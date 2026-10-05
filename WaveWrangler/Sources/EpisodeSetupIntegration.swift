@@ -24,6 +24,39 @@ enum EpisodeSetupIntegration {
     }
 }
 
+/// Keeps keyboard focus with the table whose selection just changed. Selecting a row in the SwiftUI
+/// Table can leave the show sidebar as first responder, so Return, arrows and Delete would act on the
+/// sidebar instead of the row the user picked. Never takes focus from text editing.
+@MainActor
+enum SetupTableFocus {
+    static func focus(_ identifier: String, in window: NSWindow?) {
+        DispatchQueue.main.async {
+            guard let window, window.attachedSheet == nil, let responder = window.firstResponder,
+                  !(responder is NSText) else { return }
+            guard let table = find(identifier, in: window.contentView) else {
+                #if DEBUG
+                SetupReturnKey.log.notice("Focus: no table \(identifier, privacy: .public)")
+                #endif
+                return
+            }
+            if let view = responder as? NSView, view === table || view.isDescendant(of: table) { return }
+            let moved = window.makeFirstResponder(table)
+            #if DEBUG
+            SetupReturnKey.log.notice("Focus: \(identifier, privacy: .public) from \(String(describing: type(of: responder)), privacy: .public) moved \(moved)")
+            #endif
+        }
+    }
+
+    static func find(_ identifier: String, in view: NSView?) -> NSTableView? {
+        guard let view else { return nil }
+        if let table = view as? NSTableView, table.accessibilityIdentifier() == identifier { return table }
+        for subview in view.subviews {
+            if let table = find(identifier, in: subview) { return table }
+        }
+        return nil
+    }
+}
+
 /// Return (or keypad Enter) in the Setup Sources or Speakers table moves to the details' first editable
 /// field, opening them when collapsed (K08/K09, #104). An explicit AppKit handler, because the SwiftUI
 /// Table doesn't deliver Return to `onKeyPress` or its primary action. It acts only when one of those two
@@ -34,7 +67,7 @@ enum SetupReturnKey {
     static let tableIdentifiers: Set<String> = ["ww.setup.sources", "ww.setup.speakers"]
     private static var monitor: Any?
     #if DEBUG
-    private static let log = Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "setup.keys")
+    static let log = Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "setup.keys")
     #endif
 
     static func install() {

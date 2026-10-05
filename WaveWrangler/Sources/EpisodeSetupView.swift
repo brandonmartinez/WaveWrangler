@@ -400,7 +400,10 @@ private struct SourcesTable: View {
             model.requestInspectorFocus()
         }
         .onDeleteCommand { model.requestDeleteFromSources() }
-        .onChange(of: model.selection) { model.inspectorFollowsSpeakers = false }
+        .onChange(of: model.selection) {
+            model.inspectorFollowsSpeakers = false
+            if !model.selection.isEmpty { SetupTableFocus.focus("ww.setup.sources", in: model.window()) }
+        }
         .environment(\.defaultMinListRowHeight, 22 * scale)
     }
 
@@ -618,7 +621,10 @@ private struct SpeakersSection: View {
             .onDeleteCommand {
                 if let id = model.speakerSelection.first { model.confirmation = .deleteSpeaker(id) }
             }
-            .onChange(of: model.speakerSelection) { model.inspectorFollowsSpeakers = !model.speakerSelection.isEmpty }
+            .onChange(of: model.speakerSelection) {
+                model.inspectorFollowsSpeakers = !model.speakerSelection.isEmpty
+                if !model.speakerSelection.isEmpty { SetupTableFocus.focus("ww.setup.speakers", in: model.window()) }
+            }
             .environment(\.defaultMinListRowHeight, 22 * scale)
         }
         .padding(10)
