@@ -196,11 +196,12 @@ final class SessionSourceEngine: SourceSetupEngine, @unchecked Sendable {
                 continue
             }
             let values = try? record.url.resourceValues(forKeys: Self.keys)
-            let reachable = (try? record.url.checkResourceIsReachable()) == true
+            let probe = SourceReachability.probe(record.url)
+            let reachable = probe.location == .known
             var snapshot = SourceStatusSnapshot(
-                location: reachable ? .known : .missing(sameNamedFileAtOriginalLocation: false),
-                access: reachable ? .granted : .unknown(reason: "the file couldn't be reached"),
-                residency: values.map(Self.residency) ?? .unknown,
+                location: probe.location,
+                access: probe.access,
+                residency: reachable ? (values.map(Self.residency) ?? .unknown) : .unknown,
                 transfer: transfers[id] ?? .idle,
                 identity: record.identity,
                 checkedAt: Dictionary(uniqueKeysWithValues: SourceDimension.allCases.map { ($0, now) })

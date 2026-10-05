@@ -214,17 +214,21 @@ extension ShowDocumentModel {
         return copy
     }
 
-    /// Assigns a source to one speaker (`nil` = Unassigned), replacing its previous speaker. The role is
-    /// not chosen yet: the channel is held as a provisional backup until the user picks Primary or Backup.
+    /// Assigns a source to one speaker (`nil` = Unassigned), replacing any *other* speaker's references to
+    /// it. A source that already references `speakerID` keeps that reference, its role and confirmation
+    /// (so a multi-select Assign Speaker never strips a user-confirmed primary). A newly assigned source's
+    /// role is not chosen yet: the channel is held as a provisional backup until the user picks one.
     public func assigningSpeaker(_ speakerID: SpeakerID?, toSource sourceID: SourceID, in episodeID: EpisodeID) throws(DomainError) -> ShowDocumentModel {
         if let speakerID, speaker(speakerID) == nil { throw .speakerNotFound(speakerID) }
         return try updatingSetup(episodeID) { (episode: inout Episode) throws(DomainError) in
             guard episode.source(sourceID) != nil else { throw .sourceNotFound(sourceID) }
-            Self.removeReferences(to: sourceID, in: &episode)
+            let alreadyAssigned = speakerID.map { id in episode.references(to: sourceID).contains { $0.speakerID == id } } ?? false
+            Self.removeReferences(to: sourceID, in: &episode, except: speakerID)
             guard let speakerID else {
                 Self.setRole(.unassigned, .provisional, of: sourceID, in: &episode)
                 return
             }
+            guard !alreadyAssigned else { return }
             var assignment = episode.assignment(for: speakerID) ?? SpeakerAssignment(speakerID: speakerID)
             assignment.backups.append(ChannelReference(sourceID: sourceID, channel: episode.statedChannel(of: sourceID) ?? 0))
             Self.set(assignment, in: &episode)
@@ -375,8 +379,8 @@ extension ShowDocumentModel {
         return episode.recorderGroups[groupIndex].epochs[number - 1].id
     }
 
-    private static func removeReferences(to sourceID: SourceID, in episode: inout Episode) {
-        for index in episode.speakerAssignments.indices {
+    private static func removeReferences(to sourceID: SourceID, in episode: inout Episode, except keptSpeaker: SpeakerID? = nil) {
+        for index in episode.speakerAssignments.indices where episode.speakerAssignments[index].speakerID != keptSpeaker {
             if episode.speakerAssignments[index].primary?.sourceID == sourceID {
                 episode.speakerAssignments[index].primary = nil
                 episode.speakerAssignments[index].primaryConfirmation = .provisional

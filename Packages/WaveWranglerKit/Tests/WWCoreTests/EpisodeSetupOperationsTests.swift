@@ -122,6 +122,31 @@ struct EpisodeSetupOperationTests {
         #expect(try f.ep(cleared).source(f.tr1.id)?.role == .unassigned)
     }
 
+    @Test func multiSelectAssignKeepsTheExistingSpeakersConfirmedPrimary() throws {
+        var result = try f.model.addingSpeaker(f.ana, toEpisode: f.episode.id).addingSpeaker(f.ben, toEpisode: f.episode.id)
+        result = try result.assigningSpeaker(f.ana.id, toSource: f.tr1.id, in: f.episode.id)
+        let tr1 = ChannelReference(sourceID: f.tr1.id, channel: 0)
+        result = try result.usingAsPrimary(tr1, for: f.ana.id, in: f.episode.id)
+        result = try result.assigningSpeaker(f.ben.id, toSource: f.tr2.id, in: f.episode.id)
+        let before = result
+
+        // Assign Speaker "Ana" to [tr1, tr2]: tr1 already references Ana (no-op); tr2 moves from Ben to Ana.
+        for source in [f.tr1.id, f.tr2.id] {
+            result = try result.assigningSpeaker(f.ana.id, toSource: source, in: f.episode.id)
+        }
+        let episode = try f.ep(result)
+        let ana = try #require(episode.assignment(for: f.ana.id))
+        #expect(ana.primary == tr1)
+        #expect(ana.primaryConfirmation == .userConfirmed)
+        #expect(ana.backups == [ChannelReference(sourceID: f.tr2.id, channel: 0)])
+        #expect(episode.source(f.tr1.id)?.role == .primary)
+        #expect(episode.source(f.tr1.id)?.roleConfirmation == .userConfirmed)
+        #expect(episode.assignment(for: f.ben.id)?.backups.isEmpty == true, "only other speakers' references are stripped")
+        #expect(try result.assigningSpeaker(f.ana.id, toSource: f.tr1.id, in: f.episode.id) == result, "reassigning the same speaker is a no-op")
+        #expect(before != result)
+        #expect(result.validationIssues().isEmpty)
+    }
+
     @Test func statedChannelIsUnknownUntilTheUserSetsIt() throws {
         var result = try f.model.addingSpeaker(f.ana, toEpisode: f.episode.id)
         result = try result.assigningSpeaker(f.ana.id, toSource: f.tr1.id, in: f.episode.id)

@@ -146,6 +146,19 @@ struct SetupEditCommandTests {
         expectUndo(editor, "Remove Source", restores: before)
     }
 
+    @Test func multiSelectAssignSpeakerDoesNotDemoteAConfirmedPrimary() throws {
+        let (editor, commands) = make()
+        let ana = Speaker(name: "Ana")
+        #expect(commands.createSpeaker(ana, assigning: [tr1.id]))
+        let ref = try #require(editor.showModel.episode(episodeID)?.references(to: tr1.id).first)
+        #expect(commands.useAsPrimary(ref))
+        #expect(commands.assignSpeaker(ana.id, to: [tr1.id, tr2.id]))
+        let assignment = try #require(editor.showModel.episode(episodeID)?.assignment(for: ana.id))
+        #expect(assignment.primary == ref.channel)
+        #expect(assignment.primaryConfirmation == .userConfirmed)
+        #expect(assignment.backups == [ChannelReference(sourceID: tr2.id, channel: 0)])
+    }
+
     @Test func refusalsRegisterNoUndoAndExplainWhy() {
         let (editor, commands) = make()
         #expect(!commands.setEpoch(0, for: [tr1.id]))

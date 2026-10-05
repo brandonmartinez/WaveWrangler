@@ -427,37 +427,25 @@ final class EpisodeSetupModel {
     /// One undoable "Relink “file”" action. The device-local record changes; no file is touched.
     func confirmRelink(_ context: RelinkContext) {
         sheet = nil
-        let undoName = SetupUndoName.relink(context.displayName)
-        Task { [engine] in
-            do {
-                let receipt = try await engine.commitRelink(context.sourceID, to: context.candidate, identity: context.comparison.acceptedIdentity)
-                self.registerRelinkUndo(receipt, context: context, name: undoName)
-                self.selection = [.source(context.sourceID)]
-            } catch {
-                self.message = "Couldn't relink “\(context.displayName)”: \(Self.reason(error)). Nothing was changed."
-            }
+        guard let registrar = relinkRegistrar else {
+            message = "Couldn't relink “\(context.displayName)”: this window has no undo history. Nothing was changed."
+            return
         }
+        registrar.relink(context.sourceID, to: context.candidate, identity: context.comparison.acceptedIdentity, actionName: SetupUndoName.relink(context.displayName))
+        selection = [.source(context.sourceID)]
     }
 
-    private func registerRelinkUndo(_ receipt: RelinkReceipt, context: RelinkContext, name: String) {
-        guard let undoManager = store.document?.undoManager else { return }
-        undoManager.registerUndo(withTarget: self) { model in
-            _ = MainActor.assumeIsolated {
-                Task { [engine = model.engine] in
-                    try? await engine.revertRelink(receipt)
-                    model.registerRelinkRedo(context: context, name: name)
-                }
-            }
-        }
-        undoManager.setActionName(name)
-    }
+    @ObservationIgnored private var registrarStorage: RelinkUndoRegistrar?
 
-    private func registerRelinkRedo(context: RelinkContext, name: String) {
-        guard let undoManager = store.document?.undoManager else { return }
-        undoManager.registerUndo(withTarget: self) { model in
-            MainActor.assumeIsolated { model.confirmRelink(context) }
+    private var relinkRegistrar: RelinkUndoRegistrar? {
+        guard let undoManager = store.document?.undoManager else { return nil }
+        if let existing = registrarStorage, existing.undoManager === undoManager { return existing }
+        let registrar = RelinkUndoRegistrar(undoManager: undoManager, engine: engine)
+        registrar.onFailure = { [weak self] reason in
+            self?.message = "Couldn't relink: \(reason). Nothing was changed."
         }
-        undoManager.setActionName(name)
+        registrarStorage = registrar
+        return registrar
     }
 
     // MARK: Downloads
