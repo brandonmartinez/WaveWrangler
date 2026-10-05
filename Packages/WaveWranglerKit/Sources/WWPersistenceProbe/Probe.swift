@@ -11,7 +11,11 @@ import WWPersistence
 //   open      --file F [--recovery DIR]
 //   versions  --file F
 //   autosave  --file F --enabled 0|1 [--delay S] [--recovery DIR]
-//   kill-at   --file F --boundary P1..P6 [--recovery DIR]     (real process exit at that boundary)
+//   kill-at   --file F --boundary P1..P7 [--recovery DIR] [--library LIB --index IDX] [--marker FILE] (SIGKILL at that boundary;
+//             P7 needs --library: the show save acknowledges into that library file, then updates IDX)
+//   library-kill-at --file SETTINGS.json --container DIR --recovery DIR --cache FILE --boundary P1..P6 --collection NAME
+//   record-location --file LOCATIONS_DIR --show UUID --doc SHOW.wwshow
+//   reopen-save --file LOCATIONS_DIR --show UUID --title T --recovery DIR [--library-settings S --container DIR --cache FILE]
 //   library   --file SETTINGS.json --container DIR --recovery DIR --cache FILE [--move-to FOLDER] [--add N]
 
 struct Arguments {
@@ -80,11 +84,26 @@ func waitFor(_ url: URL, timeout: Double = 30) -> Bool {
     return false
 }
 
-/// Exits the process (no cleanup, no atexit handlers) when the chosen boundary is reached.
+/// Kills the process with SIGKILL (no cleanup, no handlers) when the chosen boundary is reached. With a
+/// `marker` file, the boundary name is written and flushed first, so the parent can tell a kill *at* the
+/// boundary from any other termination (#82).
 struct ExitAtBoundary: PublicationHooks {
     let boundary: PublicationBoundary
+    var marker: URL?
     func reached(_ reached: PublicationBoundary) throws {
-        if reached == boundary { _exit(73) }
+        if reached == boundary {
+            if let marker {
+                let fd = open(marker.path, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+                if fd >= 0 {
+                    _ = boundary.rawValue.withCString { write(fd, $0, strlen($0)) }
+                    fsync(fd)
+                    close(fd)
+                }
+            }
+            kill(getpid(), SIGKILL)
+            // Delivery can lag the syscall's return: wait for it, so the process only ever ends by SIGKILL.
+            while true { pause() }
+        }
     }
 }
 
@@ -118,6 +137,9 @@ struct Probe {
         case "autosave": return await autosave()
         case "kill-at": return await killAt()
         case "library": return await library()
+        case "library-kill-at": return await libraryKillAt()
+        case "reopen-save": return await reopenSave()
+        case "record-location": return recordLocation()
         default:
             emit(["error": "unknown command \(args.command)"])
             return 2
@@ -151,6 +173,7 @@ struct Probe {
         }
         let title = args["title"] ?? "Edited by \(getpid())"
         _ = try? await session.edit { try $0.renamingShow(to: title) }
+        if let delay = Int(args["delay-ms"] ?? "") { usleep(useconds_t(delay * 1_000)) }   // seeded race schedule
         let start = ContinuousClock.now
         switch await session.save() {
         case let .success(receipt):
@@ -224,11 +247,123 @@ struct Probe {
 
     func killAt() async -> Int32 {
         guard let raw = args["boundary"], let boundary = PublicationBoundary(rawValue: raw) else { emit(["error": "boundary"]); return 2 }
-        guard let session = openSession(hooks: ExitAtBoundary(boundary: boundary)) else { return 1 }
-        _ = try? await session.edit { try $0.renamingShow(to: "Killed at \(raw)") }
-        _ = await session.save()
+        guard let session = openSession(hooks: ExitAtBoundary(boundary: boundary, marker: args.url("marker"))) else { return 1 }
+        do {
+            try await session.edit { try $0.renamingShow(to: "Killed at \(raw)") }
+        } catch {
+            // Fatal: saving an unedited model would republish the old payload as revision 3.
+            emit(["error": "edit failed: \(error)"])
+            return 3
+        }
+        var followUp = PublicationFollowUp.none
+        if let libraryURL = args.url("library") {
+            let showID = await session.payload.show.id
+            let indexURL = args.url("index")
+            let libraryPublisher = DocumentPublisher(coder: LibraryCoder.library, recovery: recovery)
+            followUp = PublicationFollowUp(
+                acknowledgeLibrary: { receipt in
+                    // C3 step 8: acknowledge the verified show publication into the library (whole publication).
+                    let bytes = try Data(contentsOf: libraryURL)
+                    let current = try LibraryCoder.library.decode(bytes)
+                    let updated = LibraryReconciler.acknowledging(showID, title: "Killed at \(raw)", publication: receipt.publication, in: current.payload)
+                    _ = try libraryPublisher.publish(updated, revision: current.revision + 1, key: .library, to: libraryURL,
+                                                     target: .inPlace(expectedBase: RevisionFingerprint(of: bytes)))
+                },
+                updateIndex: { _ in
+                    guard let indexURL else { return }
+                    let bytes = try Data(contentsOf: libraryURL)
+                    try LibraryIndexCache(url: indexURL).store(LibraryIndex.build(from: try LibraryCoder.library.decode(bytes).payload,
+                                                                                  libraryDigest: RevisionFingerprint.digest(bytes)))
+                }
+            )
+        }
+        _ = await session.save(followUp: followUp)
         emit(["result": "boundaryNotReached"])
         return 1
+    }
+
+    func libraryKillAt() async -> Int32 {
+        guard let raw = args["boundary"], let boundary = PublicationBoundary(rawValue: raw),
+              let container = args.url("container"), let recovery, let cache = args.url("cache") else {
+            emit(["error": "library-kill-at needs --boundary --container --recovery --cache"])
+            return 2
+        }
+        let store = LibraryStore(containerFolder: container, settings: FileLibrarySettings(url: file), bookmarks: PathBookmarks(),
+                                 recovery: recovery, indexCache: LibraryIndexCache(url: cache), hooks: ExitAtBoundary(boundary: boundary, marker: args.url("marker")))
+        _ = await store.load()
+        let name = args["collection"] ?? "Killed at \(raw)"
+        do {
+            _ = try await store.update { var library = $0; library.collections.append(LibraryCollection(name: name)); return library }
+        } catch {
+            emit(["error": "update failed: \(error)"])
+            return 3
+        }
+        emit(["result": "boundaryNotReached"])
+        return 1
+    }
+
+    /// Records a read-write document bookmark for `--show` at `--doc` (created by this executable, as the app does).
+    func recordLocation() -> Int32 {
+        guard let showRaw = args["show"], let showUUID = UUID(uuidString: showRaw), let doc = args.url("doc") else {
+            emit(["error": "record-location needs --show --doc"])
+            return 2
+        }
+        do {
+            try ShowLocationStore(root: file).record(ShowID(showUUID), at: doc)
+            emit(["result": "recorded"])
+            return 0
+        } catch {
+            emit(["result": "failed", "detail": "\(error)"])
+            return 1
+        }
+    }
+
+    /// M1-DUR-029: in a new process, resolve the device-local read-write bookmark, start access, open the show,
+    /// edit, Save (read-back verified), acknowledge to the library, stop access.
+    func reopenSave() async -> Int32 {
+        guard let showRaw = args["show"], let showUUID = UUID(uuidString: showRaw), let recovery else {
+            emit(["error": "reopen-save needs --show --recovery"])
+            return 2
+        }
+        let showID = ShowID(showUUID)
+        let locations = ShowLocationStore(root: file)
+        let title = args["title"] ?? "Reopened \(getpid())"
+        var library: LibraryStore?
+        if let settings = args.url("library-settings"), let container = args.url("container"), let cache = args.url("cache") {
+            let store = LibraryStore(containerFolder: container, settings: FileLibrarySettings(url: settings), bookmarks: PathBookmarks(),
+                                     recovery: recovery, indexCache: LibraryIndexCache(url: cache))
+            _ = await store.load()
+            library = store
+        }
+        let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: recovery)
+        let (outcome, saved) = await locations.withReopenedShow(showID, opener: opener) { url, document, fingerprint -> [String: Any] in
+            let session = ShowSession(key: .show(showID), url: url, payload: document.payload, base: fingerprint,
+                                      revision: document.revision, publisher: DocumentPublisher(coder: coder, recovery: recovery))
+            _ = try? await session.edit { try $0.renamingShow(to: title) }
+            switch await session.save() {
+            case let .success(receipt):
+                var ack = "none"
+                if let library {
+                    let result = await library.acknowledgeShowPublication(showID, title: title, publication: receipt.publication)
+                    ack = if case .published? = result { "published" } else { "\(String(describing: result))" }
+                }
+                return ["result": "saved", "revision": receipt.revision, "publicationID": receipt.publication.publicationID.uuidString, "libraryAck": ack]
+            case let .failure(error):
+                return describe(error)
+            }
+        }
+        let balance = locations.scopeBalance
+        var object: [String: Any] = ["scopesStarted": balance.started, "scopesStopped": balance.stopped]
+        switch outcome {
+        case let .opened(_, _, _, refreshed): object["outcome"] = "opened"; object["refreshedStaleBookmark"] = refreshed
+        case let .regrantRequired(reason): object["outcome"] = "regrantRequired"; object["reason"] = reason
+        case let .relinkRequired(candidate, reason): object["outcome"] = "relinkRequired"; object["reason"] = reason; object["candidate"] = candidate?.path ?? ""
+        case let .refused(open): object["outcome"] = "refused"; object["detail"] = "\(open)"
+        case .noRecord: object["outcome"] = "noRecord"
+        }
+        if let saved { object.merge(saved) { $1 } }
+        emit(object)
+        return 0
     }
 }
 

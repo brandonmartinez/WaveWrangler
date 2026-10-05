@@ -1,0 +1,106 @@
+[
+  {
+    "commit": "cd1c0f10f40fe5a55bdd70d2684bdb7602740b5f",
+    "containsFreeze": "2fcf4d7",
+    "split": "holdout",
+    "startedAt": "2026-10-05T07:41:22Z",
+    "host": {
+      "os": "macOS 27.0.1 (26A434)",
+      "xcode": "Xcode 27.0 Build version 27A266a",
+      "swift": "swift-driver version: 1.168.6 Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)",
+      "cpu": "Apple M5 Max",
+      "cores": 18,
+      "memoryBytes": 137438953472
+    },
+    "trees": {
+      "Packages/WaveWranglerKit/Tests/WWPersistenceTests": "0028d4c35966c06e35bf04cee306763246223ddf",
+      "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "6387033820fbd419490a7a3581441bc9928bffdb",
+      "Packages/WaveWranglerKit/Sources/WWPersistence": "e9d88eeaf586ec449163a81b91771a0362f6f007",
+      "Packages/WaveWranglerKit/Sources/WWOrganizer": "e1e370336a48d988aa963700878e94849f0e2c29",
+      "Packages/WaveWranglerKit/Sources/WWCore": "b36189e5c3c6343d9e52937dd83884c6a8950b0b",
+      "WaveWrangler/Document": "9e8c2460f558f096382bfdab3e31b0bc88236c49",
+      "WaveWranglerTests": "7e1d35b09de7b68ec61289a4c75ba7e50837c301",
+      "WaveWranglerUITests": "d24d20620b51b9e9b112c318c827f4c61107d011",
+      "scripts/holdout.sh": "981995a995b52ceef04d7ff3922d9b74e66280c5"
+    },
+    "passes": "package"
+  },
+  {
+    "commit": "cd1c0f10f40fe5a55bdd70d2684bdb7602740b5f",
+    "containsFreeze": "2fcf4d7",
+    "split": "holdout",
+    "startedAt": "2026-10-05T07:43:37Z",
+    "host": {
+      "os": "macOS 27.0.1 (26A434)",
+      "xcode": "Xcode 27.0 Build version 27A266a",
+      "swift": "swift-driver version: 1.168.6 Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)",
+      "cpu": "Apple M5 Max",
+      "cores": 18,
+      "memoryBytes": 137438953472
+    },
+    "trees": {
+      "Packages/WaveWranglerKit/Tests/WWPersistenceTests": "0028d4c35966c06e35bf04cee306763246223ddf",
+      "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "6387033820fbd419490a7a3581441bc9928bffdb",
+      "Packages/WaveWranglerKit/Sources/WWPersistence": "e9d88eeaf586ec449163a81b91771a0362f6f007",
+      "Packages/WaveWranglerKit/Sources/WWOrganizer": "e1e370336a48d988aa963700878e94849f0e2c29",
+      "Packages/WaveWranglerKit/Sources/WWCore": "b36189e5c3c6343d9e52937dd83884c6a8950b0b",
+      "WaveWrangler/Document": "9e8c2460f558f096382bfdab3e31b0bc88236c49",
+      "WaveWranglerTests": "7e1d35b09de7b68ec61289a4c75ba7e50837c301",
+      "WaveWranglerUITests": "d24d20620b51b9e9b112c318c827f4c61107d011",
+      "scripts/holdout.sh": "981995a995b52ceef04d7ff3922d9b74e66280c5"
+    },
+    "passes": "timing"
+  },
+  {
+    "commit": "cd1c0f10f40fe5a55bdd70d2684bdb7602740b5f",
+    "containsFreeze": "2fcf4d7",
+    "split": "holdout",
+    "startedAt": "2026-10-05T07:45:49Z",
+    "host": {
+      "os": "macOS 27.0.1 (26A434)",
+      "xcode": "Xcode 27.0 Build version 27A266a",
+      "swift": "swift-driver version: 1.168.6 Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)",
+      "cpu": "Apple M5 Max",
+      "cores": 18,
+      "memoryBytes": 137438953472
+    },
+    "trees": {
+      "Packages/WaveWranglerKit/Tests/WWPersistenceTests": "0028d4c35966c06e35bf04cee306763246223ddf",
+      "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "6387033820fbd419490a7a3581441bc9928bffdb",
+      "Packages/WaveWranglerKit/Sources/WWPersistence": "e9d88eeaf586ec449163a81b91771a0362f6f007",
+      "Packages/WaveWranglerKit/Sources/WWOrganizer": "e1e370336a48d988aa963700878e94849f0e2c29",
+      "Packages/WaveWranglerKit/Sources/WWCore": "b36189e5c3c6343d9e52937dd83884c6a8950b0b",
+      "WaveWrangler/Document": "9e8c2460f558f096382bfdab3e31b0bc88236c49",
+      "WaveWranglerTests": "7e1d35b09de7b68ec61289a4c75ba7e50837c301",
+      "WaveWranglerUITests": "d24d20620b51b9e9b112c318c827f4c61107d011",
+      "scripts/holdout.sh": "981995a995b52ceef04d7ff3922d9b74e66280c5"
+    },
+    "passes": "icloud"
+  },
+  {
+    "commit": "cd1c0f10f40fe5a55bdd70d2684bdb7602740b5f",
+    "containsFreeze": "2fcf4d7",
+    "split": "holdout",
+    "startedAt": "2026-10-05T07:50:36Z",
+    "host": {
+      "os": "macOS 27.0.1 (26A434)",
+      "xcode": "Xcode 27.0 Build version 27A266a",
+      "swift": "swift-driver version: 1.168.6 Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)",
+      "cpu": "Apple M5 Max",
+      "cores": 18,
+      "memoryBytes": 137438953472
+    },
+    "trees": {
+      "Packages/WaveWranglerKit/Tests/WWPersistenceTests": "0028d4c35966c06e35bf04cee306763246223ddf",
+      "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "6387033820fbd419490a7a3581441bc9928bffdb",
+      "Packages/WaveWranglerKit/Sources/WWPersistence": "e9d88eeaf586ec449163a81b91771a0362f6f007",
+      "Packages/WaveWranglerKit/Sources/WWOrganizer": "e1e370336a48d988aa963700878e94849f0e2c29",
+      "Packages/WaveWranglerKit/Sources/WWCore": "b36189e5c3c6343d9e52937dd83884c6a8950b0b",
+      "WaveWrangler/Document": "9e8c2460f558f096382bfdab3e31b0bc88236c49",
+      "WaveWranglerTests": "7e1d35b09de7b68ec61289a4c75ba7e50837c301",
+      "WaveWranglerUITests": "d24d20620b51b9e9b112c318c827f4c61107d011",
+      "scripts/holdout.sh": "981995a995b52ceef04d7ff3922d9b74e66280c5"
+    },
+    "passes": "native"
+  }
+]

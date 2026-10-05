@@ -27,7 +27,7 @@ final class LibraryManagementUITests: XCTestCase {
     func testCollectionsRebuildIndexAndLibraryLocation() throws {
         let show = workDirectory.appending(path: "WW013 Show \(suffix).wwshow")
         try probe(["create", "--file", show.path, "--seed", "13"])
-        launch()
+        launch(["-WWUITestResetStorage", "YES"])
         app.open(show)
         _ = app.windows.matching(identifier: "ww.show.window").firstMatch.waitForExistence(timeout: 10)
         app.typeKey("w", modifierFlags: .command)
@@ -139,9 +139,9 @@ final class LibraryManagementUITests: XCTestCase {
         if !condition { findings.append(message()) }
     }
 
-    private func launch() {
+    private func launch(_ extra: [String] = []) {
         app = XCUIApplication()
-        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestCenterWindows", "YES"]
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestCenterWindows", "YES"] + extra
         app.launch()
         app.activate()
     }

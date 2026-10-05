@@ -37,7 +37,8 @@ protocol LibraryEntryObserving: AnyObject {
     func locateShow(_ id: ShowID) async throws
     func canRevealShow(_ id: ShowID) -> Bool
     /// Reconciliation input from an open show window: the document is authoritative for show content.
-    func noteOpenShow(id: ShowID, model: ShowDocumentModel, fileURL: URL?)
+    /// `model` is `nil` when the window has unsaved edits (only the location and open time are recorded).
+    func noteOpenShow(id: ShowID, model: ShowDocumentModel?, fileURL: URL?)
     /// The show was opened (for "Last Opened").
     func noteOpened(id: ShowID)
 }
@@ -90,6 +91,8 @@ enum LibraryBackendError: LocalizedError {
     case notAShowFile
     case differentShow
     case libraryStorageNotConnected
+    case needsPermission
+    case showNotFound
 
     var errorDescription: String? {
         switch self {
@@ -97,6 +100,8 @@ enum LibraryBackendError: LocalizedError {
         case .notAShowFile: "That file isn't a WaveWrangler show."
         case .differentShow: "That file is a different show, so it wasn't linked."
         case .libraryStorageNotConnected: "moving the library isn't available in this version yet"
+        case .needsPermission: "WaveWrangler needs your permission to open this show again. Use Grant Access… to choose it."
+        case .showNotFound: "WaveWrangler can't find this show where it was last saved. Use Locate… to find it."
         }
     }
 }
@@ -108,10 +113,10 @@ struct LibraryServices {
     var entries: LibraryEntryObserving
     var location: LibraryLocationControlling
 
-    /// Canonical library storage and location come from the persistence lane; per-show "as of last open"
-    /// details come from shows opened in this run (device-local, rebuildable).
+    /// Canonical library storage and location come from the persistence lane; per-show locations and
+    /// "as of last open" details are device-local and persisted (`PersistentLibraryEntryObserver`).
     static var current: LibraryServices = {
-        let observer = InMemoryLibraryBackend()
+        let observer = PersistentLibraryEntryObserver.makeDefault()
         let persistence = PersistenceLibraryBackend()
         return LibraryServices(persistence: persistence, entries: observer, location: persistence)
     }()
@@ -160,7 +165,7 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
     }
 
     /// Records what an open show window knows ("as of last open").
-    func noteOpenShow(id: ShowID, model: ShowDocumentModel, fileURL: URL?) {
+    func noteOpenShow(id: ShowID, model: ShowDocumentModel?, fileURL: URL?) {
         // Two open files with the same show identity (e.g. a Finder copy): surface it, never merge.
         let others = NSDocumentController.shared.documents.compactMap { $0 as? ShowDocument }.filter {
             $0.store.model.show.id == id && $0.fileURL != nil && $0.fileURL?.standardizedFileURL != fileURL?.standardizedFileURL
@@ -176,8 +181,8 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
             return
         }
         if let fileURL { locations[id] = fileURL }
-        let episodes = model.episodes.map { EpisodeSummary(id: $0.id, number: $0.number, title: $0.title) }
-        let refs = model.episodes.reduce(0) { $0 + $1.sources.count }
+        let episodes = model.map { $0.episodes.map { EpisodeSummary(id: $0.id, number: $0.number, title: $0.title) } } ?? details[id]?.episodes
+        let refs = model.map { $0.episodes.reduce(0) { $0 + $1.sources.count } } ?? details[id]?.sourceReferenceCount
         details[id] = LibraryEntryDetails(
             state: .available,
             locationDisplayName: fileURL.map { $0.deletingLastPathComponent().lastPathComponent },

@@ -12,6 +12,8 @@ import WWPersistence
 ///   synthetic `.wwshow` files (5 episodes, 10 metadata-only source references each; 1,000 references in
 ///   the library) generated once in the container's temporary directory and reused by later launches, so
 ///   shows open from the library (WW-007 / M1-SCALE-001 native timing).
+/// - `-WWUITestResetStorage YES` (with `-WWUITestHooks YES`): delete the isolated UI-test storage (library,
+///   show locations, recovery) so a test starts clean; later launches without it keep the data (relaunch).
 /// - `-WWUITestOpenShow <name>` (+ `-WWUITestShowEpisodes <n>`): create a synthetic show and open it
 ///   (the Library window is then not shown at launch).
 /// - `-WWUITestAppearance aqua|darkAqua|highContrastAqua|highContrastDarkAqua`: app appearance for C04/C07
@@ -51,6 +53,18 @@ enum LaunchFixtures {
     static func applyBeforeLaunch() {
         #if DEBUG
         let defaults = UserDefaults.standard
+        if defaults.bool(forKey: "WWUITestResetStorage"), PersistenceEnvironment.isUITestRun {
+            // Only the isolated UI-test storage ("WaveWrangler-UITests"), never the user's.
+            let root = PersistenceEnvironment.applicationSupport("")
+            if root.path(percentEncoded: false).contains("WaveWrangler-UITests") {
+                try? FileManager.default.removeItem(at: root)
+                try? FileManager.default.removeItem(at: PersistenceEnvironment.caches(""))
+            }
+            UserDefaults(suiteName: "com.brandonmartinez.wavewrangler.uitest-preferences")?.removeObject(forKey: "WWLibraryLocation")
+            if let folder = defaults.string(forKey: "WWUITestShowFolder"), folder.hasPrefix("WWUITests-") {
+                try? FileManager.default.removeItem(at: URL(filePath: NSTemporaryDirectory()).appending(path: folder, directoryHint: .isDirectory))
+            }
+        }
         if defaults.bool(forKey: "WWUITestResetPreferences") {
             defaults.removeObject(forKey: "NSWindow Frame WaveWranglerLibraryWindow")
             // Persistence's isolated UI-test preferences (autosave policy) also start from the defaults, so
@@ -97,7 +111,9 @@ enum LaunchFixtures {
         if delay > 0 { AutosavePolicyController.shared.delaySeconds = delay }
         guard let name = defaults.string(forKey: "WWUITestOpenShow"), !name.isEmpty else { return }
         let count = max(0, defaults.integer(forKey: "WWUITestShowEpisodes"))
-        let folder = URL(filePath: NSTemporaryDirectory()).appending(path: "WWUITests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        // A stable folder name when asked (relaunch tests reopen the same show); otherwise unique.
+        let folderName = defaults.string(forKey: "WWUITestShowFolder") ?? "WWUITests-\(UUID().uuidString)"
+        let folder = URL(filePath: NSTemporaryDirectory()).appending(path: folderName, directoryHint: .isDirectory)
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         } catch {

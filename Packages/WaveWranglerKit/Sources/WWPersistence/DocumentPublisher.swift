@@ -77,7 +77,7 @@ public enum WriteFailureKind: String, Sendable, Equatable, Codable {
             switch posix {
             case ENOSPC, EDQUOT: self = .diskFull; return
             case EACCES, EPERM, EROFS: self = .permissionDenied; return
-            case ENETDOWN, ENETUNREACH, ETIMEDOUT, EHOSTUNREACH, ENOENT, ENXIO: self = .unavailable; return
+            case ENETDOWN, ENETUNREACH, ETIMEDOUT, EHOSTUNREACH, ENOENT, ENXIO, ENOTDIR: self = .unavailable; return
             case ECANCELED: self = .cancelled; return
             default: break
             }

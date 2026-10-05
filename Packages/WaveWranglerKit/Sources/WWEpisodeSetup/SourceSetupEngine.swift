@@ -135,6 +135,11 @@ public final class SetupEngineLeases<Owner: Hashable, Key: Hashable> {
             await registry.release(lease.key)
         }
         let engine = registry.acquire(key)
+        if closedOwners.contains(owner) {
+            // The owner closed before (or while) leasing: never keep a lease for it.
+            await registry.release(key)
+            return engine
+        }
         leases[owner] = (key, engine)
         return engine
     }
@@ -144,6 +149,20 @@ public final class SetupEngineLeases<Owner: Hashable, Key: Hashable> {
         guard let lease = leases.removeValue(forKey: owner) else { return }
         await registry.release(lease.key)
     }
+
+    /// An owner (window) started being watched; clears any closed mark from a previous owner with the
+    /// same identity.
+    public func ownerOpened(_ owner: Owner) {
+        closedOwners.remove(owner)
+    }
+
+    /// The owner closed. Any lease taken later for it is released immediately.
+    public func ownerClosed(_ owner: Owner) async {
+        closedOwners.insert(owner)
+        await end(owner)
+    }
+
+    private var closedOwners: Set<Owner> = []
 
     public func hasLease(_ owner: Owner) -> Bool { leases[owner] != nil }
 }
