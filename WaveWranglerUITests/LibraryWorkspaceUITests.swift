@@ -242,7 +242,9 @@ final class LibraryWorkspaceUITests: XCTestCase {
         waitFor(sheet)
         XCTAssertTrue(sheet.staticTexts["Delete the collection “Season Two”?"].exists)
         sheet.buttons["Delete"].click()
-        XCTAssertTrue(created.waitForNonExistence(timeout: 5), "collection deleted")
+        if !created.waitForNonExistence(timeout: 5) {
+            XCTFail("collection deleted; sheets: \(app.sheets.count), message bars: \(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.messageBar'")).allElementsBoundByIndex.map(\.label)), first responder region: \(app.windows["Library"].debugDescription.prefix(3000))")
+        }
         XCTAssertEqual(value(element("ww.library.sidebar.shows")), "100 shows", "Deleting a collection never deletes shows")
     }
 
@@ -296,7 +298,8 @@ final class LibraryWorkspaceUITests: XCTestCase {
         func assertInside(_ element: XCUIElement, _ name: String, file: StaticString = #filePath, line: UInt = #line) {
             XCTAssertTrue(element.exists, "\(name) exists", file: file, line: line)
             XCTAssertGreaterThanOrEqual(element.frame.minY, contentTop, "\(name) \(element.frame) is below the title bar of \(frame)", file: file, line: line)
-            XCTAssertLessThanOrEqual(element.frame.maxY, frame.maxY + 0.5, "\(name) \(element.frame) ends inside \(frame)", file: file, line: line)
+            // + 1.5: outlines report a 1 pt border outside their scroll view (as on main at 100%).
+            XCTAssertLessThanOrEqual(element.frame.maxY, frame.maxY + 1.5, "\(name) \(element.frame) ends inside \(frame)", file: file, line: line)
         }
         assertInside(shows, "Shows row")
         assertInside(element("ww.library.sidebar.recent"), "Recent row")
