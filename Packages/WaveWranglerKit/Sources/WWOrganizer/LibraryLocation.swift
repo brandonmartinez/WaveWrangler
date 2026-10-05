@@ -5,6 +5,8 @@ public enum LibraryLocationChoice: Sendable, Equatable {
     case inWaveWrangler
     case folder(displayName: String)
 
+    /// A-07: a fresh install stores the library in WaveWrangler.
+    public static let `default` = LibraryLocationChoice.inWaveWrangler
     public static let inWaveWranglerTitle = "In WaveWrangler"
     public static let chooseFolderTitle = "Choose Folder…"
 

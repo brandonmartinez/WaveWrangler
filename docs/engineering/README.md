@@ -8,7 +8,7 @@ covers code only.
 
 ```text
 WaveWrangler.xcodeproj/           Hand-authored project (objectVersion 77, synchronized folders)
-  xcshareddata/xcschemes/         WaveWrangler (build + unit tests), WaveWranglerUITests (reserved)
+  xcshareddata/xcschemes/         WaveWrangler (build + unit tests), WaveWranglerUITests (XCUITests; GUI)
 WaveWrangler/                     App target sources (folder is synchronized: new files are included automatically)
   App/                            Entry point and NSApplicationDelegate
   Document/                       NSDocument subclasses, store, persistence/lifecycle integration
@@ -21,11 +21,13 @@ WaveWrangler/                     App target sources (folder is synchronized: ne
   Info.plist                      Document types and exported UTIs (merged with generated keys)
   WaveWrangler.entitlements       App Sandbox entitlements
 WaveWranglerTests/                Unhosted unit tests (Swift Testing); never launch the app
-WaveWranglerUITests/              Placeholder; UI tests are not run (GUI launch not yet permitted)
+WaveWranglerUITests/              XCUITests + accessibility audits (launch the app; GUI lock required)
 Packages/WaveWranglerKit/         Local Swift package linked by the app
   Sources/WWCore/                 Domain model, logical IDs, schema versions, pure validated operations
   Sources/WWPersistence/          Canonical document formats, envelope coder (publication/recovery later)
   Sources/WWSources/              Device-local source access/availability model (stub)
+  Sources/WWOrganizer/            Library/workspace presentation: wording catalogs, preference keys,
+                                  collection/combine operations, sidebar models, menu shortcut register
   Tests/WW*Tests/                 Swift Testing suites per module
 scripts/build.sh, scripts/test.sh Established build/test commands (CI runs the same scripts)
 .github/workflows/ci.yml          Ordinary build/test CI
@@ -103,7 +105,7 @@ scripts/build.sh            # xcodebuild build, Debug, ad-hoc signed, -jobs 4, D
 scripts/build.sh Release
 scripts/test.sh             # swift test (package, --jobs 4) then xcodebuild test -only-testing:WaveWranglerTests
 scripts/test.sh --package-only
-scripts/test.sh --ui        # reserved: exits 2 until GUI launch/UI tests are permitted
+scripts/test.sh --ui        # XCUITests only (launches the app); needs GUI permission + the coordinator's GUI lock
 ```
 
 Environment overrides: `WW_JOBS` (default 4) and `WW_DERIVED_DATA` (default `.build/DerivedData`).
@@ -121,7 +123,8 @@ runtime, ad-hoc signing (`CODE_SIGN_IDENTITY=-`, no team). There is no network e
 - At most one `xcodebuild` per session and at most three concurrently on the host, each `-jobs 4`
   with its own DerivedData (the scripts do this).
 - Run test suites serially per lane (`scripts/test.sh` disables parallel xcodebuild testing).
-- Don't run UI tests or launch the app unless the coordinator has relayed explicit permission.
+- Don't run UI tests or launch the app without GUI permission; take the coordinator's GUI lock first
+  (one agent drives the screen at a time) and release it right after.
 
 ### Local host prerequisite
 
@@ -129,6 +132,39 @@ runtime, ad-hoc signing (`CODE_SIGN_IDENTITY=-`, no team). There is no network e
 required plug-in … run `xcodebuild -runFirstLaunch`" (check with `xcodebuild -checkFirstLaunchStatus`),
 someone with admin rights must run `sudo xcodebuild -runFirstLaunch`. Agents must not do this without
 explicit user permission. `scripts/test.sh --package-only` works without it.
+
+## Preference keys
+
+App-level `UserDefaults` keys live in `WWOrganizer.PreferenceKey`; `AppPreferences(defaults:)` reads them with
+the product defaults applied, so a missing key always means the default. The Settings window writes them.
+
+| Key | Type | Default | Read by |
+| --- | --- | --- | --- |
+| `WWAutosaveEnabled` | Bool | `true` (autosave ON) | Persistence (autosave policy), show save status |
+| `WWDownloadSourcesAutomatically` | Bool | `true` (downloads ON) | Sources (availability/download) |
+| `WWTextSizePercent` | Int 100–200, step 25 | `100` | All WaveWrangler windows (in-app text size, CMD-20) |
+| `WWSettingsLastPane` | String (`general`/`sources`) | `general` | Settings window |
+
+## UI seams between lanes
+
+The library/workspace UI talks to other lanes only through these protocols. Keep them stable; extend
+additively and update this table.
+
+| Seam (file) | Implemented by | Contract |
+| --- | --- | --- |
+| `DocumentStatusProviding` (`Workspace/DocumentStatus.swift`) | Persistence: `ShowDocument` (or an object it owns) | Observable `saveStatus: DocumentSaveStatus` (D1–D16 + checking/unknown, `WWOrganizer.DocumentSaveState`). The show window uses `store.document as? DocumentStatusProviding`; until then `NativeDocumentStatusObserver` reports Edited/Not saved or "Unknown", **never "Saved"**. |
+| `DocumentStatusActionHandling` (same file) | Persistence (optional) | Handles popover/message-bar actions (Resolve…, Try Again, Save a Copy Elsewhere…, Cancel Save…). |
+| `LibraryPersisting`, `LibraryEntryObserving`, `LibraryLocationControlling` (`Library/LibraryServices.swift`) | Persistence: library store, reconciliation, `LibraryLocationController` | Async load/save of `LibraryModel` (no main-thread I/O); observable per-show `LibraryEntryDetails`; open/locate/reveal by show identity; library location, L1–L5 state, copy → verify → retire moves. Install via `LibraryServices.current` before the library is first used. `InMemoryLibraryBackend` is the stand-in (not durable; the UI says so). |
+| `SourceCommandHandling` (`Commands/SourceCommands.swift`) | Sources UI | File › Import Sources…, Relink Source…, and extra Source-menu items. `SourceCommands.handler` defaults to a placeholder that changes nothing. |
+| `SetupSourcesContent.makeView` (`Workspace/SetupContainerView.swift`) | Sources UI | `(ShowDocumentStore, EpisodeID) -> AnyView` hosted in the Setup destination (Sources outline + Speakers table). |
+
+Show windows: `ShowDocument` hosts `ShowWorkspaceView(store:)`; per-window state (`ShowWindowState`) is
+registered for menu routing (`CommandRouter`). Edits go through `ShowDocumentStore.apply(_:coalescing:_:)`
+with the user-facing undo names in `WWOrganizer.UndoActionName`.
+
+UI-test launch arguments (Debug builds; synthetic data only): `-WWUITestResetPreferences YES`,
+`-WWUITestLibraryFixture lib100|empty`, `-WWUITestOpenShow <name>` with `-WWUITestShowEpisodes <n>`, and
+`-WWForceReduceMotion YES`.
 
 ## Conventions
 

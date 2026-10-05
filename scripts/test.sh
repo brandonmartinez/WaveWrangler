@@ -1,27 +1,49 @@
 #!/usr/bin/env bash
 # Run WaveWranglerKit package tests, then the unhosted WaveWranglerTests unit tests.
-# UI tests launch the app and are NOT run by default; --ui is reserved until GUI launch is permitted.
-# Usage: scripts/test.sh [--package-only] [--ui]
+# UI tests launch the app and are NOT run by default. `--ui` runs ONLY the XCUITests (WaveWranglerUITests
+# scheme); it drives the screen, so run it only with GUI permission and the coordinator's GUI lock.
+# Usage: scripts/test.sh [--package-only] [--ui [-only-testing:WaveWranglerUITests/Class/test]]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JOBS="${WW_JOBS:-4}"
 DERIVED_DATA="${WW_DERIVED_DATA:-$ROOT/.build/DerivedData}"
 PACKAGE_ONLY=0
+UI=0
+UI_ARGS=()
 
 for arg in "$@"; do
   case "$arg" in
     --package-only) PACKAGE_ONLY=1 ;;
-    --ui)
-      echo "error: --ui is reserved; UI tests are not enabled until GUI launch is permitted." >&2
-      exit 2
-      ;;
+    --ui) UI=1 ;;
+    -only-testing:WaveWranglerUITests*) UI_ARGS+=("$arg") ;;
     *)
-      echo "usage: scripts/test.sh [--package-only] [--ui]" >&2
+      echo "usage: scripts/test.sh [--package-only] [--ui [-only-testing:WaveWranglerUITests/...]]" >&2
       exit 2
       ;;
   esac
 done
+
+if [[ "$UI" == 1 ]]; then
+  echo "==> xcodebuild test (WaveWranglerUITests; launches the app)"
+  cd "$ROOT"
+  if [[ ${#UI_ARGS[@]} -eq 0 ]]; then UI_ARGS=(-only-testing:WaveWranglerUITests); fi
+  xcodebuild \
+    -project WaveWrangler.xcodeproj \
+    -scheme WaveWranglerUITests \
+    -configuration Debug \
+    -destination 'platform=macOS,arch=arm64' \
+    -derivedDataPath "$DERIVED_DATA" \
+    -jobs "$JOBS" \
+    "${UI_ARGS[@]}" \
+    -parallel-testing-enabled NO \
+    -resultBundlePath "$ROOT/.build/UITests-$(date +%Y%m%d-%H%M%S).xcresult" \
+    CODE_SIGN_IDENTITY=- \
+    CODE_SIGN_STYLE=Manual \
+    DEVELOPMENT_TEAM= \
+    test
+  exit $?
+fi
 
 echo "==> swift test (Packages/WaveWranglerKit)"
 swift test \

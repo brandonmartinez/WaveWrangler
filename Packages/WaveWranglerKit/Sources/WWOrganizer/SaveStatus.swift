@@ -57,7 +57,21 @@ public struct DocumentSaveStatus: Sendable, Equatable {
     }
 }
 
+enum AnnouncementKind: Equatable {
+    case saved, failure, conflict, messageBar, other
+}
+
 extension DocumentSaveState {
+    var announcementKind: AnnouncementKind {
+        switch self {
+        case .saved: .saved
+        case .notConfirmed, .locationUnavailable, .diskFull, .failed: .failure
+        case .conflict: .conflict
+        case .recovered, .readOnlyNewerFormat, .readOnlyDamaged, .updateFailed: .messageBar
+        default: .other
+        }
+    }
+
     /// Dirty column of states-and-recovery §2. `.checking`/`.unknown` are treated as not confirmed saved
     /// by the presentation but carry no dirty claim on their own.
     public var impliesUnsavedChanges: Bool {
@@ -197,7 +211,8 @@ public struct SaveStatusPresentation: Sendable, Equatable {
             text = "Can't reach"
             symbol = "icloud.slash"
             tint = .attention
-            popover = "WaveWrangler can't reach the folder where this show is saved. Your changes are still open in this window, and the last saved version hasn't been changed. WaveWrangler will try again when the folder is available." + retry
+            popover = "WaveWrangler can't reach the folder where this show is saved. Your changes are still open in this window, and the last saved version hasn't been changed. "
+                + (status.autosaveEnabled ? "WaveWrangler will try again automatically." : "Choose Try Again when the folder is available.")
             actions = [.tryAgain, .saveACopyElsewhere]
         case .diskFull(let volume):
             text = "Not saved"
@@ -296,16 +311,35 @@ public struct SaveStatusPresentation: Sendable, Equatable {
         date.formatted(date: .omitted, time: .shortened)
     }
 
-    /// Announcement for state changes (states §7). `explicitSave` is true after ⌘S.
-    public static func announcement(for state: DocumentSaveState, showName: String, explicitSave: Bool) -> String? {
+    /// Announcement for a save-state change (states §7). Failures are announced once, at the first
+    /// failure (automatic retries keep the same state and are silent); "Saved" is announced after an
+    /// explicit ⌘S or when an automatic retry succeeds after a failure. Silent autosaves aren't announced.
+    public static func announcement(
+        from previous: DocumentSaveState?,
+        to state: DocumentSaveState,
+        showName: String,
+        explicitSave: Bool
+    ) -> String? {
+        if let previous, previous.announcementKind == state.announcementKind, state.announcementKind != .saved { return nil }
         switch state {
-        case .saved: explicitSave ? "Saved" : nil
-        case .notConfirmed: "Couldn't save “\(showName)”. The save couldn't be confirmed."
-        case .locationUnavailable: "Couldn't save “\(showName)”. The folder can't be reached."
-        case .diskFull(let volume): "Couldn't save “\(showName)”. “\(volume)” is full."
-        case .failed(let reason): "Couldn't save “\(showName)”. \(reason)."
-        case .conflict: "“\(showName)” was changed somewhere else. Your changes are kept."
-        default: nil
+        case .saved:
+            return explicitSave || previous?.announcementKind == .failure ? "Saved" : nil
+        case .notConfirmed: return "Couldn't save “\(showName)”. The save couldn't be confirmed."
+        case .locationUnavailable: return "Couldn't save “\(showName)”. The folder can't be reached."
+        case .diskFull(let volume): return "Couldn't save “\(showName)”. “\(volume)” is full."
+        case .failed(let reason): return "Couldn't save “\(showName)”. \(reason)."
+        case .conflict: return "“\(showName)” was changed somewhere else. Your changes are kept."
+        case .recovered, .readOnlyNewerFormat, .readOnlyDamaged, .updateFailed:
+            return SaveStatusPresentation(DocumentSaveStatus(state: state, autosaveEnabled: true), showName: showName).messageBar?.heading
+        default: return nil
         }
     }
+
+    /// ST-16 message bar after Save a Copy Elsewhere… / Save Mine as a Copy….
+    public static func copyMessage(copyName: String, folder: String, originalFolder: String) -> String {
+        "You're now editing “\(copyName)” in \(folder). The original at \(originalFolder) wasn't changed."
+    }
+
+    /// ST-16 save-panel name.
+    public static func copyName(for showName: String) -> String { "\(showName) copy" }
 }

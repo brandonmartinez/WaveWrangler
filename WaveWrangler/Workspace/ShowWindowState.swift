@@ -24,6 +24,8 @@ final class ShowWindowState {
     var titleFocusRequest = 0
     var saveStatusPopoverShown = false
     var dismissedMessageBar: String?
+    /// Set by File › Save so the following "Saved" is announced (states §7).
+    @ObservationIgnored var explicitSavePending = false
 
     let store: ShowDocumentStore
     @ObservationIgnored weak var window: NSWindow?
@@ -188,6 +190,14 @@ final class ShowWindowState {
         }
     }
 
+    /// Announces save-state changes per states §7 (first failure once, explicit/after-retry "Saved").
+    func saveStateDidChange(from old: DocumentSaveState, to new: DocumentSaveState) {
+        if let text = SaveStatusPresentation.announcement(from: old, to: new, showName: store.model.show.title, explicitSave: explicitSavePending) {
+            announce(text)
+        }
+        if new.isCoherentlySaved || new.announcementIsTerminalFailure { explicitSavePending = false }
+    }
+
     func announce(_ text: String) {
         AccessibilityNotification.Announcement(text).post()
     }
@@ -210,6 +220,15 @@ final class ShowWindowState {
     /// IA-06: subtitle = selected episode's title.
     func updateSubtitle() {
         window?.subtitle = ShowSidebarPresentation.windowSubtitle(model: store.model, selectedEpisode: selectedEpisodeID)
+    }
+}
+
+extension DocumentSaveState {
+    fileprivate var announcementIsTerminalFailure: Bool {
+        switch self {
+        case .notConfirmed, .locationUnavailable, .diskFull, .failed, .cancelled, .conflict: true
+        default: false
+        }
     }
 }
 

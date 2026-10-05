@@ -66,6 +66,7 @@ private struct ShowWindowContent: View {
             LibraryStore.shared.showDidChange(id: model.show.id, model: model, fileURL: store.document?.fileURL)
         }
         .onChange(of: state.sidebarSelection) { _, _ in state.updateSubtitle() }
+        .onChange(of: state.saveStatus.state) { old, new in state.saveStateDidChange(from: old, to: new) }
     }
 }
 

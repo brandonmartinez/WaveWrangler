@@ -139,11 +139,40 @@ struct SaveStatusTests {
         #expect(SaveStatusPresentation.firstSentence(of: "Saved to “A.B”. Next.") == "Saved to “A.B”.")
     }
 
-    @Test func announcementsOnlyForExplicitSaveAndFailures() {
+    @Test func announcementsOnlyForExplicitSaveFirstFailureAndRetrySuccess() {
         let saved = DocumentSaveState.saved(at: Self.date, folderDisplayName: nil)
-        #expect(SaveStatusPresentation.announcement(for: saved, showName: "S", explicitSave: false) == nil)
-        #expect(SaveStatusPresentation.announcement(for: saved, showName: "S", explicitSave: true) == "Saved")
-        #expect(SaveStatusPresentation.announcement(for: .conflict(changedAt: nil), showName: "S", explicitSave: false) == "“S” was changed somewhere else. Your changes are kept.")
+        #expect(SaveStatusPresentation.announcement(from: .saving(cancellable: false), to: saved, showName: "S", explicitSave: false) == nil)
+        #expect(SaveStatusPresentation.announcement(from: .saving(cancellable: false), to: saved, showName: "S", explicitSave: true) == "Saved")
+        #expect(SaveStatusPresentation.announcement(from: .edited, to: .locationUnavailable, showName: "S", explicitSave: false) == "Couldn't save “S”. The folder can't be reached.")
+        #expect(SaveStatusPresentation.announcement(from: .locationUnavailable, to: .locationUnavailable, showName: "S", explicitSave: false) == nil)
+        #expect(SaveStatusPresentation.announcement(from: .locationUnavailable, to: saved, showName: "S", explicitSave: false) == "Saved")
+        #expect(SaveStatusPresentation.announcement(from: .edited, to: .conflict(changedAt: nil), showName: "S", explicitSave: false) == "“S” was changed somewhere else. Your changes are kept.")
+        #expect(SaveStatusPresentation.announcement(from: nil, to: .readOnlyNewerFormat, showName: "S", explicitSave: false) == "This show needs a newer WaveWrangler")
+    }
+
+    @Test func locationUnavailableWordingDependsOnAutosave() {
+        #expect(present(.locationUnavailable, autosave: true).popoverText.hasSuffix("WaveWrangler will try again automatically."))
+        let off = present(.locationUnavailable, autosave: false)
+        #expect(off.popoverText.hasSuffix("Choose Try Again when the folder is available."))
+        #expect(off.showsDirtyDot)
+        #expect(off.accessibilityValue == "Can't reach. WaveWrangler can't reach the folder where this show is saved.")
+        #expect(SaveStatusPresentation.copyMessage(copyName: "S copy", folder: "Desk", originalFolder: "Cloud") == "You're now editing “S copy” in Desk. The original at Cloud wasn't changed.")
+        #expect(SaveStatusPresentation.copyName(for: "S") == "S copy")
+    }
+
+    @Test func closeDecisionsFollowStateTable() {
+        #expect(CloseDecision(state: .saved(at: Self.date, folderDisplayName: nil), autosaveEnabled: true, showName: "S") == .closeImmediately)
+        #expect(CloseDecision(state: .edited, autosaveEnabled: true, showName: "S") == .saveFirst)
+        #expect(CloseDecision(state: .saving(cancellable: true), autosaveEnabled: false, showName: "S") == .waitForSave)
+        guard case .sheet(let plain) = CloseDecision(state: .edited, autosaveEnabled: false, showName: "S") else { Issue.record("expected sheet"); return }
+        #expect(plain.message == "Do you want to save the changes you made to “S”?")
+        #expect(plain.buttons == [.save, .cancel, .dontSave])
+        guard case .sheet(let failed) = CloseDecision(state: .locationUnavailable, autosaveEnabled: true, showName: "S") else { Issue.record("expected sheet"); return }
+        #expect(failed.message == "“S” couldn't be saved: the folder can't be reached.")
+        #expect(failed.buttons.first == .saveACopyElsewhere)
+        guard case .sheet(let conflict) = CloseDecision(state: .conflict(changedAt: nil), autosaveEnabled: true, showName: "S") else { Issue.record("expected sheet"); return }
+        #expect(!conflict.buttons.contains(.save))
+        #expect(conflict.buttons.first == .saveMineAsACopy)
     }
 }
 

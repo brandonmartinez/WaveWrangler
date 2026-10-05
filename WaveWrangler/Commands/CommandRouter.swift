@@ -73,6 +73,17 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
         windows.last?.performClose(nil)
     }
 
+    /// File › Save (⌘S). Always available for a writable show, also with Autosave On (ST-14 disables it
+    /// in read-only states). Records the explicit save so "Saved" is announced afterwards (states §7).
+    @objc func saveShow(_ sender: Any?) {
+        guard let state = activeShowState, let document = state.store.document else { return }
+        state.explicitSavePending = true
+        document.save(sender)
+    }
+
+    @objc func duplicateShow(_ sender: Any?) { activeShowState?.store.document?.duplicate(sender) }
+    @objc func saveShowAs(_ sender: Any?) { activeShowState?.store.document?.saveAs(sender) }
+
     @objc func importSources(_ sender: Any?) {
         guard let state = activeShowState, let episode = state.selectedEpisodeID else { return }
         SourceCommands.handler.importSources(store: state.store, episode: episode, window: state.window)
@@ -231,6 +242,11 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
             return false
         case #selector(closeShow(_:)):
             return show != nil
+        case #selector(saveShow(_:)):
+            return show?.isReadOnly == false
+        case #selector(duplicateShow(_:)), #selector(saveShowAs(_:)):
+            guard let show else { return false }
+            return show.saveStatus.state.allowsDuplicateOrSaveAs && show.store.document?.isInViewingMode != true
         case #selector(importSources(_:)):
             guard let show, show.canEdit, let episode = show.selectedEpisodeID else { return false }
             return SourceCommands.handler.canImportSources(store: show.store, episode: episode)
