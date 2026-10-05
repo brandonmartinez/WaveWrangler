@@ -504,6 +504,13 @@ final class EntryOutlineView: NSOutlineView {
         return resigned
     }
 
+    /// Prepare (and so expose to accessibility) only the rows in view. AppKit's responsive-scrolling overdraw
+    /// realizes rows beyond the window edge, which assistive technology and audits then report as on-screen
+    /// text that was never drawn.
+    override func prepareContent(in rect: NSRect) {
+        super.prepareContent(in: visibleRect)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil { onResign?() }

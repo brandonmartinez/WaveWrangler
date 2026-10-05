@@ -45,7 +45,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate, NSWin
         window.title = "Library"
         window.toolbarStyle = .unified
         window.setContentSize(NSSize(width: 1_000, height: 600))
-        window.contentMinSize = NSSize(width: 720, height: 400)
+        // Wide enough for the three columns' minimum widths (180 + 320 + 240) and dividers (#109).
+        window.contentMinSize = NSSize(width: 760, height: 400)
         window.identifier = Self.restorationIdentifier
         window.setAccessibilityIdentifier("ww.library.window")
         window.isRestorable = true
