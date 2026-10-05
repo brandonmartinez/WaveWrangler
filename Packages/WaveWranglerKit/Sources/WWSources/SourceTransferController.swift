@@ -95,6 +95,9 @@ public actor SourceTransferController {
     /// awaiting (`shutdownTicket()`), so an owner can say "shut down what exists *now*" and a late
     /// shutdown never touches transfers or subscriptions created afterwards.
     private let epoch = Mutex(0)
+    /// Ticket of the latest shutdown that has begun. Requests decided before it (`decidedAt` older than
+    /// this) are refused, so an owner's in-flight decision can never start a transfer after teardown.
+    private let closedThrough = Mutex(Int.min)
     private var continuations: [UUID: (epoch: Int, continuation: AsyncStream<TransferEvent>.Continuation)] = [:]
     /// Total download requests issued to the gateway (for audits/tests).
     public private(set) var downloadRequestCount = 0
@@ -151,12 +154,19 @@ public actor SourceTransferController {
 
     /// Requests local availability. Automatic requests (`userRequested == false`) are refused unless the
     /// controller's current setting is ON; explicit user requests are honored in either setting.
+    ///
+    /// `decidedAt` is the `shutdownTicket()` the caller read when it decided to request; a request
+    /// decided before a shutdown began (`beginShutdown()`) is refused and changes nothing.
     @discardableResult
     public func makeAvailable(
         _ key: DeviceAccessKey,
         at url: URL,
-        userRequested: Bool = false
+        userRequested: Bool = false,
+        decidedAt: Int? = nil
     ) -> TransferState {
+        if let decidedAt, decidedAt < closedThrough.withLock({ $0 }) {
+            return state(of: key)
+        }
         if let running = active[key] {
             if userRequested, case .offlineOrUnknown = state(of: key) {
                 // Explicit retry of a stalled transfer: stop the backoff observer and request again.
@@ -278,9 +288,19 @@ public actor SourceTransferController {
         for key in Array(active.keys) { await cancel(key) }
     }
 
-    /// The current epoch. Pass it to `shutdown(through:)` to limit teardown to what exists now.
+    /// The current epoch. Pass it to `shutdown(through:)` to limit teardown to what exists now, or as
+    /// `decidedAt` to `makeAvailable` to have the request refused if a shutdown begins meanwhile.
     public nonisolated func shutdownTicket() -> Int {
         epoch.withLock { $0 }
+    }
+
+    /// Begins owner teardown synchronously: takes a fresh ticket and, atomically, refuses every request
+    /// decided before it. Pass the result to `shutdown(through:)`. Decisions made afterwards (a newer
+    /// `shutdownTicket()`) are honored, so a restarted owner works normally.
+    public nonisolated func beginShutdown() -> Int {
+        let ticket = nextEpoch()
+        closedThrough.withLock { $0 = max($0, ticket) }
+        return ticket
     }
 
     /// Owner teardown (window closed, monitor stopped/deallocated): stops observers without recording
@@ -305,7 +325,7 @@ public actor SourceTransferController {
         for task in stopped { await task.value }
     }
 
-    private func nextEpoch() -> Int {
+    private nonisolated func nextEpoch() -> Int {
         epoch.withLock {
             $0 += 1
             return $0

@@ -224,6 +224,27 @@ struct WWSourcesSetupEngineTests {
         #expect(registry.count(for: show) == 0)
     }
 
+    /// A window that closes before (or while) its lease is taken never keeps a lease.
+    @Test func ownerClosedBeforeLeasingNeverKeepsTheEngine() async {
+        let made = InMemorySourceSetupEngine()
+        let registry = SetupEngineRegistry<ShowID> { _ in made }
+        let leases = SetupEngineLeases<Int, ShowID>(registry: registry)
+        let show = ShowID()
+        leases.ownerOpened(7)
+        await leases.ownerClosed(7)
+        _ = await leases.engine(for: 7, key: show)
+        #expect(!leases.hasLease(7))
+        #expect(registry.count(for: show) == 0)
+        #expect(made.calls.contains(.shutdown))
+        // A new window that reuses the identity starts clean.
+        leases.ownerOpened(7)
+        _ = await leases.engine(for: 7, key: show)
+        #expect(leases.hasLease(7))
+        #expect(registry.count(for: show) == 1)
+        await leases.ownerClosed(7)
+        #expect(registry.count(for: show) == 0)
+    }
+
     @Test func shutdownStopsFollowingTheDownloadPreference() async {
         let preference = FixedPreference(false)
         let engine = WWSourcesSetupEngine(showID: ShowID(), store: InMemoryDeviceAccessStore(), preference: preference)

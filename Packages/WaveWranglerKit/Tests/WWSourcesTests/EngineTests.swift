@@ -703,6 +703,33 @@ struct StallLifetimeTests {
         #expect(context.ledger.snapshot.openScopes == 0)
     }
 
+    /// Direct-caller race: a request decided before a shutdown began is refused even if it reaches the
+    /// controller afterwards; a decision made after the shutdown began is honored.
+    @Test func controllerRefusesRequestsDecidedBeforeShutdownBegan() async throws {
+        let tree = try SyntheticTree(label: "decided-before-stop")
+        var rng = SplitMix64(seed: 19)
+        let file = try tree.file("raced.wav", bytes: 64, rng: &rng)
+        let io = HarnessIO()
+        let context = makeContext(io)
+        let record = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
+        io.simulate(file, SimulatedCloudItem(script: [.complete]))
+        let controller = SourceTransferController(context: context, policy: StallFollowUpTests.policy, setting: .on)
+
+        let decided = controller.shutdownTicket()
+        let ticket = controller.beginShutdown()
+        let refused = await controller.makeAvailable(record.key, at: file, userRequested: true, decidedAt: decided)
+        #expect(refused == .unknown)
+        #expect(io.count(.downloadRequest) == 0, "request decided before the shutdown began")
+        #expect(await controller.activeCount == 0)
+        await controller.shutdown(through: ticket)
+
+        let fresh = controller.shutdownTicket()
+        await controller.makeAvailable(record.key, at: file, userRequested: true, decidedAt: fresh)
+        #expect(io.count(.downloadRequest) == 1, "a decision after the shutdown began is honored")
+        #expect(await controller.waitUntilSettled(record.key) == .idle)
+        #expect(context.ledger.snapshot.openScopes == 0)
+    }
+
     @Test @MainActor func droppingTheMonitorStopsStalledObservers() async throws {
         let tree = try SyntheticTree(label: "stall-drop-monitor")
         var rng = SplitMix64(seed: 18)
