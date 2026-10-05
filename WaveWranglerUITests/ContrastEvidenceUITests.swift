@@ -374,7 +374,7 @@ enum ContrastMeter {
     }
 
     /// Non-text contrast of an accent fill: crops the window screenshot to `element` expanded by 4 pt,
-    /// takes the most common colour as the surroundings and the most common saturated blue as the fill.
+    /// takes the crop perimeter's most common colour as the surroundings and the most common saturated blue as the fill.
     static func accentFill(_ image: NSImage, windowFrame: CGRect, element: CGRect) -> [String: Any]? {
         guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), windowFrame.width > 0 else { return nil }
         let scale = CGFloat(cg.width) / windowFrame.width
@@ -384,12 +384,16 @@ enum ContrastMeter {
         guard !rect.isEmpty, let cropped = cg.cropping(to: rect) else { return nil }
         let crop = NSImage(cgImage: cropped, size: NSSize(width: rect.width, height: rect.height))
         guard let pixels = rgba(crop) else { return nil }
-        var all: [UInt32: Int] = [:], blue: [UInt32: Int] = [:]
-        for p in pixels {
-            all[p.key, default: 0] += 1
+        // Surroundings = most common colour on the crop's 2-pixel perimeter (a small control's fill can be the
+        // majority colour of the crop itself).
+        let w = Int(rect.width), h = Int(rect.height)
+        var edge: [UInt32: Int] = [:], blue: [UInt32: Int] = [:]
+        for (i, p) in pixels.enumerated() {
+            let x = i % w, y = i / w
+            if x < 2 || y < 2 || x >= w - 2 || y >= h - 2 { edge[p.key, default: 0] += 1 }
             if Int(p.b) - Int(p.r) >= 80, Int(p.b) - Int(p.g) >= 40 { blue[p.key, default: 0] += 1 }
         }
-        guard let bgKey = all.max(by: { $0.value < $1.value })?.key else { return nil }
+        guard let bgKey = edge.max(by: { $0.value < $1.value })?.key else { return nil }
         let bg = Pixel(key: bgKey)
         var result: [String: Any] = ["background": bg.hex, "crop": NSBitmapImageRep(cgImage: cropped).representation(using: .png, properties: [:]) as Any]
         if let fillKey = blue.max(by: { $0.value < $1.value })?.key, fillKey != bgKey {
