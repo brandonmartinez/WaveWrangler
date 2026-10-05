@@ -83,7 +83,9 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; nothing depends
   = (ShowID, SourceID), so a duplicated show never shares or overwrites the original's grants): read-only
   security-scoped bookmark, last-known path/volume hints, a metadata-only identity baseline
   (`FileSystemFingerprint`: size, creation/modification dates, persistent file identifier, volume UUID,
-  extension-derived type; provisional until the user confirms) and the latest observation. Stored as a
+  extension-derived type; provisional until the user confirms; dates compare within 1 ms because
+  iCloud rematerialization shifts them by ~1e-7 s, other fields compare exactly) and the latest
+  observation. Stored as a
   versioned JSON file in Application Support (`FileDeviceAccessStore`); never written into canonical
   documents. Paths, names and bookmarks are hints, never identity.
 - **Source gateway** (`WWSources.SourceIO`): the only path to referenced originals. It exposes metadata
