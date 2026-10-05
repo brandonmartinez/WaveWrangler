@@ -275,6 +275,40 @@ actor AsyncGate {
     }
 }
 
+/// Subscribes to `controller` events for `key` *before* the caller triggers work, and collects states up
+/// to and including the first one matching `stop`. Driven by published events, not time; `limit` is only
+/// a liveness guard so a regression fails (with the states seen so far) instead of hanging the suite.
+func eventCollector(
+    _ controller: SourceTransferController,
+    key: DeviceAccessKey,
+    limit: Duration = .seconds(60),
+    until stop: @escaping @Sendable (TransferState) -> Bool
+) async -> Task<[TransferState], Never> {
+    let stream = await controller.events()
+    let seen = StateLog()
+    return Task {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                for await event in stream where event.key == key {
+                    seen.append(event.state)
+                    if stop(event.state) { break }
+                }
+            }
+            group.addTask { try? await Task.sleep(for: limit) }
+            await group.next()
+            group.cancelAll()
+        }
+        return seen.states
+    }
+}
+
+final class StateLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _states: [TransferState] = []
+    func append(_ state: TransferState) { lock.withLock { _states.append(state) } }
+    var states: [TransferState] { lock.withLock { _states } }
+}
+
 // MARK: - Synthetic trees and immutability snapshots
 
 /// Generated random-byte files in a private temp directory. Never real audio, never user media.
