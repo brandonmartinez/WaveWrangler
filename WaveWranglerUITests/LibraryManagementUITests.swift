@@ -39,7 +39,7 @@ final class LibraryManagementUITests: XCTestCase {
                 // First through the menu bar, then through the sidebar's New Collection button.
                 var field = element("ww.dialog.name")
                 if index == 1 {
-                    element("ww.library.sidebar.newCollection").click()
+                    element("ww.library.collections.add").click()
                     if !field.waitForExistence(timeout: 3) {
                         check(false, "sidebar New Collection button opens the name dialog")
                         menu("File", "Library", "New Collection…")
@@ -181,7 +181,7 @@ final class LibraryManagementUITests: XCTestCase {
     /// Sidebar rows (label: value) in order, plus the Shows count.
     private func semanticState() -> [String] {
         app.outlines["ww.library.sidebar"].descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.sidebar.' AND identifier != 'ww.library.sidebar.newCollection'"))
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.sidebar.' AND identifier != 'ww.library.collections.add'"))
             .allElementsBoundByIndex.map { "\($0.label): \($0.value as? String ?? "")" }
     }
 
