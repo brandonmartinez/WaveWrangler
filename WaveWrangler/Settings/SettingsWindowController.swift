@@ -253,7 +253,8 @@ private struct LibraryLocationControl: View {
     /// ST-33 step 6: Use That Library · Choose Another Folder… · Cancel, with no default button.
     private func offerExistingLibrary(in folder: URL, blockedReason: String?) async {
         let alert = NSAlert()
-        alert.messageText = LibraryMoveWording.existingLibraryTitle(LibraryFolderURL.displayName(for: folder))
+        // `folder` is already a folder (the adapter reduced persistence's file URL once).
+        alert.messageText = LibraryMoveWording.existingLibraryTitle(folder.lastPathComponent)
         alert.informativeText = blockedReason ?? LibraryMoveWording.existingLibraryCombineText
         let use = alert.addButton(withTitle: "Use That Library")
         use.isEnabled = blockedReason == nil
@@ -271,7 +272,7 @@ private struct LibraryLocationControl: View {
         }
         switch response {
         case .alertFirstButtonReturn:
-            handle(await controller.useExistingLibrary(in: LibraryFolderURL.folder(for: folder)))
+            handle(await controller.useExistingLibrary(in: folder))
         case .alertSecondButtonReturn:
             handleChoice(.chooseFolder)
         default:
