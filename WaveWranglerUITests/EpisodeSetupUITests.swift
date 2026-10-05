@@ -317,6 +317,39 @@ final class EpisodeSetupUITests: XCTestCase {
         XCTAssertTrue(app.outlines["ww.setup.speakers"].outlineRows.firstMatch.waitForNonExistence(timeout: 3), "Return deleted the speaker")
     }
 
+    // MARK: K08/K09 — Return on a grouped row lands in the first editable field
+
+    func testReturnOnGroupedRowFocusesFirstEditableField() {
+        importFixture()
+        select("tr1.wav")
+        menu("Source", "Assign to Recorder Group", "New Recorder Group…")
+        let name = element("ww.setup.nameField")
+        XCTAssertTrue(name.waitForExistence(timeout: 2))
+        name.click()
+        name.typeText("Zoom H6")
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        XCTAssertTrue(text("Zoom H6 — recorder group · 1 source").waitForExistence(timeout: 3))
+
+        select("tr1.wav")
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        if NSApplication.shared.isFullKeyboardAccessEnabled {
+            // With Full Keyboard Access the Recorder group pop-up is the first editable field.
+            let group = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'ww.inspector.source.group' AND hasKeyboardFocus == true")).firstMatch
+            XCTAssertTrue(group.waitForExistence(timeout: 2), "focus in Recorder group")
+            return
+        }
+        // Without it, pop-ups can't take focus: the Epoch field is first, and typing goes there.
+        app.typeKey("a", modifierFlags: .command)
+        app.typeKey("3", modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        let epoch = element("ww.inspector.source.epoch")
+        let set = expectation(for: NSPredicate(format: "value == '3'"), evaluatedWith: epoch)
+        wait(for: [set], timeout: 3)
+        app.menuBars.menuBarItems["Edit"].click()
+        XCTAssertTrue(app.menuItems["Undo Set Epoch"].exists, "typed into Epoch and committed with Return")
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+    }
+
     // MARK: T11/T12/T13 — relink, regrant and the five dimensions
 
     func testT13InspectorShowsAllFiveDimensions() throws {
