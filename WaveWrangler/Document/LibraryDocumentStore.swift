@@ -67,6 +67,15 @@ final class LibraryDocumentStore {
         return outcome
     }
 
+    /// Re-adopts the library at the configured location — after Grant Access…, recovery, "Use Other Mac's
+    /// Version" or Try Again. Queued edits are replayed if the location is reachable.
+    @discardableResult
+    func reload() async -> LibraryLoadOutcome {
+        let outcome = await store.reload()
+        await refresh()
+        return outcome
+    }
+
     /// Applies a user library edit (collections, order, aliases…) and publishes it.
     @discardableResult
     func update(_ transform: @Sendable (LibraryModel) throws -> LibraryModel) async -> Bool {
@@ -181,6 +190,25 @@ final class LibraryLocationController {
     /// `.destinationHasLibrary`; then offer "Use That Library" (`useLibrary(in:)`) or Cancel.
     func choose(_ folder: URL) async {
         await run { await $0.moveLibrary(to: folder) }
+    }
+
+    /// Outcome of the last Grant Access… attempt, for the message bar / Settings.
+    private(set) var lastRegrantOutcome: LibraryRegrantOutcome?
+
+    /// L3 "Grant Access…": call with the folder the user re-selected in an `NSOpenPanel` (pre-pointed at the
+    /// library folder). Works without a loaded library. Saves the new grant only when the folder holds this
+    /// same library (by library ID), then reloads and replays queued edits. `.differentLibrary` → offer
+    /// "Use That Library" (`useLibrary(in:)`) or another folder; nothing was changed.
+    func regrantAccess(to folder: URL) async {
+        isWorking = true
+        defer { isWorking = false }
+        lastRegrantOutcome = await library.store.regrantAccess(to: folder)
+        await library.refresh()
+    }
+
+    /// Try Again / re-adopt after recovery or "Use Other Mac's Version".
+    func reload() async {
+        await library.reload()
     }
 
     /// "Use That Library": combine this Mac's library into the one in `folder` (nothing dropped) and switch.

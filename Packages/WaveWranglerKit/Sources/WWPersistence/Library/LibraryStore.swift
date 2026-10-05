@@ -1,8 +1,6 @@
 import Foundation
 import WWCore
 
-public typealias LibraryCoder = JSONEnvelopeCoder<LibraryModel>
-
 /// Result of loading the canonical library.
 public enum LibraryLoadOutcome: Sendable, Equatable {
     case ready(revision: Int)
@@ -36,6 +34,20 @@ public enum LibraryEditResult: Sendable, Equatable {
     /// The edit changed nothing.
     case unchanged
     case failed(PublicationError)
+}
+
+/// Result of re-granting access to the library folder (Design L3 "Grant Access…").
+public enum LibraryRegrantOutcome: Sendable, Equatable {
+    /// The folder holds this same library (by `libraryID`). The new grant was saved, the library reloaded and
+    /// any queued edits replayed with the normal rules (`pending`, if there were any).
+    case regranted(load: LibraryLoadOutcome, pending: PendingEditsOutcome?)
+    /// The folder holds a different library. Nothing was changed; offer "Use That Library" or another folder.
+    case differentLibrary(URL, revision: Int?)
+    /// No library file in that folder. Nothing was changed.
+    case noLibraryThere(URL)
+    /// The library there can't be verified (still no permission, offline, damaged or newer format). Nothing
+    /// was changed.
+    case cannotVerify(reason: String)
 }
 
 /// Result of applying queued library edits after the location became reachable.
@@ -241,9 +253,10 @@ public actor LibraryStore {
     }
 
     private func createEmpty(at url: URL) async -> Bool {
-        let session = CanonicalDocumentSession(key: .library, url: url, payload: LibraryModel(), base: nil, revision: 0, publisher: publisher)
+        let empty = LibraryModel()
+        let session = CanonicalDocumentSession(key: .library, url: url, payload: empty, base: nil, revision: 0, publisher: publisher)
         guard (try? publisher.ops.createDirectory(url.deletingLastPathComponent())) != nil else { return false }
-        library = LibraryModel()
+        library = empty
         guard case .success = await save(session) else {
             library = nil
             return false
@@ -259,10 +272,13 @@ public actor LibraryStore {
     /// library keeps the edit (still unsaved) and the error is returned; nothing is acknowledged.
     private func updateUnlocked(_ transform: (LibraryModel) throws -> LibraryModel) async throws -> LibraryEditResult {
         guard let current = library else { return .failed(.readOnly("The library is not loaded.")) }
+        // The library's identity is not editable: whatever the transform returns keeps the current ID.
+        var updated = try transform(current)
+        updated.libraryID = current.libraryID
         guard let session else {
             switch lastLoad {
             case .unavailable, .unavailableShowingPrior:
-                return queue(try transform(current), over: current)
+                return queue(updated, over: current)
             default:
                 return .failed(.readOnly("The library can't be changed right now."))
             }
@@ -270,7 +286,6 @@ public actor LibraryStore {
         guard !hasConflict else {
             return .failed(.readOnly("Your library was changed on another Mac. Combine or choose a version first."))
         }
-        let updated = try transform(current)
         guard updated != current else { return .unchanged }
         await session.edit { _ in updated }
         library = updated
@@ -653,6 +668,82 @@ public actor LibraryStore {
         await exclusively { await retryPendingEditsUnlocked() }
     }
 
+    /// Re-adopts the library at the configured location (after Grant Access, recovery, "Use Other Mac's
+    /// Version", or when the user chooses Try Again). Same as `load()`; queued edits are replayed if reachable.
+    @discardableResult
+    public func reload() async -> LibraryLoadOutcome {
+        await exclusively { await loadUnlocked() }
+    }
+
+    /// "Grant Access…": the user re-selected the library folder in an open panel. Creates a new read-write
+    /// security-scoped bookmark, confirms the folder holds **this** library (by `libraryID`, not by path),
+    /// saves the grant, reloads and replays queued edits with the normal rules. Nothing changes unless the
+    /// identity is confirmed. A folder that was renamed or moved is accepted when the identity matches.
+    public func regrantAccess(to folder: URL) async -> LibraryRegrantOutcome {
+        await exclusively { await regrantAccessUnlocked(to: folder) }
+    }
+
+    /// The identity of the library this Mac was last using: queued edits first, then the library shown, then
+    /// the latest verified or retained revision. `nil` when nothing is known.
+    public func expectedLibraryID() -> LibraryID? {
+        if let pendingEdits, let queued = try? publisher.coder.decode(pendingEdits.snapshot) { return queued.payload.libraryID }
+        if let library { return library.libraryID }
+        let known = (try? recovery.validatedCheckpoints(for: .library, coder: publisher.coder)) ?? []
+        return known.first?.document.payload.libraryID
+    }
+
+    private func regrantAccessUnlocked(to folder: URL) async -> LibraryRegrantOutcome {
+        let expected = expectedLibraryID()
+        let setting = settings.load()
+        let bookmark: Data
+        do {
+            bookmark = try bookmarks.bookmark(for: folder)
+        } catch {
+            return .cannotVerify(reason: "WaveWrangler couldn't get permission to use that folder.")
+        }
+        let started = bookmarks.startAccessing(folder)
+        defer { if started { bookmarks.stopAccessing(folder) } }
+
+        let url = folder.appending(path: setting.fileName)
+        guard publisher.ops.exists(url) else { return .noLibraryThere(url) }
+        let ops = publisher.ops
+        let bytes: Data
+        do {
+            bytes = try publisher.coordination.coordinateReading(at: url) { try ops.read($0) }
+        } catch {
+            return .cannotVerify(reason: "The library in that folder can't be read right now.")
+        }
+        let found: DecodedDocument<LibraryModel>
+        do {
+            found = try publisher.coder.decode(bytes)
+        } catch .unknownNewerSchema {
+            return .cannotVerify(reason: "The library in that folder was saved by a newer version of WaveWrangler.")
+        } catch {
+            return .cannotVerify(reason: error.errorDescription ?? "The library in that folder is damaged.")
+        }
+        if let expected {
+            guard found.payload.libraryID == expected else { return .differentLibrary(url, revision: found.revision) }
+        } else {
+            // Nothing on this Mac identifies the library: only the very same configured folder is accepted.
+            guard case let .folder(_, displayPath) = setting.place,
+                  URL(fileURLWithPath: displayPath).standardizedFileURL.path == folder.standardizedFileURL.path
+            else { return .differentLibrary(url, revision: found.revision) }
+        }
+        var updated = setting
+        updated.place = folder.standardizedFileURL == containerFolder.standardizedFileURL
+            ? .appContainer
+            : .folder(bookmark: bookmark, displayPath: folder.path)
+        do {
+            try settings.save(updated)
+        } catch {
+            return .cannotVerify(reason: "The new permission couldn't be saved.")
+        }
+        let hadPending = pendingEdits != nil
+        lastPendingOutcome = nil
+        let outcome = await loadUnlocked()
+        return .regranted(load: outcome, pending: hadPending ? (lastPendingOutcome ?? .stillWaiting(reason: "\(outcome)")) : nil)
+    }
+
     /// Applies a user library edit and publishes it — or, while the location is unreachable or needs
     /// permission (L2/L3), queues it in the device-local journal. `transform` always sees the latest value.
     @discardableResult
@@ -710,6 +801,15 @@ public actor LibraryStore {
     }
 
     private func save(_ session: CanonicalDocumentSession<LibraryCoder>) async -> Result<PublicationReceipt, PublicationError> {
+        // Upgrading a schema 1 library: keep its exact bytes as a non-overwriting migration backup first.
+        if let base = await session.base, base.schemaVersion == 1 {
+            let url = await session.url
+            guard let original = try? publisher.ops.read(url), RevisionFingerprint.digest(original) == base.byteDigest,
+                  (try? recovery.preserveMigrationBackup(original, schemaVersion: 1, for: .library)) != nil
+            else {
+                return .failure(.failed(stage: .candidateValidated, kind: .other, detail: "The previous library format couldn't be backed up before updating."))
+            }
+        }
         let cache = indexCache
         // The exact value being published (the gate guarantees nothing else changes it meanwhile).
         let model: LibraryModel? = await session.payload

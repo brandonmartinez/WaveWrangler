@@ -8,7 +8,9 @@ public enum SchemaVersion {
     /// Canonical portable show document payload (`ShowDocumentModel`).
     public static let show = 1
     /// Canonical library document payload (`LibraryModel`).
-    public static let library = 1
+    /// 2: adds `libraryID`. Schema 1 libraries are upgraded with a derived, stable ID (see WWPersistence
+    /// `LibraryCoder`); the original bytes are kept as a backup before the first schema 2 publication.
+    public static let library = 2
 }
 
 /// The complete canonical value of one portable show document.

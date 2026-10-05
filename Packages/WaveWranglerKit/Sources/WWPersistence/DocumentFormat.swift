@@ -31,7 +31,8 @@ public struct DocumentFormat: Sendable, Equatable {
         identifier: "com.brandonmartinez.wavewrangler.library",
         filenameExtension: "wwlibrary",
         currentSchemaVersion: SchemaVersion.library,
-        minimumReadableSchemaVersion: 1
+        // Schema 1 is read through `LibraryCoder`, which upgrades it explicitly.
+        minimumReadableSchemaVersion: SchemaVersion.library
     )
 }
 
