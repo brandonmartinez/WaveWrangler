@@ -10,23 +10,16 @@ struct LibraryView: View {
     private var store: LibraryUIStore { state.store }
 
     var body: some View {
-        // Opaque bar above the split view (not an inset over translucent sidebar material) for contrast.
-        // #109: at large text sizes it scrolls within at most 40% of the window instead of pushing the split
-        // view out of the window. Sized by a stateless layout (no geometry → state → layout feedback).
-        MessageBarStack(maxBarFraction: 0.4, minBarCap: 120) {
-            ViewThatFits(in: .vertical) {
-                LibraryMessageBar(state: state)
-                ScrollView { LibraryMessageBar(state: state) }
-                    .scrollBounceBehavior(.basedOnSize)
+        splitView
+            .onChange(of: focus) { _, region in
+                // The AppKit entry outline reports its own focus; SwiftUI sees it as no focused region.
+                if region != nil || !(state.window?.firstResponder is EntryOutlineView) { state.focusedRegion = region }
             }
-            splitView
-        }
-        .onChange(of: focus) { _, region in
-            // The AppKit entry outline reports its own focus; SwiftUI sees it as no focused region.
-            if region != nil || !(state.window?.firstResponder is EntryOutlineView) { state.focusedRegion = region }
-        }
-        .onAppear { DispatchQueue.main.async { focus = .sidebar } }
-        .task { if !store.isLoaded { await store.load() } }
+            .onAppear { DispatchQueue.main.async { focus = .sidebar } }
+            .task {
+                if !store.isLoaded { await store.load() }
+                Responsiveness.libraryReady(entryCount: store.library.entries.count)
+            }
     }
 
     private var splitView: some View {
@@ -39,7 +32,19 @@ struct LibraryView: View {
             // width) makes the split view taller than the window, and its top overflows under the title bar
             // (`sizingOptions = []` keeps the window from resizing to SwiftUI's minimum). Column content that
             // can grow (empty states, details) scrolls instead.
-            LibraryEntryList(state: state)
+            // #59: the opaque message bar sits at the top of the content column (IA reading order: message bar
+            // first in the content). Above the whole split view, the column still reserved the toolbar's
+            // scroll-edge pocket below the bar, which blurred the column headers and the first row.
+            // #109: at large text sizes the bar scrolls within at most 40% of the column instead of pushing the
+            // list out of the window (stateless layout, no geometry → state → layout feedback).
+            MessageBarStack(maxBarFraction: 0.4, minBarCap: 120) {
+                ViewThatFits(in: .vertical) {
+                    LibraryMessageBar(state: state)
+                    ScrollView { LibraryMessageBar(state: state) }
+                        .scrollBounceBehavior(.basedOnSize)
+                }
+                LibraryEntryList(state: state)
+            }
                 .focused($focus, equals: .entries)
                 .navigationSplitViewColumnWidth(min: 320, ideal: 520)
         } detail: {
