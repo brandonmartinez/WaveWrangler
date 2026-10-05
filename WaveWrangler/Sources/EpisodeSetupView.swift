@@ -136,10 +136,6 @@ struct EpisodeSetupView: View {
             .frame(width: geometry.size.width, height: geometry.size.height)
             .onAppear { publish(placement) }
             .onChange(of: placement) { publish(placement) }
-            .onChange(of: model.inspectorFocusRequest) {
-                // Return in a table opens the details when they are collapsed.
-                if case .collapsed = placement { model.detailsExpanded = true }
-            }
         }
         .transaction { $0.animation = nil }
         .onChange(of: focusedTable) { model.focusedTable = focusedTable }
@@ -403,11 +399,6 @@ private struct SourcesTable: View {
         } primaryAction: { _ in
             model.requestInspectorFocus()
         }
-        // Return (K08/K09): move to the details' first editable field, opening them if collapsed.
-        .onKeyPress(.return) {
-            model.requestInspectorFocus()
-            return .handled
-        }
         .onDeleteCommand { model.requestDeleteFromSources() }
         .onChange(of: model.selection) { model.inspectorFollowsSpeakers = false }
         .environment(\.defaultMinListRowHeight, 22 * scale)
@@ -436,19 +427,33 @@ private struct NameCell: View {
         .lineLimit(1)
         .truncationMode(.middle)
         .accessibilityLabel(row.accessibilityLabel)
-        .accessibilityValue(hiddenSummary)
+        .modifier(HiddenColumnsValue(summary: hiddenSummary))
         .accessibilityIdentifier(row.id.accessibilityIdentifier)
     }
 
-    /// The name, then values of columns hidden for width, so VoiceOver users don't lose them.
-    private var hiddenSummary: String {
-        guard case .source = row.id else { return row.name }
+    /// Values of columns hidden for width, so VoiceOver users don't lose them (nil when none are hidden).
+    private var hiddenSummary: String? {
+        guard case .source = row.id else { return nil }
         var parts: [String] = []
         if hidden.contains(.epoch) { parts.append("epoch \(row.epoch.accessibilityValue)") }
         if hidden.contains(.channel) { parts.append("channel \(row.channel.accessibilityValue)") }
         if hidden.contains(.speaker) { parts.append("speaker \(row.speaker.accessibilityValue)") }
         if hidden.contains(.role) { parts.append("role \(row.role.accessibilityValue)") }
-        return ([row.name] + parts).joined(separator: ", ")
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
+}
+
+/// Adds an accessibility value only when there is one: an explicit empty or name-repeating value makes
+/// the accessibility audit report the name cell as not human-readable.
+private struct HiddenColumnsValue: ViewModifier {
+    let summary: String?
+
+    func body(content: Content) -> some View {
+        if let summary {
+            content.accessibilityValue(summary)
+        } else {
+            content
+        }
     }
 }
 
@@ -609,10 +614,6 @@ private struct SpeakersSection: View {
                 SpeakerContextMenu(model: model, ids: ids)
             } primaryAction: { _ in
                 model.requestInspectorFocus()
-            }
-            .onKeyPress(.return) {
-                model.requestInspectorFocus()
-                return .handled
             }
             .onDeleteCommand {
                 if let id = model.speakerSelection.first { model.confirmation = .deleteSpeaker(id) }

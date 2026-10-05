@@ -100,6 +100,7 @@ final class EpisodeSetupModel {
         // Only when the details show something editable (not for a multi-row selection), so a stale
         // request can never pull focus out of the table later.
         pendingInspectorFocus = inspectorSubject != .none
+        if !detailsShown { detailsExpanded = true }
         inspectorFocusRequest += 1
     }
 

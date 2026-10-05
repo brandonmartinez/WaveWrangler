@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 import WWCore
 import WWEpisodeSetup
@@ -19,6 +20,62 @@ enum EpisodeSetupIntegration {
         }
         SourceCommands.handler = SetupSourceCommandHandler.shared
         SetupMenus.installIfNeeded()
+        SetupReturnKey.install()
+    }
+}
+
+/// Return (or keypad Enter) in the Setup Sources or Speakers table moves to the details' first editable
+/// field, opening them when collapsed (K08/K09, #104). An explicit AppKit handler, because the SwiftUI
+/// Table doesn't deliver Return to `onKeyPress` or its primary action. It acts only when one of those two
+/// tables is the first responder of a show window with no sheet, so Return keeps its meaning everywhere
+/// else (default buttons, text fields, Import Review).
+@MainActor
+enum SetupReturnKey {
+    static let tableIdentifiers: Set<String> = ["ww.setup.sources", "ww.setup.speakers"]
+    private static var monitor: Any?
+    #if DEBUG
+    private static let log = Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "setup.keys")
+    #endif
+
+    static func install() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handle(event) ? nil : event
+        }
+    }
+
+    private static func handle(_ event: NSEvent) -> Bool {
+        guard event.keyCode == 36 || event.keyCode == 76,
+              event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+              let window = event.window ?? NSApp.keyWindow, window.attachedSheet == nil,
+              let controller = EpisodeSetupViewController.controller(for: window) else { return false }
+        let responder = window.firstResponder
+        let inTable = isSetupTable(responder)
+        #if DEBUG
+        log.notice("Return: responder \(String(describing: responder.map { type(of: $0) }), privacy: .public) id \((responder as? NSView)?.accessibilityIdentifier() ?? "-", privacy: .public) handled \(inTable)")
+        #endif
+        guard inTable else { return false }
+        controller.model.requestInspectorFocus()
+        return true
+    }
+
+    /// Whether `responder` is (inside) the Sources or Speakers table: identified by accessibility
+    /// identifier, or as a non-sidebar table in a show window hosting Setup (the show sidebar is the only
+    /// other table there, and it is a source list).
+    static func isSetupTable(_ responder: NSResponder?) -> Bool {
+        if let table = responder as? NSTableView, table.style != .sourceList,
+           table.selectionHighlightStyle != .sourceList,
+           !table.accessibilityIdentifier().hasPrefix("ww.show.") {
+            return true
+        }
+        var view = responder as? NSView
+        var depth = 0
+        while let current = view, depth < 4 {
+            if tableIdentifiers.contains(current.accessibilityIdentifier()) { return true }
+            view = current.superview
+            depth += 1
+        }
+        return false
     }
 }
 
