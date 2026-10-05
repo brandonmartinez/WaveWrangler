@@ -225,6 +225,12 @@ public actor LibraryStore {
         }
         switch opener.open(url, key: .library) {
         case let .editable(document, fingerprint):
+            // A different (real) library at this location is not this library: refuse it like damage and offer
+            // this library's own checkpoints. The file is left untouched.
+            if let expected = settings.load().libraryID.flatMap(Self.real), let found = Self.real(document.payload.libraryID), found != expected {
+                return .damaged(reason: "A different library is at this library's location.",
+                                recoveryRevisions: libraryCandidates(url: url).map(\.document.revision))
+            }
             adopt(CanonicalDocumentSession(key: .library, url: url, payload: document.payload, base: fingerprint,
                                            revision: document.revision, publisher: publisher))
             library = document.payload
@@ -512,6 +518,7 @@ public actor LibraryStore {
         if case .success = result {
             var setting = settings.load()
             setting.fileName = name
+            setting.libraryID = Self.real(payload.libraryID) ?? setting.libraryID
             try? settings.save(setting)
             await loadUnlocked()
         }

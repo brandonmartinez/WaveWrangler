@@ -14,6 +14,7 @@ import WWPersistence
 //   kill-at   --file F --boundary P1..P7 [--recovery DIR] [--library LIB --index IDX]   (SIGKILL at that boundary;
 //             P7 needs --library: the show save acknowledges into that library file, then updates IDX)
 //   library-kill-at --file SETTINGS.json --container DIR --recovery DIR --cache FILE --boundary P1..P6 --collection NAME
+//   record-location --file LOCATIONS_DIR --show UUID --doc SHOW.wwshow
 //   reopen-save --file LOCATIONS_DIR --show UUID --title T --recovery DIR [--library-settings S --container DIR --cache FILE]
 //   library   --file SETTINGS.json --container DIR --recovery DIR --cache FILE [--move-to FOLDER] [--add N]
 
@@ -89,7 +90,8 @@ struct ExitAtBoundary: PublicationHooks {
     func reached(_ reached: PublicationBoundary) throws {
         if reached == boundary {
             kill(getpid(), SIGKILL)
-            _exit(73)   // not reached
+            // Delivery can lag the syscall's return: wait for it, so the process only ever ends by SIGKILL.
+            while true { pause() }
         }
     }
 }
@@ -126,6 +128,7 @@ struct Probe {
         case "library": return await library()
         case "library-kill-at": return await libraryKillAt()
         case "reopen-save": return await reopenSave()
+        case "record-location": return recordLocation()
         default:
             emit(["error": "unknown command \(args.command)"])
             return 2
@@ -159,6 +162,7 @@ struct Probe {
         }
         let title = args["title"] ?? "Edited by \(getpid())"
         _ = try? await session.edit { try $0.renamingShow(to: title) }
+        if let delay = Int(args["delay-ms"] ?? "") { usleep(useconds_t(delay * 1_000)) }   // seeded race schedule
         let start = ContinuousClock.now
         switch await session.save() {
         case let .success(receipt):
@@ -274,6 +278,22 @@ struct Probe {
         _ = try? await store.update { var library = $0; library.collections.append(LibraryCollection(name: name)); return library }
         emit(["result": "boundaryNotReached"])
         return 1
+    }
+
+    /// Records a read-write document bookmark for `--show` at `--doc` (created by this executable, as the app does).
+    func recordLocation() -> Int32 {
+        guard let showRaw = args["show"], let showUUID = UUID(uuidString: showRaw), let doc = args.url("doc") else {
+            emit(["error": "record-location needs --show --doc"])
+            return 2
+        }
+        do {
+            try ShowLocationStore(root: file).record(ShowID(showUUID), at: doc)
+            emit(["result": "recorded"])
+            return 0
+        } catch {
+            emit(["result": "failed", "detail": "\(error)"])
+            return 1
+        }
     }
 
     /// M1-DUR-029: in a new process, resolve the device-local read-write bookmark, start access, open the show,
