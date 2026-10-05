@@ -1,0 +1,333 @@
+{
+  "schema_version": 1,
+  "experiment_id": "macos-native-document-v1",
+  "batch_date": "2026-10-04",
+  "integration_owner": "Lead",
+  "integration_acceptance": {
+    "verdict": "accept-with-limits",
+    "scope": "Finite evidence/report/metadata integration and next bounded candidate only",
+    "architecture_adopted": false,
+    "whole_research_item_completed": false,
+    "production_authorized": false,
+    "independent_reproduction": false,
+    "native_retests_in_integration": 0
+  },
+  "scope": {
+    "synthetic_only": true,
+    "user_media_accessed": false,
+    "user_media_metadata_accessed": false,
+    "cloud_trials": false,
+    "provider_trials": false,
+    "installs": false,
+    "model_downloads": false,
+    "production_code": false,
+    "ui_trials": false,
+    "github_issues_created": false,
+    "historical_foundation_reexecuted": false,
+    "os_activity_audit": false,
+    "note": "Own synthetic scratch only. Native services may manage OS metadata; no zero-hidden-OS-activity claim."
+  },
+  "artifact_root": "<research-artifacts>/research/macos-document/experiment/",
+  "authoritative_metadata_path": "<research-artifacts>/research/macos-document/results.json",
+  "repository_mirror_path": "docs/research/native-document-results.json",
+  "repository_report_path": "docs/research/native-document-spike.md",
+  "host_toolchain": {
+    "measurement_source": "experiment/qualification-summary.json:host_measurements",
+    "runtime_macos": "27.0.1",
+    "runtime_build": "26A434",
+    "architecture": "arm64",
+    "ram_bytes": 137438953472,
+    "ram_gib": 128,
+    "apple_swift_version": "6.4",
+    "swiftlang": "6.4.0.34.1",
+    "clang": "2100.3.34.1",
+    "sdk_path": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+    "target": "arm64-apple-macos26.0",
+    "language_flags": ["-swift-version", "5"],
+    "swiftui_additional_flags": ["-parse-as-library"],
+    "swift6_strict_mode_validated": false,
+    "macos26_runtime_validated": false,
+    "reference_16gb_validated": false,
+    "source_versions": {"native": "v3", "swiftui": "v2"},
+    "binary_naming_note": "NativeExperiment-v1-c3 and SwiftUIAlternative-v1-c3 basenames map to final sources via retained build logs."
+  },
+  "case_plan": {
+    "path": "experiment/plan-v1.json",
+    "sha256": "a69c68ec9a4fe9e3d49a400b9b669310e7951925f86d8beedc09048a61795706",
+    "fixed_before_qualification": true,
+    "freeze_manifest_path": "experiment/prequalification-manifest.json",
+    "freeze_manifest_sha256": "fd238154c23ef957a374f54d640f461abaa88fc1d909495c19c4098253c51caa",
+    "freeze_utc": "2026-10-04T14:57:39.109203Z",
+    "qualification_start_utc": "2026-10-04T14:57:39.150101Z",
+    "qualification_end_utc": "2026-10-04T14:57:41.897554Z",
+    "all_frozen_bytes_unchanged_reported": true,
+    "integration_verification_mode": "Exact entry-artifact hashes checked; freeze/source claims remain supplied evidence, not independent reproduction",
+    "max_correction_cycles": 3,
+    "statistical_unseen_holdout": false,
+    "case_inputs_independent": false
+  },
+  "case_accounting": {
+    "runnable": 28,
+    "pass": 28,
+    "fail": 0,
+    "native_runtime": 24,
+    "native_runtime_breakdown": {"NSDocument": 17, "NSFileCoordinator": 4, "FileWrapper": 2, "plain_bookmark": 1},
+    "swiftui_public_snapshot_runtime": 1,
+    "compile_control_cases": 3,
+    "compile_control_breakdown": {"positive_protocol_scene_case": 1, "expected_negative_control_cases": 2},
+    "blocked_overlapping_limits": 9,
+    "case_entries_including_blocked": 37,
+    "not_independent_executed_tests": true,
+    "limits_accounting_note": "qualification-summary.limits lists BL01-08; cases contains BL01-09. Carry BL09 without adding an executed test."
+  },
+  "native_callback_counts": {
+    "save": 10,
+    "autosave": 3,
+    "total": 13,
+    "success": 9,
+    "expected_failure": 4,
+    "main_thread": 13,
+    "missing_or_duplicate": 0,
+    "operation_enum_mapping": {"0": "saveOperation", "1": "saveAsOperation", "2": "saveToOperation: direct ND05 write, no callback", "4": "autosaveInPlaceOperation"},
+    "error_provenance": [
+      {"case_id": "ND08", "origin": "subclass injected write error through AppKit completion", "domain": "Research.InjectedWrite", "code": 73, "underlying_domain": "Research.InjectedWrite", "underlying_code": 73},
+      {"case_id": "ND09", "origin": "actual Foundation non-directory publication error through AppKit completion, controlled safety override", "domain": "NSCocoaErrorDomain", "code": 512, "underlying_chain": [{"domain": "NSCocoaErrorDomain", "code": 512}, {"domain": "NSPOSIXErrorDomain", "code": 20}]},
+      {"case_id": "ND10", "origin": "subclass injected cancellation, not native panel", "domain": "NSCocoaErrorDomain", "code": 3072, "underlying_domain": "NSCocoaErrorDomain", "underlying_code": 3072},
+      {"case_id": "ND11", "origin": "subclass serial stale preflight through AppKit completion", "domain": "Research.StaleRevision", "code": 409, "underlying_domain": "Research.StaleRevision", "underlying_code": 409}
+    ],
+    "read_errors_not_completion_errors": [
+      {"case_id": "ND02", "origin": "subclass schema refusal", "domain": "Research.Schema", "code": 99},
+      {"case_id": "ND03", "origin": "JSON decoding refusal", "domain": "NSCocoaErrorDomain", "code": 4864, "underlying_domain": "NSCocoaErrorDomain", "underlying_code": 3840}
+    ],
+    "accessor_error_not_completion_or_framework_error": {"case_id": "FC02", "domain": "Research.BeforePublication", "code": 74}
+  },
+  "native_policy_boundary": {
+    "native_superclass_save_autosave": true,
+    "native_url_change_count_management": true,
+    "stock_appkit_safe_publication_exercised": false,
+    "publication": "Subclass writeSafely override: controlled scratch stage, super.write, independent parsing, Foundation publication",
+    "scheduleAutosaving_suppressed": true,
+    "versions_disabled": true,
+    "subclass_policies": ["schema validation", "serial revision preflight with TOCTOU", "error injection", "retained snapshots", "custom settings/timers", "safety override"],
+    "not_recommended_product_mechanisms": ["research safety override", "RunLoop sleeps", "@unchecked Sendable", "serial preflight"],
+    "callback_success_is_not_persistence": true
+  },
+  "experiments": [
+    {
+      "id": "NSDOCUMENT",
+      "backlog_ids": ["WW-005", "WW-049"],
+      "validation_level": "native-runtime",
+      "status": "qualified-pass-with-policy-limits",
+      "cases": [
+        {"id": "ND01", "validation_level": "native-runtime", "status": "pass", "api": "data(ofType:), read(from:ofType:)", "acceptance": "Exact show/two-episode roundtrip", "callbacks": 0},
+        {"id": "ND02", "validation_level": "subclass-policy", "status": "pass", "api": "read(from:ofType:)", "acceptance": "Newer read refusal/input preservation", "callbacks": 0},
+        {"id": "ND03", "validation_level": "subclass-policy", "status": "pass", "api": "read(from:ofType:)", "acceptance": "Malformed read refusal/input preservation", "callbacks": 0},
+        {"id": "ND04", "validation_level": "native-runtime", "status": "pass", "api": "save(to:ofType:for:completionHandler:), reopen", "operation": 1, "callbacks": 1, "successes": 1, "acceptance": "Save As/fileURL/full independent disk truth"},
+        {"id": "ND05", "validation_level": "native-runtime", "status": "pass", "api": "write(to:ofType:for:originalContentsURL:)", "operation": 2, "callbacks": 0, "acceptance": "Caller target distinct from fileURL, old bytes unchanged"},
+        {"id": "ND06", "validation_level": "native-runtime", "status": "pass", "api": "save(to:ofType:for:completionHandler:)", "operation": 1, "callbacks": 1, "successes": 1, "acceptance": "Save As updates URL/preserves prior valid bytes"},
+        {"id": "ND07", "validation_level": "native-runtime", "status": "pass", "api": "UndoManager, isDocumentEdited", "callbacks": 0, "acceptance": "Named undo exact/clean, redo exact/dirty after RunLoop delivery"},
+        {"id": "ND08", "validation_level": "subclass-policy", "status": "pass", "api": "native save completion", "operation": 1, "callbacks": 1, "expected_errors": 1, "acceptance": "Injected failed Save As preserves source/target/URL/dirty"},
+        {"id": "ND09", "validation_level": "native-runtime", "status": "pass", "api": "native save completion, Foundation publication", "operation": 1, "callbacks": 1, "expected_errors": 1, "acceptance": "Actual invalid destination errors, prior bytes retained"},
+        {"id": "ND10", "validation_level": "subclass-policy", "status": "pass", "api": "native save completion", "operation": 0, "callbacks": 1, "expected_errors": 1, "acceptance": "Injected cancellation retained, not panel cancellation"},
+        {"id": "ND11", "validation_level": "subclass-policy", "status": "pass", "api": "two NSDocuments/native save completions", "operation": 0, "callbacks": 2, "successes": 1, "expected_errors": 1, "acceptance": "Serial winner retained/stale second refused; TOCTOU remains"},
+        {"id": "ND12", "validation_level": "native-runtime", "status": "pass", "api": "save(to:ofType:for:completionHandler:)", "operation": 0, "callbacks": 1, "successes": 1, "acceptance": "Explicit Save clears dirty/full disk truth"},
+        {"id": "ND13", "validation_level": "native-runtime", "status": "pass", "api": "autosave(withImplicitCancellability:completionHandler:)", "operation": 4, "callbacks": 1, "successes": 1, "acceptance": "Explicit native autosave/coherent checkpoint <=2s"},
+        {"id": "ND14", "validation_level": "subclass-policy", "status": "pass", "api": "custom Timer -> native autosave", "operation": 4, "callbacks": 1, "successes": 1, "acceptance": "0.15s custom delay/two edits/coherent checkpoint <=2s"},
+        {"id": "ND15", "validation_level": "subclass-policy", "status": "pass", "api": "custom Timer -> native autosave", "operation": 4, "callbacks": 1, "successes": 1, "acceptance": "0.4s custom delay/two edits/coherent checkpoint <=2s"},
+        {"id": "ND16", "validation_level": "subclass-policy", "status": "pass", "api": "custom OFF then native Save", "operation": 0, "callbacks": 1, "successes": 1, "acceptance": "No checkpoint during 0.45s, then explicit Save exact"},
+        {"id": "ND17", "validation_level": "subclass-policy", "status": "pass", "api": "native Save/read reopen of retained snapshot", "operation": 0, "callbacks": 1, "successes": 1, "acceptance": "Reopen retained truth after deliberate corruption, not crash recovery"}
+      ],
+      "limitations": ["All safe publication uses controlled research override", "No panels/automatic cadence/versions/real faults/multi-process/library reconciliation"],
+      "artifact_paths": ["experiment/compact-evidence.json", "experiment/runs/qualification-c3/native-raw.json"]
+    },
+    {
+      "id": "NSFILECOORDINATOR",
+      "backlog_ids": ["WW-005", "WW-049"],
+      "validation_level": "native-runtime",
+      "status": "qualified-pass-with-policy-limits",
+      "cases": [
+        {"id": "FC01", "validation_level": "native-runtime", "status": "pass", "api": "coordinate writing .forReplacing", "acceptance": "Staged/independently verified coherent generated JSON"},
+        {"id": "FC02", "validation_level": "subclass-policy", "status": "pass", "api": "writing accessor", "acceptance": "Injected prepublication failure preserves prior bytes"},
+        {"id": "FC03", "validation_level": "subclass-policy", "status": "pass", "api": "writing accessor", "acceptance": "20 accepted/20 stale-refused serial logical writers"},
+        {"id": "FC04", "validation_level": "native-runtime", "status": "pass", "api": "coordinated read accessor", "acceptance": "Coherent final revision"}
+      ],
+      "metrics": {"successful_accessor_publications": 21, "injected_prepublication_failures": 1, "serial_stale_refusals": 20, "coordinated_reads": 1, "framework_coordination_errors": 0, "parallel_workers": 0},
+      "limitations": ["Cooperative serial only, not uncooperative/parallel/multi-process/provider guarantee", "Accessor policy errors distinct from framework errors"],
+      "artifact_paths": ["experiment/compact-evidence.json", "experiment/runs/qualification-c3/native-raw.json"]
+    },
+    {
+      "id": "FILEWRAPPER",
+      "backlog_ids": ["WW-005"],
+      "validation_level": "native-runtime",
+      "status": "qualified-pass-with-policy-limits",
+      "cases": [
+        {"id": "FW01", "validation_level": "native-runtime", "status": "pass", "api": "FileWrapper directory/write/read", "acceptance": "Generated package roundtrip"},
+        {"id": "FW02", "validation_level": "subclass-policy", "status": "pass", "api": "FileWrapper contents/schema validation", "acceptance": "Two standalone malformed/newer wrapped-data refusals/input preservation"}
+      ],
+      "limitations": ["Atomic option not package/provider transaction proof", "FW02 does not test malformed/newer package migration"],
+      "artifact_paths": ["experiment/compact-evidence.json"]
+    },
+    {
+      "id": "PLAIN_BOOKMARK",
+      "backlog_ids": ["WW-006", "WW-008"],
+      "validation_level": "native-runtime",
+      "status": "qualified-pass-limited-local",
+      "cases": [{"id": "BM01", "validation_level": "native-runtime", "status": "pass", "api": "URL.bookmarkData/resolvingBookmarkData", "acceptance": "Own immutable local source, non-stale resolution"}],
+      "metrics": {"bookmark_bytes": 1368, "stale": false},
+      "limitations": ["No security scope/sandbox/denial/regrant/stale refresh/relink/cross-device/portable identity"],
+      "artifact_paths": ["experiment/compact-evidence.json"]
+    },
+    {
+      "id": "SWIFTUI_PROTOCOL_SCENE",
+      "backlog_ids": ["WW-005", "WW-008"],
+      "validation_level": "compile-only",
+      "status": "qualified-pass-compilation-only",
+      "cases": [{"id": "SU01", "validation_level": "compile-only", "status": "pass", "api": "FileDocument/ReferenceFileDocument/both DocumentGroup declarations", "acceptance": "Genuine target26 conformance/scene compilation"}],
+      "limitations": ["No App.main/scene/native serialization runtime"],
+      "artifact_paths": ["experiment/logs/build-SwiftUIAlternative-v2-c3.json"]
+    },
+    {
+      "id": "SWIFTUI_PUBLIC_SNAPSHOT",
+      "backlog_ids": ["WW-005"],
+      "validation_level": "native-runtime",
+      "status": "qualified-pass-serial-only",
+      "cases": [{"id": "SU02", "validation_level": "native-runtime", "status": "pass", "api": "ReferenceFileDocument.snapshot(contentType:) direct invocation", "acceptance": "Prior value retained after mutation"}],
+      "limitations": ["@unchecked Sendable serial probe only", "No asynchronous snapshot safety/native scene lifecycle"],
+      "artifact_paths": ["experiment/runs/qualification-c3/swiftui-raw.json"]
+    },
+    {
+      "id": "SWIFTUI_COMPILER_CONTROLS",
+      "backlog_ids": ["WW-005", "WW-008"],
+      "validation_level": "compile-only",
+      "status": "qualified-pass-expected-negative-controls",
+      "cases": [
+        {"id": "SU03", "validation_level": "compile-only", "status": "pass", "api": "Read/WriteConfiguration initializer negative compile", "expected_returncode": 1, "acceptance": "No public caller initializer; runtime callbacks blocked"},
+        {"id": "SU04", "validation_level": "compile-only", "status": "pass", "api": "Document availability ungated negative/gated positive", "expected_ungated_returncode": 1, "acceptance": "Document macOS27 requirement, gated target26 compiles"}
+      ],
+      "limitations": ["Not broken native serialization proof", "deprecated:100000.0/future deprecatedAt27.2 is not runtime removal"],
+      "artifact_paths": ["experiment/logs/control-ConfigurationControl-v1.json", "experiment/logs/control-AvailabilityControl-v1.json"]
+    },
+    {
+      "id": "BLOCKED_LIMITS",
+      "backlog_ids": ["WW-005", "WW-006", "WW-007", "WW-008", "WW-049"],
+      "validation_level": "blocked",
+      "status": "not-executed-overlapping-exclusions",
+      "cases": [
+        {"id": "BL01", "status": "blocked", "reason": "Real save-panel cancellation; injection does not substitute"},
+        {"id": "BL02", "status": "blocked", "reason": "Automatic native cadence/default controls/menus/close/app-scene lifecycle"},
+        {"id": "BL03", "status": "blocked", "reason": "Unnamed native autosave/OS storage not invoked; elsewhere untested"},
+        {"id": "BL04", "status": "blocked", "reason": "Native FileDocument/ReferenceFileDocument configurations/scene execution"},
+        {"id": "BL05", "status": "blocked", "reason": "Provider/cloud/offline/hydration/two-machine permission"},
+        {"id": "BL06", "status": "blocked", "reason": "macOS26 runtime/16GB/keyboard/VoiceOver/actual app"},
+        {"id": "BL07", "status": "blocked", "reason": "Disk-full/crash/power loss/native revisions"},
+        {"id": "BL08", "status": "blocked", "reason": "SQLite comparison/architecture adoption"},
+        {"id": "BL09", "status": "blocked", "reason": "Stock AppKit writeSafely publication excluded; controlled override only", "in_summary_limits_array": false, "in_supplied_cases": true}
+      ],
+      "limitations": ["Nine overlapping limits, not nine independent executed tests"],
+      "artifact_paths": ["experiment/qualification-summary.json", "experiment/compact-evidence.json"]
+    }
+  ],
+  "checkpoint_metrics": {
+    "unit": "seconds",
+    "start": "DispatchTime at last completed model mutation/undo grouping BEFORE native RunLoop notification drainage",
+    "end": "First independent JSONSerialization disk read matching all show/episodes/revision fields and hash after native completion",
+    "independent_python_truth_hash_checks_reported": 19,
+    "gate_seconds": 2,
+    "observations": [
+      {"case_id": "ND13", "driver": "explicit native autosave", "operation_enum": 4, "seconds": 0.12902604200644419, "acceptance": "pass"},
+      {"case_id": "ND14", "driver": "custom cancel/reschedule Timer -> native autosave", "custom_delay_seconds": 0.15, "operation_enum": 4, "seconds": 0.2929398749838583, "acceptance": "pass"},
+      {"case_id": "ND15", "driver": "custom cancel/reschedule Timer -> native autosave", "custom_delay_seconds": 0.4, "operation_enum": 4, "seconds": 0.5460124999808613, "acceptance": "pass"}
+    ],
+    "off_observation": {"case_id": "ND16", "seconds": 0.45, "no_checkpoint": true, "then_explicit_native_save_exact": true},
+    "limitations": ["Three finite observations only", "Not serializer duration/automatic AppKit cadence/product controls/durability/cloud sync", "Successful callback alone is not persistence"]
+  },
+  "failed_attempts": [
+    {"id": "c1", "status": "failed-debug-builds-preserved", "invalid_compile_failures": 2, "native_runtime_cases": 0, "causes": ["throwing expressions", "Darwin clock collision", "wrong reference DocumentGroup initializer"], "artifact_paths": ["experiment/logs/build-NativeExperiment-v1-c1.json", "experiment/logs/build-SwiftUIAlternative-v1-c1.json"]},
+    {"id": "c2", "status": "failed-debug-assertions-preserved", "native_pass": 21, "native_fail": 3, "failed_case_ids": ["ND07", "ND12", "ND13"], "swiftui_snapshot_pass": true, "finding": "Pending native dirty/undo notifications; genuine autosave success without checkpoint", "artifact_paths": ["experiment/runs/debug-c2/native-raw.json", "experiment/logs/debug-c2-native.json"]},
+    {"id": "c3", "status": "final-debug-pass-before-freeze", "native_pass": 24, "native_fail": 0, "swiftui_snapshot_pass": true, "correction": "Drain native default RunLoop notifications, no manual dirty-count fabrication or weaker gates", "artifact_paths": ["experiment/runs/debug-c3/native-raw.json", "experiment/logs/debug-c3-native.json"]},
+    {"id": "qualification-c3", "status": "single-qualified-pass", "passed_cases": 28, "failed_assertions": 0, "source_changes_after_freeze": false, "qualifying_rerun": false, "artifact_paths": ["experiment/logs/qualification-c3-native.json", "experiment/logs/qualification-c3-swiftui.json"]}
+  ],
+  "architecture_recommendation": {
+    "status": "candidate-not-adopted",
+    "candidate": "NSDocument + SwiftUI views / versioned single-file JSON value snapshots",
+    "basis": "Finite genuine save/URL/change-count/undo/error paths and inspectable lightweight multi-episode values",
+    "alternatives": {"DocumentGroup": "viable, compile/public snapshot only", "FileWrapper_package": "open, finite roundtrip not transactional/provider proof", "SQLite": "untested in this native batch"},
+    "counterexamples": ["c2 successful no-op autosave lacked checkpoint", "serial stale preflight TOCTOU, not atomic CAS", "custom retained snapshot needed after deliberate corruption", "stock safe publication/versions/scheduling bypassed"],
+    "remaining_gates": [
+      {"owner": "Mac", "backlog_ids": ["WW-005", "WW-049"], "gate": "Stock safety/revisions/unnamed-elsewhere autosave/panels/cancel/Revert/Close/Quit/restored windows"},
+      {"owner": "Mac", "backlog_ids": ["WW-005", "WW-049"], "gate": "Visible default-ON/configurable/OFF wiring, rapid edits/pending timers/honest saved status"},
+      {"owner": "Mac", "backlog_ids": ["WW-005", "WW-049"], "gate": "Concurrent windows/processes/race conflicts/library-project-index reconciliation"},
+      {"owner": "Mac", "backlog_ids": ["WW-005"], "gate": ">=100 actual boundary faults, disk-full/crash/migration/newer-format edit-save prevention"},
+      {"owner": "Mac", "backlog_ids": ["WW-005", "WW-008"], "gate": "Asynchronous snapshot safety, equivalent DocumentGroup lifecycle/package/SQLite comparisons"},
+      {"owner": "Mac", "backlog_ids": ["WW-006", "WW-049"], "gate": "Separately consented provider/offline/two-machine/security-scope/sandbox/regrant/relink/source-download controls"},
+      {"owner": "Mac", "backlog_ids": ["WW-007", "WW-008"], "gate": "macOS26 runtime/16GB/library-scale envelope"},
+      {"owner": "Design", "backlog_ids": ["WW-007", "WW-029"], "gate": "Menus/shortcuts/focus/VoiceOver/200%-text/contrast/reduced-motion/core M1 tasks and consented pilot"},
+      {"owner": "Lead", "backlog_ids": ["WW-009", "WW-010", "WW-011", "WW-012"], "gate": "Explicit production authorization after prerequisites; no scaffold now"}
+    ]
+  },
+  "claims_not_established": [
+    "Stock AppKit safe-write/versions/crash durability",
+    "Automatic native cadence or actual default/control wiring",
+    "Successful callback implies coherent checkpoint",
+    "Atomic stale compare-and-swap or multi-process conflict protection",
+    "Crash/power-loss/disk-full/real boundary fault recovery",
+    "Full library/UI/index reconciliation or scale",
+    "Malformed/newer package migration or newer-document edit/save guard",
+    "Asynchronous Sendable/snapshot safety",
+    "Executed DocumentGroup/native serialization lifecycle",
+    "Security scope/sandbox/regrant/denial/cross-device permissions",
+    "Cloud/provider/offline/two-machine consistency",
+    "Keyboard/VoiceOver/200% text or participant usability",
+    "macOS26 runtime/16GB performance/Swift6 strict concurrency",
+    "JSON superiority over SQLite/package at scale",
+    "Whole WW-005/006/007/008/049 completion, M1 or production readiness"
+  ],
+  "backlog_progress": {
+    "local_only": true,
+    "issue_promotion": "Conditional on completed planning/research, not authorized now",
+    "directive_path": ".squad/decisions/inbox/copilot-directive-2026-10-04-native-document-local-backlog.md",
+    "stable_ids": 51,
+    "dependency_edges": 196,
+    "acyclic": true,
+    "higher_id_dependencies": 23,
+    "ordered_dependency_sha256": "c6692502c03ab1f318f412ff67b4cec1a7edbe5c96cad63460d5916d30c10c43",
+    "completed": 3,
+    "partial": 14,
+    "pending": 34,
+    "completed_ids": ["WW-001", "WW-002", "WW-004"],
+    "partial_ids": ["WW-003", "WW-005", "WW-006", "WW-008", "WW-014", "WW-015", "WW-016", "WW-017", "WW-025", "WW-026", "WW-028", "WW-036", "WW-043", "WW-049"],
+    "only_status_delta": {"id": "WW-008", "before": "PENDING", "after": "PARTIAL", "reason": "Target26 protocol/scene/availability compiler evidence and plain synthetic local bookmark; no signed/runtime/sandbox/distribution outcome"},
+    "limited_added_evidence_ids": ["WW-005", "WW-006", "WW-049"],
+    "ww007_status": "PENDING: no library-scale/UI/index reconciliation gate retired",
+    "ww004_scope": "COMPLETED documentary specification only, unchanged",
+    "unapproved_pending_ids": ["WW-009", "WW-010", "WW-011", "WW-012"],
+    "owners_dependencies_criteria_unchanged": true,
+    "historical_foundation_snapshot": {"completed": 3, "partial": 13, "pending": 35, "calibration": 169, "primary_heldout": 5728, "evidence_unchanged": true}
+  },
+  "reviews": [
+    {"owner": "Mac", "path": "experiment/technical-review.md", "sha256": "542fb3bebfb302d1a53b6a7fb4d4c88c36554a34d3593ed027943c046d629a45", "verdict": "Accept the finite native callback/state/own-file subset, not a production lifecycle, adopted architecture, or cloud guarantee.", "review_mode": "author-technical-evidence-review", "independent_reproduction": false},
+    {"owner": "Design", "path": "design-review.md", "sha256": "2fc85c0ebea0f59f26ea47c97d65a564f5db0724925de20fbdab614c4470749a", "verdict": "approve-with-limits", "review_mode": "actual-read-only-evidence-review-selected-sections", "independent_reproduction": false, "ui_tests": false, "reviewed_entry_hashes_unchanged": true, "nonblocking_note": "Carry BL09 missing from summary.limits without adding independent tests", "raw_review_modified": false}
+  ],
+  "reviewer_rejection_or_lockout": false,
+  "artifact_paths": {
+    "path_resolution": "All experiment/... and design-review.md paths are relative to authoritative_metadata_path parent; raw paths remain scratch-local",
+    "compact_evidence": {"path": "experiment/compact-evidence.json", "sha256": "8ff65021ec8d21d2cdba88ae38a9575ec79d46e03a89b253114c8d2c619d03fc"},
+    "qualification_summary": {"path": "experiment/qualification-summary.json", "sha256": "9fa955fe99565308f4945189490c98e07bf260cce4ce344b5b02cf3147a12ff6"},
+    "named_inventory": {"path": "experiment/artifact-hashes.json", "sha256": "92419f8f3642871275416f56236f068bbd5aee7d4a456468c61cdbcb5d597594"},
+    "native_raw": {"path": "experiment/runs/qualification-c3/native-raw.json", "sha256": "37289a5a72ddeea20d1a37a83dd75ffbc4ac5e470d138695048689eceff588e6", "hash_provenance": "supplied named inventory"},
+    "swiftui_raw": {"path": "experiment/runs/qualification-c3/swiftui-raw.json", "sha256": "0aa49af6d6d3f0ed10884b76530b0eb7a8ed7b6a4663b08acfa48f3af85be507", "hash_provenance": "supplied named inventory"},
+    "native_source": {"path": "experiment/NativeExperiment-v3.swift", "sha256": "37bf7c312cc4af84cc0a259a7a2c6644245a1a243515732d4fef9ed06c775ebd", "hash_provenance": "supplied freeze/inventory"},
+    "swiftui_source": {"path": "experiment/SwiftUIAlternative-v2.swift", "sha256": "72c5366c125081275b62e3703802c4984d23946035358cdb952fc8a0e8f8128b", "hash_provenance": "supplied freeze/inventory"},
+    "fixture_truth": {"path": "experiment/fixture-truth-v1.json", "sha256": "6c25290b5891d08a215567be6cc5d818ec24bb70a24784bfb7b2056e21435f47", "hash_provenance": "supplied freeze/inventory"},
+    "all_fixture_ids_hashes_raw_logs": "Retained in exact named inventory/plan/compact evidence; not duplicated or reexecuted"
+  },
+  "process_shutdown": {
+    "bounded_compiler_runtime_invocations_joined_reported": 14,
+    "timeouts_reported": 0,
+    "native_timers_invalidated_reported": true,
+    "swift_process_exited_reported": true,
+    "research_processes_remaining_reported": 0,
+    "integration_research_processes_started": 0,
+    "provenance": "Mac compact/qualification/raw accounting; no fresh system-wide process audit"
+  }
+}

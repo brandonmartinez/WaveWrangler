@@ -1,0 +1,360 @@
+[
+  {
+    "id": "CPP-BASE-EN",
+    "state": "PROPOSED-NOT-AUTHORIZED",
+    "runtime": {
+      "repo": "ggml-org/whisper.cpp",
+      "revision": "60c0be6ac8fa71b1a2ae2dd938a31a34a508e774"
+    },
+    "artifacts": [
+      {
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1",
+        "path": "ggml-base.en.bin",
+        "bytes": 147964211,
+        "expectedLFSsha256": "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+        "gitBlobOID": "87c664c563ef3ff52424dd4fa925cf95b306dba6",
+        "source": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en.bin",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      }
+    ],
+    "totalBytes": 147964211,
+    "license": "MIT code/upstream weights/converted model-card assertion; artifact/transitive redistribution not cleared",
+    "variant": "unquantized-base.en; Metal/Accelerate candidate; optional CoreML encoder explicitly excluded"
+  },
+  {
+    "id": "KIT-BASE-EN",
+    "state": "PROPOSED-NOT-AUTHORIZED",
+    "runtime": {
+      "repo": "argmaxinc/argmax-oss-swift",
+      "revision": "f4e5d6be37ec820614fb0d72037e76c22d4c16f7"
+    },
+    "artifacts": [
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/AudioEncoder.mlmodelc/analytics/coremldata.bin",
+        "bytes": 243,
+        "expectedLFSsha256": "c4e096b2abd561f00b9b698401df3fbe1a0d0c8d2476ff19cb4e1995680e827e",
+        "gitBlobOID": "13849a4b8da17682bb6eaed253707eac7f2befd0",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/AudioEncoder.mlmodelc/analytics/coremldata.bin",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/AudioEncoder.mlmodelc/coremldata.bin",
+        "bytes": 347,
+        "expectedLFSsha256": "e316980638e2099e83cb1a93b903717dc12b3c2168d0ab69113764c3767696ba",
+        "gitBlobOID": "07ecae5bac3d83aa3b7bd1d17505cdfeaf109145",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/AudioEncoder.mlmodelc/coremldata.bin",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/AudioEncoder.mlmodelc/metadata.json",
+        "bytes": 1863,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "1b82ac5a57544279ce9f5c82c78f6fa5891520cc",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/AudioEncoder.mlmodelc/metadata.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/AudioEncoder.mlmodelc/model.mil",
+        "bytes": 579125,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "31b155b9b8384df140e6f7080248842f9aea1c90",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/AudioEncoder.mlmodelc/model.mil",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/AudioEncoder.mlmodelc/model.mlmodel",
+        "bytes": 79853,
+        "expectedLFSsha256": "1d42038f84b508da5ce9b953302387ffedc097c346d36a56b765109002b6080e",
+        "gitBlobOID": "50615c952c30a945ce18682e38a3a78eecddc358",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/AudioEncoder.mlmodelc/model.mlmodel",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/AudioEncoder.mlmodelc/weights/weight.bin",
+        "bytes": 41189632,
+        "expectedLFSsha256": "74f15e6d2f7694af54e90227cbf22fd6c04082638f163b78a909967b16edc1c7",
+        "gitBlobOID": "d4298162bf574f1fc77ba6009336d1dcee740a38",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/AudioEncoder.mlmodelc/weights/weight.bin",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/MelSpectrogram.mlmodelc/analytics/coremldata.bin",
+        "bytes": 243,
+        "expectedLFSsha256": "7f77e6457285248f99cd7aa3fd4cc2efbb17733e63e7023ac53abe1f95785d07",
+        "gitBlobOID": "8cce829d60c4056be93333a562d47d3bb2908b9b",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/MelSpectrogram.mlmodelc/analytics/coremldata.bin",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/MelSpectrogram.mlmodelc/coremldata.bin",
+        "bytes": 328,
+        "expectedLFSsha256": "dabdc5aa69f6ef4d97dc9499f5c30514e00e96b53b750b33a5a6471363c71662",
+        "gitBlobOID": "b1d9e7a102f740c68cdfc7272dc5b8007c48416a",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/MelSpectrogram.mlmodelc/coremldata.bin",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/MelSpectrogram.mlmodelc/metadata.json",
+        "bytes": 1848,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "022c382ec7041de63c59dd98893c3134d01b23aa",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/MelSpectrogram.mlmodelc/metadata.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/MelSpectrogram.mlmodelc/model.mil",
+        "bytes": 10176,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "a63d7fa99d6d86db1b76a1f53640cb4aa25e0210",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/MelSpectrogram.mlmodelc/model.mil",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/MelSpectrogram.mlmodelc/weights/weight.bin",
+        "bytes": 354080,
+        "expectedLFSsha256": "ee77f9b67765f7abc33f16374081b2389cf1d3a89536187b241950c5a2e5d6c1",
+        "gitBlobOID": "84ba1a9d0af96561cd2b1c5c884aae6849d18187",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/MelSpectrogram.mlmodelc/weights/weight.bin",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/TextDecoder.mlmodelc/analytics/coremldata.bin",
+        "bytes": 243,
+        "expectedLFSsha256": "e870aac5de88676c1ad93cb3939f257e6de30e5235c3f9d7686398ebecafdb8d",
+        "gitBlobOID": "9b8ae033c6c2865841997b2b83379606ed0e118e",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/TextDecoder.mlmodelc/analytics/coremldata.bin",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/TextDecoder.mlmodelc/coremldata.bin",
+        "bytes": 633,
+        "expectedLFSsha256": "4b23ff9d9fe376f2b86f9cf55af3218560a4e4d692041360510fbad490c0db43",
+        "gitBlobOID": "561e8d5c37d16c6f4ea78150263ec4f82aa6d7fd",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/TextDecoder.mlmodelc/coremldata.bin",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/TextDecoder.mlmodelc/metadata.json",
+        "bytes": 4753,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "3da2721e50228dc78a6b79cd010041f5f9c6855d",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/TextDecoder.mlmodelc/metadata.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/TextDecoder.mlmodelc/model.mil",
+        "bytes": 200444,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "ea1a8b7ddbb9a4104ef627712ef0ceb6fa1d8da2",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/TextDecoder.mlmodelc/model.mil",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/TextDecoder.mlmodelc/model.mlmodel",
+        "bytes": 160348,
+        "expectedLFSsha256": "72f1214f7c8b26e467dd8233572eaa5cbe200f30a36b918d4c289f9fc8c4f401",
+        "gitBlobOID": "64105a8ee0256e8d28c1687afdabd58ac3c4188f",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/TextDecoder.mlmodelc/model.mlmodel",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/TextDecoder.mlmodelc/weights/weight.bin",
+        "bytes": 104121136,
+        "expectedLFSsha256": "4649599bd2d97f87ffc716e6da2f61a06c06ac5a9424dd23edc3d4bf66fb6221",
+        "gitBlobOID": "e097b2c965b216e7bafeab94105a65bb5e16fd4b",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/TextDecoder.mlmodelc/weights/weight.bin",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/config.json",
+        "bytes": 1454,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "7af931c5fd7052d3211621654d93a2a3e33dd307",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/config.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "argmaxinc/whisperkit-coreml",
+        "revision": "0f63a7800b00dd0226abd051b906c246e1907482",
+        "path": "openai_whisper-base.en/generation_config.json",
+        "bytes": 982,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "cc2edd4b48ab2b8389169e32f930abd8dd8b209d",
+        "source": "https://huggingface.co/argmaxinc/whisperkit-coreml/resolve/0f63a7800b00dd0226abd051b906c246e1907482/openai_whisper-base.en/generation_config.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "openai/whisper-base.en",
+        "revision": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+        "path": "added_tokens.json",
+        "bytes": 34604,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "0b661e7eeafa60f4366f802cc18d99a08574861c",
+        "source": "https://huggingface.co/openai/whisper-base.en/resolve/911407f4214e0e1d82085af863093ec0b66f9cd6/added_tokens.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "openai/whisper-base.en",
+        "revision": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+        "path": "config.json",
+        "bytes": 1937,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "0e9af059a5d452f97d3493ffb4da98712c8fd711",
+        "source": "https://huggingface.co/openai/whisper-base.en/resolve/911407f4214e0e1d82085af863093ec0b66f9cd6/config.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "openai/whisper-base.en",
+        "revision": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+        "path": "generation_config.json",
+        "bytes": 1531,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "1cde9fc2a32ad94f4db760e67a2375e229215f58",
+        "source": "https://huggingface.co/openai/whisper-base.en/resolve/911407f4214e0e1d82085af863093ec0b66f9cd6/generation_config.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "openai/whisper-base.en",
+        "revision": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+        "path": "merges.txt",
+        "bytes": 456318,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "226b0752cac7789c48f0cb3ec53eda48b7be36cc",
+        "source": "https://huggingface.co/openai/whisper-base.en/resolve/911407f4214e0e1d82085af863093ec0b66f9cd6/merges.txt",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "openai/whisper-base.en",
+        "revision": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+        "path": "normalizer.json",
+        "bytes": 52666,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "dd6ae819ad738ac1a546e9f9282ef325c33b9ea0",
+        "source": "https://huggingface.co/openai/whisper-base.en/resolve/911407f4214e0e1d82085af863093ec0b66f9cd6/normalizer.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "openai/whisper-base.en",
+        "revision": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+        "path": "preprocessor_config.json",
+        "bytes": 184990,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "c2048dfa9fd94a052e62e908d2c4dfb18534b4d2",
+        "source": "https://huggingface.co/openai/whisper-base.en/resolve/911407f4214e0e1d82085af863093ec0b66f9cd6/preprocessor_config.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "openai/whisper-base.en",
+        "revision": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+        "path": "special_tokens_map.json",
+        "bytes": 1830,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "7e6b5b4f006274b7085b597005a9ad73c639eb80",
+        "source": "https://huggingface.co/openai/whisper-base.en/resolve/911407f4214e0e1d82085af863093ec0b66f9cd6/special_tokens_map.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "openai/whisper-base.en",
+        "revision": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+        "path": "tokenizer.json",
+        "bytes": 2405679,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "b5bd266de2f9b9a68efe13fb48ac6830ca71c0bb",
+        "source": "https://huggingface.co/openai/whisper-base.en/resolve/911407f4214e0e1d82085af863093ec0b66f9cd6/tokenizer.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "openai/whisper-base.en",
+        "revision": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+        "path": "tokenizer_config.json",
+        "bytes": 805,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "6b53d4f2b480c9267ffc419c7628159d25f3072a",
+        "source": "https://huggingface.co/openai/whisper-base.en/resolve/911407f4214e0e1d82085af863093ec0b66f9cd6/tokenizer_config.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      },
+      {
+        "repo": "openai/whisper-base.en",
+        "revision": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+        "path": "vocab.json",
+        "bytes": 798156,
+        "expectedLFSsha256": null,
+        "gitBlobOID": "84ef7fb594b5c0979e48bdeddb60a0adef33df0b",
+        "source": "https://huggingface.co/openai/whisper-base.en/resolve/911407f4214e0e1d82085af863093ec0b66f9cd6/vocab.json",
+        "bodyRetrieved": false,
+        "metadataNotContentVerification": true
+      }
+    ],
+    "totalBytes": 150646247,
+    "convertedBundleBytes": 146707731,
+    "tokenizerBytes": 3938516,
+    "license": "MIT runtime/converted card/upstream weights+tokenizer; vendored Apache-2.0 Hub/Tokenizers; redistribution not cleared",
+    "offlineGate": "loadTokenizer falls back to Hub on absent/invalid tokenizer; download:false alone is insufficient"
+  }
+]

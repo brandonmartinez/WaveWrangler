@@ -1,0 +1,161 @@
+{
+  "lane": "C-Pipeline",
+  "disposition": "finite-source-regeneration-passed; speech-documentary-only; no-adoption",
+  "generatedUTC": "2026-10-04T21:32:29.823123+00:00",
+  "correctionCyclesUsed": 2,
+  "cycle3Used": false,
+  "native": {
+    "compilePassed": true,
+    "target": "arm64-apple-macosx26.0",
+    "installedSDK": "27.0",
+    "Swift": "6.4 language-mode6",
+    "nativeExecution": 0,
+    "runtimeASR": 0,
+    "assetLocaleQueries": 0,
+    "modelBodyDownloads": 0
+  },
+  "host": {
+    "macOS": "27.0.1",
+    "build": "26A434",
+    "architecture": "arm64",
+    "physicalRAMbytes": 137438953472,
+    "macOS26or16GBQualified": false
+  },
+  "reconstruction": {
+    "distinctCalibrationCases": 3,
+    "calibrationObservations": 6,
+    "finalCalibrationRepeatedSame3Cases": true,
+    "distinctHoldoutSourceCases": 7,
+    "holdoutNamedObservations": 34,
+    "unexpectedFailures": 0,
+    "groups": {
+      "source-regeneration": {
+        "namedObservations": 7,
+        "passed": 7
+      },
+      "restoration": {
+        "namedObservations": 7,
+        "passed": 7
+      },
+      "editing": {
+        "namedObservations": 4,
+        "passed": 4
+      },
+      "refusal": {
+        "namedObservations": 13,
+        "passed": 13
+      },
+      "negative-control": {
+        "namedObservations": 3,
+        "passed": 3
+      }
+    },
+    "maxIndependentOracleErrorPCMsteps": 1,
+    "sourceAndInputBytesUnchanged": true,
+    "frozenInputsAndCodeUnchanged": true,
+    "freezeUTC": "2026-10-04T21:28:36.858708+00:00",
+    "holdoutStartUTC": "2026-10-04T21:28:36.919884+00:00",
+    "freezeBeforeHoldout": true,
+    "defaultOutput": "48000 Hz, signed little-endian 24-bit mono RIFF PCM WAV, origin0, no dither",
+    "alternateOutput": "32000 Hz, signed little-endian 16-bit mono RIFF PCM WAV",
+    "inputPCM": "new immutable 32000 mono/44100 stereo 24-bit WAV; optional 48000 backups",
+    "controls": [
+      {
+        "case": "independent-ripple-one-frame-B",
+        "faultyCandidateOutcome": "FAILED_EXPECTED",
+        "maxErrorPCMsteps": 767348
+      },
+      {
+        "case": "doubled-edge-fade-A",
+        "faultyCandidateOutcome": "FAILED_EXPECTED",
+        "maxErrorPCMsteps": 53648
+      },
+      {
+        "case": "reject-all-or-silent-output",
+        "faultyCandidateOutcome": "FAILED_EXPECTED",
+        "maxErrorPCMsteps": 547057
+      }
+    ],
+    "caseFrames": {
+      "mixed-rate-halfup-shortening": 4601,
+      "protected-overlap-speaker-lift": 4800,
+      "adjacent-overlapping-cuts-one-union": 4500,
+      "repeated-source-gaps-two-modes": 4689,
+      "late-speaker-zero-origin-padding": 4680,
+      "editable-boundary-mode-restore": 4601,
+      "configurable-32k-16bit": 3069
+    },
+    "interoperability": "UNPROVED-no-DAW-import",
+    "speechAccuracy": "UNTESTED-synthetic-waveforms-only",
+    "noDitherPreviewExport": "offline expected oracle vs encoded renderer within1step, not native preview"
+  },
+  "artifacts": [
+    {
+      "id": "CPP-BASE-EN",
+      "bytes": 147964211,
+      "files": 1
+    },
+    {
+      "id": "KIT-BASE-EN",
+      "bytes": 150646247,
+      "files": 29
+    }
+  ],
+  "sourceLedgers": [
+    {
+      "path": "raw/source-ledger.json",
+      "rows": 39,
+      "unknownRows": 5
+    },
+    {
+      "path": "raw/completion-source-ledger.json",
+      "rows": 15,
+      "unknownRows": 0
+    },
+    {
+      "path": "raw/cycle2-source-ledger.json",
+      "rows": 10,
+      "unknownRows": 0
+    }
+  ],
+  "compilerProcessAccounting": {
+    "compilerSlotsUsed": 1,
+    "swiftCompileInvocations": 1,
+    "serialTestInvocations": 3,
+    "maxConcurrentTests": 1,
+    "helpers": 0,
+    "remainingOwnedProcesses": 0
+  },
+  "unresolved": [
+    "native device/en-US availability and installed assets not queried",
+    "native asset exact size/version/hash cannot be pinned through documented AssetInventory",
+    "WhisperKit tokenizer Hub fallback must fail closed before offline runtime evaluation",
+    "conversion provenance, complete chosen-build BOM/notices/redistribution clearance",
+    "real English accuracy/word coverage/filler safety/listening",
+    "macOS26/16GB thermal/long-load and system-service memory",
+    "bandlimited SRC/native preview/concurrency/fault-atomic export",
+    "DAW target/version import/restoration interoperability"
+  ],
+  "nextActions": [
+    {
+      "owner": "Pipeline",
+      "date": "2026-10-05",
+      "action": "Present exact two download allowlists to Brandon; execute none without permission"
+    },
+    {
+      "owner": "Pipeline + Mac",
+      "date": "2026-10-05",
+      "action": "Scope native en-US device metadata-only consent separately from unknown-size provisioning/ASR"
+    },
+    {
+      "owner": "Pipeline + Mac",
+      "date": "2026-10-05",
+      "action": "Plan fail-closed local tokenizer gate and pinned library-only BOM before any WhisperKit runtime"
+    },
+    {
+      "owner": "Lead + Alignment + Design",
+      "date": "2026-10-05",
+      "action": "Reconcile neutral record/fade/time-map semantics with lanes; retain partial statuses/no M1 gate expansion"
+    }
+  ]
+}

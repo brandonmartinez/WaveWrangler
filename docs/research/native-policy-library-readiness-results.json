@@ -1,0 +1,251 @@
+{
+  "lane": "A/Mac",
+  "status": "finite evidence complete WITH LIMITS; no adoption or whole closure",
+  "reported_at": "2026-10-04T21:33:49.398052+00:00",
+  "root": "<research-artifacts>/research/parallel-readiness-20261004/mac",
+  "versions": {
+    "observed_at": "2026-10-04T21:28:17.788012+00:00",
+    "python": "3.14.8 (main, Sep 30 2026, 17:55:09) [Clang 21.0.0 (clang-2100.3.34.2)]",
+    "host": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "RAM_bytes": "137438953472",
+    "sw_vers": "ProductName:\t\tmacOS\nProductVersion:\t\t27.0.1\nBuildVersion:\t\t26A434\n",
+    "swift": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0\n",
+    "SDK": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+  },
+  "correction_cycles_used": 3,
+  "cycles": {
+    "1": "compile setup failed: NSDocument nonisolated read vs actor-isolated envelope; no native test process",
+    "2": "Mutex<Data> correction; native race paired case passed on first setup; local 52/53, L26 comparator wrongly expected successful Save",
+    "3": "candidate/truth/native unchanged; L26 comparator fixed, local 53/53 overlap; public docs expose too-late delegate, corrected BEFORE-super.terminate module compiled; no native rerun"
+  },
+  "local": {
+    "cases": 53,
+    "pass": 53,
+    "unexpected_fail": 0,
+    "accepted": 9,
+    "recovered_prior": 9,
+    "expected_refusal": 35,
+    "counts_are_cases_not_assertions": true,
+    "families": {
+      "canonical-library": {
+        "cases": 26,
+        "pass": 26,
+        "refuse": 14,
+        "prior_read_only": 9
+      },
+      "history": {
+        "cases": 16,
+        "pass": 16,
+        "refuse": 13,
+        "prior_read_only": 0
+      },
+      "migration": {
+        "cases": 4,
+        "pass": 4,
+        "refuse": 3,
+        "prior_read_only": 0
+      },
+      "reference-model": {
+        "cases": 7,
+        "pass": 7,
+        "refuse": 5,
+        "prior_read_only": 0
+      }
+    },
+    "initial_cycle2": {
+      "cases": 53,
+      "pass": 52,
+      "unexpected_fail": 1
+    },
+    "final_cycle3_overlaps_cycle2": true,
+    "unique_case_ids": 53
+  },
+  "native_scheduling": {
+    "attempt": 1,
+    "dirty_at_OFF": true,
+    "errors": [],
+    "OFF_autosave_entries": 1,
+    "OFF_complete_original_equal": true,
+    "OFF_dirty_retained": true,
+    "OFF_original_bytes_equal": true,
+    "OFF_real_periodic_callbacks": 1,
+    "ON_complete_dirty_equal": true,
+    "ON_edit_to_observed_disk_seconds": 0.507011791,
+    "ON_real_periodic_callbacks": 1,
+    "ON_within_2s": true,
+    "race_established": true,
+    "schedule_count_at_OFF": 1,
+    "pair_case_count": 1,
+    "native_processes": 1,
+    "native_periodic_callbacks": 2,
+    "superclass_autosave_completions": 1,
+    "OFF_subclass_nil_callback": 1,
+    "ON_final_sha256": "24a089572b7ced81c0b1e5dd18cd0c89b49c5eae29301286b0c977f3c328ab64",
+    "OFF_original_sha256": "d3d71d41a843a8741e15efd43dbd847b3e7689ccd86f1016e43631ab253f521f",
+    "schedule_to_OFF_seconds": 0.009692375,
+    "OFF_to_periodic_seconds": 0.349962209,
+    "native_versions_disabled": true,
+    "stock_writeSafely": true,
+    "explicit_Save_executed": false
+  },
+  "references": {
+    "model_cases": 7,
+    "native_plain_initial_roundtrip": "observed correct bytes, stale false",
+    "native_plain_move_plus_replacement": "FAILED identity candidate: resolves same-name replacement, stale true; generated original unchanged",
+    "scoped_access": "API compiled only; grant/sandbox/regrant/denial/moved-scoped behavior NOT EXECUTED",
+    "portable_vs_device_local": "model records separated; native cross-device NOT EXECUTED"
+  },
+  "early_Quit": {
+    "cycle2_late_delegate": "REJECTED by primary documentation ordering; source retained as counterexample",
+    "cycle3_before_super_terminate": "compile-only correction; module success",
+    "Save_Cancel": "documentary decision mapping, not an executed sheet or simulated/native Quit test",
+    "Dock_system_unsaved_Quit": "NOT EXECUTED"
+  },
+  "SQLite": "excluded from Lane A candidates; historical constructor-before-fallback defect NOT fixed or re-tested",
+  "failed_controls": {
+    "simulated_unsafe_values": 4,
+    "actual_plain_bookmark_identity_counterexample": 1,
+    "compile_setup_failures": 1,
+    "cycle2_comparator_failure": 1
+  },
+  "freeze": {
+    "cycle2_source_snapshot_files_retained": 21,
+    "cycle3_frozen_files": 21,
+    "candidate_unchanged_from_cycle2": true,
+    "archive2_verified": true,
+    "cycle3_verified": true,
+    "native_runtime_and_ledger_immutable_in_cycle3": true
+  },
+  "process_accounting": {
+    "compiler_invocations": 3,
+    "compiler_returncodes": [
+      1,
+      0,
+      0
+    ],
+    "maximum_concurrent_compilers_this_lane": 1,
+    "maximum_native_test_children": 1,
+    "native_child_PID": 23251,
+    "native_returncode": 0,
+    "native_pid_absent_final_probe": true,
+    "native_open_documents_at_end": 0,
+    "native_children_reaped": true,
+    "active_owned_children": 0,
+    "helpers": 0,
+    "global_concurrency": "other lane processes not inspected; coordinator owns total cap"
+  },
+  "commands": {
+    "1": {
+      "record": "raw/compile-cycle1.command.json",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swiftc",
+        "-swift-version",
+        "5",
+        "-target",
+        "arm64-apple-macos26.0",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+        "-module-cache-path",
+        "<research-artifacts>/research/parallel-readiness-20261004/mac/scratch/cache/swift",
+        "-parse-as-library",
+        "<research-artifacts>/research/parallel-readiness-20261004/mac/probes/NativeLane.swift",
+        "-o",
+        "<research-artifacts>/research/parallel-readiness-20261004/mac/scratch/native-cycle1"
+      ]
+    },
+    "2": {
+      "record": "raw/compile-cycle2.command.json",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swiftc",
+        "-swift-version",
+        "5",
+        "-target",
+        "arm64-apple-macos26.0",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+        "-module-cache-path",
+        "<research-artifacts>/research/parallel-readiness-20261004/mac/scratch/cache/swift",
+        "-parse-as-library",
+        "<research-artifacts>/research/parallel-readiness-20261004/mac/probes/NativeLane.swift",
+        "-o",
+        "<research-artifacts>/research/parallel-readiness-20261004/mac/scratch/native-cycle2"
+      ]
+    },
+    "3": {
+      "record": "raw/compile-cycle3.command.json",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swiftc",
+        "-swift-version",
+        "5",
+        "-target",
+        "arm64-apple-macos26.0",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+        "-module-cache-path",
+        "<research-artifacts>/research/parallel-readiness-20261004/mac/scratch/cache/swift",
+        "-parse-as-library",
+        "-emit-module",
+        "-module-name",
+        "OwnedBeforeNativeQuit",
+        "<research-artifacts>/research/parallel-readiness-20261004/mac/probes/BeforeNativeQuit.swift",
+        "-o",
+        "<research-artifacts>/research/parallel-readiness-20261004/mac/scratch/BeforeNativeQuit.swiftmodule"
+      ]
+    }
+  },
+  "primary_sources": [
+    {
+      "url": "https://developer.apple.com/tutorials/data/documentation/appkit/nsapplication/terminate(_:).json",
+      "retrieved_at": "2026-10-04T21:33:49.294542+00:00",
+      "path": "raw/apple-terminate.json",
+      "sha256": "dfb2d5ef87a221f9347de9b81e39026c50b33290bf64157ce76371e0e4e8e5f9"
+    },
+    {
+      "url": "https://developer.apple.com/tutorials/data/documentation/appkit/nsapplicationdelegate/applicationshouldterminate(_:).json",
+      "retrieved_at": "2026-10-04T21:33:49.393982+00:00",
+      "path": "raw/apple-applicationShouldTerminate.json",
+      "sha256": "6a9c7c6668050ef4fdddf26a023679e29f979d13ced3a194c9fd47a84d687634"
+    },
+    {
+      "installed_SDK": "raw/sdk-primary-evidence.json"
+    }
+  ],
+  "provider": {
+    "status": "PLAN ONLY; NOT EXECUTED",
+    "exact_plan": "PROVIDER_PLAN.json",
+    "provider": "iCloud Drive"
+  },
+  "unchanged_gates": [
+    "cloud canonical/provider/offline/two-machine",
+    "GUI native Save/Cancel/sheets/Dock/system Quit/VoiceOver",
+    "sandbox scoped grants/denial/regrant",
+    "in-flight publication OFF race/concurrent writers/real faults",
+    "macOS26 runtime/16GB",
+    "actual source identity/media/ASR/export",
+    "production/framework/backend adoption"
+  ],
+  "backlog": {
+    "evidence_only": [
+      "WW-003",
+      "WW-005",
+      "WW-006",
+      "WW-008",
+      "WW-049"
+    ],
+    "no_status_or_graph_changes": true,
+    "stable_IDs": 51,
+    "edges": 196,
+    "documentary_completed": 3,
+    "partial": 14,
+    "pending": 34
+  },
+  "next_action": {
+    "owner": "Mac",
+    "integration": "Lead",
+    "review_date": "2026-10-05",
+    "action": "review native chronology and corrected pre-terminate ordering; decide exact scoped/provider/GUI consent without adoption"
+  }
+}
