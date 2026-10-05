@@ -119,7 +119,6 @@ final class LibraryDocumentStore {
     /// "Try Again": apply queued edits now if the location is reachable.
     func retryPendingEdits() async {
         lastPendingOutcome = await store.retryPendingEdits()
-        if case let .combined(_, summary) = lastPendingOutcome { lastMergeSummary = summary }
         await refresh()
     }
 

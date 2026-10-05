@@ -379,9 +379,13 @@ public struct PendingLibraryEdits: Sendable, Equatable, Codable {
     public let lastQueuedAt: Date
     /// The whole edited library as a validated canonical envelope (decode with `LibraryCoder.library`).
     public let snapshot: Data
+    /// The exact bytes of the library the edits were made on, so replay can tell this Mac's changes apart
+    /// (three-way merge). `nil` if no verified library was known.
+    public let baseSnapshot: Data?
 
-    public init(base: RevisionFingerprint?, editCount: Int, firstQueuedAt: Date, lastQueuedAt: Date, snapshot: Data) {
+    public init(base: RevisionFingerprint?, baseSnapshot: Data?, editCount: Int, firstQueuedAt: Date, lastQueuedAt: Date, snapshot: Data) {
         self.base = base
+        self.baseSnapshot = baseSnapshot
         self.editCount = editCount
         self.firstQueuedAt = Self.wholeMilliseconds(firstQueuedAt)
         self.lastQueuedAt = Self.wholeMilliseconds(lastQueuedAt)

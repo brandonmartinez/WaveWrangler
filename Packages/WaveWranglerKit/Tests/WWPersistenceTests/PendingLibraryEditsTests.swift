@@ -84,13 +84,14 @@ struct PendingLibraryEditsTests {
 
         // Reconnection on load applies automatically.
         _ = await store.load()
-        guard case let .combined(_, summary) = await store.lastPendingOutcome else { Issue.record("not combined"); return }
+        guard case .merged = await store.lastPendingOutcome else { Issue.record("not merged"); return }
         let combined = try #require(await store.library)
         let names = combined.collections.map(\.name)
         #expect(names.contains("Theirs") && names.contains("Mine"))
-        #expect(names.contains("\(other.collections[0].name) (from this Mac)"), "differing order kept as a separate copy")
-        #expect(summary.collectionsKeptAsCopies == 1 && summary.collectionsAdded == 1)
+        #expect(combined.collections[0].showIDs == other.collections[0].showIDs, "the other Mac's reorder is kept (this Mac didn't touch it)")
         #expect(await store.pendingEditCount == 0)
+        let onDisk = try LibraryCoder.library.decode(Data(contentsOf: offline.libraryFile)).payload
+        #expect(onDisk == combined)
     }
 
     @Test func newerFormatAtReconnectKeepsQueueAndFile() async throws {
@@ -135,6 +136,85 @@ struct PendingLibraryEditsTests {
         guard case .failed(.readOnly) = try await store.update(Self.addCollection("X")) else { Issue.record("queued over damage"); return }
         #expect(await store.retryPendingEdits() == .journalDamaged)
         #expect(try Data(contentsOf: journal) == Data("{damaged".utf8))
+    }
+
+    /// Review repro: alias "Old" on disk, renamed to "New" while offline, recents published elsewhere meanwhile.
+    @Test func queuedAliasRenameSurvivesConcurrentRecentsPublish() async throws {
+        let offline = try await OfflineRig()
+        let show = offline.shows[1].show.id
+        let setup = offline.rig.store()
+        _ = await setup.load()
+        _ = try await setup.update { var l = $0; l.entries[l.entries.firstIndex { $0.showID == show }!].alias = "Old"; return l }
+        try offline.goOffline()
+        let store = offline.rig.store()
+        _ = await store.load()
+        #expect(try await store.update { var l = $0; l.entries[l.entries.firstIndex { $0.showID == show }!].alias = "New"; return l } == .queued(pendingEdits: 1))
+        // Another Mac publishes a recents change.
+        let file = offline.away.appending(path: LibraryLocationSetting.defaultFileName)
+        let bytes = try Data(contentsOf: file)
+        let theirs = try LibraryCoder.library.decode(bytes)
+        let other = LibraryReconciler.recordingRecent(offline.shows[3].show.id, in: theirs.payload)
+        _ = try DocumentPublisher(coder: LibraryCoder.library, recovery: nil)
+            .publish(other, revision: theirs.revision + 1, key: .library, to: file, target: .inPlace(expectedBase: RevisionFingerprint(of: bytes)))
+        try offline.comeBack()
+
+        guard case .merged = await store.retryPendingEdits() else { Issue.record("expected merge"); return }
+        let onDisk = try LibraryCoder.library.decode(Data(contentsOf: offline.libraryFile)).payload
+        #expect(onDisk.entries.first { $0.showID == show }?.alias == "New", "the queued rename is present")
+        #expect(onDisk.recentShowIDs.first == offline.shows[3].show.id, "the other Mac's recents change is kept")
+        #expect(await store.pendingEditCount == 0)
+    }
+
+    @Test func queuedRecentRemovalIsCarried() async throws {
+        let offline = try await OfflineRig()
+        try offline.goOffline()
+        let store = offline.rig.store()
+        _ = await store.load()
+        let removed = try #require(await store.library?.recentShowIDs.first)
+        _ = try await store.update { var l = $0; l.recentShowIDs.removeAll { $0 == removed }; return l }
+        let file = offline.away.appending(path: LibraryLocationSetting.defaultFileName)
+        let bytes = try Data(contentsOf: file)
+        let theirs = try LibraryCoder.library.decode(bytes)
+        var other = theirs.payload
+        other.collections.append(LibraryCollection(name: "Elsewhere"))
+        _ = try DocumentPublisher(coder: LibraryCoder.library, recovery: nil)
+            .publish(other, revision: theirs.revision + 1, key: .library, to: file, target: .inPlace(expectedBase: RevisionFingerprint(of: bytes)))
+        try offline.comeBack()
+        guard case .merged = await store.retryPendingEdits() else { Issue.record("expected merge"); return }
+        let onDisk = try LibraryCoder.library.decode(Data(contentsOf: offline.libraryFile)).payload
+        #expect(!onDisk.recentShowIDs.contains(removed))
+        #expect(onDisk.collections.contains { $0.name == "Elsewhere" })
+    }
+
+    @Test func uncarriableQueuedChangeKeepsJournalAndRaisesL4() async throws {
+        let offline = try await OfflineRig()
+        try offline.goOffline()
+        let store = offline.rig.store()
+        _ = await store.load()
+        // Remove "Archive" here while another Mac changes its members.
+        _ = try await store.update { var l = $0; l.collections.removeAll { $0.name == "Archive" }; return l }
+        let file = offline.away.appending(path: LibraryLocationSetting.defaultFileName)
+        let bytes = try Data(contentsOf: file)
+        let theirs = try LibraryCoder.library.decode(bytes)
+        var other = theirs.payload
+        other.collections[other.collections.firstIndex { $0.name == "Archive" }!].showIDs.append(offline.shows[0].show.id)
+        _ = try DocumentPublisher(coder: LibraryCoder.library, recovery: nil)
+            .publish(other, revision: theirs.revision + 1, key: .library, to: file, target: .inPlace(expectedBase: RevisionFingerprint(of: bytes)))
+        try offline.comeBack()
+        let diskBefore = try Data(contentsOf: offline.libraryFile)
+
+        guard case let .needsDecision(problems) = await store.retryPendingEdits() else { Issue.record("expected L4"); return }
+        #expect(problems.contains { $0.contains("Archive") })
+        #expect(await store.pendingEditCount == 1, "journal kept")
+        #expect(await store.levelState == .changedElsewhere)
+        #expect(try Data(contentsOf: offline.libraryFile) == diskBefore, "nothing overwritten")
+        guard case .failed(.readOnly) = try await store.update(Self.addCollection("Blocked")) else { Issue.record("L4 must be read-only"); return }
+
+        // "Use Other Mac's Version": the queued edits are kept as a backup copy, then the journal is retired.
+        _ = await store.resolveConflictUsingOtherVersion()
+        #expect(await store.pendingEditCount == 0)
+        #expect(try offline.rig.recovery.conflictCandidates(for: .library).isEmpty == false)
+        #expect(await store.library?.collections.contains { $0.name == "Archive" } == true)
     }
 
     /// Interrupting the replay at every library boundary never loses a queued edit: the journal stays until a

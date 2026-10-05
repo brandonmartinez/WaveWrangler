@@ -43,8 +43,12 @@ public enum PendingEditsOutcome: Sendable, Equatable {
     case nothingPending
     /// The library on disk was unchanged since the edits were queued: published as edited.
     case applied(PublicationReceipt)
-    /// The library on disk had diverged: combined with ST-36 (nothing dropped) and published.
-    case combined(PublicationReceipt, LibraryMergeSummary)
+    /// The library on disk had diverged: every queued change was merged field by field onto it (this Mac's
+    /// queued edit wins for the same field), verified present, and published.
+    case merged(PublicationReceipt)
+    /// Some queued changes cannot be carried onto the diverged library. The journal is kept and the library
+    /// is in L4 ("changed on another Mac") until the user combines or chooses a version.
+    case needsDecision([String])
     /// The library on disk already contained every queued edit; the journal was cleared.
     case alreadyIncluded
     /// Still unreachable or needing permission; the edits stay queued.
@@ -84,8 +88,9 @@ public actor LibraryStore {
     public private(set) var pendingEdits: PendingLibraryEdits?
     /// True when the journal exists but cannot be read; it is reported and never overwritten.
     public private(set) var pendingJournalDamaged = false
-    /// The exact library identity behind the read-only prior shown while unreachable.
+    /// The exact library identity (and bytes) behind the verified library shown while unreachable.
     private var displayedBase: RevisionFingerprint?
+    private var displayedBaseBytes: Data?
 
     /// "<n> library changes not saved yet".
     public var pendingEditCount: Int { pendingEdits?.editCount ?? 0 }
@@ -128,7 +133,7 @@ public actor LibraryStore {
 
     /// Loads the library; if queued edits exist and the location is reachable, applies them first.
     @discardableResult
-    public func load() async -> LibraryLoadOutcome {
+    private func loadUnlocked() async -> LibraryLoadOutcome {
         lastLoad = await performLoad()
         if pendingEdits != nil, lastLoad == .created || { if case .ready = lastLoad { true } else { false } }() {
             lastPendingOutcome = await applyPendingEdits()
@@ -140,8 +145,7 @@ public actor LibraryStore {
     public private(set) var lastPendingOutcome: PendingEditsOutcome?
 
     /// "Try Again" / periodic retry (the app retries at most every 30 s while edits are waiting).
-    @discardableResult
-    public func retryPendingEdits() async -> PendingEditsOutcome {
+    private func retryPendingEditsUnlocked() async -> PendingEditsOutcome {
         guard pendingEdits != nil || pendingJournalDamaged else { return .nothingPending }
         lastLoad = await performLoad()
         let outcome: PendingEditsOutcome
@@ -187,6 +191,7 @@ public actor LibraryStore {
     private func loadFromLocation() async -> LibraryLoadOutcome {
         hasConflict = false
         displayedBase = nil
+        displayedBaseBytes = nil
         session = nil
         library = nil
         index = nil
@@ -230,6 +235,7 @@ public actor LibraryStore {
         guard let prior = opener.candidates(url: nil, key: .library).first else { return .unavailable(reason: reason) }
         library = prior.document.payload
         displayedBase = prior.checkpoint.fingerprint
+        displayedBaseBytes = try? recovery.bytes(of: prior.checkpoint)
         index = LibraryIndex.build(from: prior.document.payload, libraryDigest: prior.checkpoint.fingerprint.byteDigest)
         return .unavailableShowingPrior(reason: reason, revision: prior.document.revision)
     }
@@ -251,8 +257,7 @@ public actor LibraryStore {
     /// Applies a user library edit and publishes it — or, while the location is unreachable or needs
     /// permission (L2/L3), queues it in the device-local journal. On a publication failure the in-memory
     /// library keeps the edit (still unsaved) and the error is returned; nothing is acknowledged.
-    @discardableResult
-    public func update(_ transform: (LibraryModel) throws -> LibraryModel) async throws -> LibraryEditResult {
+    private func updateUnlocked(_ transform: (LibraryModel) throws -> LibraryModel) async throws -> LibraryEditResult {
         guard let current = library else { return .failed(.readOnly("The library is not loaded.")) }
         guard let session else {
             switch lastLoad {
@@ -291,7 +296,8 @@ public actor LibraryStore {
         }
         let now = Date()
         let record = PendingLibraryEdits(
-            base: base, editCount: (pendingEdits?.editCount ?? 0) + 1,
+            base: base, baseSnapshot: pendingEdits?.baseSnapshot ?? displayedBaseBytes,
+            editCount: (pendingEdits?.editCount ?? 0) + 1,
             firstQueuedAt: pendingEdits?.firstQueuedAt ?? now, lastQueuedAt: now, snapshot: snapshot
         )
         do {
@@ -313,13 +319,23 @@ public actor LibraryStore {
         }
         guard let queued = try? publisher.coder.decode(pending.snapshot).payload else { return .journalDamaged }
         let result: LibraryModel
-        var summary: LibraryMergeSummary?
         if let base = pending.base, base.byteDigest == diskBase.byteDigest {
             result = queued
         } else {
-            let combined = LibraryMerge.combineWithSummary(thisMac: queued, into: onDisk)
-            result = combined.library
-            summary = combined.summary
+            // Diverged: three-way merge of this Mac's queued changes onto the library on disk.
+            let base = pending.baseSnapshot.flatMap { try? publisher.coder.decode($0).payload } ?? LibraryModel()
+            let merged = QueuedLibraryEdits.apply(base: base, mine: queued, onto: onDisk)
+            var problems = merged.uncarried + QueuedLibraryEdits.missingChanges(base: base, mine: queued, in: merged.library)
+            if case let .invalidPayload(issues)? = Self.validationError(of: merged.library, coder: publisher.coder) {
+                problems += issues.map(\.description)
+            }
+            guard problems.isEmpty else {
+                // Never drop a queued change: keep the journal and let the user decide (L4).
+                hasConflict = true
+                library = queued
+                return .needsDecision(problems)
+            }
+            result = merged.library
         }
         guard result != onDisk else {
             try? recovery.clearPendingLibraryEdits()
@@ -333,10 +349,19 @@ public actor LibraryStore {
             // Only now, with every queued edit verified on disk, is the journal cleared.
             try? recovery.clearPendingLibraryEdits()
             pendingEdits = nil
-            return summary.map { .combined(receipt, $0) } ?? .applied(receipt)
+            return pending.base?.byteDigest == diskBase.byteDigest ? .applied(receipt) : .merged(receipt)
         case let .failure(error):
             if case .conflict = error { hasConflict = true }
             return .refused(error)
+        }
+    }
+
+    private static func validationError(of library: LibraryModel, coder: LibraryCoder) -> PersistenceError? {
+        do {
+            _ = try coder.encode(library, revision: 1)
+            return nil
+        } catch {
+            return error
         }
     }
 
@@ -358,7 +383,7 @@ public actor LibraryStore {
 
     /// L4 "Combine (Keep Everything)": combines this Mac's unsaved library into the version on disk with
     /// ST-36 and publishes the result against that exact version. Both inputs stay unchanged on failure.
-    public func resolveConflictByCombining() async -> Result<LibraryMergeSummary, PublicationError> {
+    private func resolveConflictByCombiningUnlocked() async -> Result<LibraryMergeSummary, PublicationError> {
         guard let mine = library, let url = currentLibraryURL() else { return .failure(.readOnly("The library is not loaded.")) }
         let ops = publisher.ops
         let bytes: Data
@@ -383,40 +408,48 @@ public actor LibraryStore {
             return .failure(.acknowledgementUncertain("\(error)"))
         }
         hasConflict = false
-        await load()
+        // Every queued edit is in the combined library (ST-36 keeps everything).
+        if pendingEdits != nil {
+            try? recovery.clearPendingLibraryEdits()
+            pendingEdits = nil
+        }
+        await loadUnlocked()
         return .success(summary)
     }
 
     /// L4 "Use Other Mac's Version": this Mac's version is kept as a backup copy in the recovery store, then
     /// the on-disk version is loaded.
-    @discardableResult
-    public func resolveConflictUsingOtherVersion() async -> LibraryLoadOutcome {
+    private func resolveConflictUsingOtherVersionUnlocked() async -> LibraryLoadOutcome {
         if let mine = library, let bytes = try? publisher.coder.encode(mine, revision: max(1, (await session?.revision) ?? 1)) {
             _ = try? recovery.preserveConflictCandidate(bytes, for: .library)
         }
+        if let pendingEdits {
+            // The queued edits stay available as a backup copy before the journal is retired.
+            _ = try? recovery.preserveConflictCandidate(pendingEdits.snapshot, for: .library)
+            try? recovery.clearPendingLibraryEdits()
+            self.pendingEdits = nil
+        }
         hasConflict = false
-        return await load()
+        return await loadUnlocked()
     }
 
     /// Applies reconciliation observations; publishes only if anything changed. Entries are never dropped.
     /// Automatic reconciliation is not queued while the location is unreachable (only user edits are).
-    @discardableResult
-    public func reconcile(_ observations: [ShowID: ShowObservation], at date: Date = Date()) async -> LibraryEditResult? {
+    private func reconcileUnlocked(_ observations: [ShowID: ShowObservation], at date: Date) async -> LibraryEditResult? {
         guard let library, session != nil else { return nil }
         let reconciled = LibraryReconciler.reconcile(library, observations: observations, at: date)
         guard reconciled != library else { return nil }
-        return try? await update { _ in reconciled }
+        return try? await updateUnlocked { _ in reconciled }
     }
 
     /// Records a verified show publication (C3 step 8). Never called for failed/uncertain saves. Queued
     /// while the library location is unreachable.
-    @discardableResult
-    public func acknowledgeShowPublication(_ showID: ShowID, title: String, publication: PublicationStamp) async -> LibraryEditResult? {
-        try? await update { LibraryReconciler.acknowledging(showID, title: title, publication: publication, in: $0) }
+    private func acknowledgeShowPublicationUnlocked(_ showID: ShowID, title: String, publication: PublicationStamp) async -> LibraryEditResult? {
+        try? await updateUnlocked { LibraryReconciler.acknowledging(showID, title: title, publication: publication, in: $0) }
     }
 
-    public func recordRecent(_ showID: ShowID) async {
-        _ = try? await update { LibraryReconciler.recordingRecent(showID, in: $0) }
+    private func recordRecentUnlocked(_ showID: ShowID) async {
+        _ = try? await updateUnlocked { LibraryReconciler.recordingRecent(showID, in: $0) }
     }
 
     public var saveStatus: DocumentSaveStatus? {
@@ -427,7 +460,7 @@ public actor LibraryStore {
 
     /// Publishes a validated checkpoint as a **new** library file next to the damaged/missing one, switches to
     /// it and leaves the suspect file untouched.
-    public func recoverAsNewCopy(revision: Int) async -> Result<PublicationReceipt, PublicationError> {
+    private func recoverAsNewCopyUnlocked(revision: Int) async -> Result<PublicationReceipt, PublicationError> {
         guard let folder = resolveFolder() else { return .failure(.failed(stage: .candidateValidated, kind: .unavailable, detail: "location unavailable")) }
         let current = folder.appending(path: settings.load().fileName)
         guard let candidate = opener.candidates(url: current, key: .library).first(where: { $0.document.revision == revision }) else {
@@ -441,7 +474,7 @@ public actor LibraryStore {
             var setting = settings.load()
             setting.fileName = name
             try? settings.save(setting)
-            await load()
+            await loadUnlocked()
         }
         return result
     }
@@ -451,12 +484,12 @@ public actor LibraryStore {
     /// Copies the library into `folder`, verifies the copy independently, then switches the setting. The
     /// previous copy is **kept** as a backup and never deleted. An identical copy already there is adopted;
     /// a different library there is never overwritten (`.destinationHasLibrary` → `useLibrary(in:)` or cancel).
-    public func moveLibrary(to folder: URL) async -> Result<LibraryMoveOutcome, PublicationError> {
+    private func moveLibraryUnlocked(to folder: URL) async -> Result<LibraryMoveOutcome, PublicationError> {
         await relocate(to: folder, place: { try .folder(bookmark: self.bookmarks.bookmark(for: folder), displayPath: folder.path) })
     }
 
     /// Moves the library back into the app container (same copy-verify-switch rules).
-    public func moveLibraryToAppContainer() async -> Result<LibraryMoveOutcome, PublicationError> {
+    private func moveLibraryToAppContainerUnlocked() async -> Result<LibraryMoveOutcome, PublicationError> {
         await relocate(to: containerFolder, place: { .appContainer })
     }
 
@@ -464,7 +497,7 @@ public actor LibraryStore {
     /// entries including unavailable ones, and recents — nothing dropped), publishes the combined library
     /// there with the full protocol, then switches to it. If the target is unreachable, needs permission or
     /// has a newer format, nothing is written. The previous location is kept as a backup and never deleted.
-    public func useLibrary(in folder: URL) async -> Result<LibraryMoveOutcome, PublicationError> {
+    private func useLibraryUnlocked(in folder: URL) async -> Result<LibraryMoveOutcome, PublicationError> {
         guard let mine = library else { return .failure(.readOnly("The library must be loaded first.")) }
         let previous = currentLibraryURL()
         let isContainer = folder.standardizedFileURL == containerFolder.standardizedFileURL
@@ -571,8 +604,89 @@ public actor LibraryStore {
         } catch {
             return .failure(.failed(stage: .readBackVerified, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
         }
-        await load()
+        await loadUnlocked()
         return .success(outcome)
+    }
+
+    // MARK: - Serialized public operations
+
+    /// Every public operation runs its whole read → transform → publish → adopt sequence under this FIFO
+    /// gate, so actor reentrancy at an `await` can never interleave two sequences on stale state.
+    private var gateBusy = false
+    private var gateWaiters: [CheckedContinuation<Void, Never>] = []
+
+    private func exclusively<T>(_ body: () async throws -> T) async rethrows -> T {
+        while gateBusy {
+            await withCheckedContinuation { gateWaiters.append($0) }
+        }
+        gateBusy = true
+        defer {
+            gateBusy = false
+            if !gateWaiters.isEmpty { gateWaiters.removeFirst().resume() }
+        }
+        return try await body()
+    }
+
+    /// Loads the library; if queued edits exist and the location is reachable, applies them first.
+    @discardableResult
+    public func load() async -> LibraryLoadOutcome {
+        await exclusively { await loadUnlocked() }
+    }
+
+    /// "Try Again" / periodic retry (the app retries at most every 30 s while edits are waiting).
+    @discardableResult
+    public func retryPendingEdits() async -> PendingEditsOutcome {
+        await exclusively { await retryPendingEditsUnlocked() }
+    }
+
+    /// Applies a user library edit and publishes it — or, while the location is unreachable or needs
+    /// permission (L2/L3), queues it in the device-local journal. `transform` always sees the latest value.
+    @discardableResult
+    public func update(_ transform: (LibraryModel) throws -> LibraryModel) async throws -> LibraryEditResult {
+        try await exclusively { try await updateUnlocked(transform) }
+    }
+
+    /// Automatic reconciliation is not queued while the location is unreachable (only user edits are).
+    @discardableResult
+    public func reconcile(_ observations: [ShowID: ShowObservation], at date: Date = Date()) async -> LibraryEditResult? {
+        await exclusively { await reconcileUnlocked(observations, at: date) }
+    }
+
+    /// Records a verified show publication (C3 step 8). Queued while the library location is unreachable.
+    @discardableResult
+    public func acknowledgeShowPublication(_ showID: ShowID, title: String, publication: PublicationStamp) async -> LibraryEditResult? {
+        await exclusively { await acknowledgeShowPublicationUnlocked(showID, title: title, publication: publication) }
+    }
+
+    public func recordRecent(_ showID: ShowID) async {
+        await exclusively { await recordRecentUnlocked(showID) }
+    }
+
+    /// L4 "Combine (Keep Everything)" (ST-36).
+    public func resolveConflictByCombining() async -> Result<LibraryMergeSummary, PublicationError> {
+        await exclusively { await resolveConflictByCombiningUnlocked() }
+    }
+
+    /// L4 "Use Other Mac's Version"; this Mac's version (and any queued edits) are kept as a backup copy.
+    @discardableResult
+    public func resolveConflictUsingOtherVersion() async -> LibraryLoadOutcome {
+        await exclusively { await resolveConflictUsingOtherVersionUnlocked() }
+    }
+
+    public func recoverAsNewCopy(revision: Int) async -> Result<PublicationReceipt, PublicationError> {
+        await exclusively { await recoverAsNewCopyUnlocked(revision: revision) }
+    }
+
+    public func moveLibrary(to folder: URL) async -> Result<LibraryMoveOutcome, PublicationError> {
+        await exclusively { await moveLibraryUnlocked(to: folder) }
+    }
+
+    public func moveLibraryToAppContainer() async -> Result<LibraryMoveOutcome, PublicationError> {
+        await exclusively { await moveLibraryToAppContainerUnlocked() }
+    }
+
+    public func useLibrary(in folder: URL) async -> Result<LibraryMoveOutcome, PublicationError> {
+        await exclusively { await useLibraryUnlocked(in: folder) }
     }
 
     // MARK: - Internals
@@ -583,7 +697,8 @@ public actor LibraryStore {
 
     private func save(_ session: CanonicalDocumentSession<LibraryCoder>) async -> Result<PublicationReceipt, PublicationError> {
         let cache = indexCache
-        let model = library
+        // The exact value being published (the gate guarantees nothing else changes it meanwhile).
+        let model: LibraryModel? = await session.payload
         let result = await session.save(followUp: PublicationFollowUp(updateIndex: { receipt in
             if let model { try cache.store(LibraryIndex.build(from: model, libraryDigest: receipt.fingerprint.byteDigest)) }
         }))
