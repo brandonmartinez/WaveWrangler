@@ -233,3 +233,18 @@ public enum LibraryFolderURL {
         folder(ofLibraryFile: url).lastPathComponent
     }
 }
+
+/// Why the canonical library couldn't be adopted on load (used in "Couldn't read the library: …").
+/// Plain-language reasons; no internal terms (revision, checkpoint) in primary UI.
+public enum LibraryLoadWording {
+    public static let loadedWithoutContent = "the library loaded without content"
+    public static let newerFormat = "the library was saved by a newer version of WaveWrangler"
+    public static let needsMigration = "the library needs to be updated to the current format"
+
+    public static func damaged(_ reason: String) -> String { "the library is damaged (\(reason))" }
+
+    /// L2/L3 while only the last saved copy can be shown, read-only (states-and-recovery §5.1).
+    public static func unavailableShowingPrior(_ reason: String) -> String {
+        "WaveWrangler can't reach your library folder (\(reason)), so it's showing the last saved copy, read-only"
+    }
+}

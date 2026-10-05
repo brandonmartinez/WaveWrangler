@@ -52,14 +52,15 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
         return store.library ?? transform(base)
     }
 
+    /// Exhaustive on purpose (no `default`): a new persistence outcome must get explicit, honest wording.
     private static func describe(_ outcome: LibraryLoadOutcome) -> String {
         switch outcome {
-        case .ready, .created: "the library loaded without content"
-        case .refusedNewerFormat: "the library was saved by a newer version of WaveWrangler"
-        case .needsMigration: "the library needs to be updated to the current format"
-        case .damaged(let reason, _): "the library is damaged (\(reason))"
+        case .ready, .created: LibraryLoadWording.loadedWithoutContent
+        case .refusedNewerFormat: LibraryLoadWording.newerFormat
+        case .needsMigration: LibraryLoadWording.needsMigration
+        case .damaged(let reason, _): LibraryLoadWording.damaged(reason)
         case .unavailable(let reason): reason
-        @unknown default: "the library couldn't be read"
+        case .unavailableShowingPrior(let reason, _): LibraryLoadWording.unavailableShowingPrior(reason)
         }
     }
 
