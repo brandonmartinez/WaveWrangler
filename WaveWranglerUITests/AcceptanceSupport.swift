@@ -260,6 +260,14 @@ enum AcceptanceAudit {
         if [.window, .toolbar, .splitter, .menuBar, .menuBarItem, .touchBar].contains(element.elementType) { return "system window chrome" }
         if issue.auditType == .sufficientElementDescription, element.elementType == .group, !element.isEnabled { return "non-interactive layout container" }
         if issue.auditType == .action, element.elementType == .popUpButton { return "system pop-up button exposes AXShowMenu" }
+        // Since #112 the Setup Name cell's label is the source's file name (the visible name, IA §5) and its value
+        // carries the hidden columns; the audit's heuristic calls a file name "not human-readable". Scoped to Name
+        // cells of the synthetic fixtures (`synthetic-N.wav`), where the label is verifiably the file's name.
+        if issue.auditType == .sufficientElementDescription, element.elementType == .staticText,
+           element.identifier.range(of: #"^ww\.setup\.source\.[0-9A-F-]{36}$"#, options: .regularExpression) != nil,
+           element.label.range(of: #"^synthetic-[0-9]+\.wav$"#, options: .regularExpression) != nil {
+            return "Setup Name cell labelled with the source's file name '\(element.label)' (the visible name; heuristic finding)"
+        }
         if element.elementType == .popUpButton, element.label == "emoji & symbols" { return "system input item, not app UI" }
         if element.elementType == .dialog, element.title.isEmpty, element.buttons["siri"].exists { return "system Siri overlay, not app UI" }
         if element.elementType == .image, element.label.hasSuffix("alert"), element.identifier.hasPrefix("_NS:") {
