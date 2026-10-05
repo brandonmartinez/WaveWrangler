@@ -134,6 +134,8 @@ struct EpisodeSetupView: View {
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
+            .onAppear { publish(placement) }
+            .onChange(of: placement) { publish(placement) }
             .onChange(of: model.inspectorFocusRequest) {
                 // Return in a table opens the details when they are collapsed.
                 if case .collapsed = placement { model.detailsExpanded = true }
@@ -162,6 +164,14 @@ struct EpisodeSetupView: View {
 
     /// Sources above Speakers. Speakers keeps a usable default share (about four rows minimum, scaled
     /// with text size) and grows with the window (#89); the handle resizes it (drag or VoiceOver adjust).
+    private func publish(_ placement: SetupDetailsPlacement) {
+        switch placement {
+        case .beside: model.detailsShown = true; model.detailsCanCollapse = false
+        case .below: model.detailsShown = true; model.detailsCanCollapse = true
+        case .collapsed: model.detailsShown = false; model.detailsCanCollapse = true
+        }
+    }
+
     private var tables: some View {
         GeometryReader { geometry in
             let handle = 9.0 * scale

@@ -380,15 +380,43 @@ final class EpisodeSetupUITests: XCTestCase {
         let toggle = element("ww.setup.detailsToggle")
         XCTAssertTrue(toggle.exists, "details collapse to a bar in a short, narrow window")
         XCTAssertEqual(toggle.label, "Show Details")
-        toggle.click()
-        XCTAssertTrue(element("ww.setup.inspector").waitForExistence(timeout: 2), "details can be opened")
-        element("ww.setup.detailsToggle").click()
+        XCTAssertFalse(element("ww.setup.inspector").exists)
+
+        // Keyboard path 1: Return in the Sources table opens the details on the selected row.
+        select("tr2.wav")
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        XCTAssertTrue(element("ww.setup.inspector").waitForExistence(timeout: 2), "Return opens the details")
+        XCTAssertTrue(element("ww.inspector.source.speaker").exists, "speaker editable in the details")
+        XCTAssertTrue(element("ww.inspector.source.role").exists, "role shown in the details")
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        menu("View", "Hide Setup Details")
+        XCTAssertFalse(element("ww.setup.inspector").waitForExistence(timeout: 1))
+
+        // Keyboard path 2: the menu bar (View › Show Setup Details).
+        menu("View", "Show Setup Details")
+        XCTAssertTrue(element("ww.setup.inspector").waitForExistence(timeout: 2), "menu opens the details")
+        menu("View", "Hide Setup Details")
 
         for _ in 0..<4 { menu("View", "Text Size", "Bigger") }
         let grown = expectation(for: NSPredicate { _, _ in self.visibleSourceRows(outline).allSatisfy { $0.frame.height >= 30 } }, evaluatedWith: nil)
         wait(for: [grown], timeout: 5)
         assertStatusVisible(outline, "200% text")
         XCTAssertGreaterThanOrEqual(visibleSourceRows(outline).count, 1, "rows visible at 200% text")
+
+        // Speaker and Role columns are hidden at this width: the row's VoiceOver value still carries them,
+        // and the Source menu still edits them for the selected row.
+        let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND value CONTAINS 'speaker' AND value CONTAINS 'role'")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 2), "hidden column values are in the Name cell's VoiceOver value")
+        select("tr2.wav")
+        menu("Source", "Assign Speaker", "New Speaker…")
+        let name = element("ww.setup.nameField")
+        XCTAssertTrue(name.waitForExistence(timeout: 2))
+        name.click()
+        name.typeText("Ben")
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        select("tr2.wav")
+        menu("Source", "Use as Primary")
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND value CONTAINS 'speaker Ben' AND value CONTAINS 'role Primary'")).firstMatch.waitForExistence(timeout: 3), "speaker and role edited via the Source menu with the columns hidden")
         for _ in 0..<4 { menu("View", "Text Size", "Smaller") }
         menu("Window", "Zoom")
     }
