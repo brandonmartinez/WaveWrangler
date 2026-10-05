@@ -1,5 +1,4 @@
 import AppKit
-import OSLog
 import Observation
 import SwiftUI
 import WWCore
@@ -90,13 +89,10 @@ final class LibraryWindowState {
         guard let collection = store.library.collection(id) else { return }
         let wording = ConfirmationWording.deleteCollection(collection.name)
         Task {
-            guard await Dialogs.confirm(in: window, message: wording.message, informative: wording.informative, confirmTitle: wording.button) else { return }
+            guard await Dialogs.confirm(in: window, message: wording.message, informative: wording.informative, confirmTitle: wording.button,
+                                        destructiveIsDefault: true) else { return }
             let index = store.library.collections.firstIndex { $0.id == id }
-            let deleted = store.apply(UndoActionName.deleteCollection) { library throws(LibraryError) in try library.deletingCollection(id) }
-            #if DEBUG
-            Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "Dialogs").debug("delete collection applied=\(deleted) error=\(self.store.lastError ?? "none", privacy: .public)")
-            #endif
-            if deleted {
+            if store.apply(UndoActionName.deleteCollection, { library throws(LibraryError) in try library.deletingCollection(id) }) {
                 // Selection moves to the next collection (or the previous at the end), else Shows.
                 let remaining = store.library.collections
                 if let index, !remaining.isEmpty {
@@ -132,7 +128,8 @@ final class LibraryWindowState {
         let wording = ConfirmationWording.removeFromLibrary(rows.map(\.name))
         let all = sidebarSelection.map { store.rows(for: $0).map(\.showID) } ?? []
         Task {
-            guard await Dialogs.confirm(in: window, message: wording.message, informative: wording.informative, confirmTitle: wording.button) else { return }
+            guard await Dialogs.confirm(in: window, message: wording.message, informative: wording.informative, confirmTitle: wording.button,
+                                        destructiveIsDefault: true) else { return }
             let ids = rows.map(\.showID)
             let next = nextSelection(after: Set(ids), in: all)
             if store.apply(UndoActionName.removeFromLibrary, { library throws(LibraryError) in try library.removingEntries(ids) }) {
