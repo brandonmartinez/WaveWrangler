@@ -217,17 +217,19 @@ public enum LibraryRegrantWording {
 }
 
 /// Persistence reports library *file* URLs (`<folder>/Library.wwlibrary`) in move and regrant outcomes.
-/// The UI names folders and passes folders back to `useLibrary(in:)`, so it always reduces to the folder.
+/// The UI names folders and passes folders back to `useLibrary(in:)`. Reduce outcome URLs exactly once, in
+/// the persistence adapter, and only when the last component is the library file name — a folder that
+/// happens to be named "*.wwlibrary" is still a folder.
 public enum LibraryFolderURL {
-    public static let libraryFileExtension = "wwlibrary"
+    public static let defaultLibraryFileName = "Library.wwlibrary"
 
-    /// The folder holding the library: strips a trailing `*.wwlibrary` file component; folders pass through.
-    public static func folder(for url: URL) -> URL {
-        url.pathExtension.lowercased() == libraryFileExtension ? url.deletingLastPathComponent() : url
+    /// The folder holding the library file `url`; any other URL passes through unchanged.
+    public static func folder(containingLibraryFile url: URL, fileName: String = defaultLibraryFileName) -> URL {
+        url.lastPathComponent == fileName ? url.deletingLastPathComponent() : url
     }
 
-    /// Folder display name for UI text (never a path).
-    public static func displayName(for url: URL) -> String {
-        folder(for: url).lastPathComponent
+    /// Folder display name for a library file URL (never a path).
+    public static func displayName(containingLibraryFile url: URL, fileName: String = defaultLibraryFileName) -> String {
+        folder(containingLibraryFile: url, fileName: fileName).lastPathComponent
     }
 }

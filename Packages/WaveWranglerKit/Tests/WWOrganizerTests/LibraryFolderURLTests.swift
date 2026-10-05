@@ -10,13 +10,39 @@ import WWPersistence
 /// folders (synthetic libraries only) and check the folder reduction end to end.
 @Suite("Library folder URLs from persistence outcomes")
 struct LibraryFolderURLTests {
-    @Test func reducesLibraryFileURLsToTheirFolder() {
+    @Test func reducesOnlyTheLibraryFileName() {
+        #expect(LibraryFolderURL.defaultLibraryFileName == LibraryLocationSetting.defaultFileName)
         let folder = URL(filePath: "/tmp/Podcasts Library", directoryHint: .isDirectory)
         let file = folder.appending(path: LibraryLocationSetting.defaultFileName)
-        #expect(LibraryFolderURL.folder(for: file).standardizedFileURL == folder.standardizedFileURL)
-        #expect(LibraryFolderURL.folder(for: folder).standardizedFileURL == folder.standardizedFileURL)
-        #expect(LibraryFolderURL.displayName(for: file) == "Podcasts Library")
-        #expect(LibraryFolderURL.displayName(for: folder) == "Podcasts Library")
+        #expect(LibraryFolderURL.folder(containingLibraryFile: file).standardizedFileURL == folder.standardizedFileURL)
+        #expect(LibraryFolderURL.displayName(containingLibraryFile: file) == "Podcasts Library")
+    }
+
+    @Test func folderNamedLikeALibraryIsNotStripped() {
+        let folder = URL(filePath: "/tmp/Shows.wwlibrary", directoryHint: .isDirectory)
+        #expect(LibraryFolderURL.folder(containingLibraryFile: folder).standardizedFileURL == folder.standardizedFileURL)
+        #expect(LibraryFolderURL.displayName(containingLibraryFile: folder) == "Shows.wwlibrary")
+        let file = folder.appending(path: LibraryLocationSetting.defaultFileName)
+        let reduced = LibraryFolderURL.folder(containingLibraryFile: file)
+        #expect(reduced.standardizedFileURL == folder.standardizedFileURL, "reduced once, to the folder")
+        #expect(LibraryFolderURL.folder(containingLibraryFile: reduced).standardizedFileURL == folder.standardizedFileURL, "idempotent")
+    }
+
+    @Test func useThatLibraryWorksForAFolderNamedLikeALibrary() async throws {
+        let rig = try Rig()
+        let store = rig.store()
+        _ = await store.load()
+        let other = try await rig.otherLibraryFolder(named: "Shows.wwlibrary")
+        guard case .success(.destinationHasLibrary(let reported, _)) = await store.moveLibrary(to: other) else {
+            Issue.record("expected destinationHasLibrary")
+            return
+        }
+        #expect(LibraryFolderURL.displayName(containingLibraryFile: reported) == "Shows.wwlibrary")
+        let result = await store.useLibrary(in: LibraryFolderURL.folder(containingLibraryFile: reported))
+        guard case .success(.combined) = result else {
+            Issue.record("expected combined, got \(result)")
+            return
+        }
     }
 
     @Test func destinationHasLibraryThenUseThatLibrarySucceedsWithFolderName() async throws {
@@ -30,8 +56,8 @@ struct LibraryFolderURLTests {
             return
         }
         #expect(reported.lastPathComponent == LibraryLocationSetting.defaultFileName, "persistence reports the file URL")
-        #expect(LibraryFolderURL.displayName(for: reported) == "Other Mac Library")
-        let result = await store.useLibrary(in: LibraryFolderURL.folder(for: reported))
+        #expect(LibraryFolderURL.displayName(containingLibraryFile: reported) == "Other Mac Library")
+        let result = await store.useLibrary(in: LibraryFolderURL.folder(containingLibraryFile: reported))
         guard case .success(.combined) = result else {
             Issue.record("Use That Library with the reduced folder should combine, got \(result)")
             return
@@ -58,8 +84,8 @@ struct LibraryFolderURLTests {
             Issue.record("expected differentLibrary")
             return
         }
-        #expect(LibraryFolderURL.displayName(for: reported) == "Someone Else's Library")
-        let result = await store.useLibrary(in: LibraryFolderURL.folder(for: reported))
+        #expect(LibraryFolderURL.displayName(containingLibraryFile: reported) == "Someone Else's Library")
+        let result = await store.useLibrary(in: LibraryFolderURL.folder(containingLibraryFile: reported))
         if case .failure(let error) = result {
             Issue.record("Use That Library with the reduced folder failed: \(error)")
         }
