@@ -155,13 +155,14 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
         }
     }
 
-    /// The single place persistence's library *file* URLs (move/regrant outcomes) become folders.
+    /// The single place persistence's library *file* URLs (move/regrant outcomes, always
+    /// `folder/<setting.fileName>`, which changes after recovery) become folders.
     static func folder(_ libraryFile: URL) -> URL {
-        LibraryFolderURL.folder(containingLibraryFile: libraryFile, fileName: LibraryLocationSetting.defaultFileName)
+        LibraryFolderURL.folder(ofLibraryFile: libraryFile)
     }
 
     static func folderName(_ libraryFile: URL) -> String {
-        folder(libraryFile).lastPathComponent
+        LibraryFolderURL.displayName(ofLibraryFile: libraryFile)
     }
 
     /// ST-36 summary plus queued edits that couldn't be carried (kept in a backup copy on this Mac).

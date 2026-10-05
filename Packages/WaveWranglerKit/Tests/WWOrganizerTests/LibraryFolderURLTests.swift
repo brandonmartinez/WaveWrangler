@@ -10,22 +10,13 @@ import WWPersistence
 /// folders (synthetic libraries only) and check the folder reduction end to end.
 @Suite("Library folder URLs from persistence outcomes")
 struct LibraryFolderURLTests {
-    @Test func reducesOnlyTheLibraryFileName() {
-        #expect(LibraryFolderURL.defaultLibraryFileName == LibraryLocationSetting.defaultFileName)
-        let folder = URL(filePath: "/tmp/Podcasts Library", directoryHint: .isDirectory)
-        let file = folder.appending(path: LibraryLocationSetting.defaultFileName)
-        #expect(LibraryFolderURL.folder(containingLibraryFile: file).standardizedFileURL == folder.standardizedFileURL)
-        #expect(LibraryFolderURL.displayName(containingLibraryFile: file) == "Podcasts Library")
-    }
-
-    @Test func folderNamedLikeALibraryIsNotStripped() {
+    @Test func reducesOutcomeFileURLsByDroppingTheFileWhateverItsName() {
         let folder = URL(filePath: "/tmp/Shows.wwlibrary", directoryHint: .isDirectory)
-        #expect(LibraryFolderURL.folder(containingLibraryFile: folder).standardizedFileURL == folder.standardizedFileURL)
-        #expect(LibraryFolderURL.displayName(containingLibraryFile: folder) == "Shows.wwlibrary")
-        let file = folder.appending(path: LibraryLocationSetting.defaultFileName)
-        let reduced = LibraryFolderURL.folder(containingLibraryFile: file)
-        #expect(reduced.standardizedFileURL == folder.standardizedFileURL, "reduced once, to the folder")
-        #expect(LibraryFolderURL.folder(containingLibraryFile: reduced).standardizedFileURL == folder.standardizedFileURL, "idempotent")
+        for name in [LibraryLocationSetting.defaultFileName, "Library (Recovered r3 1A2B3C4D).wwlibrary"] {
+            let file = folder.appending(path: name)
+            #expect(LibraryFolderURL.folder(ofLibraryFile: file).standardizedFileURL == folder.standardizedFileURL)
+            #expect(LibraryFolderURL.displayName(ofLibraryFile: file) == "Shows.wwlibrary", "a folder named *.wwlibrary is kept")
+        }
     }
 
     @Test func useThatLibraryWorksForAFolderNamedLikeALibrary() async throws {
@@ -37,8 +28,8 @@ struct LibraryFolderURLTests {
             Issue.record("expected destinationHasLibrary")
             return
         }
-        #expect(LibraryFolderURL.displayName(containingLibraryFile: reported) == "Shows.wwlibrary")
-        let result = await store.useLibrary(in: LibraryFolderURL.folder(containingLibraryFile: reported))
+        #expect(LibraryFolderURL.displayName(ofLibraryFile: reported) == "Shows.wwlibrary")
+        let result = await store.useLibrary(in: LibraryFolderURL.folder(ofLibraryFile: reported))
         guard case .success(.combined) = result else {
             Issue.record("expected combined, got \(result)")
             return
@@ -56,8 +47,8 @@ struct LibraryFolderURLTests {
             return
         }
         #expect(reported.lastPathComponent == LibraryLocationSetting.defaultFileName, "persistence reports the file URL")
-        #expect(LibraryFolderURL.displayName(containingLibraryFile: reported) == "Other Mac Library")
-        let result = await store.useLibrary(in: LibraryFolderURL.folder(containingLibraryFile: reported))
+        #expect(LibraryFolderURL.displayName(ofLibraryFile: reported) == "Other Mac Library")
+        let result = await store.useLibrary(in: LibraryFolderURL.folder(ofLibraryFile: reported))
         guard case .success(.combined) = result else {
             Issue.record("Use That Library with the reduced folder should combine, got \(result)")
             return
@@ -84,13 +75,54 @@ struct LibraryFolderURLTests {
             Issue.record("expected differentLibrary")
             return
         }
-        #expect(LibraryFolderURL.displayName(containingLibraryFile: reported) == "Someone Else's Library")
-        let result = await store.useLibrary(in: LibraryFolderURL.folder(containingLibraryFile: reported))
+        #expect(LibraryFolderURL.displayName(ofLibraryFile: reported) == "Someone Else's Library")
+        let result = await store.useLibrary(in: LibraryFolderURL.folder(ofLibraryFile: reported))
         if case .failure(let error) = result {
             Issue.record("Use That Library with the reduced folder failed: \(error)")
         }
         // The unreduced file URL is exactly what broke before (…/Library.wwlibrary/Library.wwlibrary).
         #expect(reported.appending(path: LibraryLocationSetting.defaultFileName).path(percentEncoded: false).contains("wwlibrary/Library.wwlibrary"))
+    }
+}
+
+extension LibraryFolderURLTests {
+    @Test func afterRecoveryUseThatLibraryStillGetsTheFolder() async throws {
+        let rig = try Rig()
+        let first = rig.store()
+        _ = await first.load()
+        // A few published revisions give whole checkpoints to recover from.
+        for name in ["One", "Two", "Three"] {
+            _ = try await first.update { library in
+                var copy = library
+                copy.collections.append(LibraryCollection(name: name))
+                return copy
+            }
+        }
+        // Damage the canonical file, reopen, recover an earlier version (renames the library file).
+        let container = rig.dir.appending(path: "Container", directoryHint: .isDirectory)
+        try Data("not a library".utf8).write(to: container.appending(path: rig.settings.load().fileName))
+        let store = rig.store()
+        guard case .damaged(_, let revisions) = await store.load(), let newest = revisions.max() else {
+            Issue.record("expected a damaged library with recovery revisions")
+            return
+        }
+        guard case .success = await store.recoverAsNewCopy(revision: newest) else {
+            Issue.record("recovery failed")
+            return
+        }
+        let recoveredName = rig.settings.load().fileName
+        #expect(recoveredName != LibraryLocationSetting.defaultFileName, "recovery renames the library file")
+
+        // A different library in another folder under the current (recovered) file name.
+        let other = try await rig.otherLibraryFolder(named: "Other Mac Library", fileName: recoveredName)
+        guard case .success(.destinationHasLibrary(let reported, _)) = await store.moveLibrary(to: other) else {
+            Issue.record("expected destinationHasLibrary")
+            return
+        }
+        #expect(reported.lastPathComponent == recoveredName)
+        #expect(LibraryFolderURL.displayName(ofLibraryFile: reported) == "Other Mac Library")
+        let result = await store.useLibrary(in: LibraryFolderURL.folder(ofLibraryFile: reported))
+        if case .failure(let error) = result { Issue.record("Use That Library after recovery failed: \(error)") }
     }
 }
 
@@ -119,23 +151,24 @@ private final class Rig: Sendable {
     }
 
     /// Creates a different, valid library in `name` by letting a separate store publish its default library.
-    func otherLibraryFolder(named name: String) async throws -> URL {
+    func otherLibraryFolder(named name: String, fileName: String = LibraryLocationSetting.defaultFileName) async throws -> URL {
         let folder = dir.appending(path: name, directoryHint: .isDirectory)
         let other = LibraryStore(
             containerFolder: folder,
-            settings: MemorySettings(),
+            settings: MemorySettings(LibraryLocationSetting(fileName: fileName)),
             bookmarks: PathBookmarks(),
             recovery: RecoveryStore(root: dir.appending(path: "Recovery-\(name)", directoryHint: .isDirectory)),
             indexCache: LibraryIndexCache(url: dir.appending(path: "index-\(name).json"))
         )
         _ = await other.load()
-        #expect(FileManager.default.fileExists(atPath: folder.appending(path: LibraryLocationSetting.defaultFileName).path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: folder.appending(path: fileName).path(percentEncoded: false)))
         return folder
     }
 }
 
 private final class MemorySettings: LibraryLocationSettingsStoring {
-    private let value = Mutex(LibraryLocationSetting())
+    private let value: Mutex<LibraryLocationSetting>
+    init(_ initial: LibraryLocationSetting = LibraryLocationSetting()) { value = Mutex(initial) }
     func load() -> LibraryLocationSetting { value.withLock { $0 } }
     func save(_ setting: LibraryLocationSetting) throws { value.withLock { $0 = setting } }
 }

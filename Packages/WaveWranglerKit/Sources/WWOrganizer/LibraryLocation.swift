@@ -216,20 +216,20 @@ public enum LibraryRegrantWording {
     }
 }
 
-/// Persistence reports library *file* URLs (`<folder>/Library.wwlibrary`) in move and regrant outcomes.
-/// The UI names folders and passes folders back to `useLibrary(in:)`. Reduce outcome URLs exactly once, in
-/// the persistence adapter, and only when the last component is the library file name — a folder that
-/// happens to be named "*.wwlibrary" is still a folder.
+/// Persistence reports library *file* URLs in move and regrant outcomes, always built as
+/// `folder.appending(path: setting.fileName)` — and the file name changes after Recover Earlier Version
+/// ("Library (Recovered r<N> …).wwlibrary"). The UI names folders and passes folders back to
+/// `useLibrary(in:)`, so outcome URLs are reduced exactly once, in the persistence adapter, by dropping the
+/// last component with no name check. Folders from Settings or the location status never pass through
+/// here, so a folder named "*.wwlibrary" is never stripped.
 public enum LibraryFolderURL {
-    public static let defaultLibraryFileName = "Library.wwlibrary"
-
-    /// The folder holding the library file `url`; any other URL passes through unchanged.
-    public static func folder(containingLibraryFile url: URL, fileName: String = defaultLibraryFileName) -> URL {
-        url.lastPathComponent == fileName ? url.deletingLastPathComponent() : url
+    /// The folder holding the library file `url` (an outcome URL from persistence).
+    public static func folder(ofLibraryFile url: URL) -> URL {
+        url.deletingLastPathComponent()
     }
 
-    /// Folder display name for a library file URL (never a path).
-    public static func displayName(containingLibraryFile url: URL, fileName: String = defaultLibraryFileName) -> String {
-        folder(containingLibraryFile: url, fileName: fileName).lastPathComponent
+    /// Folder display name for an outcome URL (never a path).
+    public static func displayName(ofLibraryFile url: URL) -> String {
+        folder(ofLibraryFile: url).lastPathComponent
     }
 }
