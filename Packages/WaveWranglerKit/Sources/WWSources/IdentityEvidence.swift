@@ -51,6 +51,11 @@ public struct FileSystemFingerprint: Sendable, Codable, Equatable, Hashable {
     /// "changed". 1 ms is ~8,400x the largest observed shift and far below any genuine edit's timestamp
     /// change. Size, file identifier, volume and type are always compared exactly; dates never match
     /// when unknown on either side.
+    ///
+    /// Baselines are device-local and recorded from each Mac's own file, which is what makes 1 ms safe:
+    /// iCloud Drive carries dates to another Mac at whole-second precision (observed in M1-DUR-025,
+    /// #121), so a baseline recorded on one Mac must never be compared with the other Mac's copy.
+    /// Persisted baselines must keep full precision (`FileDeviceAccessStore` uses the default encoder).
     public static let timestampTolerance: TimeInterval = 0.001
 
     /// Compares every field. Equal known values match (timestamps within `timestampTolerance`); any

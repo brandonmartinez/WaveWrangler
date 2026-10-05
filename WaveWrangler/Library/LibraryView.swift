@@ -440,6 +440,17 @@ private struct LibraryMessageBar: View {
                     identifier: "ww.library.messageBar"
                 )
             }
+            if let conflicts = location.providerConflictNotice {
+                // #117: informational and persistent while the unusable versions exist (nothing to do in M1; the
+                // versions are kept, never applied). Text, not colour, carries the meaning.
+                MessageBar(
+                    heading: "Other copies of your library weren't used",
+                    message: conflicts,
+                    symbolName: "doc.on.doc",
+                    actions: [],
+                    identifier: "ww.library.messageBar.providerConflicts"
+                )
+            }
             if let result = location.resultMessage {
                 MessageBar(
                     heading: "Library",

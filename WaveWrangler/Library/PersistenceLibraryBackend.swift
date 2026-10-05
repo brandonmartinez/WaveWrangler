@@ -98,6 +98,7 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
     var movePhase: LibraryMovePhase? { controller.isWorking ? .copying : nil }
     var isConnected: Bool { true }
     var pendingEditsStatus: String? { store.pendingEditsStatus }
+    var providerConflictNotice: String? { store.providerConflictNotice }
     /// ST-34. Queued edits are kept on this Mac. With L3 they need Grant Access, not just the folder coming back.
     var quitWarning: String? {
         guard let warning = store.quitWarning else { return nil }
