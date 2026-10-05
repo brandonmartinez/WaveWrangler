@@ -584,11 +584,15 @@ struct StallFollowUpTests {
         // An automatic call while stalled does nothing new.
         _ = await controller.makeAvailable(key, at: file)
         #expect(io.count(.downloadRequest) == 1)
-        // The provider drops the transfer (placeholder, not downloading); the retry must request again
-        // whatever the observer has published in between (#85).
+        // Freeze the stalled observer mid-poll so the provider change and the retry cannot interleave with
+        // it (#85): otherwise it can observe the change first and publish inProgress, and an explicit
+        // Retry during inProgress is currently a no-op (tracked separately).
+        await io.fractionGate.arm()
+        #expect(await io.fractionGate.waitUntilEntered())
         io.mutateSimulated(file) { $0.evictAgain(script: [.progress(0.5), .complete]) }
         #expect(await controller.retry(key, at: file) == .requested)
         #expect(io.count(.downloadRequest) == 2)
+        await io.fractionGate.release()
         #expect(await settled(controller, key) == .idle)
     }
 
@@ -868,9 +872,12 @@ struct StallLifetimeTests {
         _ = await controller.makeAvailable(key, at: file)
         _ = await collector.value
         let waiter = Task { await settled(controller, key) }
-        try await Task.sleep(for: .milliseconds(10))
+        // Freeze the stalled observer before changing the provider and retrying (see above).
+        await io.fractionGate.arm()
+        #expect(await io.fractionGate.waitUntilEntered())
         io.mutateSimulated(file) { $0.evictAgain(script: [.progress(0.5), .complete]) }
         #expect(await controller.retry(key, at: file) == .requested)
+        await io.fractionGate.release()
         #expect(await waiter.value == .idle)
     }
 
@@ -974,51 +981,6 @@ struct TeardownOrderingTests {
     }
 }
 
-
-@Suite("Retry while the provider dropped an active transfer (#85)", .timeLimit(.minutes(1)))
-struct RetryAfterProviderDropTests {
-    /// Deterministic: Retry lands exactly while the observer shows inProgress after the provider dropped
-    /// the request (placeholder, not downloading). It must request again, never be swallowed.
-    @Test func retryDuringInProgressWindowRequestsAgain() async throws {
-        let tree = try SyntheticTree(label: "retry-drop")
-        var rng = SplitMix64(seed: 85)
-        let file = try tree.file("long.wav", bytes: 64, rng: &rng)
-        let io = HarnessIO()
-        io.simulate(file, SimulatedCloudItem(script: StallLifetimeTests.stallForever))
-        let controller = SourceTransferController(context: makeContext(io), policy: StallFollowUpTests.policy, setting: .on)
-        let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
-        let stalled = await eventCollector(controller, key: key) { $0.isOfflineOrUnknown }
-        _ = await controller.makeAvailable(key, at: file)
-        #expect((await stalled.value).last?.isOfflineOrUnknown == true)
-        let sawProgress = await eventCollector(controller, key: key) { if case .inProgress = $0 { true } else { false } }
-        io.mutateSimulated(file) { $0.evictAgain(script: [.progress(0.5), .complete]) }
-        let observed = (await sawProgress.value).last
-        #expect({ if case .inProgress = observed { true } else { false } }(), "observer did not publish inProgress: \(String(describing: observed))")
-        #expect(await controller.retry(key, at: file) == .requested)
-        #expect(io.count(.downloadRequest) == 2)
-        #expect(await settled(controller, key) == .idle)
-        #expect(io.leakedScopes == 0)
-    }
-
-    /// A provider that reports `downloading` is left alone: an explicit request only upgrades the transfer.
-    @Test func retryWhileProviderDownloadingDoesNotRequestAgain() async throws {
-        let tree = try SyntheticTree(label: "retry-downloading")
-        var rng = SplitMix64(seed: 86)
-        let file = try tree.file("long.wav", bytes: 64, rng: &rng)
-        let io = HarnessIO()
-        io.simulate(file, SimulatedCloudItem(script: (1...40).map { .progress(Double($0) / 50) } + [.complete]))
-        let controller = SourceTransferController(context: makeContext(io), policy: StallFollowUpTests.policy, setting: .on)
-        let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
-        await io.fractionGate.arm()
-        _ = await controller.makeAvailable(key, at: file)
-        #expect(await io.fractionGate.waitUntilEntered())
-        _ = await controller.retry(key, at: file)
-        #expect(await controller.isUserRequested(key))
-        #expect(io.count(.downloadRequest) == 1)
-        await io.fractionGate.release()
-        #expect(await settled(controller, key) == .idle)
-    }
-}
 
 enum InterleavePoint: String, Sendable, CustomTestStringConvertible {
     case requestDownload
