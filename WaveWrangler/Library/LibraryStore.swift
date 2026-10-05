@@ -33,6 +33,29 @@ final class LibraryStore {
 
     init(services: LibraryServices) {
         self.services = services
+        observeLibraryLevelState()
+    }
+
+    /// When the library becomes read-only (L4/L5) its undo history is cleared so no undo step is silently
+    /// consumed; when it becomes editable again, queued bookkeeping is applied and persisted.
+    private func observeLibraryLevelState() {
+        withObservationTracking {
+            _ = services.location.libraryState
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                libraryLevelStateDidChange()
+                observeLibraryLevelState()
+            }
+        }
+    }
+
+    func libraryLevelStateDidChange() {
+        if allowsEdits {
+            if session.flush(allowsEdits: true) { persist() }
+        } else {
+            undoManager.removeAllActions(withTarget: self)
+        }
     }
 
     var library: LibraryModel { session.library }
@@ -81,7 +104,13 @@ final class LibraryStore {
     private func registerUndo(_ change: LibrarySession.Change, actionName: String, isUndo: Bool) {
         undoManager.registerUndo(withTarget: self) { store in
             MainActor.assumeIsolated {
-                guard store.allowsEdits, store.isLoaded else { return }
+                guard store.allowsEdits, store.isLoaded else {
+                    // Read-only or unloaded: drop the library's undo history rather than consume this step
+                    // silently and leave the stack inconsistent.
+                    DispatchQueue.main.async { store.undoManager.removeAllActions(withTarget: store) }
+                    store.lastError = Self.message(for: store.isLoaded ? .readOnly : .notLoaded)
+                    return
+                }
                 if isUndo { store.session.undo(change) } else { store.session.redo(change) }
                 store.persist()
                 store.registerUndo(change, actionName: actionName, isUndo: !isUndo)
@@ -94,10 +123,15 @@ final class LibraryStore {
 
     /// Called when a show window opens: adds/refreshes the entry and records it as recent. Queued until
     /// the library has loaded and is editable.
-    func showDidOpen(id: ShowID, model: ShowDocumentModel, fileURL: URL?) {
-        services.entries.noteOpenShow(id: id, model: model, fileURL: fileURL)
+    /// `hasUnsavedChanges`: the window's document has edits not yet coherently saved, so its in-memory
+    /// title must not become the library's title (P6); only recents are updated then.
+    func showDidOpen(id: ShowID, model: ShowDocumentModel, fileURL: URL?, hasUnsavedChanges: Bool) {
+        if !hasUnsavedChanges { services.entries.noteOpenShow(id: id, model: model, fileURL: fileURL) }
         services.entries.noteOpened(id: id)
-        if session.record(.opened(id, title: model.show.title), allowsEdits: allowsEdits) { persist() }
+        let item = LibrarySession.Bookkeeping.opened(
+            id, confirmedTitle: hasUnsavedChanges ? nil : model.show.title, provisionalTitle: model.show.title
+        )
+        if session.record(item, allowsEdits: allowsEdits) { persist() }
     }
 
     /// Called only after a coherent save (D1) so the library never runs ahead of the show on disk (P6).

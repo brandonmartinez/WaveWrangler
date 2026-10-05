@@ -18,8 +18,10 @@ public struct LibrarySession: Sendable, Equatable {
     }
 
     public enum Bookkeeping: Sendable, Equatable {
-        /// A show window opened: add/refresh its entry and make it most recent.
-        case opened(ShowID, title: String)
+        /// A show window opened: make it most recent. `confirmedTitle` is the last coherently saved title
+        /// (nil when the open document has unsaved edits); it refreshes the entry's title. An entry that
+        /// doesn't exist yet is added with `provisionalTitle` so the show is never dropped.
+        case opened(ShowID, confirmedTitle: String?, provisionalTitle: String)
         /// A coherent save (D1) confirmed the show's current title.
         case confirmedTitle(ShowID, title: String)
     }
@@ -76,8 +78,13 @@ public struct LibrarySession: Sendable, Equatable {
         let original = library
         for item in queued {
             switch item {
-            case let .opened(id, title):
-                library = library.upsertingEntry(showID: id, title: title).recordingOpened(id)
+            case let .opened(id, confirmed, provisional):
+                if let confirmed {
+                    library = library.upsertingEntry(showID: id, title: confirmed)
+                } else if library.entry(id) == nil {
+                    library = library.upsertingEntry(showID: id, title: provisional)
+                }
+                library = library.recordingOpened(id)
             case let .confirmedTitle(id, title):
                 if library.entry(id) != nil { library = library.upsertingEntry(showID: id, title: title) }
             }

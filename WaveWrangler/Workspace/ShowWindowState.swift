@@ -199,7 +199,7 @@ final class ShowWindowState {
         }
         if new.isCoherentlySaved || new.announcementIsTerminalFailure { explicitSavePending = false }
         // P6 ordering: the library learns a show's new title only after coherent disk truth (D1).
-        if new.isCoherentlySaved, !old.isCoherentlySaved {
+        if new.isCoherentlySaved {
             let model = store.model
             LibraryStore.shared.showDidSaveCoherently(id: model.show.id, model: model, fileURL: store.document?.fileURL)
         }
@@ -226,7 +226,10 @@ final class ShowWindowState {
             window.setAccessibilityIdentifier("ww.show.window")
             self.updateSubtitle()
             let model = self.store.model
-            LibraryStore.shared.showDidOpen(id: model.show.id, model: model, fileURL: self.store.document?.fileURL)
+            LibraryStore.shared.showDidOpen(
+                id: model.show.id, model: model, fileURL: self.store.document?.fileURL,
+                hasUnsavedChanges: self.saveStatus.hasUnsavedChanges || self.store.document?.isDocumentEdited == true
+            )
         }
     }
 

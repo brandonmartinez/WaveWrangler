@@ -13,7 +13,7 @@ struct LibrarySessionTests {
     @Test func showOpenedBeforeLoadIsQueuedAndNeverReplacesTheStoredLibrary() {
         var session = LibrarySession()
         let early = ShowID()
-        let r1 = session.record(.opened(early, title: "Opened at launch"), allowsEdits: true)
+        let r1 = session.record(.opened(early, confirmedTitle: "Opened at launch", provisionalTitle: "Opened at launch"), allowsEdits: true)
         #expect(r1 == false)
         #expect(session.canPersist(allowsEdits: true) == false)
         #expect(session.library == LibraryModel(), "nothing applied to the empty placeholder")
@@ -28,7 +28,7 @@ struct LibrarySessionTests {
     @Test func failedLoadNeverPersistsOrEdits() {
         var session = LibrarySession()
         session.didFailLoad(reason: "unreadable")
-        let r3 = session.record(.opened(ShowID(), title: "S"), allowsEdits: true)
+        let r3 = session.record(.opened(ShowID(), confirmedTitle: "S", provisionalTitle: "S"), allowsEdits: true)
         #expect(r3 == false)
         #expect(session.canPersist(allowsEdits: true) == false)
         let failed = session
@@ -53,7 +53,7 @@ struct LibrarySessionTests {
             _ = try copy.apply(allowsEdits: false) { library throws(LibraryError) in try library.addingCollection(LibraryCollection(name: "X")) }
         }
         let opened = ShowID()
-        let r5 = session.record(.opened(opened, title: "S"), allowsEdits: false)
+        let r5 = session.record(.opened(opened, confirmedTitle: "S", provisionalTitle: "S"), allowsEdits: false)
         #expect(r5 == false)
         #expect(session.library == stored)
         let r6 = session.flush(allowsEdits: true)
@@ -68,7 +68,7 @@ struct LibrarySessionTests {
         let applied = try session.apply(allowsEdits: true) { library throws(LibraryError) in try library.deletingCollection(collection.id) }
         let change = try #require(applied)
         let newShow = ShowID()
-        let r7 = session.record(.opened(newShow, title: "Opened after delete"), allowsEdits: true)
+        let r7 = session.record(.opened(newShow, confirmedTitle: "Opened after delete", provisionalTitle: "Opened after delete"), allowsEdits: true)
         #expect(r7)
         session.undo(change)
         #expect(session.library.collections == stored.collections, "collection restored with members and order")
@@ -88,7 +88,7 @@ struct LibrarySessionTests {
         let change = try #require(applied)
         #expect(session.library.entry(victim) == nil)
         let other = ShowID()
-        _ = session.record(.opened(other, title: "Other"), allowsEdits: true)
+        _ = session.record(.opened(other, confirmedTitle: "Other", provisionalTitle: "Other"), allowsEdits: true)
         session.undo(change)
         #expect(session.library.entry(victim) != nil)
         #expect(session.library.collection(collection.id)?.showIDs == collection.showIDs)
@@ -97,6 +97,20 @@ struct LibrarySessionTests {
         #expect(session.library.entry(victim) == nil)
         #expect(session.library.collection(collection.id)?.showIDs.contains(victim) == false)
         #expect(session.library.entry(other) != nil)
+    }
+
+    @Test func openingWithUnsavedEditsDoesNotTakeTheUnsavedTitle() {
+        var session = LibrarySession()
+        _ = session.didLoad(stored, allowsEdits: true)
+        let id = stored.entries[0].showID
+        let original = stored.entries[0].lastKnownTitle
+        let changed = session.record(.opened(id, confirmedTitle: nil, provisionalTitle: "Unsaved title"), allowsEdits: true)
+        #expect(changed)
+        #expect(session.library.entry(id)?.lastKnownTitle == original)
+        #expect(session.library.recentShowIDs.first == id)
+        let fresh = ShowID()
+        _ = session.record(.opened(fresh, confirmedTitle: nil, provisionalTitle: "New show"), allowsEdits: true)
+        #expect(session.library.entry(fresh)?.lastKnownTitle == "New show", "a new show is never dropped")
     }
 
     @Test func confirmedTitleOnlyRefreshesKnownEntries() {
