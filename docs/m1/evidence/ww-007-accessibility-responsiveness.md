@@ -323,6 +323,15 @@ Pixel WCAG ratios (`ContrastMeter`: element screenshot at 2×; background = the 
   - The setup source-name top row (`ww.inspector.source.name`) from the coordinator note wasn't measured in this lane, so it isn't waived here. Its lane keeps its own identifier-scoped waiver.
   - **Status of results produced under the superseded policy (max-pixel waiver, waivers not recorded per finding):** the T01, T17 and T20 audits (CoreTasks), the full-suite audits on `241396a`, and the ContrastEvidence-based C03 Setup and C07 results. They're marked "Pass under superseded waiver policy; not re-run" above. A re-run under the scoped policy is queued for the Mac mini GUI lane and will replace these marks with its results.
 
+- **Policy change, 2026-10-05 (disclosed; coordinator decision): minimum glyph pixels 100 → 40, p75 ≥ 4.5 unchanged.**
+  - It was decided **after** the mini run at `550506d` observed one legible short word under 100: the "unknown" Location cell in `testLibraryWindowAtScaleWithUnavailableEntries`, 64×18 pt, 65 glyph pixels at p75 12.39.
+  - Separation data: blurred #59 row 4 px; clipped or offscreen cells 0 px; shortest legible word observed 65 px.
+  - The value is `AcceptanceAudit.minimumGlyphPixels`, used by `AcceptanceAudit`, `PartialClipContrast`, the `LibraryWorkspaceUITests` measured waivers and the ContrastEvidence row-1 assertion.
+  - **Re-evaluation of every committed and session record** (all `audit-records-*`, `raw-mini-*` and mini logs): only two findings fall in 40–99 px.
+    - The "unknown" cell in mini `479eb9e` "Library darkAqua 100% reduce motion" (65 px, p75 12.39) **changes classification**: it was unwaived and is now a measured artefact on the allowlisted entries surface.
+    - A show-sidebar episode row in mini `479eb9e` (63 px, p75 1.69) stays unwaived; it fails on p75.
+  - No other finding changes. The `550506d` "unknown" finding is reported as **Fail under the 100-px policy in that run**; it is waivable from the next run on.
+
 ### 7.1 Contrast findings under the scoped policy (Mac mini run, `479eb9e`)
 
 Run: Mac mini (Macsimus), Apple M2 Pro, macOS 27.0.1, 12-core/32 GiB. `xcodebuild test-without-building` of products built on the 18-core host at `479eb9e`. Result bundle `run1.xcresult` is kept by Design.

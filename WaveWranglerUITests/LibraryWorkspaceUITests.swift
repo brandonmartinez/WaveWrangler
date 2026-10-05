@@ -84,7 +84,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
         // Cross-lane edit in #111 (Design, coordinator-authorized 2026-10-05): measured, per-instance contrast
         // waivers replace the former blanket "#59 tracked" waivers. A partly clipped edge cell is measured on its
         // visible part only (`PartialClipContrast`); Library sidebar rows and entry-table text are measured from
-        // their own screenshot. Either way a waiver needs >= 100 glyph pixels with p75 >= 4.5:1, else it fails.
+        // their own screenshot. Either way a waiver needs >= `AcceptanceAudit.minimumGlyphPixels` (40) glyph pixels with p75 >= 4.5:1, else it fails.
         for (issue, description) in contrast {
             if let partial = PartialClipContrast.measure(issue, in: app) {
                 if partial.waived {
@@ -101,7 +101,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
             let m = ContrastMeter.measure(element.screenshot().image) ?? [:]
             let count = m["glyphPixels"] as? Int ?? 0, p75 = m["glyphP75"] as? Double ?? 0
             let stats = "glyphPixels \(count), p75 \(p75), max \(m["ratio"] ?? 0)"
-            if count >= 100 && p75 >= 4.5 {
+            if count >= AcceptanceAudit.minimumGlyphPixels && p75 >= 4.5 {
                 print("AUDIT WAIVED [measured] \(description) — Library system text measured legible now: \(stats)")
             } else {
                 findings.append("\(description) — measured \(stats)")

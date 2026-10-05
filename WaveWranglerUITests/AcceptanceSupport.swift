@@ -118,7 +118,7 @@ enum Acceptance {
 /// AXShowMenu, system overlays, AppKit alert icons). For `.contrast`, every finding is screenshotted (crop
 /// attached) and measured, and it is waived only as:
 /// - **measured artefact**: a surface in `measuredArtefact` (each measured from pixels and cited there) **and**
-///   the screenshot taken now shows legible text: ≥ 100 glyph pixels (≥ 1.5:1 against the background) whose
+///   the screenshot taken now shows legible text: ≥ `minimumGlyphPixels` (40) glyph pixels (≥ 1.5:1 against the background) whose
 ///   75th-percentile ratio is ≥ 4.5:1. A blurred, clipped or low-contrast instance stays unwaived;
 /// - **offscreen**: not hittable and no glyph pixels (scrolled out of view: nothing is drawn);
 /// - **behind a modal sheet**: content dimmed by AppKit, measured and listed.
@@ -143,7 +143,7 @@ extension XCUIApplication {
 /// Visible-part contrast for a `.contrast` audit finding on an element that is **partly** clipped by its
 /// window's edge (#59 option (a), coordinator decision 2026-10-05). The audit samples the whole frame,
 /// including pixels never drawn outside the window; this measures only the visible intersection, from the
-/// window's own screenshot. A finding is waived only when that visible part has >= 100 glyph pixels with
+/// window's own screenshot. A finding is waived only when that visible part has >= `AcceptanceAudit.minimumGlyphPixels` glyph pixels with
 /// p75 >= 4.5:1; otherwise it stays unwaived. Cells wholly outside every window are not handled here (see
 /// `OffscreenAuditWaiver`, whose budget is unchanged). Returns nil when the element isn't partly clipped.
 @MainActor
@@ -167,16 +167,22 @@ enum PartialClipContrast {
         let image = NSImage(cgImage: cropped, size: NSSize(width: rect.width, height: rect.height))
         let m = ContrastMeter.measure(image) ?? [:]
         let count = m["glyphPixels"] as? Int ?? 0, p75 = m["glyphP75"] as? Double ?? 0
-        let waived = count >= 100 && p75 >= 4.5
+        let waived = count >= AcceptanceAudit.minimumGlyphPixels && p75 >= 4.5
         let record: [String: Any] = ["element": "\(element.identifier) \(element.label) \((element.value as? String) ?? "")",
                                      "frame": "\(frame)", "window": "\(window.frame)", "visible": "\(visible)",
                                      "glyphPixels": count, "glyphP75": p75, "max": m["ratio"] ?? 0, "waived": waived,
-                                     "rule": "partly clipped at the window edge: visible part >= 100 glyph px, p75 >= 4.5"]
+                                     "rule": "partly clipped at the window edge: visible part >= \(AcceptanceAudit.minimumGlyphPixels) glyph px, p75 >= 4.5"]
         return Result(waived: waived, record: record, crop: NSBitmapImageRep(cgImage: cropped).representation(using: .png, properties: [:]))
     }
 }
 
 enum AcceptanceAudit {
+    /// Minimum glyph pixels (>= 1.5:1 against the background) for a measured contrast waiver, with p75 >= 4.5.
+    /// Policy change 2026-10-05 (coordinator decision, disclosed in WW-007 evidence §7): 100 → 40, decided after
+    /// the mini run at 550506d found a legible short word ("unknown", 65 px at p75 12.39) under 100. Separation
+    /// data: blurred #59 row 4 px, clipped/offscreen cells 0 px, shortest legible word observed 65 px.
+    static let minimumGlyphPixels = 40
+
     static let types: XCUIAccessibilityAuditType = [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]
 
     /// Episode inspector field labels measured at 15.7–15.9:1 (#59 "first row under the toolbar"). Only these
@@ -227,7 +233,7 @@ enum AcceptanceAudit {
     /// Glyph-statistic test for an element screenshot (see type comment).
     static func passesGlyphContrast(_ measured: [String: Any]?) -> Bool {
         guard let measured, let count = measured["glyphPixels"] as? Int, let p75 = measured["glyphP75"] as? Double else { return false }
-        return count >= 100 && p75 >= 4.5
+        return count >= minimumGlyphPixels && p75 >= 4.5
     }
 
     @MainActor

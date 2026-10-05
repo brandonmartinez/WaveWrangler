@@ -48,7 +48,7 @@ final class ContrastEvidenceUITests: XCTestCase {
             // a blurred row under the toolbar's scroll-edge pocket measured 4 glyph pixels.
             if names.element(boundBy: 0).exists, let row1 = ContrastMeter.measure(names.element(boundBy: 0).screenshot().image) {
                 let count = row1["glyphPixels"] as? Int ?? 0, p75 = row1["glyphP75"] as? Double ?? 0
-                XCTAssertTrue(count >= 100 && p75 >= 4.5, "#59 \(appearance): entry row 1 under the message bar has \(count) glyph pixels, p75 \(p75)")
+                XCTAssertTrue(count >= AcceptanceAudit.minimumGlyphPixels && p75 >= 4.5, "#59 \(appearance): entry row 1 under the message bar has \(count) glyph pixels, p75 \(p75)")
             }
             for (name, element) in targets where element.exists {
                 let screenshot = element.screenshot()
