@@ -24,7 +24,7 @@ let package = Package(
         .target(name: "WWSources", dependencies: ["WWCore"]),
         .target(name: "WWEpisodeSetup", dependencies: ["WWCore", "WWSources"]),
         .target(name: "WWOrganizer", dependencies: ["WWCore"]),
-        .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore"]),
+        .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
         .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore", "WWPersistenceProbe", "WWOrganizer"]),
         .testTarget(name: "WWSourcesTests", dependencies: ["WWSources", "WWCore"]),

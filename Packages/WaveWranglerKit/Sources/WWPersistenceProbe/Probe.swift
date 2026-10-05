@@ -141,6 +141,19 @@ struct Probe {
         case "library-kill-at": return await libraryKillAt()
         case "reopen-save": return await reopenSave()
         case "record-location": return recordLocation()
+        case "await": return awaitFile()
+        case "inspect": return inspect()
+        case "lib": return await libraryOp()
+        case "lib-inspect": return libraryInspect()
+        case "corrupt": return corrupt()
+        case "src-make": return sourceMake()
+        case "src-record": return await sourceRecord()
+        case "src-eval": return await sourceEvaluate()
+        case "src-relink": return await sourceRelink()
+        case "digest": return digest()
+        case "hold-save": return await holdSave()
+        case "checkpoint": return await checkpoint()
+        case "offer": return offer()
         default:
             emit(["error": "unknown command \(args.command)"])
             return 2
@@ -173,15 +186,25 @@ struct Probe {
             guard waitFor(go) else { emit(["result": "timeout"]); return 1 }
         }
         let title = args["title"] ?? "Edited by \(getpid())"
-        _ = try? await session.edit { try $0.renamingShow(to: title) }
+        // Two-device races: the session's base is what was on disk at open; the edit and save start at the
+        // agreed wall-clock time (DUR-025).
+        sleepUntil(epochMs: args["at-epoch-ms"].flatMap(Int64.init))
+        do {
+            try await session.edit { try $0.renamingShow(to: title) }
+        } catch {
+            emit(["result": "error", "detail": "edit failed: \(error)"])
+            return 3
+        }
         if let delay = Int(args["delay-ms"] ?? "") { usleep(useconds_t(delay * 1_000)) }   // seeded race schedule
         let start = ContinuousClock.now
+        let startedEpochMs = epochMs()
         switch await session.save() {
         case let .success(receipt):
-            emit(["result": "saved", "revision": receipt.revision, "title": title,
-                  "publicationID": receipt.publication.publicationID.uuidString, "seconds": seconds(.now - start)])
+            emit(["result": "saved", "revision": receipt.revision, "title": title, "host": hostLabel(),
+                  "publicationID": receipt.publication.publicationID.uuidString, "seconds": seconds(.now - start),
+                  "startedEpochMs": startedEpochMs, "publishedEpochMs": epochMs()])
         case let .failure(error):
-            emit(describe(error).merging(["title": title]) { $1 })
+            emit(describe(error).merging(["title": title, "host": hostLabel(), "startedEpochMs": startedEpochMs, "finishedEpochMs": epochMs()]) { $1 })
         }
         return 0
     }
