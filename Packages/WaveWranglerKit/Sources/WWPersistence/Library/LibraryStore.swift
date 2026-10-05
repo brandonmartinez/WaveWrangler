@@ -47,6 +47,7 @@ public actor LibraryStore {
     private let opener: DocumentOpener<LibraryCoder>
     private var session: CanonicalDocumentSession<LibraryCoder>?
     private var accessedFolder: URL?
+    private var hasConflict = false
 
     public init(
         containerFolder: URL,
@@ -92,6 +93,7 @@ public actor LibraryStore {
     }
 
     private func performLoad() async -> LibraryLoadOutcome {
+        hasConflict = false
         session = nil
         library = nil
         index = nil
@@ -163,7 +165,67 @@ public actor LibraryStore {
         }
         await session.edit { _ in updated }
         library = updated
-        return await save(session)
+        let result = await save(session)
+        if case .failure(.conflict) = result { hasConflict = true }
+        return result
+    }
+
+    // MARK: - Library-level state and L4 resolution
+
+    /// Design L1–L5 (plus damaged) for the message bar.
+    public var levelState: LibraryLevelState {
+        if hasConflict { return .changedElsewhere }
+        switch lastLoad {
+        case nil: return .notLoaded
+        case .ready, .created: return .ready
+        case .refusedNewerFormat: return .newerFormat
+        case .needsMigration: return .newerFormat
+        case let .damaged(_, revisions): return .damaged(recoveryRevisions: revisions)
+        case let .unavailable(reason), let .unavailableShowingPrior(reason, _):
+            return reason.localizedCaseInsensitiveContains("permission") ? .needsPermission : .unreachable(reason: reason)
+        }
+    }
+
+    /// L4 "Combine (Keep Everything)": combines this Mac's unsaved library into the version on disk with
+    /// ST-36 and publishes the result against that exact version. Both inputs stay unchanged on failure.
+    public func resolveConflictByCombining() async -> Result<LibraryMergeSummary, PublicationError> {
+        guard let mine = library, let url = currentLibraryURL() else { return .failure(.readOnly("The library is not loaded.")) }
+        let ops = publisher.ops
+        let bytes: Data
+        do {
+            bytes = try publisher.coordination.coordinateReading(at: url) { try ops.read($0) }
+        } catch {
+            return .failure(.failed(stage: .candidateValidated, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
+        }
+        let theirs: DecodedDocument<LibraryModel>
+        do {
+            theirs = try publisher.coder.decode(bytes)
+        } catch {
+            return .failure(.readOnly(error.errorDescription ?? "\(error)"))
+        }
+        let (combined, summary) = LibraryMerge.combineWithSummary(thisMac: mine, into: theirs.payload)
+        do {
+            _ = try publisher.publish(combined, revision: theirs.revision + 1, key: .library, to: url,
+                                      target: .inPlace(expectedBase: RevisionFingerprint(of: bytes)))
+        } catch let error as PublicationError {
+            return .failure(error)
+        } catch {
+            return .failure(.acknowledgementUncertain("\(error)"))
+        }
+        hasConflict = false
+        await load()
+        return .success(summary)
+    }
+
+    /// L4 "Use Other Mac's Version": this Mac's version is kept as a backup copy in the recovery store, then
+    /// the on-disk version is loaded.
+    @discardableResult
+    public func resolveConflictUsingOtherVersion() async -> LibraryLoadOutcome {
+        if let mine = library, let bytes = try? publisher.coder.encode(mine, revision: max(1, (await session?.revision) ?? 1)) {
+            _ = try? recovery.preserveConflictCandidate(bytes, for: .library)
+        }
+        hasConflict = false
+        return await load()
     }
 
     /// Applies reconciliation observations; publishes only if anything changed. Entries are never dropped.
@@ -252,7 +314,7 @@ public actor LibraryStore {
         } catch {
             return .failure(.invalidCandidate(error))
         }
-        let combined = LibraryMerge.combine(thisMac: mine, into: theirs.payload)
+        let (combined, summary) = LibraryMerge.combineWithSummary(thisMac: mine, into: theirs.payload)
         if combined != theirs.payload {
             do {
                 _ = try publisher.publish(
@@ -268,7 +330,7 @@ public actor LibraryStore {
         let place: () throws -> LibraryLocationSetting.Place = {
             isContainer ? .appContainer : .folder(bookmark: try self.bookmarks.bookmark(for: folder), displayPath: folder.path)
         }
-        return await switchSetting(place: place, outcome: .combined(into: destination, previousCopyKept: previous))
+        return await switchSetting(place: place, outcome: .combined(into: destination, previousCopyKept: previous, summary: summary))
     }
 
     private func relocate(to folder: URL, place: () throws -> LibraryLocationSetting.Place) async -> Result<LibraryMoveOutcome, PublicationError> {

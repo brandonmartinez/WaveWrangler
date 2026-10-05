@@ -89,39 +89,69 @@ public enum LibraryReconciler {
     }
 }
 
-/// Design's "Use That Library" combine rules: nothing is dropped.
+/// What a combine kept/added, for the ST-36 summary message.
+public struct LibraryMergeSummary: Sendable, Equatable {
+    /// This Mac's collections kept as separate, suffixed copies.
+    public var collectionsKeptAsCopies = 0
+    /// Collections only this Mac had, added unchanged.
+    public var collectionsAdded = 0
+    public var showsAdded = 0
+    public var recentItemsAdded = 0
+
+    public var message: String {
+        "Combined libraries: \(collectionsKeptAsCopies) collections kept as separate copies, \(showsAdded) shows and \(recentItemsAdded) recent items added."
+    }
+}
+
+/// Design combine rule ST-36 ("Use That Library", "Combine (Keep Everything)"): nothing is dropped.
 public enum LibraryMerge {
     public static let thisMacSuffix = "from this Mac"
 
-    /// Combines `thisMac` into `target`:
-    /// - entries: every target entry, plus this Mac's entries for shows the target lacks (including
-    ///   unavailable ones); for shared shows the target's entry wins but a missing alias is filled in;
-    /// - collections: target collections first; this Mac's collections follow unless an identical one
-    ///   (same name, same members in the same order) exists. A same-named collection that differs in members
-    ///   or order is kept as "<name> (from this Mac)", "<name> (from this Mac 2)", …;
-    /// - recents: target recents, then this Mac's recents not already present.
-    public static func combine(thisMac: LibraryModel, into target: LibraryModel) -> LibraryModel {
-        var result = target
+    public static func combine(thisMac: LibraryModel, into base: LibraryModel) -> LibraryModel {
+        combineWithSummary(thisMac: thisMac, into: base).library
+    }
+
+    /// Combines `thisMac` into `base` (the library that stays active):
+    /// 1. entries (including unavailable ones) are unioned by show identity; for a shared show the entry with
+    ///    the more recent recorded observation wins (`UnavailableRecord.recordedAt`; with no timestamps the
+    ///    base entry is kept) and a missing alias is filled from the other side;
+    /// 2. recents are unioned (base order first — the model records no last-opened time);
+    /// 3. collections match by name: identical members and order → one; otherwise the base collection is
+    ///    unchanged and this Mac's is added as "<name> (from this Mac)", "<name> (from this Mac 2)", … (first
+    ///    free suffix). Collections only on this Mac are added (suffixed if the name collides).
+    public static func combineWithSummary(thisMac: LibraryModel, into base: LibraryModel) -> (library: LibraryModel, summary: LibraryMergeSummary) {
+        var result = base
+        var summary = LibraryMergeSummary()
         for entry in thisMac.entries {
             if let index = result.entries.firstIndex(where: { $0.showID == entry.showID }) {
-                if result.entries[index].alias == nil { result.entries[index].alias = entry.alias }
+                let kept = result.entries[index]
+                if let mine = entry.unavailable?.recordedAt, let theirs = kept.unavailable?.recordedAt, mine > theirs {
+                    result.entries[index].unavailable = entry.unavailable
+                }
+                if kept.alias == nil { result.entries[index].alias = entry.alias }
             } else {
                 result.entries.append(entry)
+                summary.showsAdded += 1
             }
         }
         for collection in thisMac.collections {
             if result.collections.contains(where: { $0.name == collection.name && $0.showIDs == collection.showIDs }) { continue }
             var kept = collection
-            if result.collections.contains(where: { $0.name == collection.name }) {
+            let collides = result.collections.contains { $0.name == collection.name }
+            if collides {
                 kept.name = uniqueName(for: collection.name, existing: Set(result.collections.map(\.name)))
+                summary.collectionsKeptAsCopies += 1
+            } else {
+                summary.collectionsAdded += 1
             }
             if result.collections.contains(where: { $0.id == kept.id }) { kept.id = CollectionID() }
             result.collections.append(kept)
         }
         for showID in thisMac.recentShowIDs where !result.recentShowIDs.contains(showID) {
             result.recentShowIDs.append(showID)
+            summary.recentItemsAdded += 1
         }
-        return result
+        return (result, summary)
     }
 
     static func uniqueName(for name: String, existing: Set<String>) -> String {

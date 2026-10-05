@@ -185,7 +185,9 @@ struct LibraryStoreTests {
         _ = try DocumentPublisher(coder: LibraryCoder.library, recovery: nil).publish(theirs, revision: 4, key: .library, to: target, target: .newLocation)
 
         guard case .success(.destinationHasLibrary) = await store.moveLibrary(to: folder) else { Issue.record("expected choice"); return }
-        guard case .success(.combined(_, let kept)) = await store.useLibrary(in: folder) else { Issue.record("combine failed"); return }
+        guard case .success(.combined(_, let kept, let summary)) = await store.useLibrary(in: folder) else { Issue.record("combine failed"); return }
+        #expect(summary == LibraryMergeSummary(collectionsKeptAsCopies: 1, collectionsAdded: 0, showsAdded: 2, recentItemsAdded: 2))
+        #expect(summary.message == "Combined libraries: 1 collections kept as separate copies, 2 shows and 2 recent items added.")
         let combined = try #require(await store.library)
         #expect(Set(combined.entries.map(\.showID)) == Set(ids))
         #expect(combined.entries.first { $0.showID == ids[0] }?.unavailable != nil)
@@ -232,6 +234,58 @@ struct LibraryStoreTests {
         #expect(await reopened.library == library)
         guard case .failure(.readOnly) = try await reopened.update({ $0 }) else { Issue.record("edit allowed"); return }
         #expect(!FileManager.default.fileExists(atPath: folder.path), "nothing silently recreated")
+    }
+
+    @Test func changedElsewhereIsL4AndCombineKeepsEverything() async throws {
+        let rig = LibraryRig()
+        let shows = (0..<4).map { Fixtures.show(seed: 800 + UInt64($0)) }
+        let setup = rig.store()
+        _ = await setup.load()
+        _ = try await setup.update { _ in Fixtures.library(shows: shows, seed: 8) }
+        // Two writers ("this Mac" and "another Mac") both start from the same revision.
+        let thisMac = rig.store(), otherMac = rig.store()
+        _ = await thisMac.load()
+        _ = await otherMac.load()
+        _ = try await otherMac.update { var l = $0; l.collections.append(LibraryCollection(name: "Theirs", showIDs: [shows[0].show.id])); return l }
+        let otherBytes = try Data(contentsOf: rig.containerFile)
+        guard case .failure(.conflict) = try await thisMac.update({ var l = $0; l.collections.append(LibraryCollection(name: "Mine", showIDs: [shows[1].show.id])); return l })
+        else { Issue.record("expected conflict"); return }
+        #expect(await thisMac.levelState == .changedElsewhere)
+        #expect(try Data(contentsOf: rig.containerFile) == otherBytes, "nothing overwritten")
+        guard case let .success(summary) = await thisMac.resolveConflictByCombining() else { Issue.record("combine failed"); return }
+        #expect(summary.collectionsAdded == 1)
+        let combined = try #require(await thisMac.library)
+        #expect(Set(combined.collections.map(\.name)).isSuperset(of: ["Theirs", "Mine", "Active", "Archive"]))
+        #expect(await thisMac.levelState == .ready)
+    }
+
+    @Test func useOtherVersionKeepsThisMacAsBackup() async throws {
+        let rig = LibraryRig()
+        let setup = rig.store()
+        _ = await setup.load()
+        let thisMac = rig.store(), otherMac = rig.store()
+        _ = await thisMac.load()
+        _ = await otherMac.load()
+        _ = try await otherMac.update { var l = $0; l.collections.append(LibraryCollection(name: "Theirs")); return l }
+        _ = try await thisMac.update { var l = $0; l.collections.append(LibraryCollection(name: "Mine")); return l }
+        #expect(await thisMac.levelState == .changedElsewhere)
+        _ = await thisMac.resolveConflictUsingOtherVersion()
+        #expect(await thisMac.library?.collections.map(\.name) == ["Theirs"])
+        let backups = try rig.recovery.conflictCandidates(for: .library)
+        #expect(backups.contains { url in
+            (try? LibraryCoder.library.decode(Data(contentsOf: url)))?.payload.collections.map(\.name) == ["Mine"]
+        })
+    }
+
+    @Test func combineEntryRuleKeepsMostRecentObservation() {
+        let show = ShowID()
+        let older = UnavailableRecord(note: "Offline", recordedAt: Date(timeIntervalSince1970: 100))
+        let newer = UnavailableRecord(note: "Needs permission", recordedAt: Date(timeIntervalSince1970: 200))
+        let base = LibraryModel(entries: [LibraryShowEntry(showID: show, lastKnownTitle: "S", unavailable: older)])
+        let mine = LibraryModel(entries: [LibraryShowEntry(showID: show, alias: "Mine", lastKnownTitle: "S", unavailable: newer)])
+        let combined = LibraryMerge.combine(thisMac: mine, into: base)
+        #expect(combined.entries.count == 1)
+        #expect(combined.entries[0].unavailable == newer && combined.entries[0].alias == "Mine")
     }
 
     @Test func combineNameSuffixesAreNumbered() {

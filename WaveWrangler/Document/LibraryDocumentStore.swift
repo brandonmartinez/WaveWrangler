@@ -18,6 +18,10 @@ final class LibraryDocumentStore {
     private(set) var loadOutcome: LibraryLoadOutcome?
     private(set) var saveStatus: DocumentSaveStatus?
     private(set) var locationStatus: LibraryLocationStatus?
+    /// Design L1–L5 library-level state for the message bar.
+    private(set) var levelState: LibraryLevelState = .notLoaded
+    /// ST-36 summary of the last combine, for the message bar.
+    private(set) var lastMergeSummary: LibraryMergeSummary?
     /// The most recent failed library publication, presented until the next success.
     private(set) var lastError: PublicationError?
 
@@ -77,7 +81,23 @@ final class LibraryDocumentStore {
         return true
     }
 
+    /// L4 "Combine (Keep Everything)".
+    func resolveConflictByCombining() async {
+        switch await store.resolveConflictByCombining() {
+        case let .success(summary): lastMergeSummary = summary; lastError = nil
+        case let .failure(error): lastError = error
+        }
+        await refresh()
+    }
+
+    /// L4 "Use Other Mac's Version" (this Mac's version is kept as a backup copy).
+    func resolveConflictUsingOtherVersion() async {
+        await store.resolveConflictUsingOtherVersion()
+        await refresh()
+    }
+
     func refresh() async {
+        levelState = await store.levelState
         library = await store.library
         index = await store.index
         loadOutcome = await store.lastLoad
@@ -102,6 +122,7 @@ final class LibraryLocationController {
     /// Outcome of the last choose/combine/move, for the Settings pane to present.
     private(set) var lastOutcome: Result<LibraryMoveOutcome, PublicationError>?
     private(set) var isWorking = false
+    private(set) var lastMergeSummary: LibraryMergeSummary?
 
     init(library: LibraryDocumentStore) {
         self.library = library
@@ -136,5 +157,6 @@ final class LibraryLocationController {
         if await library.store.lastLoad == nil { await library.load() }
         lastOutcome = await operation(library.store)
         await library.refresh()
+        if case let .success(.combined(_, _, summary)) = lastOutcome { lastMergeSummary = summary }
     }
 }

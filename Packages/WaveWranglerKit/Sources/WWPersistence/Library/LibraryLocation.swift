@@ -109,5 +109,23 @@ public enum LibraryMoveOutcome: Sendable, Equatable {
     case destinationUnusable(URL, reason: String)
     /// This Mac's library was combined into the destination library, which is now in use. The previous
     /// location was kept as a backup.
-    case combined(into: URL, previousCopyKept: URL?)
+    case combined(into: URL, previousCopyKept: URL?, summary: LibraryMergeSummary)
+}
+
+/// Library-level states (Design L1–L5) for the Library window message bar and Settings.
+public enum LibraryLevelState: Sendable, Equatable {
+    case notLoaded
+    /// L1.
+    case ready
+    /// L2: the folder or provider cannot be reached. The last validated prior is shown read-only.
+    case unreachable(reason: String)
+    /// L3: permission to the folder must be granted again.
+    case needsPermission
+    /// L4: another writer published a different library; nothing was overwritten. Resolve with
+    /// `resolveConflictByCombining()` or `resolveConflictUsingOtherVersion()`.
+    case changedElsewhere
+    /// L5: newer format; read-only, never saved or down-saved.
+    case newerFormat
+    /// Damaged/missing with whole checkpoints available (`recoverAsNewCopy(revision:)`).
+    case damaged(recoveryRevisions: [Int])
 }
