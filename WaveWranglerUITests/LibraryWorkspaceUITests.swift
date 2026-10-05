@@ -83,10 +83,9 @@ final class LibraryWorkspaceUITests: XCTestCase {
         // window isolated on the primary display; tracked in #59 (P2, M1).
         // Cells can extend past the outline's clip frame horizontally, so match by the table's left edge and
         // vertical extent.
-        // At 200% text, rows partly or wholly clipped below the outline's visible area are still table cells
-        // (the audit measures their unrendered pixels), so match anything below the table's top.
         if issue.auditType == .contrast, let frame = entryTableFrame,
-           element.frame.minX >= frame.minX, element.frame.maxY > frame.minY, element.frame.minX < frame.maxX {
+           element.frame.minX >= frame.minX, element.frame.minY >= frame.minY, element.frame.maxY <= frame.maxY,
+           element.frame.minX < frame.maxX {
             return "issue #59: system table text contrast (tracked)"
         }
         // Window chrome (traffic lights, toolbar overflow, split-view dividers) is drawn by AppKit.
