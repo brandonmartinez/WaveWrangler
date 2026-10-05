@@ -14,8 +14,13 @@ final class EpisodeSetupUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchEnvironment["WW_SETUP_ENGINE"] = "fixture-states"
-        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+        // Isolated storage/preferences, a synthetic show with one episode opened directly in Setup.
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
+            "-WWUITestCenterWindows", "YES", "-WWUITestOpenShow", "Setup Fixture", "-WWUITestShowEpisodes", "1",
+        ]
         app.launch()
+        app.activate()
         try openSetup()
     }
 
@@ -23,15 +28,11 @@ final class EpisodeSetupUITests: XCTestCase {
         app?.terminate()
     }
 
-    /// Reaches an episode's Setup destination: directly when the window already shows it, otherwise via
-    /// File › New Episode (⇧⌘N) and View › Setup (⌘1).
+    /// The synthetic show opens on its first episode; View › Setup (⌘1) makes sure Setup is shown.
     private func openSetup() throws {
         let sources = app.descendants(matching: .any)["ww.setup.sources"]
-        if sources.waitForExistence(timeout: 5) { return }
-        app.typeKey("n", modifierFlags: [.command, .shift])
-        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
         app.typeKey("1", modifierFlags: .command)
-        XCTAssertTrue(sources.waitForExistence(timeout: 5), "Setup content not reachable")
+        XCTAssertTrue(sources.waitForExistence(timeout: 10), "Setup content not reachable")
     }
 
     private func element(_ identifier: String) -> XCUIElement {
