@@ -7,31 +7,154 @@ import WWCore
 struct SourceAccessTests {
     @Test func availabilityDefaultsToOn() {
         #expect(SourceAvailabilitySetting.default == .on)
+        #expect(SourceAvailabilitySetting(downloadSourcesAutomatically: nil) == .on)
+        #expect(SourceAvailabilitySetting(downloadSourcesAutomatically: true) == .on)
+        #expect(SourceAvailabilitySetting(downloadSourcesAutomatically: false) == .off)
     }
 
     @Test func newObservationsStartUnknownInEveryDimension() {
         let observation = AvailabilityObservation(observedAt: Date(timeIntervalSince1970: 0))
         #expect(observation.access == .unknown)
-        #expect(observation.presence == .unknown)
+        #expect(observation.location == .unknown)
         #expect(observation.residency == .unknown)
         #expect(observation.transfer == .unknown)
         #expect(observation.identity == .unknown)
+        #expect(observation.provenance == .observed)
+        #expect(observation.remedies.isEmpty)
     }
 
     @Test func accessRecordRoundTripsWithoutPathIdentity() throws {
-        let record = SourceAccessRecord(
+        let record = DeviceAccessRecord(
             sourceID: SourceID(),
+            showID: ShowID(),
             bookmark: Data([1, 2, 3]),
-            locationHint: "~/Synthetic/take.wav",
+            lastKnownPath: "/tmp/synthetic/take.wav",
+            recordedIdentity: RecordedIdentity(
+                fingerprint: FileSystemFingerprint(fileSize: .known(3), fileIdentifier: .known(9), volumeUUID: .known("V")),
+                confirmation: .provisional,
+                recordedAt: Date(timeIntervalSince1970: 5)
+            ),
+            createdAt: Date(timeIntervalSince1970: 1),
             latestObservation: AvailabilityObservation(
                 observedAt: Date(timeIntervalSince1970: 10),
+                location: .missing(lastKnownPathOccupied: .known(true)),
                 access: .denied,
                 transfer: .inProgress(fractionCompleted: .unknown),
-                identity: .unverified
-            )
+                identity: .mismatch([.fileIdentifier])
+            ),
+            relinkHistory: [RelinkEvent(at: Date(timeIntervalSince1970: 11), comparison: .differs([.fileSize], unknown: []), userConfirmed: true)]
         )
-        let decoded = try JSONDecoder().decode(SourceAccessRecord.self, from: JSONEncoder().encode(record))
+        let decoded = try JSONDecoder().decode(DeviceAccessRecord.self, from: JSONEncoder().encode(record))
         #expect(decoded == record)
         #expect(decoded.id == record.sourceID)
+    }
+
+    @Test func portableSourceRecordCarriesNoDeviceAccessFields() throws {
+        let json = try String(decoding: JSONEncoder().encode(SourceRecord(displayNameHint: "take.wav")), as: UTF8.self)
+        for forbidden in ["bookmark", "lastKnownPath", "volume", "fingerprint", "access"] {
+            #expect(!json.contains(forbidden))
+        }
+    }
+
+    @Test func deniedAndMissingStayDistinct() {
+        let denied = AvailabilityObservation(observedAt: .now, access: .denied)
+        let missing = AvailabilityObservation(observedAt: .now, location: .missing(lastKnownPathOccupied: .known(false)))
+        #expect(denied.remedies == [.checkPermissions])
+        #expect(missing.remedies == [.relink])
+        #expect(AccessState.denied.statusText != LocationState.missing(lastKnownPathOccupied: .known(false)).statusText)
+        #expect(AccessState.denied.statusText.contains("not a missing file"))
+    }
+
+    @Test func everyStateHasDistinctStatusText() {
+        let access = AccessState.allCases.map(\.statusText)
+        #expect(Set(access).count == access.count)
+        let residency = ResidencyState.allCases.map(\.statusText)
+        #expect(Set(residency).count == residency.count)
+        let transfers: [TransferState] = [
+            .unknown, .idle, .notRequested(.availabilityOff), .notRequested(.unsupportedLocation), .notRequested(.awaitingAccess),
+            .requested, .inProgress(fractionCompleted: .unknown), .inProgress(fractionCompleted: .known(0.5)), .cancelled,
+            .failed(SourceErrorDescriptor(domain: "d", code: 1)), .offlineOrUnknown(nil),
+        ]
+        let texts = transfers.map(\.statusText)
+        #expect(Set(texts).count == texts.count)
+        #expect(TransferState.inProgress(fractionCompleted: .known(0.5)).reportedFraction == 0.5)
+        #expect(TransferState.inProgress(fractionCompleted: .unknown).reportedFraction == nil)
+        let identities: [IdentityState] = [
+            .unknown, .unverified(.noRecordedEvidence), .unverified(.baselineNotUserConfirmed),
+            .unverified(.insufficientEvidence([.fileIdentifier])), .matchesRecorded, .changed([.fileSize]), .mismatch([.fileIdentifier]),
+        ]
+        let identityTexts = identities.map(\.statusText)
+        #expect(Set(identityTexts).count == identityTexts.count)
+    }
+
+    @Test func offRemedyOffersExplicitMakeAvailable() {
+        let observation = AvailabilityObservation(observedAt: .now, residency: .cloudPlaceholder, transfer: .notRequested(.availabilityOff))
+        #expect(observation.remedies == [.makeAvailable])
+        #expect(TransferState.notRequested(.availabilityOff).statusText.contains("downloads are off"))
+    }
+
+    @Test func transferErrorsAreClassifiedHonestly() {
+        #expect(TransferErrorClassifier.state(for: SourceErrorDescriptor(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)) == .offlineOrUnknown(SourceErrorDescriptor(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)))
+        #expect(TransferErrorClassifier.state(for: SourceErrorDescriptor(domain: NSCocoaErrorDomain, code: NSUbiquitousFileUnavailableError)).isOfflineOrUnknown)
+        #expect(TransferErrorClassifier.state(for: SourceErrorDescriptor(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError)) == .failed(SourceErrorDescriptor(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError)))
+    }
+}
+
+extension TransferState {
+    var isOfflineOrUnknown: Bool {
+        if case .offlineOrUnknown = self { return true }
+        return false
+    }
+
+    var isFailed: Bool {
+        if case .failed = self { return true }
+        return false
+    }
+}
+
+@Suite("Identity evidence")
+struct IdentityEvidenceTests {
+    let base = FileSystemFingerprint(
+        fileSize: .known(100),
+        creationDate: .known(Date(timeIntervalSince1970: 1)),
+        contentModificationDate: .known(Date(timeIntervalSince1970: 2)),
+        fileIdentifier: .known(42),
+        volumeUUID: .known("VOL"),
+        contentType: .known("com.microsoft.waveform-audio")
+    )
+
+    @Test func exactMatchRequiresEveryField() {
+        #expect(base.compare(to: base) == .matches)
+        var partial = base
+        partial.fileIdentifier = .unknown
+        #expect(base.compare(to: partial) == .unknown([.fileIdentifier]))
+        #expect(partial.compare(to: base) == .unknown([.fileIdentifier]))
+    }
+
+    @Test func differencesWinOverUnknowns() {
+        var candidate = base
+        candidate.fileSize = .known(101)
+        candidate.volumeUUID = .unknown
+        #expect(base.compare(to: candidate) == .differs([.fileSize], unknown: [.volumeUUID]))
+    }
+
+    @Test func objectChangesAreMismatchesContentChangesAreChanges() {
+        let recorded = RecordedIdentity(fingerprint: base, confirmation: .userConfirmed, recordedAt: .now)
+        var appended = base
+        appended.fileSize = .known(200)
+        appended.contentModificationDate = .known(Date(timeIntervalSince1970: 3))
+        #expect(recorded.identityState(for: base.compare(to: appended)) == .changed([.fileSize, .contentModificationDate]))
+        var substitute = base
+        substitute.fileIdentifier = .known(43)
+        #expect(recorded.identityState(for: base.compare(to: substitute)) == .mismatch([.fileIdentifier]))
+        #expect(recorded.identityState(for: .matches) == .matchesRecorded)
+        let provisional = RecordedIdentity(fingerprint: base, confirmation: .provisional, recordedAt: .now)
+        #expect(provisional.identityState(for: .matches) == .unverified(.baselineNotUserConfirmed))
+    }
+
+    @Test func contentEvidenceIsDeclaredButNeverObserved() {
+        #expect(ContentEvidenceField.allCases.count == 3)
+        // There is no FileSystemFingerprint field for content: identity is metadata-only in M1.
+        #expect(FingerprintField.allCases.count == 6)
     }
 }
