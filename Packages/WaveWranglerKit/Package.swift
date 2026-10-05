@@ -13,14 +13,17 @@ let package = Package(
         .library(name: "WWCore", targets: ["WWCore"]),
         .library(name: "WWPersistence", targets: ["WWPersistence"]),
         .library(name: "WWSources", targets: ["WWSources"]),
+        .library(name: "WWEpisodeSetup", targets: ["WWEpisodeSetup"]),
     ],
     targets: [
         .target(name: "WWCore"),
         .target(name: "WWPersistence", dependencies: ["WWCore"]),
         .target(name: "WWSources", dependencies: ["WWCore"]),
+        .target(name: "WWEpisodeSetup", dependencies: ["WWCore"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
         .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore"]),
         .testTarget(name: "WWSourcesTests", dependencies: ["WWSources", "WWCore"]),
+        .testTarget(name: "WWEpisodeSetupTests", dependencies: ["WWEpisodeSetup", "WWCore"]),
     ],
     swiftLanguageModes: [.v6]
 )
