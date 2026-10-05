@@ -45,6 +45,9 @@ final class ShowDocumentStore {
             guard updated != model else { return true }
             if let key, key == coalescingKey {
                 model = updated
+                // No new undo step, so AppKit won't reschedule autosaving: the quiescence timer must still move
+                // to this edit, or a checkpoint/autosave taken mid-burst would miss the rest of it.
+                document?.coalescedEditDidChangeModel()
             } else {
                 replace(with: updated, actionName: actionName)
             }
