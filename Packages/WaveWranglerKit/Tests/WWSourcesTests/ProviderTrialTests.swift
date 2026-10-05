@@ -258,3 +258,312 @@ final class HarnessIOObserved: SourceIO, @unchecked Sendable {
     func requestDownload(of url: URL) throws { bump(.downloadRequest); try base.requestDownload(of: url) }
     func downloadFraction(of url: URL) async -> Knowledge<Double> { bump(.downloadFraction); return await base.downloadFraction(of: url) }
 }
+
+// MARK: - Frozen holdout: M1-SRC-ON-PROV-001 (m1-freeze-1), 50 OFF + 50 ON evict/availability cycles
+
+struct ProviderCycleRecord: Codable, Sendable {
+    var set: String            // "OFF" (default-OFF metadata-only) or "ON" (default-ON source availability)
+    var index: Int
+    var seed: String
+    var bytes: Int
+    var variant: String
+    var evictedBefore: Bool
+    var passed: Bool
+    var failures: [String]
+    /// OFF: whether the item was still a placeholder at the end of the hold window.
+    var stillEvictedAfterHold: Bool?
+    var holdSeconds: Double?
+    var downloadRequests: Int
+    var progressQueries: Int
+    var knownProgressReports: Int
+    var transferStates: [String]
+    var finalState: String
+    var secondsToLocal: Double?
+    var providerAfterCancel: [String]
+    var bytesUnchanged: Bool?
+    var inodeSizeMtimeUnchanged: Bool?
+    /// Which lstat fields differ from the pre-evict baseline (provider rematerialization, observed).
+    var lstatFieldsChanged: [String]?
+    /// The app's metadata-only identity verdict for the source after the cycle.
+    var identityAfter: String?
+    /// Seconds between the identity baseline recorded at import and the value after the cycle.
+    var creationDateDelta: Double?
+    var modificationDateDelta: Double?
+    var scopeStarts: Int
+    var scopeStops: Int
+}
+
+extension ProviderTrialTests {
+    static let holdoutEnabled = ProcessInfo.processInfo.environment["WW_ICLOUD_TRIAL"] == "1"
+        && ProcessInfo.processInfo.environment["WW_ICLOUD_HOLDOUT"] == "1"
+    static let provFixtureID = "M1-SRC-ON-PROV-001"
+    static let frozenOffCycles = 50
+    static let frozenOnCycles = 50
+    /// Frozen calibration is 5 cycles; this lane runs 5 OFF + 5 ON calibration cycles (more, never fewer).
+    static let calibrationCycles = 5
+    /// `WW_ICLOUD_SPLIT=calibration` runs the calibration split (separate seeds, reported separately).
+    static let provSplit = ProcessInfo.processInfo.environment["WW_ICLOUD_SPLIT"] == "calibration" ? "calibration" : "holdout"
+
+    struct LStat: Equatable {
+        var ino: UInt64
+        var size: Int64
+        var mtimeSec: Int
+        var mtimeNsec: Int
+        var dataless: Bool
+
+        func changedFields(from other: LStat?) -> [String] {
+            guard let other else { return ["absent"] }
+            var fields: [String] = []
+            if ino != other.ino { fields.append("inode") }
+            if size != other.size { fields.append("size") }
+            if mtimeSec != other.mtimeSec || mtimeNsec != other.mtimeNsec { fields.append("mtime") }
+            if dataless != other.dataless { fields.append("dataless") }
+            return fields
+        }
+    }
+
+    static func lstatValues(_ url: URL) -> LStat? {
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else { return nil }
+        return LStat(ino: UInt64(info.st_ino), size: Int64(info.st_size), mtimeSec: info.st_mtimespec.tv_sec, mtimeNsec: info.st_mtimespec.tv_nsec, dataless: info.st_flags & UInt32(SF_DATALESS) != 0)
+    }
+
+    static func evict(_ url: URL, log: TrialLog) async -> Bool {
+        let (code, output) = brctl(["evict", url.path])
+        let ok = await waitFor(120, interval: 0.25) { status(SystemSourceIO(), url) == .notDownloaded }
+        if !ok { log.add("evict", url.lastPathComponent, "NOT evicted (brctl exit=\(code) \(output))") }
+        return ok
+    }
+
+    /// Waits for a transfer to settle; cancels and reports a timeout instead of hanging the trial.
+    static func settle(_ controller: SourceTransferController, _ key: DeviceAccessKey, limit: Duration) async -> (TransferState, timedOut: Bool) {
+        await withTaskGroup(of: (TransferState, Bool)?.self) { group in
+            group.addTask { (await controller.waitUntilSettled(key), false) }
+            group.addTask {
+                try? await Task.sleep(for: limit)
+                return nil
+            }
+            while let result = await group.next() {
+                if let result {
+                    group.cancelAll()
+                    return result
+                }
+                await controller.cancel(key)
+                group.cancelAll()
+                return (await controller.state(of: key), true)
+            }
+            return (.unknown, true)
+        }
+    }
+
+    @Test(.enabled(if: holdoutEnabled), .timeLimit(.minutes(60)))
+    func frozenHoldoutCycles() async throws {
+        let log = TrialLog()
+        let fm = FileManager.default
+        let rootExisted = fm.fileExists(atPath: Self.trialRoot.path)
+        let rootEntriesBefore = (try? fm.contentsOfDirectory(atPath: Self.trialRoot.path)) ?? []
+        let sources = Self.trialRoot.appendingPathComponent("sources", isDirectory: true)
+        if fm.fileExists(atPath: sources.path) {
+            try fm.removeItem(at: sources)
+            log.add("setup", "sources/", "removed a stale sources/ subfolder left by an earlier run of this lane")
+        }
+        try fm.createDirectory(at: sources, withIntermediateDirectories: true)
+        log.add("setup", "sources/", "created (trial root existed before: \(rootExisted); root entries before: \(rootEntriesBefore.sorted()))")
+        var records: [ProviderCycleRecord] = []
+        var cleanupNote = ""
+        defer {
+            try? fm.removeItem(at: sources)
+            let sourcesGone = !fm.fileExists(atPath: sources.path)
+            let remaining = (try? fm.contentsOfDirectory(atPath: Self.trialRoot.path)) ?? []
+            if !rootExisted && remaining.isEmpty { try? fm.removeItem(at: Self.trialRoot) }
+            cleanupNote = "sources/ deleted=\(sourcesGone); trial root existed before=\(rootExisted); root entries after=\(((try? fm.contentsOfDirectory(atPath: Self.trialRoot.path)) ?? []).sorted()); root present after=\(fm.fileExists(atPath: Self.trialRoot.path))"
+            log.add("cleanup", "sources/", cleanupNote)
+            Self.writeProviderEvidence(records: records, log: log, split: Self.provSplit)
+        }
+
+        // 1. Generate one random-byte file per holdout index (seeded per the registry derivation).
+        let split = Self.provSplit
+        let cycles = split == "holdout" ? max(Self.frozenOffCycles, Self.frozenOnCycles) : Self.calibrationCycles
+        log.add("setup", "*", "split=\(split) cycles per set=\(cycles)")
+        var generated: [(url: URL, data: Data, seed: UInt64)] = []
+        for index in 0..<cycles {
+            let seed = FixtureSeed.derive(fixtureID: Self.provFixtureID, split: split, caseIndex: index)
+            var rng = SplitMix64(seed: seed)
+            let size = Int.random(in: (32 * 1024)...(1024 * 1024), using: &rng)
+            var data = Data(count: size)
+            data.withUnsafeMutableBytes { buffer in
+                for offset in buffer.indices { buffer[offset] = UInt8.random(in: 0...255, using: &rng) }
+            }
+            let url = sources.appendingPathComponent(String(format: "prov-\(split)-%02d.wav", index))
+            try data.write(to: url)
+            generated.append((url, data, seed))
+        }
+        log.add("generate", "*", "\(generated.count) files, \(generated.map(\.data.count).reduce(0, +)) bytes")
+        for item in generated {
+            let ok = await Self.waitFor(600, interval: 0.5) { Self.uploaded(item.url) }
+            if !ok { log.add("upload", item.url.lastPathComponent, "NOT uploaded within 600 s") }
+        }
+        log.add("upload", "*", "upload wait finished")
+        let baseline = Dictionary(uniqueKeysWithValues: generated.map { ($0.url, Self.lstatValues($0.url)) })
+
+        // 2. OFF cycles, in batches of 10 with a 15 s hold window.
+        let show = ShowID()
+        var offRecords: [Int: ProviderCycleRecord] = [:]
+        var offContexts: [Int: (SourceAccessContext, HarnessIOObserved)] = [:]
+        var offAccess: [Int: DeviceAccessRecord] = [:]
+        for batchStart in stride(from: 0, to: cycles, by: 10) {
+            let batch = Array(batchStart..<min(batchStart + 10, cycles))
+            for index in batch {
+                let item = generated[index]
+                let evicted = await Self.evict(item.url, log: log)
+                let io = HarnessIOObserved()
+                let context = SourceAccessContext(io: io, ledger: SecurityScopeLedger())
+                offContexts[index] = (context, io)
+                var record = ProviderCycleRecord(set: "OFF", index: index, seed: String(format: "%016llx", item.seed), bytes: item.data.count, variant: "evaluate+controller+monitor", evictedBefore: evicted, passed: false, failures: [], stillEvictedAfterHold: nil, holdSeconds: nil, downloadRequests: 0, progressQueries: 0, knownProgressReports: 0, transferStates: [], finalState: "", secondsToLocal: nil, providerAfterCancel: [], bytesUnchanged: nil, inodeSizeMtimeUnchanged: nil, scopeStarts: 0, scopeStops: 0)
+                if !evicted { record.failures.append("could not create placeholder") }
+                guard let accessRecord = try await SourceImporter(context: context).plan(selection: [item.url], showID: show).items.first?.accessRecord else {
+                    record.failures.append("import failed")
+                    offRecords[index] = record
+                    continue
+                }
+                let evaluation = SourceAvailabilityEvaluator(context: context).evaluate(key: accessRecord.key, record: accessRecord, setting: .off)
+                if evaluation.observation.residency != .cloudPlaceholder { record.failures.append("residency \(evaluation.observation.residency)") }
+                if evaluation.observation.transfer != .notRequested(.availabilityOff) { record.failures.append("transfer \(evaluation.observation.transfer)") }
+                let controller = SourceTransferController(context: context, setting: .off)
+                let state = await controller.makeAvailable(accessRecord.key, at: item.url)
+                if state != .notRequested(.availabilityOff) { record.failures.append("controller \(state)") }
+                record.transferStates = ["\(evaluation.observation.transfer)", "\(state)"]
+                try await Self.runOffMonitor(show: show, records: [accessRecord], context: context)
+                offAccess[index] = accessRecord
+                offRecords[index] = record
+            }
+            let holdStart = Date()
+            try await Task.sleep(for: .seconds(15))
+            let held = Date().timeIntervalSince(holdStart)
+            for index in batch {
+                guard var record = offRecords[index], let (context, io) = offContexts[index] else { continue }
+                let item = generated[index]
+                let still = Self.status(SystemSourceIO(), item.url) == .notDownloaded
+                let after = Self.lstatValues(item.url)
+                record.stillEvictedAfterHold = still
+                record.holdSeconds = (held * 10).rounded() / 10
+                record.downloadRequests = io.count(.downloadRequest)
+                record.progressQueries = io.count(.downloadFraction)
+                record.scopeStarts = context.ledger.snapshot.starts
+                record.scopeStops = context.ledger.snapshot.stops
+                var expectedAfterEvict = baseline[item.url] ?? nil
+                expectedAfterEvict?.dataless = true
+                record.inodeSizeMtimeUnchanged = after == expectedAfterEvict
+                record.lstatFieldsChanged = after?.changedFields(from: baseline[item.url] ?? nil) ?? ["absent"]
+                record.finalState = still ? "placeholder" : "downloaded"
+                if let accessRecord = offAccess[index] {
+                    let identity = SourceAvailabilityEvaluator(context: context).evaluate(key: accessRecord.key, record: accessRecord, setting: .off)
+                    record.identityAfter = "\(identity.observation.identity)"
+                }
+                if !still { record.failures.append("no longer a placeholder after the hold window") }
+                if record.downloadRequests != 0 || record.progressQueries != 0 { record.failures.append("OFF made \(record.downloadRequests) download / \(record.progressQueries) progress requests") }
+                if context.ledger.snapshot.openScopes != 0 { record.failures.append("open scopes") }
+                if record.inodeSizeMtimeUnchanged != true { record.failures.append("lstat changed: \(String(describing: after)) vs \(String(describing: expectedAfterEvict))") }
+                record.passed = record.failures.isEmpty
+                records.append(record)
+                log.add("off", item.url.lastPathComponent, "passed=\(record.passed) stillEvicted=\(still) requests=\(record.downloadRequests)/\(record.progressQueries) \(record.failures)")
+            }
+        }
+
+        // 3. ON cycles on the same (still evicted) files: 0 automatic, 1 cancel then retry, 2 explicit request with the setting OFF.
+        for index in 0..<cycles {
+            let item = generated[index]
+            var evicted = Self.status(SystemSourceIO(), item.url) == .notDownloaded
+            if !evicted { evicted = await Self.evict(item.url, log: log) }
+            let io = HarnessIOObserved()
+            let context = SourceAccessContext(io: io, ledger: SecurityScopeLedger())
+            let variant = ["automatic", "cancel-then-retry", "explicit-with-setting-off"][index % 3]
+            var record = ProviderCycleRecord(set: "ON", index: index, seed: String(format: "%016llx", item.seed), bytes: item.data.count, variant: variant, evictedBefore: evicted, passed: false, failures: [], stillEvictedAfterHold: nil, holdSeconds: nil, downloadRequests: 0, progressQueries: 0, knownProgressReports: 0, transferStates: [], finalState: "", secondsToLocal: nil, providerAfterCancel: [], bytesUnchanged: nil, inodeSizeMtimeUnchanged: nil, scopeStarts: 0, scopeStops: 0)
+            if !evicted { record.failures.append("could not create placeholder") }
+            guard let accessRecord = try await SourceImporter(context: context).plan(selection: [item.url], showID: show).items.first?.accessRecord else {
+                record.failures.append("import failed")
+                records.append(record)
+                continue
+            }
+            let controller = SourceTransferController(context: context, policy: TransferPolicy(pollInterval: .milliseconds(100)), setting: variant == "explicit-with-setting-off" ? .off : .on)
+            let states = StateLog()
+            let stream = await controller.events()
+            let collector = Task { for await event in stream where event.key == accessRecord.key { states.append(event.state) } }
+            let start = Date()
+            switch variant {
+            case "cancel-then-retry":
+                _ = await controller.makeAvailable(accessRecord.key, at: item.url)
+                try await Task.sleep(for: .milliseconds(50))
+                await controller.cancel(accessRecord.key)
+                for delay in [1.0, 3.0] {
+                    try await Task.sleep(for: .seconds(delay == 1.0 ? 1.0 : 2.0))
+                    let status = Self.status(SystemSourceIO(), item.url)
+                    record.providerAfterCancel.append("+\(Int(delay)) s: \(status?.rawValue ?? "unknown")")
+                }
+                if Self.status(SystemSourceIO(), item.url) != .notDownloaded {
+                    let reEvicted = await Self.evict(item.url, log: log)
+                    record.providerAfterCancel.append("re-evicted=\(reEvicted)")
+                }
+                _ = await controller.retry(accessRecord.key, at: item.url)
+            case "explicit-with-setting-off":
+                _ = await controller.makeAvailable(accessRecord.key, at: item.url, userRequested: true)
+            default:
+                _ = await controller.makeAvailable(accessRecord.key, at: item.url)
+            }
+            let (final, timedOut) = await Self.settle(controller, accessRecord.key, limit: .seconds(180))
+            await controller.shutdown()
+            collector.cancel()
+            record.secondsToLocal = final == .idle ? (Date().timeIntervalSince(start) * 1000).rounded() / 1000 : nil
+            record.transferStates = states.states.map { "\($0)" }
+            record.knownProgressReports = states.states.compactMap(\.reportedFraction).count
+            record.finalState = "\(final)"
+            record.downloadRequests = io.count(.downloadRequest)
+            record.progressQueries = io.count(.downloadFraction)
+            record.scopeStarts = context.ledger.snapshot.starts
+            record.scopeStops = context.ledger.snapshot.stops
+            let bytes = try? Data(contentsOf: item.url)
+            record.bytesUnchanged = bytes == item.data
+            let after = Self.lstatValues(item.url)
+            record.lstatFieldsChanged = after?.changedFields(from: baseline[item.url] ?? nil) ?? ["absent"]
+            let identity = SourceAvailabilityEvaluator(context: context).evaluate(key: accessRecord.key, record: accessRecord, setting: .on)
+            record.identityAfter = "\(identity.observation.identity)"
+            if case let .success(now) = SystemSourceIO().metadata(at: item.url), let baselineFingerprint = accessRecord.recordedIdentity?.fingerprint {
+                if let a = baselineFingerprint.creationDate.value, let b = now.fingerprint.creationDate.value { record.creationDateDelta = b.timeIntervalSince(a) }
+                if let a = baselineFingerprint.contentModificationDate.value, let b = now.fingerprint.contentModificationDate.value { record.modificationDateDelta = b.timeIntervalSince(a) }
+            }
+            record.inodeSizeMtimeUnchanged = after.map { LStat(ino: $0.ino, size: $0.size, mtimeSec: $0.mtimeSec, mtimeNsec: $0.mtimeNsec, dataless: false) } == baseline[item.url]?.map { LStat(ino: $0.ino, size: $0.size, mtimeSec: $0.mtimeSec, mtimeNsec: $0.mtimeNsec, dataless: false) }
+            if timedOut { record.failures.append("did not settle within 180 s") }
+            if final != .idle { record.failures.append("final \(final)") }
+            if record.bytesUnchanged != true { record.failures.append("bytes differ from generated") }
+            if context.ledger.snapshot.openScopes != 0 { record.failures.append("open scopes") }
+            let expectedRequests = variant == "cancel-then-retry" ? 2 : 1
+            if record.downloadRequests != expectedRequests { record.failures.append("download requests \(record.downloadRequests) != \(expectedRequests)") }
+            record.passed = record.failures.isEmpty
+            records.append(record)
+            log.add("on", item.url.lastPathComponent, "\(variant) passed=\(record.passed) lstatChanged=\(record.lstatFieldsChanged ?? []) identity=\(record.identityAfter ?? "-") final=\(final) t=\(String(describing: record.secondsToLocal)) states=\(record.transferStates) knownProgress=\(record.knownProgressReports) \(record.providerAfterCancel) \(record.failures)")
+        }
+
+        let off = records.filter { $0.set == "OFF" }
+        let on = records.filter { $0.set == "ON" }
+        print("M1-SRC-ON-PROV-001 split=\(split) OFF cycles=\(off.count) passed=\(off.filter(\.passed).count) downloadRequests=\(off.map(\.downloadRequests).reduce(0, +)) progressQueries=\(off.map(\.progressQueries).reduce(0, +)) stillEvicted=\(off.filter { $0.stillEvictedAfterHold == true }.count)")
+        print("M1-SRC-ON-PROV-001 split=\(split) ON cycles=\(on.count) passed=\(on.filter(\.passed).count) idle=\(on.filter { $0.finalState == "idle" }.count) bytesUnchanged=\(on.filter { $0.bytesUnchanged == true }.count) knownProgressReports=\(on.map(\.knownProgressReports).reduce(0, +)) downloadRequests=\(on.map(\.downloadRequests).reduce(0, +))")
+        #expect(off.count >= cycles)
+        #expect(on.count >= cycles)
+        let failedCycles = records.filter { !$0.passed }.count
+        #expect(failedCycles == 0)
+    }
+
+    static func writeProviderEvidence(records: [ProviderCycleRecord], log: TrialLog, split: String) {
+        let dir = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".build/evidence", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let lines = records.compactMap { try? String(decoding: encoder.encode($0), as: UTF8.self) }
+        try? (lines.joined(separator: "\n") + "\n").write(to: dir.appendingPathComponent("m1-src-on-prov-001-\(split)-cycles.jsonl"), atomically: true, encoding: .utf8)
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try? encoder.encode(log.events).write(to: dir.appendingPathComponent("m1-src-on-prov-001-\(split)-log.json"))
+    }
+}
