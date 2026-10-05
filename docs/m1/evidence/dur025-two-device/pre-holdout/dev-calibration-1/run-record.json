@@ -1,7 +1,7 @@
 {
   "cleanup": {
     "at": "2026-10-05T18:12:24Z",
-    "deleted": "/Users/brandonmartinez/Library/Mobile Documents/com~apple~CloudDocs/WaveWrangler-M1-Synthetic-Trial/dur025/calibration",
+    "deleted": "<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025/calibration",
     "existedBefore": true,
     "existsAfterLocally": false
   },
@@ -45,5 +45,5 @@
     "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "c07d4b6ffbb4e6fa05096a6b2268e2898dddc99a",
     "scripts/dur025": "24c5cac433307f922616663d1aa99e0f82a7fbf1"
   },
-  "trialRoot": "/Users/brandonmartinez/Library/Mobile Documents/com~apple~CloudDocs/WaveWrangler-M1-Synthetic-Trial/dur025"
+  "trialRoot": "<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025"
 }

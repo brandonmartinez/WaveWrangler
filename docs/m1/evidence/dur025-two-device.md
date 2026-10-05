@@ -8,6 +8,10 @@
 
 ## Result: holdout, 100 cases, **95 pass / 5 fail**
 
+> **Gate outcome: DUR-025 does not meet its m1-freeze-2 gate; this run is retained as the failed run; closure needs m1-freeze-3 with fresh holdout.**
+>
+> The cross-machine-relink cell is 15/20 against its frozen count of 20. Under protocol §4, the remedy is a new freeze revision and a fresh holdout. This run is not re-run, supplemented or relabelled.
+
 | Cell (frozen holdout count) | Cases | Pass | Fail |
 |---|---:|---:|---:|
 | show-conflict (30) | 30 | **30** | 0 |
@@ -29,11 +33,11 @@
 | Commit | `8456bcde770012d761ef6599c5db8355aeaeed22`: harness branch with main `d1aeb9f` merged. Contains `ad9af5a` (m1-freeze-2), `ce1eb23` (§4.2.1), `e0ac452` (#118) and `d1aeb9f` (#119); the clean tree and every ancestor were checked by the harness. |
 | Tree IDs | WWPersistence `dea497dea6eb1510a706c43ba933fd4a375885bc` · WWPersistenceProbe `92dc8ab055386d81b99feda8ecc6b1f8d7622add` · scripts/dur025 `8286cc08029b4536ae824a57ae5ad977e7599e1a` |
 | Probe | sha256 `4450c9fea3907b58ba86edfce778b83b093ea61d0067acbf26dcffe2720fe797`. The identical binary was copied to host B and its checksum verified before the run. |
-| Hosts (observed) | A: Apple M5 Max, 18 cores, macOS 27.0.1 (26A434) · B: Macsimus, Apple M2 Pro, 12 cores, macOS 27.0.1 (26A434) |
+| Hosts (observed) | A: Apple M5 Max, 18 cores, macOS 27.0.1 (26A434) · B: Macsimus, Apple M2 Pro, 12 cores, macOS 27.0.1 (26A434). **Omission:** this run did not record `xcodebuild -version` or `swift --version`, and they are not back-filled. `host_record` records both from now on (review of #128). |
 | Window | 2026-10-05T18:51:30Z → 2026-10-05T19:53:33Z, run once |
 | Clock offset (B − A) | start 24 ms (RTT 52.8 ms); end 190 ms (RTT 391.2 ms, network under load). Race triggers use the start offset. The race skew is seeded (0–250 ms), so offset error only shifts which host starts first. |
 | Seeds | `sha256("ww-m1-fixture\|v1\|M1-DUR-025\|holdout\|" + caseIndex)`, first 8 bytes big-endian |
-| Cleanup | `/Users/brandonmartinez/Library/Mobile Documents/com~apple~CloudDocs/WaveWrangler-M1-Synthetic-Trial/dur025/holdout` deleted at 2026-10-05T19:53:34Z (every case folder inside it). The emptied `dur025` folder was deleted at 2026-10-05T19:54:47Z; both Macs listed it empty first. Device-local state on both hosts was deleted. See `dur025-two-device/cleanup-record.txt`. |
+| Cleanup | `<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025/holdout` deleted at 2026-10-05T19:53:34Z (every case folder inside it). The emptied `dur025` folder was deleted at 2026-10-05T19:54:47Z; both Macs listed it empty first. Device-local state on both hosts was deleted. See `dur025-two-device/cleanup-record.txt`. |
 
 Per-case records: [`dur025-two-device/holdout-results.jsonl`](dur025-two-device/holdout-results.jsonl). Each case has its seed, host outcomes, settle and surfacing times, version counts per host, detection path and verdict. Run record: [`holdout-run-record.json`](dur025-two-device/holdout-run-record.json).
 
@@ -56,7 +60,7 @@ Per-case records: [`dur025-two-device/holdout-results.jsonl`](dur025-two-device/
 | Truth | Holdout evidence |
 |---|---|
 | (1) Conflict detected, by a stated mechanism | **Show (30/30):** in every race, both hosts showed C3's local "Saved on this Mac" (allowed by §4.2.1). After settle, exactly one publication was current and byte-identical on both hosts. The other was **provider-surfaced**: an unresolved `NSFileVersion` conflict version, with the show's status count = 1 on **both** hosts, including the losing host. No silent last-writer-wins. **Library (30/30):** detected on load as **L4** (provider conflict version) on host A every time. |
-| (2) Both versions preserved | **Show:** each host's edit is in the current file or in the surfaced conflict version; 0 silently lost. **Library:** after L4 → Combine, each Mac's seeded edit is present in the current library on **both** hosts in all 30 cases. Of the 120 host×edit checks, 108 are present as made and 12 as ST-36 suffixed copies (member-order edits; reported as copies, per the frozen Combine semantics). 30 conflict versions were backed up before resolution, and 0 were left unresolved. Host B never needed L4 in these runs: A's Combine and resolution reached B before B opened (checked directly; truth 4 below). |
+| (2) Both versions preserved | **Show:** each host's edit is in the current file or in the surfaced conflict version; 0 silently lost. **Library:** after L4 → Combine, each Mac's seeded edit is present in the current library on **both** hosts in all 30 cases. Of the 120 host×edit checks, 108 are present as made and 12 as ST-36 suffixed copies (member-order edits; reported as copies, per the frozen Combine semantics). 30 conflict versions were backed up before resolution, and 0 were left unresolved. Host B never needed L4 in these runs: A's Combine and resolution reached B before B opened. So host B was never sampled while holding the conflict (see Limits). **Combine message observation (#131):** in 6/30 cases (30, 34, 37, 47, 48, 54), Mac B's collection reorder is present as an ST-36 copy on both hosts. Yet the product's Combine message says that change "couldn't be combined and was kept in a backup copy". The data are correct and the message is wrong. Filed as #131 (P1, M1). This does not change any verdict under the freeze-2 truths, which judge data presence. |
 | (3) No mixed revision | Every settle and reopen on both hosts read one whole valid revision with a byte-identical canonical file, in every case: show, library and recovery. |
 | (4) NSFileVersion observed and reported | Counted per case per host (unresolved conflict, status count, other versions). Shows: 1 / 1 / 1 on each host in all 30. Library: 1 unresolved conflict version per host before resolution, 0 after. See the per-case records. |
 | (5) Relink needs an explicit regrant | **15/15 evaluated cases:** host B, with no access record, reported `needsRegrant`, location unknown and identity unverified for every source; nothing was resolved by path or name. The explicit choice without confirmation gave `confirmationRequired`; with it, `applied`. Host A (which holds the evidence) reported the moved source as `moved(…)` (5/5) and the replaced same-name file as an identity mismatch (4/4); the untouched source matched exactly (6/6). Zero source writes on both hosts (sha256). **5 cases were not evaluated** (setup sync timeout, above). |
@@ -164,7 +168,8 @@ None of these runs is holdout evidence. All are kept unchanged under `dur025-two
 - `scripts/dur025/summarize.py` crashed while sorting relink variants, because the 5 failed cases never reached a variant. The fix labels them "(not reached)".
 - This changes the `scripts/dur025` tree in this PR compared with the recorded run tree. `run.py` and the probe are unchanged; the holdout ran once, at `8456bcd`.
 - CI's Swift toolchain (macOS 26 runner) rejected `bytes.withUnsafeMutableBytes` in the probe's `src-make` as ambiguous; this host's toolchain accepted it. The fix generates the same bytes into a `[UInt8]` array and wraps them in `Data`, a compile-only change. It changes the WWPersistenceProbe tree compared with the recorded run tree. Equivalence check: with seed 123456789, the holdout binary (sha256 `4450c9fe…`) and the rebuilt probe wrote byte-identical `source-0/1/2.wav` (`cmp`). The holdout was not re-run.
-- The evidence doc, the copied records, this summarizer fix and this probe compile fix are the only changes after the run.
+- `scripts/dur025/run.py` (review of #128): host B now comes from `--remote` / `WW_DUR025_REMOTE` instead of a hard-coded `user@IP`, and `host_record` adds `xcodebuild -version` and `swift --version`. Neither was used by this run.
+- The evidence doc, the copied records (redacted, below), this summarizer fix, this probe compile fix and these `run.py` changes are the only changes after the run.
 
 ## Limits
 
@@ -172,4 +177,33 @@ None of these runs is holdout evidence. All are kept unchanged under `dur025-two
 - The harness is unsandboxed: the regrant is an explicit harness-supplied choice, not the powerbox panel (the sandboxed grant is M1-REF-020).
 - Sync timing isn't controlled; all latencies are as observed, with the observer polling, so they are upper bounds.
 - **Untested path:** every show race was resolved by the provider (both hosts acknowledged within the 0–250 ms skew). No show case reached the app-level base-check stop; that path is covered by DUR-007/-009, the single-host suites.
+- **Host B never sampled holding the conflict.** §4.2.1 condition 4 (no library L1 while holding an unsurfaced version) was never sampled on host B *while B held* the conflict: A's resolution always reached B first. The #117 guard (L4 on load) is evidenced on **host A only** in this run. Host B's provider-version observations are reported, but no L1/L4 sample was taken there during the conflict.
 - Library: Combine always ran first on host A (the harness opens A, then B). Concurrent Combines on both hosts are covered by #118's unit tests, not by this holdout.
+
+## Redaction note (2026-10-05)
+
+The committed records in `dur025-two-device/` were redacted for privacy after the run (review of #128). **Paths only.** Literal string replacement, applied in this order:
+1. `<home>/Library/Mobile Documents/com~apple~CloudDocs` → `<iCloud Drive>`
+2. the harness worktree path → `<repo>`
+3. the home directory → `<home>`
+
+All other bytes are unchanged. A script parsed every `.json`/`.jsonl` file before and after redaction: the redacted records equal the same replacement applied to the parsed originals, and every per-case verdict is identical. The doc's Cleanup row and failure lines use the same placeholders. Host B's SSH address appears nowhere in the evidence.
+
+SHA-256 of each file **before** redaction (kept only here):
+
+| File | Paths replaced | SHA-256 (pre-redaction) |
+|---|---:|---|
+| `cleanup-record.txt` | 3 | `aece807dd3bfee6bab6c3c139183ad2427fee9fd6ba3dae8daf9c3c6795245a0` |
+| `holdout-results.jsonl` | 10 | `9f60719c61e70f6956a73598695726777285f0fbaac524adee1af6d00cf1fdd3` |
+| `holdout-run-record.json` | 2 | `8565559b49543d69c546f61ad2aa4fb62f6933b580ca6dc779399fc396d90b6b` |
+| `pre-holdout/calibration-1/results.jsonl` | 1 | `eec5ec5531590ae646f80cdc856b206339cc7304a2ddb48ce21ba736094183a1` |
+| `pre-holdout/calibration-1/run-record.json` | 2 | `11970f341334dd1b1fd1aae91b2a68432223ed58f9d971d2abaf7750a9fc51b5` |
+| `pre-holdout/calibration-2/results.jsonl` | 1 | `db2a5ce372520f80ff11e276b27a85a3f1af81b54468ce0ec2f26b48ea79c288` |
+| `pre-holdout/calibration-2/run-record.json` | 2 | `77cfdc394b732b1e6ef8d2a5c2a71fccfe5e0a601d8f8b16df3bc0d1683c65c0` |
+| `pre-holdout/calibration-3/results.jsonl` | 3 | `c96b7563439da3e9f348cea3bed29948d32d6030683d2a1713e9d838bb9186f6` |
+| `pre-holdout/calibration-3/run-record.json` | 2 | `8cd1bb6b3158dda2db98764c3a205e3cc67d9e73719fe3f103cdacd02c2c6c5f` |
+| `pre-holdout/dev-calibration-1/run-record.json` | 2 | `1a26369f71f850625fb4105fff61edaa3c0f5366602ed231059a5f6c5b38f215` |
+| `pre-holdout/dev-check-freeze2-cells/run-record.json` | 2 | `78203194e5e0599587c6b2ad9cf7d99a40add043e365b3849a3d67b4fd0da618` |
+| `pre-holdout/dev-dates-121-deletion.txt` | 2 | `2c8cfa4575beb62a731d4e54bc0195c52e63a4b2189210bf5511b7cb0549dc11` |
+| `pre-holdout/dev-smoke/run-record.json` | 2 | `4c3f7fa942eb5212134ad814b292500df0d58410876b516a964ca5b01fce68df` |
+

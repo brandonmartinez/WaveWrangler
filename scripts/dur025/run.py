@@ -6,7 +6,7 @@ Device A = this Mac, device B = the Mac mini (same iCloud account), driven over 
 No GUI, no app launches, nothing outside the trial folder and the per-run device-local state folders.
 
 Usage:
-  scripts/dur025/run.py --split calibration|holdout [--counts show=N,library=N,relink=N,recovery=N]
+  WW_DUR025_REMOTE=user@host scripts/dur025/run.py --split calibration|holdout [--remote user@host] [--counts show=N,library=N,relink=N,recovery=N]
                         [--workers N] [--keep] [--cleanup-only]
 
 Seeds follow docs/m1/ww-003-fixture-protocol.md:
@@ -30,13 +30,15 @@ import uuid
 from pathlib import Path
 
 FIXTURE = "M1-DUR-025"
-MINI = "brandonmartinez@192.168.18.8"
+# Host B as user@host: --remote or WW_DUR025_REMOTE. Never hard-code it here.
+REMOTE = os.environ.get("WW_DUR025_REMOTE", "")
 HOME = str(Path.home())
 TRIAL_ROOT = f"{HOME}/Library/Mobile Documents/com~apple~CloudDocs/WaveWrangler-M1-Synthetic-Trial/dur025"
 REPO = Path(__file__).resolve().parents[2]
 SSH_CONTROL = "/tmp/ww-dur025-%C"
-SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ControlMaster=auto", "-o", f"ControlPath={SSH_CONTROL}",
-       "-o", "ControlPersist=1800", "-o", "ServerAliveInterval=15", MINI]
+SSH_OPTIONS = ["ssh", "-o", "BatchMode=yes", "-o", "ControlMaster=auto", "-o", f"ControlPath={SSH_CONTROL}",
+               "-o", "ControlPersist=1800", "-o", "ServerAliveInterval=15"]
+SSH = []  # SSH_OPTIONS + [remote], set in main()
 # m1-freeze-2 cells (registry M1-DUR-025): calibration 10 / holdout 100.
 DEFAULT_COUNTS = {"calibration": {"show": 3, "library": 3, "relink": 2, "recovery": 2},
                   "holdout": {"show": 30, "library": 30, "relink": 20, "recovery": 20}}
@@ -610,9 +612,11 @@ def git(*args):
 
 
 def host_record(dev, device):
-    script = "hostname; sw_vers -productVersion; sw_vers -buildVersion; sysctl -n machdep.cpu.brand_string; sysctl -n hw.ncpu"
+    script = ("hostname; sw_vers -productVersion; sw_vers -buildVersion; sysctl -n machdep.cpu.brand_string; sysctl -n hw.ncpu; "
+              "xcodebuild -version 2>&1 | tr '\\n' ' '; echo; swift --version 2>&1 | head -1")
     out = dev.shell(device, script).stdout.split("\n")
-    return {"hostname": out[0], "macOS": f"{out[1]} ({out[2]})", "cpu": out[3], "cores": out[4]}
+    return {"hostname": out[0], "macOS": f"{out[1]} ({out[2]})", "cpu": out[3], "cores": out[4],
+            "xcode": out[5].strip(), "swift": out[6].strip()}
 
 
 def cleanup(dev, split=None):
@@ -633,7 +637,11 @@ def main():
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--keep", action="store_true", help="don't delete the trial folder afterwards")
     parser.add_argument("--cleanup-only", action="store_true")
+    parser.add_argument("--remote", default=REMOTE, help="host B as user@host (default: $WW_DUR025_REMOTE)")
     args = parser.parse_args()
+    if not args.remote:
+        sys.exit("host B is required: --remote user@host or WW_DUR025_REMOTE")
+    SSH[:] = SSH_OPTIONS + [args.remote]
     sha = git("rev-parse", "--short", "HEAD")
     dev = Devices(sha, args.split)
     if args.cleanup_only:
@@ -657,7 +665,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(dev.local_state, ignore_errors=True)
     subprocess.run(SSH + [f"mkdir -p {shlex.quote(dev.remote_dir)} && rm -rf {shlex.quote(dev.remote_state)}"], check=True)
-    subprocess.run(["rsync", "-a", "-e", f"ssh -o ControlPath={SSH_CONTROL}", dev.local_probe, f"{MINI}:{dev.remote_dir}/"], check=True)
+    subprocess.run(["rsync", "-a", "-e", f"ssh -o ControlPath={SSH_CONTROL}", dev.local_probe, f"{args.remote}:{dev.remote_dir}/"], check=True)
     local_sum = hashlib.sha256(open(dev.local_probe, "rb").read()).hexdigest()
     remote_sum = subprocess.run(SSH + [f"shasum -a 256 {shlex.quote(dev.remote_probe)}"], capture_output=True, text=True).stdout.split()[0]
     if local_sum != remote_sum:

@@ -7,7 +7,7 @@
   },
   "cleanup": {
     "at": "2026-10-05T19:53:34Z",
-    "deleted": "/Users/brandonmartinez/Library/Mobile Documents/com~apple~CloudDocs/WaveWrangler-M1-Synthetic-Trial/dur025/holdout",
+    "deleted": "<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025/holdout",
     "existedBefore": true,
     "existsAfterLocally": false
   },
@@ -58,5 +58,5 @@
     "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "92dc8ab055386d81b99feda8ecc6b1f8d7622add",
     "scripts/dur025": "8286cc08029b4536ae824a57ae5ad977e7599e1a"
   },
-  "trialRoot": "/Users/brandonmartinez/Library/Mobile Documents/com~apple~CloudDocs/WaveWrangler-M1-Synthetic-Trial/dur025"
+  "trialRoot": "<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025"
 }
