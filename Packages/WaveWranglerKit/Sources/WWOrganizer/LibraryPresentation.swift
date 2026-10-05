@@ -17,6 +17,9 @@ public enum LibraryEntryState: Sendable, Equatable {
     /// Two different files carry the same show identity (e.g. a Finder copy). Both are kept; nothing is
     /// merged or dropped.
     case identityCollision(otherLocationDisplayName: String?)
+    /// No location for this show is recorded on this Mac (e.g. the library came from another Mac or was
+    /// restored). A distinct, final state — never an endless "Checking…" (ST-01).
+    case locationUnknown
 }
 
 public enum LibraryRemedy: String, Sendable, Equatable, CaseIterable {
@@ -80,6 +83,12 @@ public struct LibraryEntryStatePresentation: Sendable, Equatable {
             self.init(
                 "Details out of date", "arrow.clockwise", .none,
                 "The library's details for this show will update the next time it's opened.", [.openShow], false
+            )
+        case .locationUnknown:
+            self.init(
+                "Location unknown", "location.slash", .attention,
+                "WaveWrangler doesn't know where “\(showName)” is saved on this Mac. Choose Locate… to find it; WaveWrangler checks the show inside the file, not its name.",
+                [.locate, .removeFromLibrary], true
             )
         case .identityCollision(let other):
             let place = other.map { " in “\($0)”" } ?? " somewhere else"
@@ -309,5 +318,60 @@ public enum LibraryPresentation {
         case .collection(let id): library.collection(id)?.name ?? "Collection"
         }
         return "\(name) (\(rowCount))"
+    }
+}
+
+/// Result of a background location check for one entry (mirrors the persistence check, without depending
+/// on it), tagged with the entry's generation when the check started.
+public struct LibraryEntryCheckResult: Sendable, Equatable {
+    public enum Observation: Sendable, Equatable {
+        case unknown
+        case reachable(folderDisplayName: String)
+        case notFound(folderDisplayName: String?)
+        case needsPermission
+        case unavailable
+    }
+
+    public var showID: ShowID
+    public var generation: Int
+    public var observation: Observation
+
+    public init(showID: ShowID, generation: Int, observation: Observation) {
+        self.showID = showID
+        self.generation = generation
+        self.observation = observation
+    }
+}
+
+public enum LibraryEntryRefresh {
+    /// Applies background check results. A result is dropped when the entry changed while the check ran
+    /// (its generation moved on: e.g. a show window opened, or an identity collision was found), and an
+    /// identity collision is never overwritten by a check.
+    public static func apply(
+        _ results: [LibraryEntryCheckResult],
+        to details: [ShowID: LibraryEntryDetails],
+        currentGenerations: [ShowID: Int]
+    ) -> [ShowID: LibraryEntryDetails] {
+        var updated = details
+        for result in results {
+            guard currentGenerations[result.showID, default: 0] == result.generation else { continue }
+            var entry = updated[result.showID] ?? LibraryEntryDetails()
+            if case .identityCollision = entry.state { continue }
+            switch result.observation {
+            case .unknown:
+                entry.state = .locationUnknown
+            case .reachable(let folder):
+                entry.state = .available
+                entry.locationDisplayName = folder
+            case .notFound(let folder):
+                entry.state = .notFound(folderDisplayName: folder)
+            case .needsPermission:
+                entry.state = .needsPermission
+            case .unavailable:
+                entry.state = .locationUnavailable
+            }
+            updated[result.showID] = entry
+        }
+        return updated
     }
 }

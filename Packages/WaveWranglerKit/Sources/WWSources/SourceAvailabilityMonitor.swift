@@ -61,7 +61,7 @@ public final class SourceAvailabilityMonitor {
         lifecycleGeneration += 1
         eventTask?.cancel()
         eventTask = nil
-        let ticket = transfers.shutdownTicket()
+        let ticket = transfers.beginShutdown()
         await transfers.shutdown(through: ticket)
     }
 
@@ -75,7 +75,7 @@ public final class SourceAvailabilityMonitor {
     isolated deinit {
         eventTask?.cancel()
         let transfers = transfers
-        let ticket = transfers.shutdownTicket()
+        let ticket = transfers.beginShutdown()
         Task { await transfers.shutdown(through: ticket) }
     }
 
@@ -96,14 +96,15 @@ public final class SourceAvailabilityMonitor {
     public func makeAvailable(_ sourceID: SourceID) async {
         guard !isStopped else { return }
         let generation = lifecycleGeneration
+        let decided = transfers.shutdownTicket()
         userCancelled.remove(sourceID)
         guard let url = resolvedURLs[sourceID] else {
             await refreshOne(sourceID)
             guard !isStopped, lifecycleGeneration == generation, let url = resolvedURLs[sourceID] else { return }
-            await transfers.makeAvailable(key(sourceID), at: url, userRequested: true)
+            await transfers.makeAvailable(key(sourceID), at: url, userRequested: true, decidedAt: decided)
             return
         }
-        await transfers.makeAvailable(key(sourceID), at: url, userRequested: true)
+        await transfers.makeAvailable(key(sourceID), at: url, userRequested: true, decidedAt: decided)
     }
 
     public func cancelTransfer(_ sourceID: SourceID) async {
@@ -136,6 +137,7 @@ public final class SourceAvailabilityMonitor {
 
     private func refreshOne(_ sourceID: SourceID) async {
         let generation = lifecycleGeneration
+        let decided = transfers.shutdownTicket()
         let key = key(sourceID)
         let record = try? await store.record(for: key)
         let transferState = await transfers.reportableState(of: key)
@@ -163,8 +165,9 @@ public final class SourceAvailabilityMonitor {
               let url = evaluation.resolvedURL
         else { return }
         guard await !transfers.isActive(key), setting == .on, !isStopped, lifecycleGeneration == generation else { return }
-        // The controller re-checks its own setting atomically and refuses if it is OFF.
-        await transfers.makeAvailable(key, at: url)
+        // The controller re-checks its own setting atomically and refuses if it is OFF, or if a stop
+        // began after this refresh decided (closes the gap between the check above and the hop).
+        await transfers.makeAvailable(key, at: url, decidedAt: decided)
     }
 
     private func apply(_ event: TransferEvent) {

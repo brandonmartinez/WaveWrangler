@@ -27,7 +27,7 @@ public enum SymbolCatalog {
         }
         let entryStates: [LibraryEntryState] = [
             .checking, .available, .notFound(folderDisplayName: nil), .needsPermission, .locationUnavailable,
-            .newerFormat, .damaged, .outOfDate, .recordedUnavailable(note: "x"), .identityCollision(otherLocationDisplayName: nil),
+            .newerFormat, .damaged, .outOfDate, .recordedUnavailable(note: "x"), .identityCollision(otherLocationDisplayName: nil), .locationUnknown,
         ]
         for state in entryStates {
             if let symbol = LibraryEntryStatePresentation(state, showName: "x").symbolName { names.insert(symbol) }

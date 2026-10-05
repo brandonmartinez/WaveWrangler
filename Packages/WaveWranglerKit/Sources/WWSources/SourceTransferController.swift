@@ -81,6 +81,9 @@ public actor SourceTransferController {
         var generation: Int
         var task: Task<Void, Never>
         var userRequested: Bool
+        /// The caller's decision ticket; a shutdown that began after it cancels the transfer even though
+        /// its generation is newer (the decision predates the shutdown).
+        var decidedAt: Int?
     }
 
     private var states: [DeviceAccessKey: TransferState] = [:]
@@ -95,6 +98,9 @@ public actor SourceTransferController {
     /// awaiting (`shutdownTicket()`), so an owner can say "shut down what exists *now*" and a late
     /// shutdown never touches transfers or subscriptions created afterwards.
     private let epoch = Mutex(0)
+    /// Ticket of the latest shutdown that has begun. Requests decided before it (`decidedAt` older than
+    /// this) are refused, so an owner's in-flight decision can never start a transfer after teardown.
+    private let closedThrough = Mutex(Int.min)
     private var continuations: [UUID: (epoch: Int, continuation: AsyncStream<TransferEvent>.Continuation)] = [:]
     /// Total download requests issued to the gateway (for audits/tests).
     public private(set) var downloadRequestCount = 0
@@ -151,12 +157,22 @@ public actor SourceTransferController {
 
     /// Requests local availability. Automatic requests (`userRequested == false`) are refused unless the
     /// controller's current setting is ON; explicit user requests are honored in either setting.
+    ///
+    /// `decidedAt` is the `shutdownTicket()` the caller read when it decided to request; a request
+    /// decided before a shutdown began (`beginShutdown()`) is refused and changes nothing.
     @discardableResult
     public func makeAvailable(
         _ key: DeviceAccessKey,
         at url: URL,
-        userRequested: Bool = false
+        userRequested: Bool = false,
+        decidedAt: Int? = nil
     ) -> TransferState {
+        // A nonisolated `beginShutdown()` can run at any point while this method does its I/O, so the
+        // decision is re-checked at the top, right before any download request and before installing an
+        // observer.
+        if isClosed(decidedAt) {
+            return state(of: key)
+        }
         if let running = active[key] {
             if userRequested, case .offlineOrUnknown = state(of: key) {
                 // Explicit retry of a stalled transfer: stop the backoff observer and request again.
@@ -174,6 +190,8 @@ public actor SourceTransferController {
         enum Decision {
             case set(TransferState)
             case request
+            /// A shutdown began while deciding; nothing was requested.
+            case refused
             /// The provider is already transferring (e.g. after an earlier request was cancelled):
             /// observe without issuing another request.
             case observeOnly
@@ -197,6 +215,7 @@ public actor SourceTransferController {
                 case .cloudPlaceholder:
                     guard metadata.supportsDownloadRequest else { return .set(.notRequested(.unsupportedLocation)) }
                     guard setting == .on || userRequested else { return .set(.notRequested(.availabilityOff)) }
+                    guard !isClosed(decidedAt) else { return .refused }
                     do {
                         downloadRequestCount += 1
                         try context.io.requestDownload(of: url)
@@ -209,9 +228,18 @@ public actor SourceTransferController {
         }
 
         switch decision {
+        case .refused:
+            return state(of: key)
         case let .set(state):
             publish(key, state)
             return state
+        case .request where isClosed(decidedAt):
+            // The request already went out, but a shutdown began meanwhile: never install an observer.
+            // The request is counted and the transfer reported cancelled (the provider may still finish).
+            publish(key, .cancelled)
+            return .cancelled
+        case .observeOnly where isClosed(decidedAt):
+            return state(of: key)
         case .request, .observeOnly:
             cancelledByUser.remove(key)
             let current = nextEpoch()
@@ -221,7 +249,7 @@ public actor SourceTransferController {
             let task = Task.detached { [context, policy, sleep] in
                 await Self.observe(owner: owner, context: context, policy: policy, sleep: sleep, key: key, url: url, generation: current)
             }
-            active[key] = Active(generation: current, task: task, userRequested: userRequested)
+            active[key] = Active(generation: current, task: task, userRequested: userRequested, decidedAt: decidedAt)
             return initial
         }
     }
@@ -278,9 +306,24 @@ public actor SourceTransferController {
         for key in Array(active.keys) { await cancel(key) }
     }
 
-    /// The current epoch. Pass it to `shutdown(through:)` to limit teardown to what exists now.
+    /// The current epoch. Pass it to `shutdown(through:)` to limit teardown to what exists now, or as
+    /// `decidedAt` to `makeAvailable` to have the request refused if a shutdown begins meanwhile.
     public nonisolated func shutdownTicket() -> Int {
         epoch.withLock { $0 }
+    }
+
+    private nonisolated func isClosed(_ decidedAt: Int?) -> Bool {
+        guard let decidedAt else { return false }
+        return decidedAt < closedThrough.withLock { $0 }
+    }
+
+    /// Begins owner teardown synchronously: takes a fresh ticket and, atomically, refuses every request
+    /// decided before it. Pass the result to `shutdown(through:)`. Decisions made afterwards (a newer
+    /// `shutdownTicket()`) are honored, so a restarted owner works normally.
+    public nonisolated func beginShutdown() -> Int {
+        let ticket = nextEpoch()
+        closedThrough.withLock { $0 = max($0, ticket) }
+        return ticket
     }
 
     /// Owner teardown (window closed, monitor stopped/deallocated): stops observers without recording
@@ -292,7 +335,7 @@ public actor SourceTransferController {
         let limit = ticket ?? Int.max
         var stopped: [Task<Void, Never>] = draining.values.flatMap { $0 }
         draining.removeAll()
-        for (key, running) in active where running.generation <= limit {
+        for (key, running) in active where running.generation <= limit || (running.decidedAt.map { $0 < limit } ?? false) {
             active[key] = nil
             running.task.cancel()
             stopped.append(running.task)
@@ -305,7 +348,7 @@ public actor SourceTransferController {
         for task in stopped { await task.value }
     }
 
-    private func nextEpoch() -> Int {
+    private nonisolated func nextEpoch() -> Int {
         epoch.withLock {
             $0 += 1
             return $0

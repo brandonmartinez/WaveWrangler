@@ -26,29 +26,23 @@ enum SetupEngineProvider {
     /// user-requested downloads while Setup isn't showing) and shuts down when the last one closes.
     static let leases = SetupEngineLeases<ObjectIdentifier, ShowID>(registry: registry)
     private static var closeObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
-    /// Windows that closed while (or before) their lease was being taken.
-    private static var closed: Set<ObjectIdentifier> = []
 
-    /// Starts watching `window` for close; call synchronously before leasing.
+    /// Starts watching `window` for close. Call synchronously as soon as the window is known (before
+    /// any lease), so a close can never be missed.
     static func watchClose(of window: NSWindow) {
         let owner = ObjectIdentifier(window)
         guard closeObservers[owner] == nil else { return }
-        closed.remove(owner)
+        leases.ownerOpened(owner)
         closeObservers[owner] = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
             MainActor.assumeIsolated {
                 if let observer = closeObservers.removeValue(forKey: owner) { NotificationCenter.default.removeObserver(observer) }
-                closed.insert(owner)
-                Task { await leases.end(owner) }
+                Task { await leases.ownerClosed(owner) }
             }
         }
     }
 
     static func engine(for window: NSWindow, show: ShowID) async -> any SourceSetupEngine {
-        let owner = ObjectIdentifier(window)
-        let engine = await leases.engine(for: owner, key: show)
-        // The window closed while the lease was being taken: give it back at once.
-        if closed.contains(owner) { await leases.end(owner) }
-        return engine
+        await leases.engine(for: ObjectIdentifier(window), key: show)
     }
 
     private static let store: any DeviceAccessStore = {

@@ -7,6 +7,8 @@ import WWOrganizer
 ///
 /// - `-WWUITestResetPreferences YES`: remove WaveWrangler preference keys (fresh defaults).
 /// - `-WWUITestLibraryFixture lib100|empty`: seed the in-memory library (F-LIB100 / F-EMPTY).
+/// - `-WWUITestResetStorage YES` (with `-WWUITestHooks YES`): delete the isolated UI-test storage (library,
+///   show locations, recovery) so a test starts clean; later launches without it keep the data (relaunch).
 /// - `-WWUITestOpenShow <name>` (+ `-WWUITestShowEpisodes <n>`): create a synthetic show and open it
 ///   (the Library window is then not shown at launch).
 /// - `-WWUITestCenterWindows YES` (implied by `-WWUITestHooks YES`): place windows fully on the primary
@@ -43,6 +45,18 @@ enum LaunchFixtures {
     static func applyBeforeLaunch() {
         #if DEBUG
         let defaults = UserDefaults.standard
+        if defaults.bool(forKey: "WWUITestResetStorage"), PersistenceEnvironment.isUITestRun {
+            // Only the isolated UI-test storage ("WaveWrangler-UITests"), never the user's.
+            let root = PersistenceEnvironment.applicationSupport("")
+            if root.path(percentEncoded: false).contains("WaveWrangler-UITests") {
+                try? FileManager.default.removeItem(at: root)
+                try? FileManager.default.removeItem(at: PersistenceEnvironment.caches(""))
+            }
+            UserDefaults(suiteName: "com.brandonmartinez.wavewrangler.uitest-preferences")?.removeObject(forKey: "WWLibraryLocation")
+            if let folder = defaults.string(forKey: "WWUITestShowFolder"), folder.hasPrefix("WWUITests-") {
+                try? FileManager.default.removeItem(at: URL(filePath: NSTemporaryDirectory()).appending(path: folder, directoryHint: .isDirectory))
+            }
+        }
         if defaults.bool(forKey: "WWUITestResetPreferences") {
             defaults.removeObject(forKey: "NSWindow Frame WaveWranglerLibraryWindow")
             // Persistence's isolated UI-test preferences (autosave policy) also start from the defaults, so
@@ -77,7 +91,9 @@ enum LaunchFixtures {
         if delay > 0 { AutosavePolicyController.shared.delaySeconds = delay }
         guard let name = defaults.string(forKey: "WWUITestOpenShow"), !name.isEmpty else { return }
         let count = max(0, defaults.integer(forKey: "WWUITestShowEpisodes"))
-        let folder = URL(filePath: NSTemporaryDirectory()).appending(path: "WWUITests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        // A stable folder name when asked (relaunch tests reopen the same show); otherwise unique.
+        let folderName = defaults.string(forKey: "WWUITestShowFolder") ?? "WWUITests-\(UUID().uuidString)"
+        let folder = URL(filePath: NSTemporaryDirectory()).appending(path: folderName, directoryHint: .isDirectory)
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         } catch {
