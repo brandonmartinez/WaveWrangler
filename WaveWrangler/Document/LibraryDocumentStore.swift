@@ -51,12 +51,12 @@ final class LibraryDocumentStore {
 
     init(store: LibraryStore? = nil) {
         self.store = store ?? LibraryStore(
-            containerFolder: (try? LibraryStore.defaultContainerFolder())
-                ?? FileManager.default.temporaryDirectory.appending(path: "WaveWrangler/Library", directoryHint: .isDirectory),
-            settings: UserDefaultsLibraryLocationSettings(),
+            containerFolder: PersistenceEnvironment.applicationSupport("Library"),
+            settings: UserDefaultsLibraryLocationSettings(
+                suiteName: PersistenceEnvironment.isUITestRun ? "com.brandonmartinez.wavewrangler.uitest-preferences" : nil
+            ),
             recovery: PersistenceEnvironment.recovery,
-            indexCache: LibraryIndexCache(url: (try? LibraryIndexCache.defaultURL())
-                ?? FileManager.default.temporaryDirectory.appending(path: "WaveWrangler/LibraryIndex/index.json"))
+            indexCache: LibraryIndexCache(url: PersistenceEnvironment.caches("LibraryIndex/index.json"))
         )
     }
 

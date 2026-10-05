@@ -8,18 +8,40 @@ import WWPersistence
 /// Everything here is device-local and outside canonical documents. Locations are inside the sandbox
 /// container (Application Support / Caches).
 enum PersistenceEnvironment {
+    /// UI-test runs (`-WWUITestHooks YES`) use separate preferences and storage so they never touch the
+    /// user's settings, recovery records or library.
+    static let isUITestRun = UserDefaults.standard.bool(forKey: UITestHooks.enabledKey)
+
+    /// Folder name under Application Support / Caches.
+    static let storageName = isUITestRun ? "WaveWrangler-UITests" : "WaveWrangler"
+
+    /// Where autosave preferences live (`UserDefaults` is not `Sendable`, so it is resolved per use).
+    static var preferences: UserDefaults {
+        isUITestRun ? (UserDefaults(suiteName: "com.brandonmartinez.wavewrangler.uitest-preferences") ?? .standard) : .standard
+    }
+
+    static func applicationSupport(_ path: String) -> URL {
+        let base = (try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
+            ?? FileManager.default.temporaryDirectory
+        return base.appending(path: "\(storageName)/\(path)", directoryHint: .isDirectory)
+    }
+
+    static func caches(_ path: String) -> URL {
+        let base = (try? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
+            ?? FileManager.default.temporaryDirectory
+        return base.appending(path: "\(storageName)/\(path)")
+    }
+
     /// Device-local recovery records (prior checkpoints, C2b edit checkpoints, conflict candidates,
-    /// migration backups). Falls back to a temporary folder only if Application Support is unavailable.
+    /// migration backups, the library pending-edits journal).
     static let recovery: RecoveryStore = {
-        let root = (try? RecoveryStore.defaultRoot())
-            ?? FileManager.default.temporaryDirectory.appending(path: "WaveWrangler/Recovery", directoryHint: .isDirectory)
-        let store = RecoveryStore(root: root)
+        let store = RecoveryStore(root: applicationSupport("Recovery"))
         store.removeStagingLeftovers()
         return store
     }()
 
     /// The actual autosave enabled flag, consulted at every scheduling boundary and automatic save entry.
-    static let autosaveGate = AutosaveGate(AutosavePreference(defaults: .standard))
+    static let autosaveGate = AutosaveGate(AutosavePreference(defaults: preferences))
 }
 
 /// Autosave preference controller (C6): ON by default / configurable delay / OFF, persisted in
@@ -58,15 +80,16 @@ final class AutosavePolicyController {
         observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { AutosavePolicyController.shared.syncFromDefaults() }
         }
+        UITestHooks.installIfRequested(self)
     }
 
     func update(_ newValue: AutosavePreference) {
-        newValue.write(to: .standard)
+        newValue.write(to: PersistenceEnvironment.preferences)
         apply(newValue)
     }
 
     private func syncFromDefaults() {
-        let stored = AutosavePreference(defaults: .standard)
+        let stored = AutosavePreference(defaults: PersistenceEnvironment.preferences)
         if stored != preference { apply(stored) }
     }
 
