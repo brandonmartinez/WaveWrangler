@@ -9,6 +9,8 @@ import XCTest
 @MainActor
 final class WaveWranglerUITests: XCTestCase {
     private var app: XCUIApplication!
+    /// Frame of the Library entry table, captured before an audit (queries inside the audit handler are unreliable).
+    private var entryTableFrame: CGRect?
 
     override func setUp() async throws {
         continueAfterFailure = false
@@ -53,6 +55,8 @@ final class WaveWranglerUITests: XCTestCase {
     /// change are waived with a rationale; everything else fails the test.
     private func audit(_ surface: String, file: StaticString = #filePath, line: UInt = #line) throws {
         var findings: [String] = []
+        let table = app.outlines["ww.library.entries"]
+        entryTableFrame = table.exists ? table.frame : nil
         try app.performAccessibilityAudit(for: [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]) { issue in
             let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(240) ?? "no element")"
             if let rationale = self.waiver(for: issue) {
@@ -72,11 +76,12 @@ final class WaveWranglerUITests: XCTestCase {
         guard let element = issue.element else { return nil }
         // Entry-table cells (system table text, no custom styling) fail contrast even with the Library
         // window isolated on the primary display; tracked in #59 (P2, M1).
-        if issue.auditType == .contrast {
-            let table = app.outlines["ww.library.entries"]
-            if table.exists, table.frame.contains(element.frame) {
-                return "issue #59: system table text contrast (tracked)"
-            }
+        // Cells can extend past the outline's clip frame horizontally, so match by the table's left edge and
+        // vertical extent.
+        if issue.auditType == .contrast, let frame = entryTableFrame,
+           element.frame.minX >= frame.minX, element.frame.minY >= frame.minY, element.frame.maxY <= frame.maxY,
+           element.frame.minX < frame.maxX {
+            return "issue #59: system table text contrast (tracked)"
         }
         // Window chrome (traffic lights, toolbar overflow, split-view dividers) is drawn by AppKit.
         if [.window, .toolbar, .splitter, .menuBar, .menuBarItem, .touchBar].contains(element.elementType) {
@@ -99,6 +104,10 @@ final class WaveWranglerUITests: XCTestCase {
         if issue.auditType == .contrast,
            element.identifier.hasPrefix("ww.library.sidebar.") || element.identifier.hasPrefix("ww.library.entry.") {
             return "issue #59: system sidebar/table text contrast (tracked)"
+        }
+        // The system "emoji & symbols" input item (Touch Bar / menu bar), not app UI.
+        if element.elementType == .popUpButton, element.label == "emoji & symbols" {
+            return "system input item, not app UI"
         }
         // macOS injects the Siri waveform overlay (an untitled Dialog with a 'siri' button) into every
         // app's AX tree on this host; it is not WaveWrangler UI.

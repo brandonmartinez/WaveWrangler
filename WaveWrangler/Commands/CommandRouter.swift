@@ -69,6 +69,8 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
         let before = Set(document.windowControllers.map(ObjectIdentifier.init))
         document.makeWindowControllers()
         for controller in document.windowControllers where !before.contains(ObjectIdentifier(controller)) {
+            // IA-02: File › New Window opens another window, not a tab.
+            controller.window?.tabbingMode = .disallowed
             controller.showWindow(nil)
         }
     }

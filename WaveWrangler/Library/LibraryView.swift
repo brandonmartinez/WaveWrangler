@@ -280,12 +280,20 @@ private struct LibraryEntryDetail: View {
         if rows.count == 1, let row = rows.first {
             detail(row)
         } else {
-            ContentUnavailableView(
-                rows.isEmpty ? "No Show Selected" : "\(rows.count) Shows Selected",
-                systemImage: "books.vertical",
-                description: Text(rows.isEmpty ? "Select a show to see its details." : "Use the File › Library menu to add them to a collection.")
-            )
-            .wwFont(.body)
+            VStack(spacing: 8) {
+                Image(systemName: "books.vertical")
+                    .wwFont(.largeTitle)
+                    .accessibilityHidden(true)
+                Text(rows.isEmpty ? "No Show Selected" : "\(rows.count) Shows Selected")
+                    .wwFont(.title3)
+                    .accessibilityAddTraits(.isHeader)
+                Text(rows.isEmpty ? "Select a show to see its details." : "Use the File › Library menu to add them to a collection.")
+                    .wwFont(.body)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

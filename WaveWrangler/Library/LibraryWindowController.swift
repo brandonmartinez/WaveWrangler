@@ -51,6 +51,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate, NSWin
         window.isRestorable = true
         window.restorationClass = LibraryWindowController.self
         window.tabbingMode = .disallowed
+        window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
         window.setFrameAutosaveName("WaveWranglerLibraryWindow")
