@@ -32,6 +32,7 @@ import WWEpisodeSetup
     func showSourceInFinder(_ sender: Any?)
     func removeSourceFromEpisode(_ sender: Any?)
     func toggleSourcesNeedingAttention(_ sender: Any?)
+    func toggleSetupDetails(_ sender: Any?)
     func sortSourcesBy(_ sender: Any?)
     func moveItemUp(_ sender: Any?)
     func moveItemDown(_ sender: Any?)
@@ -206,6 +207,11 @@ final class EpisodeSetupViewController: NSObject, SetupCommandActions, NSMenuIte
 
     func toggleSourcesNeedingAttention(_ sender: Any?) { model.onlyNeedingAttention.toggle() }
 
+    /// View › Show/Hide Setup Details: keyboard path to the details panel when it is collapsed (#104).
+    func toggleSetupDetails(_ sender: Any?) {
+        model.detailsExpanded = !(model.detailsShown)
+    }
+
     func sortSourcesBy(_ sender: Any?) {
         guard let raw = (sender as? NSMenuItem)?.representedObject as? String, let order = SourceSortOrder(rawValue: raw) else { return }
         model.sortOrder = order
@@ -247,6 +253,9 @@ final class EpisodeSetupViewController: NSObject, SetupCommandActions, NSMenuIte
         case #selector(resumeSourceDownload(_:)): return canTransfer(.resume)
         case #selector(cancelSourceDownload(_:)): return canTransfer(.cancel)
         case #selector(retrySourceDownload(_:)): return canTransfer(.retry)
+        case #selector(toggleSetupDetails(_:)):
+            item.title = model.detailsShown ? "Hide Setup Details" : "Show Setup Details"
+            return hasEpisode && model.detailsCanCollapse
         case #selector(toggleSourcesNeedingAttention(_:)):
             item.state = model.onlyNeedingAttention ? .on : .off
             return hasEpisode
@@ -404,7 +413,11 @@ enum SetupMenus {
             sortMenu.addItem(item(order.title, #selector(SetupCommandActions.sortSourcesBy(_:)), represented: order.rawValue))
         }
         sort.submenu = sortMenu
-        return [item("Show Only Sources Needing Attention", #selector(SetupCommandActions.toggleSourcesNeedingAttention(_:))), sort]
+        return [
+            item("Show Only Sources Needing Attention", #selector(SetupCommandActions.toggleSourcesNeedingAttention(_:))),
+            sort,
+            item("Show Setup Details", #selector(SetupCommandActions.toggleSetupDetails(_:))),
+        ]
     }
 
     static func makeEditItems() -> [NSMenuItem] {
