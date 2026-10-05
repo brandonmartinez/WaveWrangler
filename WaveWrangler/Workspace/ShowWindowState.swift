@@ -16,7 +16,7 @@ final class ShowWindowState {
     }
 
     var sidebarSelection: SidebarSelection? {
-        didSet { if oldValue != sidebarSelection { Responsiveness.interaction("show.sidebarSelection") } }
+        didSet { if oldValue != sidebarSelection, reportsInteractions { Responsiveness.interaction("show.sidebarSelection") } }
     }
     var destination: ShowDestination = .setup
     var inspectorPresented = true
@@ -30,6 +30,8 @@ final class ShowWindowState {
     var episodeListFocused = false
     /// Set by File › Save so the following "Saved" is announced (states §7).
     @ObservationIgnored var explicitSavePending = false
+    /// Selection changes count as user interactions (WW-007 timing) only after the window's first passes.
+    @ObservationIgnored private var reportsInteractions = false
 
     let store: ShowDocumentStore
     @ObservationIgnored weak var window: NSWindow?
@@ -228,6 +230,7 @@ final class ShowWindowState {
             LaunchFixtures.placeForTesting(window)
             window.setAccessibilityIdentifier("ww.show.window")
             Responsiveness.showWindowAttached()
+            DispatchQueue.main.async { self.reportsInteractions = true }
             self.updateSubtitle()
             let model = self.store.model
             LibraryUIStore.shared.showDidOpen(

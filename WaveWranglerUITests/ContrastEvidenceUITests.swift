@@ -45,7 +45,7 @@ final class ContrastEvidenceUITests: XCTestCase {
             for (name, element) in targets where element.exists {
                 let screenshot = element.screenshot()
                 let file = "contrast-\(label)-\(appearance)-\(name.replacingOccurrences(of: " ", with: "_").replacingOccurrences(of: "'", with: "")).png"
-                try? screenshot.pngRepresentation.write(to: Acceptance.evidenceDirectory.appending(path: file))
+                Acceptance.attach(self, png: screenshot.pngRepresentation, name: file)
                 var entry: [String: Any] = ["element": name, "identifier": element.identifier, "frame": "\(element.frame)", "screenshot": file]
                 if let ratio = ContrastMeter.measure(screenshot.image) {
                     entry.merge(ratio) { $1 }
@@ -60,15 +60,15 @@ final class ContrastEvidenceUITests: XCTestCase {
             }
             let window = app.windows.firstMatch.screenshot()
             let full = "contrast-\(label)-\(appearance)-library-window.png"
-            try? window.pngRepresentation.write(to: Acceptance.evidenceDirectory.appending(path: full))
+            Acceptance.attach(self, png: window.pngRepresentation, name: full)
             if let gray = ContrastMeter.desaturated(window.image) {
-                try? gray.write(to: Acceptance.evidenceDirectory.appending(path: "saturation0-\(label)-\(appearance)-library-window.png"))
+                Acceptance.attach(self, png: gray, name: "saturation0-\(label)-\(appearance)-library-window.png")
             }
             results.append(["appearance": appearance, "measurements": measured, "auditContrastFlags": flagged, "windowScreenshot": full])
             Acceptance.record(self, "#59 \(label) \(appearance): \(measured.map { "\($0["element"] ?? ""): \($0["ratio"] ?? "n/a")" }) audit flags \(flagged.count)")
             app.terminate()
         }
-        Acceptance.writeEvidence("contrast-\(label).json", ["revision": Acceptance.revision(), "label": label, "results": results])
+        Acceptance.writeEvidence("contrast-\(label)", ["revision": Acceptance.revision(), "label": label, "results": results], test: self)
     }
 
     /// C06 saturation-0 captures of the show window (Setup and a blocked destination).
@@ -86,9 +86,9 @@ final class ContrastEvidenceUITests: XCTestCase {
             window.typeKey(key, modifierFlags: .command)
             Thread.sleep(forTimeInterval: 1)
             let shot = window.screenshot()
-            try? shot.pngRepresentation.write(to: Acceptance.evidenceDirectory.appending(path: "show-\(name).png"))
+            Acceptance.attach(self, png: shot.pngRepresentation, name: "show-\(name).png")
             if let gray = ContrastMeter.desaturated(shot.image) {
-                try? gray.write(to: Acceptance.evidenceDirectory.appending(path: "saturation0-show-\(name).png"))
+                Acceptance.attach(self, png: gray, name: "saturation0-show-\(name).png")
             }
         }
     }

@@ -5,7 +5,6 @@ import XCTest
 /// statistics and evidence output. Synthetic fixtures only.
 ///
 /// Environment (set with the `TEST_RUNNER_` prefix when invoking `scripts/test.sh --ui`):
-/// - `WW_EVIDENCE_DIR`: folder for raw JSON evidence (default: the runner's temporary directory).
 /// - `WW_SCALE_SAMPLES`: samples per SCALE-001 stratum (default 5 = calibration; 100 = frozen holdout).
 /// - `WW_HOLDOUT_SCENARIOS`: GUI scenarios for DUR-026 / REF-020 (default 2 = calibration; 20 = holdout).
 enum Acceptance {
@@ -15,21 +14,25 @@ enum Acceptance {
         environment[key].flatMap(Int.init) ?? value
     }
 
-    static var evidenceDirectory: URL {
-        let url = environment["WW_EVIDENCE_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? FileManager.default.temporaryDirectory.appending(path: "WaveWranglerEvidence", directoryHint: .isDirectory)
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+    /// Emits `object` as one `[evidence-json] <name> <json>` line (and an attachment). The sandboxed runner
+    /// can't write outside its container, so evidence is collected from the test log.
+    static func writeEvidence(_ name: String, _ object: Any, test: XCTestCase? = nil) {
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return }
+        print("[evidence-json] \(name) \(String(decoding: data, as: UTF8.self))")
+        if let test {
+            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            test.add(attachment)
+        }
     }
 
-    /// Writes `object` as pretty JSON into the evidence folder and returns its URL.
-    @discardableResult
-    static func writeEvidence(_ name: String, _ object: Any) -> URL {
-        let url = evidenceDirectory.appending(path: name)
-        if let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]) {
-            try? data.write(to: url)
-        }
-        return url
+    /// Keeps a PNG as an attachment in the result bundle (export with `xcresulttool export attachments`).
+    static func attach(_ test: XCTestCase, png: Data, name: String) {
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        test.add(attachment)
     }
 
     // MARK: - Statistics (registry: nearest-rank ceil(0.95 n))
@@ -54,58 +57,16 @@ enum Acceptance {
         ]
     }
 
-    // MARK: - In-app timings (`-WWUITestTimingLog YES`, see WaveWrangler/Support/Responsiveness.swift)
-
-    struct Timing {
-        var name: String
-        var eventMs: Double
-        var handlerMs: Double
-        var thread: String
-        var detail: [String: String]
-        var date: String
-    }
+    // MARK: - Phases (in-app timings are extracted outside the sandboxed runner)
 
     static let timingArguments = ["-WWUITestTimingLog", "YES"]
 
-    /// Reads the app's `WWTIMING` lines logged since `start` from the unified log.
-    static func appTimings(since start: Date) -> [Timing] {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/log")
-        process.arguments = [
-            "show", "--style", "ndjson", "--info",
-            "--start", formatter.string(from: start.addingTimeInterval(-1)),
-            "--predicate", "subsystem == \"com.brandonmartinez.wavewrangler\" AND category == \"Responsiveness\"",
-        ]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return [] }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        var timings: [Timing] = []
-        for line in data.split(separator: UInt8(ascii: "\n")) {
-            guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
-                  let message = object["eventMessage"] as? String, message.hasPrefix("WWTIMING ") else { continue }
-            var fields: [String: String] = [:]
-            for part in message.dropFirst("WWTIMING ".count).split(separator: " ") {
-                let pair = part.split(separator: "=", maxSplits: 1)
-                if pair.count == 2 { fields[String(pair[0])] = String(pair[1]) }
-            }
-            guard let name = fields.removeValue(forKey: "name"),
-                  let event = fields.removeValue(forKey: "eventMs").flatMap(Double.init),
-                  let handler = fields.removeValue(forKey: "handlerMs").flatMap(Double.init) else { continue }
-            let thread = fields.removeValue(forKey: "thread") ?? "?"
-            timings.append(Timing(name: name, eventMs: event, handlerMs: handler, thread: thread, detail: fields,
-                                  date: object["timestamp"] as? String ?? ""))
-        }
-        return timings
-    }
-
-    static func json(_ timings: [Timing]) -> [[String: Any]] {
-        timings.map { ["name": $0.name, "eventMs": $0.eventMs, "handlerMs": $0.handlerMs, "thread": $0.thread, "detail": $0.detail, "date": $0.date] }
+    /// Marks a measurement phase in the test log. The UI-test runner is sandboxed and can't read the unified
+    /// log, so `docs/m1/evidence/ww-007/collect_timings.py` assigns the app's `WWTIMING` lines to phases by time.
+    static func phase(_ name: String, _ body: () throws -> Void) rethrows {
+        print("[phase] begin \(name) \(Date().timeIntervalSince1970)")
+        defer { print("[phase] end \(name) \(Date().timeIntervalSince1970)") }
+        try body()
     }
 
     /// Commit and tree IDs of the tested checkout (the runner is not sandboxed; `WW_SOURCE_ROOT` or the

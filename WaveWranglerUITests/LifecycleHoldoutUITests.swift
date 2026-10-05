@@ -66,9 +66,9 @@ final class LifecycleHoldoutUITests: XCTestCase {
             Acceptance.record(self, "DUR-026 #\(index + 1) \(route.rawValue): \(failures.isEmpty ? "PASS" : "FAIL \(failures)")")
         }
         let passed = records.filter { $0["passed"] as? Bool == true }.count
-        Acceptance.writeEvidence("dur026-native-lifecycle.json", [
+        Acceptance.writeEvidence("dur026-native-lifecycle", [
             "revision": Acceptance.revision(), "scenarios": records, "executed": records.count, "passed": passed,
-        ])
+        ], test: self)
         for record in records where record["passed"] as? Bool != true {
             XCTFail("DUR-026 scenario \(record["scenario"] ?? "?") \(record["route"] ?? ""): \(record["failures"] ?? "")")
         }

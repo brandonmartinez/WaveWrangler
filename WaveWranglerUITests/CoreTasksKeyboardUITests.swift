@@ -223,15 +223,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
         let passed = findings.isEmpty
         Acceptance.record(self, "A11Y-001 \(id): \(passed ? "PASS" : "FAIL \(findings)")")
         results.append(["task": id, "passed": passed, "findings": findings])
-        let url = Acceptance.evidenceDirectory.appending(path: "a11y001-core-tasks.jsonl")
-        let line = (try? JSONSerialization.data(withJSONObject: ["task": id, "passed": passed, "findings": findings, "revision": Acceptance.revision()])) ?? Data()
-        if let handle = try? FileHandle(forWritingTo: url) {
-            handle.seekToEndOfFile()
-            handle.write(line + Data("\n".utf8))
-            try? handle.close()
-        } else {
-            try? (line + Data("\n".utf8)).write(to: url)
-        }
+        Acceptance.writeEvidence("a11y001-\(id)", ["task": id, "passed": passed, "findings": findings, "revision": Acceptance.revision()], test: self)
         for finding in findings { XCTFail("\(id): \(finding)") }
     }
 

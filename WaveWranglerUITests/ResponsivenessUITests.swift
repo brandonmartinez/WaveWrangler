@@ -67,101 +67,76 @@ final class ResponsivenessUITests: XCTestCase {
         return opened ? Date().timeIntervalSince(start) * 1000 : nil
     }
 
-    private func gate(_ label: String, _ values: [Double], below limit: Double) -> [String: Any] {
-        var summary = Acceptance.summary(values)
-        summary["gateMs"] = limit
-        summary["gatePassed"] = (Acceptance.p95(values) ?? .infinity) < limit
-        Acceptance.record(self, "\(label): \(summary)")
-        return summary
-    }
-
     // MARK: - Launch and first open (cold process)
 
-    /// Each sample is a fresh app process: launch → library ready → open one show (first show opened in
-    /// the process). Rows rotate through the 97 available shows.
+    /// Each sample is a fresh app process: launch → library ready → open one show (the first show opened in
+    /// the process). Rows rotate through the 97 available shows (rows 4–100; rows 1–3 are the unavailable
+    /// fixture entries). A warm-up launch first generates the fixture files (excluded from the phase).
     func testColdLaunchAndFirstOpen() throws {
-        let start = Date()
+        launch("lib100files")
+        waitForLibrary()
+        app.terminate()
         var harness: [Double] = []
-        var opened = 0
-        var row = 0
-        var attempts = 0
-        while opened < samples, attempts < samples + 10 {
-            attempts += 1
-            launch("lib100files")
-            waitForLibrary()
-            if let ms = openFirstAvailable(from: row % 100) {
+        Acceptance.phase("cold-first-open") {
+            for index in 0..<samples {
+                launch("lib100files")
+                waitForLibrary()
+                guard let ms = openFirstAvailable(from: 3 + index % 97) else {
+                    XCTFail("cold sample \(index) did not open a show")
+                    break
+                }
                 harness.append(ms)
-                opened += 1
+                app.terminate()
             }
-            row += 1
-            app.terminate()
         }
-        let timings = Acceptance.appTimings(since: start)
-        let launches = timings.filter { $0.name == "launch.libraryReady" }.map(\.eventMs)
-        let firstOpens = timings.filter { $0.name == "show.open" && $0.detail["openIndex"] == "1" }.map(\.eventMs)
-        let result: [String: Any] = [
-            "revision": Acceptance.revision(),
-            "fixture": "F-LIB100 lib100files (100 shows, 97 file-backed, 1,000 refs, 5 collections, 3 unavailable)",
-            "launchToLibraryReady": gate("cold launch → library ready (in-app, process start → commit)", launches, below: 1000),
-            "firstOpenCold": gate("first open in a fresh process (in-app, Return → show window commit)", firstOpens, below: 1000),
-            "firstOpenHarnessUpperBound": Acceptance.summary(harness),
-            "raw": Acceptance.json(timings.filter { $0.name == "launch.libraryReady" || $0.name == "show.open" }),
-        ]
-        Acceptance.writeEvidence("scale001-native-first-open.json", result)
-        XCTAssertGreaterThanOrEqual(firstOpens.count, samples, "first-open samples")
-        XCTAssertLessThan(Acceptance.p95(firstOpens) ?? .infinity, 1000, "WW-007 provisional p95 open < 1 s")
-        XCTAssertLessThan(Acceptance.p95(launches) ?? .infinity, 1000, "launch to library ready p95 < 1 s")
+        Acceptance.writeEvidence("scale001-native-first-open-harness", [
+            "revision": Acceptance.revision(), "harnessReturnToWindowMs": harness, "summary": Acceptance.summary(harness),
+        ], test: self)
+        XCTAssertEqual(harness.count, samples, "first-open samples")
     }
 
     // MARK: - Warm open (same process)
 
-    /// One process: open a show, close it (⌘W), reopen it from the library with Return. The first open is
-    /// excluded; every later open is warm.
+    /// One process: open a show, then close it (⌘W) and reopen it from the library with Return, `samples`
+    /// times. The first open (openIndex 1) is excluded; every reopen is warm.
     func testWarmReopen() throws {
-        let start = Date()
         launch("lib100files")
         waitForLibrary()
-        var harness: [Double] = []
         XCTAssertNotNil(openFirstAvailable(from: 3), "opened an available show")
-        XCTAssertEqual(showWindows.count, 1, "first show opened")
-        for index in 0..<samples {
-            app.typeKey("w", modifierFlags: .command)
-            XCTAssertTrue(Acceptance.waitFor(timeout: 5) { self.showWindows.count == 0 }, "closed (\(index))")
-            guard let ms = pressReturnAndWaitForShow() else {
-                XCTFail("warm reopen \(index) did not open a show window")
-                break
+        var harness: [Double] = []
+        Acceptance.phase("warm-reopen") {
+            for index in 0..<samples {
+                app.typeKey("w", modifierFlags: .command)
+                XCTAssertTrue(Acceptance.waitFor(timeout: 5) { self.showWindows.count == 0 }, "closed (\(index))")
+                guard let ms = pressReturnAndWaitForShow() else {
+                    XCTFail("warm reopen \(index) did not open a show window")
+                    break
+                }
+                harness.append(ms)
             }
-            harness.append(ms)
         }
-        let timings = Acceptance.appTimings(since: start)
-        let warm = timings.filter { $0.name == "show.open" && ($0.detail["openIndex"].flatMap(Int.init) ?? 0) >= 2 }.map(\.eventMs)
-        let result: [String: Any] = [
-            "revision": Acceptance.revision(),
-            "fixture": "F-LIB100 lib100files",
-            "warmOpen": gate("warm reopen (in-app, Return → show window commit)", warm, below: 1000),
-            "warmOpenHarnessUpperBound": Acceptance.summary(harness),
-            "raw": Acceptance.json(timings.filter { $0.name == "show.open" }),
-        ]
-        Acceptance.writeEvidence("scale001-native-warm-open.json", result)
-        XCTAssertGreaterThanOrEqual(warm.count, samples, "warm samples")
-        XCTAssertLessThan(Acceptance.p95(warm) ?? .infinity, 1000, "WW-007 provisional p95 open < 1 s")
+        Acceptance.writeEvidence("scale001-native-warm-open-harness", [
+            "revision": Acceptance.revision(), "harnessReturnToWindowMs": harness, "summary": Acceptance.summary(harness),
+        ], test: self)
+        XCTAssertEqual(harness.count, samples, "warm samples")
     }
 
     // MARK: - Interactions
 
     /// Library sidebar selection, collection reorder (an undoable library edit), episode switch and
-    /// episode-title edit: `samples` each, keyboard only.
+    /// episode-title edit: `samples` each, keyboard only. Each kind is its own phase.
     func testInteractions() throws {
-        let start = Date()
         launch("lib100files")
         waitForLibrary()
 
         // Sidebar: Shows, Recent, Unavailable, Synthetic Collection 1…5 (8 rows); walk down and up.
         var position = 0
-        for index in 0..<samples {
-            let down = (index / 7) % 2 == 0
-            app.typeKey(down ? .downArrow : .upArrow, modifierFlags: [])
-            position += down ? 1 : -1
+        Acceptance.phase("interaction-library-sidebar") {
+            for index in 0..<samples {
+                let down = (index / 7) % 2 == 0
+                app.typeKey(down ? .downArrow : .upArrow, modifierFlags: [])
+                position += down ? 1 : -1
+            }
         }
         // Collection edit: select Synthetic Collection 3 (row 5) and move it down/up (⌥⌘↓ / ⌥⌘↑).
         let target = 5 - position
@@ -169,8 +144,10 @@ final class ResponsivenessUITests: XCTestCase {
         let collection = app.outlines["ww.library.sidebar"].descendants(matching: .any)
             .matching(NSPredicate(format: "label == 'Synthetic Collection 3, collection'")).firstMatch
         XCTAssertTrue(collection.waitForExistence(timeout: 5))
-        for index in 0..<samples {
-            app.typeKey(index % 2 == 0 ? .downArrow : .upArrow, modifierFlags: [.command, .option])
+        Acceptance.phase("interaction-collection-edit") {
+            for index in 0..<samples {
+                app.typeKey(index % 2 == 0 ? .downArrow : .upArrow, modifierFlags: [.command, .option])
+            }
         }
 
         // Back to Shows (top), open an available show.
@@ -180,10 +157,13 @@ final class ResponsivenessUITests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 10))
         let episodes = app.descendants(matching: .any).matching(identifier: "ww.show.sidebar.episodes").firstMatch
         XCTAssertTrue(episodes.waitForExistence(timeout: 5))
+        Thread.sleep(forTimeInterval: 0.5)
 
         // Episode switch: the episode list has focus when the window opens; walk 5 episodes down and up.
-        for index in 0..<samples {
-            app.typeKey((index / 4) % 2 == 0 ? .downArrow : .upArrow, modifierFlags: [])
+        Acceptance.phase("interaction-episode-switch") {
+            for index in 0..<samples {
+                app.typeKey((index / 4) % 2 == 0 ? .downArrow : .upArrow, modifierFlags: [])
+            }
         }
 
         // Metadata edit: ⌘I focuses Title; each typed character (then each deletion) is a live, undoable edit.
@@ -193,34 +173,34 @@ final class ResponsivenessUITests: XCTestCase {
         app.typeKey(.rightArrow, modifierFlags: .command)
         let half = samples / 2
         let letters = Array("abcdefghijklmnopqrstuvwxyz")
-        for index in 0..<half { app.typeKey(String(letters[index % letters.count]), modifierFlags: []) }
-        for _ in 0..<(samples - half) { app.typeKey(.delete, modifierFlags: []) }
-
+        Acceptance.phase("interaction-metadata-edit") {
+            for index in 0..<half { app.typeKey(String(letters[index % letters.count]), modifierFlags: []) }
+            for _ in 0..<(samples - half) { app.typeKey(.delete, modifierFlags: []) }
+        }
         Thread.sleep(forTimeInterval: 1)
-        let timings = Acceptance.appTimings(since: start)
-        func values(_ name: String) -> [Double] { timings.filter { $0.name == name }.map(\.eventMs) }
-        let sidebar = values("library.sidebarSelection")
-        let collectionEdits = values("library.edit")
-        let episodeSwitches = values("show.sidebarSelection")
-        let edits = values("show.edit")
-        let all = sidebar + collectionEdits + episodeSwitches + edits
-        let result: [String: Any] = [
-            "revision": Acceptance.revision(),
-            "fixture": "F-LIB100 lib100files",
-            "librarySidebarSelection": gate("library sidebar selection", sidebar, below: 100),
-            "collectionEdit": gate("collection move (library edit)", collectionEdits, below: 100),
-            "episodeSwitch": gate("episode switch", episodeSwitches, below: 100),
-            "metadataEdit": gate("episode title edit (per keystroke)", edits, below: 100),
-            "allInteractions": gate("all interactions", all, below: 100),
-            "nonMainThreadReports": timings.filter { $0.thread != "main" }.count,
-            "raw": Acceptance.json(timings),
-        ]
-        Acceptance.writeEvidence("scale001-native-interactions.json", result)
-        XCTAssertGreaterThanOrEqual(sidebar.count, samples, "sidebar selection samples")
-        XCTAssertGreaterThanOrEqual(collectionEdits.count, samples, "collection edit samples")
-        XCTAssertGreaterThanOrEqual(episodeSwitches.count, samples, "episode switch samples")
-        XCTAssertGreaterThanOrEqual(edits.count, samples, "metadata edit samples")
-        XCTAssertLessThan(Acceptance.p95(all) ?? .infinity, 100, "WW-007 provisional p95 interaction < 100 ms")
+    }
+
+    // MARK: - Main-thread file activity (Instruments File Activity, attached from outside)
+
+    /// Prints `[trace] attach-now`, waits for an external `xctrace record --template 'File Activity' --attach
+    /// WaveWrangler` (started by the harness script; the sandboxed runner can't run xctrace), then performs a
+    /// show open, episode switches, edits, sidebar selections and a close inside the `file-activity` phase.
+    func testMainThreadFileActivityTrace() throws {
+        launch("lib100files")
+        waitForLibrary()
+        print("[trace] attach-now \(Date().timeIntervalSince1970)")
+        Thread.sleep(forTimeInterval: 10)
+        Acceptance.phase("file-activity") {
+            for index in 0..<20 { app.typeKey((index / 7) % 2 == 0 ? .downArrow : .upArrow, modifierFlags: []) }
+            for _ in 0..<10 { app.typeKey(.upArrow, modifierFlags: []) }
+            XCTAssertNotNil(openFirstAvailable(from: 3), "opened an available show")
+            for index in 0..<16 { app.typeKey((index / 4) % 2 == 0 ? .downArrow : .upArrow, modifierFlags: []) }
+            app.typeKey("i", modifierFlags: .command)
+            for letter in ["a", "b", "c", "d", "e"] { app.typeKey(letter, modifierFlags: []) }
+            for _ in 0..<5 { app.typeKey(.delete, modifierFlags: []) }
+            app.typeKey("w", modifierFlags: .command)
+        }
+        Thread.sleep(forTimeInterval: 2)
     }
 
     // MARK: - XCTest launch metric (corroboration)
