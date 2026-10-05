@@ -163,7 +163,8 @@ None of these runs is holdout evidence. All are kept unchanged under `dur025-two
 **After the holdout (report-only):**
 - `scripts/dur025/summarize.py` crashed while sorting relink variants, because the 5 failed cases never reached a variant. The fix labels them "(not reached)".
 - This changes the `scripts/dur025` tree in this PR compared with the recorded run tree. `run.py` and the probe are unchanged; the holdout ran once, at `8456bcd`.
-- The evidence doc, the copied records and this summarizer fix are the only changes after the run.
+- CI's Swift toolchain (macOS 26 runner) rejected `bytes.withUnsafeMutableBytes` in the probe's `src-make` as ambiguous; this host's toolchain accepted it. The fix generates the same bytes into a `[UInt8]` array and wraps them in `Data`, a compile-only change. It changes the WWPersistenceProbe tree compared with the recorded run tree. Equivalence check: with seed 123456789, the holdout binary (sha256 `4450c9fe…`) and the rebuilt probe wrote byte-identical `source-0/1/2.wav` (`cmp`). The holdout was not re-run.
+- The evidence doc, the copied records, this summarizer fix and this probe compile fix are the only changes after the run.
 
 ## Limits
 

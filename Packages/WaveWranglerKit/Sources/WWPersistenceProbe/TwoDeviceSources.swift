@@ -55,14 +55,13 @@ extension Probe {
             for index in 0..<count {
                 seed = seed &* 6364136223846793005 &+ 1442695040888963407
                 let size = 4096 + Int(seed % 61440)
-                var bytes = Data(count: size)
                 var state = seed
-                bytes.withUnsafeMutableBytes { buffer in
-                    for i in 0..<size {
-                        state = state &* 6364136223846793005 &+ 1442695040888963407
-                        buffer[i] = UInt8(truncatingIfNeeded: state >> 33)
-                    }
+                var generated = [UInt8](repeating: 0, count: size)
+                for i in 0..<size {
+                    state = state &* 6364136223846793005 &+ 1442695040888963407
+                    generated[i] = UInt8(truncatingIfNeeded: state >> 33)
                 }
+                let bytes = Data(generated)
                 let url = file.appending(path: "source-\(index).wav")
                 try bytes.write(to: url, options: .atomic)
                 files.append(["path": url.path, "sha256": sha256Hex(bytes), "bytes": size])
