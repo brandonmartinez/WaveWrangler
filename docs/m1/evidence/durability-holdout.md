@@ -135,3 +135,8 @@ on that commit only.
 - #82: the `MultiProcessTests` process-kill check counts a kill only when the helper exits on signal 9 **and** its fsynced boundary marker matches. An external kill is retried with a fresh fixture.
   - The probe's `--marker` flag is optional and off by default, so the holdout's probe invocations behave as they did.
 - `LibraryLoadOutcome.unavailableShowingPrior` documentation and `isReadOnly` now match L2/L3 queueing.
+- DUR-004 test: the two timestamps are now shared through a Sendable `LockedBox` instead of a captured `Mutex`, because CI's macOS 26 toolchain rejects the capture. The semantics are unchanged, and the test tree ID now differs from the holdout record above.
+
+The full `scripts/test.sh` suite ran 20 times consecutively on 7bc4a7d (before the DUR-004 `LockedBox` change, which then passed CI):
+- 19 runs passed. Every run passed `processKillAtBoundary` (#82), with 0 external-kill retries.
+- 1 run failed in the source lane's `WW-006 lifecycle matrix` (M1-REF-015 holdout case 3, residency/transfer timing). That test is from main and is not touched here; it was reported to the coordinator.
