@@ -154,6 +154,7 @@ private struct LibraryEntryList: View {
             } else if !Self.usesSwiftUITable {
                 LibraryEntryOutline(
                     state: state,
+                    list: item,
                     rows: state.store.rows(for: item),
                     title: title,
                     selection: state.entrySelection,

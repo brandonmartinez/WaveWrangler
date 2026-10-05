@@ -13,6 +13,7 @@ import WWOrganizer
 /// multiple selection bound to `entrySelection`; context menu; Return/double-click opens; type-select by name.
 struct LibraryEntryOutline: NSViewRepresentable {
     let state: LibraryWindowState
+    let list: LibrarySidebarItem
     let rows: [LibraryEntryRow]
     let title: String
     let selection: Set<ShowID>
@@ -50,6 +51,7 @@ struct LibraryEntryOutline: NSViewRepresentable {
         outline.setAccessibilityIdentifier("ww.library.entries")
         outline.onReturn = { [weak coordinator = context.coordinator] in coordinator?.openSelection() }
         outline.onFocus = { [weak coordinator = context.coordinator] in coordinator?.state.focusedRegion = .entries }
+        outline.onResign = { [weak coordinator = context.coordinator] in coordinator?.resignEntriesFocus() }
 
         let scroll = NSScrollView()
         scroll.documentView = outline
@@ -64,7 +66,11 @@ struct LibraryEntryOutline: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let coordinator = context.coordinator
         coordinator.state = state
-        coordinator.apply(rows: rows, title: title, selection: selection, pointSize: pointSize)
+        coordinator.apply(list: list, rows: rows, title: title, selection: selection, pointSize: pointSize)
+    }
+
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+        coordinator.resignEntriesFocus()
     }
 
     @MainActor
@@ -72,10 +78,13 @@ struct LibraryEntryOutline: NSViewRepresentable {
         var state: LibraryWindowState
         weak var outline: EntryOutlineView?
         let contextMenu = NSMenu()
+        private var list: LibrarySidebarItem = .shows
         private var unsorted: [LibraryEntryRow] = []
         private(set) var items: [EntryItem] = []
         private var cache: [ShowID: EntryItem] = [:]
+        private var reconciler = LibraryEntryListReconciler()
         private var font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        private var lineCounts: [StatusLineKey: Int] = [:]
         private var syncingSelection = false
 
         init(state: LibraryWindowState) {
@@ -84,33 +93,63 @@ struct LibraryEntryOutline: NSViewRepresentable {
             contextMenu.delegate = self
         }
 
-        func apply(rows: [LibraryEntryRow], title: String, selection: Set<ShowID>, pointSize: CGFloat) {
+        func apply(list: LibrarySidebarItem, rows: [LibraryEntryRow], title: String, selection: Set<ShowID>, pointSize: CGFloat) {
             guard let outline else { return }
             outline.setAccessibilityLabel(title)
-            var reload = false
+            var force = false
             if font.pointSize != pointSize {
                 font = NSFont.systemFont(ofSize: pointSize)
-                outline.rowHeight = Self.rowHeight(for: font)
+                outline.rowHeight = Self.rowHeight(for: font, lines: 1)
                 outline.headerView?.needsDisplay = true
-                reload = true
+                lineCounts = [:]
+                force = true
             }
-            if rows != unsorted {
-                unsorted = rows
-                reload = true
-            }
-            if reload {
-                resort()
+            self.list = list
+            unsorted = rows
+            reconcile(selection: selection, forceReload: force)
+        }
+
+        /// Applies the model to the outline: reloads only what changed, restores the selection after a reload
+        /// without moving the scroll position, and scrolls only for model-originated selection changes.
+        private func reconcile(selection: Set<ShowID>, forceReload: Bool = false) {
+            guard let outline else { return }
+            let sorted = Self.sorted(unsorted, by: outline.sortDescriptors)
+            let plan = reconciler.reconcile(rows: sorted, list: list, selection: selection, forceReload: forceReload)
+            switch plan.update {
+            case .none:
+                break
+            case .reloadAll:
+                rebuildItems(sorted)
+                syncingSelection = true
                 outline.reloadData()
+                syncingSelection = false
+            case .reloadRows(let indexes):
+                rebuildItems(sorted)
+                outline.reloadData(forRowIndexes: indexes, columnIndexes: IndexSet(0..<outline.numberOfColumns))
+                outline.noteHeightOfRows(withIndexesChanged: indexes)
             }
-            syncSelection(selection)
+            if outline.selectedRowIndexes != plan.selection {
+                syncingSelection = true
+                outline.selectRowIndexes(plan.selection, byExtendingSelection: false)
+                syncingSelection = false
+            }
+            if let row = plan.scrollToRow {
+                outline.scrollRowToVisible(row)
+            } else if plan.scrollToTop, let clip = outline.enclosingScrollView?.contentView {
+                clip.scroll(to: NSPoint(x: clip.bounds.minX, y: -clip.contentInsets.top))
+                outline.enclosingScrollView?.reflectScrolledClipView(clip)
+            }
         }
 
-        static func rowHeight(for font: NSFont) -> CGFloat {
-            (font.ascender - font.descender + font.leading).rounded(.up) + 8
+        func resignEntriesFocus() {
+            if state.focusedRegion == .entries { state.focusedRegion = nil }
         }
 
-        private func resort() {
-            let sorted = Self.sorted(unsorted, by: outline?.sortDescriptors ?? [])
+        static func rowHeight(for font: NSFont, lines: Int) -> CGFloat {
+            (font.ascender - font.descender + font.leading).rounded(.up) * CGFloat(lines) + 8
+        }
+
+        private func rebuildItems(_ sorted: [LibraryEntryRow]) {
             var next: [ShowID: EntryItem] = [:]
             items = sorted.map { row in
                 let item = cache[row.showID] ?? EntryItem(row: row)
@@ -126,16 +165,6 @@ struct LibraryEntryOutline: NSViewRepresentable {
                 descriptor.key.flatMap(LibraryEntrySortKey.init(rawValue:)).map { (key: $0, ascending: descriptor.ascending) }
             }
             return LibraryPresentation.sorted(rows, by: keys)
-        }
-
-        private func syncSelection(_ selection: Set<ShowID>) {
-            guard let outline else { return }
-            let indexes = IndexSet(items.indices.filter { selection.contains(items[$0].row.showID) })
-            guard indexes != outline.selectedRowIndexes else { return }
-            syncingSelection = true
-            outline.selectRowIndexes(indexes, byExtendingSelection: false)
-            if let first = indexes.first { outline.scrollRowToVisible(first) }
-            syncingSelection = false
         }
 
         private var selectedIDs: [ShowID] {
@@ -171,10 +200,7 @@ struct LibraryEntryOutline: NSViewRepresentable {
         func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { false }
 
         func outlineView(_ outlineView: NSOutlineView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
-            let selection = Set(selectedIDs)
-            resort()
-            outlineView.reloadData()
-            syncSelection(selection)
+            reconcile(selection: state.entrySelection)
         }
 
         // MARK: Delegate
@@ -188,6 +214,32 @@ struct LibraryEntryOutline: NSViewRepresentable {
             return cell
         }
 
+        /// Rows are one line, or two when the Status text wraps at the column's width and the text size
+        /// (IA §3.2, CMD-20: status wraps to two lines, then truncates; the tooltip has the full text).
+        func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
+            guard let row = (item as? EntryItem)?.row else { return outlineView.rowHeight }
+            return Self.rowHeight(for: font, lines: statusLines(row.status.statusText, in: outlineView))
+        }
+
+        func outlineViewColumnDidResize(_ notification: Notification) {
+            guard let outline, outline.numberOfRows > 0,
+                  (notification.userInfo?["NSTableColumn"] as? NSTableColumn)?.identifier == EntryColumn.status.identifier else { return }
+            outline.noteHeightOfRows(withIndexesChanged: IndexSet(0..<outline.numberOfRows))
+        }
+
+        private func statusLines(_ text: String, in outlineView: NSOutlineView) -> Int {
+            let column = outlineView.column(withIdentifier: EntryColumn.status.identifier)
+            guard column >= 0 else { return 1 }
+            // The cell can be a little narrower than the column (inset style); measure conservatively so text
+            // that wraps in the cell never gets a one-line row.
+            let cellWidth = outlineView.tableColumns[column].width - outlineView.intercellSpacing.width - 4
+            let key = StatusLineKey(text: text, width: cellWidth, pointSize: font.pointSize)
+            if let lines = lineCounts[key] { return lines }
+            let lines = EntryCellView.statusLineCount(text, font: font, cellWidth: cellWidth)
+            lineCounts[key] = lines
+            return lines
+        }
+
         func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor tableColumn: NSTableColumn?, item: Any) -> String? {
             tableColumn?.identifier == EntryColumn.name.identifier ? (item as? EntryItem)?.row.name : nil
         }
@@ -195,6 +247,7 @@ struct LibraryEntryOutline: NSViewRepresentable {
         func outlineViewSelectionDidChange(_ notification: Notification) {
             guard !syncingSelection else { return }
             let selection = Set(selectedIDs)
+            reconciler.noteUserSelection(selection)
             if state.entrySelection != selection { state.entrySelection = selection }
         }
 
@@ -234,6 +287,12 @@ struct LibraryEntryOutline: NSViewRepresentable {
             })
         }
     }
+}
+
+private struct StatusLineKey: Hashable {
+    let text: String
+    let width: CGFloat
+    let pointSize: CGFloat
 }
 
 /// Outline item: a stable object per show so AppKit keeps row identity across reloads.
@@ -290,7 +349,7 @@ enum EntryColumn: String, CaseIterable {
 final class EntryCellView: NSTableCellView {
     private static let dateStyle = Date.FormatStyle(date: .abbreviated, time: .shortened)
     let column: EntryColumn
-    private let label = NSTextField(labelWithString: "")
+    private let label = EntryLabel(labelWithString: "")
     private var symbol: NSImageView?
     private var spinner: NSProgressIndicator?
 
@@ -298,9 +357,13 @@ final class EntryCellView: NSTableCellView {
         self.column = column
         super.init(frame: NSRect(x: 0, y: 0, width: column.idealWidth, height: 24))
         identifier = column.identifier
-        label.lineBreakMode = column == .name || column == .location ? .byTruncatingMiddle : .byTruncatingTail
-        label.maximumNumberOfLines = 1
-        label.cell?.truncatesLastVisibleLine = true
+        if column == .status {
+            Self.configureWrapping(label)
+        } else {
+            label.lineBreakMode = column == .name || column == .location ? .byTruncatingMiddle : .byTruncatingTail
+            label.maximumNumberOfLines = 1
+            label.cell?.truncatesLastVisibleLine = true
+        }
         addSubview(label)
         textField = label
         if column == .status {
@@ -332,7 +395,7 @@ final class EntryCellView: NSTableCellView {
         case .episodes:
             label.stringValue = row.episodesText
             label.font = NSFont.monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular)
-            label.setAccessibilityValue(row.episodeCount == nil ? "unknown" : row.episodesText)
+            label.accessibilityValueOverride = row.episodeCount == nil ? "unknown" : row.episodesText
         case .location:
             label.stringValue = row.locationText
             toolTip = row.locationText
@@ -340,8 +403,8 @@ final class EntryCellView: NSTableCellView {
             label.stringValue = row.lastOpened.map { $0.formatted(Self.dateStyle) } ?? "—"
         case .status:
             label.stringValue = row.status.statusText
-            label.setAccessibilityValue(row.status.statusText)
-            toolTip = row.status.explanation ?? row.status.statusText
+            label.accessibilityValueOverride = row.status.statusText
+            toolTip = [row.status.statusText, row.status.explanation].compactMap { $0 }.joined(separator: "\n")
             if let name = row.status.symbolName {
                 symbol?.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
                     .withSymbolConfiguration(.init(pointSize: font.pointSize, weight: .regular))
@@ -363,16 +426,53 @@ final class EntryCellView: NSTableCellView {
 
     override func layout() {
         super.layout()
-        let height = label.intrinsicContentSize.height
-        var leading: CGFloat = 2
-        if column == .status {
-            let side = min(bounds.height, height)
-            let iconFrame = NSRect(x: 2, y: ((bounds.height - side) / 2).rounded(), width: side, height: side)
-            symbol?.frame = iconFrame
-            spinner?.frame = iconFrame
-            leading = iconFrame.maxX + 4
+        guard column == .status, let font = label.font else {
+            let height = label.intrinsicContentSize.height
+            label.frame = NSRect(x: 2, y: ((bounds.height - height) / 2).rounded(), width: max(0, bounds.width - 4), height: height)
+            return
         }
-        label.frame = NSRect(x: leading, y: ((bounds.height - height) / 2).rounded(), width: max(0, bounds.width - leading - 2), height: height)
+        let side = Self.iconSide(font)
+        let iconFrame = NSRect(x: 2, y: ((bounds.height - side) / 2).rounded(), width: side, height: side)
+        symbol?.frame = iconFrame
+        spinner?.frame = iconFrame
+        let width = Self.statusTextWidth(cellWidth: bounds.width, font: font)
+        let height = min(bounds.height, label.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: .greatestFiniteMagnitude)).height ?? 0)
+        label.frame = NSRect(x: iconFrame.maxX + 4, y: ((bounds.height - height) / 2).rounded(), width: width, height: height)
+    }
+
+    // MARK: Status text metrics (shared with the row-height calculation)
+
+    private static let measuringLabel: EntryLabel = {
+        let label = EntryLabel(labelWithString: "")
+        configureWrapping(label)
+        return label
+    }()
+
+    private static func configureWrapping(_ label: NSTextField) {
+        label.usesSingleLineMode = false
+        label.cell?.wraps = true
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 2
+        label.cell?.truncatesLastVisibleLine = true
+    }
+
+    private static func iconSide(_ font: NSFont) -> CGFloat {
+        (font.ascender - font.descender).rounded(.up)
+    }
+
+    private static func statusTextWidth(cellWidth: CGFloat, font: NSFont) -> CGFloat {
+        max(0, cellWidth - (2 + iconSide(font) + 4) - 2)
+    }
+
+    /// 1 or 2: the lines the Status text takes at this cell width (more than two are truncated).
+    static func statusLineCount(_ text: String, font: NSFont, cellWidth: CGFloat) -> Int {
+        let label = measuringLabel
+        label.font = font
+        label.stringValue = text
+        let width = statusTextWidth(cellWidth: cellWidth, font: font)
+        let height = label.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: .greatestFiniteMagnitude)).height ?? 0
+        let line = (font.ascender - font.descender + font.leading).rounded(.up)
+        return height > line * 1.5 ? 2 : 1
     }
 }
 
@@ -381,6 +481,7 @@ final class EntryCellView: NSTableCellView {
 final class EntryOutlineView: NSOutlineView {
     var onReturn: (() -> Void)?
     var onFocus: (() -> Void)?
+    var onResign: (() -> Void)?
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 || event.keyCode == 76, event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function]).isEmpty {
@@ -394,6 +495,28 @@ final class EntryOutlineView: NSOutlineView {
         let accepted = super.becomeFirstResponder()
         if accepted { onFocus?() }
         return accepted
+    }
+
+    /// Delete/Move must not keep targeting the entries once focus has left the list (or the list is gone).
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { onResign?() }
+        return resigned
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { onResign?() }
+    }
+}
+
+/// A label whose accessibility value can differ from its text (e.g. "unknown" for "—"); `NSTextField`
+/// ignores `setAccessibilityValue(_:)` and reports its string value.
+final class EntryLabel: NSTextField {
+    var accessibilityValueOverride: String?
+
+    override func accessibilityValue() -> String? {
+        accessibilityValueOverride ?? super.accessibilityValue()
     }
 }
 
