@@ -20,6 +20,9 @@ final class LibraryDocumentStore {
     private(set) var locationStatus: LibraryLocationStatus?
     /// Design L1–L5 library-level state for the message bar.
     private(set) var levelState: LibraryLevelState = .notLoaded
+    /// Provider conflict versions of the library that can't be read or hold a different library (#117). They're
+    /// kept unresolved and never applied; `providerConflictNotice` is the Library window's message for them.
+    private(set) var unusableProviderConflictCount = 0
     /// ST-36 summary of the last combine, for the message bar.
     private(set) var lastMergeSummary: LibraryMergeSummary?
     /// L2/L3 queued organizing edits ("Edits waiting").
@@ -152,11 +155,23 @@ final class LibraryDocumentStore {
         if let outcome = await store.lastPendingOutcome { lastPendingOutcome = outcome }
         scheduleRetriesIfNeeded()
         levelState = await store.levelState
+        unusableProviderConflictCount = await store.unusableProviderConflicts.count
         library = await store.library
         index = await store.index
         loadOutcome = await store.lastLoad
         saveStatus = await store.saveStatus
         locationStatus = await store.locationStatus
+    }
+
+    /// "Your cloud service kept 1 other copy of your library that WaveWrangler can't read. …" (#117)
+    var providerConflictNotice: String? {
+        Self.providerConflictNotice(unusableCount: unusableProviderConflictCount)
+    }
+
+    static func providerConflictNotice(unusableCount count: Int) -> String? {
+        guard count > 0 else { return nil }
+        let copies = count == 1 ? "1 other copy" : "\(count) other copies"
+        return "Your cloud service kept \(copies) of your library from another Mac that WaveWrangler can't read or that belongs to a different library. WaveWrangler hasn't used, changed or removed \(count == 1 ? "it" : "them")."
     }
 
     private func ensureLoaded() async {

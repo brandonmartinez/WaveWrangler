@@ -100,6 +100,14 @@ public struct LibraryMergeSummary: Sendable, Equatable {
     public var showsAdded = 0
     public var recentItemsAdded = 0
 
+    mutating func add(_ other: LibraryMergeSummary) {
+        collectionsKeptAsCopies += other.collectionsKeptAsCopies
+        collectionsAdded += other.collectionsAdded
+        showsAdded += other.showsAdded
+        recentItemsAdded += other.recentItemsAdded
+        queuedChangesNotCarried += other.queuedChangesNotCarried
+    }
+
     public var message: String {
         "Combined libraries: \(collectionsKeptAsCopies) collections kept as separate copies, \(showsAdded) shows and \(recentItemsAdded) recent items added."
     }

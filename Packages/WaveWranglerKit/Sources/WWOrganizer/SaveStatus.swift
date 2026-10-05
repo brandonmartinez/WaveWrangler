@@ -50,12 +50,17 @@ public struct DocumentSaveStatus: Sendable, Equatable {
     public var retryingAutomatically: Bool
     /// Whether the user has edits that are not coherently on disk. Only D1 may clear this (ST-10).
     public var hasUnsavedChanges: Bool
+    /// Unresolved conflict versions the sync provider kept for this file (e.g. iCloud, after two Macs saved at
+    /// the same time). Evidence only (WW-009 C4): shown, never resolved or removed by WaveWrangler.
+    public var providerConflictVersions: Int
 
-    public init(state: DocumentSaveState, autosaveEnabled: Bool, retryingAutomatically: Bool = false, hasUnsavedChanges: Bool? = nil) {
+    public init(state: DocumentSaveState, autosaveEnabled: Bool, retryingAutomatically: Bool = false, hasUnsavedChanges: Bool? = nil,
+                providerConflictVersions: Int = 0) {
         self.state = state
         self.autosaveEnabled = autosaveEnabled
         self.retryingAutomatically = retryingAutomatically
         self.hasUnsavedChanges = hasUnsavedChanges ?? state.impliesUnsavedChanges
+        self.providerConflictVersions = providerConflictVersions
     }
 }
 
@@ -286,6 +291,11 @@ public struct SaveStatusPresentation: Sendable, Equatable {
             suffix = false
         }
 
+        // C4 evidence: provider conflict versions are stated in the popover and in VoiceOver's value, whatever
+        // the save state. WaveWrangler doesn't resolve or remove them.
+        let providerNote = Self.providerConflictNote(status.providerConflictVersions)
+        if let providerNote { popover += " " + providerNote }
+
         itemText = text
         symbolName = symbol
         self.tint = tint
@@ -295,7 +305,14 @@ public struct SaveStatusPresentation: Sendable, Equatable {
         showsDirtyDot = dot && !status.state.isReadOnly
         isReadOnly = status.state.isReadOnly
         messageBar = message
-        accessibilityValue = "\(text). \(Self.firstSentence(of: popover))"
+        accessibilityValue = "\(text). \(Self.firstSentence(of: popover))" + (providerNote.map { " " + $0 } ?? "")
+    }
+
+    /// "Your cloud service also kept 2 other versions of this show from another Mac or app. …"
+    public static func providerConflictNote(_ count: Int) -> String? {
+        guard count > 0 else { return nil }
+        let versions = count == 1 ? "1 other version" : "\(count) other versions"
+        return "Your cloud service also kept \(versions) of this show from another Mac or app. WaveWrangler hasn't changed or removed \(count == 1 ? "it" : "them")."
     }
 
     /// VoiceOver value = item text + first sentence of the popover (states §2).

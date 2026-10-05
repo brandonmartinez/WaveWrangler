@@ -11,7 +11,8 @@ extension ShowDocument: DocumentStatusProviding {
             status.saveStatus.state,
             readOnlyReason: status.readOnlyReason,
             autosaveEnabled: AutosavePolicyController.shared.isEnabled,
-            folderDisplayName: fileURL?.deletingLastPathComponent().lastPathComponent
+            folderDisplayName: fileURL?.deletingLastPathComponent().lastPathComponent,
+            providerConflictVersions: status.saveStatus.providerConflicts.unresolvedVersionCount
         )
     }
 }
@@ -21,7 +22,8 @@ enum ShowDocumentStatusMapping {
         _ state: WWPersistence.DocumentSaveState,
         readOnlyReason: String?,
         autosaveEnabled: Bool,
-        folderDisplayName: String?
+        folderDisplayName: String?,
+        providerConflictVersions: Int = 0
     ) -> WWOrganizer.DocumentSaveStatus {
         let mapped: WWOrganizer.DocumentSaveState = switch state {
         case .clean(nil):
@@ -64,7 +66,8 @@ enum ShowDocumentStatusMapping {
         return DocumentSaveStatus(
             state: final,
             autosaveEnabled: autosaveEnabled,
-            hasUnsavedChanges: state.hasUnsavedWork
+            hasUnsavedChanges: state.hasUnsavedWork,
+            providerConflictVersions: providerConflictVersions
         )
     }
 }

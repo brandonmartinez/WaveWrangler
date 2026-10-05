@@ -220,3 +220,20 @@ struct SymbolAndMenuTests {
         #expect(MenuCommand.toggleInspector.shortcut.description == "⌃⌘I")
     }
 }
+
+/// WW-009 C4 / #117: provider conflict versions of a show are evidence only, but always visible.
+@Suite("Provider conflict versions in show status")
+struct ProviderConflictStatusTests {
+    @Test func countReachesPopoverAndVoiceOverValueInEveryState() {
+        let date = Date(timeIntervalSince1970: 0)
+        for state in [DocumentSaveState.saved(at: date, folderDisplayName: "Shows"), .edited, .conflict(changedAt: nil), .readOnlyNewerFormat] {
+            let one = SaveStatusPresentation(DocumentSaveStatus(state: state, autosaveEnabled: true, providerConflictVersions: 1), showName: "Show")
+            #expect(one.popoverText.hasSuffix("Your cloud service also kept 1 other version of this show from another Mac or app. WaveWrangler hasn't changed or removed it."))
+            #expect(one.accessibilityValue.contains("kept 1 other version"))
+            let two = SaveStatusPresentation(DocumentSaveStatus(state: state, autosaveEnabled: true, providerConflictVersions: 2), showName: "Show")
+            #expect(two.accessibilityValue.contains("kept 2 other versions") && two.accessibilityValue.contains("removed them"))
+            let none = SaveStatusPresentation(DocumentSaveStatus(state: state, autosaveEnabled: true), showName: "Show")
+            #expect(!none.popoverText.contains("cloud service also kept") && !none.accessibilityValue.contains("other version"))
+        }
+    }
+}
