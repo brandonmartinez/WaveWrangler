@@ -239,7 +239,10 @@ The machine-readable record is the registry's `freezeRevisions[2]` and `M1-DUR-0
 - **What each sample records**, for each unresolved version V:
   - decode result and libraryID;
   - the product's `isIncluded` judgement and the **fork base it used**;
-  - an **independent harness judgement** of whether V's content is present in the sampled current library. The harness knows the seeded edits of the host that wrote V, and an ST-36 copy counts as present;
+  - an **independent harness judgement** of whether V's content is present in the sampled current library:
+    - **Source:** computed only from the harness's own record of the seeded edits of the host that wrote V (additions, renames, removals, reorders and recorded saves), compared directly with the sampled model. An ST-36 copy counts as present when it carries exactly the seeded membership and order.
+    - **Independence:** it must **not** call, wrap or re-derive `LibraryMerge.isIncluded`, `LibraryReconciler` or any other product merge or reconcile code, and it must **not** read the product's judgement or fork base.
+    - **Outcomes:** "included", "not included" or **"undetermined"**. Undetermined is never exempt;
   - whether the unusable-version notice (#119) is shown;
   - the level.
 - **FAIL** iff the level is ready/L1 **and** some unresolved V is not exempt.
@@ -254,6 +257,9 @@ The machine-readable record is the registry's `freezeRevisions[2]` and `M1-DUR-0
   - a version not proven included by both judgements.
 
   For the first two (undecodable or different library), ready/L1 passes only if the #119 notice is shown. If the product says "included" but the harness says "not included", the sample **fails**. Every disagreement is reported.
+- **How this reads against truth 1 and §4.2.1** (`truth1LibraryClause`). Truth 1's library clause and §4.2.1 condition 4 are read subject to this predicate, as follows.
+  - **In-window (before settle):** an exempt version need not drive L4 or be surfaced at that sample. Every non-exempt unresolved version must still drive L4, or show the #119 notice if it is undecodable or a different library. Otherwise a ready/L1 sample **fails**.
+  - **At settle:** §4.2.1 conditions 2 and 4 apply unchanged. On each host, an unresolved version that at settle is neither resolved (with its backup present) nor surfaced (L4 or #119) while the host shows ready/L1 **fails** the case, even if it was exempt in-window. An indefinitely unresolved version can never pass, including in `combineOnAThenB`.
 - **Literal reading reported.** Each sample records the raw unresolved count. The evidence reports, per host and per case, how many samples would fail under the literal `m1-freeze-3` rule, next to the `m1-freeze-4` result.
 
 **Six gaps in the `m1-freeze-3` text, frozen in the same revision.** Each is equal to or stricter than `m1-freeze-3`:
