@@ -31,6 +31,9 @@ struct SetupInspectorView: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // The toolbar's top scroll-edge effect softens the first rows under it, which fails the contrast
+        // audit for essential text; the details panel has its own opaque background instead.
+        .scrollEdgeEffectHidden(true, for: .top)
         .background(Color(nsColor: .textBackgroundColor))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Selection details")
