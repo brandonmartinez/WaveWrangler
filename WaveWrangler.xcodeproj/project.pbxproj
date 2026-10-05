@@ -44,6 +44,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Commands/ConfirmationButtons.swift,
+				Commands/OpaqueErrorPanel.swift,
 			);
 			target = C13E785C401E67854374EF9C /* WaveWranglerTests */;
 		};

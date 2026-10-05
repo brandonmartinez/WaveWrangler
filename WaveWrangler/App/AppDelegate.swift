@@ -8,6 +8,8 @@ import WWOrganizer
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static func main() {
         let app = NSApplication.shared
+        // The first document controller created becomes `NSDocumentController.shared` (#126).
+        _ = DocumentController()
         let delegate = AppDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.regular)
