@@ -291,11 +291,14 @@ End-to-end authorized synthetic task/recovery run plus the coordinator's M1 exit
 | **Grant B** — temporary VoiceOver for the core M1 tasks | **Granted 2026-10-04** — `M1-A11Y-002` |
 | **Grant C** — one iCloud Drive folder `WaveWrangler-M1-Synthetic-Trial`, generated synthetic documents only, on this Mac: save, autosave, two-window/two-process conflict, brctl evict/download and recovery; delete the folder afterwards | **Granted 2026-10-04** — `M1-DUR-024`, `M1-SRC-ON-PROV-001` |
 | **Grant D** — temporary Increase Contrast, Reduce Motion and larger text, with original values recorded and restored | **Granted 2026-10-04** — `M1-A11Y-003` |
-| Second device; OneDrive; Dropbox; disk-image (real full-volume) tests; any network trial beyond grant C | **Not authorized** — `M1-DUR-025`, `M1-DUR-030`, `M1-SRC-ON-PROV-002/003`, `M1-DUR-013` real-volume variant |
+| **Grant E** — synthetic iCloud Drive testing on this Mac and the user's Mac mini (same Apple account), including deliberate multi-device testing; UI stays on the Mac mini | **Granted by the user directly, 2026-10-05** — `M1-DUR-025`, frozen by `m1-freeze-2` ([#116](https://github.com/brandonmartinez/WaveWrangler/pull/116)) before execution |
+| Standing consent — all ongoing and future UI, VoiceOver and related accessibility work on the Mac mini; the disposable episode copy at the same location on the mini under the same consent | **Granted by the user directly, 2026-10-05** |
+| OneDrive; Dropbox; disk-image (real full-volume) tests; any network trial beyond grant C | **Not authorized** — `M1-DUR-030`, `M1-SRC-ON-PROV-002/003`, `M1-DUR-013` real-volume variant |
 | Recording/sample-folder browsing, model downloads, signing credentials, publishing | **Not authorized** |
 
 ## 10. Change log
 
 - 2026-10-04 — Initial record (Lead). Contracts selected; no outcome accepted.
 - 2026-10-04 — Review fixes (PR #51): configurable library location (C2a, former Q2 resolved by coordinator), split read-only/read-write bookmark modes, C3-derived boundaries P1–P7 with public injection points and library boundaries L1–L6, unpublished edit-checkpoint record (C2b), disk-image variant not authorized, user grants A–D recorded.
+- 2026-10-05 — Consent ledger: grant E (multi-device iCloud, UI on the Mac mini) and standing Mac mini UI consent added; second device no longer unauthorized.
 - 2026-10-05 — Status amendments at M1 exit (Lead): C2a "retire" keeps the old copy as a backup and never deletes it; existing-library destination combines by ST-36; L2/L3 queue library edits in a durable journal; Grant Access checks `libraryID`; C4 library merge exception. Evidence and acceptance are recorded in the [M1 exit record](../planning/milestone-exits/m1.md), not here.
