@@ -79,16 +79,36 @@ public struct RecoveryStore: Sendable {
             .sorted { ($0.fingerprint.revision ?? 0, $0.url.lastPathComponent) > ($1.fingerprint.revision ?? 0, $1.url.lastPathComponent) }
     }
 
-    /// Checkpoints that decode, checksum and validate with `coder`, newest first. Never a mixture: each value
-    /// comes from one whole retained file.
+    /// Whole validated revisions that can be recovered, newest first: the verified-current record (if any)
+    /// plus retained priors, de-duplicated by bytes. Never a mixture: each value comes from one whole file.
     public func validatedCheckpoints<Coder: CanonicalDocumentCoding>(
         for key: DocumentKey,
         coder: Coder
     ) throws -> [(checkpoint: RecoveryCheckpoint, document: DecodedDocument<Coder.Payload>)] {
-        try checkpoints(for: key).compactMap { checkpoint in
-            guard let data = try? ops.read(checkpoint.url), let decoded = try? coder.decode(data) else { return nil }
-            return (checkpoint, decoded)
+        var all = try checkpoints(for: key)
+        if let current = verifiedCurrent(for: key), !all.contains(where: { $0.fingerprint.byteDigest == current.fingerprint.byteDigest }) {
+            all.append(current)
         }
+        return all
+            .compactMap { checkpoint in
+                guard let data = try? ops.read(checkpoint.url), let decoded = try? coder.decode(data) else { return nil }
+                return (checkpoint, decoded)
+            }
+            .sorted { $0.document.revision > $1.document.revision }
+    }
+
+    /// Records the latest read-back-verified revision (used by the library so an unreachable location can
+    /// show the newest verified value). Kept apart from prior checkpoints so prior retention is unchanged.
+    public func recordVerifiedCurrent(_ bytes: Data, for key: DocumentKey) throws {
+        let url = folder("verified-current", key).appending(path: "current.wwcheckpoint")
+        if (try? ops.read(url)) == bytes { return }
+        try replaceRecord(bytes, at: url)
+    }
+
+    public func verifiedCurrent(for key: DocumentKey) -> RecoveryCheckpoint? {
+        let url = folder("verified-current", key).appending(path: "current.wwcheckpoint")
+        guard let data = try? ops.read(url) else { return nil }
+        return RecoveryCheckpoint(key: key, url: url, fingerprint: RevisionFingerprint(of: data))
     }
 
     public func bytes(of checkpoint: RecoveryCheckpoint) throws -> Data {
@@ -207,6 +227,31 @@ public struct RecoveryStore: Sendable {
         Int(url.deletingPathExtension().lastPathComponent)
     }
 
+    // MARK: - Pending library edits journal (Design L2/L3)
+
+    private var pendingLibraryEditsURL: URL { root.appending(path: "library-journal/pending-edits.json") }
+
+    /// Atomically replaces the pending library-edits journal and verifies it by read-back.
+    public func writePendingLibraryEdits(_ record: PendingLibraryEdits) throws {
+        let bytes = try record.encoded()
+        try replaceRecord(bytes, at: pendingLibraryEditsURL)
+        guard (try? PendingLibraryEdits.decode(ops.read(pendingLibraryEditsURL))) == record else { throw CocoaError(.fileWriteUnknown) }
+    }
+
+    /// The journal, if any. A damaged journal is reported (`.failure`), never silently discarded.
+    public func pendingLibraryEdits() -> Result<PendingLibraryEdits, EditCheckpointRecord.ReadError>? {
+        let url = pendingLibraryEditsURL
+        guard ops.exists(url) else { return nil }
+        guard let data = try? ops.read(url) else { return .failure(.unreadable(url)) }
+        guard let record = try? PendingLibraryEdits.decode(data) else { return .failure(.damaged(url)) }
+        return .success(record)
+    }
+
+    /// Clears the journal — only after a verified publication contains every queued edit.
+    public func clearPendingLibraryEdits() throws {
+        if ops.exists(pendingLibraryEditsURL) { try ops.remove(pendingLibraryEditsURL) }
+    }
+
     /// Removes interrupted staging leftovers (app-owned, never canonical).
     public func removeStagingLeftovers() {
         let staging = root.appending(path: ".staging", directoryHint: .isDirectory)
@@ -315,6 +360,60 @@ public struct EditCheckpointRecord: Sendable, Equatable, Codable {
         let record = try decoder.decode(EditCheckpointRecord.self, from: data)
         guard record.recordKind == "edit-checkpoint", record.unpublished else {
             throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "not an unpublished edit checkpoint"))
+        }
+        return record
+    }
+}
+
+/// Device-local journal of library edits made while the library location was unreachable or needed
+/// permission (Design L2/L3, "Edits waiting"). It holds the whole edited library as a validated envelope
+/// snapshot plus the exact on-disk identity the edits started from, so that on reconnection the edits are
+/// either published directly (disk unchanged) or combined with ST-36 (disk diverged). Never dropped silently.
+public struct PendingLibraryEdits: Sendable, Equatable, Codable {
+    public var recordKind = "library-pending-edits"
+    /// The library identity the queued edits were made on top of (`nil` if none was known).
+    public let base: RevisionFingerprint?
+    /// The number of queued edits ("<n> library changes not saved yet").
+    public let editCount: Int
+    public let firstQueuedAt: Date
+    public let lastQueuedAt: Date
+    /// The whole edited library as a validated canonical envelope (decode with `LibraryCoder.library`).
+    public let snapshot: Data
+
+    public init(base: RevisionFingerprint?, editCount: Int, firstQueuedAt: Date, lastQueuedAt: Date, snapshot: Data) {
+        self.base = base
+        self.editCount = editCount
+        self.firstQueuedAt = Self.wholeMilliseconds(firstQueuedAt)
+        self.lastQueuedAt = Self.wholeMilliseconds(lastQueuedAt)
+        self.snapshot = snapshot
+    }
+
+    static func wholeMilliseconds(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: TimeInterval(Int64((date.timeIntervalSince1970 * 1000).rounded())) / 1000)
+    }
+
+    func encoded() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(CanonicalDate.string(from: date))
+        }
+        return try encoder.encode(self)
+    }
+
+    static func decode(_ data: Data) throws -> PendingLibraryEdits {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            guard let date = CanonicalDate.date(from: try container.decode(String.self)) else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "timestamp")
+            }
+            return date
+        }
+        let record = try decoder.decode(PendingLibraryEdits.self, from: data)
+        guard record.recordKind == "library-pending-edits" else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "not a pending library edits journal"))
         }
         return record
     }

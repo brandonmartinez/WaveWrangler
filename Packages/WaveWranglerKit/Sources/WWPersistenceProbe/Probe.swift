@@ -276,7 +276,7 @@ extension Probe {
                                                              showIDs: library.entries.prefix(3).map(\.showID)))
                 return library
             }
-            object["update"] = result.map { if case let .success(receipt) = $0 { "saved r\(receipt.revision)" } else { "\($0)" } } ?? "threw"
+            object["update"] = result.map { if case let .published(receipt) = $0 { "saved r\(receipt.revision)" } else { "\($0)" } } ?? "threw"
             object["updateSeconds"] = seconds(.now - start)
         }
         if let folder = args.url("move-to") {

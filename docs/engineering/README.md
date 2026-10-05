@@ -68,6 +68,9 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; nothing depends
   as shows, keeps its own prior checkpoints, defaults to the app container and can move to a chosen
   folder (copy → verify → switch; the old copy is kept). "Use That Library" combines both libraries with
   nothing dropped; same-named collections that differ get "(from this Mac)", "(from this Mac 2)", …
+  While the folder is unreachable or needs permission (L2/L3), organizing edits go to a device-local
+  pending-edits journal ("Edits waiting") and are applied through the base check (ST-36 combine on
+  divergence) when it is reachable again; the journal is cleared only after verified publication.
 - **Device-local access records** (`WWSources.SourceAccessRecord`): logical source ID → bookmark,
   location hint and independent access/presence/residency/transfer/identity observations. Never
   written into canonical documents. Storage location is decided by the sources owner.

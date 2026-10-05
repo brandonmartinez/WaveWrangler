@@ -22,6 +22,26 @@ final class LibraryDocumentStore {
     private(set) var levelState: LibraryLevelState = .notLoaded
     /// ST-36 summary of the last combine, for the message bar.
     private(set) var lastMergeSummary: LibraryMergeSummary?
+    /// L2/L3 queued organizing edits ("Edits waiting").
+    private(set) var pendingEditCount = 0
+    private(set) var lastPendingOutcome: PendingEditsOutcome?
+    @ObservationIgnored private var retryTask: Task<Void, Never>?
+
+    /// Minimum interval between automatic retries while edits are waiting (Design L2: at most every 30 s).
+    static let retryInterval: Duration = .seconds(30)
+
+    /// Accessible status for queued edits, e.g. "Edits waiting — 3 library changes not saved yet".
+    var pendingEditsStatus: String? {
+        guard pendingEditCount > 0 else { return nil }
+        return "Edits waiting — \(pendingEditCount) library change\(pendingEditCount == 1 ? "" : "s") not saved yet"
+    }
+
+    /// ST-34 text for Quit with queued edits. The journal is durable on this Mac, so nothing is lost on quit;
+    /// the wording says so rather than threatening loss.
+    var quitWarning: String? {
+        guard pendingEditCount > 0 else { return nil }
+        return "WaveWrangler couldn't save \(pendingEditCount) library change\(pendingEditCount == 1 ? "" : "s") yet. They're kept on this Mac and will be saved when your library folder is available again."
+    }
     /// The most recent failed library publication, presented until the next success.
     private(set) var lastError: PublicationError?
 
@@ -54,15 +74,15 @@ final class LibraryDocumentStore {
         let result = try? await store.update(transform)
         await refresh()
         switch result {
-        case .success, .failure(.cancelled): lastError = nil; return true // `.cancelled`: nothing changed
-        case let .failure(error): lastError = error; return false
+        case .published, .queued, .unchanged: lastError = nil; return true
+        case let .failed(error): lastError = error; return false
         case nil: return false
         }
     }
 
     func reconcile(_ observations: [ShowID: ShowObservation]) async {
         await ensureLoaded()
-        if case let .failure(error) = await store.reconcile(observations) { lastError = error }
+        if case let .failed(error) = await store.reconcile(observations) { lastError = error }
         await refresh()
     }
 
@@ -96,7 +116,29 @@ final class LibraryDocumentStore {
         await refresh()
     }
 
+    /// "Try Again": apply queued edits now if the location is reachable.
+    func retryPendingEdits() async {
+        lastPendingOutcome = await store.retryPendingEdits()
+        if case let .combined(_, summary) = lastPendingOutcome { lastMergeSummary = summary }
+        await refresh()
+    }
+
+    private func scheduleRetriesIfNeeded() {
+        guard pendingEditCount > 0, retryTask == nil else { return }
+        retryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.retryInterval)
+                guard let self, self.pendingEditCount > 0 else { break }
+                await self.retryPendingEdits()
+            }
+            self?.retryTask = nil
+        }
+    }
+
     func refresh() async {
+        pendingEditCount = await store.pendingEditCount
+        if let outcome = await store.lastPendingOutcome { lastPendingOutcome = outcome }
+        scheduleRetriesIfNeeded()
         levelState = await store.levelState
         library = await store.library
         index = await store.index

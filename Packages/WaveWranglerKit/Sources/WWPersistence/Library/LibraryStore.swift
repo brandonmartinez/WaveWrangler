@@ -26,12 +26,44 @@ public enum LibraryLoadOutcome: Sendable, Equatable {
     }
 }
 
+/// Result of a library edit.
+public enum LibraryEditResult: Sendable, Equatable {
+    /// Published and read-back verified at the library location.
+    case published(PublicationReceipt)
+    /// The location is unreachable or needs permission (L2/L3): the edit is kept in the device-local
+    /// pending-edits journal ("Edits waiting") and published when the location is reachable again.
+    case queued(pendingEdits: Int)
+    /// The edit changed nothing.
+    case unchanged
+    case failed(PublicationError)
+}
+
+/// Result of applying queued library edits after the location became reachable.
+public enum PendingEditsOutcome: Sendable, Equatable {
+    case nothingPending
+    /// The library on disk was unchanged since the edits were queued: published as edited.
+    case applied(PublicationReceipt)
+    /// The library on disk had diverged: combined with ST-36 (nothing dropped) and published.
+    case combined(PublicationReceipt, LibraryMergeSummary)
+    /// The library on disk already contained every queued edit; the journal was cleared.
+    case alreadyIncluded
+    /// Still unreachable or needing permission; the edits stay queued.
+    case stillWaiting(reason: String)
+    /// Could not apply (newer format, damaged, conflict during publication…); the edits stay queued.
+    case refused(PublicationError)
+    /// The journal itself is damaged; it is reported and retained, never applied or discarded.
+    case journalDamaged
+}
+
 /// The canonical library document store (C2/C5 for the library): a separate versioned document with its own
 /// device-local prior checkpoints, a configurable location (app container by default, or a user-chosen —
 /// possibly cloud — folder) and a rebuildable derived index kept outside canonical data.
 ///
 /// Library edits are user commands, so each change is published immediately through the full publication
-/// protocol (not autosave). Reconciliation only publishes when it changes something.
+/// protocol (not autosave). Reconciliation only publishes when it changes something. While the location is
+/// unreachable or needs permission (L2/L3), organizing edits are kept in a device-local pending-edits
+/// journal and applied — through the same base check, with ST-36 combine on divergence — once it is
+/// reachable again. Queued edits are never dropped silently.
 public actor LibraryStore {
     public private(set) var library: LibraryModel?
     public private(set) var index: LibraryIndex?
@@ -48,6 +80,15 @@ public actor LibraryStore {
     private var session: CanonicalDocumentSession<LibraryCoder>?
     private var accessedFolder: URL?
     private var hasConflict = false
+    /// Queued edits (L2/L3), mirrored from the device-local journal.
+    public private(set) var pendingEdits: PendingLibraryEdits?
+    /// True when the journal exists but cannot be read; it is reported and never overwritten.
+    public private(set) var pendingJournalDamaged = false
+    /// The exact library identity behind the read-only prior shown while unreachable.
+    private var displayedBase: RevisionFingerprint?
+
+    /// "<n> library changes not saved yet".
+    public var pendingEditCount: Int { pendingEdits?.editCount ?? 0 }
 
     public init(
         containerFolder: URL,
@@ -85,15 +126,67 @@ public actor LibraryStore {
         resolveFolder().map { $0.appending(path: settings.load().fileName) }
     }
 
+    /// Loads the library; if queued edits exist and the location is reachable, applies them first.
     @discardableResult
     public func load() async -> LibraryLoadOutcome {
-        let outcome = await performLoad()
-        lastLoad = outcome
+        lastLoad = await performLoad()
+        if pendingEdits != nil, lastLoad == .created || { if case .ready = lastLoad { true } else { false } }() {
+            lastPendingOutcome = await applyPendingEdits()
+        }
+        return lastLoad!
+    }
+
+    /// The outcome of the last automatic or explicit attempt to apply queued edits.
+    public private(set) var lastPendingOutcome: PendingEditsOutcome?
+
+    /// "Try Again" / periodic retry (the app retries at most every 30 s while edits are waiting).
+    @discardableResult
+    public func retryPendingEdits() async -> PendingEditsOutcome {
+        guard pendingEdits != nil || pendingJournalDamaged else { return .nothingPending }
+        lastLoad = await performLoad()
+        let outcome: PendingEditsOutcome
+        switch lastLoad! {
+        case .ready, .created:
+            outcome = await applyPendingEdits()
+        case let .unavailable(reason), let .unavailableShowingPrior(reason, _):
+            outcome = pendingJournalDamaged ? .journalDamaged : .stillWaiting(reason: reason)
+        case let .refusedNewerFormat(found, supported):
+            outcome = .refused(.readOnly("The library was saved by a newer version of WaveWrangler (format \(found); this version supports \(supported))."))
+        case let .needsMigration(schema):
+            outcome = .refused(.readOnly("The library uses an older format (\(schema)) that must be updated first."))
+        case let .damaged(reason, _):
+            outcome = .refused(.readOnly(reason))
+        }
+        lastPendingOutcome = outcome
         return outcome
     }
 
+    private func loadJournal() {
+        switch recovery.pendingLibraryEdits() {
+        case nil: pendingEdits = nil; pendingJournalDamaged = false
+        case let .success(record): pendingEdits = record; pendingJournalDamaged = false
+        case .failure: pendingEdits = nil; pendingJournalDamaged = true
+        }
+    }
+
     private func performLoad() async -> LibraryLoadOutcome {
+        loadJournal()
+        let outcome = await loadFromLocation()
+        // While unreachable, show the queued library (edits waiting) rather than the older prior.
+        switch outcome {
+        case .unavailable, .unavailableShowingPrior:
+            if let pendingEdits, let queued = try? publisher.coder.decode(pendingEdits.snapshot) {
+                library = queued.payload
+                index = LibraryIndex.build(from: queued.payload, libraryDigest: RevisionFingerprint.digest(pendingEdits.snapshot))
+            }
+        default: break
+        }
+        return outcome
+    }
+
+    private func loadFromLocation() async -> LibraryLoadOutcome {
         hasConflict = false
+        displayedBase = nil
         session = nil
         library = nil
         index = nil
@@ -119,6 +212,7 @@ public actor LibraryStore {
                                            revision: document.revision, publisher: publisher))
             library = document.payload
             refreshIndex(digest: fingerprint.byteDigest)
+            retainVerifiedCurrent(at: url, fingerprint: fingerprint)
             return .ready(revision: document.revision)
         case let .refusedNewerFormat(found, supported, _):
             return .refusedNewerFormat(found: found, supported: supported)
@@ -135,6 +229,7 @@ public actor LibraryStore {
     private func showPriorReadOnly(reason: String) -> LibraryLoadOutcome {
         guard let prior = opener.candidates(url: nil, key: .library).first else { return .unavailable(reason: reason) }
         library = prior.document.payload
+        displayedBase = prior.checkpoint.fingerprint
         index = LibraryIndex.build(from: prior.document.payload, libraryDigest: prior.checkpoint.fingerprint.byteDigest)
         return .unavailableShowingPrior(reason: reason, revision: prior.document.revision)
     }
@@ -153,21 +248,96 @@ public actor LibraryStore {
 
     // MARK: - Editing
 
-    /// Applies a user library edit and publishes it. On failure the in-memory library keeps the edit (still
-    /// unsaved) and the error is returned; nothing is acknowledged.
+    /// Applies a user library edit and publishes it — or, while the location is unreachable or needs
+    /// permission (L2/L3), queues it in the device-local journal. On a publication failure the in-memory
+    /// library keeps the edit (still unsaved) and the error is returned; nothing is acknowledged.
     @discardableResult
-    public func update(_ transform: (LibraryModel) throws -> LibraryModel) async throws -> Result<PublicationReceipt, PublicationError> {
-        guard let session else { return .failure(.readOnly("The library is not loaded.")) }
-        guard let current = library else { return .failure(.readOnly("The library is not loaded.")) }
-        let updated = try transform(current)
-        guard updated != current || library == nil else {
-            return .failure(.cancelled)
+    public func update(_ transform: (LibraryModel) throws -> LibraryModel) async throws -> LibraryEditResult {
+        guard let current = library else { return .failed(.readOnly("The library is not loaded.")) }
+        guard let session else {
+            switch lastLoad {
+            case .unavailable, .unavailableShowingPrior:
+                return queue(try transform(current), over: current)
+            default:
+                return .failed(.readOnly("The library can't be changed right now."))
+            }
         }
+        guard !hasConflict else {
+            return .failed(.readOnly("Your library was changed on another Mac. Combine or choose a version first."))
+        }
+        let updated = try transform(current)
+        guard updated != current else { return .unchanged }
         await session.edit { _ in updated }
         library = updated
-        let result = await save(session)
-        if case .failure(.conflict) = result { hasConflict = true }
-        return result
+        switch await save(session) {
+        case let .success(receipt): return .published(receipt)
+        case let .failure(error):
+            if case .conflict = error { hasConflict = true }
+            return .failed(error)
+        }
+    }
+
+    private func queue(_ updated: LibraryModel, over current: LibraryModel) -> LibraryEditResult {
+        guard updated != current else { return .unchanged }
+        guard !pendingJournalDamaged else {
+            return .failed(.readOnly("Library changes can't be kept right now because the record of waiting changes is damaged."))
+        }
+        let base = pendingEdits?.base ?? displayedBase
+        let snapshot: Data
+        do {
+            snapshot = try publisher.coder.encode(updated, revision: max(1, (base?.revision ?? 0) + 1))
+        } catch {
+            return .failed(.invalidCandidate(error))
+        }
+        let now = Date()
+        let record = PendingLibraryEdits(
+            base: base, editCount: (pendingEdits?.editCount ?? 0) + 1,
+            firstQueuedAt: pendingEdits?.firstQueuedAt ?? now, lastQueuedAt: now, snapshot: snapshot
+        )
+        do {
+            try recovery.writePendingLibraryEdits(record)
+        } catch {
+            return .failed(.failed(stage: .candidateValidated, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
+        }
+        pendingEdits = record
+        library = (try? publisher.coder.decode(snapshot).payload) ?? updated
+        index = LibraryIndex.build(from: library!, libraryDigest: RevisionFingerprint.digest(snapshot))
+        return .queued(pendingEdits: record.editCount)
+    }
+
+    /// Applies the journal over the library now loaded from a reachable location.
+    private func applyPendingEdits() async -> PendingEditsOutcome {
+        guard let pending = pendingEdits else { return pendingJournalDamaged ? .journalDamaged : .nothingPending }
+        guard let session, let onDisk = library, let diskBase = await session.base else {
+            return .stillWaiting(reason: "The library is not loaded.")
+        }
+        guard let queued = try? publisher.coder.decode(pending.snapshot).payload else { return .journalDamaged }
+        let result: LibraryModel
+        var summary: LibraryMergeSummary?
+        if let base = pending.base, base.byteDigest == diskBase.byteDigest {
+            result = queued
+        } else {
+            let combined = LibraryMerge.combineWithSummary(thisMac: queued, into: onDisk)
+            result = combined.library
+            summary = combined.summary
+        }
+        guard result != onDisk else {
+            try? recovery.clearPendingLibraryEdits()
+            pendingEdits = nil
+            return .alreadyIncluded
+        }
+        await session.edit { _ in result }
+        library = result
+        switch await save(session) {
+        case let .success(receipt):
+            // Only now, with every queued edit verified on disk, is the journal cleared.
+            try? recovery.clearPendingLibraryEdits()
+            pendingEdits = nil
+            return summary.map { .combined(receipt, $0) } ?? .applied(receipt)
+        case let .failure(error):
+            if case .conflict = error { hasConflict = true }
+            return .refused(error)
+        }
     }
 
     // MARK: - Library-level state and L4 resolution
@@ -229,17 +399,19 @@ public actor LibraryStore {
     }
 
     /// Applies reconciliation observations; publishes only if anything changed. Entries are never dropped.
+    /// Automatic reconciliation is not queued while the location is unreachable (only user edits are).
     @discardableResult
-    public func reconcile(_ observations: [ShowID: ShowObservation], at date: Date = Date()) async -> Result<PublicationReceipt, PublicationError>? {
-        guard let library else { return nil }
+    public func reconcile(_ observations: [ShowID: ShowObservation], at date: Date = Date()) async -> LibraryEditResult? {
+        guard let library, session != nil else { return nil }
         let reconciled = LibraryReconciler.reconcile(library, observations: observations, at: date)
         guard reconciled != library else { return nil }
         return try? await update { _ in reconciled }
     }
 
-    /// Records a verified show publication (C3 step 8). Never called for failed/uncertain saves.
+    /// Records a verified show publication (C3 step 8). Never called for failed/uncertain saves. Queued
+    /// while the library location is unreachable.
     @discardableResult
-    public func acknowledgeShowPublication(_ showID: ShowID, title: String, publication: PublicationStamp) async -> Result<PublicationReceipt, PublicationError>? {
+    public func acknowledgeShowPublication(_ showID: ShowID, title: String, publication: PublicationStamp) async -> LibraryEditResult? {
         try? await update { LibraryReconciler.acknowledging(showID, title: title, publication: publication, in: $0) }
     }
 
@@ -327,6 +499,11 @@ public actor LibraryStore {
                 return .failure(.acknowledgementUncertain("\(error)"))
             }
         }
+        // Any queued edits were part of `mine` and are now verified in the combined library.
+        if pendingEdits != nil {
+            try? recovery.clearPendingLibraryEdits()
+            pendingEdits = nil
+        }
         let place: () throws -> LibraryLocationSetting.Place = {
             isContainer ? .appContainer : .folder(bookmark: try self.bookmarks.bookmark(for: folder), displayPath: folder.path)
         }
@@ -412,8 +589,16 @@ public actor LibraryStore {
         }))
         if case let .success(receipt) = result, let model {
             index = LibraryIndex.build(from: model, libraryDigest: receipt.fingerprint.byteDigest)
+            retainVerifiedCurrent(at: receipt.url, fingerprint: receipt.fingerprint)
         }
         return result
+    }
+
+    /// Keeps the verified current library as a checkpoint too, so an unreachable location shows the latest
+    /// verified library (not one revision older) and queued edits start from it.
+    private func retainVerifiedCurrent(at url: URL, fingerprint: RevisionFingerprint) {
+        guard let bytes = try? publisher.ops.read(url), RevisionFingerprint.digest(bytes) == fingerprint.byteDigest else { return }
+        try? recovery.recordVerifiedCurrent(bytes, for: .library)
     }
 
     private func refreshIndex(digest: String) {

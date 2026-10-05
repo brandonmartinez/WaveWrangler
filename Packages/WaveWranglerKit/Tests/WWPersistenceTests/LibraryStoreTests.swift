@@ -34,12 +34,13 @@ struct LibraryStoreTests {
         #expect(await store.load() == .created)
         let shows = (0..<6).map { Fixtures.show(seed: 100 + UInt64($0)) }
         let library = Fixtures.library(shows: shows, seed: 1)
-        guard case .success = try await store.update({ _ in library }) else { Issue.record("update failed"); return }
+        guard case .published = try await store.update({ _ in library }) else { Issue.record("update failed"); return }
         let reopened = rig.store()
         #expect(await reopened.load() == .ready(revision: 2))
         #expect(await reopened.library == library)
         let priors = try rig.recovery.validatedCheckpoints(for: .library, coder: LibraryCoder.library)
-        #expect(priors.first?.document.payload == LibraryModel())
+        #expect(priors.map(\.document.revision) == [2, 1], "verified current and the prior are both retained")
+        #expect(priors.last?.document.payload == LibraryModel())
     }
 
     @Test func newerLibraryIsRefusedAndNeverWritten() async throws {
@@ -51,7 +52,7 @@ struct LibraryStoreTests {
         try newer.write(to: rig.containerFile)
         let store = rig.store()
         #expect(await store.load() == .refusedNewerFormat(found: SchemaVersion.library + 1, supported: SchemaVersion.library))
-        guard case .failure(.readOnly) = try await store.update({ $0 }) else { Issue.record("update allowed"); return }
+        guard case .failed(.readOnly) = try await store.update({ $0 }) else { Issue.record("update allowed"); return }
         #expect(try Data(contentsOf: rig.containerFile) == newer)
     }
 
@@ -62,14 +63,16 @@ struct LibraryStoreTests {
         let library = Fixtures.library(shows: (0..<4).map { Fixtures.show(seed: 200 + UInt64($0)) }, seed: 2)
         _ = try await store.update { _ in library }
         _ = try await store.update { LibraryReconciler.recordingRecent($0.entries[3].showID, in: $0) }
+        let latest = try #require(await store.library)
         try Data("{\"truncated".utf8).write(to: rig.containerFile)
         let reopened = rig.store()
         guard case let .damaged(_, revisions) = await reopened.load() else { Issue.record("not damaged"); return }
-        #expect(revisions.first == 2)
-        guard case .success = await reopened.recoverAsNewCopy(revision: 2) else { Issue.record("recover failed"); return }
-        #expect(await reopened.library == library)
+        #expect(revisions == [3, 2, 1], "the latest verified revision is recoverable")
+        guard case .success = await reopened.recoverAsNewCopy(revision: 3) else { Issue.record("recover failed"); return }
+        #expect(await reopened.library == latest)
         #expect(try Data(contentsOf: rig.containerFile) == Data("{\"truncated".utf8))
-        #expect(rig.settings.load().fileName.hasPrefix("Library (Recovered r2"))
+        #expect(rig.settings.load().fileName.hasPrefix("Library (Recovered r3"))
+        _ = library
     }
 
     @Test func reconciliationRetainsEveryEntry() async throws {
@@ -219,7 +222,7 @@ struct LibraryStoreTests {
         guard case .appContainer = rig.settings.load().place else { Issue.record("setting changed"); return }
     }
 
-    @Test func unreachableFolderShowsLastPriorReadOnly() async throws {
+    @Test func unreachableFolderShowsLastVerifiedLibrary() async throws {
         let rig = LibraryRig()
         let store = rig.store()
         _ = await store.load()
@@ -232,7 +235,6 @@ struct LibraryStoreTests {
         guard case let .unavailableShowingPrior(_, revision) = await reopened.load() else { Issue.record("expected read-only prior"); return }
         #expect(revision == 2)
         #expect(await reopened.library == library)
-        guard case .failure(.readOnly) = try await reopened.update({ $0 }) else { Issue.record("edit allowed"); return }
         #expect(!FileManager.default.fileExists(atPath: folder.path), "nothing silently recreated")
     }
 
@@ -248,7 +250,7 @@ struct LibraryStoreTests {
         _ = await otherMac.load()
         _ = try await otherMac.update { var l = $0; l.collections.append(LibraryCollection(name: "Theirs", showIDs: [shows[0].show.id])); return l }
         let otherBytes = try Data(contentsOf: rig.containerFile)
-        guard case .failure(.conflict) = try await thisMac.update({ var l = $0; l.collections.append(LibraryCollection(name: "Mine", showIDs: [shows[1].show.id])); return l })
+        guard case .failed(.conflict) = try await thisMac.update({ var l = $0; l.collections.append(LibraryCollection(name: "Mine", showIDs: [shows[1].show.id])); return l })
         else { Issue.record("expected conflict"); return }
         #expect(await thisMac.levelState == .changedElsewhere)
         #expect(try Data(contentsOf: rig.containerFile) == otherBytes, "nothing overwritten")
