@@ -320,4 +320,52 @@ final class LibraryWorkspaceUITests: XCTestCase {
         waitFor(app.popUpButtons["ww.settings.textSize"])
         waitForValue(app.popUpButtons["ww.settings.textSize"], "100%")
     }
+
+    // MARK: - #88: the library remembers show locations across relaunch
+
+    func testLibraryReopensShowAfterRelaunchAndSaves() throws {
+        let folder = "WWUITests-Relaunch"
+        // Launch 1: create a show (verified save) in a stable synthetic folder; the window records its location.
+        launch(["-WWUITestResetStorage", "YES", "-WWUITestOpenShow", "Relaunch Show", "-WWUITestShowEpisodes", "1",
+                "-WWUITestShowFolder", folder, "-WWUITestAutosave", "ON"])
+        let window = app.windows.matching(identifier: "ww.show.window").firstMatch
+        waitFor(window, timeout: 15)
+        let status = element("ww.show.saveStatus")
+        let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Saved'"), object: status)
+        XCTAssertEqual(XCTWaiter().wait(for: [saved], timeout: 10), .completed)
+        Thread.sleep(forTimeInterval: 2) // let the device-local location record land
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15), "quit")
+
+        // Launch 2: a fresh process reads only persisted data.
+        launch([])
+        app.typeKey("l", modifierFlags: [.command, .shift])
+        let entries = app.outlines["ww.library.entries"]
+        waitFor(entries, timeout: 10)
+        let row = entries.outlineRows.containing(NSPredicate(format: "value == 'Relaunch Show'")).firstMatch
+        waitFor(row, timeout: 10)
+        let statusCell = row.staticTexts.matching(NSPredicate(format: "label == 'Status'")).firstMatch
+        let available = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Available'"), object: statusCell)
+        XCTAssertEqual(XCTWaiter().wait(for: [available], timeout: 10), .completed, "status resolves (never stuck Checking…): \(value(statusCell))")
+        XCTAssertTrue(row.staticTexts.matching(NSPredicate(format: "value == %@", folder)).firstMatch.exists, "location remembered")
+        try audit("Library after relaunch")
+
+        row.click()
+        let open = element("ww.library.detail.open")
+        waitFor(open)
+        open.click()
+        let reopened = app.windows.matching(identifier: "ww.show.window").firstMatch
+        waitFor(reopened, timeout: 15)
+        XCTAssertTrue(reopened.title.hasPrefix("Relaunch Show"), "opened the same show: \(reopened.title)")
+
+        // Edit and save through the reopened (bookmark-resolved) location.
+        reopened.typeKey("n", modifierFlags: [.command, .shift])
+        let rename = element("ww.show.sidebar.rename")
+        waitFor(rename)
+        app.typeText("After Relaunch\r")
+        reopened.typeKey("s", modifierFlags: .command)
+        let reopenedStatus = element("ww.show.saveStatus")
+        let savedAgain = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Saved'"), object: reopenedStatus)
+        XCTAssertEqual(XCTWaiter().wait(for: [savedAgain], timeout: 10), .completed, "saved after relaunch: \(value(reopenedStatus))")
+    }
 }

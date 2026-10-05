@@ -17,6 +17,9 @@ public enum LibraryEntryState: Sendable, Equatable {
     /// Two different files carry the same show identity (e.g. a Finder copy). Both are kept; nothing is
     /// merged or dropped.
     case identityCollision(otherLocationDisplayName: String?)
+    /// No location for this show is recorded on this Mac (e.g. the library came from another Mac or was
+    /// restored). A distinct, final state — never an endless "Checking…" (ST-01).
+    case locationUnknown
 }
 
 public enum LibraryRemedy: String, Sendable, Equatable, CaseIterable {
@@ -80,6 +83,12 @@ public struct LibraryEntryStatePresentation: Sendable, Equatable {
             self.init(
                 "Details out of date", "arrow.clockwise", .none,
                 "The library's details for this show will update the next time it's opened.", [.openShow], false
+            )
+        case .locationUnknown:
+            self.init(
+                "Location unknown", "location.slash", .attention,
+                "WaveWrangler doesn't know where “\(showName)” is saved on this Mac. Choose Locate… to find it; WaveWrangler checks the show inside the file, not its name.",
+                [.locate, .removeFromLibrary], true
             )
         case .identityCollision(let other):
             let place = other.map { " in “\($0)”" } ?? " somewhere else"
