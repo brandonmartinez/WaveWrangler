@@ -187,7 +187,9 @@ The committed records in `dur025-two-device/` were redacted for privacy after th
 2. the harness worktree path → `<repo>`
 3. the home directory → `<home>`
 
-All other bytes are unchanged. A script parsed every `.json`/`.jsonl` file before and after redaction: the redacted records equal the same replacement applied to the parsed originals, and every per-case verdict is identical. The doc's Cleanup row and failure lines use the same placeholders. Host B's SSH address appears nowhere in the evidence.
+All other bytes are unchanged.
+
+**Scope (whole PR tree, checked 2026-10-05 against `origin/main...HEAD`):** no file this PR adds or changes contains a home-directory path, a `user@host` string or a LAN IP address. An earlier commit on this branch had tracked a compiled `scripts/dur025/__pycache__/*.pyc` that embedded the pre-parameterization `user@IP`. It is now untracked, and `scripts/dur025/.gitignore` excludes `__pycache__/` and `*.pyc`; it remains in the branch's commit history only. Not redacted, by design: the two Macs' computer names. Host B's appears in the coordinator-required host label and in NSFileVersion "saving computer" fields; host A's appears in the run record's host fields. m1-freeze-3 runs record pseudonyms only (host A / host B). A script parsed every `.json`/`.jsonl` file before and after redaction: the redacted records equal the same replacement applied to the parsed originals, and every per-case verdict is identical. The doc's Cleanup row and failure lines use the same placeholders. Host B's SSH address appears nowhere in the evidence.
 
 SHA-256 of each file **before** redaction (kept only here):
 
