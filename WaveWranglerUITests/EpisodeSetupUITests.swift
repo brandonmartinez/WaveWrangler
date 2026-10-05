@@ -383,15 +383,25 @@ final class EpisodeSetupUITests: XCTestCase {
     func testColumnsStayStableAcrossRepeatedZoom() {
         importFixture()
         let outline = app.outlines["ww.setup.sources"]
+        let status = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status'")).firstMatch
+        var offsets: [Double] = []  // Status's x within the table, each time zoomed
         for cycle in 1...3 {
             menu("Window", "Zoom")  // default size
             assertStatusVisible(outline, "zoom cycle \(cycle), default size")
             menu("Window", "Zoom")  // zoomed
             assertStatusVisible(outline, "zoom cycle \(cycle), zoomed")
+            offsets.append(status.frame.minX - outline.frame.minX)
         }
-        let status = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status'")).firstMatch
-        XCTAssertLessThan(status.frame.minX - outline.frame.minX, outline.frame.width * 0.85, "Name and the other columns haven't grown to fill the table")
+        // Same window size each cycle, so the columns must land in the same place (no compounding).
+        XCTAssertLessThanOrEqual(offsets.max()! - offsets.min()!, 20, "column widths stable across zooms: \(offsets)")
         select("tr2.wav")
+
+        // #104: columns follow the width plan only; the header offers no show/hide/reorder menu.
+        outline.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 60, dy: -10)).rightClick()
+        for column in ["Epoch", "Ch", "Speaker", "Role", "Status", "Name"] {
+            XCTAssertFalse(app.menuItems[column].waitForExistence(timeout: column == "Epoch" ? 1 : 0.1), "no header menu item for \(column)")
+        }
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
     }
 
     /// At the default show-window size Sources shows several rows with Status readable (no horizontal
