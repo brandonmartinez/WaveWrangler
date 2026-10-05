@@ -10,7 +10,14 @@ import WWPersistence
 enum PersistenceEnvironment {
     /// UI-test runs (`-WWUITestHooks YES`) use separate preferences and storage so they never touch the
     /// user's settings, recovery records or library.
-    static let isUITestRun = UserDefaults.standard.bool(forKey: UITestHooks.enabledKey)
+    /// Always `false` in Release builds: the hooks are compiled only into Debug builds.
+    static let isUITestRun: Bool = {
+        #if DEBUG
+        return UserDefaults.standard.bool(forKey: UITestHooks.enabledKey)
+        #else
+        return false
+        #endif
+    }()
 
     /// Folder name under Application Support / Caches.
     static let storageName = isUITestRun ? "WaveWrangler-UITests" : "WaveWrangler"
@@ -82,7 +89,9 @@ final class AutosavePolicyController {
         observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.syncFromDefaults() }
         }
+        #if DEBUG
         UITestHooks.installIfRequested(self)
+        #endif
     }
 
     func update(_ newValue: AutosavePreference) {

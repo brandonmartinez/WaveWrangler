@@ -58,3 +58,34 @@ struct AppConfigurationTests {
         #expect(decoded.revision == 1)
     }
 }
+
+/// UI-test hooks (isolated storage, distributed autosave toggles) must never be active in Release builds.
+/// This unhosted bundle checks the source guards; the Release binary was also verified to contain none of
+/// the hook strings (`strings` on `scripts/build.sh Release` output).
+@Suite("UI-test hooks are Debug-only")
+struct UITestHooksDebugOnlyTests {
+    static func source(_ path: String) throws -> String {
+        try String(contentsOf: AppConfigurationTests.appFolder.appending(path: path), encoding: .utf8)
+    }
+
+    @Test func hooksTypeIsCompiledOnlyInDebug() throws {
+        let lines = try Self.source("Document/UITestHooks.swift").split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let code = lines.filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") && !$0.trimmingCharacters(in: .whitespaces).isEmpty && $0 != "import Foundation" }
+        #expect(code.first == "#if DEBUG", "everything after the import is inside #if DEBUG")
+        #expect(code.last == "#endif")
+        #expect(code.filter { $0.hasPrefix("#if") || $0.hasPrefix("#endif") || $0.hasPrefix("#else") }.count == 2)
+    }
+
+    @Test func environmentIgnoresHooksOutsideDebug() throws {
+        let source = try Self.source("Document/PersistenceEnvironment.swift")
+        let isUITestRun = try #require(source.range(of: "static let isUITestRun: Bool = {"))
+        let body = String(source[isUITestRun.upperBound...].prefix(260))
+        #expect(body.contains("#if DEBUG") && body.contains("#else\n        return false"), "Release returns false")
+        let install = try #require(source.range(of: "UITestHooks.installIfRequested(self)"))
+        let before = source[..<install.lowerBound].suffix(40)
+        #expect(before.contains("#if DEBUG"))
+        // Every other reference to UITestHooks must also sit inside a DEBUG block.
+        let references = source.components(separatedBy: "UITestHooks.").count - 1
+        #expect(references == 2, "only the two guarded references")
+    }
+}
