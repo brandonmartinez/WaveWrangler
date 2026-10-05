@@ -312,6 +312,7 @@ Under the scoped policy, **ContrastEvidence passed 5/5** (#59 verified again: ro
 | T16 AppKit sheet message ("This document's file has been changed…") | 12,000 · 9.75 | Legible: **artefact** | Allowlisted (`_NS:` text inside a sheet), gated |
 | T16 "Edit the show's title…" (window content under the sheet's band) | 18,550 · 3.15 | Content dimmed behind the sheet, but its midpoint lies inside the sheet's frame | Stays unwaived; to be re-checked with the crop |
 | **T17 recovery alert text** ("The document “Recover…” could not be opened", "A complete earlier revision…") | 8,626–10,462 · **2.85–2.95** | **Unresolved**: an NSAlert measuring below 3:1 is unexpected (possibly an inactive or occluded alert window); needs the crop | Stays unwaived. **T17 audit = Fail** until explained. |
+| Other accent-tinted controls (default button, switches, checkboxes, toolbar destination fill, focus ring) | computed only so far | The accent change affects them. In dark mode the computed accent-vs-background contrast is lower than with system blue (see the [design spec accent decision](../design/states-and-recovery.md#1-rules-for-every-state-indicator)). | Measured light and dark by `ContrastEvidenceUITests.testAccentTintedControls`: text ≥ 4.5 (glyph p75), state fills ≥ 3:1. **Not run yet** (next mini slot). |
 | 200% Library rows | — | Overflow under the title bar | [#109](https://github.com/brandonmartinez/WaveWrangler/issues/109) |
 
 ## 8. Findings and issues

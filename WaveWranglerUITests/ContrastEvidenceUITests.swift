@@ -177,6 +177,95 @@ final class ContrastEvidenceUITests: XCTestCase {
         }
     }
 
+    /// Accent decision (AccentColor #0064E1, design spec states-and-recovery §1 "Accent"): measures every
+    /// accent-tinted control in light and dark. Text on an accent fill (selected rows, the default button,
+    /// the selected toolbar destination) must reach glyph p75 ≥ 4.5:1; an accent fill that alone shows state
+    /// (switch on, checkbox checked) must reach ≥ 3:1 against its surroundings (WCAG 1.4.11). Values recorded
+    /// as `[evidence-json] accent-controls-<appearance>` with a crop per control.
+    func testAccentTintedControls() throws {
+        for appearance in ["aqua", "darkAqua"] {
+            var rows: [[String: Any]] = []
+            func textOnAccent(_ name: String, _ element: XCUIElement) {
+                guard element.exists else { rows.append(["control": name, "result": "not found"]); return }
+                let shot = element.screenshot()
+                Acceptance.attach(self, png: shot.pngRepresentation, name: "accent-\(appearance)-\(slug(name)).png")
+                let m = ContrastMeter.measure(shot.image) ?? [:]
+                let p75 = m["glyphP75"] as? Double ?? 0
+                rows.append(["control": name, "kind": "text on accent", "frame": "\(element.frame)", "threshold": 4.5].merging(m) { $1 })
+                XCTAssertGreaterThanOrEqual(p75, 4.5, "\(appearance) \(name): text on accent glyph p75 \(p75) (\(m["text"] ?? "") on \(m["background"] ?? ""))")
+            }
+            func fill(_ name: String, _ element: XCUIElement, assert: Bool) {
+                guard element.exists else { rows.append(["control": name, "result": "not found"]); return }
+                let window = app.windows.firstMatch
+                var m = ContrastMeter.accentFill(window.screenshot().image, windowFrame: window.frame, element: element.frame) ?? [:]
+                if let crop = m.removeValue(forKey: "crop") as? Data { Acceptance.attach(self, png: crop, name: "accent-\(appearance)-\(slug(name)).png") }
+                let ratio = m["fillContrast"] as? Double ?? 0
+                rows.append(["control": name, "kind": "accent fill vs surroundings", "frame": "\(element.frame)", "value": "\(element.value ?? "")",
+                             "threshold": assert ? 3.0 : "recorded only"].merging(m) { $1 })
+                if assert { XCTAssertGreaterThanOrEqual(ratio, 3.0, "\(appearance) \(name): accent fill \(m["fill"] ?? "none") vs \(m["background"] ?? "") = \(ratio)") }
+            }
+
+            app = XCUIApplication()
+            app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
+                                   "-WWUITestCenterWindows", "YES", "-WWUITestLibraryFixture", "lib100", "-WWUITestAppearance", appearance]
+            app.launch()
+            app.activate()
+            let entries = app.outlines["ww.library.entries"]
+            XCTAssertTrue(entries.waitForExistence(timeout: 15))
+            Thread.sleep(forTimeInterval: 1)
+            textOnAccent("Library sidebar selected row 'Shows'", app.descendants(matching: .any)["ww.library.sidebar.shows"])
+            let first = entries.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.'")).element(boundBy: 0)
+            if first.exists { first.click(); Thread.sleep(forTimeInterval: 1) }
+            textOnAccent("Library selected entry row (focused outline)", first)
+            let open = app.descendants(matching: .any)["ww.library.detail.open"]
+            textOnAccent("Default button 'Open Show' label", open)
+            fill("Default button 'Open Show' bezel", open, assert: false)
+            app.typeKey(",", modifierFlags: .command)
+            Thread.sleep(forTimeInterval: 1.5)
+            let autosave = app.descendants(matching: .any)["ww.settings.autosave"]
+            fill("Settings switch 'Autosave' (on)", autosave, assert: isOn(autosave) && autosave.isEnabled)
+            let sourcesTab = app.toolbars.buttons["Sources"]
+            if sourcesTab.exists { sourcesTab.click(); Thread.sleep(forTimeInterval: 1) }
+            let download = app.descendants(matching: .any)["ww.settings.downloadSources"]
+            fill("Settings switch 'Download sources'", download, assert: isOn(download))
+            app.terminate()
+
+            app = XCUIApplication()
+            app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
+                                   "-WWUITestCenterWindows", "YES", "-WWUITestOpenShow", "Synthetic Show", "-WWUITestShowEpisodes", "2",
+                                   "-WWUITestAppearance", appearance]
+            app.launchEnvironment["WW_SETUP_ENGINE"] = "fixture-states"
+            app.launch()
+            app.activate()
+            let window = app.windows.matching(identifier: "ww.show.window").firstMatch
+            XCTAssertTrue(window.waitForExistence(timeout: 15))
+            Thread.sleep(forTimeInterval: 1)
+            window.typeKey("1", modifierFlags: .command)
+            Thread.sleep(forTimeInterval: 1)
+            let episode = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.show.sidebar.episode.'")).firstMatch
+            textOnAccent("Show sidebar selected episode row", episode)
+            textOnAccent("Toolbar selected destination 'Setup' (accent 25% fill)", app.descendants(matching: .any)["ww.show.destination.setup"])
+            app.typeKey("i", modifierFlags: [.command, .shift])
+            Thread.sleep(forTimeInterval: 1.5)
+            let include = app.descendants(matching: .any)["ww.import.row.0.include"]
+            fill("Import review checkbox 'Include' (checked)", include, assert: isOn(include))
+            app.typeKey(.escape, modifierFlags: [])
+            app.terminate()
+
+            Acceptance.writeEvidence("accent-controls-\(appearance)", ["revision": Acceptance.revision(), "appearance": appearance,
+                                                                       "accent": "AccentColor #0064E1 (system accent: Multicolor)", "controls": rows], test: self)
+            Acceptance.record(self, "Accent \(appearance): \(rows.map { "\($0["control"] ?? ""): \($0["glyphP75"] ?? $0["fillContrast"] ?? $0["result"] ?? "n/a")" })")
+        }
+    }
+
+    private func isOn(_ element: XCUIElement) -> Bool {
+        element.exists && ("\(element.value ?? "")" == "1" || (element.value as? Bool) == true)
+    }
+
+    private func slug(_ s: String) -> String {
+        String(s.map { $0.isLetter || $0.isNumber ? $0 : "_" })
+    }
+
     private func capture(_ name: String) {
         let shot = app.windows.firstMatch.screenshot()
         Acceptance.attach(self, png: shot.pngRepresentation, name: "\(name).png")
@@ -282,6 +371,34 @@ enum ContrastMeter {
                                       space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
         return stride(from: 0, to: data.count, by: 4).map { Pixel(r: data[$0], g: data[$0 + 1], b: data[$0 + 2]) }
+    }
+
+    /// Non-text contrast of an accent fill: crops the window screenshot to `element` expanded by 4 pt,
+    /// takes the most common colour as the surroundings and the most common saturated blue as the fill.
+    static func accentFill(_ image: NSImage, windowFrame: CGRect, element: CGRect) -> [String: Any]? {
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), windowFrame.width > 0 else { return nil }
+        let scale = CGFloat(cg.width) / windowFrame.width
+        let rect = CGRect(x: (element.minX - windowFrame.minX - 4) * scale, y: (element.minY - windowFrame.minY - 4) * scale,
+                          width: (element.width + 8) * scale, height: (element.height + 8) * scale).integral
+            .intersection(CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        guard !rect.isEmpty, let cropped = cg.cropping(to: rect) else { return nil }
+        let crop = NSImage(cgImage: cropped, size: NSSize(width: rect.width, height: rect.height))
+        guard let pixels = rgba(crop) else { return nil }
+        var all: [UInt32: Int] = [:], blue: [UInt32: Int] = [:]
+        for p in pixels {
+            all[p.key, default: 0] += 1
+            if Int(p.b) - Int(p.r) >= 80, Int(p.b) - Int(p.g) >= 40 { blue[p.key, default: 0] += 1 }
+        }
+        guard let bgKey = all.max(by: { $0.value < $1.value })?.key else { return nil }
+        let bg = Pixel(key: bgKey)
+        var result: [String: Any] = ["background": bg.hex, "crop": NSBitmapImageRep(cgImage: cropped).representation(using: .png, properties: [:]) as Any]
+        if let fillKey = blue.max(by: { $0.value < $1.value })?.key, fillKey != bgKey {
+            let fill = Pixel(key: fillKey)
+            result["fill"] = fill.hex
+            result["fillPixels"] = blue.values.reduce(0, +)
+            result["fillContrast"] = (contrast(fill.luminance, bg.luminance) * 100).rounded() / 100
+        }
+        return result
     }
 
     static func desaturated(_ image: NSImage) -> Data? {

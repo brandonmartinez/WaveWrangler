@@ -15,6 +15,16 @@ Companion documents: [information architecture](information-architecture.md) · 
 
 Tints: fine = secondary label colour (no tint) · attention = `systemOrange` · failed = `systemRed` · unknown/checking = secondary. In Increase Contrast, use the system's high-contrast variants; do not add custom colours.
 
+**Accent (Design decision, 2026-10-05; evidence [WW-007 §7.1](../evidence/ww-007-accessibility-responsiveness.md#71-contrast-findings-under-the-scoped-policy-mac-mini-run-479eb9e)).** The app sets `AccentColor` = sRGB **#0064E1** (`NSAccentColorName`) rather than leaving the system default blue (#007AFF). Reason: white text on the default selection measured **4.02:1**, which fails 4.5:1. That covers selected sidebar rows in the Library and show windows, light and dark, and the `.contrast` audit flags it. On #0064E1 white text is **5.37:1**. Scope and effects:
+- The app accent applies only while the user's system accent is **Multicolor**, the default. A user-chosen system accent still wins, as the HIG asks [A3], and is the user's choice.
+- It tints every accent-derived control: list/table/outline selection, default (Return) buttons, switches when on, checked checkboxes, linear progress fill, the keyboard focus ring and the toolbar destination's 25% accent fill.
+- Computed against typical window backgrounds, the accent fill improves in light mode (white 5.37 vs 4.02; #ECECEC 4.55 vs 3.40). In dark mode it is **lower** than system blue (#1E1E1E 3.10 vs 4.15; #323232 2.39 vs 3.19).
+- These controls are therefore measured in both appearances by `ContrastEvidenceUITests.testAccentTintedControls`:
+  - text on accent must reach glyph p75 ≥ 4.5:1;
+  - a fill that alone shows state (switch on, checkbox checked) must reach ≥ 3:1 against its surroundings (WCAG 1.4.11).
+- If dark-mode fills fail, the fix is a dark-appearance variant of `AccentColor`, re-measured. The asset is never removed while selection text is below 4.5:1.
+- The colour is never the only signal (ST-02).
+
 ## 2. Document save states
 
 The **save-status item** sits at the toolbar trailing edge as symbol + short text; activating it opens a popover. Its identifier is `ww.show.saveStatus`. The title suffix and close-button dot follow [A4]. "Dirty" means the window's content has edits that are not confirmed coherently on disk.
