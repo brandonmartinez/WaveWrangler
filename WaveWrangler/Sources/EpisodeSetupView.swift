@@ -31,7 +31,14 @@ struct EpisodeSetupContent: NSViewControllerRepresentable {
 
     @MainActor
     static func makeModel(store: ShowDocumentStore, episodeID: EpisodeID) -> EpisodeSetupModel {
-        EpisodeSetupModel(store: store, episodeID: episodeID, engine: SetupEngineProvider.shared, preference: UserDefaultsSourceDownloadPreference())
+        let engine = SetupEngineProvider.engine(for: store.model.show.id)
+        let model = EpisodeSetupModel(store: store, episodeID: episodeID, engine: engine, preference: UserDefaultsSourceDownloadPreference())
+        if let real = engine as? WWSourcesSetupEngine {
+            real.sourceNames = { [weak store] id in
+                store?.model.episodes.lazy.compactMap { $0.source(id)?.displayNameHint }.first ?? "another source"
+            }
+        }
+        return model
     }
 }
 

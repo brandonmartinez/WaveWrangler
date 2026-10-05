@@ -64,6 +64,13 @@ public protocol SourceSetupEngine: AnyObject, Sendable {
 
     /// Explicit user download command (allowed even when automatic downloads are Off).
     func perform(_ action: TransferAction, on sourceID: SourceID) async
+
+    /// Re-observes the given sources (Try Again).
+    func refresh(_ sourceIDs: [SourceID]) async
+}
+
+extension SourceSetupEngine {
+    public func refresh(_ sourceIDs: [SourceID]) async {}
 }
 
 /// App preference "Download sources automatically" (Settings › Sources). Default On.

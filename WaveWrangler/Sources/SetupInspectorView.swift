@@ -358,7 +358,10 @@ private struct DimensionRow: View {
             switch presentation.dimension {
             case .location:
                 switch status.location {
-                case .missing, .unknown, .moved:
+                case .unknown:
+                    Button("Try Again") { model.tryAgain(source.id) }
+                    Button("Relink…") { model.beginRelink(source.id) }
+                case .missing, .moved:
                     Button("Relink…") { model.beginRelink(source.id) }
                 default: EmptyView()
                 }
@@ -366,6 +369,8 @@ private struct DimensionRow: View {
                 switch status.access {
                 case .needsPermission, .denied:
                     Button("Grant Access…") { model.beginRelink(source.id, mode: .grantAccess) }
+                case .unknown:
+                    Button("Try Again") { model.tryAgain(source.id) }
                 default: EmptyView()
                 }
             case .identity:

@@ -44,6 +44,8 @@ public enum TransferStatus: Hashable, Sendable {
     case failed(reason: String)
     case noConnection
     case downloadsOff
+    /// The file is in a cloud location WaveWrangler can't request downloads from (no generic classifier).
+    case unsupportedLocation
     /// Downloads were turned off while the provider was mid-transfer and couldn't be cancelled.
     case providerMayFinish
 }
@@ -223,6 +225,8 @@ extension TransferStatus {
             .init(.transfer, "Can't download — no network connection", .symbol("wifi.slash"), summary: "No connection", spoken: "no connection", priority: 4, attention: true, tint: .attention)
         case .downloadsOff:
             .init(.transfer, "Downloads are off", .symbol("slash.circle"), summary: nil, spoken: nil, priority: nil, tint: .none)
+        case .unsupportedLocation:
+            .init(.transfer, "WaveWrangler can't download from this location", .symbol("slash.circle"), summary: nil, spoken: "can't download from this location", priority: nil, tint: .secondary)
         case .providerMayFinish:
             .init(.transfer, "Your cloud service may finish this download on its own", .indeterminate, summary: nil, spoken: "your cloud service may finish this download on its own", priority: nil, tint: .secondary)
         }
@@ -339,7 +343,7 @@ public enum SourceStatusCatalog {
     public static let allLocations: [LocationStatus] = [.checking, .known, .moved(newFolder: "Archive"), .moved(newFolder: nil), .missing(sameNamedFileAtOriginalLocation: false), .missing(sameNamedFileAtOriginalLocation: true), .unknown(reason: "the drive isn't connected")]
     public static let allAccess: [AccessStatus] = [.checking, .granted, .refreshing, .needsPermission, .denied, .unknown(reason: "macOS didn't say")]
     public static let allResidency: [ResidencyStatus] = [.checking, .local, .cloudOnly, .unknown]
-    public static let allTransfers: [TransferStatus] = [.idle, .queued, .downloading(fraction: 0.42), .downloading(fraction: nil), .paused, .cancelled, .failed(reason: "the cloud service stopped responding"), .noConnection, .downloadsOff, .providerMayFinish]
+    public static let allTransfers: [TransferStatus] = [.idle, .queued, .downloading(fraction: 0.42), .downloading(fraction: nil), .paused, .cancelled, .failed(reason: "the cloud service stopped responding"), .noConnection, .downloadsOff, .unsupportedLocation, .providerMayFinish]
     public static let allIdentity: [IdentityStatus] = [.checking, .notChecked, .detailsMatch, .changed(differences: "size differs", acceptedByUser: false), .changed(differences: "size differs", acceptedByUser: true), .mismatch(differences: "size and created date differ")]
 
     public static var allSnapshots: [SourceStatusSnapshot] {

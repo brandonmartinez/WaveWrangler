@@ -129,7 +129,7 @@ struct ImportReviewTests {
         #expect(review.includedCount == 3)
         #expect(review.title == "Import 3 Sources into “Interview with Ana”")
         #expect(review.importButtonTitle == "Import 3")
-        #expect(review.fromLine == "From: Ana Interview (2 folders, 6 files; 1 not a recording, 1 hidden file, skipped)")
+        #expect(review.fromLine == "From: Ana Interview (2 folders, 6 files; 1 not a recording, 1 hidden item, skipped)")
         #expect(review.rows[0].group == .suggested(Suggestion(value: "ZOOM0001", reason: "Suggested because the files share folder ZOOM0001")))
         #expect(review.rows[0].group.accessibilityValue(none: "Ungrouped") == "ZOOM0001, suggested")
         #expect(review.rows[2].speaker == .suggested(Suggestion(value: "Ana", reason: "Suggested because the file name contains “Ana”")))

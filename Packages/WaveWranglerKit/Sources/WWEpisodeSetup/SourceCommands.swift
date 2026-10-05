@@ -62,6 +62,10 @@ public struct RelinkComparison: Hashable, Sendable {
         case match
         case different(fields: [String])
         case unknown(reason: String)
+        /// The chosen file is already linked to another source in this show; using it needs confirmation.
+        case alreadyLinked(otherSource: String)
+        /// The chosen file can't be used at all (not a file, not found, permission denied…).
+        case unavailable(reason: String)
     }
 
     public var rows: [Row]
@@ -72,7 +76,15 @@ public struct RelinkComparison: Hashable, Sendable {
         case .match: "File details match. WaveWrangler compared file details, not audio."
         case let .different(fields): "Some file details are different: \(fields.map { $0.lowercased() }.joined(separator: ", "))."
         case let .unknown(reason): "WaveWrangler can't compare some details because \(reason)."
+        case let .alreadyLinked(other): "This file is already used for “\(other)” in this show."
+        case let .unavailable(reason): "WaveWrangler can't use this file: \(reason). Nothing was changed."
         }
+    }
+
+    /// False when the chosen file can't be used at all; only Choose Another… and Cancel remain.
+    public var canConfirm: Bool {
+        if case .unavailable = outcome { return false }
+        return true
     }
 
     /// Anything but an exact match needs the "I've checked this is the same recording" checkbox and has
@@ -89,6 +101,8 @@ public struct RelinkComparison: Hashable, Sendable {
         case .match: .detailsMatch
         case let .different(fields): .changed(differences: fields.map { $0.lowercased() }.joined(separator: ", ") + " differ", acceptedByUser: true)
         case let .unknown(reason): .changed(differences: "not compared because \(reason)", acceptedByUser: true)
+        case .alreadyLinked: .changed(differences: "also used by another source", acceptedByUser: true)
+        case .unavailable: .notChecked
         }
     }
 
@@ -176,6 +190,7 @@ public enum TransferAction: String, Hashable, Sendable, CaseIterable {
         let notLocal = residency == .cloudOnly || residency == .unknown
         switch transfer {
         case .idle, .downloadsOff: return notLocal ? [.download] : []
+        case .unsupportedLocation: return []
         case .queued: return [.cancel]
         case .downloading: return pauseSupported ? [.pause, .cancel] : [.cancel]
         case .paused: return pauseSupported ? [.resume, .cancel] : [.cancel]

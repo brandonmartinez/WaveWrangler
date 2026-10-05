@@ -19,11 +19,11 @@ let package = Package(
         .target(name: "WWCore"),
         .target(name: "WWPersistence", dependencies: ["WWCore"]),
         .target(name: "WWSources", dependencies: ["WWCore"]),
-        .target(name: "WWEpisodeSetup", dependencies: ["WWCore"]),
+        .target(name: "WWEpisodeSetup", dependencies: ["WWCore", "WWSources"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
         .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore"]),
         .testTarget(name: "WWSourcesTests", dependencies: ["WWSources", "WWCore"]),
-        .testTarget(name: "WWEpisodeSetupTests", dependencies: ["WWEpisodeSetup", "WWCore"]),
+        .testTarget(name: "WWEpisodeSetupTests", dependencies: ["WWEpisodeSetup", "WWCore", "WWSources"]),
     ],
     swiftLanguageModes: [.v6]
 )

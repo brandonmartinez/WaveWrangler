@@ -41,12 +41,42 @@ public struct ImportScan: Hashable, Sendable {
     public var chosenDisplayName: String
     public var folderCount: Int
     public var fileCount: Int
+    /// Items counted but not listed (engines that never enumerate non-recordings by name).
+    public var uncountedSkips: SkipCounts
+    /// Engine-provided suggestions by candidate; when nil, `ImportSuggester` derives them from names.
+    public var suggestions: [UUID: CandidateSuggestions]?
 
-    public init(candidates: [ImportCandidate], chosenDisplayName: String, folderCount: Int, fileCount: Int) {
+    public struct SkipCounts: Hashable, Sendable {
+        public var notRecordings: Int
+        public var hidden: Int
+        public var unreadable: Int
+        public var duplicates: Int
+
+        public init(notRecordings: Int = 0, hidden: Int = 0, unreadable: Int = 0, duplicates: Int = 0) {
+            self.notRecordings = notRecordings
+            self.hidden = hidden
+            self.unreadable = unreadable
+            self.duplicates = duplicates
+        }
+    }
+
+    public init(candidates: [ImportCandidate], chosenDisplayName: String, folderCount: Int, fileCount: Int, uncountedSkips: SkipCounts = SkipCounts(), suggestions: [UUID: CandidateSuggestions]? = nil) {
         self.candidates = candidates
         self.chosenDisplayName = chosenDisplayName
         self.folderCount = folderCount
         self.fileCount = fileCount
+        self.uncountedSkips = uncountedSkips
+        self.suggestions = suggestions
+    }
+}
+
+public struct CandidateSuggestions: Hashable, Sendable {
+    public var group: Suggestion?
+    public var speaker: Suggestion?
+
+    public init(group: Suggestion? = nil, speaker: Suggestion? = nil) {
+        self.group = group
+        self.speaker = speaker
     }
 }
 
@@ -157,20 +187,25 @@ public struct ImportReview: Hashable, Sendable {
     public var chosenDisplayName: String
     public var folderCount: Int
     public var fileCount: Int
+    public var uncountedSkips: ImportScan.SkipCounts
 
     public init(scan: ImportScan, episodeTitle: String, knownSpeakerNames: [String]) {
         self.episodeTitle = episodeTitle
         chosenDisplayName = scan.chosenDisplayName
         folderCount = scan.folderCount
         fileCount = scan.fileCount
-        let suggestions = ImportSuggester.suggestions(for: scan.candidates, knownSpeakerNames: knownSpeakerNames)
+        uncountedSkips = scan.uncountedSkips
+        let derived = ImportSuggester.suggestions(for: scan.candidates, knownSpeakerNames: knownSpeakerNames)
         rows = scan.candidates.filter(\.isRecording).map { candidate in
-            let suggestion = suggestions[candidate.id]
+            let engine = scan.suggestions?[candidate.id]
+            let names = derived[candidate.id]
+            let group = scan.suggestions == nil ? names?.group : engine?.group
+            let speaker = engine?.speaker ?? names?.speaker
             return Row(
                 candidate: candidate,
                 include: !candidate.alreadyInEpisode,
-                group: suggestion?.group.map(Choice.suggested) ?? .none,
-                speaker: suggestion?.speaker.map(Choice.suggested) ?? .none
+                group: group.map(Choice.suggested) ?? .none,
+                speaker: speaker.map(Choice.suggested) ?? .none
             )
         }
         skipped = scan.candidates.filter { !$0.isRecording }
@@ -190,11 +225,13 @@ public struct ImportReview: Hashable, Sendable {
         var parts = [Self.count(folderCount, "folder"), Self.count(fileCount, "file")]
         if folderCount == 0 { parts.removeFirst() }
         var line = "From: \(chosenDisplayName) (\(parts.joined(separator: ", "))"
-        let notRecordings = skipped.filter { $0.kind == .notRecording }.count
-        let hidden = skipped.filter { $0.kind == .hidden }.count
+        let notRecordings = skipped.filter { $0.kind == .notRecording }.count + uncountedSkips.notRecordings
+        let hidden = skipped.filter { $0.kind == .hidden }.count + uncountedSkips.hidden
         var skips: [String] = []
         if notRecordings > 0 { skips.append(notRecordings == 1 ? "1 not a recording" : "\(notRecordings) not recordings") }
-        if hidden > 0 { skips.append(hidden == 1 ? "1 hidden file" : "\(hidden) hidden files") }
+        if hidden > 0 { skips.append(hidden == 1 ? "1 hidden item" : "\(hidden) hidden items") }
+        if uncountedSkips.duplicates > 0 { skips.append(uncountedSkips.duplicates == 1 ? "1 chosen twice" : "\(uncountedSkips.duplicates) chosen twice") }
+        if uncountedSkips.unreadable > 0 { skips.append(uncountedSkips.unreadable == 1 ? "1 couldn't be read" : "\(uncountedSkips.unreadable) couldn't be read") }
         if !skips.isEmpty { line += "; \(skips.joined(separator: ", ")), skipped" }
         return line + ")"
     }
@@ -290,10 +327,11 @@ public struct ImportReview: Hashable, Sendable {
         return names.filter { seen.insert($0).inserted }
     }
 
-    /// The import batch: only included rows, only confirmed values. `makeID` assigns new logical IDs.
-    public func importItems(makeID: () -> SourceID = { SourceID() }) -> [(candidateID: UUID, item: SourceImportItem)] {
+    /// The import batch: only included rows, only confirmed values. Each source's logical ID is the
+    /// candidate's ID, so the engine's device-local record (made at scan time) refers to the same source.
+    public func importItems() -> [(candidateID: UUID, item: SourceImportItem)] {
         includedRows.map { row in
-            let source = SourceRecord(id: makeID(), displayNameHint: row.candidate.displayName)
+            let source = SourceRecord(id: SourceID(row.candidate.id), displayNameHint: row.candidate.displayName)
             return (row.id, SourceImportItem(source: source, recorderGroupName: row.group.appliedValue, speakerName: row.speaker.appliedValue))
         }
     }

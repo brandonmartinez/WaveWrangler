@@ -462,6 +462,10 @@ final class EpisodeSetupModel {
         Task { [engine] in await engine.perform(action, on: sourceID) }
     }
 
+    func tryAgain(_ sourceID: SourceID) {
+        Task { [engine] in await engine.refresh([sourceID]) }
+    }
+
     func availableActions(for sourceID: SourceID) -> [TransferAction] {
         let s = status(of: sourceID)
         return TransferAction.available(transfer: s.transfer, residency: s.residency, pauseSupported: engine.pauseSupported)

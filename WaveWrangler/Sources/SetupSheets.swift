@@ -247,7 +247,7 @@ struct RelinkSheet: View {
             Text("WaveWrangler never moves, renames, copies over or changes either file.")
                 .setupFont(.caption1).foregroundStyle(.secondary)
 
-            if comparison.requiresAcknowledgement {
+            if comparison.requiresAcknowledgement && comparison.canConfirm {
                 Toggle(RelinkComparison.acknowledgementTitle, isOn: $acknowledged)
                     .toggleStyle(.checkbox)
                     .setupFont(.body)
@@ -267,7 +267,7 @@ struct RelinkSheet: View {
                 if comparison.requiresAcknowledgement {
                     // No default button when details differ or are unknown (states §4 step 3).
                     Button(comparison.confirmTitle) { model.confirmRelink(context) }
-                        .disabled(!acknowledged)
+                        .disabled(!acknowledged || !comparison.canConfirm)
                         .accessibilityIdentifier("ww.relink.confirm")
                 } else {
                     Button(comparison.confirmTitle) { model.confirmRelink(context) }
