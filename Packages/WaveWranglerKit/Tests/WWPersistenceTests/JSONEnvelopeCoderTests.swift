@@ -44,9 +44,40 @@ struct JSONEnvelopeCoderTests {
         #expect(object["payload"] is [String: Any])
     }
 
-    @Test func encodingIsDeterministic() throws {
+    @Test func encodingIsDeterministicForAGivenPublication() throws {
         let model = sampleModel()
-        #expect(try coder.encode(model, revision: 1) == coder.encode(model, revision: 1))
+        let id = UUID()
+        #expect(try coder.encode(model, revision: 1, publicationID: id) == coder.encode(model, revision: 1, publicationID: id))
+    }
+
+    @Test func publicationIdentityDistinguishesSameRevisionWrites() throws {
+        let model = sampleModel()
+        let first = try coder.encodeDocument(model, revision: 4, publicationID: UUID())
+        let second = try coder.encodeDocument(model, revision: 4, publicationID: UUID())
+        #expect(first.publication.revision == second.publication.revision)
+        #expect(first.publication.checksum == second.publication.checksum)
+        #expect(first.publication != second.publication)
+
+        let decoded = try coder.decode(first.data)
+        #expect(decoded.publication == first.publication)
+        #expect(decoded.revision == 4)
+        #expect(try json(first.data)["publicationID"] as? String == first.publication.publicationID.uuidString)
+
+        var edited = model
+        edited.show.title = "Edited elsewhere"
+        let divergent = try coder.encodeDocument(edited, revision: 4, publicationID: UUID())
+        #expect(divergent.publication.checksum != first.publication.checksum)
+    }
+
+    @Test func refusesCurrentVersionWithoutPublicationID() throws {
+        var object = try json(coder.encode(sampleModel(), revision: 1))
+        object.removeValue(forKey: "publicationID")
+        #expect {
+            try coder.decode(data(object))
+        } throws: { error in
+            if case .malformed = error as? PersistenceError { return true }
+            return false
+        }
     }
 
     @Test func refusesUnknownNewerSchemaBeforeDecodingPayload() throws {
@@ -55,6 +86,19 @@ struct JSONEnvelopeCoderTests {
         object["payload"] = ["something": "from the future"]
         #expect(throws: PersistenceError.unknownNewerSchema(found: SchemaVersion.show + 1, supported: SchemaVersion.show)) {
             try coder.decode(data(object))
+        }
+    }
+
+    @Test func reportsNewerVersionEvenWhenVersionSpecificHeaderShapeDiffers() throws {
+        let future: [String: Any] = [
+            "format": DocumentFormat.show.identifier,
+            "schemaVersion": SchemaVersion.show + 1,
+            "revision": ["lamport": 7, "device": "synthetic"],
+            "integrity": ["algorithm": "blake3", "digest": "00"],
+            "payload": ["shape": "unknown"],
+        ]
+        #expect(throws: PersistenceError.unknownNewerSchema(found: SchemaVersion.show + 1, supported: SchemaVersion.show)) {
+            try coder.decode(data(future))
         }
     }
 
@@ -134,13 +178,16 @@ struct JSONEnvelopeCoderTests {
     @Test func libraryRoundTrips() throws {
         let show = ShowID()
         let library = LibraryModel(
-            entries: [LibraryShowEntry(showID: show, alias: "Main", lastKnownTitle: "Show", lastKnownRevision: 2,
+            entries: [LibraryShowEntry(showID: show, alias: "Main", lastKnownTitle: "Show",
+                                       lastKnownPublication: PublicationStamp(revision: 2, publicationID: UUID(), checksum: "sha256:00"),
                                        unavailable: UnavailableRecord(note: "Folder offline", recordedAt: Date(timeIntervalSince1970: 1_000)))],
             collections: [LibraryCollection(name: "Active", showIDs: [show])],
             recentShowIDs: [show]
         )
         let coder = JSONEnvelopeCoder<LibraryModel>.library
-        #expect(try coder.decode(coder.encode(library, revision: 5)).payload == library)
+        let decoded = try coder.decode(coder.encode(library, revision: 5)).payload
+        #expect(decoded == library)
+        #expect(decoded.entries.first?.lastKnownRevision == 2)
     }
 
     @Test func errorsAreUserPresentable() {

@@ -60,7 +60,7 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; nothing depends
   JSON value, `ShowDocumentModel` — show, all episodes, recorder groups/epochs, logical source records,
   speakers and per-episode assignments, edit-history skeleton.
 - **Canonical library document** (`.wwlibrary`, UTI `com.brandonmartinez.wavewrangler.library`):
-  `LibraryModel` — entries (logical show refs, aliases, last-known revision, unavailable records),
+  `LibraryModel` — entries (logical show refs, aliases, last-known publication, unavailable records),
   collections/order and recents. It is user work, so it is a canonical document that may live in a
   user-chosen (including cloud) folder, *not* only in Application Support. The UTI is exported now;
   no NSDocument class or location UI exists yet (library UI/persistence owners).
@@ -69,10 +69,22 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; nothing depends
   written into canonical documents. Storage location is decided by the sources owner.
 - **Derived index/cache:** rebuildable and outside canonical data (not implemented yet).
 - **Envelope** (`WWPersistence.JSONEnvelopeCoder`, behind `CanonicalDocumentCoding`):
-  `{checksum, format, payload, revision, schemaVersion}` with sorted keys. Reads refuse, in order:
-  malformed header, wrong format, **unknown-newer schema (before the payload is decoded)**, unsupported
-  older schema, invalid revision, undecodable payload, checksum mismatch, content the model would
-  silently drop, and semantic validation issues. The checksum is SHA-256 over the canonical payload
+  `{checksum, format, payload, publicationID, revision, schemaVersion}` with sorted keys. Only
+  `{format, schemaVersion}` is frozen across versions and is decoded first. Reads refuse, in order:
+  malformed version header, wrong format, **unknown-newer schema (before any version-specific field or
+  the payload is decoded)**, unsupported older schema, malformed publication header, invalid revision,
+  undecodable payload, checksum mismatch, content the model would silently drop, and semantic
+  validation issues.
+- **Publication identity:** every write gets a fresh `publicationID`. `PublicationStamp`
+  `{revision, publicationID, checksum}` identifies what is on disk, and `LibraryShowEntry` records it as
+  `lastKnownPublication`. `revision` is **only an ordering hint**: two devices or a restored Version can
+  publish the same revision number with different content. Conflict detection compares publication ID
+  and checksum.
+- **Show identity and copies:** File ▸ Duplicate gives the copy a new `ShowID` (show-scoped episode,
+  source and speaker IDs are kept). A Finder/provider copy of a `.wwshow` file keeps the **same**
+  `ShowID` as the original. The library lane must surface that collision to the user (for example by
+  offering "treat as a copy" with a new ID); it must never silently drop, merge or overwrite either
+  document. The checksum is SHA-256 over the canonical payload
   encoding — integrity bookkeeping, not authenticity. Timestamps are ISO-8601 UTC with exactly three
   fractional digits (integer-millisecond rounding keeps decode → encode byte-stable).
 

@@ -13,9 +13,12 @@ import WWPersistence
 final class ShowDocument: NSDocument {
     let store: ShowDocumentStore
     private let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
-    /// Revision of the last coherent value read or successfully written.
-    private(set) var revision = 0
-    private var pendingRevision: Int?
+    /// Publication of the last coherent value read or successfully written (`nil` for a new document).
+    /// `revision` is only an ordering hint; the publication ID and checksum identify what is on disk.
+    private(set) var publication: PublicationStamp?
+    private var pendingPublication: PublicationStamp?
+
+    var revision: Int { publication?.revision ?? 0 }
 
     override init() {
         store = ShowDocumentStore(model: .untitled())
@@ -47,16 +50,15 @@ final class ShowDocument: NSDocument {
         let decoded = try coder.decode(data)
         MainActor.assumeIsolated {
             store.replaceLoadedModel(decoded.payload)
-            revision = decoded.revision
+            publication = decoded.publication
         }
     }
 
     override func data(ofType typeName: String) throws -> Data {
         try MainActor.assumeIsolated {
-            let next = revision + 1
-            let data = try coder.encode(store.model, revision: next)
-            pendingRevision = next
-            return data
+            let encoded = try coder.encodeDocument(store.model, revision: revision + 1, publicationID: UUID())
+            pendingPublication = encoded.publication
+            return encoded.data
         }
     }
 
@@ -66,12 +68,26 @@ final class ShowDocument: NSDocument {
         for saveOperation: NSDocument.SaveOperationType,
         completionHandler: @escaping (Error?) -> Void
     ) {
+        // The model is already current (edits apply live); end any coalesced burst so that an edit made
+        // after this save registers new undo and marks the document dirty again.
+        store.endCoalescing()
         super.save(to: url, ofType: typeName, for: saveOperation) { [weak self] error in
-            if let self, error == nil, let pending = self.pendingRevision {
-                self.revision = pending
+            if let self, error == nil, let pending = self.pendingPublication {
+                self.publication = pending
             }
-            self?.pendingRevision = nil
+            self?.pendingPublication = nil
             completionHandler(error)
         }
+    }
+
+    /// Duplicate (File ▸ Duplicate) creates a distinct show with a new `ShowID`, so the original and the
+    /// copy can coexist in the library. Show-scoped IDs (episodes, sources, speakers…) are kept.
+    override func duplicate() throws -> NSDocument {
+        let copy = try super.duplicate()
+        guard let show = copy as? ShowDocument else { return copy }
+        show.store.replaceLoadedModel(store.model.duplicatedAsNewShow())
+        show.publication = nil
+        show.updateChangeCount(.changeDone)
+        return show
     }
 }
