@@ -157,11 +157,18 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestAutosave", "ON",
                                "-WWUITestCenterWindows", "YES"] + extra
         app.launch()
+        let start = Date()
         app.open(document)
         let window = app.windows.matching(identifier: "ww.show.window").firstMatch
-        guard window.waitForExistence(timeout: 10) else {
-            throw NSError(domain: "REF020", code: 1, userInfo: [NSLocalizedDescriptionKey: "show window did not open"])
+        // Wait up to 30 s and record the time, so a slow open (e.g. resolving a moved source) is measured instead of
+        // aborting the cycle; more than 10 s is still a failure of the scenario.
+        guard window.waitForExistence(timeout: 30) else {
+            let windows = app.windows.allElementsBoundByIndex.map { "\($0.identifier)|\($0.title)" }
+            throw NSError(domain: "REF020", code: 1, userInfo: [NSLocalizedDescriptionKey: "show window did not open within 30 s; app windows \(windows)"])
         }
+        let seconds = Date().timeIntervalSince(start)
+        Acceptance.record(self, "REF-020 show window opened in \(String(format: "%.1f", seconds)) s")
+        check(seconds <= 10, "show window opened within 10 s (took \(String(format: "%.1f", seconds)) s)")
         window.typeKey("1", modifierFlags: .command)
         _ = element("ww.setup.sources").waitForExistence(timeout: 10)
     }
