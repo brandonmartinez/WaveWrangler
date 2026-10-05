@@ -7,9 +7,8 @@ import WWOrganizer
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static func main() {
-        let app = NSApplication.shared
-        // The first document controller created becomes `NSDocumentController.shared` (#126).
-        _ = DocumentController()
+        // The first `shared` access creates NSApp, so this makes it a WaveWranglerApplication (#126).
+        let app = WaveWranglerApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.regular)

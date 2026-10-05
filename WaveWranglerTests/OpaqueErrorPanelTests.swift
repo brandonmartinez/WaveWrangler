@@ -108,6 +108,26 @@ struct OpaqueErrorPanelTests {
         #expect(attempter.chosen.isEmpty)
     }
 
+    /// The windowless `presentError(_:modalFor:…)` path reports back with AppKit's did-present signature.
+    final class PresentDelegate: NSObject {
+        var calls: [(Bool, UnsafeMutableRawPointer?)] = []
+        @objc func didPresentError(withRecovery didRecover: Bool, contextInfo: UnsafeMutableRawPointer?) {
+            calls.append((didRecover, contextInfo))
+        }
+    }
+
+    @Test func didPresentCallbackGetsRecoveryAndContext() {
+        let delegate = PresentDelegate()
+        let context = UnsafeMutableRawPointer(bitPattern: 0x2A)
+        let selector = #selector(PresentDelegate.didPresentError(withRecovery:contextInfo:))
+        OpaqueErrorPresenter.notify(delegate, didPresent: selector, didRecover: true, contextInfo: context)
+        OpaqueErrorPresenter.notify(delegate, didPresent: selector, didRecover: false, contextInfo: nil)
+        OpaqueErrorPresenter.notify(delegate, didPresent: nil, didRecover: true, contextInfo: nil)
+        OpaqueErrorPresenter.notify(nil, didPresent: selector, didRecover: true, contextInfo: nil)
+        #expect(delegate.calls.map(\.0) == [true, false])
+        #expect(delegate.calls.map(\.1) == [context, nil])
+    }
+
     // MARK: - Opaque surface and contrast
 
     @Test func panelIsAnOpaqueDialog() {

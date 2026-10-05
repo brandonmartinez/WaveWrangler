@@ -177,6 +177,14 @@ enum OpaqueErrorPresenter {
         return attemptRecovery(from: error, optionIndex: index)
     }
 
+    /// Calls the delegate's did-present selector with AppKit's signature
+    /// `- (void)didPresentErrorWithRecovery:(BOOL)didRecover contextInfo:(void *)contextInfo`.
+    static func notify(_ delegate: Any?, didPresent selector: Selector?, didRecover: Bool, contextInfo: UnsafeMutableRawPointer?) {
+        guard let object = delegate as? NSObject, let selector, object.responds(to: selector) else { return }
+        typealias Callback = @convention(c) (NSObject, Selector, ObjCBool, UnsafeMutableRawPointer?) -> Void
+        unsafeBitCast(object.method(for: selector), to: Callback.self)(object, selector, ObjCBool(didRecover), contextInfo)
+    }
+
     /// Same contract as AppKit's error presentation: only an error that offers recovery options is handed to
     /// its `NSRecoveryAttempterErrorKey` object (e.g. the copy-only `DocumentRecoveryOffer.RecoveryAttempter`).
     static func attemptRecovery(from error: Error, optionIndex: Int) -> Bool {
