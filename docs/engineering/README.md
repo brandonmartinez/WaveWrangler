@@ -155,12 +155,17 @@ additively and update this table.
 | `DocumentStatusProviding` (`Workspace/DocumentStatus.swift`) | Persistence: `ShowDocument` (or an object it owns) | Observable `saveStatus: DocumentSaveStatus` (D1–D16 + checking/unknown, `WWOrganizer.DocumentSaveState`). The show window uses `store.document as? DocumentStatusProviding`; until then `NativeDocumentStatusObserver` reports Edited/Not saved or "Unknown", **never "Saved"**. |
 | `DocumentStatusActionHandling` (same file) | Persistence (optional) | Handles popover/message-bar actions (Resolve…, Try Again, Save a Copy Elsewhere…, Cancel Save…). |
 | `LibraryPersisting`, `LibraryEntryObserving`, `LibraryLocationControlling` (`Library/LibraryServices.swift`) | Persistence: library store, reconciliation, `LibraryLocationController` | Async load/save of `LibraryModel` (no main-thread I/O); observable per-show `LibraryEntryDetails`; open/locate/reveal by show identity; library location, L1–L5 state, copy → verify → retire moves. Install via `LibraryServices.current` before the library is first used. `InMemoryLibraryBackend` is the stand-in (not durable; the UI says so). |
-| `SourceCommandHandling` (`Commands/SourceCommands.swift`) | Sources UI | File › Import Sources…, Relink Source…, and extra Source-menu items. `SourceCommands.handler` defaults to a placeholder that changes nothing. |
+| `SourceCommandHandling` (`Commands/SourceCommands.swift`) | Sources UI | File › Import Sources…, Relink Source…, extra Source-menu items, and optional Edit › Delete / Move Up/Down hooks for the Sources/Speakers tables (return a title only while your table has focus). `SourceCommands.handler` defaults to a placeholder that changes nothing. |
+| `AutosavePolicyConnection.isConnected` (`Settings/AutosavePolicyConnection.swift`) | Persistence (autosave policy) | Set `true` once `WWAutosaveEnabled` really controls autosave; until then Settings shows autosave On and doesn't offer Off. |
 | `SetupSourcesContent.makeView` (`Workspace/SetupContainerView.swift`) | Sources UI | `(ShowDocumentStore, EpisodeID) -> AnyView` hosted in the Setup destination (Sources outline + Speakers table). |
 
 Show windows: `ShowDocument` hosts `ShowWorkspaceView(store:)`; per-window state (`ShowWindowState`) is
 registered for menu routing (`CommandRouter`). Edits go through `ShowDocumentStore.apply(_:coalescing:_:)`
 with the user-facing undo names in `WWOrganizer.UndoActionName`.
+
+Library ordering: `LibraryStore` (backed by the pure, unit-tested `WWOrganizer.LibrarySession`) loads at
+launch, never writes before load / after a failed load / while read-only (L4/L5), queues show-open bookkeeping,
+refreshes titles only after a coherent save (D1), and undoes only what an action changed.
 
 UI-test launch arguments (Debug builds; synthetic data only): `-WWUITestResetPreferences YES`,
 `-WWUITestLibraryFixture lib100|empty`, `-WWUITestOpenShow <name>` with `-WWUITestShowEpisodes <n>`, and
