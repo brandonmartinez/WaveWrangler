@@ -2,7 +2,7 @@
 # Run WaveWranglerKit package tests, then the unhosted WaveWranglerTests unit tests.
 # UI tests launch the app and are NOT run by default. `--ui` runs ONLY the XCUITests (GUI); use it only
 # when GUI launch is permitted and the GUI lock is held.
-# Usage: scripts/test.sh [--package-only] [--ui]
+# Usage: scripts/test.sh [--package-only] [--ui [-only-testing:WaveWranglerUITests/Class/test]]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,13 +10,15 @@ JOBS="${WW_JOBS:-4}"
 DERIVED_DATA="${WW_DERIVED_DATA:-$ROOT/.build/DerivedData}"
 PACKAGE_ONLY=0
 UI=0
+UI_ARGS=()
 
 for arg in "$@"; do
   case "$arg" in
     --package-only) PACKAGE_ONLY=1 ;;
     --ui) UI=1 ;;
+    -only-testing:WaveWranglerUITests*) UI_ARGS+=("$arg") ;;
     *)
-      echo "usage: scripts/test.sh [--package-only] [--ui]" >&2
+      echo "usage: scripts/test.sh [--package-only] [--ui [-only-testing:WaveWranglerUITests/...]]" >&2
       exit 2
       ;;
   esac
@@ -32,6 +34,7 @@ if [[ "$UI" == 1 ]]; then
   PROBE="$(swift build --package-path "$ROOT/Packages/WaveWranglerKit" --scratch-path "$ROOT/.build/swiftpm" --show-bin-path)/wwpersist-probe"
   echo "==> xcodebuild test (WaveWranglerUITests; launches the app)"
   cd "$ROOT"
+  if [[ ${#UI_ARGS[@]} -eq 0 ]]; then UI_ARGS=(-only-testing:WaveWranglerUITests); fi
   TEST_RUNNER_WW_PROBE="$PROBE" xcodebuild \
     -project WaveWrangler.xcodeproj \
     -scheme WaveWranglerUITests \
@@ -39,7 +42,9 @@ if [[ "$UI" == 1 ]]; then
     -destination 'platform=macOS,arch=arm64' \
     -derivedDataPath "$DERIVED_DATA" \
     -jobs "$JOBS" \
+    "${UI_ARGS[@]}" \
     -parallel-testing-enabled NO \
+    -resultBundlePath "$ROOT/.build/UITests-$(date +%Y%m%d-%H%M%S).xcresult" \
     CODE_SIGN_IDENTITY=- \
     CODE_SIGN_STYLE=Manual \
     DEVELOPMENT_TEAM= \

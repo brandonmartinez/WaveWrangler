@@ -167,6 +167,9 @@ final class DocumentLifecycleUITests: XCTestCase {
     }
 
     private func edit(_ window: XCUIElement, title: String) throws {
+        // The show title lives in the Show Info inspector of the library/workspace UI.
+        let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
+        if showInfo.waitForExistence(timeout: 5) { showInfo.click() }
         let field = window.textFields["Show title"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.click()
