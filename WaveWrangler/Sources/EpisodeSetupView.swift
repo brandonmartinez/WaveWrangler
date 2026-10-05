@@ -111,7 +111,7 @@ struct EpisodeSetupView: View {
                     Divider()
                     SetupInspectorView(model: model)
                         .frame(width: wide ? 300 : nil)
-                        .frame(maxHeight: wide ? .infinity : max(140, geometry.size.height * 0.3))
+                        .frame(maxHeight: wide ? .infinity : max(120, geometry.size.height * 0.25))
                         .focusSection()
                 }
             }
@@ -315,13 +315,13 @@ private struct SourcesTable: View {
                 NameCell(row: row)
             }
             .width(min: 140, ideal: 220)
-            TableColumn("Epoch") { row in CellView(cell: row.epoch, label: "Epoch", identifier: "\(row.id.accessibilityIdentifier).epoch") }
+            TableColumn("Epoch") { row in SourceCell(row: row, cell: row.epoch, label: "Epoch", column: "epoch") }
                 .width(min: 44 * scale, ideal: 54 * scale)
-            TableColumn("Ch") { row in CellView(cell: row.channel, label: "Channel", identifier: "\(row.id.accessibilityIdentifier).channel") }
+            TableColumn("Ch") { row in SourceCell(row: row, cell: row.channel, label: "Channel", column: "channel") }
                 .width(min: 36 * scale, ideal: 44 * scale)
-            TableColumn("Speaker") { row in CellView(cell: row.speaker, label: "Speaker", identifier: "\(row.id.accessibilityIdentifier).speaker") }
+            TableColumn("Speaker") { row in SourceCell(row: row, cell: row.speaker, label: "Speaker", column: "speaker") }
                 .width(min: 70, ideal: 110)
-            TableColumn("Role") { row in CellView(cell: row.role, label: "Role", identifier: "\(row.id.accessibilityIdentifier).role") }
+            TableColumn("Role") { row in SourceCell(row: row, cell: row.role, label: "Role", column: "role") }
                 .width(min: 70, ideal: 120)
             TableColumn("Status") { row in
                 if let status = row.status, case let .source(id) = row.id {
@@ -382,14 +382,37 @@ private struct NameCell: View {
     }
 }
 
+/// A Sources-outline cell. Group rows have no epoch/channel/speaker/role, so those cells are empty (the
+/// group row's own label carries its meaning).
+private struct SourceCell: View {
+    let row: SetupSourceRow
+    let cell: CellText
+    let label: String
+    let column: String
+
+    var body: some View {
+        if case .group = row.id {
+            EmptyView()
+        } else {
+            CellView(cell: cell, label: label, identifier: "\(row.id.accessibilityIdentifier).\(column)")
+        }
+    }
+}
+
 private struct CellView: View {
     let cell: CellText
     let label: String
     let identifier: String
 
+    static func isPlaceholder(_ cell: CellText) -> Bool { cell == .none || cell == .unknown }
+
     var body: some View {
         Text(cell.text)
             .setupFont(.body)
+            // Single-glyph placeholders ("—" none, "?" unknown) are drawn bold so their thin strokes keep
+            // full label-colour contrast (#100); the VoiceOver value says "none" / "unknown".
+            .fontWeight(Self.isPlaceholder(cell) ? .bold : nil)
+            .foregroundStyle(.primary)
             .lineLimit(2)
             .accessibilityLabel(label)
             .accessibilityValue(cell.accessibilityValue)
@@ -678,17 +701,13 @@ private struct SplitHandle: View {
                     fraction = SetupSplitLayout.fraction(forHandleAt: value.location.y, total: total)
                 }
         )
-        .accessibilityElement()
-        .accessibilityLabel("Speakers table height")
-        .accessibilityValue("\(Int((fraction * 100).rounded())) percent")
-        .accessibilityAdjustableAction { direction in
-            let step = 0.05
-            switch direction {
-            case .increment: fraction = min(fraction + step, SetupSplitLayout.fractionRange.upperBound)
-            case .decrement: fraction = max(fraction - step, SetupSplitLayout.fractionRange.lowerBound)
-            @unknown default: break
+        // Exposed as a slider (increment/decrement by 5%), so assistive tech gets a real role and value.
+        .accessibilityRepresentation {
+            Slider(value: $fraction, in: SetupSplitLayout.fractionRange, step: 0.05) {
+                Text("Speakers table height")
             }
+            .accessibilityValue("\(Int((fraction * 100).rounded())) percent")
+            .accessibilityIdentifier("ww.setup.split")
         }
-        .accessibilityIdentifier("ww.setup.split")
     }
 }

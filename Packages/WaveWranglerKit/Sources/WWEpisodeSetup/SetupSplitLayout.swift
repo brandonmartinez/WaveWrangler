@@ -12,7 +12,7 @@ public enum SetupSplitLayout {
     static let row = 24.0
 
     public static func minimumSpeakersHeight(scale: Double) -> Double {
-        (sectionHeader + columnHeader + 5 * row) * scale
+        (sectionHeader + columnHeader + 6 * row) * scale
     }
 
     public static func minimumSourcesHeight(scale: Double) -> Double {
