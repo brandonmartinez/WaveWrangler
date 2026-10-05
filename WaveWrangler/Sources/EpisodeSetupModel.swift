@@ -63,6 +63,8 @@ final class EpisodeSetupModel {
     var selection: Set<SetupRowID> = []
     var speakerSelection: Set<SpeakerID> = []
     var onlyNeedingAttention = false
+    /// Recorder group rows the user collapsed (all start expanded).
+    var collapsedRows: Set<SetupRowID> = []
     var sortOrder: SourceSortOrder = .manual
     var sheet: Sheet?
     var confirmation: Confirmation?
@@ -333,6 +335,11 @@ final class EpisodeSetupModel {
     // MARK: Import (IA §5)
 
     func beginImport() {
+        if SetupFixtures.isActive {
+            // UI-test fixture: the scripted engine supplies a synthetic scan; no panel, no files.
+            scan([])
+            return
+        }
         guard let window = window(), episode != nil else { return }
         let panel = NSOpenPanel()
         panel.canChooseFiles = true

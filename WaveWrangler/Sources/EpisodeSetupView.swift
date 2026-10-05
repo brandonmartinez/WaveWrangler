@@ -242,7 +242,12 @@ private struct SourcesTable: View {
             .width(min: 110, ideal: 180)
         } rows: {
             ForEach(rows) { group in
-                DisclosureTableRow(group) {
+                DisclosureTableRow(group, isExpanded: Binding(
+                    get: { !model.collapsedRows.contains(group.id) },
+                    set: { expanded in
+                        if expanded { model.collapsedRows.remove(group.id) } else { model.collapsedRows.insert(group.id) }
+                    }
+                )) {
                     ForEach(Self.flattened(group.children ?? [])) { row in
                         TableRow(row)
                     }
