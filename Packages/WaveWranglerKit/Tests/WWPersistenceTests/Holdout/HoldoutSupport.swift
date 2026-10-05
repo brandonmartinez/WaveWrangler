@@ -331,3 +331,11 @@ func decodeShow(_ url: URL) -> DecodedDocument<ShowDocumentModel>? {
 func decodeLibrary(_ url: URL) -> DecodedDocument<LibraryModel>? {
     (try? Data(contentsOf: url)).flatMap { try? LibraryCoder.library.decode($0) }
 }
+
+/// A Sendable reference to a `Mutex`, so escaping `Task` closures can share it (older compilers reject
+/// capturing the non-copyable `Mutex` itself in a `sending` closure).
+final class LockedBox<Value: Sendable>: Sendable {
+    private let mutex: Mutex<Value>
+    init(_ value: Value) { mutex = Mutex(value) }
+    func withLock<R: Sendable>(_ body: (inout sending Value) throws -> sending R) rethrows -> R { try mutex.withLock(body) }
+}

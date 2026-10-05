@@ -122,8 +122,8 @@ struct HoldoutSaveLifecycleTests {
             let schedule = index % 2 == 0 ? "onToOff" : "offToOn"
             let gate = AutosaveGate(AutosavePreference(enabled: schedule == "onToOff", delaySeconds: 1))
             let session = show.session(gate: gate)
-            let fired = Mutex<ContinuousClock.Instant?>(nil)
-            let published = Mutex<ContinuousClock.Instant?>(nil)
+            let fired = LockedBox<ContinuousClock.Instant?>(nil)
+            let published = LockedBox<ContinuousClock.Instant?>(nil)
             let scheduler = QuiescenceScheduler(gate: gate, queue: DispatchQueue(label: "dur004.\(index)")) { work in
                 guard work == .publish else { return }
                 fired.withLock { $0 = .now }
