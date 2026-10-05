@@ -40,6 +40,7 @@ public final class SourceAvailabilityMonitor {
 
     /// Starts consuming transfer events. Call once (e.g. when the window appears).
     public func start() {
+        isStopped = false
         guard eventTask == nil else { return }
         let transfers = transfers
         eventTask = Task { [weak self] in
@@ -55,11 +56,20 @@ public final class SourceAvailabilityMonitor {
     /// user cancel). Returns once teardown finished, so a later `start()` / `makeAvailable` is never
     /// affected. Call when the owning window closes; deinit does the same without awaiting.
     public func stop() async {
+        isStopped = true
+        lifecycleGeneration += 1
         eventTask?.cancel()
         eventTask = nil
         let ticket = transfers.shutdownTicket()
         await transfers.shutdown(through: ticket)
     }
+
+    /// Set by `stop()`. A stopped monitor never requests a transfer again, even from work that was
+    /// already in flight (checked after every await).
+    public private(set) var isStopped = false
+    /// Incremented by every `stop()`: work that began before a stop never requests a transfer, even if
+    /// the monitor was started again meanwhile.
+    @ObservationIgnored private var lifecycleGeneration = 0
 
     isolated deinit {
         eventTask?.cancel()
@@ -83,10 +93,12 @@ public final class SourceAvailabilityMonitor {
 
     /// Explicit per-item request; allowed even when availability is OFF (labelled a content transfer).
     public func makeAvailable(_ sourceID: SourceID) async {
+        guard !isStopped else { return }
+        let generation = lifecycleGeneration
         userCancelled.remove(sourceID)
         guard let url = resolvedURLs[sourceID] else {
             await refreshOne(sourceID)
-            guard let url = resolvedURLs[sourceID] else { return }
+            guard !isStopped, lifecycleGeneration == generation, let url = resolvedURLs[sourceID] else { return }
             await transfers.makeAvailable(key(sourceID), at: url, userRequested: true)
             return
         }
@@ -122,6 +134,7 @@ public final class SourceAvailabilityMonitor {
     }
 
     private func refreshOne(_ sourceID: SourceID) async {
+        let generation = lifecycleGeneration
         let key = key(sourceID)
         let record = try? await store.record(for: key)
         let transferState = await transfers.reportableState(of: key)
@@ -135,7 +148,7 @@ public final class SourceAvailabilityMonitor {
             try? await store.save(refreshed)
         }
         // Re-read after every await: a setting change while this ran supersedes the result.
-        guard settingGeneration == evaluatedGeneration else { return }
+        guard settingGeneration == evaluatedGeneration, !isStopped, lifecycleGeneration == generation else { return }
         resolvedURLs[sourceID] = evaluation.resolvedURL
         observations[sourceID] = evaluation.observation
 
@@ -148,7 +161,7 @@ public final class SourceAvailabilityMonitor {
               evaluation.observation.residency == .cloudPlaceholder,
               let url = evaluation.resolvedURL
         else { return }
-        guard await !transfers.isActive(key), setting == .on else { return }
+        guard await !transfers.isActive(key), setting == .on, !isStopped, lifecycleGeneration == generation else { return }
         // The controller re-checks its own setting atomically and refuses if it is OFF.
         await transfers.makeAvailable(key, at: url)
     }

@@ -4,14 +4,30 @@ import WWCore
 import WWSources
 @testable import WWEpisodeSetup
 
-/// Delegates to the real `SystemSourceIO` and counts download requests/progress queries.
+/// Delegates to the real `SystemSourceIO` and counts download requests/progress queries. An armed gate
+/// blocks the next metadata call until released (deterministic in-flight work).
 final class CountingIO: SourceIO, @unchecked Sendable {
     let base = SystemSourceIO()
     private let lock = NSLock()
     private var _downloads = 0
+    private var gateArmed = false
+    private var _gateEntered = false
+    private let gate = DispatchSemaphore(value: 0)
     var downloads: Int { lock.withLock { _downloads } }
+    var gateEntered: Bool { lock.withLock { _gateEntered } }
+    func armGate() { lock.withLock { gateArmed = true } }
+    func releaseGate() { gate.signal() }
     var provenance: ObservationProvenance { base.provenance }
-    func metadata(at url: URL) -> MetadataResult { base.metadata(at: url) }
+    func metadata(at url: URL) -> MetadataResult {
+        let block = lock.withLock { () -> Bool in
+            guard gateArmed else { return false }
+            gateArmed = false
+            _gateEntered = true
+            return true
+        }
+        if block { gate.wait() }
+        return base.metadata(at: url)
+    }
     func listItems(under directory: URL) -> DirectoryListing { base.listItems(under: directory) }
     func makeReadOnlyBookmark(for url: URL) throws -> Data { try base.makeReadOnlyBookmark(for: url) }
     func resolveBookmark(_ data: Data) -> BookmarkResolution { base.resolveBookmark(data) }
@@ -143,6 +159,86 @@ struct WWSourcesSetupEngineTests {
         }
     }
 
+    /// Reviewer's probe: observe, cancel the consumer, shut down, drop the engine — nothing keeps it alive.
+    @Test(.timeLimit(.minutes(1))) func observingNeverLeaksTheEngine() async throws {
+        let root = try makeTree()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        var engine: WWSourcesSetupEngine? = WWSourcesSetupEngine(showID: ShowID(), store: InMemoryDeviceAccessStore(), context: SourceAccessContext(io: CountingIO()), preference: FixedPreference(false))
+        weak let weakEngine = engine
+        let scan = try await engine!.scanForImport([root], episodeSourceIDs: [])
+        let review = ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: [])
+        let items = review.importItems()
+        try await engine!.commitImport(Dictionary(uniqueKeysWithValues: items.map { ($0.candidateID, $0.item.source.id) }), fromScan: scan.token)
+        let stream = engine!.observe(Set(items.map(\.item.source.id)))
+        let received = Counter()
+        let consumer = Task { for await _ in stream { received.increment() } }
+        while received.value < 1 { await Task.yield() }
+        consumer.cancel()
+        await consumer.value
+        #expect(received.value >= 1)
+        await engine!.shutdown()
+        engine = nil
+        for _ in 0..<200 where weakEngine != nil { await Task.yield() }
+        #expect(weakEngine == nil, "engine leaked after observe + cancel + shutdown")
+    }
+
+    /// Shutdown also finishes streams whose consumer is still listening, then the engine can go away.
+    @Test(.timeLimit(.minutes(1))) func shutdownFinishesOpenStreams() async {
+        var engine: WWSourcesSetupEngine? = WWSourcesSetupEngine(showID: ShowID(), store: InMemoryDeviceAccessStore(), preference: FixedPreference(false))
+        weak let weakEngine = engine
+        let stream = engine!.observe([SourceID()])
+        let consumer = Task { for await _ in stream {}; return true }
+        await Task.yield()
+        await engine!.shutdown()
+        #expect(await consumer.value, "stream finished by shutdown")
+        engine = nil
+        for _ in 0..<200 where weakEngine != nil { await Task.yield() }
+        #expect(weakEngine == nil)
+    }
+
+    /// Shutdown waits for an in-flight refresh before stopping the monitor, and nothing runs after it.
+    @Test(.timeLimit(.minutes(1))) func shutdownAwaitsInFlightWork() async throws {
+        let root = try makeTree()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let io = CountingIO()
+        let engine = WWSourcesSetupEngine(showID: ShowID(), store: InMemoryDeviceAccessStore(), context: SourceAccessContext(io: io), preference: FixedPreference(true))
+        let scan = try await engine.scanForImport([root], episodeSourceIDs: [])
+        let items = ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: []).importItems()
+        try await engine.commitImport(Dictionary(uniqueKeysWithValues: items.map { ($0.candidateID, $0.item.source.id) }), fromScan: scan.token)
+        io.armGate()
+        let refresh = Task { await engine.refresh(items.map(\.item.source.id)) }
+        while !io.gateEntered { await Task.yield() }
+        let shutdown = Task { await engine.shutdown() }
+        for _ in 0..<50 { await Task.yield() }
+        #expect(!engine.monitor.isStopped, "shutdown waits for the in-flight refresh")
+        io.releaseGate()
+        await refresh.value
+        await shutdown.value
+        #expect(engine.monitor.isStopped)
+        await engine.perform(.download, on: items[0].item.source.id)
+        await engine.refresh(items.map(\.item.source.id))
+        #expect(io.downloads == 0, "no transfer requested after shutdown")
+    }
+
+    @Test func leasesArePerOwner() async {
+        let made = InMemorySourceSetupEngine()
+        let registry = SetupEngineRegistry<ShowID> { _ in made }
+        let leases = SetupEngineLeases<Int, ShowID>(registry: registry)
+        let show = ShowID()
+        let a = await leases.engine(for: 1, key: show)
+        let again = await leases.engine(for: 1, key: show)
+        #expect(a === again)
+        #expect(registry.count(for: show) == 1, "re-leasing from the same window is free")
+        _ = await leases.engine(for: 2, key: show)
+        #expect(registry.count(for: show) == 2)
+        await leases.end(1)
+        #expect(!made.calls.contains(.shutdown), "the other window still holds it")
+        await leases.end(2)
+        #expect(made.calls.contains(.shutdown))
+        await leases.end(2)
+        #expect(registry.count(for: show) == 0)
+    }
+
     @Test func shutdownStopsFollowingTheDownloadPreference() async {
         let preference = FixedPreference(false)
         let engine = WWSourcesSetupEngine(showID: ShowID(), store: InMemoryDeviceAccessStore(), preference: preference)
@@ -221,4 +317,11 @@ struct WWSourcesSetupEngineTests {
         let missing = AvailabilityObservation(observedAt: Date(), location: .missing(lastKnownPathOccupied: .known(true)), access: .granted)
         #expect(WWSourcesStatusMapping.snapshot(missing).location == .missing(sameNamedFileAtOriginalLocation: true))
     }
+}
+
+final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func increment() { lock.withLock { count += 1 } }
+    var value: Int { lock.withLock { count } }
 }

@@ -182,6 +182,10 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     private var proposals: [SourceID: (url: URL, proposal: RelinkProposal)] = [:]
     private var previousRecords: [UUID: DeviceAccessRecord?] = [:]
     private var defaultsObserver: NSObjectProtocol?
+    /// Engine-owned work that touches the monitor; shutdown cancels and awaits it before stopping.
+    private var tasks: [UUID: Task<Void, Never>] = [:]
+    /// Open `observe` streams and the signal each one is waiting on.
+    private var observers: [UUID: (continuation: AsyncStream<[SourceID: SourceStatusSnapshot]>.Continuation, signal: WakeSignal?)] = [:]
     /// Display names of sources in this show, for "already used for …" (set by the UI).
     public var sourceNames: (SourceID) -> String = { _ in "another source" }
 
@@ -207,14 +211,45 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         Task { await monitor.stop() }
     }
 
-    /// Stops the monitor and stops following the download preference (show closed). Idempotent.
+    /// Show closed: finishes every open observation stream, cancels and awaits in-flight engine work,
+    /// then stops the monitor (no transfer can start afterwards) and stops following the download
+    /// preference. Idempotent.
     public func shutdown() async {
         guard !isShutDown else { return }
         isShutDown = true
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
         defaultsObserver = nil
         plans.removeAll()
+        for observer in observers.values {
+            observer.continuation.finish()
+            observer.signal?.fire()
+        }
+        observers.removeAll()
+        let pending = Array(tasks.values)
+        tasks.removeAll()
+        for task in pending { task.cancel() }
+        for task in pending { await task.value }
         await monitor.stop()
+    }
+
+    /// Runs monitor work as tracked engine work; returns nil (doing nothing) after shutdown.
+    private func tracked<T: Sendable>(_ work: @escaping @MainActor () async -> T) async -> T? {
+        guard !isShutDown else { return nil }
+        let id = UUID()
+        let task = Task { @MainActor in await work() }
+        tasks[id] = Task { _ = await task.value }
+        defer { tasks[id] = nil }
+        return await task.value
+    }
+
+    /// Fire-and-forget tracked monitor work.
+    private func spawn(_ work: @escaping @MainActor () async -> Void) {
+        guard !isShutDown else { return }
+        let id = UUID()
+        tasks[id] = Task { @MainActor [weak self] in
+            await work()
+            self?.tasks[id] = nil
+        }
     }
 
     public var isRunning: Bool { !isShutDown }
@@ -224,7 +259,7 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         guard !isShutDown, let preference else { return }
         let setting = SourceAvailabilitySetting(downloadSourcesAutomatically: preference.downloadsAutomatically)
         guard setting != monitor.setting else { return }
-        Task { await monitor.setAvailabilitySetting(setting) }
+        spawn { [monitor] in await monitor.setAvailabilitySetting(setting) }
     }
 
     private func key(_ sourceID: SourceID) -> DeviceAccessKey { DeviceAccessKey(showID: showID, sourceID: sourceID) }
@@ -295,10 +330,18 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
             }
             records.append(record)
         }
-        do {
-            try await monitor.adopt(records)
-        } catch {
-            throw .failed(reason: error.localizedDescription)
+        let outcome: Result<Void, any Error>? = await tracked { [monitor] in
+            do {
+                try await monitor.adopt(records)
+                return .success(())
+            } catch {
+                return .failure(error)
+            }
+        }
+        switch outcome {
+        case nil: throw .failed(reason: "the show was closed")
+        case let .failure(error)?: throw .failed(reason: error.localizedDescription)
+        case .success?: break
         }
     }
 
@@ -347,7 +390,7 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         }
         let receipt = RelinkReceipt(sourceID: sourceID)
         previousRecords[receipt.id] = previous
-        await monitor.refresh([sourceID])
+        _ = await tracked { [monitor] in await monitor.refresh([sourceID]) }
         return receipt
     }
 
@@ -362,29 +405,54 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         } catch {
             throw .failed(reason: error.localizedDescription)
         }
-        await monitor.refresh([receipt.sourceID])
+        let sourceID = receipt.sourceID
+        _ = await tracked { [monitor] in await monitor.refresh([sourceID]) }
     }
 
+    /// Current snapshots for `sourceIDs`, then again whenever the monitor changes. The observing task
+    /// holds the engine only briefly (never while waiting), so dropping the engine or cancelling the
+    /// consumer ends it; `shutdown()` finishes the stream.
     public nonisolated func observe(_ sourceIDs: Set<SourceID>) -> AsyncStream<[SourceID: SourceStatusSnapshot]> {
         let (stream, continuation) = AsyncStream<[SourceID: SourceStatusSnapshot]>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let id = UUID()
         let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.syncSetting()
-            await self.monitor.refresh(Array(sourceIDs))
+            await self?.beginObserving(sourceIDs, id: id, continuation: continuation)
             while !Task.isCancelled {
-                continuation.yield(self.snapshots(sourceIDs))
-                await withCheckedContinuation { (resume: CheckedContinuation<Void, Never>) in
-                    withObservationTracking {
-                        _ = self.monitor.observations
-                        _ = self.monitor.setting
-                    } onChange: {
-                        resume.resume()
-                    }
-                }
+                guard let signal = self?.publish(sourceIDs, id: id) else { break }
+                await signal.wait()
             }
+            continuation.finish()
+            self?.observers[id] = nil
         }
         continuation.onTermination = { _ in task.cancel() }
         return stream
+    }
+
+    private func beginObserving(_ ids: Set<SourceID>, id: UUID, continuation: AsyncStream<[SourceID: SourceStatusSnapshot]>.Continuation) async {
+        guard !isShutDown else {
+            continuation.finish()
+            return
+        }
+        observers[id] = (continuation, nil)
+        syncSetting()
+        _ = await tracked { [monitor] in await monitor.refresh(Array(ids)) }
+    }
+
+    /// Yields the current snapshot and returns the signal that fires on the next monitor change, or nil
+    /// when the stream is over.
+    private func publish(_ ids: Set<SourceID>, id: UUID) -> WakeSignal? {
+        guard !isShutDown, let observer = observers[id] else { return nil }
+        observer.continuation.yield(snapshots(ids))
+        let signal = WakeSignal()
+        let monitor = monitor
+        withObservationTracking {
+            _ = monitor.observations
+            _ = monitor.setting
+        } onChange: {
+            signal.fire()
+        }
+        observers[id] = (observer.continuation, signal)
+        return signal
     }
 
     private func snapshots(_ ids: Set<SourceID>) -> [SourceID: SourceStatusSnapshot] {
@@ -392,15 +460,49 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     }
 
     public func refresh(_ sourceIDs: [SourceID]) async {
-        await monitor.refresh(sourceIDs)
+        _ = await tracked { [monitor] in await monitor.refresh(sourceIDs) }
     }
 
     public func perform(_ action: TransferAction, on sourceID: SourceID) async {
-        switch action {
-        case .download: await monitor.makeAvailable(sourceID)
-        case .retry: await monitor.retryTransfer(sourceID)
-        case .cancel: await monitor.cancelTransfer(sourceID)
-        case .pause, .resume: break
+        _ = await tracked { [monitor] in
+            switch action {
+            case .download: await monitor.makeAvailable(sourceID)
+            case .retry: await monitor.retryTransfer(sourceID)
+            case .cancel: await monitor.cancelTransfer(sourceID)
+            case .pause, .resume: break
+            }
+        }
+    }
+}
+
+/// A one-shot wake-up that may fire from any thread, before or after `wait()`, or on cancellation.
+final class WakeSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func fire() {
+        let waiting: CheckedContinuation<Void, Never>? = lock.withLock {
+            guard !fired else { return nil }
+            fired = true
+            defer { continuation = nil }
+            return continuation
+        }
+        waiting?.resume()
+    }
+
+    func wait() async {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let resumeNow = lock.withLock {
+                    if fired { return true }
+                    self.continuation = continuation
+                    return false
+                }
+                if resumeNow { continuation.resume() }
+            }
+        } onCancel: {
+            fire()
         }
     }
 }

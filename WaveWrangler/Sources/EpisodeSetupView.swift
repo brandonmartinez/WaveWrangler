@@ -12,47 +12,55 @@ struct EpisodeSetupContent: View {
     var showsInspector = true
     var textScale: CGFloat = 1
     @State private var controller: EpisodeSetupViewController?
-    @State private var acquiredShow: ShowID?
+    @State private var connecting = false
 
     var body: some View {
         Group {
             if let controller {
                 EpisodeSetupView(model: controller.model, showsInspector: showsInspector)
                     .environment(\.setupTextScale, textScale)
-                    .background(WindowReader { controller.attach(to: $0) })
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .onAppear(perform: acquire)
-        .onDisappear(perform: release)
-    }
-
-    /// Takes a use of the show's engine for as long as this Setup content is on screen.
-    private func acquire() {
-        guard controller == nil else { return }
-        let showID = store.model.show.id
-        let engine = SetupEngineProvider.registry.acquire(showID)
-        acquiredShow = showID
-        let model = EpisodeSetupModel(store: store, episodeID: episodeID, engine: engine, preference: AppSettingsDownloadPreference.shared)
-        if let real = engine as? WWSourcesSetupEngine {
-            real.sourceNames = { [weak store] id in
-                store?.model.episodes.lazy.compactMap { $0.source(id)?.displayNameHint }.first ?? "another source"
-            }
+        .background(WindowReader { window in
+            Task { @MainActor in connect(to: window) }
+        })
+        .onAppear {
+            controller?.model.isOnScreen = true
+            controller?.model.startObserving()
         }
-        model.isOnScreen = true
-        let controller = EpisodeSetupViewController(model: model)
-        self.controller = controller
-        model.startObserving()
+        .onDisappear {
+            // The show's engine stays leased to the window (downloads keep running); only this view's
+            // observation stops. The lease ends when the window closes.
+            controller?.model.isOnScreen = false
+            controller?.model.stopObserving()
+        }
     }
 
-    private func release() {
-        guard let controller, let showID = acquiredShow else { return }
-        controller.model.isOnScreen = false
-        controller.model.stopObserving()
-        self.controller = nil
-        acquiredShow = nil
-        Task { await SetupEngineProvider.registry.release(showID) }
+    private func connect(to window: NSWindow?) {
+        guard let window else { return }
+        if let controller {
+            controller.attach(to: window)
+            return
+        }
+        guard !connecting else { return }
+        connecting = true
+        Task { @MainActor in
+            let engine = await SetupEngineProvider.engine(for: window, show: store.model.show.id)
+            let model = EpisodeSetupModel(store: store, episodeID: episodeID, engine: engine, preference: AppSettingsDownloadPreference.shared)
+            if let real = engine as? WWSourcesSetupEngine {
+                real.sourceNames = { [weak store] id in
+                    store?.model.episodes.lazy.compactMap { $0.source(id)?.displayNameHint }.first ?? "another source"
+                }
+            }
+            let controller = EpisodeSetupViewController(model: model)
+            controller.attach(to: window)
+            model.isOnScreen = true
+            self.controller = controller
+            connecting = false
+            model.startObserving()
+        }
     }
 }
 
@@ -298,13 +306,13 @@ private struct SourcesTable: View {
                 NameCell(row: row)
             }
             .width(min: 140, ideal: 220)
-            TableColumn("Epoch") { row in CellView(cell: row.epoch, label: "Epoch") }
+            TableColumn("Epoch") { row in CellView(cell: row.epoch, label: "Epoch", identifier: "\(row.id.accessibilityIdentifier).epoch") }
                 .width(min: 44 * scale, ideal: 54 * scale)
-            TableColumn("Ch") { row in CellView(cell: row.channel, label: "Channel") }
+            TableColumn("Ch") { row in CellView(cell: row.channel, label: "Channel", identifier: "\(row.id.accessibilityIdentifier).channel") }
                 .width(min: 36 * scale, ideal: 44 * scale)
-            TableColumn("Speaker") { row in CellView(cell: row.speaker, label: "Speaker") }
+            TableColumn("Speaker") { row in CellView(cell: row.speaker, label: "Speaker", identifier: "\(row.id.accessibilityIdentifier).speaker") }
                 .width(min: 70, ideal: 110)
-            TableColumn("Role") { row in CellView(cell: row.role, label: "Role") }
+            TableColumn("Role") { row in CellView(cell: row.role, label: "Role", identifier: "\(row.id.accessibilityIdentifier).role") }
                 .width(min: 70, ideal: 120)
             TableColumn("Status") { row in
                 if let status = row.status, case let .source(id) = row.id {
@@ -368,6 +376,7 @@ private struct NameCell: View {
 private struct CellView: View {
     let cell: CellText
     let label: String
+    let identifier: String
 
     var body: some View {
         Text(cell.text)
@@ -375,6 +384,7 @@ private struct CellView: View {
             .lineLimit(2)
             .accessibilityLabel(label)
             .accessibilityValue(cell.accessibilityValue)
+            .accessibilityIdentifier(identifier)
     }
 }
 
@@ -472,7 +482,7 @@ private struct SpeakersSection: View {
                         .accessibilityValue(row.accessibilityValue)
                         .accessibilityIdentifier(row.accessibilityIdentifier)
                 }
-                TableColumn("Primary") { row in CellView(cell: row.primary, label: "Primary") }
+                TableColumn("Primary") { row in CellView(cell: row.primary, label: "Primary", identifier: "\(row.accessibilityIdentifier).primary") }
                 TableColumn("Backups") { row in
                     Text("\(row.backupCount)").setupFont(.body).monospacedDigit()
                         .accessibilityLabel("Backups")

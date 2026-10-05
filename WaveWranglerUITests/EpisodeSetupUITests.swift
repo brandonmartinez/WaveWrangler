@@ -74,43 +74,66 @@ final class EpisodeSetupUITests: XCTestCase {
         app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ AND value BEGINSWITH %@", identifier, prefix)).firstMatch.waitForExistence(timeout: timeout)
     }
 
-    /// macOS audit types (acceptance §4.2). Waivers follow the library lane's policy (system chrome,
-    /// non-interactive SwiftUI containers, pop-up AXShowMenu, the Siri overlay, and system table/sidebar text
-    /// contrast tracked in #59); every other finding fails the test with its description.
+    /// Audit waiver rules. System/framework rules cover controls app code can't change; app-specific
+    /// rules are scoped by identifier and pinned per surface so new findings can't hide behind them.
+    enum WaiverRule: String, CaseIterable {
+        case layoutContainer = "non-interactive layout container"
+        case popUpShowMenu = "system pop-up button exposes AXShowMenu"
+        case windowChrome = "system window chrome"
+        case siriOverlay = "system Siri overlay, not app UI"
+        case behindSheet = "window content behind a modal sheet (dimmed by AppKit); audited undimmed in T13"
+        case tableText = "issue #59: system table/sidebar text contrast (tracked)"
+        case windowTitle = "window title/subtitle drawn by AppKit"
+    }
+
+    /// Maximum waivers per rule for each audited surface (observed on the claimed host, fixture-sized).
+    static let pinned: [String: [WaiverRule: Int]] = [
+        "import-review": [.layoutContainer: 39, .popUpShowMenu: 10, .windowChrome: 1, .siriOverlay: 1, .behindSheet: 17, .tableText: 1],
+        "setup": [.layoutContainer: 67, .popUpShowMenu: 2, .windowChrome: 1, .siriOverlay: 1, .tableText: 4, .windowTitle: 3],
+    ]
+
+    /// Identifier prefixes of the #59 surfaces: Setup outline/table cells, Import Review rows and the
+    /// show sidebar rows (system table text with no custom styling).
+    static let tableTextIdentifiers = ["ww.setup.source.", "ww.setup.speaker.", "ww.setup.group.", "ww.import.row.", "ww.show.sidebar.episode.", "ww.show.sidebar.showInfo"]
+
+    /// macOS audit types (acceptance §4.2). Every finding is either waived by a rule (printed, counted
+    /// and checked against the surface's pin) or fails the test.
     private func audit(_ surface: String, file: StaticString = #filePath, line: UInt = #line) throws {
         var findings: [String] = []
-        let tables = ["ww.setup.sources", "ww.setup.speakers", "ww.show.sidebar.episodes"].map { app.outlines[$0] }.filter(\.exists).map(\.frame)
-            + app.sheets.tables.allElementsBoundByIndex.map(\.frame)
+        var counts: [WaiverRule: Int] = [:]
         let titlebarBottom = app.windows["ww.show.window"].frame.minY + 56
         let sheet = app.sheets.firstMatch.exists ? app.sheets.firstMatch.frame : nil
         try app.performAccessibilityAudit(for: [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]) { issue in
             let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(240) ?? "no element")"
-            if let rationale = Self.waiver(for: issue, tables: tables, titlebarBottom: titlebarBottom, sheet: sheet) {
-                print("AUDIT WAIVED \(description) — \(rationale)")
+            if let rule = Self.waiver(for: issue, titlebarBottom: titlebarBottom, sheet: sheet) {
+                counts[rule, default: 0] += 1
+                print("AUDIT WAIVED [\(rule)] \(description)")
             } else {
                 findings.append(description)
             }
             return true
         }
         for finding in findings { XCTFail("AUDIT \(finding)", file: file, line: line) }
+        let pins = Self.pinned[surface] ?? [:]
+        for rule in WaiverRule.allCases {
+            let count = counts[rule, default: 0]
+            print("AUDIT \(surface) rule \(rule): \(count) (pinned ≤ \(pins[rule, default: 0])) — \(rule.rawValue)")
+            XCTAssertLessThanOrEqual(count, pins[rule, default: 0], "AUDIT \(surface): waiver rule \(rule) exceeded its pinned count", file: file, line: line)
+        }
         print("AUDIT \(surface): \(findings.isEmpty ? "no unwaived issues" : "\(findings.count) unwaived issue(s)")")
     }
 
-    private static func waiver(for issue: XCUIAccessibilityAuditIssue, tables: [CGRect], titlebarBottom: CGFloat, sheet: CGRect?) -> String? {
+    private static func waiver(for issue: XCUIAccessibilityAuditIssue, titlebarBottom: CGFloat, sheet: CGRect?) -> WaiverRule? {
         guard let element = issue.element else { return nil }
-        if [.window, .toolbar, .splitter, .menuBar, .menuBarItem, .touchBar].contains(element.elementType) { return "system window chrome" }
-        if issue.auditType == .sufficientElementDescription, element.elementType == .group, !element.isEnabled { return "non-interactive layout container" }
-        if issue.auditType == .action, element.elementType == .popUpButton { return "system pop-up button exposes AXShowMenu" }
-        if element.elementType == .dialog, element.title.isEmpty, element.buttons["siri"].exists { return "system Siri overlay, not app UI" }
+        if [.window, .toolbar, .splitter, .menuBar, .menuBarItem, .touchBar].contains(element.elementType) { return .windowChrome }
+        if issue.auditType == .sufficientElementDescription, element.elementType == .group, !element.isEnabled { return .layoutContainer }
+        if issue.auditType == .action, element.elementType == .popUpButton { return .popUpShowMenu }
+        if element.elementType == .dialog, element.title.isEmpty, element.buttons["siri"].exists { return .siriOverlay }
         if issue.auditType == .contrast {
             let frame = element.frame
-            if let sheet, !sheet.contains(CGPoint(x: frame.midX, y: frame.midY)) {
-                return "window content behind a modal sheet (dimmed by AppKit); audited separately without the sheet"
-            }
-            if tables.contains(where: { $0.intersects(frame) && frame.minY >= $0.minY - 1 && frame.maxY <= $0.maxY + 1 }) {
-                return "issue #59: system table/sidebar text contrast (tracked)"
-            }
-            if frame.maxY <= titlebarBottom, element.elementType == .staticText { return "window title/subtitle drawn by AppKit" }
+            if let sheet, !sheet.contains(CGPoint(x: frame.midX, y: frame.midY)) { return .behindSheet }
+            if element.elementType == .staticText, tableTextIdentifiers.contains(where: element.identifier.hasPrefix) { return .tableText }
+            if element.elementType == .staticText, frame.maxY <= titlebarBottom { return .windowTitle }
         }
         return nil
     }
@@ -148,7 +171,7 @@ final class EpisodeSetupUITests: XCTestCase {
 
         let unapplied = element("ww.import.unapplied")
         XCTAssertTrue(unapplied.exists, "unconfirmed suggestions are announced as not applied")
-        try audit("setup")
+        try audit("import-review")
 
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
         XCTAssertTrue(element("ww.setup.sources").waitForExistence(timeout: 3))

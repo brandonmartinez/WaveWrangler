@@ -677,6 +677,31 @@ struct StallLifetimeTests {
         #expect(context.ledger.snapshot.openScopes == 0)
     }
 
+    /// A refresh already evaluating when the monitor stops must not request a download afterwards.
+    @Test @MainActor func stoppedMonitorNeverRequestsFromInFlightRefresh() async throws {
+        let tree = try SyntheticTree(label: "stop-inflight")
+        var rng = SplitMix64(seed: 18)
+        let file = try tree.file("late.wav", bytes: 64, rng: &rng)
+        let io = HarnessIO()
+        let context = makeContext(io)
+        let record = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
+        io.simulate(file, SimulatedCloudItem(script: [.complete]))
+        let store = InMemoryDeviceAccessStore([record])
+        let monitor = SourceAvailabilityMonitor(showID: testShow, store: store, context: context, setting: .on, transferPolicy: StallFollowUpTests.policy)
+        monitor.start()
+        io.armMetadataGate()
+        let refresh = Task { await monitor.refresh([record.sourceID]) }
+        while !io.gateEntered { await Task.yield() }
+        await monitor.stop()
+        io.releaseGate()
+        await refresh.value
+        await monitor.makeAvailable(record.sourceID)
+        #expect(monitor.isStopped)
+        #expect(io.count(.downloadRequest) == 0, "no transfer after stop()")
+        #expect(await monitor.transfers.activeCount == 0)
+        #expect(context.ledger.snapshot.openScopes == 0)
+    }
+
     @Test @MainActor func droppingTheMonitorStopsStalledObservers() async throws {
         let tree = try SyntheticTree(label: "stall-drop-monitor")
         var rng = SplitMix64(seed: 18)

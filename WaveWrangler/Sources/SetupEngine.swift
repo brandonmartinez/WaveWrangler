@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import WWCore
 import WWEpisodeSetup
@@ -19,6 +20,24 @@ enum SetupEngineProvider {
     static let registry = SetupEngineRegistry<ShowID> { showID in
         if let fixture = SetupFixtures.statesEngine() { return fixture }
         return WWSourcesSetupEngine(showID: showID, store: store, context: context, preference: AppSettingsDownloadPreference.shared)
+    }
+
+    /// Leases per show window: the engine stays alive while any window of the show is open (including
+    /// user-requested downloads while Setup isn't showing) and shuts down when the last one closes.
+    static let leases = SetupEngineLeases<ObjectIdentifier, ShowID>(registry: registry)
+    private static var closeObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
+
+    static func engine(for window: NSWindow, show: ShowID) async -> any SourceSetupEngine {
+        let owner = ObjectIdentifier(window)
+        if closeObservers[owner] == nil {
+            closeObservers[owner] = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    if let observer = closeObservers.removeValue(forKey: owner) { NotificationCenter.default.removeObserver(observer) }
+                    Task { await leases.end(owner) }
+                }
+            }
+        }
+        return await leases.engine(for: owner, key: show)
     }
 
     private static let store: any DeviceAccessStore = {

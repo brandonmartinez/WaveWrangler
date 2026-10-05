@@ -116,6 +116,38 @@ public final class SetupEngineRegistry<Key: Hashable> {
     public func count(for key: Key) -> Int { entries[key]?.count ?? 0 }
 }
 
+/// Engines leased per owner (a show window): an owner holds at most one use, re-leasing the same key is
+/// free, and ending the owner releases it. Keeps a show's engine — and user-requested transfers — alive
+/// while any of its windows is open, whichever destination is showing.
+@MainActor
+public final class SetupEngineLeases<Owner: Hashable, Key: Hashable> {
+    public let registry: SetupEngineRegistry<Key>
+    private var leases: [Owner: (key: Key, engine: any SourceSetupEngine)] = [:]
+
+    public init(registry: SetupEngineRegistry<Key>) {
+        self.registry = registry
+    }
+
+    public func engine(for owner: Owner, key: Key) async -> any SourceSetupEngine {
+        if let lease = leases[owner] {
+            if lease.key == key { return lease.engine }
+            leases[owner] = nil
+            await registry.release(lease.key)
+        }
+        let engine = registry.acquire(key)
+        leases[owner] = (key, engine)
+        return engine
+    }
+
+    /// The owner closed: release its use (shutting the engine down if it was the last).
+    public func end(_ owner: Owner) async {
+        guard let lease = leases.removeValue(forKey: owner) else { return }
+        await registry.release(lease.key)
+    }
+
+    public func hasLease(_ owner: Owner) -> Bool { leases[owner] != nil }
+}
+
 /// App preference "Download sources automatically" (Settings › Sources). Default On.
 public protocol SourceDownloadPreference: AnyObject {
     var downloadsAutomatically: Bool { get set }
