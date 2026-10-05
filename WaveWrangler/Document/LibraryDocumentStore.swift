@@ -58,6 +58,9 @@ final class LibraryDocumentStore {
             recovery: PersistenceEnvironment.recovery,
             indexCache: LibraryIndexCache(url: PersistenceEnvironment.caches("LibraryIndex/index.json"))
         )
+        #if DEBUG
+        NativeHoldoutRunner.scheduleIfRequested()
+        #endif
     }
 
     @discardableResult

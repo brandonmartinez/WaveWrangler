@@ -4,7 +4,7 @@ import WWCore
 @testable import WWPersistence
 
 /// Real multi-process evidence using the `wwpersist-probe` executable built alongside the tests:
-/// two processes saving the same synthetic file, and real process death (`_exit`) at each publisher
+/// two processes saving the same synthetic file, and real process death (SIGKILL) at each publisher
 /// boundary. Local APFS only — **simulated/local, not provider-observed**.
 @Suite("Multi-process (real processes)", .serialized)
 struct MultiProcessTests {
@@ -91,7 +91,7 @@ struct MultiProcessTests {
             let (process, pipe) = try Self.launch(["kill-at", "--file", url.path, "--boundary", boundary.rawValue, "--recovery", rig.recovery.root.path])
             let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             process.waitUntilExit()
-            if process.terminationStatus == 73 { killed += 1 } else {
+            if process.terminationReason == .uncaughtSignal, process.terminationStatus == SIGKILL { killed += 1 } else {
                 Issue.record("probe did not die at \(boundary.rawValue): status \(process.terminationStatus) \(output)")
             }
             switch rig.opener.open(url, key: .show(model.show.id)) {
@@ -102,7 +102,7 @@ struct MultiProcessTests {
             default: zeroValid += 1
             }
         }
-        Evidence.record("process kill (_exit 73) boundary=\(boundary.rawValue) runs=\(runs) killed=\(killed) old=\(old) new=\(new) mixed=\(mixed) zeroValid=\(zeroValid) [simulated/local, not provider-observed]")
+        Evidence.record("process kill (SIGKILL) boundary=\(boundary.rawValue) runs=\(runs) killed=\(killed) old=\(old) new=\(new) mixed=\(mixed) zeroValid=\(zeroValid) [simulated/local, not provider-observed]")
         #expect(killed == runs && mixed == 0 && zeroValid == 0 && old + new == runs)
     }
 
