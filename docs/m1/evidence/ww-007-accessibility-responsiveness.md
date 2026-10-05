@@ -9,13 +9,31 @@ Results use only **Pass**, **Fail** (with issue), **Blocked** (with reason) and 
 | Area | Result |
 | --- | --- |
 | **SCALE-001 native** (WW-007 timing) | **Holdout `cb42138`: Fail.** First open p95 1.048 s ([#105](https://github.com/brandonmartinez/WaveWrangler/issues/105)) and sidebar selection p95 165 ms ([#106](https://github.com/brandonmartinez/WaveWrangler/issues/106)); every other stratum passed. **Post-fix re-execution `10eb4b8` (main `251d122` with #107/#108 + this branch): Pass.** Every gate passes: first open p95 461 ms, sidebar p95 52 ms; episode switch p95 95 ms with 4 of 100 samples over 100 ms. |
-| DUR-026 native lifecycle ×20 | **Pass** (18 Pass, 0 Fail, 2 Not run: the Dock › Quit route, a tool limit; user-manual item). Executed on `241396a`. A first attempt on `08f62ee` was **aborted by a harness defect** at scenario 1 (raw record committed). |
-| REF-020 sandboxed grant ×20 | **Fail** (holdout `08f62ee`: 16 executed, 4 not executed; 12 Pass, 4 Fail). All 4 failures and the 4 not-executed scenarios trace to harness defects: row selection, then an aborted cycle 5. **No product failure observed.** A post-correction re-execution on `241396a` aborted in cycle 2 on panel timing; the full-suite cycle passed 4/4. Raw records committed. |
-| A11Y-001 keyboard full suite | **Fail** (1/1 executed on `241396a`: 45 tests, 36 Pass, 6 Fail, 3 skipped for VO). Open issues behind the failures: [#104](https://github.com/brandonmartinez/WaveWrangler/issues/104) (clipped Role cell), [#66](https://github.com/brandonmartinez/WaveWrangler/issues/66) (T16 D6), [#110](https://github.com/brandonmartinez/WaveWrangler/issues/110) (sidebar "+"), [#109](https://github.com/brandonmartinez/WaveWrangler/issues/109) (200% overflow). The 2 DocumentLifecycle failures came from my first #86 fix; the corrected fix passes 10/10 on `10eb4b8`. |
+| DUR-026 native lifecycle ×20 | **Pass** (18 Pass, 0 Fail, 2 Not run: Dock › Quit, a tool limit and a user-manual item). Executed on `241396a` (18-core host). **Re-executed on the Mac mini (macOS 27.0.1, M2 Pro) at `4a109aa` (main `6e35da2`): 18 Pass, 0 Fail, 2 Not run, the same routes.** A first attempt on `08f62ee` was **aborted by a harness defect** at scenario 1 (raw record committed). |
+| REF-020 sandboxed grant ×20 | **Fail.** Holdout `08f62ee`: 16 executed, 4 not executed; 12 Pass, 4 Fail. All 4 failures and the 4 not-executed scenarios trace to harness defects (row selection, then cycle 5 aborted). Re-executions, each disclosed and none replacing the holdout:
+- `241396a`: aborted in cycle 2 (3 Pass, 3 Fail; panel timing).
+- Mac mini (macOS 27.0.1, M2 Pro) `4a109aa`: harness-invalid. #112 moved hidden columns into the Name cell's AX value; stopped and fixed in `e3984d8`.
+- Mac mini (macOS 27.0.1, M2 Pro) `9e994b1`: **aborted in cycle 1 after 3 Pass** (grant, relaunch, regrant). On the relaunch after the harness moved a source, the app ran with **no windows** within 10 s. Under investigation: the harness now measures open time up to 30 s (`d227452`).
+
+Raw records committed. |
+| A11Y-001 keyboard full suite | **Fail.** 1/1 executed on `241396a`: 45 tests, 36 Pass, 6 Fail, 3 skipped for VO. CoreTasks re-run on the Mac mini (macOS 27.0.1, M2 Pro) with main `6e35da2` (§4):
+- **Pass:** T01, T02/T03/T15, T24.
+- **Fail:** T16 on [#66](https://github.com/brandonmartinez/WaveWrangler/issues/66) and [#125](https://github.com/brandonmartinez/WaveWrangler/issues/125). It is safe and not a dead end: Save As from the conflicted state passes.
+- **Fail:** T17/T20 on [#126](https://github.com/brandonmartinez/WaveWrangler/issues/126) (alert contrast 2.85–2.95).
+
+Since fixed on main: #104 (#112), #109/#110 (#113). |
 | A11Y-002 VoiceOver | **Blocked** (0/1). Background computer-use can't toggle or drive VoiceOver. A manual checklist is in §5.1 (user-only item). |
-| A11Y-003 visual | **Fail** (1/1 executed, in-app overrides only). C03 200% Library **Fail** ([#109](https://github.com/brandonmartinez/WaveWrangler/issues/109)); C03 Setup Pass; C06 Pass (captured surfaces); C07 Pass; **C04 Not run** (OS-level Increase Contrast not exercised; the override doesn't emulate it); **C05 Not run** (static captures). OS-level toggles are a user-only item. |
+| A11Y-003 visual | **Fail** (1/1 executed, in-app overrides only).
+- C03 200% Library: Fail on `241396a` ([#109](https://github.com/brandonmartinez/WaveWrangler/issues/109), since fixed by #113; `testLibraryAt200PercentTextStaysInsideTheWindow` passes on the mini with main's placement).
+- C03 Setup: Pass.
+- C06: Pass (captured surfaces).
+- C07: Pass. The accent change is verified in light and dark on the mini, §7.1.
+- **C04 Not run.** OS-level Increase Contrast was not exercised, and the override doesn't emulate it.
+- **C05 Not run** (static captures only).
+
+OS-level toggles are queued for a mini slot. |
 | A11Y-004 static audit | **Pass** (1/1 executed: 0 flags across 132 controls). It's heuristic: it missed the merged sidebar "+" button the GUI run found ([#110](https://github.com/brandonmartinez/WaveWrangler/issues/110)). |
-| #59 | Sidebar and inspector findings are **audit artefacts** (15.7–18.1:1). The entry-table blur under a Library message bar was a **real failure**; it's **fixed in this PR and verified**: row 1 went from 7.07 / 6.7:1 (blurred) to 15.91 / 12.39:1. The fix makes the existing in-app 200% overflow worse ([#109](https://github.com/brandonmartinez/WaveWrangler/issues/109)). |
+| #59 | Sidebar and inspector findings are **audit artefacts** (15.7–18.1:1). The entry-table blur under a Library message bar is a **real failure**. My content-column fix verified 15.91 / 12.39:1. **Main's #113 placement (`MessageBarStack` above the split view) brings it back:** row 1 has 4 glyph pixels in all four appearances on the mini. My placement failed one Library 200% audit finding (a partly clipped bottom-row cell), so it is **reverted per the coordinator's rule**. **#59 is currently Fail on main and on this branch; the coordinator decides the fix (§7).** |
 | P0s | **None found.** |
 
 ## 1. Run record
@@ -99,6 +117,11 @@ Raw samples: [`scale001-native-raw.jsonl`](ww-007/scale001-native-raw.jsonl) (ho
 | Revert To › Last Saved Version → edits discarded, focused field shows the disk value (#86) | #8, #17 | Pass ×2 |
 | Relaunch with an edit checkpoint → "Restore Unsaved Changes" restores; status "Edited…", never Saved (#84/#95) | #9, #18 | Pass ×2 |
 
+**Re-execution on the Mac mini (macOS 27.0.1, M2 Pro), `4a109aa` (main `6e35da2`):**
+- 20 scenarios: **18 Pass, 0 Fail, 2 Not run** (Dock, #4 and #13). Every other route passed, including Revert (#8, #17) and relaunch-with-checkpoint (#9, #18).
+- Raw records: [`raw-mini-6e35da2-runs.jsonl`](ww-007/raw-mini-6e35da2-runs.jsonl) (`runC`).
+- Side effect found: the checkpoint from #18 persisted in the isolated UI-test storage and covered later CoreTasks windows. CoreTasks now starts each task with fresh storage (`94176b5`).
+
 `241396a` had my **first** #86 fix. The corrected fix (`10eb4b8`) was re-verified on routes 8 and 9 plus all 10 `DocumentLifecycleUITests`: **all pass**.
 
 ### 2.3 REF-020 sandboxed grant / relaunch / regrant / relink
@@ -116,6 +139,8 @@ Every scenario checks SHA-256 and mtime of every source.
 | **First execution, `08f62ee`** | 16 executed, 4 not executed | Cycles 1–4: grant 4/4, relaunch 4/4, regrant 2/4, relink 2/4, so **12 Pass, 4 Fail**. All 4 failures were **harness row-selection defects**: the row click didn't select, so Grant Access and Relink stayed disabled. Cycle 5 **aborted** on a harness defect (an unguarded Import Review read after the panel didn't confirm), so its 4 scenarios weren't executed. |
 | Post-harness-correction re-execution, `241396a` (fixes `cc41261`, `74c13d9`) | 6 recorded: 3 Pass, 3 Fail | Cycle 1: grant, relaunch and relink pass; regrant failed because the identity sheet didn't appear (panel timing). Cycle 2: the Import Review didn't appear (panel timing), then the run aborted. **Disclosed; it doesn't replace the first execution.** |
 | Full-suite cycle, `241396a` | 4 | 4/4 Pass |
+| Re-execution, Mac mini (macOS 27.0.1, M2 Pro), `4a109aa` (main `6e35da2`) | **harness-invalid, stopped** | Cycle 1 grant failed with "imported rows present: [:]". Since #112 the Setup Name cell's AX value carries the hidden columns ("epoch none, channels …"), and the harness read the value before the label. Fixed in `e3984d8` (match label or value). No scenario result is claimed from this attempt. |
+| Re-execution, Mac mini (macOS 27.0.1, M2 Pro), `9e994b1` (main `6e35da2`) | 3 recorded: **3 Pass**, then aborted | Cycle 1: grant, relaunch and regrant Pass (sources Ready; the regranted source Ready; zero source writes). Relink: after ⌘Q and the harness moving a source, the relaunch opened the document but **no window appeared within 10 s**. The AX tree had the menu bar and no windows, not even Library. The test threw and aborted. **Not yet diagnosed.** It could be a slow open while resolving the moved source (a responsiveness defect) or a silent open failure. The harness now waits up to 30 s, records the open time and the app's windows, and fails the scenario above 10 s (`d227452`). Needs another mini slot. |
 
 **Raw records:** [`ww-007/raw-dur026-ref020-executions.jsonl`](ww-007/raw-dur026-ref020-executions.jsonl) has every `[evidence]` line, test-case result and XCTest error, from both the first execution and the re-execution.
 
@@ -165,24 +190,24 @@ Every scenario checks SHA-256 and mtime of every source.
 
 | ID | Keyboard result (XCUITest key events + AX focus/value) | Notes |
 | --- | --- | --- |
-| T01 Create a show | **Pass under superseded waiver policy; not re-run** | ⌘N → save panel → name → ⇧⌘G folder → Create. File created; title equals the name; "0 episodes"; Saved only after the verified create. |
+| T01 Create a show | **Pass** (mini, main `6e35da2`, scoped policy) | ⌘N → save panel → name → ⇧⌘G folder → Create. File created; title equals the name; "0 episodes"; Saved only after the verified create. Focus starts in the episode list. Audit: no unwaived issues. |
 | T02 Add an episode | **Pass** | ⇧⌘N puts focus in the inline rename field (`hasKeyboardFocus`). ⌘Z removes the episode. |
-| T03 Metadata | **Pass** (functional); audit **Fail** [#104](https://github.com/brandonmartinez/WaveWrangler/issues/104) | ⌘I focuses Title and Tab reaches Number. Values persist after ⌘S and reopen. |
+| T03 Metadata | **Pass** (mini `94176b5`, main `6e35da2`, scoped policy) | ⌘I focuses Title and Tab reaches Number. Values persist after ⌘S and reopen. The audit is clean after #112: the clipped Role cell is gone. One new `sufficientElementDescription` heuristic finding (the Name cell labelled with the file name "synthetic-0.wav") gets a scoped structural waiver (§7.1). |
 | T04 Collections | **Pass** (menu path); "+" button **Fail** [#110](https://github.com/brandonmartinez/WaveWrangler/issues/110) | Lane suite plus WW-013 (§4.1) |
 | T05 Library at scale | **Pass** | 300 keyboard opens and 400 interactions per SCALE-001 execution. Timings in §2.1. |
 | T06 Blocked destinations | **Pass** | `LibraryWorkspaceUITests` |
 | T07–T13 Setup | **Pass** | `EpisodeSetupUITests` (fixture engine, simulated provider states). Default-size layout: [#104](https://github.com/brandonmartinez/WaveWrangler/issues/104). |
 | T14 Toggle autosave | **Pass** | DUR-026, `DocumentLifecycleUITests.testDynamicToggle` |
 | T15 Explicit Save | **Pass** | Never "Saved" before ⌘S; after ⌘S, "Saved" with disk verified |
-| T16 Conflict | **Fail vs spec**; data invariant **Pass** | AppKit's "changed by another application… Save anyway?" sheet; choosing **Save** is refused by the base check: "could not be saved… a copy is kept on this Mac". The status AX value is "Not saved. Couldn't save: …" (honest). The other writer's bytes are unchanged. No D6 Conflict state or "Save Mine as a Copy…": [#66](https://github.com/brandonmartinez/WaveWrangler/issues/66) (M2). |
-| T17 Recover prior work | **Pass under superseded waiver policy; not re-run** (spec deviation: alert, not message bar) | "A complete earlier revision (2) is kept on this Mac…" with "Open Recovered Copy" opened the complete version as an unsaved copy; the damaged file was left unchanged. |
+| T16 Conflict | **Fail vs spec** ([#66](https://github.com/brandonmartinez/WaveWrangler/issues/66), [#125](https://github.com/brandonmartinez/WaveWrangler/issues/125)). Data safety and way forward: **Pass** (mini `94176b5`). | ⌘S → AppKit "…changed by another application… Save anyway?" → Save → the base check refuses with "could not be saved. Expected r1/…, found r2/…" plus "Your changes are still open and a copy is kept on this Mac…" [OK]. Return dismisses it; Esc doesn't, because there's no Cancel button. Status "Not saved. Couldn't save: …", never "Saved". ⌘W close sheet: Save / Don't Save / Cancel; **plain Save is offered** (D6 says no plain Save). Choosing it goes through "Save anyway?" and is refused again; the window and edits are kept. **⌥⇧⌘S Save As → keyboard save panel → new document contains the user's edits; the other writer's file is unchanged; window "Conflict Mine"; status "Saved…".** Not a dead end, no data loss. The audit's "Edit the show's title…" finding is the modal dim (§7.1). |
+| T17 Recover prior work | **Fail** (audit, mini `de30c99` and `4a109aa`): alert text 2.85–2.95:1, [#126](https://github.com/brandonmartinez/WaveWrangler/issues/126). Functional checks pass. Spec deviation: an alert, not a message bar. | "A complete earlier revision (2) is kept on this Mac…" with "Open Recovered Copy" / "Cancel". |
 | T18 Cancel/retry download | **Pass** | `EpisodeSetupUITests` (simulated) |
 | T19 Downloads Off | **Pass** (Settings wording) + A-08 | |
-| T20 Unknown newer | **Pass under superseded waiver policy; not re-run** (spec deviation: refused at open) | "Open it with the newer version of WaveWrangler. This version will not edit or save it". No editable window; bytes unchanged ([#67](https://github.com/brandonmartinez/WaveWrangler/issues/67) catalog sync). |
+| T20 Unknown newer | **Fail** (audit, mini): alert text 2.85–2.95:1, [#126](https://github.com/brandonmartinez/WaveWrangler/issues/126). Refusal is functionally correct. Spec deviation: refused at open. | "Open it with the newer version of WaveWrangler. This version will not edit or save it…" |
 | T21 Migration | **Not run** | No older or forced-failure format fixture in the app hooks |
 | T22 Unavailable entries | **Pass** | `LibraryWorkspaceUITests` |
 | T23 Close/quit unsaved | **Pass** for D3 (DUR-026); **Not run** for D4/D7 (no seam to delay or fail publication in the app) | |
-| T24 Two windows / named undo | **Pass** | Passes with the #86 fix |
+| T24 Two windows / named undo | **Pass** (mini, main `6e35da2`) | Passes with the #86 fix |
 | T25 Library location | **Pass** (move to a local folder and back, nothing lost); **Not run** for L1–L5 targets (F-LIBLOC) | §4.1 |
 | T26–T28 Folder unreachable | **Not run** | No F-OFFLINE seam in the app's UI-test hooks |
 | T29 No connection → Retry | **Pass** | `EpisodeSetupUITests` (simulated) |
@@ -267,8 +292,14 @@ Pixel WCAG ratios (`ContrastMeter`: element screenshot at 2×; background = the 
 | Sidebar unselected rows "Recent", "Unavailable" | 18.1:1 | 15.7–15.9:1 | **Audit artefact.** Keep the identifier-scoped waiver. |
 | Episode inspector "Title" / "Number" / "Recording date" / "Notes" (first row under the toolbar) | n/a | 15.7–15.9:1 (#FFFFFF on #222222) | **Audit artefact.** Identifier-scoped waiver. |
 | Entry list rows 2 and 5 | 14.9 / 15.9:1 | 11.0 / 12.4:1 | Pass |
-| **Entry list headers + row 1 while a Library message bar is shown** | 7.07:1 before (blurred) → **15.91:1** after | 6.7:1 before (blurred) → **12.39:1** after | **Real failure, fixed in this PR** |
+| **Entry list headers + row 1 while a Library message bar is shown** | 7.07:1 before (blurred) → **15.91:1** with my fix → **7.57:1, 4 glyph pixels with main's #113 placement** | 6.7:1 before → **12.39:1** with my fix → **7.7:1, 4 glyph pixels with #113** | **Real failure. Fixed by my placement, regressed on main by #113; decision pending (below).** |
 
+- **Regression after #113 (Mac mini, `9e994b1`, main `6e35da2`, `testLibraryTextContrastAcrossAppearances`).** #113 put the bar back above the split view (`MessageBarStack`, needed for #109). Row 1 has **4 glyph pixels** (max 7.57 light / 7.7 dark) in aqua, darkAqua and both high-contrast overrides; row 2 has 1,771–2,132. That is the original #59 signature. Raw records: [`raw-mini-6e35da2-runs.jsonl`](ww-007/raw-mini-6e35da2-runs.jsonl) (`runD`).
+- **My placement with #113 merged** (`MessageBarStack` inside the content column, `1aef328`/`4a109aa`, mini `runA`). Every Library XCUITest passed except the audit in `testLibraryAt200PercentTextStaysInsideTheWindow`, which passed: LibraryManagement, both LibraryProviderConflict tests, `testLibraryReopensShowAfterRelaunchAndSaves`, and all 200% layout assertions. The audit had one unwaived `.contrast` finding: a bottom-row cell "5" at y 839–871, partly below the window's bottom edge (855). The library lane's `OffscreenAuditWaiver` only covers cells with no intersection.
+- Per the coordinator's rule (keep my placement only if every Library test passes), **I reverted to main's placement (`019b305`)**. #59 now fails on main and on this branch. Options for the coordinator:
+  - (a) restore the content-column placement and have the audit measure partly clipped edge cells (glyph statistics on the visible part);
+  - (b) another fix for the toolbar pocket.
+- The "Cause", "Fix" and "Known cost" notes below describe my original fix.
 - **Cause:** with the message bar above the `NavigationSplitView`, the content column still reserved the toolbar's scroll-edge pocket *below* the bar. That blurred the column headers and the first row (before: [`screens/library-light-header-blur.png`](ww-007/screens/library-light-header-blur.png), [`screens/library-dark-header-blur.png`](ww-007/screens/library-dark-header-blur.png)).
 - **Fix:** `LibraryMessageBar` moved to the top of the content column (`.safeAreaInset(edge: .top)`), which also matches IA reading order (after: [`screens/library-dark-after-59-fix.png`](ww-007/screens/library-dark-after-59-fix.png)).
 - **Rejected alternatives:**
@@ -312,8 +343,10 @@ Under the scoped policy, **ContrastEvidence passed 5/5** (#59 verified again: ro
 | T16 AppKit sheet message ("This document's file has been changed…") | 12,000 · 9.75 | Legible: **artefact** | Allowlisted (`_NS:` text inside a sheet), gated |
 | T16 "Edit the show's title…" (window content under the sheet's band) | 1,029–2,452 · 3.15–3.85 | **Modal dim (measured)**: the crop shows the window's own text dimmed by AppKit while the document-modal sheet is up. Not interactive, not the sheet's content. Coordinator decision 2026-10-05. | Classified as the modal dim from the crop (`contrast-crops/mini-de30c99-audit-crop-T16_external-change_sheet-10.png`). The T16 audit still records it. T16 is a Fail anyway because of #66. |
 | **T17/T20 alert text** (`_NS:74` message, `_NS:58` informative) | 6,264–10,462 · **2.85–2.95** | **Real rendered failure**: the crops show sharp white bold text on the app-modal NSAlert's translucent material, which shows the light desktop behind it in dark mode. Not a blur or dim artefact. | [#126](https://github.com/brandonmartinez/WaveWrangler/issues/126) (P1, Mac). **T17 and T20 audits = Fail.** Crops `contrast-crops/mini-de30c99-audit-crop-T17_*`, `…T20_*`. |
-| Other accent-tinted controls (default button, switches, checkboxes, toolbar destination fill) | see [design spec](../design/states-and-recovery.md#1-rules-for-every-state-indicator) | **Measured** on the mini at `de30c99`. Light: switches 5.28, default bezel 5.37, toolbar destination text 12.02. Dark with #0064E1: switches **2.99 (failed)**, fixed with the dark variant #0A6CF0. Dark at `de30c99`: switches 3.37, bezel 3.51, destination text 6.5. Checkbox: the first run measured accent on the selection highlight (a harness defect). | The harness now measures the checkmark against the fill in a selected row and the fill against its surroundings in an unselected row (`cb586ba`). **Checkbox result Not run yet.** The focus ring isn't measured (FKA not granted). |
-| T03 setup "Role" cell `ww.setup.source.<id>.role` ("none") | 0 · — · 1.06 | Clipped: the column is 12 pt wide at the default window size, so no glyph is visible. Hittable, so the offscreen rule doesn't apply. | Layout problem [#104](https://github.com/brandonmartinez/WaveWrangler/issues/104). Stays unwaived; the T03 audit = Fail. |
+| Other accent-tinted controls (default button, switches, checkboxes, toolbar destination fill) | see [design spec](../design/states-and-recovery.md#1-rules-for-every-state-indicator) | **Measured, Pass** on the mini (`de30c99`, then `4a109aa` with main `6e35da2`). Light: switches 5.28, default bezel 5.37, destination text 12.02, checkmark-on-fill (selected row) 4.88, checked fill vs surroundings (unselected row) 5.10. Dark with #0064E1: switches **2.99 (failed)**, fixed with the dark variant #0A6CF0. Dark now: switches 3.37, bezel 3.51, destination text 6.5, checkmark 4.35, checked fill 3.20. | `testAccentTintedControls` **passed** in both appearances at `4a109aa`. The focus ring isn't measured (FKA not granted). |
+| T03 setup "Role" cell `ww.setup.source.<id>.role` ("none") | 0 · — · 1.06 (`de30c99`) | Clipped: the column was 12 pt wide at the default window size | **Resolved by #112** (column tiers hide Role when there's no room). Not present at `94176b5`. |
+| T03 Setup Name cell `ww.setup.source.<id>` labelled "synthetic-0.wav" (`sufficientElementDescription`: "Label not human-readable") | n/a (not contrast) | Heuristic finding that appeared with #112. The label is the source's file name, the visible name per IA; #112 moved the hidden columns into the value. | **Scoped structural waiver:** Setup Name-cell identifier **and** a label matching the synthetic fixture file name `synthetic-N.wav`; recorded per finding. |
+| Library 200% bottom-row cell "5" (y 839–871, window bottom 855), only with my content-column #59 placement | not measured by the library lane's audit | Partly clipped edge cell | See §7. My placement is reverted; no waiver added. |
 | 200% Library rows | — | Overflow under the title bar | [#109](https://github.com/brandonmartinez/WaveWrangler/issues/109) |
 
 Raw records for the `457dbd1`/`de30c99` mini runs: [`audit-records-mini-de30c99.jsonl`](ww-007/audit-records-mini-de30c99.jsonl). It includes the `accent-controls-*` records.
@@ -330,13 +363,16 @@ CoreTasks at `de30c99`:
 | --- | --- | --- |
 | [#84](https://github.com/brandonmartinez/WaveWrangler/issues/84) No "Restore unsaved changes" UI | P1, M1 must-fix | Fixed by #95; verified (DUR-026 routes 9/18) |
 | [#86](https://github.com/brandonmartinez/WaveWrangler/issues/86) A focused inspector field kept a discarded draft after Revert or an external change | P1 | **Fixed in this PR**; verified (DUR-026 Revert, T24, all `DocumentLifecycleUITests`) |
-| [#104](https://github.com/brandonmartinez/WaveWrangler/issues/104) Setup shows one Sources row at the default size; Role/Status clipped | P1 | Open (episode setup lane) |
+| [#104](https://github.com/brandonmartinez/WaveWrangler/issues/104) Setup shows one Sources row at the default size; Role/Status clipped | P1 | Fixed by #112; T03 passes on the mini |
 | [#105](https://github.com/brandonmartinez/WaveWrangler/issues/105) First open p95 1.048 s (holdout) | P1 | Fixed by #107; post-fix p95 461 ms |
 | [#106](https://github.com/brandonmartinez/WaveWrangler/issues/106) "Shows" sidebar selection 165–177 ms (holdout) | P1 | Fixed by #108; post-fix p95 52 ms |
-| [#59](https://github.com/brandonmartinez/WaveWrangler/issues/59) Entry list blurred under a Library message bar | real failure | **Fixed in this PR**; verified. Artefact surfaces documented. |
-| [#109](https://github.com/brandonmartinez/WaveWrangler/issues/109) Library window content overflows at in-app 200% | P1 (C03) | Open. Pre-existing; worse with the #59 fix. |
-| [#110](https://github.com/brandonmartinez/WaveWrangler/issues/110) Sidebar "New Collection" (+) isn't an accessible button | P1 (coordinator triage) | Open (menu path works) |
+| [#59](https://github.com/brandonmartinez/WaveWrangler/issues/59) Entry list blurred under a Library message bar | real failure | **Regressed on main by #113.** My fix is verified but reverted per the coordinator's Library-tests rule. Coordinator decision pending (§7). Artefact surfaces documented. |
+| [#109](https://github.com/brandonmartinez/WaveWrangler/issues/109) Library window content overflows at in-app 200% | P1 (C03) | Fixed by #113; its 200% test passes on the mini with main's placement |
+| [#110](https://github.com/brandonmartinez/WaveWrangler/issues/110) Sidebar "New Collection" (+) isn't an accessible button | P1 | Fixed by #113 (`ww.library.collections.add`); LibraryManagement passes on the mini |
 | [#66](https://github.com/brandonmartinez/WaveWrangler/issues/66) No D6 Conflict / Save Mine as a Copy after Save Anyway | P2 (M2) | Existing; T16 cites it |
+| [#125](https://github.com/brandonmartinez/WaveWrangler/issues/125) Save-conflict alert shows internal revision IDs | P2 (M2) | Filed by Design; T16 |
+| [#126](https://github.com/brandonmartinez/WaveWrangler/issues/126) T17/T20 alerts: white text on translucent alert material, 2.85–2.95:1 | P1 | Filed by Design; T17/T20 audits Fail |
+| AccentColor: white on the default system-blue selection measured 4.02:1 | real failure | **Fixed in this PR:** `AccentColor` #0064E1 light / #0A6CF0 dark; verified on the mini. Design spec updated. |
 | UI-test runs wrote source access records into the user's device-local store | test isolation | **Fixed in this PR**. `WaveWrangler-UITests/DeviceAccess` is used in UI-test runs, plus a `-WWUITestResetSourceAccess YES` hook. |
 
 ## 9. User-only and remaining exit items
