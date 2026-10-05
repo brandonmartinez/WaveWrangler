@@ -172,29 +172,59 @@ The machine-readable record is the registry's `freezeRevisions[1]`, together wit
 
 **Recipe additions (frozen in advance; persistence-lane numbers accepted by Lead):**
 - **Setup preconditions:**
-  - A case is *established* only when host B has observed every setup fixture with the expected digest or publication ID **before the first product operation**.
-  - If a fixture is still missing after a 420 s wait, B calls `startDownloadingUbiquitousItem` on that synthetic fixture and waits one more 420 s (worst case 840 s).
-  - If that also expires, the case is `setupNotEstablished`. No product truth is evaluated, and it is neither a pass nor a fail.
-  - **Diagnostics are captured at expiry:**
-    - on host A: uploaded/uploading;
-    - on host B: presence, size, downloading status and any download error.
+  - A case is *established* only when, **strictly before its first product operation**:
+    - host A's setup publication completed successfully (C3 steps 1–8, acknowledged and read back on A); and
+    - host B has observed every setup fixture with the expected digest or publication ID.
+  - If a fixture is still missing on B after a 420 s wait, B calls `startDownloadingUbiquitousItem` on that synthetic fixture and waits one more 420 s (worst case 840 s).
+  - **`setupNotEstablished` is reserved for a fixture that has not arrived.** At expiry, the fixture is absent on B (or only a dataless placeholder), host A holds it readable with the expected digest, and A's setup publication succeeded. No product truth is evaluated, and the case is neither a pass nor a fail.
+  - **Every other setup outcome is a case failure:**
+    - the fixture is present on B with a wrong digest or publication ID;
+    - the fixture isn't readable on A with the expected digest;
+    - A's setup publication failed, was refused, or is acknowledgement-uncertain;
+    - a wait's expiry is not strictly earlier than the first product operation.
+  - **Diagnostics at every expiry, on both hosts:**
+    - the local digest, or absence;
+    - presence, size and dataless state;
+    - A's uploaded/uploading state;
+    - B's downloading status and any download error;
+    - A's setup publication outcome and acknowledgement state.
+  - The case folder is deleted only at the end of the run, after diagnostics.
+  - Relink truth 5 (zero source writes) is checked for `setupNotEstablished` cases too.
   - Any timeout after the first product operation is still a **case failure**.
+- **First product operation (named per cell/variant):**
+
+  | Cell / variant | First product operation |
+  | --- | --- |
+  | show `simultaneous` | each host's open of revision r |
+  | show `staggered` | host B's open of r, which it then holds |
+  | library (both variants) | the first product library load on either host |
+  | relink | host B's open of the show |
+  | recovery | host B's first edit on r |
+
+  Every case records, on both hosts, the first-product-operation timestamp and each setup wait's start and expiry (host clocks plus the measured A–B offset).
 - **Replacement, never lowering the count:**
   - A `setupNotEstablished` slot is refilled from the frozen reserve split `holdout-f3-reserve`. Indices are used in order, with the same cell and variant, and recorded per slot.
   - Refills continue until each cell has evaluated exactly its frozen holdout count.
   - If `setupNotEstablished` exceeds **20%** of a cell, the cell **fails as incomplete**: more than 6 cases for show or library, more than 4 for relink or recovery.
 - **Concurrency:** at most one case is in setup at a time, across all cells. At most 6 product workers run at once.
-- **Host labels, on both hosts:**
-  - hostname, `sw_vers` product and build, model, CPU, cores and memory;
+- **Host labels, on both hosts.** Hosts are identified only as "host A" and "host B". No hostname, computer name or account identifier is recorded, because macOS default names can embed the account's full name.
+  - hardware model, CPU, cores and memory, and `sw_vers` product and build;
   - `xcodebuild -version`, `xcrun --show-sdk-version` and `swift --version`;
   - the sha256 of the probe binary run (it must match between hosts);
   - the commit SHA and harness tree IDs;
   - "same Apple account: operator-attested", with no account identifiers.
   - A run missing any label, or with mismatched probe hashes, is **invalid**.
+- **Per-case reporting.** §4.2.1 condition 5 still applies to every case, as evidence, not gates: local acknowledgements, time to settle, time to surfacing per host, version counts per host and the detection path. `m1-freeze-3` adds these per case:
+  - variant and setup outcome, including diagnostics;
+  - reserve index;
+  - first-product-operation and wait timestamps on both hosts;
+  - level samples on both hosts;
+  - Combine rounds;
+  - Combine-summary sets against the harness-computed sets.
 - **Seeds:** fresh splits `calibration-f3`, `holdout-f3` and `holdout-f3-reserve`.
 - **Calibration coverage:** the 10 calibration cases include at least one staggered show case, one `concurrentCombine` case and one case that exercises the host-B sampling gate. In addition, a forced `setupNotEstablished` drill, using an injected unreachable fixture, tests the retry, the diagnostics and the reserve refill. It is reported separately and is not one of the 10.
 
-**Note on the setup reclassification.** Under `m1-freeze-2`, a setup stall was a case failure. Under `m1-freeze-3`, it is reported with diagnostics and replaced, within a 20% cap. This changes how *non-product* setup stalls are classified. It is frozen **before** any new run and does not touch any product truth. A stall after the product phase begins is still a failure, and the evaluated count can never fall below the frozen count.
+**Note on the setup reclassification.** Under `m1-freeze-2`, a setup stall was a case failure. Under `m1-freeze-3`, it is reported with diagnostics and replaced, within a 20% cap. This changes how *non-product* setup stalls are classified. Only a fixture that **has not arrived**, with host A's side verified, before the first product operation qualifies. It is frozen **before** any new run and does not touch any product truth. A stall after the product phase begins is still a failure, and the evaluated count can never fall below the frozen count.
 
 **Post-freeze rule:** as in §4.2. It runs once, on a clean commit containing this revision's merge. Calibration (`calibration-f3`) is reported separately and tunes nothing.
 
