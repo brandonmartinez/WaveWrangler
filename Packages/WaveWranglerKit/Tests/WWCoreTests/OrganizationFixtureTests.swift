@@ -12,6 +12,10 @@ import Testing
 //
 // Expected refusals are computed by an independent oracle in this file from the recipe, not from the
 // code under test. Every episode is recorded (including failures).
+//
+// This WWCore phase uses a harness snapshot editor, so its undo/redo checks are not product-undo evidence
+// and it is NOT the REF-019 holdout. The single holdout run drives WWEpisodeSetup's SetupEditCommands
+// with a real UndoManager.
 
 enum REF019 {
     static let fixtureID = "M1-REF-019"
@@ -351,7 +355,7 @@ struct REF019Case {
 }
 
 @MainActor
-@Suite("M1-REF-019 organization fixtures (WWCore)")
+@Suite("M1-REF-019 generator and WWCore model operations (not holdout; holdout is Run D with product undo)")
 struct OrganizationFixtureTests {
     @Test func refusalOracleMatchesKnownCases() {
         let group = RecorderGroup(name: "G", epochs: [RecordingEpoch(label: "1")])
@@ -379,7 +383,7 @@ struct OrganizationFixtureTests {
         let calibration = records.filter { $0.split == "calibration" }
         let failed = records.filter { !$0.passed }
         for record in failed.prefix(10) { print("M1-REF-019-FAILURE \(record.failures.prefix(3))") }
-        print("M1-REF-019 editor=WWCore-snapshot holdout=\(holdout.count) calibration=\(calibration.count) failedEpisodes=\(failed.count) groups=\(holdout.map(\.groups).reduce(0, +)) clips=\(holdout.map(\.clips).reduce(0, +)) knownChannelCounts=\(holdout.map(\.knownChannelCounts).reduce(0, +)) speakers=\(holdout.map(\.speakers).reduce(0, +)) appliedEdits=\(holdout.map(\.appliedEdits).reduce(0, +)) expectedRefusals=\(holdout.map(\.expectedRefusals).reduce(0, +)) undoSteps=\(holdout.map(\.undoSteps).reduce(0, +)) redoSteps=\(holdout.map(\.redoSteps).reduce(0, +))")
+        print("M1-REF-019-WWCORE (not holdout) editor=harness-snapshot holdoutSeeds=\(holdout.count) calibrationSeeds=\(calibration.count) failedEpisodes=\(failed.count) groups=\(holdout.map(\.groups).reduce(0, +)) clips=\(holdout.map(\.clips).reduce(0, +)) knownChannelCounts=\(holdout.map(\.knownChannelCounts).reduce(0, +)) speakers=\(holdout.map(\.speakers).reduce(0, +)) appliedEdits=\(holdout.map(\.appliedEdits).reduce(0, +)) expectedRefusals=\(holdout.map(\.expectedRefusals).reduce(0, +)) undoSteps=\(holdout.map(\.undoSteps).reduce(0, +)) redoSteps=\(holdout.map(\.redoSteps).reduce(0, +))")
 
         let dir = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

@@ -2,7 +2,7 @@
 
 **Lane:** Mac (sources). **Date:** 2026-10-05. **Freeze:** [`m1-freeze-1`](../ww-003-fixture-protocol.md#41-freeze-record-m1-freeze-1-2026-10-05), which takes effect at the PR #62 merge `2fcf4d7`. **Registry:** [`m1-fixture-registry.json`](../fixtures/m1-fixture-registry.json).
 
-Only the runs listed under "Post-freeze holdout runs" count as holdout. Each one ran once, on a clean checkout of a commit that contains `2fcf4d7`. Every case is reported in the per-case files in [`sources-holdout/`](sources-holdout/), including failures and exclusions (there were none). The pre-freeze runs from #54/#58 and the calibration runs on this branch before the merge are calibration only, and are listed separately below.
+Only Runs A and B under "Post-freeze holdout runs" count as holdout. Run C is harness and model-operation evidence, **not** holdout (see below). Each one ran once, on a clean checkout of a commit that contains `2fcf4d7`. Every case is reported in the per-case files in [`sources-holdout/`](sources-holdout/), including failures and exclusions (there were none). The pre-freeze runs from #54/#58 and the calibration runs on this branch before the merge are calibration only, and are listed separately below.
 
 ## Host
 
@@ -88,7 +88,12 @@ ON cycles: **50/50 reached `idle`, with bytes identical** to the generated data 
 
 **Provider finding (filed as #78, not a holdout failure):** after rematerialization, lstat `mtime` differed for 50/50 files, while inode and size were unchanged and the bytes were identical. The creation and modification dates moved by **±1.19×10⁻⁷ s**. The metadata-only identity check compares dates exactly, so it reported `changed(…)` for **41/50** sources: 14 creation only, 14 modification only, 13 both. The other 9 were unchanged. Identity is not part of this entry's frozen truth, and zero source writes still holds: no app write API exists, and the bytes are unchanged. The fix belongs in a separate PR.
 
-### Run C: M1-REF-019 organization, WWCore phase
+### Run C: M1-REF-019 generator and WWCore model operations (**not holdout**)
+
+Run C is **harness and model-operation evidence only. It does not count as M1-REF-019 holdout.**
+- **Undo is not product undo:** its undo/redo check runs against the harness's own snapshot editor, so the exact-state result is trivially true and is not reported.
+- **One holdout per revision:** protocol §4 allows one holdout run per frozen revision. The single M1-REF-019 holdout will be **Run D**, run through `SetupEditCommands` with a real `UndoManager` once `WWEpisodeSetup` (#55) is on main.
+- **Same seeds:** Run C used the holdout seed derivation. Run D uses the same deterministic episodes.
 
 | Field | Value |
 | --- | --- |
@@ -97,19 +102,19 @@ ON cycles: **50/50 reached `idle`, with bytes identical** to the generated data 
 | Code under test `WWCore` | `b36189e5c3c6343d9e52937dd83884c6a8950b0b` |
 | Command | `swift test … --filter OrganizationFixtureTests` |
 | Time | 2026-10-05T07:24:23Z, exit 0 |
-| Every episode | [`sources-holdout/ref-019-wwcore-cases.jsonl`](sources-holdout/ref-019-wwcore-cases.jsonl): 110 records (100 holdout, 10 calibration) |
+| Records | [`sources-holdout/ref-019-wwcore-cases.jsonl`](sources-holdout/ref-019-wwcore-cases.jsonl): 110 generated episodes. The `split` field names the seed split; these are **not** holdout results. |
 
-**Holdout:** 100 episodes, **100 passed**, 0 failed. Totals: 348 recorder groups, 1,559 clips, 774 with a known channel count and 785 unknown, and 346 speakers. There were 2,092 applied corrections and 337 refusals predicted by an independent oracle. All 337 were refused, and each left the model unchanged. Undo ran 2,092 steps and redo 2,092 steps.
+**What Run C shows (WWCore pure operations, generator sanity):**
+- 110 generated episodes: 348 groups, 1,559 clips and 346 speakers across the 100 holdout-seeded episodes. 774 clips had a known channel count and 785 unknown.
+- 2,092 applied corrections. All 337 refusals predicted by the independent oracle were refused, and each left the model unchanged.
+- Corrections never changed recorder groups or source placement.
+- Observations stayed equal to the generated metadata. Duration and sample rate stayed `unknown`.
+- No label became `userConfirmed` without an explicit confirming edit to that item.
+- A primary change never retargeted another speaker.
 
-| Truth clause | WWCore-phase result |
-| --- | --- |
-| Group clock distinct from clip start | Corrections never changed recorder groups (clock note, epochs) or source placement. Schema v1 has no clip-start field, so this check is structural. |
-| UNKNOWN duration/channels stay UNKNOWN | Observations always equal the generated metadata. Duration and sample rate always stayed `unknown`. |
-| Provisional vs user-confirmed labels honest | No primary or role ever became `userConfirmed` without an explicit confirming edit to that item. Untargeted sources and speakers never changed. |
-| Primary change marks dependents stale | **Not applicable in schema v1:** there is no dependent derived work to mark. A primary change was verified never to retarget other speakers' assignments. |
-| Named undo restores exact state | Exact model equality after every undo and redo step, with matching action names. This phase uses a **harness snapshot undo** with `EditHistory` names, not `UndoManager`. |
-
-**Pending: REF-019 with WWEpisodeSetup.** `WWEpisodeSetup` arrives with #55, which is still open. Once #55 merges, origin/main is merged here and REF-019 runs again through `SetupEditCommands` with a real `UndoManager`, added as Run D. Run C is kept unchanged.
+**Not evidenced by Run C:**
+- **Named undo restores exact state:** needs product undo; deferred to Run D.
+- **"Primary change marks dependents stale":** **not evidenced**. Schema v1 has no dependent derived work to mark stale, so this clause cannot pass as written. It needs a Lead freeze revision (N/A for schema v1, or an M2+ pointer) and is not claimed.
 
 ## Calibration and pre-freeze runs (not holdout)
 
@@ -117,6 +122,8 @@ ON cycles: **50/50 reached `idle`, with bytes identical** to the generated data 
 | --- | --- | --- | --- |
 | Pre-freeze (#54, #58) | various | lifecycle matrix, iCloud trial | Disclosed in `m1-freeze-1` `preFreezeExecutions`; unchanged |
 | Branch calibration, pre-merge | `7087aa3` + uncommitted harness | lifecycle matrix dev run; REF-019 dev run | All passed; harness development only |
+| Run C (post-merge, not holdout) | `2f7594d` | REF-019 generator plus WWCore operations | See Run C |
+| Local `scripts/test.sh` at the evidence commit, plus CI | `37f2962` | Re-execution of the same deterministic harness trees (matrix and REF-019 generator) | Identical results; not counted as additional holdout |
 | Branch calibration, pre-merge | `7087aa3` + uncommitted harness | M1-SRC-ON-PROV-001 calibration split (5 OFF + 5 ON), twice | 10/10 passed each time. The first run surfaced the lstat `mtime` change, so the second added field-level and identity reporting to the harness. No gate or truth change. |
 
 ## Limits
@@ -128,4 +135,4 @@ ON cycles: **50/50 reached `idle`, with bytes identical** to the generated data 
 ## Proposed registry/evidence updates (Lead/coordinator-owned)
 
 - Set `evidenceStatus` for M1-REF-001…017, M1-REF-018 (invariant), M1-SRC-OFF-001, M1-SRC-ON-001/002, M1-SRC-ON-002-REVIEW and M1-SRC-ON-PROV-001 to "post-freeze holdout reported: `docs/m1/evidence/sources-holdout.md`".
-- Set M1-REF-019 to "post-freeze holdout (WWCore phase) reported; WWEpisodeSetup phase pending #55", until Run D lands.
+- M1-REF-019 stays **"post-freeze holdout not yet reported"** until Run D lands. Its "primary change marks dependents stale" truth clause needs a freeze revision, since it is not evidenceable in schema v1.
