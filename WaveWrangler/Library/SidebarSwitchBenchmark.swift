@@ -9,8 +9,9 @@ import WWOrganizer
 /// library has loaded, the Library window is sized to `-WWMeasureWindowSize WxH` (content size; default
 /// 1000x600, the window's normal size), then the sidebar selection is changed N times through the same state
 /// path the List selection binding uses for arrow keys, walking down and up the 8 rows like the SCALE-001
-/// harness. Each change is measured from the change to the end of the run-loop pass that committed it (as
-/// `Responsiveness` does), logged as a `WWBENCH` line, summarised, and the app then quits.
+/// harness. Each change is measured from the change until the entry list shows the new rows (end of the first
+/// committed run-loop pass with every visible row realized), logged as a `WWBENCH` line, summarised, and the
+/// app then quits.
 ///
 /// Read results with:
 /// `log show --last 10m --predicate 'subsystem == "com.brandonmartinez.wavewrangler" AND category == "Benchmark"'`
@@ -48,36 +49,58 @@ enum SidebarSwitchBenchmark {
             if !items.indices.contains(position + direction) { direction = -direction }
             position += direction
             let item = items[position]
-            let ms = await measure { state.sidebarSelection = item }
+            let expected = state.store.rows(for: item).count
+            let (ms, passes) = await measure(expectedRows: expected, window: state.window) { state.sidebarSelection = item }
             all.append(ms)
             if item == .shows { toShows.append(ms) }
             let realized = realizedRows(in: state.window)
-            logger.notice("WWBENCH step=\(step, privacy: .public) item=\(name(item), privacy: .public) rows=\(state.store.rows(for: item).count, privacy: .public) realized=\(realized.realized, privacy: .public) visible=\(realized.visible, privacy: .public) ms=\(ms, format: .fixed(precision: 3), privacy: .public)")
+            logger.notice("WWBENCH step=\(step, privacy: .public) item=\(name(item), privacy: .public) rows=\(state.store.rows(for: item).count, privacy: .public) passes=\(passes, privacy: .public) realized=\(realized.realized, privacy: .public) visible=\(realized.visible, privacy: .public) ms=\(ms, format: .fixed(precision: 3), privacy: .public)")
             try? await Task.sleep(for: .milliseconds(60))
         }
         let window = state.window?.contentLayoutRect.size ?? size
         logger.notice("WWBENCH summary window=\(Int(window.width), privacy: .public)x\(Int(window.height), privacy: .public) all n=\(all.count, privacy: .public) p50=\(percentile(all, 0.5), format: .fixed(precision: 1), privacy: .public) p95=\(percentile(all, 0.95), format: .fixed(precision: 1), privacy: .public) max=\(all.max() ?? 0, format: .fixed(precision: 1), privacy: .public) toShows n=\(toShows.count, privacy: .public) p50=\(percentile(toShows, 0.5), format: .fixed(precision: 1), privacy: .public) p95=\(percentile(toShows, 0.95), format: .fixed(precision: 1), privacy: .public) max=\(toShows.max() ?? 0, format: .fixed(precision: 1), privacy: .public)")
     }
 
-    /// From the change to the end of the run-loop pass that committed it (after Core Animation's commit).
-    private static func measure(_ change: () -> Void) async -> Double {
+    /// From the change to the end of the first run-loop pass (after Core Animation's commit) at which the entry
+    /// list shows the new content: the table has the new row count and a row view for every visible row. A pass
+    /// that commits before the rows are realized doesn't count as ready (no undercounting).
+    private static func measure(expectedRows: Int, window: NSWindow?, _ change: () -> Void) async -> (ms: Double, passes: Int) {
         let start = ProcessInfo.processInfo.systemUptime
         change()
         return await withCheckedContinuation { continuation in
-            let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, false, CFIndex.max) { _, _ in
-                continuation.resume(returning: (ProcessInfo.processInfo.systemUptime - start) * 1000)
+            var passes = 0
+            var observer: CFRunLoopObserver?
+            observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, true, CFIndex.max) { _, _ in
+                passes += 1
+                let elapsed = (ProcessInfo.processInfo.systemUptime - start) * 1000
+                guard MainActor.assumeIsolated({ isReady(expectedRows: expectedRows, window: window) }) || elapsed > 3_000 else { return }
+                if let observer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
+                continuation.resume(returning: (elapsed, passes))
             }
             CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
         }
     }
 
-    /// Row views the entry table holds after the switch vs. rows in its visible rect (realized-rows hypothesis).
-    private static func realizedRows(in window: NSWindow?) -> (realized: Int, visible: Int) {
+    private static func isReady(expectedRows: Int, window: NSWindow?) -> Bool {
+        guard expectedRows > 0 else { return entryTable(in: window) == nil }
+        guard let table = entryTable(in: window), table.numberOfRows == expectedRows else { return false }
+        let visible = table.rows(in: table.visibleRect)
+        guard visible.length > 0 else { return false }
+        return (visible.location..<(visible.location + visible.length)).allSatisfy { table.rowView(atRow: $0, makeIfNecessary: false) != nil }
+    }
+
+    private static func entryTable(in window: NSWindow?) -> NSTableView? {
         func tables(_ view: NSView) -> [NSTableView] {
             ((view as? NSTableView).map { [$0] } ?? []) + view.subviews.flatMap(tables)
         }
-        guard let content = window?.contentView,
-              let table = tables(content).max(by: { $0.numberOfColumns < $1.numberOfColumns }) else { return (-1, -1) }
+        guard let content = window?.contentView else { return nil }
+        // The sidebar is a one-column outline; the entry list has five columns.
+        return tables(content).first { $0.numberOfColumns > 1 }
+    }
+
+    /// Row views the entry table holds after the switch vs. rows in its visible rect (realized-rows hypothesis).
+    private static func realizedRows(in window: NSWindow?) -> (realized: Int, visible: Int) {
+        guard let table = entryTable(in: window) else { return (-1, -1) }
         var realized = 0
         table.enumerateAvailableRowViews { _, _ in realized += 1 }
         return (realized, table.rows(in: table.visibleRect).length)
