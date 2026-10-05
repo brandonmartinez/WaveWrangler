@@ -468,11 +468,7 @@ def case_relink(dev, split, index, rng):
             dates[host] = json.loads(out.stdout.strip().splitlines()[-1])
         except (ValueError, IndexError):
             dates[host] = {"error": out.stderr[-200:]}
-    try:
-        with open(f"{records_a}/{sid.upper()}.json") as handle:
-            dates["A recorded baseline"] = json.load(handle).get("recordedIdentity", {}).get("fingerprint")
-    except OSError as error:
-        dates["A recorded baseline"] = {"error": str(error)}
+    dates["A recorded baseline"] = recorded_baseline(f"{records_a}/source-access-records.json", sid)
     # Zero source writes: every source digest on both hosts is exactly what A generated.
     digests = {h: {p: dev.run(h, ["digest", "--file", p]).get("sha256") for p in expected} for h in ("A", "B")}
     zero_writes = all(digests[h][p] == expected[p] for h in digests for p in expected)
@@ -485,6 +481,29 @@ def case_relink(dev, split, index, rng):
             "aUntouchedSourceDatesChangedBySync": variant == "same" and a_eval.get("identity", "").startswith("changed("),
             "sourceDates": dates,
             "zeroSourceWrites": zero_writes, "sourceFiles": len(expected)}
+
+
+def recorded_baseline(store_path, source_id):
+    """A's recorded fingerprint dates for one source, from the app's FileDeviceAccessStore file (JSONEncoder's
+    default date strategy: seconds since 2001-01-01), as UTC ISO with ms."""
+    import datetime as dt
+    try:
+        with open(store_path) as handle:
+            records = json.load(handle).get("records", [])
+    except (OSError, ValueError) as error:
+        return {"error": str(error)}
+    record = next((r for r in records if str(r.get("sourceID", "")).upper() == source_id.upper()), None)
+    if not record:
+        return {"error": "no record"}
+    fingerprint = (record.get("recordedIdentity") or {}).get("fingerprint") or {}
+
+    def iso(knowledge):
+        value = knowledge.get("value") if isinstance(knowledge, dict) else None
+        if not isinstance(value, (int, float)):
+            return value
+        return dt.datetime.fromtimestamp(value + 978307200, dt.timezone.utc).isoformat(timespec="milliseconds")
+    return {"creation": iso(fingerprint.get("creationDate")), "modification": iso(fingerprint.get("contentModificationDate")),
+            "fileIdentifier": (fingerprint.get("fileIdentifier") or {}).get("value")}
 
 
 def await_digest(dev, host, path, sha, timeout=AWAIT_TIMEOUT):
@@ -646,7 +665,9 @@ def main():
     record = {"fixture": FIXTURE, "split": args.split, "commit": git("rev-parse", "HEAD"), "probeSha256": local_sum,
               "freeze": "m1-freeze-2", "interpretation": "ww-003-fixture-protocol.md §4.2.1",
               "requiredCommits": os.environ.get("WW_REQUIRED_COMMITS", ""), "cells": CELL_NAMES,
-              "label": "two-host evidence: Mac (host A) + Mac mini 'Macsimus' (host B), same Apple account, iCloud Drive",
+              "label": "two-host evidence (Mac + Mac mini), same Apple account, iCloud Drive, synthetic data only",
+              "hostLabels": {"A": "this Mac (MacBook, macOS 27.0.1, 18-core, 128 GiB)",
+                             "B": "Mac mini (Macsimus, Apple M2 Pro, macOS 27.0.1, 12-core/32 GiB)"},
               "hosts": {"A": host_record(dev, "A"), "B": host_record(dev, "B")}, "clockOffsetStart": dev.measure_offset(),
               "counts": counts, "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "trialRoot": TRIAL_ROOT,
               "trees": {p: git("rev-parse", f"HEAD:{p}") for p in ["Packages/WaveWranglerKit/Sources/WWPersistence",
