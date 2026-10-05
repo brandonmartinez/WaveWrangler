@@ -163,6 +163,25 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             } else {
                 check(false, "Close while conflicted asks how to keep the changes")
             }
+            // The way forward the refusal offers ("Save them as a new document"): Save As… (⌥⇧⌘S) by keyboard.
+            if window.exists {
+                let copy = workDirectory.appending(path: "Conflict Mine.wwshow")
+                window.typeKey("s", modifierFlags: [.command, .shift, .option])
+                let panelShown = app.sheets.buttons["Save"].waitForExistence(timeout: 5) || app.buttons["Save"].waitForExistence(timeout: 2)
+                check(panelShown, "Save As… panel shown from the conflicted window (⌥⇧⌘S)")
+                if panelShown {
+                    app.typeKey("a", modifierFlags: .command)
+                    app.typeText("Conflict Mine")
+                    app.typeKey("g", modifierFlags: [.command, .shift])
+                    Thread.sleep(forTimeInterval: 0.5)
+                    app.typeText(workDirectory.path + "\r")
+                    Thread.sleep(forTimeInterval: 0.5)
+                    app.typeKey(.return, modifierFlags: [])
+                    check(Acceptance.waitFor(timeout: 10) { self.diskTitle(copy) == "Mine" }, "Save As from conflict wrote the user's edits to a new document: \(diskTitle(copy) ?? "nil")")
+                    let status = element("ww.show.saveStatus")
+                    Acceptance.record(self, "T16 after Save As: window title \(window.title), status \(value(status)), copy \(diskTitle(copy) ?? "nil"), other \(diskTitle(document) ?? "nil")")
+                }
+            }
             check(diskTitle(document) == "Other Writer", "other version byte-unchanged at the end")
         }
     }

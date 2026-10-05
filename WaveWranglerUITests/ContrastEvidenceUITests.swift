@@ -247,8 +247,23 @@ final class ContrastEvidenceUITests: XCTestCase {
             textOnAccent("Toolbar selected destination 'Setup' (accent 25% fill)", app.descendants(matching: .any)["ww.show.destination.setup"])
             app.typeKey("i", modifierFlags: [.command, .shift])
             Thread.sleep(forTimeInterval: 1.5)
-            let include = app.descendants(matching: .any)["ww.import.row.0.include"]
-            fill("Import review checkbox 'Include' (checked)", include, assert: isOn(include))
+            // Row 0 is the selected row: there the checkbox's state is its white checkmark on the accent fill
+            // (the fill sits on the selection highlight), so measure the checkmark against the fill. Row 1 is an
+            // ordinary row: measure the fill against its surroundings.
+            let selectedInclude = app.descendants(matching: .any)["ww.import.row.0.include"]
+            if selectedInclude.exists, isOn(selectedInclude) {
+                let shot = selectedInclude.screenshot()
+                Acceptance.attach(self, png: shot.pngRepresentation, name: "accent-\(appearance)-checkmark-selected-row.png")
+                let m = ContrastMeter.measure(shot.image) ?? [:]
+                let p75 = m["glyphP75"] as? Double ?? 0
+                rows.append(["control": "Import review checkbox in selected row: checkmark vs accent fill", "kind": "glyph on accent",
+                             "frame": "\(selectedInclude.frame)", "threshold": 3.0].merging(m) { $1 })
+                XCTAssertGreaterThanOrEqual(p75, 3.0, "\(appearance) checkmark vs fill p75 \(p75) (\(m["text"] ?? "") on \(m["background"] ?? ""))")
+            } else {
+                rows.append(["control": "Import review checkbox in selected row", "result": selectedInclude.exists ? "not checked" : "not found"])
+            }
+            let include = app.descendants(matching: .any)["ww.import.row.1.include"]
+            fill("Import review checkbox 'Include' (checked, unselected row)", include, assert: isOn(include))
             app.typeKey(.escape, modifierFlags: [])
             app.terminate()
 
