@@ -11,8 +11,8 @@
       "path": ".github/agents/squad.agent.md",
       "archived_original_sha256": "69697f343c962ec7c0032d6130e41de133ba2adbc277e81a2a00c87df16da039",
       "archived_original_bytes": 83661,
-      "published_sha256": "4284fa80f9df0b58f2e1b0a151302f1abc6dc520c10eae4133a16a243557700f",
-      "published_bytes": 88321,
+      "published_sha256": "1d6cbc0a7ef9b276b3d4db6b65a22293ca32fbfe04963df4f6cd188c92f4c6e9",
+      "published_bytes": 88625,
       "byte_identical": false,
       "local_pointer_redaction_applied": false,
       "publication_notice_link_or_policy_edit_applied": true
@@ -361,8 +361,8 @@
       "path": ".squad/decisions.md",
       "archived_original_sha256": "cedc91eed65c29ee687a5483c43bf65c2a88a26a03d2ada8a3c406fa34d1beba",
       "archived_original_bytes": 4636,
-      "published_sha256": "063b991306695f2fc455b34229deec25d2c7a87da8edaeded2ff0bb2a978bae5",
-      "published_bytes": 8130,
+      "published_sha256": "371d25f079ccef0eb45099f5330145742366ec23d0ba0d80ab94fadd0ebc6410",
+      "published_bytes": 8499,
       "byte_identical": false,
       "local_pointer_redaction_applied": false,
       "publication_notice_link_or_policy_edit_applied": true

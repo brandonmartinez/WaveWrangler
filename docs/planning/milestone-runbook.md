@@ -60,6 +60,8 @@ Resolve ordinary engineering choices autonomously inside accepted scope. Try up 
 
 Pasting a named kickoff authorizes that milestone's repository code/build/test, dependency restores for changed manifests or verified missing dependencies, isolated branches/worktrees, commits, push, independently reviewed PR merges and relevant GitHub issue updates. It does **not** authorize recording inspection/processing, model body downloads/native asset provisioning, provider/cloud/network trials, GUI/OS settings, signing credentials or external podcast publication.
 
+For future M1 engineering, this includes minimal ordinary native **build/test CI** declared as M1 code, including `.github/workflows`. It does not include repository/permission settings, auto-Squad dispatch, deployment/upload/release automation or signing credentials. The documentation-publication session itself remains **docs-only with no workflow changes**; do not carry that phase-specific workflow ban into future authorized build/test work.
+
 Ask only when genuinely needed: exact media/provider/model assets, native provisioning/credential/GUI/destructive action, inaccessible required artifacts or an unresolved product-scope conflict. Request precise scope/destination/consequence and continue independent work. Do not reopen the 20 settled Q01-Q10 facets or ask for routine technical choices. Source downloads default ON in-app are not permission for an agent to inspect original samples. No external services receive recordings. Model/runtime availability stays UNKNOWN until actually observed. Public-signing/reference-device/broader participant work does not block safe internal use under the user's explicit split, but blocked core safety does.
 
 ## Bugs, issue closure and milestone exit
