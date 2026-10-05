@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 import WWCore
 import WWEpisodeSetup
@@ -19,6 +20,95 @@ enum EpisodeSetupIntegration {
         }
         SourceCommands.handler = SetupSourceCommandHandler.shared
         SetupMenus.installIfNeeded()
+        SetupReturnKey.install()
+    }
+}
+
+/// Keeps keyboard focus with the table whose selection just changed. Selecting a row in the SwiftUI
+/// Table can leave the show sidebar as first responder, so Return, arrows and Delete would act on the
+/// sidebar instead of the row the user picked. Never takes focus from text editing.
+@MainActor
+enum SetupTableFocus {
+    static func focus(_ identifier: String, in window: NSWindow?) {
+        DispatchQueue.main.async {
+            guard let window, window.attachedSheet == nil, let responder = window.firstResponder,
+                  !(responder is NSText) else { return }
+            guard let table = find(identifier, in: window.contentView) else {
+                #if DEBUG
+                SetupReturnKey.log.notice("Focus: no table \(identifier, privacy: .public)")
+                #endif
+                return
+            }
+            if let view = responder as? NSView, view === table || view.isDescendant(of: table) { return }
+            let moved = window.makeFirstResponder(table)
+            #if DEBUG
+            SetupReturnKey.log.notice("Focus: \(identifier, privacy: .public) from \(String(describing: type(of: responder)), privacy: .public) moved \(moved)")
+            #endif
+        }
+    }
+
+    static func find(_ identifier: String, in view: NSView?) -> NSTableView? {
+        guard let view else { return nil }
+        if let table = view as? NSTableView, table.accessibilityIdentifier() == identifier { return table }
+        for subview in view.subviews {
+            if let table = find(identifier, in: subview) { return table }
+        }
+        return nil
+    }
+}
+
+/// Return (or keypad Enter) in the Setup Sources or Speakers table moves to the details' first editable
+/// field, opening them when collapsed (K08/K09, #104). An explicit AppKit handler, because the SwiftUI
+/// Table doesn't deliver Return to `onKeyPress` or its primary action. It acts only when one of those two
+/// tables is the first responder of a show window with no sheet, so Return keeps its meaning everywhere
+/// else (default buttons, text fields, Import Review).
+@MainActor
+enum SetupReturnKey {
+    static let tableIdentifiers: Set<String> = ["ww.setup.sources", "ww.setup.speakers"]
+    private static var monitor: Any?
+    #if DEBUG
+    static let log = Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "setup.keys")
+    #endif
+
+    static func install() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handle(event) ? nil : event
+        }
+    }
+
+    private static func handle(_ event: NSEvent) -> Bool {
+        guard event.keyCode == 36 || event.keyCode == 76,
+              event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+              let window = event.window ?? NSApp.keyWindow, window.attachedSheet == nil,
+              let controller = EpisodeSetupViewController.controller(for: window) else { return false }
+        let responder = window.firstResponder
+        let inTable = isSetupTable(responder)
+        #if DEBUG
+        log.notice("Return: responder \(String(describing: responder.map { type(of: $0) }), privacy: .public) id \((responder as? NSView)?.accessibilityIdentifier() ?? "-", privacy: .public) handled \(inTable)")
+        #endif
+        guard inTable else { return false }
+        controller.model.requestInspectorFocus()
+        return true
+    }
+
+    /// Whether `responder` is (inside) the Sources or Speakers table: identified by accessibility
+    /// identifier, or as a non-sidebar table in a show window hosting Setup (the show sidebar is the only
+    /// other table there, and it is a source list).
+    static func isSetupTable(_ responder: NSResponder?) -> Bool {
+        if let table = responder as? NSTableView, table.style != .sourceList,
+           table.selectionHighlightStyle != .sourceList,
+           !table.accessibilityIdentifier().hasPrefix("ww.show.") {
+            return true
+        }
+        var view = responder as? NSView
+        var depth = 0
+        while let current = view, depth < 4 {
+            if tableIdentifiers.contains(current.accessibilityIdentifier()) { return true }
+            view = current.superview
+            depth += 1
+        }
+        return false
     }
 }
 

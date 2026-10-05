@@ -40,6 +40,13 @@
 			);
 			target = 04EB296F827131170B2A4D94 /* WaveWrangler */;
 		};
+		7D1C4A2E9F3B5A6C8E0D2F41 /* Exceptions for "WaveWrangler" folder in "WaveWranglerTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Commands/ConfirmationButtons.swift,
+			);
+			target = C13E785C401E67854374EF9C /* WaveWranglerTests */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -47,6 +54,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				4EBFAC63F56D497130CBA266 /* Exceptions for "WaveWrangler" folder in "WaveWrangler" target */,
+				7D1C4A2E9F3B5A6C8E0D2F41 /* Exceptions for "WaveWrangler" folder in "WaveWranglerTests" target */,
 			);
 			path = WaveWrangler;
 			sourceTree = "<group>";
