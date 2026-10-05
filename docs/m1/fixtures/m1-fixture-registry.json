@@ -1,12 +1,82 @@
 {
-  "registryVersion": "m1-fixtures-v2-draft",
-  "date": "2026-10-04",
+  "registryVersion": "m1-fixtures-v3-frozen",
+  "date": "2026-10-05",
   "generatedBy": "docs/m1/fixtures/generate-registry.py (do not hand-edit; regenerate)",
   "owner": "Lead (protocol); WW-003 informational owner Pipeline",
   "issue": "https://github.com/brandonmartinez/WaveWrangler/issues/5",
   "protocol": "docs/m1/ww-003-fixture-protocol.md",
-  "status": "PROTOCOL-DEFINED / NOT FROZEN / NOT EXECUTED",
+  "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT PENDING",
   "freezeRule": "Each family is frozen (generator source hash, recipe, truth, counts, gate) in a dated freeze record before its first holdout case runs. Counts may increase before freeze; never decrease below a frozen gate minimum without explicit Lead/Brandon approval.",
+  "freeze": {
+    "freezeID": "m1-freeze-1",
+    "date": "2026-10-05",
+    "recordedBy": "Lead (WW-003 protocol author), at the M1 coordinator's direction",
+    "baseCommit": "7087aa33b07b805defa024bdc3af1aa8e975b7ed",
+    "baseCommitNote": "main at the time this freeze was authored (merge of PR #60). The freeze takes effect at the merge commit of the PR that adds this record.",
+    "scope": "Every entry whose permission class is authorized-synthetic or authorized-user-grant: ID, generator recipe, expected truth, split (calibration/holdout counts and unit), gate values and supported-claim limits exactly as written in this registry. Not-authorized entries are frozen only after exact consent is relayed. M1-USER-001 is a manual, non-statistical validation and is not frozen.",
+    "gateChanges": "None. Gate values, truth definitions and per-entry counts are unchanged from the protocol merged in PR #51 (m1-fixtures-v2-draft). The only registry change is the addition of M1-SRC-ON-002-REVIEW, which already ran on main.",
+    "deviation": "RETROACTIVE FREEZE. The protocol was defined at the PR #51 merge but was not frozen before execution. Runs reported in PRs #54, #56, #57, #58 and #60 were made from the seeded registry derivation without a dated freeze record, so they are labelled PRE-FREEZE and are retained unchanged, never relabelled as holdout.",
+    "preFreezeExecutions": [
+      {
+        "pr": "https://github.com/brandonmartinez/WaveWrangler/pull/54",
+        "families": "M1-REF-001..017, M1-SRC-OFF-001, M1-SRC-ON-001/002, M1-SRC-ON-002-REVIEW (lifecycle matrix); M1-SRC-ON-PROV-001 (iCloud trial, grant C)"
+      },
+      {
+        "pr": "https://github.com/brandonmartinez/WaveWrangler/pull/58",
+        "families": "lifecycle matrix re-runs incl. M1-REF-015 stall variants"
+      },
+      {
+        "pr": "https://github.com/brandonmartinez/WaveWrangler/pull/56",
+        "families": "M1-DUR-* (fault-injection harness, process kills, two-process conflicts, timings), M1-DUR-024 (iCloud trial, grant C), M1-DUR-026 native autosave XCUITests (grant A)"
+      },
+      {
+        "pr": "https://github.com/brandonmartinez/WaveWrangler/pull/57",
+        "families": "M1-SCALE-001 model-level timings; M1-A11Y-001 partial XCUITest keyboard flows and audits (grant A)"
+      },
+      {
+        "pr": "https://github.com/brandonmartinez/WaveWrangler/pull/60",
+        "families": "library regrant/schema 2 tests within M1-DUR-019/022/023/029 strata"
+      }
+    ],
+    "postFreezeRule": "A run counts as post-freeze holdout only when it executes on a commit that contains this freeze record's merge commit, and is reported with commit SHA, host, every case (including failures and exclusions) and actual counts. Harness counts may exceed the frozen holdout minimums; they never fall below them. A change to a frozen family's generator, truth, counts or gate requires a new dated freeze revision with fresh holdout; the earlier run is retained. Adding unrelated test files does not change a frozen family.",
+    "generatorSourceTreesAtBase": {
+      "note": "git tree object IDs at baseCommit (verify with: git rev-parse <baseCommit>:<path>). The test code in these trees implements the frozen generators and truth checks.",
+      "Packages/WaveWranglerKit/Tests/WWSourcesTests": "b8698a4f4889dd83c9c4e20a7852a18093765e29",
+      "Packages/WaveWranglerKit/Tests/WWPersistenceTests": "11be08b1ed2bed02eff235375c5693255739e284",
+      "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "fd55f678056943dd946b7f9440c0a6653c9cd6f5",
+      "Packages/WaveWranglerKit/Tests/WWOrganizerTests": "ba48e1362e460df541df75459ca0b44b224a9997",
+      "Packages/WaveWranglerKit/Tests/WWCoreTests": "20280f521d55436e41b5f7906ad280c042ff03f3",
+      "WaveWranglerTests": "7e1d35b09de7b68ec61289a4c75ba7e50837c301",
+      "WaveWranglerUITests": "d24d20620b51b9e9b112c318c827f4c61107d011"
+    },
+    "familyGenerators": {
+      "durability": [
+        "Packages/WaveWranglerKit/Tests/WWPersistenceTests",
+        "Packages/WaveWranglerKit/Sources/WWPersistenceProbe",
+        "WaveWranglerUITests (M1-DUR-026)"
+      ],
+      "reference": [
+        "Packages/WaveWranglerKit/Tests/WWSourcesTests",
+        "WaveWranglerUITests (M1-REF-020)"
+      ],
+      "organization": [
+        "Packages/WaveWranglerKit/Tests/WWSourcesTests",
+        "Packages/WaveWranglerKit/Tests/WWCoreTests"
+      ],
+      "source-availability": [
+        "Packages/WaveWranglerKit/Tests/WWSourcesTests"
+      ],
+      "scale": [
+        "Packages/WaveWranglerKit/Tests/WWOrganizerTests",
+        "Packages/WaveWranglerKit/Tests/WWPersistenceTests"
+      ],
+      "accessibility": [
+        "WaveWranglerUITests",
+        "Packages/WaveWranglerKit/Tests/WWOrganizerTests"
+      ]
+    },
+    "host": "macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, 18-core Apple silicon, 128 GiB -- claimed internal host, not the macOS 26/16 GB reference"
+  },
   "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
   "claimedHost": "macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), 18-core Apple silicon, 128 GiB -- not the macOS 26/16 GB reference",
   "userGrants20261004": {
@@ -138,9 +208,9 @@
   ],
   "nsdocumentPathCoverage": "NSDocument path evidences P1-P3 and P5-P7 deterministically via public overrides (writeSafely override before/after super, write(to:ofType:for:originalContentsURL:) throw, completion handler, index entry). It does NOT deterministically evidence interruption inside AppKit's safe replace (P4); that boundary is evidenced only at the WWPersistence publisher level plus non-deterministic process kills. Any NSDocument claim about P4 is limited to 'AppKit stock safe-save, not independently interrupted'.",
   "counts": {
-    "entries": 62,
+    "entries": 63,
     "byPermissionClass": {
-      "authorized-synthetic": 50,
+      "authorized-synthetic": 51,
       "authorized-user-grant": 7,
       "consent-relayed-manual": 1,
       "not-authorized": 4
@@ -148,8 +218,8 @@
     "consentBlockedEntries": 4,
     "consentBlockedVariants": 1,
     "authorizedSynthetic": {
-      "calibration": 805,
-      "holdout": 8611
+      "calibration": 815,
+      "holdout": 8711
     },
     "authorizedUserGrant": {
       "calibration": 23,
@@ -158,7 +228,8 @@
     "ww006LifecycleHoldout": 1110,
     "showPublicationBoundaries": 7,
     "libraryPublicationBoundaries": 6,
-    "perBoundaryHoldoutMinimum": 100
+    "perBoundaryHoldoutMinimum": 100,
+    "frozenEntries": 58
   },
   "fixtures": [
     {
@@ -190,7 +261,7 @@
         "unit": "documents"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-002",
@@ -220,7 +291,7 @@
         "unit": "timing samples"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Timing is claimed-host only; not an autosave-cadence or reference-device claim (WW-052).",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "frozenGate": "<=2 s provisional (WW-005)"
     },
     {
@@ -251,7 +322,7 @@
         "unit": "documents"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Model/AppKit-object level; native Close/Quit UI is M1-DUR-026.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-004",
@@ -281,7 +352,7 @@
         "unit": "interleavings"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Addresses AS01 at object level only; native GUI replay is M1-DUR-026.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-005",
@@ -311,7 +382,7 @@
         "unit": "documents"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-006",
@@ -342,7 +413,7 @@
         "unit": "interruptions (10 cal / 100 holdout per boundary per applicable path: 6 boundaries x 2 paths + P4 publisher-only = 13 cells)"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Injected exceptions are not power loss or provider-sync interruptions. NSDocument path evidences P1-P3 and P5-P7 deterministically via public overrides (writeSafely override before/after super, write(to:ofType:for:originalContentsURL:) throw, completion handler, index entry). It does NOT deterministically evidence interruption inside AppKit's safe replace (P4); that boundary is evidenced only at the WWPersistence publisher level plus non-deterministic process kills. Any NSDocument claim about P4 is limited to 'AppKit stock safe-save, not independently interrupted'.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "boundaries": [
         {
           "id": "P1",
@@ -451,7 +522,7 @@
         "unit": "conflicts"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Same-host writer only; iCloud trial is M1-DUR-024; other providers/two-device are M1-DUR-030/025.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-008",
@@ -481,7 +552,7 @@
         "unit": "interleavings"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Object level; visual/keyboard window behavior is M1-DUR-026/M1-A11Y-001.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-009",
@@ -511,7 +582,7 @@
         "unit": "races"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Local processes; TOCTOU narrowed and detected, not eliminated; not a provider guarantee.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-010",
@@ -542,7 +613,7 @@
         "unit": "documents"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Simulated offline; real iCloud offline is part of M1-DUR-024 only where observable.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-011",
@@ -572,7 +643,7 @@
         "unit": "cancellations"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Native save-panel cancel is M1-DUR-026 (grant A).",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-012",
@@ -602,7 +673,7 @@
         "unit": "retries"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-013",
@@ -632,7 +703,7 @@
         "unit": "documents"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Injected, not a physically full volume. The real disk-image variant is NOT authorized.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "variants": [
         {
           "id": "M1-DUR-013-real-volume",
@@ -673,7 +744,7 @@
         "unit": "operations"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Native panel UX is M1-DUR-026 (grant A).",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-015",
@@ -704,7 +775,7 @@
         "unit": "documents"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-016",
@@ -734,7 +805,7 @@
         "unit": "documents"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Synthetic old schema only until a real prior M1 schema exists.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-017",
@@ -764,7 +835,7 @@
         "unit": "documents"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-018",
@@ -794,7 +865,7 @@
         "unit": "documents"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "frozenGate": "100% refusal (WW-005)"
     },
     {
@@ -826,7 +897,7 @@
         "unit": "interruptions (10/100 per location stratum)"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "locationStrata": [
         "app-container (default)",
         "user-chosen-folder (synthetic temp folder reached via read-write security-scoped bookmark)"
@@ -861,7 +932,7 @@
         "unit": "rebuilds"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "frozenGate": "zero semantic loss (WW-005)"
     },
     {
@@ -892,7 +963,7 @@
         "unit": "kills (5 cal / 100 holdout per boundary, publisher path)"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Process kill is not power loss or kernel panic. NSDocument path evidences P1-P3 and P5-P7 deterministically via public overrides (writeSafely override before/after super, write(to:ofType:for:originalContentsURL:) throw, completion handler, index entry). It does NOT deterministically evidence interruption inside AppKit's safe replace (P4); that boundary is evidenced only at the WWPersistence publisher level plus non-deterministic process kills. Any NSDocument claim about P4 is limited to 'AppKit stock safe-save, not independently interrupted'.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "boundaries": [
         {
           "id": "P1",
@@ -999,7 +1070,7 @@
         "unit": "documents (10/100 per location stratum)"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "locationStrata": [
         "app-container (default)",
         "user-chosen-folder (synthetic temp folder reached via read-write security-scoped bookmark)"
@@ -1034,7 +1105,7 @@
         "unit": "documents (10/100 per location stratum)"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "locationStrata": [
         "app-container (default)",
         "user-chosen-folder (synthetic temp folder reached via read-write security-scoped bookmark)"
@@ -1070,7 +1141,7 @@
         "unit": "trial operations (min holdout: 100 save/autosave publications, 100 conflict attempts, 50 evict/download cycles, 20 recovery cases, 20 library-at-iCloud publications/moves)"
       },
       "supportedClaimLimits": "iCloud Drive on this single Mac only; no OneDrive/Dropbox, second-device or two-machine sync claim; interruption counts at uncontrollable sync boundaries are reported, not claimed as >=100 unless achieved.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-025",
@@ -1131,7 +1202,7 @@
         "unit": "GUI scenarios (per scenario; destructive choices only on synthetic documents)"
       },
       "supportedClaimLimits": "Single claimed host; scripted UI, not human usability; AS01/AS05 stay open until these pass.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-027",
@@ -1163,7 +1234,7 @@
         "unit": "interruptions (10 cal / 100 holdout per boundary per location stratum)"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "boundaries": [
         {
           "id": "L1",
@@ -1241,7 +1312,7 @@
         "unit": "kills (5 cal / 100 holdout per boundary)"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "boundaries": [
         {
           "id": "L1",
@@ -1316,7 +1387,7 @@
         "unit": "relaunch cycles"
       },
       "supportedClaimLimits": "Counts as sandbox evidence only when the host is sandboxed (else labelled non-sandboxed). GUI relaunch variant is part of M1-REF-020 (grant A).",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-DUR-030",
@@ -1377,7 +1448,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1410,7 +1481,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1443,7 +1514,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1476,7 +1547,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1509,7 +1580,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1542,7 +1613,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1575,7 +1646,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1608,7 +1679,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1641,7 +1712,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1674,7 +1745,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1707,7 +1778,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Test double only; real iCloud values are M1-SRC-ON-PROV-001 (grant C).",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1740,7 +1811,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Test double only.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1773,7 +1844,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Test double only.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1806,7 +1877,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Test double only.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1839,7 +1910,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Test double only.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1872,7 +1943,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ],
@@ -1906,7 +1977,7 @@
         "unit": "lifecycle cases"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
       ]
@@ -1939,7 +2010,7 @@
         "unit": "invariant over all REF/SRC cases (not additional cases)"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Harness-side digests of generated files only; the app never hashes sources.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "frozenGate": "zero source writes / substitutions (WW-006)"
     },
     {
@@ -1970,7 +2041,7 @@
         "unit": "episodes"
       },
       "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-REF-020",
@@ -2001,7 +2072,7 @@
         "unit": "GUI scenarios"
       },
       "supportedClaimLimits": "Single claimed host, ad-hoc signed; not Developer ID/notarized/clean-install (WW-041/052).",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-SRC-OFF-001",
@@ -2031,7 +2102,7 @@
         "unit": "workflows"
       },
       "supportedClaimLimits": "LABELLED DEFAULT-OFF METADATA SET. Proves app requests only; OS/provider/picker activity not proven absent. Not evidence for default-ON behavior.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "trialLabel": "default-OFF metadata-only",
       "frozenGate": "zero app content/hash/header/preview/decode/download requests (WW-006)"
     },
@@ -2063,7 +2134,7 @@
         "unit": "workflows"
       },
       "supportedClaimLimits": "LABELLED DEFAULT-ON SYNTHETIC SET. Test double only; does not qualify any real provider.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "trialLabel": "default-ON synthetic double"
     },
     {
@@ -2094,7 +2165,38 @@
         "unit": "interleavings"
       },
       "supportedClaimLimits": "Test double only.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
+      "trialLabel": "default-ON synthetic double"
+    },
+    {
+      "id": "M1-SRC-ON-002-REVIEW",
+      "title": "Setting races and stale transfer states (added after PR #54 review)",
+      "stratum": "source/toggle",
+      "family": "source-availability",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Four seeded interleavings (double): OFF toggled while a refresh's off-main evaluation is held by a deterministic gate; explicit Make Available during an automatic transfer, then OFF; ON download, then OFF, then eviction; a stale notRequested(.awaitingAccess) state followed by fresh evidence."
+      },
+      "expectedTruth": "OFF during a held refresh issues 0 requests; an explicit request survives OFF; after OFF + eviction the state is a fresh notRequested(.availabilityOff) with the Make Available remedy; stale states never mask fresh evidence. Zero leaked scopes, source writes and substitutions.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "interleavings"
+      },
+      "supportedClaimLimits": "Test double only. Added to the matrix during PR #54 review (2026-10-05) and to the registry at the 2026-10-05 freeze; it does not count toward the WW-006 >=1,000 reference total.",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "trialLabel": "default-ON synthetic double"
     },
     {
@@ -2125,7 +2227,7 @@
         "unit": "evict/availability cycles (50 OFF, 50 ON holdout)"
       },
       "supportedClaimLimits": "iCloud Drive on this Mac only, synthetic files only; OFF and ON reported as separately labelled sets; no OneDrive/Dropbox claim.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "trialLabel": "real iCloud: separate default-OFF and default-ON subsets"
     },
     {
@@ -2216,7 +2318,7 @@
         "unit": "timing samples (100 open-first, 100 open-warm, 400 interaction)"
       },
       "supportedClaimLimits": "Claimed host only (macOS 27.0.1/128 GiB) -- NOT the macOS 26/16 GB reference (WW-052). Model/view-model and (grant A) native-window measurements reported separately.",
-      "evidenceStatus": "not-yet-executed",
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry",
       "frozenGate": "p95 open <1 s, interaction <100 ms (WW-007, provisional)"
     },
     {
@@ -2248,7 +2350,7 @@
         "unit": "full suite runs (each covers every core task)"
       },
       "supportedClaimLimits": "Scripted, single host; not participant usability (WW-052).",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-A11Y-002",
@@ -2279,7 +2381,7 @@
         "unit": "full suite runs"
       },
       "supportedClaimLimits": "Single operator/host; not broader participant studies (WW-052).",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-A11Y-003",
@@ -2310,7 +2412,7 @@
         "unit": "full suite runs"
       },
       "supportedClaimLimits": "Single host; measured contrast ratios reported where tooling allows; reference device -> WW-052.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-A11Y-004",
@@ -2341,7 +2443,7 @@
         "unit": "audit run"
       },
       "supportedClaimLimits": "Static/code-level only; NOT a VoiceOver or human usability result.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
     },
     {
       "id": "M1-USER-001",
@@ -2372,7 +2474,7 @@
         "unit": "manual validation session (not a statistical sample)"
       },
       "supportedClaimLimits": "One user-provided episode; supports only 'the organizer workflow was manually exercised on one real episode copy'. No media, format, provider, accuracy or performance claim.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "manual; not frozen (non-statistical); not yet reported in this registry"
     }
   ],
   "laterMilestonePointers": {
