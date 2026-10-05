@@ -305,6 +305,9 @@ func appendBytes(_ url: URL, count: Int) throws {
     try handle.write(contentsOf: Data(repeating: 0x5A, count: count))
 }
 
+/// Fixed show used by single-show tests.
+let testShow = ShowID(UUID(uuidString: "00000000-0000-0000-0000-00000000005E")!)
+
 func makeContext(_ io: HarnessIO) -> SourceAccessContext {
     SourceAccessContext(io: io, ledger: SecurityScopeLedger())
 }

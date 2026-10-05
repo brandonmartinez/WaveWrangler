@@ -25,8 +25,8 @@ struct SourceAccessTests {
 
     @Test func accessRecordRoundTripsWithoutPathIdentity() throws {
         let record = DeviceAccessRecord(
-            sourceID: SourceID(),
             showID: ShowID(),
+            sourceID: SourceID(),
             bookmark: Data([1, 2, 3]),
             lastKnownPath: "/tmp/synthetic/take.wav",
             recordedIdentity: RecordedIdentity(
@@ -46,7 +46,7 @@ struct SourceAccessTests {
         )
         let decoded = try JSONDecoder().decode(DeviceAccessRecord.self, from: JSONEncoder().encode(record))
         #expect(decoded == record)
-        #expect(decoded.id == record.sourceID)
+        #expect(decoded.id == record.key)
     }
 
     @Test func portableSourceRecordCarriesNoDeviceAccessFields() throws {

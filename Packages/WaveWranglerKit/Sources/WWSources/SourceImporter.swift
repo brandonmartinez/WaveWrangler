@@ -50,7 +50,8 @@ public struct ImportedSource: Sendable, Equatable {
     public var accessRecord: DeviceAccessRecord
     /// Path components relative to the selected folder (used only for provisional suggestions).
     public var relativePathComponents: [String]
-    /// An existing access record whose identity evidence names the same file object (never merged automatically).
+    /// An existing access record *in the same show* whose identity evidence names the same file object
+    /// (never merged automatically).
     public var possibleDuplicateOf: SourceID?
 }
 
@@ -81,7 +82,7 @@ public struct SourceImporter: Sendable {
 
     public func plan(
         selection: [URL],
-        showID: ShowID? = nil,
+        showID: ShowID,
         existingRecords: [DeviceAccessRecord] = []
     ) async throws -> ImportPlan {
         var items: [ImportedSource] = []
@@ -89,7 +90,7 @@ public struct SourceImporter: Sendable {
         var failures: [ImportFailure] = []
         var seenObjects: Set<String> = []
         let existingByObject = Dictionary(
-            existingRecords.compactMap { record -> (String, SourceID)? in
+            existingRecords.filter { $0.showID == showID }.compactMap { record -> (String, SourceID)? in
                 guard let key = record.recordedIdentity.flatMap({ Self.objectKey($0.fingerprint) }) else { return nil }
                 return (key, record.sourceID)
             },
@@ -194,8 +195,8 @@ public struct SourceImporter: Sendable {
                     let now = context.now()
                     let sourceID = SourceID()
                     let record = DeviceAccessRecord(
-                        sourceID: sourceID,
                         showID: showID,
+                        sourceID: sourceID,
                         bookmark: bookmark,
                         lastKnownPath: resolvedPath,
                         lastKnownVolumeUUID: metadata.fingerprint.volumeUUID.value,

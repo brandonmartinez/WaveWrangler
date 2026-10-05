@@ -42,7 +42,7 @@ struct ScopeLedgerTests {
 struct EvaluatorTests {
     @Test func noAccessRecordMeansRelinkRequired() {
         let io = HarnessIO()
-        let evaluation = SourceAvailabilityEvaluator(context: makeContext(io)).evaluate(sourceID: SourceID(), record: nil, setting: .on)
+        let evaluation = SourceAvailabilityEvaluator(context: makeContext(io)).evaluate(key: DeviceAccessKey(showID: testShow, sourceID: SourceID()), record: nil, setting: .on)
         #expect(evaluation.observation.access == .needsRegrant)
         #expect(evaluation.observation.location == .unknown)
         #expect(evaluation.observation.identity == .unverified(.noRecordedEvidence))
@@ -56,12 +56,12 @@ struct EvaluatorTests {
         let original = try tree.file("take.wav", bytes: 64, rng: &rng)
         let io = HarnessIO()
         let context = makeContext(io)
-        let plan = try await SourceImporter(context: context).plan(selection: [original])
+        let plan = try await SourceImporter(context: context).plan(selection: [original], showID: testShow)
         let record = try #require(plan.items.first?.accessRecord)
         try FileManager.default.moveItem(at: original, to: tree.sources.appendingPathComponent("moved.wav"))
         try tree.file("take.wav", bytes: 64, rng: &rng)
 
-        let evaluation = SourceAvailabilityEvaluator(context: context).evaluate(sourceID: record.sourceID, record: record, setting: .on)
+        let evaluation = SourceAvailabilityEvaluator(context: context).evaluate(key: record.key, record: record, setting: .on)
         #expect(evaluation.refreshedRecord == nil)
         guard case .mismatch = evaluation.observation.identity else {
             Issue.record("expected mismatch, got \(evaluation.observation.identity)")
@@ -78,16 +78,16 @@ struct EvaluatorTests {
         let file = try tree.file("rec/a.wav", bytes: 32, rng: &rng)
         let io = HarnessIO()
         let context = makeContext(io)
-        let record = try #require(try await SourceImporter(context: context).plan(selection: [file]).items.first?.accessRecord)
+        let record = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
 
         chmod(file.deletingLastPathComponent().path, 0)
-        let dirDenied = SourceAvailabilityEvaluator(context: context).evaluate(sourceID: record.sourceID, record: record, setting: .on)
+        let dirDenied = SourceAvailabilityEvaluator(context: context).evaluate(key: record.key, record: record, setting: .on)
         chmod(file.deletingLastPathComponent().path, 0o755)
         #expect(dirDenied.observation.access == .denied)
         #expect(dirDenied.observation.location == .unknown)
 
         chmod(file.path, 0)
-        let fileDenied = SourceAvailabilityEvaluator(context: context).evaluate(sourceID: record.sourceID, record: record, setting: .on)
+        let fileDenied = SourceAvailabilityEvaluator(context: context).evaluate(key: record.key, record: record, setting: .on)
         chmod(file.path, 0o644)
         #expect(fileDenied.observation.access == .denied)
         #expect(fileDenied.observation.location == .present)
@@ -124,7 +124,7 @@ struct ImporterTests {
         let before = TreeSnapshot.take(tree.sources)
         let clock = ContinuousClock()
         let start = clock.now
-        let plan = try await SourceImporter(context: context).plan(selection: [tree.sources])
+        let plan = try await SourceImporter(context: context).plan(selection: [tree.sources], showID: testShow)
         let elapsed = clock.now - start
         #expect(TreeSnapshot.take(tree.sources).differences(from: before) == 0)
         #expect(plan.items.count == audio)
@@ -153,8 +153,8 @@ struct ImporterTests {
         var rng = SplitMix64(seed: 5)
         let file = try tree.file("a.wav", bytes: 16, rng: &rng)
         let context = makeContext(HarnessIO())
-        let first = try await SourceImporter(context: context).plan(selection: [file])
-        let second = try await SourceImporter(context: context).plan(selection: [file, tree.sources], existingRecords: first.accessRecords)
+        let first = try await SourceImporter(context: context).plan(selection: [file], showID: testShow)
+        let second = try await SourceImporter(context: context).plan(selection: [file, tree.sources], showID: testShow, existingRecords: first.accessRecords)
         #expect(second.items.count == 1)
         #expect(second.skipped.duplicateSelections == 1)
         #expect(second.items[0].possibleDuplicateOf == first.items[0].sourceRecord.id)
@@ -166,7 +166,7 @@ struct ImporterTests {
         var rng = SplitMix64(seed: 6)
         for index in 0..<200 { try tree.file("f\(index).wav", bytes: 8, rng: &rng) }
         let context = makeContext(HarnessIO())
-        let task = Task { try await SourceImporter(context: context).plan(selection: [tree.sources]) }
+        let task = Task { try await SourceImporter(context: context).plan(selection: [tree.sources], showID: testShow) }
         task.cancel()
         _ = try? await task.value
         #expect(context.ledger.snapshot.openScopes == 0)
@@ -208,13 +208,13 @@ struct RelinkTests {
         var rng = SplitMix64(seed: 7)
         let file = try tree.file("a.wav", bytes: 16, rng: &rng)
         let context = makeContext(HarnessIO())
-        let record = try #require(try await SourceImporter(context: context).plan(selection: [file]).items.first?.accessRecord)
+        let record = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
         let relink = RelinkEvaluator(context: context)
 
         let moved = tree.sources.appendingPathComponent("sub/a-renamed.wav")
         try FileManager.default.createDirectory(at: moved.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.moveItem(at: file, to: moved)
-        let exact = relink.evaluate(candidate: moved, for: record.sourceID, record: record)
+        let exact = relink.evaluate(candidate: moved, for: record.key, record: record)
         #expect(exact.comparison == .matches)
         #expect(!exact.requiresConfirmation)
         let applied = try relink.apply(exact, to: record, userConfirmed: false)
@@ -222,18 +222,18 @@ struct RelinkTests {
 
         let copy = tree.sources.appendingPathComponent("copy.wav")
         try FileManager.default.copyItem(at: moved, to: copy)
-        let copied = relink.evaluate(candidate: copy, for: record.sourceID, record: applied)
+        let copied = relink.evaluate(candidate: copy, for: record.key, record: applied)
         #expect(copied.requiresConfirmation)
         #expect(throws: RelinkError.self) { try relink.apply(copied, to: applied, userConfirmed: false) }
         let confirmed = try relink.apply(copied, to: applied, userConfirmed: true)
         #expect(confirmed.recordedIdentity?.confirmation == .userConfirmed)
         #expect(confirmed.relinkHistory.count == 2)
 
-        let crossMachine = relink.evaluate(candidate: copy, for: SourceID(), record: nil)
+        let crossMachine = relink.evaluate(candidate: copy, for: DeviceAccessKey(showID: testShow, sourceID: SourceID()), record: nil)
         #expect(crossMachine.comparison == .unknown(FingerprintField.allCases))
         #expect(crossMachine.requiresConfirmation)
 
-        let linkedTwice = relink.evaluate(candidate: copy, for: SourceID(), record: nil, otherRecords: [confirmed])
+        let linkedTwice = relink.evaluate(candidate: copy, for: DeviceAccessKey(showID: testShow, sourceID: SourceID()), record: nil, otherRecords: [confirmed])
         #expect(linkedTwice.alreadyLinkedTo == record.sourceID)
         #expect(context.ledger.snapshot.openScopes == 0)
     }
@@ -248,7 +248,7 @@ struct TransferControllerTests {
         let io = HarnessIO()
         io.simulate(file, SimulatedCloudItem(script: [.progress(0.5), .complete]))
         let controller = SourceTransferController(context: makeContext(io), policy: TransferPolicy(pollInterval: .milliseconds(1), stallTimeout: .seconds(5)))
-        let id = SourceID()
+        let id = DeviceAccessKey(showID: testShow, sourceID: SourceID())
         #expect(await controller.makeAvailable(id, at: file, setting: .off) == .notRequested(.availabilityOff))
         #expect(io.count(.downloadRequest) == 0)
         #expect(await controller.makeAvailable(id, at: file, setting: .off, userRequested: true) == .requested)
@@ -264,9 +264,9 @@ struct DeviceAccessStoreTests {
         let tree = try SyntheticTree(label: "store")
         let url = tree.root.appendingPathComponent("store/records.json")
         let store = FileDeviceAccessStore(fileURL: url)
-        let record = DeviceAccessRecord(sourceID: SourceID(), bookmark: Data([1]), lastKnownPath: "/x", createdAt: Date(timeIntervalSince1970: 0))
+        let record = DeviceAccessRecord(showID: testShow, sourceID: SourceID(), bookmark: Data([1]), lastKnownPath: "/x", createdAt: Date(timeIntervalSince1970: 0))
         try await store.save(record)
-        #expect(try await FileDeviceAccessStore(fileURL: url).record(for: record.sourceID) == record)
+        #expect(try await FileDeviceAccessStore(fileURL: url).record(for: record.key) == record)
 
         let newer = Data(#"{"schemaVersion":99,"records":[],"future":true}"#.utf8)
         try newer.write(to: url)
@@ -286,10 +286,10 @@ struct MonitorTests {
         let cloud = try tree.file("cloud.wav", bytes: 16, rng: &rng)
         let io = HarnessIO()
         let context = makeContext(io)
-        let plan = try await SourceImporter(context: context).plan(selection: [local, cloud])
+        let plan = try await SourceImporter(context: context).plan(selection: [local, cloud], showID: testShow)
         io.simulate(cloud, SimulatedCloudItem(script: [.progress(0.3), .progress(0.9), .complete]))
         let store = InMemoryDeviceAccessStore()
-        let monitor = SourceAvailabilityMonitor(store: store, context: context, setting: .off, transferPolicy: TransferPolicy(pollInterval: .milliseconds(1), stallTimeout: .seconds(5)))
+        let monitor = SourceAvailabilityMonitor(showID: testShow, store: store, context: context, setting: .off, transferPolicy: TransferPolicy(pollInterval: .milliseconds(1), stallTimeout: .seconds(5)))
         monitor.start()
         try await monitor.adopt(plan.accessRecords)
         let cloudID = plan.items[1].sourceRecord.id
@@ -300,7 +300,7 @@ struct MonitorTests {
 
         await monitor.setAvailabilitySetting(.on)
         #expect(io.count(.downloadRequest) == 1)
-        #expect(await monitor.transfers.waitUntilSettled(cloudID) == .idle)
+        #expect(await monitor.transfers.waitUntilSettled(DeviceAccessKey(showID: testShow, sourceID: cloudID)) == .idle)
         await monitor.refresh([cloudID])
         #expect(monitor.observations[cloudID]?.residency == .local)
         #expect(io.count(.downloadRequest) == 1)
@@ -359,5 +359,115 @@ struct ForbiddenAPITests {
         // SourceIO requirements: metadata, listing, read-only bookmarks, scopes, download request/progress.
         let mirror = HarnessIO.Op.allCases.map(\.rawValue)
         #expect(Set(mirror) == ["metadata", "list", "bookmarkCreate", "bookmarkResolve", "scopeStart", "scopeStop", "downloadRequest", "downloadFraction"])
+    }
+}
+
+@Suite("Duplicated shows keep separate device access")
+struct DuplicatedShowTests {
+    /// A File ▸ Duplicate copy keeps the source IDs but gets a new ShowID.
+    func makeOriginalAndCopy(store: any DeviceAccessStore, tree: SyntheticTree, rng: inout SplitMix64) async throws -> (original: DeviceAccessRecord, copy: DeviceAccessRecord, context: SourceAccessContext) {
+        let file = try tree.file("take.wav", bytes: 32, rng: &rng)
+        let context = makeContext(HarnessIO())
+        let original = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
+        var copy = original
+        copy.showID = ShowID()
+        try await store.save([original, copy])
+        return (original, copy, context)
+    }
+
+    @Test(arguments: ["memory", "file"])
+    func relinkingTheCopyLeavesTheOriginalUntouched(storeKind: String) async throws {
+        let tree = try SyntheticTree(label: "dup-relink")
+        var rng = SplitMix64(seed: 10)
+        let store: any DeviceAccessStore = storeKind == "memory"
+            ? InMemoryDeviceAccessStore()
+            : FileDeviceAccessStore(fileURL: tree.root.appendingPathComponent("store.json"))
+        let (original, copy, context) = try await makeOriginalAndCopy(store: store, tree: tree, rng: &rng)
+        #expect(original.sourceID == copy.sourceID)
+        #expect(original.key != copy.key)
+
+        let other = try tree.file("other.wav", bytes: 48, rng: &rng)
+        let relink = RelinkEvaluator(context: context)
+        let proposal = relink.evaluate(candidate: other, for: copy.key, record: copy, otherRecords: try await store.allRecords())
+        #expect(proposal.requiresConfirmation)
+        #expect(proposal.alreadyLinkedTo == nil)
+        let relinked = try relink.apply(proposal, to: copy, userConfirmed: true)
+        try await store.save(relinked)
+
+        // Reload from a fresh store instance for the file-backed variant.
+        let reread: any DeviceAccessStore = storeKind == "memory" ? store : FileDeviceAccessStore(fileURL: tree.root.appendingPathComponent("store.json"))
+        #expect(try await reread.record(for: original.key) == original)
+        #expect(try await reread.record(for: copy.key) == relinked)
+        #expect(try await reread.records(in: testShow) == [original])
+
+        // Applying the copy's proposal to the original's record is refused.
+        #expect(throws: RelinkError.sourceMismatch) { try relink.apply(proposal, to: original, userConfirmed: true) }
+
+        // Forgetting the copy's grant keeps the original's grant.
+        try await reread.removeRecord(for: copy.key)
+        #expect(try await reread.record(for: original.key) == original)
+        try await reread.removeRecords(in: copy.showID)
+        #expect(try await reread.allRecords() == [original])
+
+        // The original still observes as present and granted.
+        let evaluation = SourceAvailabilityEvaluator(context: context).evaluate(key: original.key, record: original, setting: .on)
+        #expect(evaluation.observation.location == .present)
+        #expect(evaluation.observation.access == .granted)
+    }
+
+    @Test func evaluatorIgnoresARecordFromAnotherShow() async throws {
+        let tree = try SyntheticTree(label: "dup-eval")
+        var rng = SplitMix64(seed: 11)
+        let (original, copy, context) = try await makeOriginalAndCopy(store: InMemoryDeviceAccessStore(), tree: tree, rng: &rng)
+        let evaluation = SourceAvailabilityEvaluator(context: context).evaluate(key: copy.key, record: original, setting: .on)
+        #expect(evaluation.observation.access == .needsRegrant)
+        #expect(evaluation.observation.identity == .unverified(.noRecordedEvidence))
+    }
+
+    @Test @MainActor func monitorsOfTheTwoShowsDoNotCrossWrite() async throws {
+        let tree = try SyntheticTree(label: "dup-monitor")
+        var rng = SplitMix64(seed: 12)
+        let store = InMemoryDeviceAccessStore()
+        let (original, copy, context) = try await makeOriginalAndCopy(store: store, tree: tree, rng: &rng)
+        // Make the original's bookmark stale so a refresh would rewrite it.
+        let moved = tree.sources.appendingPathComponent("moved.wav")
+        try FileManager.default.moveItem(at: tree.sources.appendingPathComponent("take.wav"), to: moved)
+
+        let copyMonitor = SourceAvailabilityMonitor(showID: copy.showID, store: store, context: context, setting: .off)
+        try await copyMonitor.adopt([original])  // a record from another show is not adopted
+        await copyMonitor.refresh([copy.sourceID])
+        #expect(try await store.record(for: original.key) == original)
+        #expect(try await store.record(for: copy.key)?.bookmark != copy.bookmark)  // copy's own bookmark refreshed
+        guard case .moved = copyMonitor.observations[copy.sourceID]?.location else {
+            Issue.record("expected moved")
+            return
+        }
+    }
+}
+
+@Suite("Harness self-checks")
+struct HarnessSelfTests {
+    @Test func snapshotDetectsEveryKindOfSourceChange() throws {
+        let tree = try SyntheticTree(label: "snapshot")
+        var rng = SplitMix64(seed: 13)
+        let file = try tree.file("a.wav", bytes: 32, rng: &rng)
+        let base = TreeSnapshot.take(tree.sources)
+        #expect(TreeSnapshot.take(tree.sources).differences(from: base) == 0)
+        try setDates(file, modification: Date(timeIntervalSince1970: 1_000), creation: nil)
+        #expect(TreeSnapshot.take(tree.sources).differences(from: base) == 1)
+        let touched = TreeSnapshot.take(tree.sources)
+        try appendBytes(file, count: 1)
+        #expect(TreeSnapshot.take(tree.sources).differences(from: touched) == 1)
+        let appended = TreeSnapshot.take(tree.sources)
+        try FileManager.default.moveItem(at: file, to: tree.sources.appendingPathComponent("b.wav"))
+        #expect(TreeSnapshot.take(tree.sources).differences(from: appended) == 2)
+        let renamed = TreeSnapshot.take(tree.sources)
+        chmod(tree.sources.appendingPathComponent("b.wav").path, 0o600)
+        #expect(TreeSnapshot.take(tree.sources).differences(from: renamed) == 1)
+    }
+
+    @Test func seedsFollowTheRegistryDerivation() {
+        #expect(FixtureSeed.derive(fixtureID: "M1-REF-001", split: "holdout", caseIndex: 0) == FixtureSeed.derive(fixtureID: "M1-REF-001", split: "holdout", caseIndex: 0))
+        #expect(FixtureSeed.derive(fixtureID: "M1-REF-001", split: "holdout", caseIndex: 0) != FixtureSeed.derive(fixtureID: "M1-REF-001", split: "calibration", caseIndex: 0))
     }
 }

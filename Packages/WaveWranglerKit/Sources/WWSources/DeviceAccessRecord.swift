@@ -1,16 +1,30 @@
 import Foundation
 import WWCore
 
-/// Device-local mapping from a logical source to this machine's location hint, read-only grant and
+/// Identifies a device-local access record. Source IDs are show-scoped (a duplicated show keeps them),
+/// so records are keyed by show *and* source: relinking or forgetting a source in one show never touches
+/// the same logical source in another show.
+public struct DeviceAccessKey: Sendable, Codable, Hashable, CustomStringConvertible {
+    public var showID: ShowID
+    public var sourceID: SourceID
+
+    public init(showID: ShowID, sourceID: SourceID) {
+        self.showID = showID
+        self.sourceID = sourceID
+    }
+
+    public var description: String { "\(showID)/\(sourceID)" }
+}
+
+/// Device-local mapping from a show's logical source to this machine's location hint, read-only grant and
 /// identity baseline. Never written into canonical (portable) show or library documents: a show opened
 /// on another Mac has no records there and every source starts as "relink required".
 public struct DeviceAccessRecord: Sendable, Codable, Equatable, Identifiable {
     /// Independently versioned access-record schema (see WW-009 C2 version records).
     public static let schemaVersion = 1
 
+    public var showID: ShowID
     public var sourceID: SourceID
-    /// Owning show document, when known (diagnostics and cleanup; not identity).
-    public var showID: ShowID?
     /// Read-only security-scoped bookmark: a permission/location hint, never identity.
     public var bookmark: Data?
     /// Last confirmed absolute path (hint for relink UI only).
@@ -24,11 +38,12 @@ public struct DeviceAccessRecord: Sendable, Codable, Equatable, Identifiable {
     /// Explicit relinks, newest last (audit of user decisions; no paths).
     public var relinkHistory: [RelinkEvent]
 
-    public var id: SourceID { sourceID }
+    public var key: DeviceAccessKey { DeviceAccessKey(showID: showID, sourceID: sourceID) }
+    public var id: DeviceAccessKey { key }
 
     public init(
+        showID: ShowID,
         sourceID: SourceID,
-        showID: ShowID? = nil,
         bookmark: Data? = nil,
         lastKnownPath: String? = nil,
         lastKnownVolumeUUID: String? = nil,
@@ -38,8 +53,8 @@ public struct DeviceAccessRecord: Sendable, Codable, Equatable, Identifiable {
         latestObservation: AvailabilityObservation? = nil,
         relinkHistory: [RelinkEvent] = []
     ) {
-        self.sourceID = sourceID
         self.showID = showID
+        self.sourceID = sourceID
         self.bookmark = bookmark
         self.lastKnownPath = lastKnownPath
         self.lastKnownVolumeUUID = lastKnownVolumeUUID
@@ -64,13 +79,21 @@ public struct RelinkEvent: Sendable, Codable, Equatable {
     }
 }
 
-/// Storage seam for device-local access records.
+/// Storage seam for device-local access records, keyed by (show, source).
 public protocol DeviceAccessStore: Sendable {
-    func record(for sourceID: SourceID) async throws -> DeviceAccessRecord?
+    func record(for key: DeviceAccessKey) async throws -> DeviceAccessRecord?
+    func records(in showID: ShowID) async throws -> [DeviceAccessRecord]
     func allRecords() async throws -> [DeviceAccessRecord]
     func save(_ record: DeviceAccessRecord) async throws
     func save(_ records: [DeviceAccessRecord]) async throws
-    func removeRecord(for sourceID: SourceID) async throws
+    func removeRecord(for key: DeviceAccessKey) async throws
+    func removeRecords(in showID: ShowID) async throws
+}
+
+extension Array where Element == DeviceAccessRecord {
+    func sortedByKey() -> [DeviceAccessRecord] {
+        sorted { $0.key.description < $1.key.description }
+    }
 }
 
 public enum DeviceAccessStoreError: Error, Equatable, Sendable {
@@ -80,17 +103,19 @@ public enum DeviceAccessStoreError: Error, Equatable, Sendable {
 }
 
 public actor InMemoryDeviceAccessStore: DeviceAccessStore {
-    private var records: [SourceID: DeviceAccessRecord] = [:]
+    private var records: [DeviceAccessKey: DeviceAccessRecord] = [:]
 
     public init(_ records: [DeviceAccessRecord] = []) {
-        for record in records { self.records[record.sourceID] = record }
+        for record in records { self.records[record.key] = record }
     }
 
-    public func record(for sourceID: SourceID) -> DeviceAccessRecord? { records[sourceID] }
-    public func allRecords() -> [DeviceAccessRecord] { records.values.sorted { $0.sourceID.description < $1.sourceID.description } }
-    public func save(_ record: DeviceAccessRecord) { records[record.sourceID] = record }
-    public func save(_ records: [DeviceAccessRecord]) { for record in records { self.records[record.sourceID] = record } }
-    public func removeRecord(for sourceID: SourceID) { records[sourceID] = nil }
+    public func record(for key: DeviceAccessKey) -> DeviceAccessRecord? { records[key] }
+    public func records(in showID: ShowID) -> [DeviceAccessRecord] { records.values.filter { $0.showID == showID }.sortedByKey() }
+    public func allRecords() -> [DeviceAccessRecord] { Array(records.values).sortedByKey() }
+    public func save(_ record: DeviceAccessRecord) { records[record.key] = record }
+    public func save(_ records: [DeviceAccessRecord]) { for record in records { self.records[record.key] = record } }
+    public func removeRecord(for key: DeviceAccessKey) { records[key] = nil }
+    public func removeRecords(in showID: ShowID) { records = records.filter { $0.key.showID != showID } }
 }
 
 /// JSON-file store in the app container (Application Support). The store file is the only thing it
@@ -106,7 +131,7 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
     }
 
     public let fileURL: URL
-    private var cache: [SourceID: DeviceAccessRecord]?
+    private var cache: [DeviceAccessKey: DeviceAccessRecord]?
 
     public init(fileURL: URL) {
         self.fileURL = fileURL
@@ -119,12 +144,16 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
         return base.appendingPathComponent("WaveWrangler/DeviceAccess/source-access-records.json", isDirectory: false)
     }
 
-    public func record(for sourceID: SourceID) throws -> DeviceAccessRecord? {
-        try load()[sourceID]
+    public func record(for key: DeviceAccessKey) throws -> DeviceAccessRecord? {
+        try load()[key]
+    }
+
+    public func records(in showID: ShowID) throws -> [DeviceAccessRecord] {
+        try load().values.filter { $0.showID == showID }.sortedByKey()
     }
 
     public func allRecords() throws -> [DeviceAccessRecord] {
-        try load().values.sorted { $0.sourceID.description < $1.sourceID.description }
+        try Array(load().values).sortedByKey()
     }
 
     public func save(_ record: DeviceAccessRecord) throws {
@@ -133,17 +162,24 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
 
     public func save(_ records: [DeviceAccessRecord]) throws {
         var all = try load()
-        for record in records { all[record.sourceID] = record }
+        for record in records { all[record.key] = record }
         try persist(all)
     }
 
-    public func removeRecord(for sourceID: SourceID) throws {
+    public func removeRecord(for key: DeviceAccessKey) throws {
         var all = try load()
-        guard all.removeValue(forKey: sourceID) != nil else { return }
+        guard all.removeValue(forKey: key) != nil else { return }
         try persist(all)
     }
 
-    private func load() throws -> [SourceID: DeviceAccessRecord] {
+    public func removeRecords(in showID: ShowID) throws {
+        let all = try load()
+        let kept = all.filter { $0.key.showID != showID }
+        guard kept.count != all.count else { return }
+        try persist(kept)
+    }
+
+    private func load() throws -> [DeviceAccessKey: DeviceAccessRecord] {
         if let cache { return cache }
         let data: Data
         do {
@@ -166,7 +202,7 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
         }
         do {
             let envelope = try decoder.decode(Envelope.self, from: data)
-            let records = Dictionary(envelope.records.map { ($0.sourceID, $0) }, uniquingKeysWith: { _, newer in newer })
+            let records = Dictionary(envelope.records.map { ($0.key, $0) }, uniquingKeysWith: { _, newer in newer })
             cache = records
             return records
         } catch {
@@ -174,12 +210,12 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
         }
     }
 
-    private func persist(_ records: [SourceID: DeviceAccessRecord]) throws {
+    private func persist(_ records: [DeviceAccessKey: DeviceAccessRecord]) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let envelope = Envelope(
             schemaVersion: DeviceAccessRecord.schemaVersion,
-            records: records.values.sorted { $0.sourceID.description < $1.sourceID.description }
+            records: Array(records.values).sortedByKey()
         )
         let data = try encoder.encode(envelope)
         try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)

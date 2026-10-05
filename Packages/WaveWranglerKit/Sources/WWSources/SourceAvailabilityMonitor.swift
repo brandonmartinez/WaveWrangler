@@ -2,11 +2,13 @@ import Foundation
 import Observation
 import WWCore
 
-/// Main-actor, observable facade for the Sources UI: per-source observations, the availability
+/// Main-actor, observable facade for one show's Sources UI: per-source observations, the availability
 /// setting and explicit Make Available / Cancel / Retry. All file-system work runs off the main actor.
+/// Records are read and written only under this show's `DeviceAccessKey`s.
 @MainActor
 @Observable
 public final class SourceAvailabilityMonitor {
+    public let showID: ShowID
     public private(set) var observations: [SourceID: AvailabilityObservation] = [:]
     public private(set) var setting: SourceAvailabilitySetting
 
@@ -20,11 +22,13 @@ public final class SourceAvailabilityMonitor {
     @ObservationIgnored private var eventTask: Task<Void, Never>?
 
     public init(
+        showID: ShowID,
         store: any DeviceAccessStore,
         context: SourceAccessContext = SourceAccessContext(),
         setting: SourceAvailabilitySetting = .default,
         transferPolicy: TransferPolicy = TransferPolicy()
     ) {
+        self.showID = showID
         self.store = store
         self.context = context
         self.setting = setting
@@ -68,15 +72,15 @@ public final class SourceAvailabilityMonitor {
         guard let url = resolvedURLs[sourceID] else {
             await refreshOne(sourceID)
             guard let url = resolvedURLs[sourceID] else { return }
-            await transfers.makeAvailable(sourceID, at: url, setting: setting, userRequested: true)
+            await transfers.makeAvailable(key(sourceID), at: url, setting: setting, userRequested: true)
             return
         }
-        await transfers.makeAvailable(sourceID, at: url, setting: setting, userRequested: true)
+        await transfers.makeAvailable(key(sourceID), at: url, setting: setting, userRequested: true)
     }
 
     public func cancelTransfer(_ sourceID: SourceID) async {
         userCancelled.insert(sourceID)
-        await transfers.cancel(sourceID)
+        await transfers.cancel(key(sourceID))
     }
 
     public func retryTransfer(_ sourceID: SourceID) async {
@@ -90,19 +94,25 @@ public final class SourceAvailabilityMonitor {
         await refreshAll()
     }
 
-    /// Persists records produced by import or relink and observes them.
+    /// Persists records produced by import or relink for this show and observes them.
     public func adopt(_ records: [DeviceAccessRecord]) async throws {
-        try await store.save(records)
-        await refresh(records.map(\.sourceID))
+        let mine = records.filter { $0.showID == showID }
+        try await store.save(mine)
+        await refresh(mine.map(\.sourceID))
+    }
+
+    private func key(_ sourceID: SourceID) -> DeviceAccessKey {
+        DeviceAccessKey(showID: showID, sourceID: sourceID)
     }
 
     private func refreshOne(_ sourceID: SourceID) async {
-        let record = try? await store.record(for: sourceID)
-        let transferState = await transfers.state(of: sourceID)
+        let key = key(sourceID)
+        let record = try? await store.record(for: key)
+        let transferState = await transfers.state(of: key)
         let evaluator = SourceAvailabilityEvaluator(context: context)
         let setting = setting
         let evaluation = await Task.detached {
-            evaluator.evaluate(sourceID: sourceID, record: record, setting: setting, transfer: transferState == .unknown ? nil : transferState)
+            evaluator.evaluate(key: key, record: record, setting: setting, transfer: transferState == .unknown ? nil : transferState)
         }.value
         if let refreshed = evaluation.refreshedRecord {
             try? await store.save(refreshed)
@@ -113,16 +123,16 @@ public final class SourceAvailabilityMonitor {
         if setting == .on, !userCancelled.contains(sourceID), evaluation.supportsDownloadRequest,
            evaluation.observation.residency == .cloudPlaceholder,
            let url = evaluation.resolvedURL,
-           await !transfers.isActive(sourceID) {
-            await transfers.makeAvailable(sourceID, at: url, setting: setting)
+           await !transfers.isActive(key) {
+            await transfers.makeAvailable(key, at: url, setting: setting)
         }
     }
 
     private func apply(_ event: TransferEvent) {
-        guard var observation = observations[event.sourceID] else { return }
+        guard event.key.showID == showID, var observation = observations[event.key.sourceID] else { return }
         observation.transfer = event.state
         observation.transferEvidence = .transferController
         if event.state == .idle { observation.residency = .local }
-        observations[event.sourceID] = observation
+        observations[event.key.sourceID] = observation
     }
 }

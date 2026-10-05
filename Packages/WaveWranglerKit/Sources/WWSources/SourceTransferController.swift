@@ -14,7 +14,7 @@ public struct TransferPolicy: Sendable, Equatable {
 }
 
 public struct TransferEvent: Sendable, Equatable {
-    public var sourceID: SourceID
+    public var key: DeviceAccessKey
     public var state: TransferState
     public var provenance: ObservationProvenance
 }
@@ -36,8 +36,8 @@ public actor SourceTransferController {
         var userRequested: Bool
     }
 
-    private var states: [SourceID: TransferState] = [:]
-    private var active: [SourceID: Active] = [:]
+    private var states: [DeviceAccessKey: TransferState] = [:]
+    private var active: [DeviceAccessKey: Active] = [:]
     private var generation = 0
     private var continuations: [UUID: AsyncStream<TransferEvent>.Continuation] = [:]
     /// Total download requests issued to the gateway (for audits/tests).
@@ -48,12 +48,12 @@ public actor SourceTransferController {
         self.policy = policy
     }
 
-    public func state(of sourceID: SourceID) -> TransferState {
-        states[sourceID] ?? .unknown
+    public func state(of key: DeviceAccessKey) -> TransferState {
+        states[key] ?? .unknown
     }
 
-    public func isActive(_ sourceID: SourceID) -> Bool {
-        active[sourceID] != nil
+    public func isActive(_ key: DeviceAccessKey) -> Bool {
+        active[key] != nil
     }
 
     public var activeCount: Int { active.count }
@@ -70,16 +70,19 @@ public actor SourceTransferController {
 
     @discardableResult
     public func makeAvailable(
-        _ sourceID: SourceID,
+        _ key: DeviceAccessKey,
         at url: URL,
         setting: SourceAvailabilitySetting,
         userRequested: Bool = false
     ) -> TransferState {
-        if active[sourceID] != nil { return state(of: sourceID) }
+        if active[key] != nil { return state(of: key) }
 
         enum Decision {
             case set(TransferState)
             case request
+            /// The provider is already transferring (e.g. after an earlier request was cancelled):
+            /// observe without issuing another request.
+            case observeOnly
         }
         let decision: Decision = context.withScopedAccess(to: url) { url in
             switch context.io.metadata(at: url) {
@@ -95,7 +98,8 @@ public actor SourceTransferController {
                 case .unknown:
                     return .set(.unknown)
                 case .downloading:
-                    return .set(.inProgress(fractionCompleted: .unknown))
+                    guard setting == .on || userRequested else { return .set(.notRequested(.availabilityOff)) }
+                    return .observeOnly
                 case .cloudPlaceholder:
                     guard metadata.supportsDownloadRequest else { return .set(.notRequested(.unsupportedLocation)) }
                     guard setting == .on || userRequested else { return .set(.notRequested(.availabilityOff)) }
@@ -112,57 +116,58 @@ public actor SourceTransferController {
 
         switch decision {
         case let .set(state):
-            publish(sourceID, state)
+            publish(key, state)
             return state
-        case .request:
+        case .request, .observeOnly:
             generation += 1
             let current = generation
-            publish(sourceID, .requested)
-            let task = Task { await self.observe(sourceID, url: url, generation: current) }
-            active[sourceID] = Active(generation: current, task: task, userRequested: userRequested)
-            return .requested
+            let initial: TransferState = if case .request = decision { .requested } else { .inProgress(fractionCompleted: .unknown) }
+            publish(key, initial)
+            let task = Task { await self.observe(key, url: url, generation: current) }
+            active[key] = Active(generation: current, task: task, userRequested: userRequested)
+            return initial
         }
     }
 
     /// Stops requesting/observing. The original is never evicted or modified.
-    public func cancel(_ sourceID: SourceID) {
-        guard let running = active.removeValue(forKey: sourceID) else { return }
+    public func cancel(_ key: DeviceAccessKey) {
+        guard let running = active.removeValue(forKey: key) else { return }
         running.task.cancel()
-        publish(sourceID, .cancelled)
+        publish(key, .cancelled)
     }
 
     /// Re-requests after cancel/failure/offline. A no-op while a request is active.
     @discardableResult
-    public func retry(_ sourceID: SourceID, at url: URL, setting: SourceAvailabilitySetting, userRequested: Bool = true) -> TransferState {
-        makeAvailable(sourceID, at: url, setting: setting, userRequested: userRequested)
+    public func retry(_ key: DeviceAccessKey, at url: URL, setting: SourceAvailabilitySetting, userRequested: Bool = true) -> TransferState {
+        makeAvailable(key, at: url, setting: setting, userRequested: userRequested)
     }
 
     /// ON→OFF cancels automatic transfers honestly (state `.cancelled`); OFF→ON issues nothing by itself —
     /// callers re-evaluate sources and request only placeholders.
     public func availabilitySettingChanged(to setting: SourceAvailabilitySetting) {
         guard setting == .off else { return }
-        for (sourceID, running) in active where !running.userRequested {
-            active[sourceID] = nil
+        for (key, running) in active where !running.userRequested {
+            active[key] = nil
             running.task.cancel()
-            publish(sourceID, .cancelled)
+            publish(key, .cancelled)
         }
     }
 
     /// Waits for the current request (if any) to finish and returns the final state.
-    public func waitUntilSettled(_ sourceID: SourceID) async -> TransferState {
-        if let running = active[sourceID] {
+    public func waitUntilSettled(_ key: DeviceAccessKey) async -> TransferState {
+        if let running = active[key] {
             await running.task.value
         }
-        return state(of: sourceID)
+        return state(of: key)
     }
 
     public func cancelAll() {
-        for sourceID in Array(active.keys) { cancel(sourceID) }
+        for key in Array(active.keys) { cancel(key) }
     }
 
     // MARK: - Observation
 
-    private func observe(_ sourceID: SourceID, url: URL, generation: Int) async {
+    private func observe(_ key: DeviceAccessKey, url: URL, generation: Int) async {
         let clock = ContinuousClock()
         var lastChange = clock.now
         var lastSignature: String?
@@ -172,10 +177,10 @@ public actor SourceTransferController {
             } catch {
                 return
             }
-            guard isCurrent(sourceID, generation) else { return }
+            guard isCurrent(key, generation) else { return }
             let metadata = context.withScopedAccess(to: url) { context.io.metadata(at: $0) }
             let fraction = await context.withScopedAccess(to: url) { await context.io.downloadFraction(of: $0) }
-            guard isCurrent(sourceID, generation), !Task.isCancelled else { return }
+            guard isCurrent(key, generation), !Task.isCancelled else { return }
 
             let next: TransferState
             var finished = false
@@ -200,32 +205,32 @@ public actor SourceTransferController {
                         lastSignature = signature
                         lastChange = clock.now
                     } else if clock.now - lastChange >= policy.stallTimeout {
-                        finish(sourceID, generation, .offlineOrUnknown(nil))
+                        finish(key, generation, .offlineOrUnknown(nil))
                         return
                     }
                 }
             }
             if finished {
-                finish(sourceID, generation, next)
+                finish(key, generation, next)
                 return
             }
-            if state(of: sourceID) != next { publish(sourceID, next) }
+            if state(of: key) != next { publish(key, next) }
         }
     }
 
-    private func isCurrent(_ sourceID: SourceID, _ generation: Int) -> Bool {
-        active[sourceID]?.generation == generation
+    private func isCurrent(_ key: DeviceAccessKey, _ generation: Int) -> Bool {
+        active[key]?.generation == generation
     }
 
-    private func finish(_ sourceID: SourceID, _ generation: Int, _ state: TransferState) {
-        guard isCurrent(sourceID, generation) else { return }
-        active[sourceID] = nil
-        publish(sourceID, state)
+    private func finish(_ key: DeviceAccessKey, _ generation: Int, _ state: TransferState) {
+        guard isCurrent(key, generation) else { return }
+        active[key] = nil
+        publish(key, state)
     }
 
-    private func publish(_ sourceID: SourceID, _ state: TransferState) {
-        states[sourceID] = state
-        let event = TransferEvent(sourceID: sourceID, state: state, provenance: context.io.provenance)
+    private func publish(_ key: DeviceAccessKey, _ state: TransferState) {
+        states[key] = state
+        let event = TransferEvent(key: key, state: state, provenance: context.io.provenance)
         for continuation in continuations.values { continuation.yield(event) }
     }
 

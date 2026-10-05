@@ -12,12 +12,13 @@ public struct RelinkProposal: Sendable, Equatable {
         case metadataUnavailable(SourceErrorDescriptor)
     }
 
-    public var sourceID: SourceID
+    public var key: DeviceAccessKey
     public var candidateFingerprint: FileSystemFingerprint?
     /// `.unknown` (all fields) when this device has no recorded evidence, e.g. a cross-machine open.
     public var comparison: IdentityComparison
     public var availability: Availability
-    /// Another source already linked to the same file object on this device.
+    /// Another source *in the same show* already linked to the same file object on this device. Other
+    /// shows (e.g. a duplicated show) may legitimately reference the same original.
     public var alreadyLinkedTo: SourceID?
     public var provenance: ObservationProvenance
 
@@ -52,26 +53,28 @@ public struct RelinkEvaluator: Sendable {
 
     public func evaluate(
         candidate: URL,
-        for sourceID: SourceID,
+        for key: DeviceAccessKey,
         record: DeviceAccessRecord?,
         otherRecords: [DeviceAccessRecord] = []
     ) -> RelinkProposal {
-        context.withScopedAccess(to: candidate) { url in
+        let record = record?.key == key ? record : nil
+        return context.withScopedAccess(to: candidate) { url in
             let metadata: SourceMetadata
             switch context.io.metadata(at: url) {
             case let .success(value): metadata = value
-            case .failure(.permissionDenied): return unavailable(sourceID, .permissionDenied)
-            case .failure(.notFound): return unavailable(sourceID, .notFound)
-            case let .failure(.other(error)): return unavailable(sourceID, .metadataUnavailable(error))
+            case .failure(.permissionDenied): return unavailable(key, .permissionDenied)
+            case .failure(.notFound): return unavailable(key, .notFound)
+            case let .failure(.other(error)): return unavailable(key, .metadataUnavailable(error))
             }
             guard metadata.isRegularFile.value == true else {
-                return RelinkProposal(sourceID: sourceID, candidateFingerprint: metadata.fingerprint, comparison: .unknown(FingerprintField.allCases), availability: .notAFile, alreadyLinkedTo: nil, provenance: context.io.provenance)
+                return RelinkProposal(key: key, candidateFingerprint: metadata.fingerprint, comparison: .unknown(FingerprintField.allCases), availability: .notAFile, alreadyLinkedTo: nil, provenance: context.io.provenance)
             }
             let comparison = record?.recordedIdentity?.fingerprint.compare(to: metadata.fingerprint) ?? .unknown(FingerprintField.allCases)
             let objectKey = SourceImporter.objectKey(metadata.fingerprint)
-            let linkedElsewhere = objectKey.flatMap { key in
+            let linkedElsewhere = objectKey.flatMap { fileObject in
                 otherRecords.first { other in
-                    other.sourceID != sourceID && other.recordedIdentity.flatMap { SourceImporter.objectKey($0.fingerprint) } == key
+                    other.showID == key.showID && other.sourceID != key.sourceID
+                        && other.recordedIdentity.flatMap { SourceImporter.objectKey($0.fingerprint) } == fileObject
                 }?.sourceID
             }
             let availability: RelinkProposal.Availability
@@ -86,7 +89,7 @@ public struct RelinkEvaluator: Sendable {
                 availability = .bookmarkFailed(SourceErrorDescriptor(error))
             }
             return RelinkProposal(
-                sourceID: sourceID,
+                key: key,
                 candidateFingerprint: metadata.fingerprint,
                 comparison: comparison,
                 availability: availability,
@@ -102,18 +105,17 @@ public struct RelinkEvaluator: Sendable {
     public func apply(
         _ proposal: RelinkProposal,
         to record: DeviceAccessRecord?,
-        userConfirmed: Bool,
-        showID: ShowID? = nil
+        userConfirmed: Bool
     ) throws(RelinkError) -> DeviceAccessRecord {
         guard case let .ready(bookmark, resolvedPath) = proposal.availability else {
             throw .candidateUnavailable(proposal.availability)
         }
-        if let record, record.sourceID != proposal.sourceID { throw .sourceMismatch }
+        if let record, record.key != proposal.key { throw .sourceMismatch }
         if proposal.requiresConfirmation && !userConfirmed {
             throw .confirmationRequired(proposal.comparison)
         }
         let now = context.now()
-        var updated = record ?? DeviceAccessRecord(sourceID: proposal.sourceID, showID: showID, createdAt: now)
+        var updated = record ?? DeviceAccessRecord(showID: proposal.key.showID, sourceID: proposal.key.sourceID, createdAt: now)
         updated.bookmark = bookmark
         updated.lastKnownPath = resolvedPath
         updated.lastKnownVolumeUUID = proposal.candidateFingerprint?.volumeUUID.value
@@ -136,7 +138,7 @@ public struct RelinkEvaluator: Sendable {
         return updated
     }
 
-    private func unavailable(_ sourceID: SourceID, _ availability: RelinkProposal.Availability) -> RelinkProposal {
-        RelinkProposal(sourceID: sourceID, candidateFingerprint: nil, comparison: .unknown(FingerprintField.allCases), availability: availability, alreadyLinkedTo: nil, provenance: context.io.provenance)
+    private func unavailable(_ key: DeviceAccessKey, _ availability: RelinkProposal.Availability) -> RelinkProposal {
+        RelinkProposal(key: key, candidateFingerprint: nil, comparison: .unknown(FingerprintField.allCases), availability: availability, alreadyLinkedTo: nil, provenance: context.io.provenance)
     }
 }

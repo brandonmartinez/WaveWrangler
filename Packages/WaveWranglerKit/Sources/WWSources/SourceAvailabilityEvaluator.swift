@@ -3,7 +3,7 @@ import WWCore
 
 /// The outcome of observing one source.
 public struct SourceEvaluation: Sendable, Equatable {
-    public var sourceID: SourceID
+    public var key: DeviceAccessKey
     public var observation: AvailabilityObservation
     /// Set only when the bookmark was safely refreshed (stale, accessible and identity evidence matched).
     /// Location hints and identity baselines are never changed here; that requires an explicit relink.
@@ -27,14 +27,15 @@ public struct SourceAvailabilityEvaluator: Sendable {
         self.context = context
     }
 
+    /// - Precondition: `record`, when present, belongs to `key` (records from another show are ignored).
     public func evaluate(
-        sourceID: SourceID,
+        key: DeviceAccessKey,
         record: DeviceAccessRecord?,
         setting: SourceAvailabilitySetting,
         transfer: TransferState? = nil
     ) -> SourceEvaluation {
         var observation = AvailabilityObservation(observedAt: context.now(), provenance: context.io.provenance)
-        guard let record, let bookmark = record.bookmark else {
+        guard let record, record.key == key, let bookmark = record.bookmark else {
             observation.location = .unknown
             observation.locationEvidence = .noAccessRecord
             observation.access = .needsRegrant
@@ -43,16 +44,16 @@ public struct SourceAvailabilityEvaluator: Sendable {
             observation.identityEvidence = .noAccessRecord
             observation.transfer = .notRequested(.awaitingAccess)
             observation.transferEvidence = .noAccessRecord
-            return SourceEvaluation(sourceID: sourceID, observation: observation, refreshedRecord: nil, resolvedURL: nil, supportsDownloadRequest: false)
+            return SourceEvaluation(key: key, observation: observation, refreshedRecord: nil, resolvedURL: nil, supportsDownloadRequest: false)
         }
 
         switch context.io.resolveBookmark(bookmark) {
         case let .failed(failure):
             observeUnresolved(failure, record: record, into: &observation)
-            return SourceEvaluation(sourceID: sourceID, observation: observation, refreshedRecord: nil, resolvedURL: nil, supportsDownloadRequest: false)
+            return SourceEvaluation(key: key, observation: observation, refreshedRecord: nil, resolvedURL: nil, supportsDownloadRequest: false)
         case let .resolved(url, isStale):
             return context.withScopedAccess(to: url) { scopedURL in
-                observeResolved(sourceID: sourceID, url: scopedURL, isStale: isStale, record: record, setting: setting, transfer: transfer, into: &observation)
+                observeResolved(key: key, url: scopedURL, isStale: isStale, record: record, setting: setting, transfer: transfer, into: &observation)
             }
         }
     }
@@ -99,7 +100,7 @@ public struct SourceAvailabilityEvaluator: Sendable {
     }
 
     private func observeResolved(
-        sourceID: SourceID,
+        key: DeviceAccessKey,
         url: URL,
         isStale: Bool,
         record: DeviceAccessRecord,
@@ -116,7 +117,7 @@ public struct SourceAvailabilityEvaluator: Sendable {
             observation.accessEvidence = .notObserved
             observation.transfer = .notRequested(.awaitingAccess)
             observation.transferEvidence = .resourceValues
-            return SourceEvaluation(sourceID: sourceID, observation: observation, refreshedRecord: nil, resolvedURL: nil, supportsDownloadRequest: false)
+            return SourceEvaluation(key: key, observation: observation, refreshedRecord: nil, resolvedURL: nil, supportsDownloadRequest: false)
         case .failure(.permissionDenied):
             observation.access = .denied
             observation.accessEvidence = .posixError
@@ -124,12 +125,12 @@ public struct SourceAvailabilityEvaluator: Sendable {
             observation.locationEvidence = .posixError
             observation.transfer = .notRequested(.awaitingAccess)
             observation.transferEvidence = .posixError
-            return SourceEvaluation(sourceID: sourceID, observation: observation, refreshedRecord: nil, resolvedURL: nil, supportsDownloadRequest: false)
+            return SourceEvaluation(key: key, observation: observation, refreshedRecord: nil, resolvedURL: nil, supportsDownloadRequest: false)
         case .failure(.other):
             observation.access = .unknown
             observation.location = .unknown
             observation.locationEvidence = .resourceValues
-            return SourceEvaluation(sourceID: sourceID, observation: observation, refreshedRecord: nil, resolvedURL: nil, supportsDownloadRequest: false)
+            return SourceEvaluation(key: key, observation: observation, refreshedRecord: nil, resolvedURL: nil, supportsDownloadRequest: false)
         case let .success(value):
             metadata = value
         }
@@ -210,7 +211,7 @@ public struct SourceAvailabilityEvaluator: Sendable {
             refreshed = refreshedRecord
         }
         return SourceEvaluation(
-            sourceID: sourceID,
+            key: key,
             observation: observation,
             refreshedRecord: refreshed,
             resolvedURL: url,
