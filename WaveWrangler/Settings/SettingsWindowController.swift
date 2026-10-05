@@ -231,7 +231,7 @@ private struct LibraryLocationControl: View {
         Task {
             guard await Dialogs.confirm(
                 in: NSApp.keyWindow, message: wording.message, informative: wording.informative, confirmTitle: wording.button,
-                destructive: false
+                destructive: false, destructiveIsDefault: true
             ) else { return }
             moveError = nil
             handle(await controller.moveLibrary(to: url))

@@ -1,5 +1,4 @@
 import AppKit
-import OSLog
 
 /// Native sheets for names and destructive confirmations. NSAlert gives standard keyboard behaviour:
 /// Return = default, Esc = Cancel, focus returns to the invoking window afterwards.
@@ -31,27 +30,24 @@ enum Dialogs {
         return field.stringValue
     }
 
-    /// Confirms an uncommon destructive action. The destructive button is first but, per A13, the
-    /// sheet has Cancel bound to Esc; `destructiveIsDefault` controls whether Return confirms.
+    /// Confirms an uncommon destructive action. Cancel is bound to Esc. Buttons follow `ConfirmationButtons`
+    /// (A13): pass `destructiveIsDefault: true` only when the user chose the action (Return confirms); the
+    /// default, `false`, gives no default button.
     static func confirm(
         in window: NSWindow?,
         message: String,
         informative: String,
         confirmTitle: String,
         destructive: Bool = true,
-        destructiveIsDefault: Bool = true
+        destructiveIsDefault: Bool = false
     ) async -> Bool {
         let alert = NSAlert()
         alert.messageText = message
         alert.informativeText = informative
         alert.alertStyle = destructive ? .warning : .informational
         let confirm = alert.addButton(withTitle: confirmTitle)
-        confirm.hasDestructiveAction = destructive
         let cancel = alert.addButton(withTitle: "Cancel")
-        cancel.keyEquivalent = "\u{1b}"
-        if !destructiveIsDefault {
-            confirm.keyEquivalent = ""
-        }
+        ConfirmationButtons.configure(confirm: confirm, cancel: cancel, destructive: destructive, destructiveIsDefault: destructiveIsDefault)
         return await run(alert, in: window) == .alertFirstButtonReturn
     }
 
@@ -66,20 +62,10 @@ enum Dialogs {
 
     private static func run(_ alert: NSAlert, in window: NSWindow?) async -> NSApplication.ModalResponse {
         guard let window, window.isVisible else { return alert.runModal() }
-        #if DEBUG
-        diagnostics.debug("sheet begin “\(alert.messageText, privacy: .public)” key=\(window.isKeyWindow) attached=\(window.attachedSheet != nil) modal=\(NSApp.modalWindow?.title ?? "none", privacy: .public)")
-        #endif
         return await withCheckedContinuation { continuation in
             alert.beginSheetModal(for: window) { response in
-                #if DEBUG
-                diagnostics.debug("sheet end “\(alert.messageText, privacy: .public)” response=\(response.rawValue)")
-                #endif
                 continuation.resume(returning: response)
             }
         }
     }
-
-    #if DEBUG
-    private static let diagnostics = Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "Dialogs")
-    #endif
 }
