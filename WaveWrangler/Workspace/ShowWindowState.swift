@@ -24,6 +24,8 @@ final class ShowWindowState {
     var titleFocusRequest = 0
     var saveStatusPopoverShown = false
     var dismissedMessageBar: String?
+    /// The C2b offer heading already announced in this window (announced once, never moving focus).
+    @ObservationIgnored private var announcedEditCheckpointHeading: String?
     /// Whether the Episodes list has keyboard focus (Edit › Delete / Move act on the focused list only).
     var episodeListFocused = false
     /// Set by File › Save so the following "Saved" is announced (states §7).
@@ -190,6 +192,34 @@ final class ShowWindowState {
         case .cancelSave, .resolve, .details, .showDetails:
             break
         }
+    }
+
+    // MARK: - Unsaved-changes recovery offer (C2b, #84)
+
+    var editCheckpointOffer: (state: EditCheckpointOfferState, presentation: EditCheckpointOfferPresentation)? {
+        guard let provider: EditCheckpointOfferProviding = store.document, let state = provider.editCheckpointOfferState else { return nil }
+        return (state, EditCheckpointOfferPresentation(state, showName: store.model.show.title))
+    }
+
+    /// Discard and Dismiss ask first (Cancel on Esc, no destructive default); the others act directly.
+    func performEditCheckpointAction(_ action: EditCheckpointAction) {
+        guard let provider: EditCheckpointOfferProviding = store.document, let state = provider.editCheckpointOfferState else { return }
+        guard let wording = EditCheckpointOfferPresentation.confirmation(for: action, state: state) else {
+            provider.performConfirmedEditCheckpointAction(action)
+            if action == .restore { announce("Restored unsaved changes") }
+            return
+        }
+        Task {
+            guard await Dialogs.confirm(in: window, message: wording.message, informative: wording.informative, confirmTitle: wording.button,
+                                        destructive: action == .discard, destructiveIsDefault: false) else { return }
+            provider.performConfirmedEditCheckpointAction(action)
+        }
+    }
+
+    func editCheckpointOfferDidAppear(_ presentation: EditCheckpointOfferPresentation) {
+        guard announcedEditCheckpointHeading != presentation.heading else { return }
+        announcedEditCheckpointHeading = presentation.heading
+        announce(presentation.announcement)
     }
 
     /// Announces save-state changes per states §7 (first failure once, explicit/after-retry "Saved").

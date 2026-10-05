@@ -298,7 +298,18 @@ private struct ShowMessageBar: View {
 
     var body: some View {
         let presentation = state.presentation
-        if let bar = presentation.messageBar, state.dismissedMessageBar != bar.heading {
+        // The unsaved-changes offer (C2b) takes the bar first; save-state messages follow once it is resolved.
+        if let offer = state.editCheckpointOffer {
+            MessageBar(
+                heading: offer.presentation.heading,
+                message: offer.presentation.body,
+                symbolName: offer.presentation.symbolName,
+                actions: offer.presentation.actions.map { action in (action.rawValue, { state.performEditCheckpointAction(action) }) },
+                accessibilityValue: offer.presentation.accessibilityValue
+            )
+            .onAppear { state.editCheckpointOfferDidAppear(offer.presentation) }
+            .onChange(of: offer.presentation.heading) { _, _ in state.editCheckpointOfferDidAppear(offer.presentation) }
+        } else if let bar = presentation.messageBar, state.dismissedMessageBar != bar.heading {
             MessageBar(
                 heading: bar.heading,
                 message: bar.body,

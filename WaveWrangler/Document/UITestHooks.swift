@@ -5,15 +5,20 @@ import Foundation
 /// policy while documents are open, exactly as the Settings pane would.
 ///
 /// - `-WWUITestAutosave ON|OFF` sets the policy at launch.
+/// - `-WWUITestAutosaveDelay <seconds>` sets the autosave delay at launch (default 1 s when absent, so a delay
+///   left in the UI-test preferences by one test never leaks into the next).
 /// - Distributed notifications `com.brandonmartinez.wavewrangler.uitest.autosave.on` / `.off` toggle it later.
 ///
 /// Debug builds only: in Release the whole type is compiled out, so `-WWUITestHooks YES` and the
 /// distributed notifications have no effect (`PersistenceEnvironment.isUITestRun` is always `false`).
 #if DEBUG
+import WWPersistence
+
 @MainActor
 enum UITestHooks {
     nonisolated static let enabledKey = "WWUITestHooks"
     static let autosaveArgumentKey = "WWUITestAutosave"
+    static let autosaveDelayArgumentKey = "WWUITestAutosaveDelay"
     static let autosaveOnNotification = Notification.Name("com.brandonmartinez.wavewrangler.uitest.autosave.on")
     static let autosaveOffNotification = Notification.Name("com.brandonmartinez.wavewrangler.uitest.autosave.off")
 
@@ -24,6 +29,8 @@ enum UITestHooks {
         if let value = UserDefaults.standard.string(forKey: autosaveArgumentKey) {
             controller.isEnabled = value.uppercased() == "ON"
         }
+        let delay = UserDefaults.standard.string(forKey: autosaveDelayArgumentKey).flatMap(Double.init) ?? AutosavePreference.defaultDelay
+        if controller.delaySeconds != delay { controller.delaySeconds = delay }
         let center = DistributedNotificationCenter.default()
         for (name, enabled) in [(autosaveOnNotification, true), (autosaveOffNotification, false)] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { _ in

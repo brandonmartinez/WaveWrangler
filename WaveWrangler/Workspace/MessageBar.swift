@@ -8,6 +8,8 @@ struct MessageBar: View {
     let symbolName: String
     let actions: [(String, () -> Void)]
     var identifier = "ww.show.messageBar"
+    /// VoiceOver value for the bar (ST-03); `nil` leaves the default.
+    var accessibilityValue: String?
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -40,6 +42,15 @@ struct MessageBar: View {
         .overlay(alignment: .bottom) { Divider() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(heading)
+        .modifier(OptionalAccessibilityValue(value: accessibilityValue))
         .accessibilityIdentifier(identifier)
+    }
+}
+
+private struct OptionalAccessibilityValue: ViewModifier {
+    let value: String?
+
+    func body(content: Content) -> some View {
+        if let value { content.accessibilityValue(value) } else { content }
     }
 }
