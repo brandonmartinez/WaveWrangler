@@ -637,11 +637,51 @@ struct StallFollowUpTests {
 }
 
 
-final class SleepLog: @unchecked Sendable {
+/// A sleeper driven by the test: each `sleep` publishes its duration on `requests` and suspends (on a
+/// continuation, not a thread) until `step()`; task cancellation resumes it with `CancellationError`.
+final class SteppedSleeper: @unchecked Sendable {
+    let requests: AsyncStream<Duration>
+    private let requestContinuation: AsyncStream<Duration>.Continuation
     private let lock = NSLock()
-    private var _durations: [Duration] = []
-    func record(_ duration: Duration) { lock.withLock { _durations.append(duration) } }
-    var durations: [Duration] { lock.withLock { _durations } }
+    private var pending: CheckedContinuation<Void, any Error>?
+    private var cancelled = false
+
+    init() {
+        (requests, requestContinuation) = AsyncStream<Duration>.makeStream()
+    }
+
+    func sleep(_ duration: Duration) async throws {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                let alreadyCancelled = lock.withLock { () -> Bool in
+                    if cancelled { return true }
+                    pending = continuation
+                    return false
+                }
+                if alreadyCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    requestContinuation.yield(duration)
+                }
+            }
+        } onCancel: {
+            let continuation = lock.withLock { () -> CheckedContinuation<Void, any Error>? in
+                cancelled = true
+                defer { pending = nil }
+                return pending
+            }
+            continuation?.resume(throwing: CancellationError())
+        }
+    }
+
+    /// Lets the currently suspended sleep return.
+    func step() {
+        let continuation = lock.withLock { () -> CheckedContinuation<Void, any Error>? in
+            defer { pending = nil }
+            return pending
+        }
+        continuation?.resume()
+    }
 }
 
 /// Polling has stopped once the metadata call count stays unchanged for 40 ms (a live test observer
@@ -749,31 +789,36 @@ struct StallLifetimeTests {
         #expect(await waiter.value == .idle)
     }
 
+    /// Event-driven (#85 follow-up): the injected sleeper hands each requested duration to the test and
+    /// suspends on a continuation until the test steps it — no wall clock, no parked threads.
     @Test func stalledBackoffScheduleInsideTheObservationLoop() async throws {
         let tree = try SyntheticTree(label: "stall-backoff")
         var rng = SplitMix64(seed: 21)
         let file = try tree.file("long.wav", bytes: 64, rng: &rng)
         let io = HarnessIO()
         io.simulate(file, SimulatedCloudItem(script: Self.stallForever))
-        let log = SleepLog()
+        let sleeper = SteppedSleeper()
         let policy = TransferPolicy(pollInterval: .milliseconds(1), stallAfterUnchangedPolls: 3, stalledPollInterval: .milliseconds(4), maxStalledPollInterval: .milliseconds(16))
         let controller = SourceTransferController(context: makeContext(io), policy: policy, setting: .on) { duration in
-            log.record(duration)
-            try await Task.sleep(for: .microseconds(200))
+            try await sleeper.sleep(duration)
         }
         let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
         _ = await controller.makeAvailable(key, at: file)
-        let clock = ContinuousClock()
-        let deadline = clock.now + .seconds(30)
-        while log.durations.count < 10 && clock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        var durations: [Duration] = []
+        for await duration in sleeper.requests {
+            durations.append(duration)
+            if durations.count == 10 { break }
+            sleeper.step()
+        }
         await controller.cancel(key)
-        let durations = Array(log.durations.prefix(10))
         // 1 poll establishes the signature, 3 unchanged polls trigger the stall, then 4 → 8 → 16 (cap).
         #expect(durations == [.milliseconds(1), .milliseconds(1), .milliseconds(1), .milliseconds(1),
                               .milliseconds(4), .milliseconds(8), .milliseconds(16), .milliseconds(16),
                               .milliseconds(16), .milliseconds(16)])
         #expect(await controller.state(of: key) == .cancelled)
+        #expect(await controller.activeCount == 0)
         #expect(io.count(.downloadRequest) == 1)
+        #expect(io.leakedScopes == 0)
     }
 }
 
