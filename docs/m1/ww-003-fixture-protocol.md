@@ -67,7 +67,7 @@ The machine-readable record is the registry's `freezeRevisions[0]`.
 
 - **Trigger:** user grant E (2026-10-05), given directly: "yes, you can do multi-device icloud testing. ui stays on the mac mini".
 - **Scope:** `M1-DUR-025` only. Every `m1-freeze-1` entry is unchanged.
-- **Made before any execution.** No pre-freeze `M1-DUR-025` run exists. Base is `main` at `251d122`; the revision takes effect at the merge commit of its PR.
+- **Made before any holdout execution.** Disclosed: while this freeze was in review, a development smoke run of the two-host harness ran 1 case per cell (synthetic; not calibration, not holdout, not counted). It found P0 [#117](https://github.com/brandonmartinez/WaveWrangler/issues/117): an iCloud library conflict version was never surfaced. That led to the explicit detection mechanism in truths 1–2. Truth was tightened, never loosened; counts are unchanged. Base is `main` at `251d122`; the revision takes effect at the merge commit of its PR.
 - **Hosts:**
   - Host A is this Mac (main).
   - Host B is the Mac mini.
@@ -79,8 +79,13 @@ The machine-readable record is the registry's `freezeRevisions[0]`.
   - cross-machine-relink 2 / 20: sources created on A, opened on B with no access record, then an explicit regrant; variants are same, moved and same-name replaced;
   - recovery 2 / 20: B holds unpublished edits while A publishes, B relaunches, or A is killed at P4/P5.
 - **Truth:**
-  1. **Conflict:** detected, with at most one host acknowledged per base. The library gets L4 or a verified merge, never a silent overwrite.
-  2. **Preservation:** both edits are preserved in the canonical file, a preserved candidate or journal, or an NSFileVersion conflict version.
+  1. **Conflict detection:** at most one host is acknowledged per base, and detection follows a stated mechanism.
+     - **Shows:** an unresolved provider NSFileVersion conflict version is surfaced as evidence, with its count visible in the show status (C4).
+     - **Library:** an unresolved provider conflict version is detected on load, on reload and before each update, and drives L4 (`changedElsewhere`).
+     - A provider conflict version that is never surfaced is a failure.
+  2. **Preservation:**
+     - **Shows:** both edits are preserved in the canonical file, the losing host's candidate, or a surfaced conflict version.
+     - **Library:** after L4 → Combine (ST-36), both Macs' changes are in the current library on **both** hosts. Each conflict version is backed up to the device-local recovery store before it is marked resolved. Concurrent Combines converge.
   3. **No mixed revisions:** every reopen on either host is whole and valid, or an honest refusal.
   4. **NSFileVersion:** current, unresolved-conflict and other version counts are observed and reported per case per host.
   5. **Relink:** needs an explicit regrant. Never resolved by path or name, and never a silent substitution. Zero source writes on both hosts.
