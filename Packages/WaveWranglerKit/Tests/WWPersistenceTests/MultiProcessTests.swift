@@ -84,25 +84,46 @@ struct MultiProcessTests {
         let rig = Rig(label: "kill")
         let runs = 100
         var killed = 0, old = 0, new = 0, mixed = 0, zeroValid = 0
+        var externalKillsRetried = 0
         for index in 0..<runs {
-            let model = Fixtures.show(seed: 9_000 + UInt64(index))
-            let url = rig.url("Kill-\(index).wwshow")
-            let (old2, _) = try rig.seedTwoRevisions(model, at: url)
-            let (process, pipe) = try Self.launch(["kill-at", "--file", url.path, "--boundary", boundary.rawValue, "--recovery", rig.recovery.root.path])
-            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            process.waitUntilExit()
-            if process.terminationReason == .uncaughtSignal, process.terminationStatus == SIGKILL { killed += 1 } else {
-                Issue.record("probe did not die at \(boundary.rawValue): status \(process.terminationStatus) \(output)")
-            }
-            switch rig.opener.open(url, key: .show(model.show.id)) {
-            case let .editable(document, _):
-                if document.payload == old2, document.revision == 2 { old += 1 }
-                else if document.payload.show.title == "Killed at \(boundary.rawValue)", document.revision == 3 { new += 1 }
-                else { mixed += 1 }
-            default: zeroValid += 1
+            // A kill counts only when the probe wrote the boundary marker right before SIGKILLing itself. Any
+            // other termination (e.g. an external SIGKILL under load, #82) is retried with a fresh fixture.
+            var attempt = 0
+            while true {
+                let model = Fixtures.show(seed: 9_000 + UInt64(index) + UInt64(attempt) * 100_000)
+                let url = rig.url("Kill-\(index)-\(attempt).wwshow")
+                let marker = rig.dir.url.appending(path: "marker-\(index)-\(attempt)")
+                let (old2, _) = try rig.seedTwoRevisions(model, at: url)
+                let (process, pipe) = try Self.launch(["kill-at", "--file", url.path, "--boundary", boundary.rawValue,
+                                                       "--recovery", rig.recovery.root.path, "--marker", marker.path])
+                let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                process.waitUntilExit()
+                // Invariants hold whatever ended the process.
+                switch rig.opener.open(url, key: .show(model.show.id)) {
+                case let .editable(document, _):
+                    if document.payload != old2, document.payload.show.title != "Killed at \(boundary.rawValue)" { mixed += 1 }
+                case .damaged, .unreadable, .refusedNewerFormat, .needsMigration:
+                    zeroValid += 1
+                }
+                let atBoundary = process.terminationReason == .uncaughtSignal && process.terminationStatus == SIGKILL
+                    && (try? String(contentsOf: marker, encoding: .utf8)) == boundary.rawValue
+                if atBoundary {
+                    killed += 1
+                    if case let .editable(document, _) = rig.opener.open(url, key: .show(model.show.id)) {
+                        if document.payload == old2, document.revision == 2 { old += 1 }
+                        else if document.revision == 3 { new += 1 }
+                    }
+                    break
+                }
+                attempt += 1
+                externalKillsRetried += 1
+                if attempt >= 3 {
+                    Issue.record("probe did not die at \(boundary.rawValue) after \(attempt) attempts: status \(process.terminationStatus) \(output)")
+                    break
+                }
             }
         }
-        Evidence.record("process kill (SIGKILL) boundary=\(boundary.rawValue) runs=\(runs) killed=\(killed) old=\(old) new=\(new) mixed=\(mixed) zeroValid=\(zeroValid) [simulated/local, not provider-observed]")
+        Evidence.record("process kill (SIGKILL) boundary=\(boundary.rawValue) runs=\(runs) killed=\(killed) old=\(old) new=\(new) mixed=\(mixed) zeroValid=\(zeroValid) externalKillsRetried=\(externalKillsRetried) [simulated/local, not provider-observed]")
         #expect(killed == runs && mixed == 0 && zeroValid == 0 && old + new == runs)
     }
 

@@ -11,7 +11,7 @@ import WWPersistence
 //   open      --file F [--recovery DIR]
 //   versions  --file F
 //   autosave  --file F --enabled 0|1 [--delay S] [--recovery DIR]
-//   kill-at   --file F --boundary P1..P7 [--recovery DIR] [--library LIB --index IDX]   (SIGKILL at that boundary;
+//   kill-at   --file F --boundary P1..P7 [--recovery DIR] [--library LIB --index IDX] [--marker FILE] (SIGKILL at that boundary;
 //             P7 needs --library: the show save acknowledges into that library file, then updates IDX)
 //   library-kill-at --file SETTINGS.json --container DIR --recovery DIR --cache FILE --boundary P1..P6 --collection NAME
 //   record-location --file LOCATIONS_DIR --show UUID --doc SHOW.wwshow
@@ -84,11 +84,22 @@ func waitFor(_ url: URL, timeout: Double = 30) -> Bool {
     return false
 }
 
-/// Kills the process with SIGKILL (no cleanup, no handlers) when the chosen boundary is reached.
+/// Kills the process with SIGKILL (no cleanup, no handlers) when the chosen boundary is reached. With a
+/// `marker` file, the boundary name is written and flushed first, so the parent can tell a kill *at* the
+/// boundary from any other termination (#82).
 struct ExitAtBoundary: PublicationHooks {
     let boundary: PublicationBoundary
+    var marker: URL?
     func reached(_ reached: PublicationBoundary) throws {
         if reached == boundary {
+            if let marker {
+                let fd = open(marker.path, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+                if fd >= 0 {
+                    _ = boundary.rawValue.withCString { write(fd, $0, strlen($0)) }
+                    fsync(fd)
+                    close(fd)
+                }
+            }
             kill(getpid(), SIGKILL)
             // Delivery can lag the syscall's return: wait for it, so the process only ever ends by SIGKILL.
             while true { pause() }
@@ -236,7 +247,7 @@ struct Probe {
 
     func killAt() async -> Int32 {
         guard let raw = args["boundary"], let boundary = PublicationBoundary(rawValue: raw) else { emit(["error": "boundary"]); return 2 }
-        guard let session = openSession(hooks: ExitAtBoundary(boundary: boundary)) else { return 1 }
+        guard let session = openSession(hooks: ExitAtBoundary(boundary: boundary, marker: args.url("marker"))) else { return 1 }
         _ = try? await session.edit { try $0.renamingShow(to: "Killed at \(raw)") }
         var followUp = PublicationFollowUp.none
         if let libraryURL = args.url("library") {
@@ -272,7 +283,7 @@ struct Probe {
             return 2
         }
         let store = LibraryStore(containerFolder: container, settings: FileLibrarySettings(url: file), bookmarks: PathBookmarks(),
-                                 recovery: recovery, indexCache: LibraryIndexCache(url: cache), hooks: ExitAtBoundary(boundary: boundary))
+                                 recovery: recovery, indexCache: LibraryIndexCache(url: cache), hooks: ExitAtBoundary(boundary: boundary, marker: args.url("marker")))
         _ = await store.load()
         let name = args["collection"] ?? "Killed at \(raw)"
         _ = try? await store.update { var library = $0; library.collections.append(LibraryCollection(name: name)); return library }

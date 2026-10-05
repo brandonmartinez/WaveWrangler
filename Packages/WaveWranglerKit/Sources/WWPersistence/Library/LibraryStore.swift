@@ -13,13 +13,18 @@ public enum LibraryLoadOutcome: Sendable, Equatable {
     case damaged(reason: String, recoveryRevisions: [Int])
     /// The configured location cannot be reached. Nothing is created there silently.
     case unavailable(reason: String)
-    /// The location cannot be reached; the last validated prior checkpoint is shown **read-only** (labelled).
+    /// The location cannot be reached or needs permission (Design L2/L3). The newest verified library on this
+    /// Mac is shown (labelled); organizing edits are **queued** in the device-local pending-edits journal and
+    /// published when the location is reachable again (`LibraryEditResult.queued`).
     case unavailableShowingPrior(reason: String, revision: Int)
 
+    /// Whether library edits are refused. `false` when edits are published (ready/created) or queued
+    /// (`unavailableShowingPrior`); `true` for newer-format, migration-needed, damaged and unavailable-with-no-
+    /// library outcomes. (A damaged pending-edits journal also refuses queueing; see `pendingJournalDamaged`.)
     public var isReadOnly: Bool {
         switch self {
-        case .ready, .created: false
-        default: true
+        case .ready, .created, .unavailableShowingPrior: false
+        case .refusedNewerFormat, .needsMigration, .damaged, .unavailable: true
         }
     }
 }

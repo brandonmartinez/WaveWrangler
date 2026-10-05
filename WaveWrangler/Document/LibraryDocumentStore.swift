@@ -45,6 +45,7 @@ final class LibraryDocumentStore {
     /// The most recent failed library publication, presented until the next success.
     private(set) var lastError: PublicationError?
 
+    /// Library edits refused (not loaded yet, newer format, damaged…). L2/L3 queue edits, so they are not read-only.
     var isReadOnly: Bool { loadOutcome?.isReadOnly ?? true }
 
     @ObservationIgnored let store: LibraryStore
