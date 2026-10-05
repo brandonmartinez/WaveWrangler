@@ -11,40 +11,48 @@ struct EpisodeSetupContent: View {
     let episodeID: EpisodeID
     var showsInspector = true
     var textScale: CGFloat = 1
-    @State private var controller: EpisodeSetupViewController
-
-    init(store: ShowDocumentStore, episodeID: EpisodeID, showsInspector: Bool = true, textScale: CGFloat = 1) {
-        self.store = store
-        self.episodeID = episodeID
-        self.showsInspector = showsInspector
-        self.textScale = textScale
-        _controller = State(initialValue: EpisodeSetupViewController(model: Self.makeModel(store: store, episodeID: episodeID)))
-    }
+    @State private var controller: EpisodeSetupViewController?
+    @State private var acquiredShow: ShowID?
 
     var body: some View {
-        EpisodeSetupView(model: controller.model, showsInspector: showsInspector)
-            .environment(\.setupTextScale, textScale)
-            .background(WindowReader { controller.attach(to: $0) })
-            .onAppear {
-                controller.model.isOnScreen = true
-                controller.model.startObserving()
+        Group {
+            if let controller {
+                EpisodeSetupView(model: controller.model, showsInspector: showsInspector)
+                    .environment(\.setupTextScale, textScale)
+                    .background(WindowReader { controller.attach(to: $0) })
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .onDisappear {
-                controller.model.isOnScreen = false
-                controller.model.stopObserving()
-            }
+        }
+        .onAppear(perform: acquire)
+        .onDisappear(perform: release)
     }
 
-    @MainActor
-    static func makeModel(store: ShowDocumentStore, episodeID: EpisodeID) -> EpisodeSetupModel {
-        let engine = SetupEngineProvider.engine(for: store.model.show.id)
+    /// Takes a use of the show's engine for as long as this Setup content is on screen.
+    private func acquire() {
+        guard controller == nil else { return }
+        let showID = store.model.show.id
+        let engine = SetupEngineProvider.registry.acquire(showID)
+        acquiredShow = showID
         let model = EpisodeSetupModel(store: store, episodeID: episodeID, engine: engine, preference: AppSettingsDownloadPreference.shared)
         if let real = engine as? WWSourcesSetupEngine {
             real.sourceNames = { [weak store] id in
                 store?.model.episodes.lazy.compactMap { $0.source(id)?.displayNameHint }.first ?? "another source"
             }
         }
-        return model
+        model.isOnScreen = true
+        let controller = EpisodeSetupViewController(model: model)
+        self.controller = controller
+        model.startObserving()
+    }
+
+    private func release() {
+        guard let controller, let showID = acquiredShow else { return }
+        controller.model.isOnScreen = false
+        controller.model.stopObserving()
+        self.controller = nil
+        acquiredShow = nil
+        Task { await SetupEngineProvider.registry.release(showID) }
     }
 }
 

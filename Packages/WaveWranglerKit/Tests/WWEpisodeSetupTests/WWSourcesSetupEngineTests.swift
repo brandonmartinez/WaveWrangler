@@ -27,7 +27,8 @@ final class CountingIO: SourceIO, @unchecked Sendable {
     }
 }
 
-final class FixedPreference: SourceDownloadPreference {
+@MainActor
+final class FixedPreference: @MainActor SourceDownloadPreference {
     var downloadsAutomatically: Bool
     init(_ on: Bool) { downloadsAutomatically = on }
 }
@@ -70,7 +71,7 @@ struct WWSourcesSetupEngineTests {
         let review = ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: [])
         #expect(review.rows.allSatisfy { $0.group.isUnconfirmedSuggestion || $0.group == .none })
         let items = review.importItems()
-        try await engine.commitImport(Dictionary(uniqueKeysWithValues: items.map { ($0.candidateID, $0.item.source.id) }))
+        try await engine.commitImport(Dictionary(uniqueKeysWithValues: items.map { ($0.candidateID, $0.item.source.id) }), fromScan: review.scanToken)
 
         let ids = Set(items.map(\.item.source.id))
         let ready = await firstSnapshot(engine, ids) { $0.count == 2 && $0.values.allSatisfy { $0.location == .known } }
@@ -87,9 +88,12 @@ struct WWSourcesSetupEngineTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: folder.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path) }
         await engine.refresh(Array(ids))
-        let denied = WWSourcesStatusMapping.snapshot(engine.monitor.observations[ids.first!])
-        #expect(denied.summary.text != "Not found", "\(denied)")
-        if case .missing = denied.location { Issue.record("denied shown as missing: \(denied)") }
+        for id in ids {
+            let denied = WWSourcesStatusMapping.snapshot(engine.monitor.observations[id])
+            #expect(denied.access == .denied, "\(denied)")
+            #expect(denied.summary.text == "Access denied", "\(denied)")
+            if case .missing = denied.location { Issue.record("denied shown as missing: \(denied)") }
+        }
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
 
         // Move tr2 away: Not found; relink to the moved file needs no default when details differ only by path.
@@ -113,11 +117,98 @@ struct WWSourcesSetupEngineTests {
         #expect(io.downloads == 0)
     }
 
+    @Test(.timeLimit(.minutes(1))) func concurrentScansCommitTheirOwnRecords() async throws {
+        let first = try makeTree()
+        let second = try makeTree()
+        defer {
+            try? FileManager.default.removeItem(at: first.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: second.deletingLastPathComponent())
+        }
+        let store = InMemoryDeviceAccessStore()
+        let showID = ShowID()
+        let engine = WWSourcesSetupEngine(showID: showID, store: store, context: SourceAccessContext(io: CountingIO()), preference: FixedPreference(false))
+        // Window A scans, then window B scans before A imports.
+        let scanA = try await engine.scanForImport([first], episodeSourceIDs: [])
+        let scanB = try await engine.scanForImport([second], episodeSourceIDs: [])
+        let itemsA = ImportReview(scan: scanA, episodeTitle: "A", knownSpeakerNames: []).importItems()
+        try await engine.commitImport(Dictionary(uniqueKeysWithValues: itemsA.map { ($0.candidateID, $0.item.source.id) }), fromScan: scanA.token)
+        let records = await store.records(in: showID)
+        #expect(Set(records.map(\.sourceID)) == Set(itemsA.map(\.item.source.id)), "A's commit used A's plan")
+        // The same scan can't be committed twice, and an unknown source has no record.
+        await #expect(throws: SourceEngineError.self) {
+            try await engine.commitImport([:], fromScan: scanA.token)
+        }
+        await #expect(throws: SourceEngineError.self) {
+            try await engine.commitImport([UUID(): SourceID()], fromScan: scanB.token)
+        }
+    }
+
+    @Test func shutdownStopsFollowingTheDownloadPreference() async {
+        let preference = FixedPreference(false)
+        let engine = WWSourcesSetupEngine(showID: ShowID(), store: InMemoryDeviceAccessStore(), preference: preference)
+        #expect(engine.monitor.setting == .off)
+        await engine.shutdown()
+        #expect(!engine.isRunning)
+        preference.downloadsAutomatically = true
+        engine.syncSetting()
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: nil)
+        await Task.yield()
+        #expect(engine.monitor.setting == .off, "a closed show never turns its downloads on")
+    }
+
+    @Test func registrySharesAndShutsDownOnLastRelease() async {
+        let engines = [ShowID(), ShowID()].map { ($0, InMemorySourceSetupEngine()) }
+        let registry = SetupEngineRegistry<ShowID> { key in engines.first { $0.0 == key }!.1 }
+        let (show, engine) = engines[0]
+        let a = registry.acquire(show)
+        let b = registry.acquire(show)
+        #expect(a === b)
+        #expect(registry.count(for: show) == 2)
+        await registry.release(show)
+        #expect(!engine.calls.contains(.shutdown), "another window still uses it")
+        await registry.release(show)
+        #expect(engine.calls.contains(.shutdown))
+        #expect(registry.count(for: show) == 0)
+    }
+
+    @Test func awaitingAccessIsNotADownload() {
+        #expect(WWSourcesStatusMapping.transfer(.notRequested(.awaitingAccess)) == .idle)
+        let observation = AvailabilityObservation(observedAt: Date(), location: .present, access: .needsRegrant, residency: .cloudPlaceholder, transfer: .notRequested(.awaitingAccess))
+        let waiting = WWSourcesStatusMapping.snapshot(observation)
+        #expect(!waiting.transfer.isActive)
+        #expect(EpisodeDownloadProgress(statuses: [waiting]) == nil, "no episode download spinner")
+        #expect(!TransferAction.available(transfer: waiting.transfer, residency: waiting.residency, pauseSupported: false).contains(.cancel))
+        #expect(waiting.summary.text == "Needs permission")
+        // After regrant the transfer stays idle and the file is still in the cloud: no "Downloaded".
+        var regranted = observation
+        regranted.access = .granted
+        regranted.transfer = .idle
+        #expect(TransferAnnouncement.decide(from: waiting, to: WWSourcesStatusMapping.snapshot(regranted)) == nil)
+    }
+
+    @Test func downloadedIsAnnouncedOnlyWhenTheFileArrived() {
+        let downloading = SourceStatusSnapshot(location: .known, access: .granted, residency: .cloudOnly, transfer: .downloading(fraction: nil), identity: .notChecked)
+        var arrived = downloading
+        arrived.transfer = .idle
+        arrived.residency = .local
+        #expect(TransferAnnouncement.decide(from: downloading, to: arrived) == .downloaded)
+        var stillCloud = downloading
+        stillCloud.transfer = .idle
+        #expect(TransferAnnouncement.decide(from: downloading, to: stillCloud) == nil)
+        var queued = downloading
+        queued.transfer = .queued
+        #expect(TransferAnnouncement.decide(from: SourceStatusSnapshot(location: .known, access: .granted, residency: .cloudOnly, transfer: .idle, identity: .notChecked), to: queued) == .started)
+        var failed = downloading
+        failed.transfer = .failed(reason: "no progress was reported")
+        #expect(TransferAnnouncement.decide(from: downloading, to: failed)?.text(for: "tr2.wav") == "Download failed for tr2.wav: no progress was reported")
+    }
+
     @Test func mappingIsHonest() {
         #expect(WWSourcesStatusMapping.transfer(.offlineOrUnknown(nil)) == .failed(reason: "no progress was reported"))
         #expect(WWSourcesStatusMapping.transfer(.offlineOrUnknown(nil)).presentation.summaryText != "No connection")
         #expect(WWSourcesStatusMapping.transfer(.notRequested(.availabilityOff)) == .downloadsOff)
         #expect(WWSourcesStatusMapping.transfer(.notRequested(.unsupportedLocation)) == .unsupportedLocation)
+        #expect(WWSourcesStatusMapping.transfer(.notRequested(.awaitingAccess)) == .idle)
         #expect(WWSourcesStatusMapping.transfer(.requested) == .downloading(fraction: nil))
         #expect(WWSourcesStatusMapping.transfer(.inProgress(fractionCompleted: .unknown)) == .downloading(fraction: nil))
         #expect(WWSourcesStatusMapping.transfer(.inProgress(fractionCompleted: .known(0.5))) == .downloading(fraction: 0.5))

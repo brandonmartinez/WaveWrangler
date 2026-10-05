@@ -36,6 +36,8 @@ public struct ImportCandidate: Identifiable, Hashable, Sendable {
 
 /// Result of scanning the user's chosen files/folders.
 public struct ImportScan: Hashable, Sendable {
+    /// Identifies this scan to the engine (commit uses the same scan's records).
+    public var token: UUID
     public var candidates: [ImportCandidate]
     /// Display name of what the user chose (one folder name, or "3 items").
     public var chosenDisplayName: String
@@ -60,7 +62,8 @@ public struct ImportScan: Hashable, Sendable {
         }
     }
 
-    public init(candidates: [ImportCandidate], chosenDisplayName: String, folderCount: Int, fileCount: Int, uncountedSkips: SkipCounts = SkipCounts(), suggestions: [UUID: CandidateSuggestions]? = nil) {
+    public init(token: UUID = UUID(), candidates: [ImportCandidate], chosenDisplayName: String, folderCount: Int, fileCount: Int, uncountedSkips: SkipCounts = SkipCounts(), suggestions: [UUID: CandidateSuggestions]? = nil) {
+        self.token = token
         self.candidates = candidates
         self.chosenDisplayName = chosenDisplayName
         self.folderCount = folderCount
@@ -182,6 +185,8 @@ public struct ImportReview: Hashable, Sendable {
     }
 
     public var episodeTitle: String
+    /// The scan this review came from (passed back to the engine on Import).
+    public var scanToken: UUID
     public var rows: [Row]
     public var skipped: [ImportCandidate]
     public var chosenDisplayName: String
@@ -191,6 +196,7 @@ public struct ImportReview: Hashable, Sendable {
 
     public init(scan: ImportScan, episodeTitle: String, knownSpeakerNames: [String]) {
         self.episodeTitle = episodeTitle
+        scanToken = scan.token
         chosenDisplayName = scan.chosenDisplayName
         folderCount = scan.folderCount
         fileCount = scan.fileCount

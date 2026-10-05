@@ -200,34 +200,20 @@ final class EpisodeSetupModel {
             announce(text)
         }
         if let focused, let now = statuses[focused], let name = episode?.source(focused)?.displayNameHint {
-            announceTransferChange(from: previousFocused?.transfer, to: now.transfer, name: name)
+            announceTransferChange(from: previousFocused, to: now, name: name)
         }
     }
 
-    @ObservationIgnored private var lastProgressAnnouncement: (bucket: Int, at: Date)?
+    @ObservationIgnored private var lastProgressAnnouncement: Date?
 
-    private func announceTransferChange(from old: TransferStatus?, to new: TransferStatus, name: String) {
-        guard old != new else { return }
-        switch new {
-        case let .downloading(fraction?):
-            let bucket = Int(fraction * 4)
-            if let last = lastProgressAnnouncement, last.bucket == bucket || Date().timeIntervalSince(last.at) < 10 { return }
-            if bucket >= 1 && bucket <= 3 || old == nil || !(old?.isActive ?? false) {
-                lastProgressAnnouncement = (bucket, Date())
-                announce(bucket == 0 ? "Downloading \(name)" : "\(bucket * 25) percent downloaded, \(name)")
-            }
-        case .downloading(nil) where !(old?.isActive ?? false):
-            announce("Downloading \(name)")
-        case let .failed(reason):
-            announce("Download failed for \(name): \(reason)")
-        case .noConnection:
-            if case .noConnection? = old { return }
-            announce("Download failed for \(name): no network connection")
-        case .idle where old?.isActive == true:
-            announce("Downloaded \(name)")
-        default:
-            break
+    /// Announces the focused source's transfer changes (states §7): progress at most every 10 s.
+    private func announceTransferChange(from old: SourceStatusSnapshot?, to new: SourceStatusSnapshot, name: String) {
+        guard let event = TransferAnnouncement.decide(from: old, to: new) else { return }
+        if case .progress = event {
+            if let last = lastProgressAnnouncement, Date().timeIntervalSince(last) < 10 { return }
+            lastProgressAnnouncement = Date()
         }
+        announce(event.text(for: name))
     }
 
     func announce(_ text: String) {
@@ -383,7 +369,7 @@ final class EpisodeSetupModel {
     /// Confirms an Import Review: one undoable "Import N Sources" action, then device-local records.
     func commitImport(_ review: ImportReview) {
         let pairs = review.importItems()
-        guard !pairs.isEmpty else { sheet = nil; return }
+        guard !pairs.isEmpty else { cancelImport(review); return }
         let items = pairs.map(\.item)
         sheet = nil
         guard edit({ $0.importSources(items) }) else { return }
@@ -396,9 +382,10 @@ final class EpisodeSetupModel {
         }
         announce("Imported \(items.count == 1 ? "1 source" : "\(items.count) sources")")
         let accepted = Dictionary(uniqueKeysWithValues: pairs.map { ($0.candidateID, $0.item.source.id) })
+        let token = review.scanToken
         Task { [engine] in
             do {
-                try await engine.commitImport(accepted)
+                try await engine.commitImport(accepted, fromScan: token)
             } catch {
                 self.message = "The sources were added, but WaveWrangler couldn't save permission to reach them on this Mac: \(Self.reason(error))."
             }
@@ -406,6 +393,13 @@ final class EpisodeSetupModel {
             try? await Task.sleep(for: .milliseconds(200))
             if self.selection.isEmpty { self.selection = imported }
         }
+    }
+
+    /// Cancel changes nothing; the engine forgets the scan.
+    func cancelImport(_ review: ImportReview) {
+        sheet = nil
+        let token = review.scanToken
+        Task { [engine] in await engine.discardScan(token) }
     }
 
     // MARK: Relink / regrant (states §4)

@@ -268,3 +268,48 @@ public enum SetupUndoName {
     public static let moveSpeaker = "Move Speaker"
     public static func relink(_ file: String) -> String { "Relink “\(file)”" }
 }
+
+/// What to announce when the focused source's transfer changes (states §7). Pure; the caller throttles
+/// progress (at most every 10 s) and only calls this for the focused source.
+public enum TransferAnnouncement: Equatable, Sendable {
+    case started
+    case progress(percent: Int)
+    case downloaded
+    case failed(reason: String)
+    case noConnection
+
+    public static func decide(from old: SourceStatusSnapshot?, to new: SourceStatusSnapshot) -> TransferAnnouncement? {
+        let before = old?.transfer
+        guard before != new.transfer else { return nil }
+        let wasActive = before?.isActive == true
+        switch new.transfer {
+        case let .downloading(fraction?):
+            let bucket = Int(TransferStatus.clamped(fraction) * 4)
+            if !wasActive { return .started }
+            if case let .downloading(previous?) = before, Int(TransferStatus.clamped(previous) * 4) == bucket { return nil }
+            return (1...3).contains(bucket) ? .progress(percent: bucket * 25) : nil
+        case .downloading(nil), .queued:
+            return wasActive ? nil : .started
+        case let .failed(reason):
+            return .failed(reason: reason)
+        case .noConnection:
+            if case .noConnection? = before { return nil }
+            return .noConnection
+        case .idle:
+            // Only a transfer WaveWrangler was running that ended with the file on this Mac.
+            return wasActive && new.residency == .local ? .downloaded : nil
+        default:
+            return nil
+        }
+    }
+
+    public func text(for name: String) -> String {
+        switch self {
+        case .started: "Downloading \(name)"
+        case let .progress(percent): "\(percent) percent downloaded, \(name)"
+        case .downloaded: "Downloaded \(name)"
+        case let .failed(reason): "Download failed for \(name): \(reason)"
+        case .noConnection: "Download failed for \(name): no network connection"
+        }
+    }
+}

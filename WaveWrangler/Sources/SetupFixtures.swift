@@ -7,14 +7,41 @@ import WWEpisodeSetup
 /// state here is labelled "simulated provider state".
 @MainActor
 enum SetupFixtures {
-    static var isActive: Bool { ProcessInfo.processInfo.environment["WW_SETUP_ENGINE"] == "fixture-states" }
+    /// Debug builds only; Release builds ignore `WW_SETUP_ENGINE` entirely.
+    static var isActive: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["WW_SETUP_ENGINE"] == "fixture-states"
+        #else
+        false
+        #endif
+    }
 
     /// In fixture mode the Relink/Grant Access panel is replaced by this synthetic candidate.
     static var relinkCandidateOverride: URL? {
+        #if DEBUG
         isActive ? URL(filePath: "/WaveWranglerFixture/ZOOM0001/tr2.wav") : nil
+        #else
+        nil
+        #endif
     }
 
-    static func statesEngine() -> InMemorySourceSetupEngine {
+    /// The shared scripted engine in fixture mode, otherwise nil.
+    static func statesEngine() -> InMemorySourceSetupEngine? {
+        #if DEBUG
+        guard isActive else { return nil }
+        if let shared { return shared }
+        let engine = makeStatesEngine()
+        shared = engine
+        return engine
+        #else
+        return nil
+        #endif
+    }
+
+    #if DEBUG
+    private static var shared: InMemorySourceSetupEngine?
+
+    private static func makeStatesEngine() -> InMemorySourceSetupEngine {
         let created = Date(timeIntervalSince1970: 1_790_000_000)
         func details(_ name: String, _ folder: String?, size: Int64 = 1_210_000_000) -> FileDetails {
             FileDetails(name: name, size: size, created: created, modified: created, kind: "WAV audio", folderName: folder)
@@ -67,6 +94,7 @@ enum SetupFixtures {
         }
         return engine
     }
+    #endif
 }
 
 // MARK: - In-app text size (CMD-20)

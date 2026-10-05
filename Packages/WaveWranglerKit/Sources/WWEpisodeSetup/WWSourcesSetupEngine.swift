@@ -58,7 +58,8 @@ public enum WWSourcesStatusMapping {
         case .unknown, .idle: .idle
         case .notRequested(.availabilityOff): .downloadsOff
         case .notRequested(.unsupportedLocation): .unsupportedLocation
-        case .notRequested(.awaitingAccess): .queued
+        // Nothing was requested: access/location already show the remedy. Never "Waiting to download".
+        case .notRequested(.awaitingAccess): .idle
         case .requested: .downloading(fraction: nil)
         case let .inProgress(fraction): .downloading(fraction: fraction.value)
         case .cancelled: .cancelled
@@ -175,7 +176,9 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     public let context: SourceAccessContext
     public let monitor: SourceAvailabilityMonitor
     private let preference: (any SourceDownloadPreference)?
-    private var lastPlan: ImportPlan?
+    /// Import plans keyed by scan token, so concurrent scans in different windows never mix.
+    private var plans: [UUID: ImportPlan] = [:]
+    private var isShutDown = false
     private var proposals: [SourceID: (url: URL, proposal: RelinkProposal)] = [:]
     private var previousRecords: [UUID: DeviceAccessRecord?] = [:]
     private var defaultsObserver: NSObjectProtocol?
@@ -204,9 +207,21 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         Task { await monitor.stop() }
     }
 
+    /// Stops the monitor and stops following the download preference (show closed). Idempotent.
+    public func shutdown() async {
+        guard !isShutDown else { return }
+        isShutDown = true
+        if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+        defaultsObserver = nil
+        plans.removeAll()
+        await monitor.stop()
+    }
+
+    public var isRunning: Bool { !isShutDown }
+
     /// Applies the current "Download sources automatically" preference to the engine.
     public func syncSetting() {
-        guard let preference else { return }
+        guard !isShutDown, let preference else { return }
         let setting = SourceAvailabilitySetting(downloadSourcesAutomatically: preference.downloadsAutomatically)
         guard setting != monitor.setting else { return }
         Task { await monitor.setAvailabilitySetting(setting) }
@@ -224,7 +239,8 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         } catch {
             throw .failed(reason: error.localizedDescription)
         }
-        lastPlan = plan
+        let token = UUID()
+        plans[token] = plan
         let inEpisode = Set(episodeSourceIDs)
         var suggestions: [UUID: CandidateSuggestions] = [:]
         for group in plan.suggestions.recorderGroups {
@@ -257,6 +273,7 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         )
         let chosen = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) items"
         return ImportScan(
+            token: token,
             candidates: candidates,
             chosenDisplayName: chosen,
             folderCount: skipped[.directory] ?? 0,
@@ -266,15 +283,27 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         )
     }
 
-    public func commitImport(_ accepted: [UUID: SourceID]) async throws(SourceEngineError) {
-        guard let plan = lastPlan else { return }
-        let ids = Set(accepted.values)
-        let records = plan.items.map(\.accessRecord).filter { ids.contains($0.sourceID) }
+    public func commitImport(_ accepted: [UUID: SourceID], fromScan token: UUID) async throws(SourceEngineError) {
+        guard let plan = plans.removeValue(forKey: token) else {
+            throw .failed(reason: "the file list is out of date; choose the files again")
+        }
+        let byID = Dictionary(plan.items.map { ($0.sourceRecord.id, $0.accessRecord) }, uniquingKeysWith: { first, _ in first })
+        var records: [DeviceAccessRecord] = []
+        for sourceID in accepted.values {
+            guard let record = byID[sourceID] else {
+                throw .failed(reason: "WaveWrangler has no permission record for one of the chosen files")
+            }
+            records.append(record)
+        }
         do {
             try await monitor.adopt(records)
         } catch {
             throw .failed(reason: error.localizedDescription)
         }
+    }
+
+    public func discardScan(_ token: UUID) async {
+        plans[token] = nil
     }
 
     public func forget(_ sourceIDs: [SourceID]) async {

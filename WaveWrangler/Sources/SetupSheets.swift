@@ -120,7 +120,7 @@ struct ImportReviewSheet: View {
                 Button("Clear Suggestions") { review.clearSuggestions() }
                     .disabled(!review.hasSuggestions)
                 Spacer()
-                Button("Cancel", role: .cancel) { model.sheet = nil; dismiss() }
+                Button("Cancel", role: .cancel) { model.cancelImport(review); dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(review.importButtonTitle) { model.commitImport(review) }
                     .keyboardShortcut(.defaultAction)

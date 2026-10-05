@@ -12,16 +12,13 @@ import WWSources
 ///   states; it never touches the file system.
 @MainActor
 enum SetupEngineProvider {
-    private static var engines: [ShowID: any SourceSetupEngine] = [:]
     private static let context = SourceAccessContext()
-    private static let fixture: InMemorySourceSetupEngine? = SetupFixtures.isActive ? SetupFixtures.statesEngine() : nil
 
-    static func engine(for showID: ShowID) -> any SourceSetupEngine {
-        if let fixture { return fixture }
-        if let existing = engines[showID] { return existing }
-        let engine = WWSourcesSetupEngine(showID: showID, store: store, context: context, preference: AppSettingsDownloadPreference.shared)
-        engines[showID] = engine
-        return engine
+    /// One engine per open show, shared by its windows; the last window to close shuts it down (its
+    /// monitor stops and it no longer follows the download preference).
+    static let registry = SetupEngineRegistry<ShowID> { showID in
+        if let fixture = SetupFixtures.statesEngine() { return fixture }
+        return WWSourcesSetupEngine(showID: showID, store: store, context: context, preference: AppSettingsDownloadPreference.shared)
     }
 
     private static let store: any DeviceAccessStore = {

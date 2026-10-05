@@ -39,8 +39,15 @@ public protocol SourceSetupEngine: AnyObject, Sendable {
     /// are already referenced in the episode by its own identity records (never by name).
     func scanForImport(_ urls: [URL], episodeSourceIDs: [SourceID]) async throws(SourceEngineError) -> ImportScan
 
-    /// Creates device-local access records for imported sources (called after the canonical import).
-    func commitImport(_ accepted: [UUID: SourceID]) async throws(SourceEngineError)
+    /// Creates device-local access records for imported sources from the scan identified by `token`
+    /// (called after the canonical import). Throws when the scan is unknown or a record is missing.
+    func commitImport(_ accepted: [UUID: SourceID], fromScan token: UUID) async throws(SourceEngineError)
+
+    /// Forgets a scan the user cancelled.
+    func discardScan(_ token: UUID) async
+
+    /// Stops observation and background work when no window uses this engine any more.
+    func shutdown() async
 
     /// Removes device-local records for sources no longer referenced (after removal/undo of import).
     func forget(_ sourceIDs: [SourceID]) async
@@ -71,6 +78,42 @@ public protocol SourceSetupEngine: AnyObject, Sendable {
 
 extension SourceSetupEngine {
     public func refresh(_ sourceIDs: [SourceID]) async {}
+    public func discardScan(_ token: UUID) async {}
+    public func shutdown() async {}
+}
+
+/// Shares one engine per key (show) among the windows showing it; shuts it down when the last releases.
+@MainActor
+public final class SetupEngineRegistry<Key: Hashable> {
+    private var entries: [Key: (engine: any SourceSetupEngine, count: Int)] = [:]
+    private let make: (Key) -> any SourceSetupEngine
+
+    public init(make: @escaping (Key) -> any SourceSetupEngine) {
+        self.make = make
+    }
+
+    public func acquire(_ key: Key) -> any SourceSetupEngine {
+        if let entry = entries[key] {
+            entries[key] = (entry.engine, entry.count + 1)
+            return entry.engine
+        }
+        let engine = make(key)
+        entries[key] = (engine, 1)
+        return engine
+    }
+
+    /// Releases one use; the last release removes the engine and awaits its shutdown.
+    public func release(_ key: Key) async {
+        guard let entry = entries[key] else { return }
+        if entry.count > 1 {
+            entries[key] = (entry.engine, entry.count - 1)
+            return
+        }
+        entries[key] = nil
+        await entry.engine.shutdown()
+    }
+
+    public func count(for key: Key) -> Int { entries[key]?.count ?? 0 }
 }
 
 /// App preference "Download sources automatically" (Settings › Sources). Default On.
@@ -99,6 +142,7 @@ public final class InMemorySourceSetupEngine: SourceSetupEngine, @unchecked Send
     public enum Call: Hashable, Sendable {
         case scan(count: Int)
         case commitImport(count: Int)
+        case shutdown
         case forget(count: Int)
         case recordedDetails(SourceID)
         case compare(SourceID)
@@ -165,7 +209,7 @@ public final class InMemorySourceSetupEngine: SourceSetupEngine, @unchecked Send
         return scanResult
     }
 
-    public func commitImport(_ accepted: [UUID: SourceID]) async throws(SourceEngineError) {
+    public func commitImport(_ accepted: [UUID: SourceID], fromScan token: UUID) async throws(SourceEngineError) {
         lock.withLock {
             _calls.append(.commitImport(count: accepted.count))
             for (candidateID, sourceID) in accepted {
@@ -182,6 +226,10 @@ public final class InMemorySourceSetupEngine: SourceSetupEngine, @unchecked Send
 
     public func forget(_ sourceIDs: [SourceID]) async {
         lock.withLock { _calls.append(.forget(count: sourceIDs.count)) }
+    }
+
+    public func shutdown() async {
+        lock.withLock { _calls.append(.shutdown) }
     }
 
     public func recordedDetails(for sourceID: SourceID) async -> FileDetails? {
