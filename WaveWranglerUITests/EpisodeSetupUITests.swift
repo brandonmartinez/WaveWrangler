@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 /// Setup destination keyboard/VoiceOver-structure tasks (accessibility-acceptance T07–T13, T18, T29) run
@@ -400,10 +401,17 @@ final class EpisodeSetupUITests: XCTestCase {
         select("tr2.wav")
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
         XCTAssertTrue(element("ww.setup.inspector").waitForExistence(timeout: 2), "Return opens the details")
-        // K08/K09: Return also moves focus to the details' first editable field.
+        // K08/K09: Return also moves focus to the details' first editable field. Pop-ups take focus only
+        // with Full Keyboard Access; without it this ungrouped, channel-Unknown row has no focusable
+        // field, so focus stays in the Sources table (the Source menu edits it).
         let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasKeyboardFocus == true AND identifier BEGINSWITH 'ww.inspector.'")).firstMatch
-        XCTAssertTrue(focused.waitForExistence(timeout: 2), "focus moved into the details after Return")
-        XCTAssertEqual(focused.identifier, "ww.inspector.source.group", "first editable field (Recorder group)")
+        if NSApplication.shared.isFullKeyboardAccessEnabled {
+            XCTAssertTrue(focused.waitForExistence(timeout: 2), "focus moved into the details after Return")
+            XCTAssertEqual(focused.identifier, "ww.inspector.source.group", "first editable field (Recorder group)")
+        } else {
+            XCTAssertFalse(focused.waitForExistence(timeout: 1), "no focusable field: focus stays in the table")
+            XCTAssertTrue(app.outlines.matching(NSPredicate(format: "identifier == 'ww.setup.sources' AND hasKeyboardFocus == true")).firstMatch.exists, "focus stays in ww.setup.sources")
+        }
         XCTAssertTrue(element("ww.inspector.source.speaker").exists, "speaker editable in the details")
         XCTAssertTrue(element("ww.inspector.source.role").exists, "role shown in the details")
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])

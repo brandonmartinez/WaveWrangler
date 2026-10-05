@@ -161,8 +161,18 @@ private struct SourceInspector: View {
         .onChange(of: model.store.model.episode(model.episodeID)?.epochNumber(of: source.id)) { resetDrafts() }
         .onChange(of: model.inspectorFocusRequest, initial: true) {
             // Also on first appearance: Return may have just opened the collapsed details.
-            if model.consumeInspectorFocus() { Task { @MainActor in focus = .group } }
+            if model.consumeInspectorFocus(), let field = firstFocusableField { Task { @MainActor in focus = field } }
         }
+    }
+
+    /// The first editable field that can take keyboard focus. Pop-up menus take focus only with Full
+    /// Keyboard Access (AppKit's rule); otherwise the first enabled number field. Nil leaves focus in the
+    /// table, where the Source menu still edits everything.
+    private var firstFocusableField: InspectorField? {
+        if NSApp.isFullKeyboardAccessEnabled { return .group }
+        if source.placement.recorderGroupID != nil { return .epoch }
+        if statedChannel != nil { return .channel }
+        return nil
     }
 
     private var roleRow: some View {
