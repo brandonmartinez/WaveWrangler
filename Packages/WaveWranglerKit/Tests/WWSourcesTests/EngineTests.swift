@@ -730,6 +730,38 @@ struct StallLifetimeTests {
         #expect(context.ledger.snapshot.openScopes == 0)
     }
 
+    /// Reviewer's interleaving: `beginShutdown()` runs while `makeAvailable` is doing its I/O. Inside
+    /// `requestDownload` (request already out): no observer survives, the transfer is reported cancelled
+    /// and counted. During the metadata read: nothing is requested at all.
+    @Test(arguments: [InterleavePoint.requestDownload, .metadata])
+    func shutdownBeginningDuringMakeAvailableLeavesNoTransfer(_ point: InterleavePoint) async throws {
+        let tree = try SyntheticTree(label: "interleave-\(point)")
+        var rng = SplitMix64(seed: 20)
+        let file = try tree.file("raced.wav", bytes: 64, rng: &rng)
+        let base = HarnessIO()
+        let io = InterleavingIO(base: base, point: point)
+        let context = SourceAccessContext(io: io, ledger: SecurityScopeLedger())
+        let record = try #require(try await SourceImporter(context: makeContext(base)).plan(selection: [file], showID: testShow).items.first?.accessRecord)
+        base.simulate(file, SimulatedCloudItem(script: [.complete]))
+        let controller = SourceTransferController(context: context, policy: StallFollowUpTests.policy, setting: .on)
+        io.onPoint = { _ = controller.beginShutdown() }
+
+        let decided = controller.shutdownTicket()
+        let state = await controller.makeAvailable(record.key, at: file, userRequested: true, decidedAt: decided)
+        await controller.shutdown(through: controller.shutdownTicket())
+        #expect(await controller.activeCount == 0)
+        switch point {
+        case .requestDownload:
+            #expect(base.count(.downloadRequest) == 1, "the request had already gone out")
+            #expect(await controller.downloadRequestCount == 1, "counted")
+            #expect(state == .cancelled)
+            #expect(await controller.state(of: record.key) == .cancelled)
+        case .metadata:
+            #expect(base.count(.downloadRequest) == 0, "refused before any request")
+        }
+        #expect(context.ledger.snapshot.openScopes == 0)
+    }
+
     @Test @MainActor func droppingTheMonitorStopsStalledObservers() async throws {
         let tree = try SyntheticTree(label: "stall-drop-monitor")
         var rng = SplitMix64(seed: 18)
@@ -877,4 +909,54 @@ struct TeardownOrderingTests {
         #expect(!laterStates.isEmpty)
         await controller.cancel(newKey)
     }
+}
+
+enum InterleavePoint: String, Sendable, CustomTestStringConvertible {
+    case requestDownload
+    case metadata
+    var testDescription: String { rawValue }
+}
+
+/// Delegates to `HarnessIO` and runs `onPoint` once, synchronously, at the chosen I/O call (as a
+/// nonisolated `beginShutdown()` on another thread would interleave).
+final class InterleavingIO: SourceIO, @unchecked Sendable {
+    let base: HarnessIO
+    let point: InterleavePoint
+    private let lock = NSLock()
+    private var _onPoint: (@Sendable () -> Void)?
+    var onPoint: (@Sendable () -> Void)? {
+        get { lock.withLock { _onPoint } }
+        set { lock.withLock { _onPoint = newValue } }
+    }
+
+    init(base: HarnessIO, point: InterleavePoint) {
+        self.base = base
+        self.point = point
+    }
+
+    private func fire(_ at: InterleavePoint) {
+        guard at == point else { return }
+        let hook = lock.withLock { () -> (@Sendable () -> Void)? in
+            defer { _onPoint = nil }
+            return _onPoint
+        }
+        hook?()
+    }
+
+    var provenance: ObservationProvenance { base.provenance }
+    func metadata(at url: URL) -> MetadataResult {
+        let result = base.metadata(at: url)
+        fire(.metadata)
+        return result
+    }
+    func listItems(under directory: URL) -> DirectoryListing { base.listItems(under: directory) }
+    func makeReadOnlyBookmark(for url: URL) throws -> Data { try base.makeReadOnlyBookmark(for: url) }
+    func resolveBookmark(_ data: Data) -> BookmarkResolution { base.resolveBookmark(data) }
+    func startAccessingSecurityScope(_ url: URL) -> Bool { base.startAccessingSecurityScope(url) }
+    func stopAccessingSecurityScope(_ url: URL) { base.stopAccessingSecurityScope(url) }
+    func requestDownload(of url: URL) throws {
+        try base.requestDownload(of: url)
+        fire(.requestDownload)
+    }
+    func downloadFraction(of url: URL) async -> Knowledge<Double> { await base.downloadFraction(of: url) }
 }
