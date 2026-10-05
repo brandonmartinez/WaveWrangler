@@ -7,6 +7,7 @@ import WWOrganizer
 ///
 /// - `-WWUITestResetPreferences YES`: remove WaveWrangler preference keys (fresh defaults).
 /// - `-WWUITestLibraryFixture lib100|empty`: seed the in-memory library (F-LIB100 / F-EMPTY).
+/// - `-WWUITestProviderConflicts n` (with `lib100`): n unusable provider conflict versions of the library (#117).
 /// - `-WWUITestResetStorage YES` (with `-WWUITestHooks YES`): delete the isolated UI-test storage (library,
 ///   show locations, recovery) so a test starts clean; later launches without it keep the data (relaunch).
 /// - `-WWUITestOpenWithoutShowWindows <folder/name.wwshow>`: see `UITestHooks` (restoration-equivalent open).
@@ -73,6 +74,9 @@ enum LaunchFixtures {
         case "lib100":
             let fixture = SyntheticLibraryFixture.make()
             let backend = InMemoryLibraryBackend(seed: fixture.library, details: fixture.details)
+            // #117: simulate unusable provider conflict versions for the message bar.
+            let conflicts = defaults.integer(forKey: "WWUITestProviderConflicts")
+            if conflicts > 0 { backend.providerConflictNotice = LibraryDocumentStore.providerConflictNotice(unusableCount: conflicts) }
             LibraryServices.current = LibraryServices(persistence: backend, entries: backend, location: backend)
         case "empty":
             let backend = InMemoryLibraryBackend()
