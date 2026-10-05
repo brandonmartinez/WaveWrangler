@@ -183,14 +183,17 @@ struct EpisodeSetupView: View {
     @ViewBuilder
     private func confirmationButtons(_ confirmation: EpisodeSetupModel.Confirmation) -> some View {
         switch confirmation {
+        // The user chose these (⌫ or a menu command), so Return confirms (K05) and Esc cancels. No
+        // destructive role: on macOS it clears the Return key equivalent (#114); destructive styling is
+        // only for destruction the user didn't choose (sources A13).
         case let .removeSources(ids):
-            Button("Remove", role: .destructive) { model.removeSources(ids) }
+            Button("Remove") { model.removeSources(ids) }.keyboardShortcut(.defaultAction)
             Button("Cancel", role: .cancel) {}
         case let .deleteSpeaker(id):
-            Button("Delete", role: .destructive) { model.deleteSpeaker(id) }
+            Button("Delete") { model.deleteSpeaker(id) }.keyboardShortcut(.defaultAction)
             Button("Cancel", role: .cancel) {}
         case let .deleteGroup(id):
-            Button("Delete", role: .destructive) { model.deleteGroup(id) }
+            Button("Delete") { model.deleteGroup(id) }.keyboardShortcut(.defaultAction)
             Button("Cancel", role: .cancel) {}
         case let .cancelDownload(id):
             Button("Cancel Download", role: .destructive) { model.performConfirmed(.cancel, on: id) }

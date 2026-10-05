@@ -261,6 +261,50 @@ final class EpisodeSetupUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.speaker.' AND value CONTAINS '1 backup,'")).firstMatch.waitForExistence(timeout: 3), "previous primary stays as one backup")
     }
 
+    // MARK: K05 — chosen destructive actions confirm with Return, cancel with Esc (#114)
+
+    func testDeleteConfirmationsAcceptReturnAndEsc() {
+        importFixture()
+        let alert = app.sheets.firstMatch
+
+        // Remove Source: ⌫ asks; Esc changes nothing; Return removes.
+        select("intro.wav")
+        app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.buttons["Remove"].waitForExistence(timeout: 3), "⌫ asks before removing")
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 3), "Esc dismisses")
+        XCTAssertTrue(text("Ungrouped · 9 sources").waitForExistence(timeout: 2), "Esc removes nothing")
+
+        select("intro.wav")
+        app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.buttons["Remove"].waitForExistence(timeout: 3))
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 3), "Return confirms")
+        XCTAssertTrue(text("Ungrouped · 8 sources").waitForExistence(timeout: 3), "Return removed the source")
+
+        // Delete Speaker: same keys in the Speakers table.
+        select("tr2.wav")
+        menu("Source", "Assign Speaker", "New Speaker…")
+        let name = element("ww.setup.nameField")
+        XCTAssertTrue(name.waitForExistence(timeout: 2))
+        name.click()
+        name.typeText("Ana")
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        let speaker = app.outlines["ww.setup.speakers"].outlineRows.firstMatch
+        XCTAssertTrue(speaker.waitForExistence(timeout: 3))
+        speaker.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).click()
+        app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.buttons["Delete"].waitForExistence(timeout: 3), "⌫ asks before deleting a speaker")
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 3))
+        XCTAssertTrue(speaker.exists, "Esc deletes nothing")
+        app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.buttons["Delete"].waitForExistence(timeout: 3))
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 3), "Return confirms")
+        XCTAssertTrue(app.outlines["ww.setup.speakers"].outlineRows.firstMatch.waitForNonExistence(timeout: 3), "Return deleted the speaker")
+    }
+
     // MARK: T11/T12/T13 — relink, regrant and the five dimensions
 
     func testT13InspectorShowsAllFiveDimensions() throws {
