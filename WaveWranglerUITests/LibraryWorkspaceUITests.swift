@@ -62,10 +62,17 @@ final class LibraryWorkspaceUITests: XCTestCase {
         let table = app.outlines["ww.library.entries"]
         entryTableFrame = table.exists ? table.frame : nil
         toolbarFrames = app.toolbars.allElementsBoundByIndex.map(\.frame)
+        let windowRects = OffscreenAuditWaiver.windowRects(of: app)
+        var notOnScreen = 0
         try app.performAccessibilityAudit(for: [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]) { issue in
             let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(240) ?? "no element")"
             if let rationale = self.waiver(for: issue) {
                 print("AUDIT WAIVED \(description) — \(rationale)")
+                return true
+            }
+            if let offscreen = OffscreenAuditWaiver.waiver(for: issue.element, windowRects: windowRects) {
+                notOnScreen += 1
+                print("AUDIT WAIVED [notOnScreen] \(description) — \(offscreen)")
                 return true
             }
             findings.append(description)
@@ -74,6 +81,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
         for finding in findings {
             XCTFail("AUDIT \(finding)", file: file, line: line)
         }
+        OffscreenAuditWaiver.assertWithinPin(notOnScreen, surface: surface, file: file, line: line)
         print("AUDIT \(surface): \(findings.isEmpty ? "no unwaived issues" : "\(findings.count) unwaived issue(s)")")
     }
 
@@ -218,32 +226,104 @@ final class LibraryWorkspaceUITests: XCTestCase {
         let collectionSelected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Season Two (1)'"), object: table)
         XCTAssertEqual(XCTWaiter().wait(for: [collectionSelected], timeout: 5), .completed, "Arrowed to the collection: \(table.label)")
 
-        // ⌫ in the entry list removes the show from the collection (no confirmation). Once the list is gone,
-        // ⌫ must no longer target entries (#108 review: focus is cleared when the list resigns or goes away).
+        // ⌫ in the entry list removes the show from the collection (no confirmation). Once the list is gone, ⌫
+        // must no longer target entries (#108 review): the next ⌫ asks to delete the collection instead.
+        // Checked by behaviour, not by opening the Edit menu: dismissing that menu with Esc leaves macOS 27's
+        // remote-view (Writing Tools/AutoFill items) holding keyboard focus (`+[NSRemoteView
+        // _menuDidEndTracking:]` → viewbridge-key-window), and a sheet opened next receives no clicks or keys.
         app.typeKey("\t", modifierFlags: [])
         app.typeKey(.downArrow, modifierFlags: [])
-        let edit = app.menuBars.menuBarItems["Edit"]
-        edit.click()
-        XCTAssertTrue(edit.menuItems["Remove from Collection"].isEnabled, "⌫ targets the focused entry list")
-        app.typeKey(.escape, modifierFlags: [])
         app.typeKey(.delete, modifierFlags: [])
         waitForValue(created, "0 items")
         XCTAssertFalse(app.sheets.firstMatch.exists, "Remove from Collection doesn't ask")
-        edit.click()
-        XCTAssertFalse(edit.menuItems["Remove from Collection"].exists, "no stale entries focus once the list is gone")
-        XCTAssertTrue(edit.menuItems["Delete Collection…"].isEnabled, "⌫ falls back to the selected collection")
-        app.typeKey(.escape, modifierFlags: [])
-        // Undo the removal so the collection deleted below still has its show; then focus the sidebar row.
-        app.typeKey("z", modifierFlags: .command)
-        waitForValue(created, "1 item")
-        created.click()
         app.typeKey(.delete, modifierFlags: [])
         let sheet = app.sheets.firstMatch
         waitFor(sheet)
-        XCTAssertTrue(sheet.staticTexts["Delete the collection “Season Two”?"].exists)
+        XCTAssertTrue(sheet.staticTexts["Delete the collection “Season Two”?"].exists, "⌫ falls back to the selected collection")
+        // Confirm with the sheet's Delete button (as main's acceptance WW-013 does). Return on this sheet is not
+        // delivered on macOS 27 when a system remote view holds keyboard focus (#114; also fails on main).
         sheet.buttons["Delete"].click()
-        XCTAssertFalse(created.waitForExistence(timeout: 2))
+        if !sheet.waitForNonExistence(timeout: 5) {
+            XCTFail("sheet dismissed by its default button; windows: \(app.windows.allElementsBoundByIndex.map { "\($0.identifier) \($0.frame) hittable=\($0.isHittable)" }), sheet: \(sheet.debugDescription.prefix(2500))")
+        }
+        XCTAssertTrue(created.waitForNonExistence(timeout: 5), "collection deleted")
         XCTAssertEqual(value(element("ww.library.sidebar.shows")), "100 shows", "Deleting a collection never deletes shows")
+    }
+
+    /// #110: "New Collection" is a real, pressable button (not merged into the Collections heading).
+    func testNewCollectionButtonIsAnAccessibleButton() throws {
+        launch(["-WWUITestLibraryFixture", "lib100"])
+        let add = app.buttons["ww.library.collections.add"]
+        waitFor(add)
+        XCTAssertEqual(add.label, "New Collection")
+        XCTAssertTrue(add.isHittable, "on screen and pressable: \(add.frame)")
+        let headings = app.outlines["ww.library.sidebar"].staticTexts.matching(NSPredicate(format: "label CONTAINS 'New Collection'"))
+        XCTAssertEqual(headings.count, 0, "not merged into the Collections heading")
+        add.click()
+        let nameField = element("ww.dialog.name")
+        waitFor(nameField)
+        nameField.typeText("From The Button\r")
+        let created = app.outlines["ww.library.sidebar"].descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.sidebar.collection.' AND label == %@", "From The Button, collection")).firstMatch
+        waitFor(created)
+        try audit("Library sidebar with New Collection button")
+    }
+
+    /// #109: at in-app 200% text the Library window's content stays inside the window: sidebar rows, the message
+    /// bar (in the content column, #59) and the entry list are below the title bar and reachable.
+    func testLibraryAt200PercentTextStaysInsideTheWindow() throws {
+        launch(["-WWUITestLibraryFixture", "lib100"])
+        let window = app.windows["Library"]
+        waitFor(element("ww.library.sidebar"))
+        let bar = element("ww.library.messageBar.inMemory")
+        waitFor(bar)
+        // 100%: the bar's content sits directly under the toolbar (no empty or doubled inset) and row 1 is
+        // clickable. (The bar's background, and so its AX frame, extends up under the toolbar.)
+        let toolbarBottom = window.frame.minY + 52
+        let barHeading = bar.staticTexts["The library isn't saved yet in this version"]
+        XCTAssertTrue(barHeading.exists)
+        XCTAssertTrue((toolbarBottom - 2...toolbarBottom + 24).contains(barHeading.frame.minY),
+                      "bar heading \(barHeading.frame) right under the toolbar of \(window.frame)")
+        let firstCell = app.outlines["ww.library.entries"].cells.firstMatch
+        waitFor(firstCell)
+        XCTAssertTrue(firstCell.isHittable, "row 1 hittable below the bar: \(firstCell.frame), bar \(bar.frame)")
+        for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
+        let shows = element("ww.library.sidebar.shows")
+        let entries = app.outlines["ww.library.entries"]
+        waitFor(entries)
+        // Let the 200% layout settle (the text size change re-lays out every column).
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in shows.frame.height > 30 }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [settled], timeout: 5), .completed, "200% applied: Shows row \(shows.frame)")
+        let frame = window.frame
+        // The unified title bar and toolbar take the top ~52 pt; content must start below it.
+        let contentTop = frame.minY + 50
+        func assertInside(_ element: XCUIElement, _ name: String, file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertTrue(element.exists, "\(name) exists", file: file, line: line)
+            XCTAssertGreaterThanOrEqual(element.frame.minY, contentTop, "\(name) \(element.frame) is below the title bar of \(frame)", file: file, line: line)
+            // + 1.5: outlines report a 1 pt border outside their scroll view (as on main at 100%).
+            XCTAssertLessThanOrEqual(element.frame.maxY, frame.maxY + 1.5, "\(name) \(element.frame) ends inside \(frame)", file: file, line: line)
+        }
+        assertInside(shows, "Shows row")
+        assertInside(element("ww.library.sidebar.recent"), "Recent row")
+        assertInside(app.buttons["ww.library.collections.add"], "New Collection button")
+        let heading = bar.staticTexts["The library isn't saved yet in this version"]
+        assertInside(heading, "Message bar heading")
+        let dismiss = bar.buttons["Dismiss"]
+        // The bar's action is reachable: visible, or scrolled into view inside the capped bar.
+        if !dismiss.isHittable { bar.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -400) }
+        XCTAssertTrue(dismiss.isHittable, "message bar action reachable at 200%: \(dismiss.frame)")
+        XCTAssertGreaterThan(entries.frame.height, 60, "entry list keeps room below the bar: \(entries.frame)")
+        assertInside(entries, "Entry list")
+        XCTAssertGreaterThanOrEqual(entries.frame.minY, bar.frame.maxY - 1.5, "list below the bar (outline's 1 pt AX border)")
+        try audit("Library window at 200% text (lib100, message bar)")
+
+        // Dismissing the notice gives the list the full height: with no messages the bar area is 0 pt tall, so
+        // the split view starts right under the toolbar.
+        dismiss.click()
+        XCTAssertTrue(bar.waitForNonExistence(timeout: 5), "notice dismissed")
+        assertInside(entries, "Entry list without the bar")
+        let sidebarScroll = app.outlines["ww.library.sidebar"].frame
+        XCTAssertLessThanOrEqual(abs(sidebarScroll.minY - toolbarBottom), 12, "no empty bar area: sidebar \(sidebarScroll) vs toolbar bottom \(toolbarBottom)")
     }
 
     // MARK: - Show window (T01–T03, T06, T24; K02, K03, K24)
