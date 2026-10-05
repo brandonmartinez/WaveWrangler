@@ -1,0 +1,1944 @@
+{
+  "registryVersion": "m1-fixtures-v1-draft",
+  "date": "2026-10-04",
+  "owner": "Lead (protocol); WW-003 informational owner Pipeline",
+  "issue": "https://github.com/brandonmartinez/WaveWrangler/issues/5",
+  "protocol": "docs/m1/ww-003-fixture-protocol.md",
+  "status": "PROTOCOL-DEFINED / NOT FROZEN / NOT EXECUTED",
+  "freezeRule": "Each family is frozen (generator source hash, recipe, truth, counts, gate) in a dated freeze record before its first holdout case runs. Counts may increase before freeze; never decrease below a frozen gate minimum without explicit Lead/Brandon approval.",
+  "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+  "claimedHost": "macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), 18-core Apple silicon, 128 GiB -- not the macOS 26/16 GB reference",
+  "permissionClasses": {
+    "authorized-synthetic": "Generated deterministic data in temp dirs; authorized by the pasted M1 kickoff.",
+    "consent-relayed-manual": "Specific user consent relayed by the M1 coordinator; manual use within stated scope only.",
+    "pending-user-consent": "Needs an exact user answer (GUI launch/UI tests/VoiceOver/OS settings).",
+    "pending-coordinator-confirmation": "Local synthetic operation with side effects beyond temp files (e.g., disk image); coordinator confirms.",
+    "not-authorized": "Provider/network/second-device/real-media trials; exact consent required."
+  },
+  "counts": {
+    "entries": 58,
+    "authorizedSyntheticEntries": 47,
+    "consentBlockedEntries": 10,
+    "consentRelayedManualEntries": 1,
+    "syntheticCalibrationTotal": 555,
+    "syntheticHoldoutTotal": 5811,
+    "ww006LifecycleHoldout": 1110,
+    "perBoundaryInjectedHoldout": 100,
+    "perBoundaryProcessKillHoldout": 100
+  },
+  "fixtures": [
+    {
+      "id": "M1-DUR-001",
+      "title": "Explicit Save (new and existing document)",
+      "stratum": "save/explicit-save",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-010",
+        "WW-049"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Generate a show with 1-12 episodes, 0-40 logical sources, groups/speakers/collections; apply 1-20 edits; invoke explicit Save (and first Save to a new temp URL)."
+      },
+      "expectedTruth": "On-disk file parses, checksum valid, revision = prior+1, payload equals the independently built expected value; prior revision retained in recovery store; status 'Saved on this Mac' only after read-back; library ack advances exactly once.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "documents"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-002",
+      "title": "Autosave ON edit-to-quiescent coherent checkpoint timing",
+      "stratum": "autosave/ON",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Default ON configuration; burst of 1-20 edits then quiescence; timestamps: last completed model mutation (monotonic) to first independent coordinated read that parses/validates the full expected revision (canonical in-place or device-local recovery checkpoint, labelled)."
+      },
+      "expectedTruth": "Every case reaches a coherent whole checkpoint; reported p95 and max; provisional gate <=2 s on claimed host. Checkpoint kind recorded; callback success alone never counts.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 20,
+        "holdout": 100,
+        "unit": "timing samples"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Timing is claimed-host only; not an autosave-cadence or reference-device claim (WW-052).",
+      "evidenceStatus": "not-yet-executed",
+      "frozenGate": "<=2 s provisional (WW-005)"
+    },
+    {
+      "id": "M1-DUR-003",
+      "title": "Autosave OFF: no automatic publication, dirty preserved",
+      "stratum": "autosave/OFF",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Set OFF; edit; drive the scheduling boundary and deliver queued automatic autosave requests; observe for a bounded window."
+      },
+      "expectedTruth": "Zero automatic publications/recovery checkpoints; canonical bytes unchanged; document remains dirty; automatic requests complete as non-success (never nil/success-shaped); no error loop (no repeated 1004-class errors); no autosavingFileType nil/empty.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "documents"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Model/AppKit-object level; native Close/Quit UI is M1-DUR-026.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-004",
+      "title": "Autosave toggle transitions (ON->OFF with queued work; OFF->ON with pending edits)",
+      "stratum": "autosave/configurable",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Interleave: edit under ON, toggle OFF before/while an automatic request is queued; and edit under OFF, toggle ON with pending edits. Deterministic interleaving schedule from the seed."
+      },
+      "expectedTruth": "ON->OFF: no publication after OFF takes effect unless already past B4 (then reported as saved with exact revision); dirty state honest. OFF->ON: a coherent checkpoint of the pending revision follows within the ON gate. Never a mixed revision.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "interleavings"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Addresses AS01 at object level only; native GUI replay remains M1-DUR-026.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-005",
+      "title": "Explicit Save while autosave is OFF",
+      "stratum": "explicit-save/OFF",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-010"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "OFF; edits; explicit Save with valid file type."
+      },
+      "expectedTruth": "Publication of exact pending revision; dirty cleared only after successful read-back; OFF setting unchanged afterwards.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "documents"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-006",
+      "title": "Publication-boundary interruptions (injected)",
+      "stratum": "interrupted-publication",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049",
+        "WW-010"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "For each boundary in boundaries[], inject a failure exactly at that boundary during Save/autosave/Save As."
+      },
+      "expectedTruth": "After each interruption the canonical location holds either the old valid revision or the complete new revision, never a mixture; recovery store holds a validated coherent prior; status is failed or acknowledgement-uncertain (B5+), never 'Saved' without read-back; library/index do not advance on failure.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 70,
+        "holdout": 700,
+        "unit": "interruptions (10 cal / 100 holdout per boundary)"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Injected exceptions are not power loss or provider-sync interruptions.",
+      "evidenceStatus": "not-yet-executed",
+      "boundaries": [
+        "B1-after-stage-write-before-flush",
+        "B2-after-stage-flush-before-prior-retained",
+        "B3-after-prior-retained-before-coordinated-publish",
+        "B4-during-publish-replace",
+        "B5-after-publish-before-readback",
+        "B6-after-readback-before-library-ack",
+        "B7-after-library-ack-before-index-update"
+      ],
+      "perBoundary": {
+        "calibration": 10,
+        "holdout": 100
+      },
+      "frozenGate": ">=100 interruptions per publication boundary (WW-005/WW-049)"
+    },
+    {
+      "id": "M1-DUR-007",
+      "title": "Conflict: on-disk revision changed by another writer",
+      "stratum": "conflict",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049",
+        "WW-010"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Between load and save, a separate harness writer publishes a different valid revision (or replaces the file with another document)."
+      },
+      "expectedTruth": "Save stops with Conflict; neither revision is overwritten; both remain recoverable; non-destructive choices offered; no automatic merge.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "conflicts"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Same-host writer only; provider/two-device conflicts are M1-DUR-024/025.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-008",
+      "title": "Concurrent windows on one document",
+      "stratum": "concurrent-window",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-010"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Two or more window controllers on one document issue interleaved edits/undo and saves."
+      },
+      "expectedTruth": "One shared model and undo stack; every save publishes one coherent revision containing all committed edits; no lost edits; focus/selection per window independent.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "interleavings"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Object level; visual/keyboard window behavior needs GUI consent.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-009",
+      "title": "Two-process competing writers",
+      "stratum": "conflict/multi-process",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Owned helper subprocess and test process both open the same temp document and save on a seeded schedule."
+      },
+      "expectedTruth": "Zero silent overwrites: each loser reports Conflict; every on-disk state is a whole valid revision; both users' work recoverable.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "races"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Local processes; TOCTOU narrowed and detected, not eliminated; not a provider guarantee.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-010",
+      "title": "Offline / unavailable destination",
+      "stratum": "offline",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049",
+        "WW-010"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Destination directory removed, made read-only, permission-denied, or path made unresolvable before/during save (simulated offline)."
+      },
+      "expectedTruth": "Save fails honestly with distinct reason; prior valid revision retained; document stays dirty; retry offered.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "documents"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Simulated offline; real provider offline needs consent.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-011",
+      "title": "Cancel during save stages (programmatic)",
+      "stratum": "cancel",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Cancel requested at each cancellable stage before and after publication."
+      },
+      "expectedTruth": "Before publish: disk unchanged, dirty retained. After publish: reported as 'revision saved, follow-up incomplete' with the exact revision, never 'nothing happened'.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "cancellations"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Native save-panel cancel requires GUI consent (M1-DUR-026).",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-012",
+      "title": "Retry after failure",
+      "stratum": "retry",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Inject transient failure, then retry once or more."
+      },
+      "expectedTruth": "Retry publishes exactly the current pending revision once; no duplicate revisions; statuses transition honestly.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "retries"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-013",
+      "title": "Disk full (ENOSPC injected)",
+      "stratum": "disk-full",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-010"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Inject ENOSPC at stage write, prior retention and publication."
+      },
+      "expectedTruth": "Prior valid revision intact; partial stage files cleaned or ignored; distinct 'disk full' status; dirty retained.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "documents"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Injected, not a physically full volume. A real small-volume variant (disk image) needs coordinator confirmation.",
+      "evidenceStatus": "not-yet-executed",
+      "variants": [
+        {
+          "id": "M1-DUR-013-real-volume",
+          "permission": {
+            "class": "pending-coordinator-confirmation",
+            "status": "pending-coordinator-confirmation",
+            "scope": "Create/mount a small temporary disk image in a temp dir and fill it with generated data; no user volumes."
+          }
+        }
+      ]
+    },
+    {
+      "id": "M1-DUR-014",
+      "title": "Save As (success, failure, cancel)",
+      "stratum": "save-as",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-010"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Save As to new temp URL; inject failure at each stage; programmatic cancel."
+      },
+      "expectedTruth": "Success: new documentID/location semantics recorded explicitly, original untouched, library adds only a completed coherent document. Failure/cancel: original document and edits preserved; no orphan library entry.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "operations"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Native panel UX needs GUI consent.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-015",
+      "title": "Acknowledgement-uncertain publication and reconcile",
+      "stratum": "interrupted-publication/ack-uncertain",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049",
+        "WW-010"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Fail after publication but before/at read-back or library ack; then reopen."
+      },
+      "expectedTruth": "Status 'Save may have completed - reopen to verify'; library/index not advanced; explicit reopen/reconcile adopts the coherent on-disk revision and preserves library aliases/collections/order/unavailable entries.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "documents"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-016",
+      "title": "Migration from older synthetic schema",
+      "stratum": "migration",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-010"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Synthetic older schema documents (not a shipped WaveWrangler format) with human work; migrate with cancel/retry and injected failures."
+      },
+      "expectedTruth": "Original bytes and non-overwriting backup preserved; migrated whole revision equals independently authored expected semantics; unknown facts stay explicitly unknown; failures leave original or coherent new revision only.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "documents"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Synthetic old schema only until a real prior M1 schema exists.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-017",
+      "title": "Corrupt show document",
+      "stratum": "corrupt",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-010"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Truncated, checksum-mismatch, invalid JSON, schema-invalid, empty, duplicate-key and wrong-documentID variants."
+      },
+      "expectedTruth": "Load refuses with distinct reason; suspect file untouched; validated recovery-store checkpoint offered as a new copy; never recreated from index.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "documents"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-018",
+      "title": "Unknown-newer show document",
+      "stratum": "unknown-newer",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-010"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Envelope with schemaVersion greater than supported, valid or partially unknown payload."
+      },
+      "expectedTruth": "Opens read-only with accessible reason; 100% refusal of edit, Save, autosave, Save As downsave and migration; bytes unchanged.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "documents"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
+      "evidenceStatus": "not-yet-executed",
+      "frozenGate": "100% refusal (WW-005)"
+    },
+    {
+      "id": "M1-DUR-019",
+      "title": "Library <-> project reconciliation interruption",
+      "stratum": "library-project-reconciliation",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-010",
+        "WW-011"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Interrupt between project publication and library acknowledgement, and during library publication itself."
+      },
+      "expectedTruth": "Library never claims a revision that is not coherent on disk; reopen reconciles; both documents retain prior valid state; unavailable entries retained.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "interruptions"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-020",
+      "title": "Derived index deletion and rebuild",
+      "stratum": "index-rebuild",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-010",
+        "WW-011"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Delete/corrupt/replace the derived index; rebuild from library + validated show revisions, including unavailable shows."
+      },
+      "expectedTruth": "Zero loss of collections, order, aliases, comments, corrections or unavailable entries; rebuilt index equals expected derived value.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "rebuilds"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
+      "evidenceStatus": "not-yet-executed",
+      "frozenGate": "zero semantic loss (WW-005)"
+    },
+    {
+      "id": "M1-DUR-021",
+      "title": "Owned subprocess kill at publication boundaries",
+      "stratum": "interrupted-publication/process-kill",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Helper subprocess performs the save protocol and is terminated (SIGKILL) exactly at each boundary in boundaries[]."
+      },
+      "expectedTruth": "Same truth as M1-DUR-006 after restart: old valid or complete new revision, never mixed; recovery store coherent.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 35,
+        "holdout": 700,
+        "unit": "kills (5 cal / 100 holdout per boundary)"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Process kill is not power loss or kernel panic.",
+      "evidenceStatus": "not-yet-executed",
+      "boundaries": [
+        "B1-after-stage-write-before-flush",
+        "B2-after-stage-flush-before-prior-retained",
+        "B3-after-prior-retained-before-coordinated-publish",
+        "B4-during-publish-replace",
+        "B5-after-publish-before-readback",
+        "B6-after-readback-before-library-ack",
+        "B7-after-library-ack-before-index-update"
+      ],
+      "perBoundary": {
+        "calibration": 5,
+        "holdout": 100
+      },
+      "frozenGate": ">=100 interruptions per publication boundary (WW-005/WW-049)"
+    },
+    {
+      "id": "M1-DUR-022",
+      "title": "Unknown-newer library document",
+      "stratum": "unknown-newer/library",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-010",
+        "WW-011"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Library envelope with newer schemaVersion."
+      },
+      "expectedTruth": "Library read-only with reason; no save/downsave; show documents still openable; bytes unchanged.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "documents"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-023",
+      "title": "Corrupt library and prior recovery",
+      "stratum": "corrupt/library",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-010",
+        "WW-011"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Same corruption variants as M1-DUR-017 applied to the library document."
+      },
+      "expectedTruth": "Validated prior library checkpoint offered; never recreated from index; suspect file retained.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "documents"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-024",
+      "title": "Real cloud-provider canonical locations (iCloud Drive, OneDrive, Dropbox)",
+      "stratum": "cloud-canonical/provider",
+      "family": "durability",
+      "issues": [
+        "WW-049",
+        "WW-005",
+        "WW-010"
+      ],
+      "automated": false,
+      "generator": {
+        "kind": "none-until-consent",
+        "seedDerivation": null,
+        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
+      },
+      "expectedTruth": "Per provider/operation: observed (not simulated) publication, conflict, offline, cancel/retry behavior; >=100 interruptions per sync boundary where a boundary can be controlled.",
+      "permission": {
+        "class": "not-authorized",
+        "status": "not-authorized",
+        "scope": "Requires exact user consent naming provider, account/folder (generated content only), operations and network use."
+      },
+      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+      "split": {
+        "calibration": null,
+        "holdout": null,
+        "unit": "defined at consent; frozen before holdout"
+      },
+      "supportedClaimLimits": "Until executed, every provider guarantee in M1 records is labelled SIMULATED; no provider atomicity claim.",
+      "evidenceStatus": "consent-blocked"
+    },
+    {
+      "id": "M1-DUR-025",
+      "title": "Two-device conflict and relink",
+      "stratum": "conflict/two-device",
+      "family": "durability",
+      "issues": [
+        "WW-049",
+        "WW-006"
+      ],
+      "automated": false,
+      "generator": {
+        "kind": "none-until-consent",
+        "seedDerivation": null,
+        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
+      },
+      "expectedTruth": "Cross-device conflicts preserved; device-local access records regranted explicitly.",
+      "permission": {
+        "class": "not-authorized",
+        "status": "not-authorized",
+        "scope": "Requires a named second device and provider consent."
+      },
+      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+      "split": {
+        "calibration": null,
+        "holdout": null,
+        "unit": "defined at consent; frozen before holdout"
+      },
+      "supportedClaimLimits": "No cross-device claim until executed.",
+      "evidenceStatus": "consent-blocked"
+    },
+    {
+      "id": "M1-DUR-026",
+      "title": "Native GUI lifecycle: Close/Quit dirty decisions, AS01/AS05 replay, panel Save As cancel, Revert",
+      "stratum": "autosave/native-gui",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049",
+        "WW-007"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "none-until-consent",
+        "seedDerivation": null,
+        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
+      },
+      "expectedTruth": "Dirty OFF or failed-autosave documents always present Save/Don't Save/Cancel on Close and every Quit route; no silent loss; AS01 queued race and AS05 dirty Quit evidenced or remain open.",
+      "permission": {
+        "class": "pending-user-consent",
+        "status": "pending-user-consent",
+        "scope": "Requires user permission to launch the app GUI / UI tests on this Mac with synthetic documents; destructive choices (Don't Save/Revert) need precise consent."
+      },
+      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+      "split": {
+        "calibration": null,
+        "holdout": null,
+        "unit": "defined at consent; frozen before holdout"
+      },
+      "supportedClaimLimits": "AS01 unestablished and AS05 partial remain open gates until executed.",
+      "evidenceStatus": "consent-blocked"
+    },
+    {
+      "id": "M1-REF-001",
+      "title": "Add reference; read-only bookmark create/resolve",
+      "stratum": "reference/add",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Generate source files (random bytes, never audio decoded); add via harness; create read-only security-scoped bookmark where sandboxed."
+      },
+      "expectedTruth": "Logical SourceID assigned; hints stored; access record device-local; identity 'unverified'; zero source writes; scopes balanced.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-002",
+      "title": "Stale bookmark refresh while access is valid",
+      "stratum": "reference/stale-bookmark",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Move/rename source while access remains valid so resolution reports stale."
+      },
+      "expectedTruth": "Bookmark refreshed only with valid access; identity remains unverified until explicit confirmation; no substitution.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-003",
+      "title": "Regrant required",
+      "stratum": "reference/regrant",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Bookmark unresolvable or access expired/denied."
+      },
+      "expectedTruth": "State 'regrant required' (access denied/unknown, not missing); no automatic replacement; regrant path offered.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-004",
+      "title": "Moved source",
+      "stratum": "reference/moved",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Move source within temp tree."
+      },
+      "expectedTruth": "Location 'candidate-moved' or unresolved; explicit relink required; identity unverified; zero writes.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-005",
+      "title": "Copied source (original still present)",
+      "stratum": "reference/copied",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Copy source; optionally delete original later."
+      },
+      "expectedTruth": "Copy is never auto-selected; ambiguity surfaced; explicit choice required.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-006",
+      "title": "Renamed source",
+      "stratum": "reference/renamed",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Rename in place."
+      },
+      "expectedTruth": "Name hint updated only after explicit relink/confirmation; identity unverified.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-007",
+      "title": "Same-name substitute",
+      "stratum": "reference/same-name-substitute",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Replace file at original path with different bytes and same name (includes the bookmark-resolves-replacement counterexample)."
+      },
+      "expectedTruth": "Never silently accepted; identity 'changed' or 'unverified'; explicit confirmation required; zero writes.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-008",
+      "title": "Denied access",
+      "stratum": "reference/denied",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "POSIX permission removal on generated file/dir."
+      },
+      "expectedTruth": "access=denied; never labelled missing; distinct remedy.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-009",
+      "title": "Missing source",
+      "stratum": "reference/missing",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Delete generated file."
+      },
+      "expectedTruth": "location=unresolved, missing labelled distinct from denied/unknown; relink offered.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-010",
+      "title": "Changed source metadata",
+      "stratum": "reference/changed",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Change size/modification date via append to generated file."
+      },
+      "expectedTruth": "identity=changed (metadata evidence) or unverified; never auto-confirmed.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-011",
+      "title": "Cloud placeholder residency (test double)",
+      "stratum": "reference/cloud-placeholder",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Inject resource-value double reporting placeholder/not-downloaded/unknown."
+      },
+      "expectedTruth": "residency=placeholder or unknown exactly as reported; no generic classifier; OFF makes zero download requests.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Test double only; real provider values need consent (M1-SRC-ON-PROV-*).",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-012",
+      "title": "Download progress known/unknown (test double)",
+      "stratum": "reference/download-progress",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Double emits determinate, indeterminate and absent progress."
+      },
+      "expectedTruth": "Determinate progress only when reported; otherwise 'Progress unknown'; accessible text values.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Test double only.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-013",
+      "title": "Download cancel (test double)",
+      "stratum": "reference/cancel",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Cancel transfer at seeded points."
+      },
+      "expectedTruth": "transfer=cancelled; no partial state presented as available; scopes balanced.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Test double only.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-014",
+      "title": "Download retry (test double)",
+      "stratum": "reference/retry",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Fail then retry."
+      },
+      "expectedTruth": "Exactly one active request; honest state transitions.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Test double only.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-015",
+      "title": "Offline source provider (test double)",
+      "stratum": "reference/offline",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Double reports offline/network unavailable."
+      },
+      "expectedTruth": "transfer=failed/offline with retry; residency unchanged; no fake availability.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Test double only.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-016",
+      "title": "Scope balance under injected error/cancel",
+      "stratum": "reference/scope-lifecycle",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Inject errors/cancellation at each scope acquire/use/release point across all reference operations."
+      },
+      "expectedTruth": "Every successful start is balanced by exactly one stop; leaked-scope counter == 0; zero source writes.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 150,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ],
+      "frozenGate": "zero leaked scopes (WW-006)"
+    },
+    {
+      "id": "M1-REF-017",
+      "title": "Cross-machine relink (simulated: no device-local access record)",
+      "stratum": "reference/cross-machine-simulated",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Open a show document whose sources have no access records on this device."
+      },
+      "expectedTruth": "All sources 'relink required'; hints shown as hints; explicit relink only.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 60,
+        "unit": "lifecycle cases"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
+      "evidenceStatus": "not-yet-executed",
+      "countsToward": [
+        "WW-006 >=1,000 lifecycle/error/cancel cases"
+      ]
+    },
+    {
+      "id": "M1-REF-018",
+      "title": "Zero-source-write invariant audit",
+      "stratum": "reference/immutability-audit",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Harness digests every generated source (outside the app process) before and after every REF/SRC case."
+      },
+      "expectedTruth": "All digests unchanged; no rename/move/delete; leaked scopes = 0; substitutions = 0.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 0,
+        "holdout": 0,
+        "unit": "invariant over all REF/SRC cases (not additional cases)"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Harness-side digests of generated files only; the app never hashes sources.",
+      "evidenceStatus": "not-yet-executed",
+      "frozenGate": "zero source writes / substitutions (WW-006)"
+    },
+    {
+      "id": "M1-REF-019",
+      "title": "Recorder groups, epochs, channels, speakers, primary/backup",
+      "stratum": "organization/groups-speakers",
+      "family": "organization",
+      "issues": [
+        "WW-012",
+        "WW-011"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Generate episodes with 1-6 groups, 1-8 clips per group, unknown/known channel counts from synthetic safe metadata, speakers, primary/backup assignments and corrections with undo."
+      },
+      "expectedTruth": "Group clock distinct from clip start; UNKNOWN duration/channels stay UNKNOWN; provisional vs user-confirmed labels honest; primary change marks dependents stale; named undo restores exact state.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "episodes"
+      },
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-REF-020",
+      "title": "Sandboxed native panel grant/regrant with security-scoped bookmarks",
+      "stratum": "reference/native-grant",
+      "family": "reference",
+      "issues": [
+        "WW-006",
+        "WW-008",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "none-until-consent",
+        "seedDerivation": null,
+        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
+      },
+      "expectedTruth": "Panel grant -> read-only bookmark -> relaunch resolve -> start/stop balanced; regrant path works; zero source writes.",
+      "permission": {
+        "class": "pending-user-consent",
+        "status": "pending-user-consent",
+        "scope": "Requires GUI launch of the sandboxed ad-hoc-signed app with synthetic files selected via NSOpenPanel."
+      },
+      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+      "split": {
+        "calibration": null,
+        "holdout": null,
+        "unit": "defined at consent; frozen before holdout"
+      },
+      "supportedClaimLimits": "Programmatic non-panel subsets do not prove TCC/panel/relaunch behavior.",
+      "evidenceStatus": "consent-blocked"
+    },
+    {
+      "id": "M1-SRC-OFF-001",
+      "title": "Metadata-only (source availability OFF) trial set",
+      "stratum": "source/metadata-only-OFF",
+      "family": "source-availability",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "OFF; run add reference, open show, relink, library rebuild, index rebuild, primary/backup edits, placeholder sources (double)."
+      },
+      "expectedTruth": "Recording gateway: zero content reads, hashes, header reads, previews/thumbnails/QuickLook, decodes and download requests; forbidden-API check clean.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 200,
+        "unit": "workflows"
+      },
+      "supportedClaimLimits": "LABELLED DEFAULT-OFF METADATA SET. Proves app requests only; OS/provider/picker activity not proven absent. Not evidence for default-ON behavior.",
+      "evidenceStatus": "not-yet-executed",
+      "trialLabel": "default-OFF metadata-only",
+      "frozenGate": "zero app content/hash/header/preview/decode/download requests (WW-006)"
+    },
+    {
+      "id": "M1-SRC-ON-001",
+      "title": "Default-ON source availability (synthetic provider double)",
+      "stratum": "source/default-ON",
+      "family": "source-availability",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "ON (default); double reports placeholder residency, determinate/indeterminate/absent progress, offline, errors; cancel/retry seeded."
+      },
+      "expectedTruth": "Requests availability only for placeholder sources; accessible progress/unknown/offline/cancel/retry states; no generic classifier; OFF control reachable and effective.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 200,
+        "unit": "workflows"
+      },
+      "supportedClaimLimits": "LABELLED DEFAULT-ON SYNTHETIC SET. Test double only; does not qualify any real provider.",
+      "evidenceStatus": "not-yet-executed",
+      "trialLabel": "default-ON synthetic double"
+    },
+    {
+      "id": "M1-SRC-ON-002",
+      "title": "Toggle source availability mid-transfer",
+      "stratum": "source/toggle",
+      "family": "source-availability",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Switch ON->OFF and OFF->ON while transfers are pending/in progress (double)."
+      },
+      "expectedTruth": "ON->OFF stops issuing new requests and cancels or reports in-flight ones honestly; OFF->ON resumes only for placeholders.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "interleavings"
+      },
+      "supportedClaimLimits": "Test double only.",
+      "evidenceStatus": "not-yet-executed",
+      "trialLabel": "default-ON synthetic double"
+    },
+    {
+      "id": "M1-SRC-ON-PROV-001",
+      "title": "Real provider source availability: iCloud Drive",
+      "stratum": "source/default-ON/provider",
+      "family": "source-availability",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": false,
+      "generator": {
+        "kind": "none-until-consent",
+        "seedDerivation": null,
+        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
+      },
+      "expectedTruth": "Observed residency/progress/offline/cancel/retry; zero source writes; provider work observed separately.",
+      "permission": {
+        "class": "not-authorized",
+        "status": "not-authorized",
+        "scope": "Requires exact consent: iCloud Drive account/folder containing generated (non-recording) files, operations, network use."
+      },
+      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+      "split": {
+        "calibration": null,
+        "holdout": null,
+        "unit": "defined at consent; frozen before holdout"
+      },
+      "supportedClaimLimits": "No iCloud Drive support claim until executed; default-ON behavior otherwise only synthetic.",
+      "evidenceStatus": "consent-blocked"
+    },
+    {
+      "id": "M1-SRC-ON-PROV-002",
+      "title": "Real provider source availability: OneDrive",
+      "stratum": "source/default-ON/provider",
+      "family": "source-availability",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": false,
+      "generator": {
+        "kind": "none-until-consent",
+        "seedDerivation": null,
+        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
+      },
+      "expectedTruth": "Observed residency/progress/offline/cancel/retry; zero source writes; provider work observed separately.",
+      "permission": {
+        "class": "not-authorized",
+        "status": "not-authorized",
+        "scope": "Requires exact consent: OneDrive account/folder containing generated (non-recording) files, operations, network use."
+      },
+      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+      "split": {
+        "calibration": null,
+        "holdout": null,
+        "unit": "defined at consent; frozen before holdout"
+      },
+      "supportedClaimLimits": "No OneDrive support claim until executed; default-ON behavior otherwise only synthetic.",
+      "evidenceStatus": "consent-blocked"
+    },
+    {
+      "id": "M1-SRC-ON-PROV-003",
+      "title": "Real provider source availability: Dropbox",
+      "stratum": "source/default-ON/provider",
+      "family": "source-availability",
+      "issues": [
+        "WW-006",
+        "WW-012"
+      ],
+      "automated": false,
+      "generator": {
+        "kind": "none-until-consent",
+        "seedDerivation": null,
+        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
+      },
+      "expectedTruth": "Observed residency/progress/offline/cancel/retry; zero source writes; provider work observed separately.",
+      "permission": {
+        "class": "not-authorized",
+        "status": "not-authorized",
+        "scope": "Requires exact consent: Dropbox account/folder containing generated (non-recording) files, operations, network use."
+      },
+      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+      "split": {
+        "calibration": null,
+        "holdout": null,
+        "unit": "defined at consent; frozen before holdout"
+      },
+      "supportedClaimLimits": "No Dropbox support claim until executed; default-ON behavior otherwise only synthetic.",
+      "evidenceStatus": "consent-blocked"
+    },
+    {
+      "id": "M1-SCALE-001",
+      "title": "Library scale: 100 projects / 1,000 references",
+      "stratum": "scale",
+      "family": "scale",
+      "issues": [
+        "WW-007",
+        "WW-011"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Generate 100 show documents (>=2 episodes each), 1,000 distinct logical references, collections, >=1 unavailable show; measure model+view-model open per show and defined interactions (select show/episode, toggle collection, rename, filter sidebar)."
+      },
+      "expectedTruth": "p95 (nearest-rank ceil(0.95n)) open <1 s and interaction <100 ms on claimed host; zero main-thread provider I/O; first-open and warm reported separately.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 20,
+        "holdout": 600,
+        "unit": "timing samples (100 open-first, 100 open-warm, 400 interaction)"
+      },
+      "supportedClaimLimits": "Claimed host only (macOS 27.0.1/128 GiB) -- NOT the macOS 26/16 GB reference (WW-052). Model/view-model level is authorized; native window open timing needs GUI-launch consent.",
+      "evidenceStatus": "not-yet-executed",
+      "frozenGate": "p95 open <1 s, interaction <100 ms (WW-007, provisional)"
+    },
+    {
+      "id": "M1-A11Y-004",
+      "title": "Static accessibility audit",
+      "stratum": "accessibility/static",
+      "family": "accessibility",
+      "issues": [
+        "WW-007",
+        "WW-011",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Enumerate controls/status values from view models and source; check labels, values, hints, identifiers, non-colour status text, menu/keyboard equivalents for each core task."
+      },
+      "expectedTruth": "100% core-task controls have accessible name/value/action and a keyboard/menu path; status text never colour-only.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 0,
+        "holdout": 1,
+        "unit": "audit run"
+      },
+      "supportedClaimLimits": "Static/code-level only; NOT a VoiceOver or human usability result.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-A11Y-001",
+      "title": "Keyboard-only core M1 task suite",
+      "stratum": "accessibility/keyboard",
+      "family": "accessibility",
+      "issues": [
+        "WW-007",
+        "WW-011",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "none-until-consent",
+        "seedDerivation": null,
+        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
+      },
+      "expectedTruth": "100% core tasks (WW-004 18 tasks + source ON/OFF/unknown/offline/cancel/retry, relink, primary/backup, save/conflict/autosave ON/OFF/explicit Save) completable by keyboard with visible focus.",
+      "permission": {
+        "class": "pending-user-consent",
+        "status": "pending-user-consent",
+        "scope": "GUI launch / XCUITest with synthetic documents on this Mac."
+      },
+      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+      "split": {
+        "calibration": null,
+        "holdout": null,
+        "unit": "defined at consent; frozen before holdout"
+      },
+      "supportedClaimLimits": "Core-workflow accessibility cannot be accepted or transferred without this run; broader participant studies -> WW-052.",
+      "evidenceStatus": "consent-blocked"
+    },
+    {
+      "id": "M1-A11Y-002",
+      "title": "VoiceOver core M1 task suite",
+      "stratum": "accessibility/voiceover",
+      "family": "accessibility",
+      "issues": [
+        "WW-007",
+        "WW-011",
+        "WW-012"
+      ],
+      "automated": false,
+      "generator": {
+        "kind": "none-until-consent",
+        "seedDerivation": null,
+        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
+      },
+      "expectedTruth": "100% core tasks completable with VoiceOver; names/values/states/blocked reasons announced; no unsolicited focus change.",
+      "permission": {
+        "class": "pending-user-consent",
+        "status": "pending-user-consent",
+        "scope": "Enabling VoiceOver and launching the app GUI on this Mac."
+      },
+      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+      "split": {
+        "calibration": null,
+        "holdout": null,
+        "unit": "defined at consent; frozen before holdout"
+      },
+      "supportedClaimLimits": "Core-workflow accessibility cannot be accepted or transferred without this run; broader participant studies -> WW-052.",
+      "evidenceStatus": "consent-blocked"
+    },
+    {
+      "id": "M1-A11Y-003",
+      "title": "200% text, increased contrast, reduced motion, cold/warm/recovery",
+      "stratum": "accessibility/visual",
+      "family": "accessibility",
+      "issues": [
+        "WW-007",
+        "WW-011",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "none-until-consent",
+        "seedDerivation": null,
+        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
+      },
+      "expectedTruth": "Essential names/state/controls visible and reflowed at 200%; contrast meets measured target; no essential motion.",
+      "permission": {
+        "class": "pending-user-consent",
+        "status": "pending-user-consent",
+        "scope": "Changing OS accessibility/display settings and launching the GUI."
+      },
+      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+      "split": {
+        "calibration": null,
+        "holdout": null,
+        "unit": "defined at consent; frozen before holdout"
+      },
+      "supportedClaimLimits": "Core-workflow accessibility cannot be accepted or transferred without this run; broader participant studies -> WW-052.",
+      "evidenceStatus": "consent-blocked"
+    },
+    {
+      "id": "M1-USER-001",
+      "title": "User-provided local disposable episode copy (path withheld)",
+      "stratum": "manual/real-media-organizer",
+      "family": "user-provided",
+      "issues": [
+        "WW-012",
+        "WW-011",
+        "WW-006"
+      ],
+      "automated": false,
+      "generator": {
+        "kind": "user-provided",
+        "seedDerivation": null,
+        "recipe": "Selected by the user/coordinator-designated operator through the app's native panel at validation time. Path, file names and content are never recorded here, in tests, logs committed to the repo, or PR text."
+      },
+      "expectedTruth": "Manual checklist: references added without source writes; recorder grouping/speaker/primary-backup assignment and correction work; relink path works; metadata-only and default-ON states shown honestly; duration/channels UNKNOWN unless safe metadata. Operator records pass/fail per checklist item only.",
+      "permission": {
+        "class": "consent-relayed-manual",
+        "status": "consented (relayed by M1 coordinator 2026-10-04; Lead has not seen the original user message)",
+        "scope": "M1 manual import/library/recorder-grouping/primary-backup/relink validation only; read-only; no decode, analysis, hashing, preview or transcription; never in automated tests or the repository; disposable copy."
+      },
+      "provenance": "User-supplied disposable copy; provenance details intentionally withheld for privacy.",
+      "split": {
+        "calibration": 0,
+        "holdout": 0,
+        "unit": "manual validation session (not a statistical sample)"
+      },
+      "supportedClaimLimits": "One user-provided episode; supports only 'the organizer workflow was manually exercised on one real episode copy'. No media, format, provider, accuracy or performance claim.",
+      "evidenceStatus": "not-yet-executed"
+    }
+  ],
+  "laterMilestonePointers": {
+    "note": "Pointers only; NOT M1 obligations. Qualification remains in each domain issue.",
+    "items": [
+      {
+        "milestone": "M2",
+        "strata": "short/long durations, rates, shared-clock, unequal starts, affine/nonlinear drift, discontinuities, acoustic-delay negatives, noise/silence/bleed/overlap",
+        "issues": [
+          "WW-015 (#10)",
+          "WW-016 (#15)",
+          "WW-017 (#11)",
+          "WW-018 (#13)"
+        ]
+      },
+      {
+        "milestone": "M2",
+        "strata": "import priming/padding/rate/channel/codec cases",
+        "issues": [
+          "WW-050 (#45)",
+          "WW-020 (#19)"
+        ]
+      },
+      {
+        "milestone": "M3",
+        "strata": "English native/Whisper timing/provisioning/offline",
+        "issues": [
+          "WW-026 (#23)",
+          "WW-027 (#21)"
+        ]
+      },
+      {
+        "milestone": "M3",
+        "strata": "common-map shortening, mode changes, partial inverses, occurrences, crossfades, protected speech",
+        "issues": [
+          "WW-028 (#25)",
+          "WW-043 (#40)",
+          "WW-045 (#41)"
+        ]
+      },
+      {
+        "milestone": "M3",
+        "strata": "review keyboard/VoiceOver",
+        "issues": [
+          "WW-029 (#26)",
+          "WW-044 (#48)"
+        ]
+      },
+      {
+        "milestone": "M4",
+        "strata": "neutral stems/record/restoration and listening",
+        "issues": [
+          "WW-036 (#34)",
+          "WW-038 (#33)",
+          "WW-040 (#37)"
+        ]
+      }
+    ]
+  }
+}
