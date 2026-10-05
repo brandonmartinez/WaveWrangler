@@ -125,6 +125,8 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
         }
         let store = self.store
         let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: nil)
+        let interval = OpenSignposts.begin("library.openShow")
+        defer { OpenSignposts.end(interval) }
         do {
             // Resolve, start the scope and verify the ShowID; the store ends access exactly once on any
             // failure, including a failed NSDocument open below.
