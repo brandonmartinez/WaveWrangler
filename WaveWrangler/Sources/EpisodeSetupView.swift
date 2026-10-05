@@ -343,7 +343,6 @@ private struct SourcesTable: View {
     let rows: [SetupSourceRow]
     let width: Double
     @Environment(\.setupTextScale) private var textScale
-    @State private var customization = TableColumnCustomization<SetupSourceRow>()
 
     private var scale: Double { Double(textScale) }
     /// Columns that fit (#104): Status always; Name truncates first; hidden values stay in the details
@@ -353,33 +352,35 @@ private struct SourcesTable: View {
     var body: some View {
         let shown = columns
         let hidden = Set(SetupSourceColumn.allCases).subtracting(shown)
-        Table(of: SetupSourceRow.self, selection: $model.selection, columnCustomization: $customization) {
+        // Columns come only from the width plan (no header-menu customization), so the VoiceOver summary
+        // of hidden values always matches what is hidden and Status is never pushed out.
+        Table(of: SetupSourceRow.self, selection: $model.selection) {
             TableColumn("Name") { row in
                 NameCell(row: row, hidden: hidden)
             }
             .width(min: SetupSourceColumn.nameMinimum(scale: scale), ideal: SetupColumnPlan.nameWidth(shown, tableWidth: width, scale: scale))
-            .customizationID(SetupSourceColumn.name.rawValue)
-            .disabledCustomizationBehavior(.visibility)
-            TableColumn("Epoch") { row in SourceCell(row: row, cell: row.epoch, label: "Epoch", column: "epoch") }
-                .width(min: 36 * scale, ideal: SetupSourceColumn.epoch.width(scale: scale))
-                .customizationID(SetupSourceColumn.epoch.rawValue)
-            TableColumn("Ch") { row in SourceCell(row: row, cell: row.channel, label: "Channel", column: "channel") }
-                .width(min: 28 * scale, ideal: SetupSourceColumn.channel.width(scale: scale))
-                .customizationID(SetupSourceColumn.channel.rawValue)
-            TableColumn("Speaker") { row in SourceCell(row: row, cell: row.speaker, label: "Speaker", column: "speaker") }
-                .width(min: 56 * scale, ideal: SetupSourceColumn.speaker.width(scale: scale))
-                .customizationID(SetupSourceColumn.speaker.rawValue)
-            TableColumn("Role") { row in SourceCell(row: row, cell: row.role, label: "Role", column: "role") }
-                .width(min: 56 * scale, ideal: SetupSourceColumn.role.width(scale: scale))
-                .customizationID(SetupSourceColumn.role.rawValue)
+            if shown.contains(.epoch) {
+                TableColumn("Epoch") { row in SourceCell(row: row, cell: row.epoch, label: "Epoch", column: "epoch") }
+                    .width(min: 36 * scale, ideal: SetupSourceColumn.epoch.width(scale: scale))
+            }
+            if shown.contains(.channel) {
+                TableColumn("Ch") { row in SourceCell(row: row, cell: row.channel, label: "Channel", column: "channel") }
+                    .width(min: 28 * scale, ideal: SetupSourceColumn.channel.width(scale: scale))
+            }
+            if shown.contains(.speaker) {
+                TableColumn("Speaker") { row in SourceCell(row: row, cell: row.speaker, label: "Speaker", column: "speaker") }
+                    .width(min: 56 * scale, ideal: SetupSourceColumn.speaker.width(scale: scale))
+            }
+            if shown.contains(.role) {
+                TableColumn("Role") { row in SourceCell(row: row, cell: row.role, label: "Role", column: "role") }
+                    .width(min: 56 * scale, ideal: SetupSourceColumn.role.width(scale: scale))
+            }
             TableColumn("Status") { row in
                 if let status = row.status, case let .source(id) = row.id {
                     StatusCell(summary: status, identifier: "ww.setup.source.\(id).status")
                 }
             }
             .width(min: 100 * scale, ideal: SetupSourceColumn.status.width(scale: scale))
-            .customizationID(SetupSourceColumn.status.rawValue)
-            .disabledCustomizationBehavior(.visibility)
         } rows: {
             ForEach(rows) { group in
                 DisclosureTableRow(group, isExpanded: Binding(
@@ -400,19 +401,11 @@ private struct SourcesTable: View {
         .contextMenu(forSelectionType: SetupRowID.self) { ids in
             SourceContextMenu(model: model, ids: ids)
         } primaryAction: { _ in
-            model.inspectorFocusRequest += 1
+            model.requestInspectorFocus()
         }
         .onDeleteCommand { model.requestDeleteFromSources() }
         .onChange(of: model.selection) { model.inspectorFollowsSpeakers = false }
         .environment(\.defaultMinListRowHeight, 22 * scale)
-        .onAppear { apply(shown) }
-        .onChange(of: shown) { apply(shown) }
-    }
-
-    private func apply(_ shown: [SetupSourceColumn]) {
-        for column in SetupSourceColumn.allCases where column != .name && column != .status {
-            customization[visibility: column.rawValue] = shown.contains(column) ? .visible : .hidden
-        }
     }
 
     static func flattened(_ rows: [SetupSourceRow]) -> [SetupSourceRow] {
@@ -610,7 +603,7 @@ private struct SpeakersSection: View {
             .contextMenu(forSelectionType: SpeakerID.self) { ids in
                 SpeakerContextMenu(model: model, ids: ids)
             } primaryAction: { _ in
-                model.inspectorFocusRequest += 1
+                model.requestInspectorFocus()
             }
             .onDeleteCommand {
                 if let id = model.speakerSelection.first { model.confirmation = .deleteSpeaker(id) }

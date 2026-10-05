@@ -146,7 +146,8 @@ final class EpisodeSetupUITests: XCTestCase {
 
     /// Clicks the Sources outline row whose name is `name` (at the row's leading edge).
     private func select(_ name: String) {
-        let row = app.outlines["ww.setup.sources"].outlineRows.containing(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND value == %@", name)).firstMatch
+        // The Name cell's label is the file name (its value carries hidden column values for VoiceOver).
+        let row = app.outlines["ww.setup.sources"].outlineRows.containing(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND (label == %@ OR value == %@)", name, name)).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 3), "row \(name)")
         row.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).click()
         if !waitForOutline("1 selected") {
@@ -334,7 +335,7 @@ final class EpisodeSetupUITests: XCTestCase {
         let split = app.sliders["ww.setup.split"].exists ? app.sliders["ww.setup.split"] : app.sliders["Speakers table height"]
         XCTAssertTrue(split.exists, "resize handle is a slider")
         let splitValue = split.value.map { "\($0)" } ?? ""
-        XCTAssertTrue(splitValue == "40 percent" || splitValue == "0.4", "handle value \(splitValue)")
+        XCTAssertTrue(splitValue == "35 percent" || splitValue == "0.35", "handle value \(splitValue)")
 
         menu("Window", "Zoom")
         for _ in 0..<4 { menu("View", "Text Size", "Bigger") }
@@ -375,7 +376,8 @@ final class EpisodeSetupUITests: XCTestCase {
 
         XCTAssertGreaterThanOrEqual(visibleSourceRows(outline).count, 4, "several source rows at the default size (\(outline.frame))")
         assertStatusVisible(outline, "default window")
-        XCTAssertGreaterThanOrEqual(app.outlines["ww.setup.speakers"].frame.height, 28 + 4 * 22, "Speakers stays usable")
+        // Sources has priority in a short window; Speakers keeps its column header plus three rows.
+        XCTAssertGreaterThanOrEqual(app.outlines["ww.setup.speakers"].frame.height, 28 + 3 * 22, "Speakers stays usable")
 
         let toggle = element("ww.setup.detailsToggle")
         XCTAssertTrue(toggle.exists, "details collapse to a bar in a short, narrow window")
@@ -386,6 +388,10 @@ final class EpisodeSetupUITests: XCTestCase {
         select("tr2.wav")
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
         XCTAssertTrue(element("ww.setup.inspector").waitForExistence(timeout: 2), "Return opens the details")
+        // K08/K09: Return also moves focus to the details' first editable field.
+        let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasKeyboardFocus == true AND identifier BEGINSWITH 'ww.inspector.'")).firstMatch
+        XCTAssertTrue(focused.waitForExistence(timeout: 2), "focus moved into the details after Return")
+        XCTAssertEqual(focused.identifier, "ww.inspector.source.group", "first editable field (Recorder group)")
         XCTAssertTrue(element("ww.inspector.source.speaker").exists, "speaker editable in the details")
         XCTAssertTrue(element("ww.inspector.source.role").exists, "role shown in the details")
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])

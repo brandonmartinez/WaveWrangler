@@ -87,6 +87,20 @@ final class EpisodeSetupModel {
     var inspectorFollowsSpeakers = false
     /// Incremented to ask the inspector to focus its first editable field (Return in the tables).
     var inspectorFocusRequest = 0
+    /// A focus request not yet honoured (the details may still be appearing). Consumed once.
+    @ObservationIgnored private var pendingInspectorFocus = false
+
+    /// Return in a table: move focus to the details' first editable field, opening them if collapsed.
+    func requestInspectorFocus() {
+        pendingInspectorFocus = true
+        inspectorFocusRequest += 1
+    }
+
+    /// True once per request, for whichever details view is on screen to take focus.
+    func consumeInspectorFocus() -> Bool {
+        defer { pendingInspectorFocus = false }
+        return pendingInspectorFocus
+    }
     var isScanning = false
 
     @ObservationIgnored private var observation: Task<Void, Never>?
