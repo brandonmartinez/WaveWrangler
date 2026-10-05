@@ -149,6 +149,11 @@ final class DocumentLifecycleUITests: XCTestCase {
         let elapsed = Date().timeIntervalSince(committed)
         record("ON committed-edit-to-disk (native app, 1 s policy) \(String(format: "%.3f", elapsed)) s")
         XCTAssertLessThanOrEqual(elapsed, 2.0, "WW-005 provisional ≤2 s")
+        // #87: once the autosave is verified ("Saved"), the window no longer says "Edited" either.
+        let status = window.descendants(matching: .any).matching(identifier: "ww.show.saveStatus").firstMatch
+        XCTAssertTrue(waitFor(timeout: 3) { (status.value as? String ?? status.label).hasPrefix("Saved") }, "status reaches Saved")
+        XCTAssertTrue(waitFor(timeout: 3) { !self.windowSaysEdited(window) }, "no \"— Edited\" after a verified autosave")
+        record("after autosave: title \(window.title) | status \(status.value as? String ?? status.label)")
 
         app.typeKey("w", modifierFlags: .command)
         XCTAssertFalse(app.sheets.firstMatch.waitForExistence(timeout: 1.5), "no prompt with autosave ON")
@@ -281,6 +286,12 @@ final class DocumentLifecycleUITests: XCTestCase {
         field.typeKey("a", modifierFlags: .command)
         field.typeText(title)
         field.typeKey(.return, modifierFlags: [])
+    }
+
+    /// "— Edited" in the window title or subtitle (AppKit's edited-document suffix).
+    private func windowSaysEdited(_ window: XCUIElement) -> Bool {
+        window.title.contains("Edited")
+            || window.staticTexts.matching(NSPredicate(format: "value CONTAINS '— Edited' OR label CONTAINS '— Edited'")).count > 0
     }
 
     private func closeSheet() throws -> XCUIElement {

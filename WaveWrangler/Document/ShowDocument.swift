@@ -160,9 +160,10 @@ final class ShowDocument: NSDocument {
         let adopts = Self.adoptsPublication(saveOperation)
         if adopts { status.set(.saving) }
         let candidateBytes = pendingCandidate?.data
+        let candidateModel = store.model
         super.save(to: url, ofType: typeName, for: saveOperation) { [weak self] error in
             guard let self else { return completionHandler(error) }
-            self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error, url: url, candidateBytes: candidateBytes)
+            self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error, url: url, candidateBytes: candidateBytes, candidateModel: candidateModel)
             completionHandler(error)
         }
     }
@@ -177,19 +178,32 @@ final class ShowDocument: NSDocument {
         }
     }
 
-    private func finishSave(saveOperation: NSDocument.SaveOperationType, adopts: Bool, error: Error?, url: URL, candidateBytes: Data?) {
+    private func finishSave(
+        saveOperation: NSDocument.SaveOperationType, adopts: Bool, error: Error?, url: URL, candidateBytes: Data?, candidateModel: ShowDocumentModel
+    ) {
         let receipt = lastReceipt
         lastReceipt = nil
         pendingCandidate = nil
         if error == nil, adopts, let receipt {
             publication = receipt.publication
             onDiskBase = receipt.fingerprint
+            // #87: AppKit only marks an autosave in place as "autosaved"; clear "— Edited" exactly when the verified
+            // publication holds the current model. Edits made during the save keep the document (and status) edited.
+            let isAutosaveInPlace = saveOperation == .autosaveInPlaceOperation
+            if isAutosaveInPlace, isDocumentEdited,
+               EditedStatePolicy.clearsEditedState(after: .autosaveInPlace, verified: true, publishedEqualsCurrent: store.model == candidateModel) {
+                updateChangeCount(.changeCleared)
+            }
             if !isDocumentEdited {
                 scheduler?.cancelPending()
                 try? recovery.discardEditCheckpoints(for: documentKey)
             }
             resolveOfferRecordsAfterVerifiedSave()
-            status.set(.saved(revision: receipt.revision, at: receipt.verifiedAt))
+            if isAutosaveInPlace, isDocumentEdited {
+                status.set(.edited(autosaveEnabled: gate.isEnabled))
+            } else {
+                status.set(.saved(revision: receipt.revision, at: receipt.verifiedAt))
+            }
             let model = store.model
             #if DEBUG
             if let acknowledge = Self.debugLibraryAcknowledger {

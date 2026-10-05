@@ -31,6 +31,8 @@ Packages/WaveWranglerKit/         Local Swift package linked by the app
                                   collection/combine operations, library session, sidebar models, menu shortcut register
   Tests/WW*Tests/                 Swift Testing suites per module
 scripts/build.sh, scripts/test.sh Established build/test commands (CI runs the same scripts)
+scripts/demo/                     Manual demonstration helpers: synthetic fixture generator, metadata-only fs manifest
+                                  (see docs/m1/evidence/m1-demonstration.md; outputs go to $TMPDIR, never a repo)
 .github/workflows/ci.yml          Ordinary build/test CI
 ```
 
