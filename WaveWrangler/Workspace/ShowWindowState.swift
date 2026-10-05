@@ -223,6 +223,7 @@ final class ShowWindowState {
             }
             window.contentView?.setAccessibilityLabel("Show")
             window.toolbarStyle = .unified
+            LaunchFixtures.placeForTesting(window)
             window.setAccessibilityIdentifier("ww.show.window")
             self.updateSubtitle()
             let model = self.store.model

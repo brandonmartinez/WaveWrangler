@@ -28,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LaunchFixtures.applyAfterLaunch()
         // IA-05: restore windows open at quit; otherwise show the Library window. Never alert at launch.
         DispatchQueue.main.async {
-            if !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) {
+            if !LaunchFixtures.suppressesLibraryAtLaunch, !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) {
                 LibraryWindowController.show()
             }
         }

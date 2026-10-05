@@ -14,6 +14,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         instance = controller
         if let pane { controller.tabs.select(pane) }
         controller.showWindow(nil)
+        if let window = controller.window { LaunchFixtures.placeForTesting(window) }
         controller.window?.makeKeyAndOrderFront(nil)
     }
 

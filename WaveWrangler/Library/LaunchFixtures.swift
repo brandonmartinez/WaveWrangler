@@ -7,9 +7,32 @@ import WWOrganizer
 ///
 /// - `-WWUITestResetPreferences YES`: remove WaveWrangler preference keys (fresh defaults).
 /// - `-WWUITestLibraryFixture lib100|empty`: seed the in-memory library (F-LIB100 / F-EMPTY).
-/// - `-WWUITestOpenShow <name>` (+ `-WWUITestShowEpisodes <n>`): create a synthetic show and open it.
+/// - `-WWUITestOpenShow <name>` (+ `-WWUITestShowEpisodes <n>`): create a synthetic show and open it
+///   (the Library window is then not shown at launch).
+/// - `-WWUITestCenterWindows YES`: place windows fully on the main display (stable audits).
 @MainActor
 enum LaunchFixtures {
+    /// Debug-only: keep a window entirely on the primary display (the one with the menu bar) so audits sample its own pixels.
+    static func placeForTesting(_ window: NSWindow) {
+        #if DEBUG
+        guard UserDefaults.standard.bool(forKey: "WWUITestCenterWindows"), let visible = NSScreen.screens.first?.visibleFrame else { return }
+        var frame = window.frame
+        frame.size.width = min(frame.width, visible.width)
+        frame.size.height = min(frame.height, visible.height)
+        frame.origin.x = visible.midX - frame.width / 2
+        frame.origin.y = visible.midY - frame.height / 2
+        window.setFrame(frame, display: true)
+        #endif
+    }
+
+    static var suppressesLibraryAtLaunch: Bool {
+        #if DEBUG
+        return !(UserDefaults.standard.string(forKey: "WWUITestOpenShow") ?? "").isEmpty
+        #else
+        return false
+        #endif
+    }
+
     static func applyBeforeLaunch() {
         #if DEBUG
         let defaults = UserDefaults.standard

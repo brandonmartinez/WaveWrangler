@@ -30,6 +30,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate, NSWin
             frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
             window.setFrame(frame, display: true)
         }
+        LaunchFixtures.placeForTesting(window)
         window.makeKeyAndOrderFront(nil)
     }
 
