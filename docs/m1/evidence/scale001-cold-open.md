@@ -50,17 +50,42 @@ Limits:
 
 - **Provider-version inspection and the C2b offer scan run after the window's first frame.** Neither decides anything before then: the offer's actions re-check against disk when used, and saving depends on neither.
   - The C2b **set-aside stays synchronous** in `read`. It is what protects edit-checkpoint records from an immediate save or a new checkpoint, and it costs about 0.02 ms.
-  - A document that is never displayed presents neither, so its deferred work runs only if its windows are shown.
+  - It runs when a window of the document first appears, on **every** display path: `showWindows()`, a window restored at launch by state restoration (via the show window's attach, since restoration never calls `showWindows()`; #107 review), or the next turn after a revert. A document that is never displayed presents neither, so its deferred work runs once one of its windows appears.
 - **Library bookkeeping (`LibraryUIStore.showDidOpen`) runs after the show window's first commit.** It updates and re-renders the Library window (entry details, Last Opened, recents), which previously happened inside the pass that committed the show window.
   - It reads the document's state when it runs, so a save in between is never recorded over by an older title.
 
-## Native before/after: pending
+## Native before/after (direct launch, 2026-10-05)
 
-XCUITest automation is blocked while Automation Mode awaits user authentication. The planned measurement launches the app
-directly, without XCUITest:
-- **Builds:** local Debug builds of the acceptance lane's branch (`cb42138`, which carries its `Responsiveness` `show.open` instrumentation and the `lib100files` fixture), unmodified ("before") and merged with this branch ("after").
-- **Trigger:** a local-only `-WWMeasureOpenRow` hook (never merged) opens an entry through the normal `LibraryWindowState.open` path.
-- **Samples:** 100 fresh processes per variant, under the GUI lock.
+**Method:**
+- **Builds:** local Debug builds of the acceptance lane's branch (`cb42138`, with its `Responsiveness` instrumentation and the `lib100files` fixture).
+  - **Before:** unmodified.
+  - **After:** merged with this branch at `ccb6c19`.
+- **Trigger:** a local-only `-WWMeasureOpenRow N` hook (never merged) opens entry N through the normal `LibraryWindowState.open` path, 1 s after the library is ready, then quits. Rows rotate 3–99.
+- **Samples:** 100 fresh processes per variant, launched directly (no XCUITest) under the GUI lock. Claimed host: Apple M5 Max, macOS 27.0.1. Percentiles are nearest-rank.
+- **Metric:** the acceptance lane's `show.open` interval, ending at the commit after the show window attaches. Its start is shown two ways:
 
-That run also tests whether the bimodal ~20% depends on XCUITest's 50 ms accessibility polling during the open. No native
-improvement is claimed until it has run.
+| `show.open`, first open in a fresh process | p50 | p95 | max | ≥ 0.9 s |
+|---|---:|---:|---:|---:|
+| Before, from the `open()` handler | 241 ms | 295 ms | 345 ms | 0/100 |
+| After, from the `open()` handler | 232 ms | **274 ms** | 323 ms | 0/100 |
+| Before, from "event" timestamp (as reported) | 270 ms | 1,267 ms | 1,286 ms | 27/100 |
+| After, from "event" timestamp (as reported) | 238 ms | 1,255 ms | 1,317 ms | 26/100 |
+
+**Finding: the slow mode is a measurement artifact, not product time.**
+- `Responsiveness.begin` uses `NSApp.currentEvent.timestamp` whenever that event is less than 1 s old.
+- With no input event (the programmatic open), the current event in about 26% of launches was a stale launch/activation event 933–1,000 ms old. The bound comes from the `< 1 s` guard.
+- In those samples, every `ShowOpen` stage took the same time as in fast samples, and the main thread was idle; the gap is the hook's own 1 s wait.
+- **Hypothesis for the XCUITest harness (to verify):** its slow cluster at 0.91–1.12 s has the same shape, about 0.2–0.3 s of open plus a stale event under 1 s old. If the Return handler runs where `NSApp.currentEvent` is not the Return keyDown (for example, an earlier arrow-key event), the interval starts too early. Logging the event's type, key code and age in `Responsiveness.begin` would settle it.
+
+**Stage attribution (after, n = 100, p50 / p95):**
+- `library.openShow` 209 / 226 ms (the Task through NSDocumentController's return), which includes:
+  - `document.makeWindowControllers` 123 / 130 ms (hosting controller, SwiftUI view graph);
+  - `document.read` 2.4 / 3.8 ms (`document.decode` 2.3 / 3.6 ms);
+  - `document.init` 0.5 / 0.7 ms.
+- `window.firstCommit` 95 / 133 ms.
+- `window.attachCommit` 23 / 57 ms.
+- Moved after the first frame: `document.deferred` 0.27 / 0.31 ms and `library.showDidOpen` 0.15 / 0.16 ms. The Library window's re-render is no longer inside the show window's commit.
+
+**Change, handler-measured:**
+- p95 295 → 274 ms (−21 ms), p50 241 → 232 ms, max 345 → 323 ms.
+- The remaining cost is AppKit/SwiftUI window creation and first layout (about 220 ms), which persistence doesn't own.
