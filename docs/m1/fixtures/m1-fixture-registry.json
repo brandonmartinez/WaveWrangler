@@ -1,6 +1,7 @@
 {
-  "registryVersion": "m1-fixtures-v1-draft",
+  "registryVersion": "m1-fixtures-v2-draft",
   "date": "2026-10-04",
+  "generatedBy": "docs/m1/fixtures/generate-registry.py (do not hand-edit; regenerate)",
   "owner": "Lead (protocol); WW-003 informational owner Pipeline",
   "issue": "https://github.com/brandonmartinez/WaveWrangler/issues/5",
   "protocol": "docs/m1/ww-003-fixture-protocol.md",
@@ -8,23 +9,156 @@
   "freezeRule": "Each family is frozen (generator source hash, recipe, truth, counts, gate) in a dated freeze record before its first holdout case runs. Counts may increase before freeze; never decrease below a frozen gate minimum without explicit Lead/Brandon approval.",
   "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
   "claimedHost": "macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), 18-core Apple silicon, 128 GiB -- not the macOS 26/16 GB reference",
+  "userGrants20261004": {
+    "A": "Grant A (user, 2026-10-04): local GUI launch, XCUITest, accessibility audits and computer-use on the ad-hoc-signed app, under a coordinator-held single GUI lock; the user approves any prompts.",
+    "B": "Grant B (user, 2026-10-04): temporary VoiceOver for the core M1 tasks.",
+    "C": "Grant C (user, 2026-10-04): one iCloud Drive folder 'WaveWrangler-M1-Synthetic-Trial' with generated synthetic documents only, on this Mac: save, autosave, two-window/two-process conflict, brctl evict/download and recovery; delete the folder afterwards.",
+    "D": "Grant D (user, 2026-10-04): temporary Increase Contrast, Reduce Motion and larger text; record original values and restore them."
+  },
+  "stillBlocked": [
+    "second device",
+    "OneDrive",
+    "Dropbox",
+    "disk-image (real full-volume) tests"
+  ],
   "permissionClasses": {
     "authorized-synthetic": "Generated deterministic data in temp dirs; authorized by the pasted M1 kickoff.",
+    "authorized-user-grant": "Synthetic data exercised through a user grant of 2026-10-04 (A-D) relayed by the M1 coordinator, within its exact scope.",
     "consent-relayed-manual": "Specific user consent relayed by the M1 coordinator; manual use within stated scope only.",
-    "pending-user-consent": "Needs an exact user answer (GUI launch/UI tests/VoiceOver/OS settings).",
-    "pending-coordinator-confirmation": "Local synthetic operation with side effects beyond temp files (e.g., disk image); coordinator confirms.",
-    "not-authorized": "Provider/network/second-device/real-media trials; exact consent required."
+    "not-authorized": "Not granted; exact user consent required."
   },
+  "showPublicationBoundaries": [
+    {
+      "id": "P1",
+      "after": "C3.3 candidate encoded+validated",
+      "before": "C3.4 prior retained",
+      "injection": "WWPersistence publisher step hook; NSDocument path: our writeSafely(to:ofType:for:) override before calling super",
+      "paths": [
+        "publisher",
+        "nsdocument"
+      ]
+    },
+    {
+      "id": "P2",
+      "after": "C3.4 validated prior retained in recovery store",
+      "before": "C3.5 coordinated write / base check",
+      "injection": "publisher step hook; NSDocument path: writeSafely override before super, after prior retention",
+      "paths": [
+        "publisher",
+        "nsdocument"
+      ]
+    },
+    {
+      "id": "P3",
+      "after": "C3.5 base check passed",
+      "before": "C3.6 bytes written",
+      "injection": "publisher: NSFileCoordinator writing accessor; NSDocument path: throw from our write(to:ofType:for:originalContentsURL:) override before writing (AppKit then aborts safe save)",
+      "paths": [
+        "publisher",
+        "nsdocument"
+      ]
+    },
+    {
+      "id": "P4",
+      "after": "C3.6 staged bytes written+flushed",
+      "before": "C3.6 replace/publish of canonical file",
+      "injection": "publisher-only (stage file -> replaceItemAt). NO public hook inside AppKit writeSafely; NSDocument path reaches this only by non-deterministic process kill (DUR-021)",
+      "paths": [
+        "publisher"
+      ]
+    },
+    {
+      "id": "P5",
+      "after": "C3.6 publication returned",
+      "before": "C3.7 independent read-back",
+      "injection": "publisher step hook; NSDocument path: writeSafely override after super returns",
+      "paths": [
+        "publisher",
+        "nsdocument"
+      ]
+    },
+    {
+      "id": "P6",
+      "after": "C3.7 read-back verified",
+      "before": "C3.8 library acknowledgement",
+      "injection": "app save-completion handler before library ack (both paths)",
+      "paths": [
+        "publisher",
+        "nsdocument"
+      ]
+    },
+    {
+      "id": "P7",
+      "after": "C3.8 library acknowledgement published",
+      "before": "derived index update",
+      "injection": "index updater entry (both paths)",
+      "paths": [
+        "publisher",
+        "nsdocument"
+      ]
+    }
+  ],
+  "libraryPublicationBoundaries": [
+    {
+      "id": "L1",
+      "after": "library candidate encoded+validated",
+      "before": "library prior retained",
+      "injection": "library publisher step hook"
+    },
+    {
+      "id": "L2",
+      "after": "library prior retained",
+      "before": "coordinated write / base check",
+      "injection": "library publisher step hook"
+    },
+    {
+      "id": "L3",
+      "after": "base check passed inside NSFileCoordinator writing accessor",
+      "before": "stage write",
+      "injection": "coordinator accessor"
+    },
+    {
+      "id": "L4",
+      "after": "stage written+flushed",
+      "before": "replaceItemAt publish",
+      "injection": "library publisher step hook"
+    },
+    {
+      "id": "L5",
+      "after": "publish returned",
+      "before": "independent read-back",
+      "injection": "library publisher step hook"
+    },
+    {
+      "id": "L6",
+      "after": "read-back verified",
+      "before": "derived index update",
+      "injection": "index updater entry"
+    }
+  ],
+  "nsdocumentPathCoverage": "NSDocument path evidences P1-P3 and P5-P7 deterministically via public overrides (writeSafely override before/after super, write(to:ofType:for:originalContentsURL:) throw, completion handler, index entry). It does NOT deterministically evidence interruption inside AppKit's safe replace (P4); that boundary is evidenced only at the WWPersistence publisher level plus non-deterministic process kills. Any NSDocument claim about P4 is limited to 'AppKit stock safe-save, not independently interrupted'.",
   "counts": {
-    "entries": 58,
-    "authorizedSyntheticEntries": 47,
-    "consentBlockedEntries": 10,
-    "consentRelayedManualEntries": 1,
-    "syntheticCalibrationTotal": 555,
-    "syntheticHoldoutTotal": 5811,
+    "entries": 62,
+    "byPermissionClass": {
+      "authorized-synthetic": 50,
+      "authorized-user-grant": 7,
+      "consent-relayed-manual": 1,
+      "not-authorized": 4
+    },
+    "consentBlockedEntries": 4,
+    "consentBlockedVariants": 1,
+    "authorizedSynthetic": {
+      "calibration": 805,
+      "holdout": 8611
+    },
+    "authorizedUserGrant": {
+      "calibration": 23,
+      "holdout": 433
+    },
     "ww006LifecycleHoldout": 1110,
-    "perBoundaryInjectedHoldout": 100,
-    "perBoundaryProcessKillHoldout": 100
+    "showPublicationBoundaries": 7,
+    "libraryPublicationBoundaries": 6,
+    "perBoundaryHoldoutMinimum": 100
   },
   "fixtures": [
     {
@@ -71,9 +205,9 @@
       "generator": {
         "kind": "synthetic-deterministic",
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
-        "recipe": "Default ON configuration; burst of 1-20 edits then quiescence; timestamps: last completed model mutation (monotonic) to first independent coordinated read that parses/validates the full expected revision (canonical in-place or device-local recovery checkpoint, labelled)."
+        "recipe": "Default ON configuration; burst of 1-20 edits then quiescence; timestamps: last completed model mutation (monotonic) to first independent read that parses/validates the full expected state, either a published canonical revision or an unpublished edit-checkpoint record (WW-009 C2), labelled by kind."
       },
-      "expectedTruth": "Every case reaches a coherent whole checkpoint; reported p95 and max; provisional gate <=2 s on claimed host. Checkpoint kind recorded; callback success alone never counts.",
+      "expectedTruth": "Every case reaches a coherent whole checkpoint; edit-checkpoint records carry documentID, baseRevision/baseChecksum, unpublished=true and never change canonical bytes or 'Saved' status; reported p95 and max; provisional gate <=2 s on claimed host. Callback success alone never counts.",
       "permission": {
         "class": "authorized-synthetic",
         "status": "authorized",
@@ -104,7 +238,7 @@
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
         "recipe": "Set OFF; edit; drive the scheduling boundary and deliver queued automatic autosave requests; observe for a bounded window."
       },
-      "expectedTruth": "Zero automatic publications/recovery checkpoints; canonical bytes unchanged; document remains dirty; automatic requests complete as non-success (never nil/success-shaped); no error loop (no repeated 1004-class errors); no autosavingFileType nil/empty.",
+      "expectedTruth": "Zero automatic publications and zero edit-checkpoint records; canonical bytes unchanged; document remains dirty; automatic requests complete as non-success (never nil/success-shaped); no error loop (no repeated 1004-class errors); no autosavingFileType nil/empty.",
       "permission": {
         "class": "authorized-synthetic",
         "status": "authorized",
@@ -134,7 +268,7 @@
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
         "recipe": "Interleave: edit under ON, toggle OFF before/while an automatic request is queued; and edit under OFF, toggle ON with pending edits. Deterministic interleaving schedule from the seed."
       },
-      "expectedTruth": "ON->OFF: no publication after OFF takes effect unless already past B4 (then reported as saved with exact revision); dirty state honest. OFF->ON: a coherent checkpoint of the pending revision follows within the ON gate. Never a mixed revision.",
+      "expectedTruth": "ON->OFF: no publication after OFF takes effect unless already past P4 (then reported as saved with exact revision); dirty state honest. OFF->ON: a coherent checkpoint of the pending state follows within the ON gate. Never a mixed revision.",
       "permission": {
         "class": "authorized-synthetic",
         "status": "authorized",
@@ -146,7 +280,7 @@
         "holdout": 100,
         "unit": "interleavings"
       },
-      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Addresses AS01 at object level only; native GUI replay remains M1-DUR-026.",
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Addresses AS01 at object level only; native GUI replay is M1-DUR-026.",
       "evidenceStatus": "not-yet-executed"
     },
     {
@@ -181,7 +315,7 @@
     },
     {
       "id": "M1-DUR-006",
-      "title": "Publication-boundary interruptions (injected)",
+      "title": "Show-document publication-boundary interruptions (injected)",
       "stratum": "interrupted-publication",
       "family": "durability",
       "issues": [
@@ -193,9 +327,9 @@
       "generator": {
         "kind": "synthetic-deterministic",
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
-        "recipe": "For each boundary in boundaries[], inject a failure exactly at that boundary during Save/autosave/Save As."
+        "recipe": "For each boundary in boundaries[] (derived from WW-009 C3), inject a failure at its public injection point during Save/autosave/Save As. Run each boundary on every path listed in its 'paths'; publisher-only boundaries run on the WWPersistence publisher only."
       },
-      "expectedTruth": "After each interruption the canonical location holds either the old valid revision or the complete new revision, never a mixture; recovery store holds a validated coherent prior; status is failed or acknowledgement-uncertain (B5+), never 'Saved' without read-back; library/index do not advance on failure.",
+      "expectedTruth": "Canonical location holds either the old valid revision or the complete new revision, never a mixture; recovery store holds a validated coherent prior; status is failed or acknowledgement-uncertain (P5+), never 'Saved' without read-back; library/index do not advance on failure.",
       "permission": {
         "class": "authorized-synthetic",
         "status": "authorized",
@@ -203,26 +337,90 @@
       },
       "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
       "split": {
-        "calibration": 70,
-        "holdout": 700,
-        "unit": "interruptions (10 cal / 100 holdout per boundary)"
+        "calibration": 130,
+        "holdout": 1300,
+        "unit": "interruptions (10 cal / 100 holdout per boundary per applicable path: 6 boundaries x 2 paths + P4 publisher-only = 13 cells)"
       },
-      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Injected exceptions are not power loss or provider-sync interruptions.",
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Injected exceptions are not power loss or provider-sync interruptions. NSDocument path evidences P1-P3 and P5-P7 deterministically via public overrides (writeSafely override before/after super, write(to:ofType:for:originalContentsURL:) throw, completion handler, index entry). It does NOT deterministically evidence interruption inside AppKit's safe replace (P4); that boundary is evidenced only at the WWPersistence publisher level plus non-deterministic process kills. Any NSDocument claim about P4 is limited to 'AppKit stock safe-save, not independently interrupted'.",
       "evidenceStatus": "not-yet-executed",
       "boundaries": [
-        "B1-after-stage-write-before-flush",
-        "B2-after-stage-flush-before-prior-retained",
-        "B3-after-prior-retained-before-coordinated-publish",
-        "B4-during-publish-replace",
-        "B5-after-publish-before-readback",
-        "B6-after-readback-before-library-ack",
-        "B7-after-library-ack-before-index-update"
+        {
+          "id": "P1",
+          "after": "C3.3 candidate encoded+validated",
+          "before": "C3.4 prior retained",
+          "injection": "WWPersistence publisher step hook; NSDocument path: our writeSafely(to:ofType:for:) override before calling super",
+          "paths": [
+            "publisher",
+            "nsdocument"
+          ]
+        },
+        {
+          "id": "P2",
+          "after": "C3.4 validated prior retained in recovery store",
+          "before": "C3.5 coordinated write / base check",
+          "injection": "publisher step hook; NSDocument path: writeSafely override before super, after prior retention",
+          "paths": [
+            "publisher",
+            "nsdocument"
+          ]
+        },
+        {
+          "id": "P3",
+          "after": "C3.5 base check passed",
+          "before": "C3.6 bytes written",
+          "injection": "publisher: NSFileCoordinator writing accessor; NSDocument path: throw from our write(to:ofType:for:originalContentsURL:) override before writing (AppKit then aborts safe save)",
+          "paths": [
+            "publisher",
+            "nsdocument"
+          ]
+        },
+        {
+          "id": "P4",
+          "after": "C3.6 staged bytes written+flushed",
+          "before": "C3.6 replace/publish of canonical file",
+          "injection": "publisher-only (stage file -> replaceItemAt). NO public hook inside AppKit writeSafely; NSDocument path reaches this only by non-deterministic process kill (DUR-021)",
+          "paths": [
+            "publisher"
+          ]
+        },
+        {
+          "id": "P5",
+          "after": "C3.6 publication returned",
+          "before": "C3.7 independent read-back",
+          "injection": "publisher step hook; NSDocument path: writeSafely override after super returns",
+          "paths": [
+            "publisher",
+            "nsdocument"
+          ]
+        },
+        {
+          "id": "P6",
+          "after": "C3.7 read-back verified",
+          "before": "C3.8 library acknowledgement",
+          "injection": "app save-completion handler before library ack (both paths)",
+          "paths": [
+            "publisher",
+            "nsdocument"
+          ]
+        },
+        {
+          "id": "P7",
+          "after": "C3.8 library acknowledgement published",
+          "before": "derived index update",
+          "injection": "index updater entry (both paths)",
+          "paths": [
+            "publisher",
+            "nsdocument"
+          ]
+        }
       ],
       "perBoundary": {
         "calibration": 10,
-        "holdout": 100
+        "holdout": 100,
+        "perApplicablePath": true
       },
-      "frozenGate": ">=100 interruptions per publication boundary (WW-005/WW-049)"
+      "frozenGate": ">=100 interruptions per publication boundary (WW-005/WW-049)",
+      "nsdocumentPathCoverage": "NSDocument path evidences P1-P3 and P5-P7 deterministically via public overrides (writeSafely override before/after super, write(to:ofType:for:originalContentsURL:) throw, completion handler, index entry). It does NOT deterministically evidence interruption inside AppKit's safe replace (P4); that boundary is evidenced only at the WWPersistence publisher level plus non-deterministic process kills. Any NSDocument claim about P4 is limited to 'AppKit stock safe-save, not independently interrupted'."
     },
     {
       "id": "M1-DUR-007",
@@ -252,7 +450,7 @@
         "holdout": 100,
         "unit": "conflicts"
       },
-      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Same-host writer only; provider/two-device conflicts are M1-DUR-024/025.",
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Same-host writer only; iCloud trial is M1-DUR-024; other providers/two-device are M1-DUR-030/025.",
       "evidenceStatus": "not-yet-executed"
     },
     {
@@ -282,7 +480,7 @@
         "holdout": 100,
         "unit": "interleavings"
       },
-      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Object level; visual/keyboard window behavior needs GUI consent.",
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Object level; visual/keyboard window behavior is M1-DUR-026/M1-A11Y-001.",
       "evidenceStatus": "not-yet-executed"
     },
     {
@@ -343,7 +541,7 @@
         "holdout": 100,
         "unit": "documents"
       },
-      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Simulated offline; real provider offline needs consent.",
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Simulated offline; real iCloud offline is part of M1-DUR-024 only where observable.",
       "evidenceStatus": "not-yet-executed"
     },
     {
@@ -373,7 +571,7 @@
         "holdout": 100,
         "unit": "cancellations"
       },
-      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Native save-panel cancel requires GUI consent (M1-DUR-026).",
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Native save-panel cancel is M1-DUR-026 (grant A).",
       "evidenceStatus": "not-yet-executed"
     },
     {
@@ -419,7 +617,7 @@
       "generator": {
         "kind": "synthetic-deterministic",
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
-        "recipe": "Inject ENOSPC at stage write, prior retention and publication."
+        "recipe": "Inject ENOSPC at stage write, prior retention, edit-checkpoint write and publication."
       },
       "expectedTruth": "Prior valid revision intact; partial stage files cleaned or ignored; distinct 'disk full' status; dirty retained.",
       "permission": {
@@ -433,16 +631,17 @@
         "holdout": 100,
         "unit": "documents"
       },
-      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Injected, not a physically full volume. A real small-volume variant (disk image) needs coordinator confirmation.",
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Injected, not a physically full volume. The real disk-image variant is NOT authorized.",
       "evidenceStatus": "not-yet-executed",
       "variants": [
         {
           "id": "M1-DUR-013-real-volume",
           "permission": {
-            "class": "pending-coordinator-confirmation",
-            "status": "pending-coordinator-confirmation",
-            "scope": "Create/mount a small temporary disk image in a temp dir and fill it with generated data; no user volumes."
-          }
+            "class": "not-authorized",
+            "status": "not-authorized (needs user consent; not granted 2026-10-04)",
+            "scope": "Would create/mount a small temporary disk image and fill it with generated data."
+          },
+          "evidenceStatus": "consent-blocked"
         }
       ]
     },
@@ -473,7 +672,7 @@
         "holdout": 100,
         "unit": "operations"
       },
-      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Native panel UX needs GUI consent.",
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Native panel UX is M1-DUR-026 (grant A).",
       "evidenceStatus": "not-yet-executed"
     },
     {
@@ -612,7 +811,7 @@
       "generator": {
         "kind": "synthetic-deterministic",
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
-        "recipe": "Interrupt between project publication and library acknowledgement, and during library publication itself."
+        "recipe": "Interrupt between project publication and library acknowledgement, and during library publication itself; run with the library in each location stratum."
       },
       "expectedTruth": "Library never claims a revision that is not coherent on disk; reopen reconciles; both documents retain prior valid state; unavailable entries retained.",
       "permission": {
@@ -622,12 +821,16 @@
       },
       "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
       "split": {
-        "calibration": 10,
-        "holdout": 100,
-        "unit": "interruptions"
+        "calibration": 20,
+        "holdout": 200,
+        "unit": "interruptions (10/100 per location stratum)"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "not-yet-executed",
+      "locationStrata": [
+        "app-container (default)",
+        "user-chosen-folder (synthetic temp folder reached via read-write security-scoped bookmark)"
+      ]
     },
     {
       "id": "M1-DUR-020",
@@ -663,7 +866,7 @@
     },
     {
       "id": "M1-DUR-021",
-      "title": "Owned subprocess kill at publication boundaries",
+      "title": "Owned subprocess kill at show-document publication boundaries",
       "stratum": "interrupted-publication/process-kill",
       "family": "durability",
       "issues": [
@@ -674,7 +877,7 @@
       "generator": {
         "kind": "synthetic-deterministic",
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
-        "recipe": "Helper subprocess performs the save protocol and is terminated (SIGKILL) exactly at each boundary in boundaries[]."
+        "recipe": "Helper subprocess runs the WWPersistence publisher and is terminated (SIGKILL) exactly at each boundary in boundaries[]; a separate seeded set kills a helper performing NSDocument-path saves at random points (reported separately, not per-boundary)."
       },
       "expectedTruth": "Same truth as M1-DUR-006 after restart: old valid or complete new revision, never mixed; recovery store coherent.",
       "permission": {
@@ -686,18 +889,80 @@
       "split": {
         "calibration": 35,
         "holdout": 700,
-        "unit": "kills (5 cal / 100 holdout per boundary)"
+        "unit": "kills (5 cal / 100 holdout per boundary, publisher path)"
       },
-      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Process kill is not power loss or kernel panic.",
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media. Process kill is not power loss or kernel panic. NSDocument path evidences P1-P3 and P5-P7 deterministically via public overrides (writeSafely override before/after super, write(to:ofType:for:originalContentsURL:) throw, completion handler, index entry). It does NOT deterministically evidence interruption inside AppKit's safe replace (P4); that boundary is evidenced only at the WWPersistence publisher level plus non-deterministic process kills. Any NSDocument claim about P4 is limited to 'AppKit stock safe-save, not independently interrupted'.",
       "evidenceStatus": "not-yet-executed",
       "boundaries": [
-        "B1-after-stage-write-before-flush",
-        "B2-after-stage-flush-before-prior-retained",
-        "B3-after-prior-retained-before-coordinated-publish",
-        "B4-during-publish-replace",
-        "B5-after-publish-before-readback",
-        "B6-after-readback-before-library-ack",
-        "B7-after-library-ack-before-index-update"
+        {
+          "id": "P1",
+          "after": "C3.3 candidate encoded+validated",
+          "before": "C3.4 prior retained",
+          "injection": "WWPersistence publisher step hook; NSDocument path: our writeSafely(to:ofType:for:) override before calling super",
+          "paths": [
+            "publisher",
+            "nsdocument"
+          ]
+        },
+        {
+          "id": "P2",
+          "after": "C3.4 validated prior retained in recovery store",
+          "before": "C3.5 coordinated write / base check",
+          "injection": "publisher step hook; NSDocument path: writeSafely override before super, after prior retention",
+          "paths": [
+            "publisher",
+            "nsdocument"
+          ]
+        },
+        {
+          "id": "P3",
+          "after": "C3.5 base check passed",
+          "before": "C3.6 bytes written",
+          "injection": "publisher: NSFileCoordinator writing accessor; NSDocument path: throw from our write(to:ofType:for:originalContentsURL:) override before writing (AppKit then aborts safe save)",
+          "paths": [
+            "publisher",
+            "nsdocument"
+          ]
+        },
+        {
+          "id": "P4",
+          "after": "C3.6 staged bytes written+flushed",
+          "before": "C3.6 replace/publish of canonical file",
+          "injection": "publisher-only (stage file -> replaceItemAt). NO public hook inside AppKit writeSafely; NSDocument path reaches this only by non-deterministic process kill (DUR-021)",
+          "paths": [
+            "publisher"
+          ]
+        },
+        {
+          "id": "P5",
+          "after": "C3.6 publication returned",
+          "before": "C3.7 independent read-back",
+          "injection": "publisher step hook; NSDocument path: writeSafely override after super returns",
+          "paths": [
+            "publisher",
+            "nsdocument"
+          ]
+        },
+        {
+          "id": "P6",
+          "after": "C3.7 read-back verified",
+          "before": "C3.8 library acknowledgement",
+          "injection": "app save-completion handler before library ack (both paths)",
+          "paths": [
+            "publisher",
+            "nsdocument"
+          ]
+        },
+        {
+          "id": "P7",
+          "after": "C3.8 library acknowledgement published",
+          "before": "derived index update",
+          "injection": "index updater entry (both paths)",
+          "paths": [
+            "publisher",
+            "nsdocument"
+          ]
+        }
       ],
       "perBoundary": {
         "calibration": 5,
@@ -719,9 +984,9 @@
       "generator": {
         "kind": "synthetic-deterministic",
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
-        "recipe": "Library envelope with newer schemaVersion."
+        "recipe": "Library envelope with newer schemaVersion, in each location stratum."
       },
-      "expectedTruth": "Library read-only with reason; no save/downsave; show documents still openable; bytes unchanged.",
+      "expectedTruth": "Library read-only with reason; no save/downsave/move; show documents still openable; bytes unchanged.",
       "permission": {
         "class": "authorized-synthetic",
         "status": "authorized",
@@ -729,12 +994,16 @@
       },
       "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
       "split": {
-        "calibration": 10,
-        "holdout": 100,
-        "unit": "documents"
+        "calibration": 20,
+        "holdout": 200,
+        "unit": "documents (10/100 per location stratum)"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "not-yet-executed",
+      "locationStrata": [
+        "app-container (default)",
+        "user-chosen-folder (synthetic temp folder reached via read-write security-scoped bookmark)"
+      ]
     },
     {
       "id": "M1-DUR-023",
@@ -750,7 +1019,7 @@
       "generator": {
         "kind": "synthetic-deterministic",
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
-        "recipe": "Same corruption variants as M1-DUR-017 applied to the library document."
+        "recipe": "Same corruption variants as M1-DUR-017 applied to the library document, in each location stratum."
       },
       "expectedTruth": "Validated prior library checkpoint offered; never recreated from index; suspect file retained.",
       "permission": {
@@ -760,43 +1029,48 @@
       },
       "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
       "split": {
-        "calibration": 10,
-        "holdout": 100,
-        "unit": "documents"
+        "calibration": 20,
+        "holdout": 200,
+        "unit": "documents (10/100 per location stratum)"
       },
       "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
-      "evidenceStatus": "not-yet-executed"
+      "evidenceStatus": "not-yet-executed",
+      "locationStrata": [
+        "app-container (default)",
+        "user-chosen-folder (synthetic temp folder reached via read-write security-scoped bookmark)"
+      ]
     },
     {
       "id": "M1-DUR-024",
-      "title": "Real cloud-provider canonical locations (iCloud Drive, OneDrive, Dropbox)",
-      "stratum": "cloud-canonical/provider",
+      "title": "iCloud Drive canonical trial (show + library) on this Mac",
+      "stratum": "cloud-canonical/icloud-trial",
       "family": "durability",
       "issues": [
         "WW-049",
         "WW-005",
-        "WW-010"
+        "WW-010",
+        "WW-006"
       ],
-      "automated": false,
+      "automated": true,
       "generator": {
-        "kind": "none-until-consent",
-        "seedDerivation": null,
-        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "In the single iCloud Drive folder 'WaveWrangler-M1-Synthetic-Trial' only: generated synthetic show documents and a library relocated there. Operations: explicit Save, autosave ON/OFF, two-window and two-process conflicts, brctl evict/download of the synthetic documents, interruption at publisher boundaries, recovery, library publication/move into and out of the folder. Delete the folder afterwards and record deletion."
       },
-      "expectedTruth": "Per provider/operation: observed (not simulated) publication, conflict, offline, cancel/retry behavior; >=100 interruptions per sync boundary where a boundary can be controlled.",
+      "expectedTruth": "Observed (not simulated) behavior per operation: whole valid revisions only, conflicts detected without overwrite, evicted documents report placeholder/unknown honestly and reopen after download, prior work recoverable, library at iCloud location obeys C3-C5. Provider guarantees reported as observed for iCloud Drive on this Mac only.",
       "permission": {
-        "class": "not-authorized",
-        "status": "not-authorized",
-        "scope": "Requires exact user consent naming provider, account/folder (generated content only), operations and network use."
+        "class": "authorized-user-grant",
+        "status": "authorized (grants C+A, relayed by M1 coordinator 2026-10-04)",
+        "scope": "Grant C (user, 2026-10-04): one iCloud Drive folder 'WaveWrangler-M1-Synthetic-Trial' with generated synthetic documents only, on this Mac: save, autosave, two-window/two-process conflict, brctl evict/download and recovery; delete the folder afterwards. Grant A (user, 2026-10-04): local GUI launch, XCUITest, accessibility audits and computer-use on the ad-hoc-signed app, under a coordinator-held single GUI lock; the user approves any prompts. GUI portions (if any) under grant A's single GUI lock."
       },
-      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
       "split": {
-        "calibration": null,
-        "holdout": null,
-        "unit": "defined at consent; frozen before holdout"
+        "calibration": 10,
+        "holdout": 290,
+        "unit": "trial operations (min holdout: 100 save/autosave publications, 100 conflict attempts, 50 evict/download cycles, 20 recovery cases, 20 library-at-iCloud publications/moves)"
       },
-      "supportedClaimLimits": "Until executed, every provider guarantee in M1 records is labelled SIMULATED; no provider atomicity claim.",
-      "evidenceStatus": "consent-blocked"
+      "supportedClaimLimits": "iCloud Drive on this single Mac only; no OneDrive/Dropbox, second-device or two-machine sync claim; interruption counts at uncontrollable sync boundaries are reported, not claimed as >=100 unless achieved.",
+      "evidenceStatus": "not-yet-executed"
     },
     {
       "id": "M1-DUR-025",
@@ -817,7 +1091,7 @@
       "permission": {
         "class": "not-authorized",
         "status": "not-authorized",
-        "scope": "Requires a named second device and provider consent."
+        "scope": "Requires a named second device; not granted 2026-10-04."
       },
       "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
       "split": {
@@ -830,7 +1104,7 @@
     },
     {
       "id": "M1-DUR-026",
-      "title": "Native GUI lifecycle: Close/Quit dirty decisions, AS01/AS05 replay, panel Save As cancel, Revert",
+      "title": "Native GUI lifecycle: Close/Quit dirty decisions, AS01/AS05 replay, panel Save As cancel, Revert, edit-checkpoint recovery presentation",
       "stratum": "autosave/native-gui",
       "family": "durability",
       "issues": [
@@ -840,15 +1114,231 @@
       ],
       "automated": true,
       "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Launch the ad-hoc-signed app with synthetic documents in temp/trial folders; drive via XCUITest/computer-use: OFF dirty Close/Quit (all routes: Close, Cmd-Q, app menu, Dock), queued ON->OFF race (AS01), dirty Quit (AS05), Save As panel cancel, Revert, relaunch with a pending edit-checkpoint record."
+      },
+      "expectedTruth": "Dirty OFF or failed-autosave documents always present Save/Don't Save/Cancel on Close and every Quit route; no silent loss; edit-checkpoint offered as 'Restore unsaved changes' (dirty, not saved); AS01 and AS05 evidenced or remain open.",
+      "permission": {
+        "class": "authorized-user-grant",
+        "status": "authorized (grants A, relayed by M1 coordinator 2026-10-04)",
+        "scope": "Grant A (user, 2026-10-04): local GUI launch, XCUITest, accessibility audits and computer-use on the ad-hoc-signed app, under a coordinator-held single GUI lock; the user approves any prompts."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 2,
+        "holdout": 20,
+        "unit": "GUI scenarios (per scenario; destructive choices only on synthetic documents)"
+      },
+      "supportedClaimLimits": "Single claimed host; scripted UI, not human usability; AS01/AS05 stay open until these pass.",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-027",
+      "title": "Library publication-boundary interruptions (injected)",
+      "stratum": "interrupted-publication/library",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049",
+        "WW-010",
+        "WW-011"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Inject failure at each library boundary in boundaries[], with the library in each location stratum."
+      },
+      "expectedTruth": "Library location holds old valid or complete new library revision, never mixed; library prior checkpoint coherent; collections/order/aliases/unavailable entries intact; index not advanced on failure.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 120,
+        "holdout": 1200,
+        "unit": "interruptions (10 cal / 100 holdout per boundary per location stratum)"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
+      "evidenceStatus": "not-yet-executed",
+      "boundaries": [
+        {
+          "id": "L1",
+          "after": "library candidate encoded+validated",
+          "before": "library prior retained",
+          "injection": "library publisher step hook"
+        },
+        {
+          "id": "L2",
+          "after": "library prior retained",
+          "before": "coordinated write / base check",
+          "injection": "library publisher step hook"
+        },
+        {
+          "id": "L3",
+          "after": "base check passed inside NSFileCoordinator writing accessor",
+          "before": "stage write",
+          "injection": "coordinator accessor"
+        },
+        {
+          "id": "L4",
+          "after": "stage written+flushed",
+          "before": "replaceItemAt publish",
+          "injection": "library publisher step hook"
+        },
+        {
+          "id": "L5",
+          "after": "publish returned",
+          "before": "independent read-back",
+          "injection": "library publisher step hook"
+        },
+        {
+          "id": "L6",
+          "after": "read-back verified",
+          "before": "derived index update",
+          "injection": "index updater entry"
+        }
+      ],
+      "locationStrata": [
+        "app-container (default)",
+        "user-chosen-folder (synthetic temp folder reached via read-write security-scoped bookmark)"
+      ],
+      "perBoundary": {
+        "calibration": 10,
+        "holdout": 100,
+        "perLocationStratum": true
+      },
+      "frozenGate": ">=100 interruptions per publication boundary (WW-005/WW-049)"
+    },
+    {
+      "id": "M1-DUR-028",
+      "title": "Owned subprocess kill at library publication boundaries",
+      "stratum": "interrupted-publication/library-process-kill",
+      "family": "durability",
+      "issues": [
+        "WW-005",
+        "WW-049"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Helper subprocess publishes the library (user-chosen-folder stratum) and is SIGKILLed exactly at each library boundary."
+      },
+      "expectedTruth": "Same truth as M1-DUR-027 after restart.",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 30,
+        "holdout": 600,
+        "unit": "kills (5 cal / 100 holdout per boundary)"
+      },
+      "supportedClaimLimits": "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media.",
+      "evidenceStatus": "not-yet-executed",
+      "boundaries": [
+        {
+          "id": "L1",
+          "after": "library candidate encoded+validated",
+          "before": "library prior retained",
+          "injection": "library publisher step hook"
+        },
+        {
+          "id": "L2",
+          "after": "library prior retained",
+          "before": "coordinated write / base check",
+          "injection": "library publisher step hook"
+        },
+        {
+          "id": "L3",
+          "after": "base check passed inside NSFileCoordinator writing accessor",
+          "before": "stage write",
+          "injection": "coordinator accessor"
+        },
+        {
+          "id": "L4",
+          "after": "stage written+flushed",
+          "before": "replaceItemAt publish",
+          "injection": "library publisher step hook"
+        },
+        {
+          "id": "L5",
+          "after": "publish returned",
+          "before": "independent read-back",
+          "injection": "library publisher step hook"
+        },
+        {
+          "id": "L6",
+          "after": "read-back verified",
+          "before": "derived index update",
+          "injection": "index updater entry"
+        }
+      ],
+      "perBoundary": {
+        "calibration": 5,
+        "holdout": 100
+      },
+      "frozenGate": ">=100 interruptions per publication boundary (WW-005/WW-049)"
+    },
+    {
+      "id": "M1-DUR-029",
+      "title": "Reopen show from library after relaunch, then Save (read-write document bookmark)",
+      "stratum": "reference/document-bookmark-reopen-save",
+      "family": "durability",
+      "issues": [
+        "WW-006",
+        "WW-010",
+        "WW-011",
+        "WW-008"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Create show documents and a library entry holding a read-write security-scoped bookmark; terminate the host process; in a new process resolve the bookmark, start access, open the show, edit, Save, stop access. Variants: stale bookmark, moved document, revoked access, library at user-chosen folder."
+      },
+      "expectedTruth": "Reopen and Save succeed via the read-write bookmark with read-back verification; scopes balanced; stale/moved/revoked cases show regrant/relink without writing elsewhere; source bookmarks remain read-only (any write attempt via a source scope fails).",
+      "permission": {
+        "class": "authorized-synthetic",
+        "status": "authorized",
+        "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 10,
+        "holdout": 100,
+        "unit": "relaunch cycles"
+      },
+      "supportedClaimLimits": "Counts as sandbox evidence only when the host is sandboxed (else labelled non-sandboxed). GUI relaunch variant is part of M1-REF-020 (grant A).",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-DUR-030",
+      "title": "Other cloud providers as canonical locations (OneDrive, Dropbox)",
+      "stratum": "cloud-canonical/other-providers",
+      "family": "durability",
+      "issues": [
+        "WW-049",
+        "WW-005",
+        "WW-010"
+      ],
+      "automated": false,
+      "generator": {
         "kind": "none-until-consent",
         "seedDerivation": null,
         "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
       },
-      "expectedTruth": "Dirty OFF or failed-autosave documents always present Save/Don't Save/Cancel on Close and every Quit route; no silent loss; AS01 queued race and AS05 dirty Quit evidenced or remain open.",
+      "expectedTruth": "Per provider/operation observed publication, conflict, offline, cancel/retry behavior.",
       "permission": {
-        "class": "pending-user-consent",
-        "status": "pending-user-consent",
-        "scope": "Requires user permission to launch the app GUI / UI tests on this Mac with synthetic documents; destructive choices (Don't Save/Revert) need precise consent."
+        "class": "not-authorized",
+        "status": "not-authorized",
+        "scope": "Not granted 2026-10-04; requires exact consent naming provider, folder (generated content only), operations and network use."
       },
       "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
       "split": {
@@ -856,7 +1346,7 @@
         "holdout": null,
         "unit": "defined at consent; frozen before holdout"
       },
-      "supportedClaimLimits": "AS01 unestablished and AS05 partial remain open gates until executed.",
+      "supportedClaimLimits": "OneDrive/Dropbox guarantees remain SIMULATED/UNKNOWN; no support claim.",
       "evidenceStatus": "consent-blocked"
     },
     {
@@ -874,7 +1364,7 @@
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
         "recipe": "Generate source files (random bytes, never audio decoded); add via harness; create read-only security-scoped bookmark where sandboxed."
       },
-      "expectedTruth": "Logical SourceID assigned; hints stored; access record device-local; identity 'unverified'; zero source writes; scopes balanced.",
+      "expectedTruth": "Logical SourceID assigned; hints stored; access record device-local; identity 'unverified'; source bookmark created with read-only option; zero source writes; scopes balanced.",
       "permission": {
         "class": "authorized-synthetic",
         "status": "authorized",
@@ -907,7 +1397,7 @@
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
         "recipe": "Move/rename source while access remains valid so resolution reports stale."
       },
-      "expectedTruth": "Bookmark refreshed only with valid access; identity remains unverified until explicit confirmation; no substitution.",
+      "expectedTruth": "Bookmark refreshed (still read-only) only with valid access; identity remains unverified until explicit confirmation; no substitution.",
       "permission": {
         "class": "authorized-synthetic",
         "status": "authorized",
@@ -1216,7 +1706,7 @@
         "holdout": 60,
         "unit": "lifecycle cases"
       },
-      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Test double only; real provider values need consent (M1-SRC-ON-PROV-*).",
+      "supportedClaimLimits": "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants. Test double only; real iCloud values are M1-SRC-ON-PROV-001 (grant C).",
       "evidenceStatus": "not-yet-executed",
       "countsToward": [
         "WW-006 >=1,000 lifecycle/error/cancel cases"
@@ -1367,7 +1857,7 @@
       "generator": {
         "kind": "synthetic-deterministic",
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
-        "recipe": "Inject errors/cancellation at each scope acquire/use/release point across all reference operations."
+        "recipe": "Inject errors/cancellation at each scope acquire/use/release point across all reference, document and library-folder bookmark operations."
       },
       "expectedTruth": "Every successful start is balanced by exactly one stop; leaked-scope counter == 0; zero source writes.",
       "permission": {
@@ -1434,7 +1924,7 @@
       "generator": {
         "kind": "synthetic-deterministic",
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
-        "recipe": "Harness digests every generated source (outside the app process) before and after every REF/SRC case."
+        "recipe": "Harness digests every generated source (outside the app process) before and after every REF/SRC/DUR-029 case."
       },
       "expectedTruth": "All digests unchanged; no rename/move/delete; leaked scopes = 0; substitutions = 0.",
       "permission": {
@@ -1484,7 +1974,7 @@
     },
     {
       "id": "M1-REF-020",
-      "title": "Sandboxed native panel grant/regrant with security-scoped bookmarks",
+      "title": "Sandboxed native panel grant/regrant/relaunch (sources read-only; documents/library folder read-write)",
       "stratum": "reference/native-grant",
       "family": "reference",
       "issues": [
@@ -1494,24 +1984,24 @@
       ],
       "automated": true,
       "generator": {
-        "kind": "none-until-consent",
-        "seedDerivation": null,
-        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Launch the sandboxed ad-hoc-signed app; select synthetic source files, a synthetic show document and a library folder via NSOpenPanel/NSSavePanel; quit; relaunch; resolve bookmarks; reopen show from library and Save; attempt source access after revocation/move to drive regrant."
       },
-      "expectedTruth": "Panel grant -> read-only bookmark -> relaunch resolve -> start/stop balanced; regrant path works; zero source writes.",
+      "expectedTruth": "Panel grant -> bookmark of the correct mode (source read-only; document and library folder read-write) -> relaunch resolve -> start/stop balanced; reopen+Save succeeds; regrant path works; zero source writes.",
       "permission": {
-        "class": "pending-user-consent",
-        "status": "pending-user-consent",
-        "scope": "Requires GUI launch of the sandboxed ad-hoc-signed app with synthetic files selected via NSOpenPanel."
+        "class": "authorized-user-grant",
+        "status": "authorized (grants A, relayed by M1 coordinator 2026-10-04)",
+        "scope": "Grant A (user, 2026-10-04): local GUI launch, XCUITest, accessibility audits and computer-use on the ad-hoc-signed app, under a coordinator-held single GUI lock; the user approves any prompts."
       },
-      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
       "split": {
-        "calibration": null,
-        "holdout": null,
-        "unit": "defined at consent; frozen before holdout"
+        "calibration": 2,
+        "holdout": 20,
+        "unit": "GUI scenarios"
       },
-      "supportedClaimLimits": "Programmatic non-panel subsets do not prove TCC/panel/relaunch behavior.",
-      "evidenceStatus": "consent-blocked"
+      "supportedClaimLimits": "Single claimed host, ad-hoc signed; not Developer ID/notarized/clean-install (WW-041/052).",
+      "evidenceStatus": "not-yet-executed"
     },
     {
       "id": "M1-SRC-OFF-001",
@@ -1609,33 +2099,34 @@
     },
     {
       "id": "M1-SRC-ON-PROV-001",
-      "title": "Real provider source availability: iCloud Drive",
-      "stratum": "source/default-ON/provider",
+      "title": "Real provider source availability: iCloud Drive trial folder",
+      "stratum": "source/default-ON/icloud-trial",
       "family": "source-availability",
       "issues": [
         "WW-006",
         "WW-012"
       ],
-      "automated": false,
+      "automated": true,
       "generator": {
-        "kind": "none-until-consent",
-        "seedDerivation": null,
-        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Generated synthetic source files (random bytes, never decoded) inside 'WaveWrangler-M1-Synthetic-Trial'; brctl evict to create placeholders; then OFF (metadata-only) and ON runs: observe residency/progress/offline/cancel/retry; brctl download where needed. Delete the folder afterwards."
       },
-      "expectedTruth": "Observed residency/progress/offline/cancel/retry; zero source writes; provider work observed separately.",
+      "expectedTruth": "OFF: zero app content/download requests while placeholders stay placeholders as observed. ON: observed residency/progress (or 'Progress unknown')/cancel/retry; zero source writes; provider work observed separately.",
       "permission": {
-        "class": "not-authorized",
-        "status": "not-authorized",
-        "scope": "Requires exact consent: iCloud Drive account/folder containing generated (non-recording) files, operations, network use."
+        "class": "authorized-user-grant",
+        "status": "authorized (grants C, relayed by M1 coordinator 2026-10-04)",
+        "scope": "Grant C (user, 2026-10-04): one iCloud Drive folder 'WaveWrangler-M1-Synthetic-Trial' with generated synthetic documents only, on this Mac: save, autosave, two-window/two-process conflict, brctl evict/download and recovery; delete the folder afterwards."
       },
-      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
       "split": {
-        "calibration": null,
-        "holdout": null,
-        "unit": "defined at consent; frozen before holdout"
+        "calibration": 5,
+        "holdout": 100,
+        "unit": "evict/availability cycles (50 OFF, 50 ON holdout)"
       },
-      "supportedClaimLimits": "No iCloud Drive support claim until executed; default-ON behavior otherwise only synthetic.",
-      "evidenceStatus": "consent-blocked"
+      "supportedClaimLimits": "iCloud Drive on this Mac only, synthetic files only; OFF and ON reported as separately labelled sets; no OneDrive/Dropbox claim.",
+      "evidenceStatus": "not-yet-executed",
+      "trialLabel": "real iCloud: separate default-OFF and default-ON subsets"
     },
     {
       "id": "M1-SRC-ON-PROV-002",
@@ -1656,7 +2147,7 @@
       "permission": {
         "class": "not-authorized",
         "status": "not-authorized",
-        "scope": "Requires exact consent: OneDrive account/folder containing generated (non-recording) files, operations, network use."
+        "scope": "Not granted 2026-10-04; requires exact consent: OneDrive folder containing generated (non-recording) files, operations, network use."
       },
       "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
       "split": {
@@ -1664,7 +2155,7 @@
         "holdout": null,
         "unit": "defined at consent; frozen before holdout"
       },
-      "supportedClaimLimits": "No OneDrive support claim until executed; default-ON behavior otherwise only synthetic.",
+      "supportedClaimLimits": "No OneDrive support claim until executed.",
       "evidenceStatus": "consent-blocked"
     },
     {
@@ -1686,7 +2177,7 @@
       "permission": {
         "class": "not-authorized",
         "status": "not-authorized",
-        "scope": "Requires exact consent: Dropbox account/folder containing generated (non-recording) files, operations, network use."
+        "scope": "Not granted 2026-10-04; requires exact consent: Dropbox folder containing generated (non-recording) files, operations, network use."
       },
       "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
       "split": {
@@ -1694,7 +2185,7 @@
         "holdout": null,
         "unit": "defined at consent; frozen before holdout"
       },
-      "supportedClaimLimits": "No Dropbox support claim until executed; default-ON behavior otherwise only synthetic.",
+      "supportedClaimLimits": "No Dropbox support claim until executed.",
       "evidenceStatus": "consent-blocked"
     },
     {
@@ -1710,7 +2201,7 @@
       "generator": {
         "kind": "synthetic-deterministic",
         "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
-        "recipe": "Generate 100 show documents (>=2 episodes each), 1,000 distinct logical references, collections, >=1 unavailable show; measure model+view-model open per show and defined interactions (select show/episode, toggle collection, rename, filter sidebar)."
+        "recipe": "Generate 100 show documents (>=2 episodes each), 1,000 distinct logical references, collections, >=1 unavailable show; measure model+view-model open per show and defined interactions (select show/episode, toggle collection, rename, filter sidebar). Native-window timing variant under grant A."
       },
       "expectedTruth": "p95 (nearest-rank ceil(0.95n)) open <1 s and interaction <100 ms on claimed host; zero main-thread provider I/O; first-open and warm reported separately.",
       "permission": {
@@ -1724,9 +2215,102 @@
         "holdout": 600,
         "unit": "timing samples (100 open-first, 100 open-warm, 400 interaction)"
       },
-      "supportedClaimLimits": "Claimed host only (macOS 27.0.1/128 GiB) -- NOT the macOS 26/16 GB reference (WW-052). Model/view-model level is authorized; native window open timing needs GUI-launch consent.",
+      "supportedClaimLimits": "Claimed host only (macOS 27.0.1/128 GiB) -- NOT the macOS 26/16 GB reference (WW-052). Model/view-model and (grant A) native-window measurements reported separately.",
       "evidenceStatus": "not-yet-executed",
       "frozenGate": "p95 open <1 s, interaction <100 ms (WW-007, provisional)"
+    },
+    {
+      "id": "M1-A11Y-001",
+      "title": "Keyboard-only core M1 task suite",
+      "stratum": "accessibility/keyboard",
+      "family": "accessibility",
+      "issues": [
+        "WW-007",
+        "WW-011",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "XCUITest/computer-use keyboard-only scripts over synthetic documents: WW-004 18 core tasks + source ON/OFF/unknown/offline/cancel/retry, relink, primary/backup, save/conflict/autosave ON/OFF/explicit Save, library location choose/move, edit-checkpoint restore; plus Xcode accessibility audits."
+      },
+      "expectedTruth": "100% core tasks completable by keyboard with visible focus; accessibility audit issues triaged with zero unresolved blockers.",
+      "permission": {
+        "class": "authorized-user-grant",
+        "status": "authorized (grants A, relayed by M1 coordinator 2026-10-04)",
+        "scope": "Grant A (user, 2026-10-04): local GUI launch, XCUITest, accessibility audits and computer-use on the ad-hoc-signed app, under a coordinator-held single GUI lock; the user approves any prompts."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 2,
+        "holdout": 1,
+        "unit": "full suite runs (each covers every core task)"
+      },
+      "supportedClaimLimits": "Scripted, single host; not participant usability (WW-052).",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-A11Y-002",
+      "title": "VoiceOver core M1 task suite",
+      "stratum": "accessibility/voiceover",
+      "family": "accessibility",
+      "issues": [
+        "WW-007",
+        "WW-011",
+        "WW-012"
+      ],
+      "automated": false,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Temporarily enable VoiceOver; operator-driven (computer-use/manual) core task suite: WW-004 18 core tasks + source ON/OFF/unknown/offline/cancel/retry, relink, primary/backup, save/conflict/autosave ON/OFF/explicit Save, library location choose/move, edit-checkpoint restore; restore VoiceOver to its original state."
+      },
+      "expectedTruth": "100% core tasks completable with VoiceOver; names/values/states/blocked reasons announced; no unsolicited focus change; VoiceOver state restored.",
+      "permission": {
+        "class": "authorized-user-grant",
+        "status": "authorized (grants B+A, relayed by M1 coordinator 2026-10-04)",
+        "scope": "Grant B (user, 2026-10-04): temporary VoiceOver for the core M1 tasks. Grant A (user, 2026-10-04): local GUI launch, XCUITest, accessibility audits and computer-use on the ad-hoc-signed app, under a coordinator-held single GUI lock; the user approves any prompts."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 1,
+        "holdout": 1,
+        "unit": "full suite runs"
+      },
+      "supportedClaimLimits": "Single operator/host; not broader participant studies (WW-052).",
+      "evidenceStatus": "not-yet-executed"
+    },
+    {
+      "id": "M1-A11Y-003",
+      "title": "200% text, Increase Contrast, Reduce Motion, cold/warm/recovery",
+      "stratum": "accessibility/visual",
+      "family": "accessibility",
+      "issues": [
+        "WW-007",
+        "WW-011",
+        "WW-012"
+      ],
+      "automated": true,
+      "generator": {
+        "kind": "synthetic-deterministic",
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
+        "recipe": "Record original OS values; temporarily enable Increase Contrast, Reduce Motion and larger text; run core task views cold/warm/recovery; restore and verify original values."
+      },
+      "expectedTruth": "Essential names/state/controls visible and reflowed at larger text/200% app text; contrast acceptable with Increase Contrast; no essential motion; original OS values restored exactly.",
+      "permission": {
+        "class": "authorized-user-grant",
+        "status": "authorized (grants D+A, relayed by M1 coordinator 2026-10-04)",
+        "scope": "Grant D (user, 2026-10-04): temporary Increase Contrast, Reduce Motion and larger text; record original values and restore them. Grant A (user, 2026-10-04): local GUI launch, XCUITest, accessibility audits and computer-use on the ad-hoc-signed app, under a coordinator-held single GUI lock; the user approves any prompts."
+      },
+      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "split": {
+        "calibration": 1,
+        "holdout": 1,
+        "unit": "full suite runs"
+      },
+      "supportedClaimLimits": "Single host; measured contrast ratios reported where tooling allows; reference device -> WW-052.",
+      "evidenceStatus": "not-yet-executed"
     },
     {
       "id": "M1-A11Y-004",
@@ -1758,99 +2342,6 @@
       },
       "supportedClaimLimits": "Static/code-level only; NOT a VoiceOver or human usability result.",
       "evidenceStatus": "not-yet-executed"
-    },
-    {
-      "id": "M1-A11Y-001",
-      "title": "Keyboard-only core M1 task suite",
-      "stratum": "accessibility/keyboard",
-      "family": "accessibility",
-      "issues": [
-        "WW-007",
-        "WW-011",
-        "WW-012"
-      ],
-      "automated": true,
-      "generator": {
-        "kind": "none-until-consent",
-        "seedDerivation": null,
-        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
-      },
-      "expectedTruth": "100% core tasks (WW-004 18 tasks + source ON/OFF/unknown/offline/cancel/retry, relink, primary/backup, save/conflict/autosave ON/OFF/explicit Save) completable by keyboard with visible focus.",
-      "permission": {
-        "class": "pending-user-consent",
-        "status": "pending-user-consent",
-        "scope": "GUI launch / XCUITest with synthetic documents on this Mac."
-      },
-      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
-      "split": {
-        "calibration": null,
-        "holdout": null,
-        "unit": "defined at consent; frozen before holdout"
-      },
-      "supportedClaimLimits": "Core-workflow accessibility cannot be accepted or transferred without this run; broader participant studies -> WW-052.",
-      "evidenceStatus": "consent-blocked"
-    },
-    {
-      "id": "M1-A11Y-002",
-      "title": "VoiceOver core M1 task suite",
-      "stratum": "accessibility/voiceover",
-      "family": "accessibility",
-      "issues": [
-        "WW-007",
-        "WW-011",
-        "WW-012"
-      ],
-      "automated": false,
-      "generator": {
-        "kind": "none-until-consent",
-        "seedDerivation": null,
-        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
-      },
-      "expectedTruth": "100% core tasks completable with VoiceOver; names/values/states/blocked reasons announced; no unsolicited focus change.",
-      "permission": {
-        "class": "pending-user-consent",
-        "status": "pending-user-consent",
-        "scope": "Enabling VoiceOver and launching the app GUI on this Mac."
-      },
-      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
-      "split": {
-        "calibration": null,
-        "holdout": null,
-        "unit": "defined at consent; frozen before holdout"
-      },
-      "supportedClaimLimits": "Core-workflow accessibility cannot be accepted or transferred without this run; broader participant studies -> WW-052.",
-      "evidenceStatus": "consent-blocked"
-    },
-    {
-      "id": "M1-A11Y-003",
-      "title": "200% text, increased contrast, reduced motion, cold/warm/recovery",
-      "stratum": "accessibility/visual",
-      "family": "accessibility",
-      "issues": [
-        "WW-007",
-        "WW-011",
-        "WW-012"
-      ],
-      "automated": true,
-      "generator": {
-        "kind": "none-until-consent",
-        "seedDerivation": null,
-        "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."
-      },
-      "expectedTruth": "Essential names/state/controls visible and reflowed at 200%; contrast meets measured target; no essential motion.",
-      "permission": {
-        "class": "pending-user-consent",
-        "status": "pending-user-consent",
-        "scope": "Changing OS accessibility/display settings and launching the GUI."
-      },
-      "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
-      "split": {
-        "calibration": null,
-        "holdout": null,
-        "unit": "defined at consent; frozen before holdout"
-      },
-      "supportedClaimLimits": "Core-workflow accessibility cannot be accepted or transferred without this run; broader participant studies -> WW-052.",
-      "evidenceStatus": "consent-blocked"
     },
     {
       "id": "M1-USER-001",

@@ -1,0 +1,372 @@
+#!/usr/bin/env python3
+"""Generate (or --check) docs/m1/fixtures/m1-fixture-registry.json.
+
+Lead-authored source of truth for the WW-003 M1 fixture registry. The JSON is
+derived output; edit this script, regenerate, and commit both.
+
+Usage:
+  python3 docs/m1/fixtures/generate-registry.py            # write registry, print counts
+  python3 docs/m1/fixtures/generate-registry.py --check    # exit 1 if committed JSON differs
+Standard library only; no network, no file access outside this directory.
+"""
+import collections, json, os, sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.join(HERE, "m1-fixture-registry.json")
+SEED = "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64"
+
+SYN = {"class": "authorized-synthetic", "status": "authorized",
+       "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."}
+GRANT = {
+ "A": "Grant A (user, 2026-10-04): local GUI launch, XCUITest, accessibility audits and computer-use on the ad-hoc-signed app, under a coordinator-held single GUI lock; the user approves any prompts.",
+ "B": "Grant B (user, 2026-10-04): temporary VoiceOver for the core M1 tasks.",
+ "C": "Grant C (user, 2026-10-04): one iCloud Drive folder 'WaveWrangler-M1-Synthetic-Trial' with generated synthetic documents only, on this Mac: save, autosave, two-window/two-process conflict, brctl evict/download and recovery; delete the folder afterwards.",
+ "D": "Grant D (user, 2026-10-04): temporary Increase Contrast, Reduce Motion and larger text; record original values and restore them.",
+}
+def granted(*keys, extra=""):
+    return {"class": "authorized-user-grant", "status": "authorized (grants " + "+".join(keys) + ", relayed by M1 coordinator 2026-10-04)",
+            "scope": " ".join(GRANT[k] for k in keys) + (" " + extra if extra else "")}
+PROV_SYN = "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test."
+LIM_SYN = "Synthetic local file-system evidence on the claimed host only (macOS 27.0.1, Xcode 27, Apple silicon, 128 GiB). Does not qualify provider (iCloud/OneDrive/Dropbox) atomicity, two-device behavior, power loss, the macOS 26/16 GB reference or real media."
+LOCATIONS = ["app-container (default)", "user-chosen-folder (synthetic temp folder reached via read-write security-scoped bookmark)"]
+
+# Show-document publication boundaries, derived from the WW-009 C3 order.
+P = [
+ {"id": "P1", "after": "C3.3 candidate encoded+validated", "before": "C3.4 prior retained",
+  "injection": "WWPersistence publisher step hook; NSDocument path: our writeSafely(to:ofType:for:) override before calling super", "paths": ["publisher", "nsdocument"]},
+ {"id": "P2", "after": "C3.4 validated prior retained in recovery store", "before": "C3.5 coordinated write / base check",
+  "injection": "publisher step hook; NSDocument path: writeSafely override before super, after prior retention", "paths": ["publisher", "nsdocument"]},
+ {"id": "P3", "after": "C3.5 base check passed", "before": "C3.6 bytes written",
+  "injection": "publisher: NSFileCoordinator writing accessor; NSDocument path: throw from our write(to:ofType:for:originalContentsURL:) override before writing (AppKit then aborts safe save)", "paths": ["publisher", "nsdocument"]},
+ {"id": "P4", "after": "C3.6 staged bytes written+flushed", "before": "C3.6 replace/publish of canonical file",
+  "injection": "publisher-only (stage file -> replaceItemAt). NO public hook inside AppKit writeSafely; NSDocument path reaches this only by non-deterministic process kill (DUR-021)", "paths": ["publisher"]},
+ {"id": "P5", "after": "C3.6 publication returned", "before": "C3.7 independent read-back",
+  "injection": "publisher step hook; NSDocument path: writeSafely override after super returns", "paths": ["publisher", "nsdocument"]},
+ {"id": "P6", "after": "C3.7 read-back verified", "before": "C3.8 library acknowledgement",
+  "injection": "app save-completion handler before library ack (both paths)", "paths": ["publisher", "nsdocument"]},
+ {"id": "P7", "after": "C3.8 library acknowledgement published", "before": "derived index update",
+  "injection": "index updater entry (both paths)", "paths": ["publisher", "nsdocument"]},
+]
+# Library-document publication boundaries (library uses the WWPersistence publisher; it is not an NSDocument).
+L = [
+ {"id": "L1", "after": "library candidate encoded+validated", "before": "library prior retained", "injection": "library publisher step hook"},
+ {"id": "L2", "after": "library prior retained", "before": "coordinated write / base check", "injection": "library publisher step hook"},
+ {"id": "L3", "after": "base check passed inside NSFileCoordinator writing accessor", "before": "stage write", "injection": "coordinator accessor"},
+ {"id": "L4", "after": "stage written+flushed", "before": "replaceItemAt publish", "injection": "library publisher step hook"},
+ {"id": "L5", "after": "publish returned", "before": "independent read-back", "injection": "library publisher step hook"},
+ {"id": "L6", "after": "read-back verified", "before": "derived index update", "injection": "index updater entry"},
+]
+NSDOC_NOTE = ("NSDocument path evidences P1-P3 and P5-P7 deterministically via public overrides (writeSafely override before/after super, write(to:ofType:for:originalContentsURL:) throw, completion handler, index entry). "
+              "It does NOT deterministically evidence interruption inside AppKit's safe replace (P4); that boundary is evidenced only at the WWPersistence publisher level plus non-deterministic process kills. "
+              "Any NSDocument claim about P4 is limited to 'AppKit stock safe-save, not independently interrupted'.")
+
+def gen(recipe):
+    return {"kind": "synthetic-deterministic", "seedDerivation": SEED, "recipe": recipe}
+def syn(i, title, stratum, family, issues, recipe, truth, cal, hold, unit, limits, counts_toward=None, extra=None, permission=None, automated=True):
+    e = {"id": i, "title": title, "stratum": stratum, "family": family, "issues": issues,
+         "automated": automated, "generator": gen(recipe), "expectedTruth": truth,
+         "permission": permission or SYN, "provenance": PROV_SYN,
+         "split": {"calibration": cal, "holdout": hold, "unit": unit},
+         "supportedClaimLimits": limits, "evidenceStatus": "not-yet-executed"}
+    if counts_toward: e["countsToward"] = counts_toward
+    if extra: e.update(extra)
+    return e
+def blocked(i, title, stratum, family, issues, scope, truth, limits, automated=False):
+    return {"id": i, "title": title, "stratum": stratum, "family": family, "issues": issues,
+            "automated": automated, "generator": {"kind": "none-until-consent", "seedDerivation": None, "recipe": "Exact operations/devices/providers specified in the consent request; synthetic generated content only unless consent says otherwise."},
+            "expectedTruth": truth,
+            "permission": {"class": "not-authorized", "status": "not-authorized", "scope": scope},
+            "provenance": "Planned by Lead 2026-10-04; no fixture exists until consent is relayed by the M1 coordinator.",
+            "split": {"calibration": None, "holdout": None, "unit": "defined at consent; frozen before holdout"},
+            "supportedClaimLimits": limits, "evidenceStatus": "consent-blocked"}
+
+F = []
+# ---------------- Durability: show document ----------------
+F.append(syn("M1-DUR-001","Explicit Save (new and existing document)","save/explicit-save","durability",["WW-005","WW-010","WW-049"],
+  "Generate a show with 1-12 episodes, 0-40 logical sources, groups/speakers/collections; apply 1-20 edits; invoke explicit Save (and first Save to a new temp URL).",
+  "On-disk file parses, checksum valid, revision = prior+1, payload equals the independently built expected value; prior revision retained in recovery store; status 'Saved on this Mac' only after read-back; library ack advances exactly once.",10,100,"documents",LIM_SYN))
+F.append(syn("M1-DUR-002","Autosave ON edit-to-quiescent coherent checkpoint timing","autosave/ON","durability",["WW-005","WW-049"],
+  "Default ON configuration; burst of 1-20 edits then quiescence; timestamps: last completed model mutation (monotonic) to first independent read that parses/validates the full expected state, either a published canonical revision or an unpublished edit-checkpoint record (WW-009 C2), labelled by kind.",
+  "Every case reaches a coherent whole checkpoint; edit-checkpoint records carry documentID, baseRevision/baseChecksum, unpublished=true and never change canonical bytes or 'Saved' status; reported p95 and max; provisional gate <=2 s on claimed host. Callback success alone never counts.",20,100,"timing samples",LIM_SYN + " Timing is claimed-host only; not an autosave-cadence or reference-device claim (WW-052).",
+  extra={"frozenGate": "<=2 s provisional (WW-005)"}))
+F.append(syn("M1-DUR-003","Autosave OFF: no automatic publication, dirty preserved","autosave/OFF","durability",["WW-005","WW-049"],
+  "Set OFF; edit; drive the scheduling boundary and deliver queued automatic autosave requests; observe for a bounded window.",
+  "Zero automatic publications and zero edit-checkpoint records; canonical bytes unchanged; document remains dirty; automatic requests complete as non-success (never nil/success-shaped); no error loop (no repeated 1004-class errors); no autosavingFileType nil/empty.",10,100,"documents",LIM_SYN + " Model/AppKit-object level; native Close/Quit UI is M1-DUR-026."))
+F.append(syn("M1-DUR-004","Autosave toggle transitions (ON->OFF with queued work; OFF->ON with pending edits)","autosave/configurable","durability",["WW-005","WW-049"],
+  "Interleave: edit under ON, toggle OFF before/while an automatic request is queued; and edit under OFF, toggle ON with pending edits. Deterministic interleaving schedule from the seed.",
+  "ON->OFF: no publication after OFF takes effect unless already past P4 (then reported as saved with exact revision); dirty state honest. OFF->ON: a coherent checkpoint of the pending state follows within the ON gate. Never a mixed revision.",10,100,"interleavings",LIM_SYN + " Addresses AS01 at object level only; native GUI replay is M1-DUR-026."))
+F.append(syn("M1-DUR-005","Explicit Save while autosave is OFF","explicit-save/OFF","durability",["WW-005","WW-010"],
+  "OFF; edits; explicit Save with valid file type.",
+  "Publication of exact pending revision; dirty cleared only after successful read-back; OFF setting unchanged afterwards.",10,100,"documents",LIM_SYN))
+F.append(syn("M1-DUR-006","Show-document publication-boundary interruptions (injected)","interrupted-publication","durability",["WW-005","WW-049","WW-010"],
+  "For each boundary in boundaries[] (derived from WW-009 C3), inject a failure at its public injection point during Save/autosave/Save As. Run each boundary on every path listed in its 'paths'; publisher-only boundaries run on the WWPersistence publisher only.",
+  "Canonical location holds either the old valid revision or the complete new revision, never a mixture; recovery store holds a validated coherent prior; status is failed or acknowledgement-uncertain (P5+), never 'Saved' without read-back; library/index do not advance on failure.",130,1300,"interruptions (10 cal / 100 holdout per boundary per applicable path: 6 boundaries x 2 paths + P4 publisher-only = 13 cells)",LIM_SYN + " Injected exceptions are not power loss or provider-sync interruptions. " + NSDOC_NOTE,
+  extra={"boundaries": P, "perBoundary": {"calibration": 10, "holdout": 100, "perApplicablePath": True}, "frozenGate": ">=100 interruptions per publication boundary (WW-005/WW-049)", "nsdocumentPathCoverage": NSDOC_NOTE}))
+F.append(syn("M1-DUR-007","Conflict: on-disk revision changed by another writer","conflict","durability",["WW-005","WW-049","WW-010"],
+  "Between load and save, a separate harness writer publishes a different valid revision (or replaces the file with another document).",
+  "Save stops with Conflict; neither revision is overwritten; both remain recoverable; non-destructive choices offered; no automatic merge.",10,100,"conflicts",LIM_SYN + " Same-host writer only; iCloud trial is M1-DUR-024; other providers/two-device are M1-DUR-030/025."))
+F.append(syn("M1-DUR-008","Concurrent windows on one document","concurrent-window","durability",["WW-005","WW-010"],
+  "Two or more window controllers on one document issue interleaved edits/undo and saves.",
+  "One shared model and undo stack; every save publishes one coherent revision containing all committed edits; no lost edits; focus/selection per window independent.",10,100,"interleavings",LIM_SYN + " Object level; visual/keyboard window behavior is M1-DUR-026/M1-A11Y-001."))
+F.append(syn("M1-DUR-009","Two-process competing writers","conflict/multi-process","durability",["WW-005","WW-049"],
+  "Owned helper subprocess and test process both open the same temp document and save on a seeded schedule.",
+  "Zero silent overwrites: each loser reports Conflict; every on-disk state is a whole valid revision; both users' work recoverable.",10,100,"races",LIM_SYN + " Local processes; TOCTOU narrowed and detected, not eliminated; not a provider guarantee."))
+F.append(syn("M1-DUR-010","Offline / unavailable destination","offline","durability",["WW-005","WW-049","WW-010"],
+  "Destination directory removed, made read-only, permission-denied, or path made unresolvable before/during save (simulated offline).",
+  "Save fails honestly with distinct reason; prior valid revision retained; document stays dirty; retry offered.",10,100,"documents",LIM_SYN + " Simulated offline; real iCloud offline is part of M1-DUR-024 only where observable."))
+F.append(syn("M1-DUR-011","Cancel during save stages (programmatic)","cancel","durability",["WW-005","WW-049"],
+  "Cancel requested at each cancellable stage before and after publication.",
+  "Before publish: disk unchanged, dirty retained. After publish: reported as 'revision saved, follow-up incomplete' with the exact revision, never 'nothing happened'.",10,100,"cancellations",LIM_SYN + " Native save-panel cancel is M1-DUR-026 (grant A)."))
+F.append(syn("M1-DUR-012","Retry after failure","retry","durability",["WW-005","WW-049"],
+  "Inject transient failure, then retry once or more.",
+  "Retry publishes exactly the current pending revision once; no duplicate revisions; statuses transition honestly.",10,100,"retries",LIM_SYN))
+F.append(syn("M1-DUR-013","Disk full (ENOSPC injected)","disk-full","durability",["WW-005","WW-010"],
+  "Inject ENOSPC at stage write, prior retention, edit-checkpoint write and publication.",
+  "Prior valid revision intact; partial stage files cleaned or ignored; distinct 'disk full' status; dirty retained.",10,100,"documents",LIM_SYN + " Injected, not a physically full volume. The real disk-image variant is NOT authorized.",
+  extra={"variants": [{"id": "M1-DUR-013-real-volume", "permission": {"class": "not-authorized", "status": "not-authorized (needs user consent; not granted 2026-10-04)", "scope": "Would create/mount a small temporary disk image and fill it with generated data."}, "evidenceStatus": "consent-blocked"}]}))
+F.append(syn("M1-DUR-014","Save As (success, failure, cancel)","save-as","durability",["WW-005","WW-010"],
+  "Save As to new temp URL; inject failure at each stage; programmatic cancel.",
+  "Success: new documentID/location semantics recorded explicitly, original untouched, library adds only a completed coherent document. Failure/cancel: original document and edits preserved; no orphan library entry.",10,100,"operations",LIM_SYN + " Native panel UX is M1-DUR-026 (grant A)."))
+F.append(syn("M1-DUR-015","Acknowledgement-uncertain publication and reconcile","interrupted-publication/ack-uncertain","durability",["WW-005","WW-049","WW-010"],
+  "Fail after publication but before/at read-back or library ack; then reopen.",
+  "Status 'Save may have completed - reopen to verify'; library/index not advanced; explicit reopen/reconcile adopts the coherent on-disk revision and preserves library aliases/collections/order/unavailable entries.",10,100,"documents",LIM_SYN))
+F.append(syn("M1-DUR-016","Migration from older synthetic schema","migration","durability",["WW-005","WW-010"],
+  "Synthetic older schema documents (not a shipped WaveWrangler format) with human work; migrate with cancel/retry and injected failures.",
+  "Original bytes and non-overwriting backup preserved; migrated whole revision equals independently authored expected semantics; unknown facts stay explicitly unknown; failures leave original or coherent new revision only.",10,100,"documents",LIM_SYN + " Synthetic old schema only until a real prior M1 schema exists."))
+F.append(syn("M1-DUR-017","Corrupt show document","corrupt","durability",["WW-005","WW-010"],
+  "Truncated, checksum-mismatch, invalid JSON, schema-invalid, empty, duplicate-key and wrong-documentID variants.",
+  "Load refuses with distinct reason; suspect file untouched; validated recovery-store checkpoint offered as a new copy; never recreated from index.",10,100,"documents",LIM_SYN))
+F.append(syn("M1-DUR-018","Unknown-newer show document","unknown-newer","durability",["WW-005","WW-010"],
+  "Envelope with schemaVersion greater than supported, valid or partially unknown payload.",
+  "Opens read-only with accessible reason; 100% refusal of edit, Save, autosave, Save As downsave and migration; bytes unchanged.",10,100,"documents",LIM_SYN,extra={"frozenGate": "100% refusal (WW-005)"}))
+F.append(syn("M1-DUR-019","Library <-> project reconciliation interruption","library-project-reconciliation","durability",["WW-005","WW-010","WW-011"],
+  "Interrupt between project publication and library acknowledgement, and during library publication itself; run with the library in each location stratum.",
+  "Library never claims a revision that is not coherent on disk; reopen reconciles; both documents retain prior valid state; unavailable entries retained.",20,200,"interruptions (10/100 per location stratum)",LIM_SYN,
+  extra={"locationStrata": LOCATIONS}))
+F.append(syn("M1-DUR-020","Derived index deletion and rebuild","index-rebuild","durability",["WW-005","WW-010","WW-011"],
+  "Delete/corrupt/replace the derived index; rebuild from library + validated show revisions, including unavailable shows.",
+  "Zero loss of collections, order, aliases, comments, corrections or unavailable entries; rebuilt index equals expected derived value.",10,100,"rebuilds",LIM_SYN,extra={"frozenGate": "zero semantic loss (WW-005)"}))
+F.append(syn("M1-DUR-021","Owned subprocess kill at show-document publication boundaries","interrupted-publication/process-kill","durability",["WW-005","WW-049"],
+  "Helper subprocess runs the WWPersistence publisher and is terminated (SIGKILL) exactly at each boundary in boundaries[]; a separate seeded set kills a helper performing NSDocument-path saves at random points (reported separately, not per-boundary).",
+  "Same truth as M1-DUR-006 after restart: old valid or complete new revision, never mixed; recovery store coherent.",35,700,"kills (5 cal / 100 holdout per boundary, publisher path)",LIM_SYN + " Process kill is not power loss or kernel panic. " + NSDOC_NOTE,
+  extra={"boundaries": P, "perBoundary": {"calibration": 5, "holdout": 100}, "frozenGate": ">=100 interruptions per publication boundary (WW-005/WW-049)"}))
+F.append(syn("M1-DUR-022","Unknown-newer library document","unknown-newer/library","durability",["WW-005","WW-010","WW-011"],
+  "Library envelope with newer schemaVersion, in each location stratum.",
+  "Library read-only with reason; no save/downsave/move; show documents still openable; bytes unchanged.",20,200,"documents (10/100 per location stratum)",LIM_SYN,
+  extra={"locationStrata": LOCATIONS}))
+F.append(syn("M1-DUR-023","Corrupt library and prior recovery","corrupt/library","durability",["WW-005","WW-010","WW-011"],
+  "Same corruption variants as M1-DUR-017 applied to the library document, in each location stratum.",
+  "Validated prior library checkpoint offered; never recreated from index; suspect file retained.",20,200,"documents (10/100 per location stratum)",LIM_SYN,
+  extra={"locationStrata": LOCATIONS}))
+F.append(syn("M1-DUR-024","iCloud Drive canonical trial (show + library) on this Mac","cloud-canonical/icloud-trial","durability",["WW-049","WW-005","WW-010","WW-006"],
+  "In the single iCloud Drive folder 'WaveWrangler-M1-Synthetic-Trial' only: generated synthetic show documents and a library relocated there. Operations: explicit Save, autosave ON/OFF, two-window and two-process conflicts, brctl evict/download of the synthetic documents, interruption at publisher boundaries, recovery, library publication/move into and out of the folder. Delete the folder afterwards and record deletion.",
+  "Observed (not simulated) behavior per operation: whole valid revisions only, conflicts detected without overwrite, evicted documents report placeholder/unknown honestly and reopen after download, prior work recoverable, library at iCloud location obeys C3-C5. Provider guarantees reported as observed for iCloud Drive on this Mac only.",
+  10,290,"trial operations (min holdout: 100 save/autosave publications, 100 conflict attempts, 50 evict/download cycles, 20 recovery cases, 20 library-at-iCloud publications/moves)",
+  "iCloud Drive on this single Mac only; no OneDrive/Dropbox, second-device or two-machine sync claim; interruption counts at uncontrollable sync boundaries are reported, not claimed as >=100 unless achieved.",
+  permission=granted("C", "A", extra="GUI portions (if any) under grant A's single GUI lock."), automated=True))
+F.append(blocked("M1-DUR-025","Two-device conflict and relink","conflict/two-device","durability",["WW-049","WW-006"],
+  "Requires a named second device; not granted 2026-10-04.",
+  "Cross-device conflicts preserved; device-local access records regranted explicitly.",
+  "No cross-device claim until executed."))
+F.append(syn("M1-DUR-026","Native GUI lifecycle: Close/Quit dirty decisions, AS01/AS05 replay, panel Save As cancel, Revert, edit-checkpoint recovery presentation","autosave/native-gui","durability",["WW-005","WW-049","WW-007"],
+  "Launch the ad-hoc-signed app with synthetic documents in temp/trial folders; drive via XCUITest/computer-use: OFF dirty Close/Quit (all routes: Close, Cmd-Q, app menu, Dock), queued ON->OFF race (AS01), dirty Quit (AS05), Save As panel cancel, Revert, relaunch with a pending edit-checkpoint record.",
+  "Dirty OFF or failed-autosave documents always present Save/Don't Save/Cancel on Close and every Quit route; no silent loss; edit-checkpoint offered as 'Restore unsaved changes' (dirty, not saved); AS01 and AS05 evidenced or remain open.",
+  2,20,"GUI scenarios (per scenario; destructive choices only on synthetic documents)","Single claimed host; scripted UI, not human usability; AS01/AS05 stay open until these pass.",
+  permission=granted("A")))
+F.append(syn("M1-DUR-027","Library publication-boundary interruptions (injected)","interrupted-publication/library","durability",["WW-005","WW-049","WW-010","WW-011"],
+  "Inject failure at each library boundary in boundaries[], with the library in each location stratum.",
+  "Library location holds old valid or complete new library revision, never mixed; library prior checkpoint coherent; collections/order/aliases/unavailable entries intact; index not advanced on failure.",120,1200,"interruptions (10 cal / 100 holdout per boundary per location stratum)",LIM_SYN,
+  extra={"boundaries": L, "locationStrata": LOCATIONS, "perBoundary": {"calibration": 10, "holdout": 100, "perLocationStratum": True}, "frozenGate": ">=100 interruptions per publication boundary (WW-005/WW-049)"}))
+F.append(syn("M1-DUR-028","Owned subprocess kill at library publication boundaries","interrupted-publication/library-process-kill","durability",["WW-005","WW-049"],
+  "Helper subprocess publishes the library (user-chosen-folder stratum) and is SIGKILLed exactly at each library boundary.",
+  "Same truth as M1-DUR-027 after restart.",30,600,"kills (5 cal / 100 holdout per boundary)",LIM_SYN,
+  extra={"boundaries": L, "perBoundary": {"calibration": 5, "holdout": 100}, "frozenGate": ">=100 interruptions per publication boundary (WW-005/WW-049)"}))
+F.append(syn("M1-DUR-029","Reopen show from library after relaunch, then Save (read-write document bookmark)","reference/document-bookmark-reopen-save","durability",["WW-006","WW-010","WW-011","WW-008"],
+  "Create show documents and a library entry holding a read-write security-scoped bookmark; terminate the host process; in a new process resolve the bookmark, start access, open the show, edit, Save, stop access. Variants: stale bookmark, moved document, revoked access, library at user-chosen folder.",
+  "Reopen and Save succeed via the read-write bookmark with read-back verification; scopes balanced; stale/moved/revoked cases show regrant/relink without writing elsewhere; source bookmarks remain read-only (any write attempt via a source scope fails).",10,100,"relaunch cycles","Counts as sandbox evidence only when the host is sandboxed (else labelled non-sandboxed). GUI relaunch variant is part of M1-REF-020 (grant A)."))
+F.append(blocked("M1-DUR-030","Other cloud providers as canonical locations (OneDrive, Dropbox)","cloud-canonical/other-providers","durability",["WW-049","WW-005","WW-010"],
+  "Not granted 2026-10-04; requires exact consent naming provider, folder (generated content only), operations and network use.",
+  "Per provider/operation observed publication, conflict, offline, cancel/retry behavior.",
+  "OneDrive/Dropbox guarantees remain SIMULATED/UNKNOWN; no support claim."))
+# ---------------- References ----------------
+LIM_REF = "Synthetic generated files in temp dirs on the claimed host. Security-scoped behavior counts only when run inside a sandboxed host; otherwise labelled non-sandboxed. No real media, provider, second device or TCC/panel grants."
+def ref(i, title, stratum, recipe, truth, cal=10, hold=60, counts=True, extra=None, limits=LIM_REF):
+    return syn(i, title, stratum, "reference", ["WW-006","WW-012"], recipe, truth, cal, hold, "lifecycle cases", limits,
+               counts_toward=["WW-006 >=1,000 lifecycle/error/cancel cases"] if counts else None, extra=extra)
+F.append(ref("M1-REF-001","Add reference; read-only bookmark create/resolve","reference/add","Generate source files (random bytes, never audio decoded); add via harness; create read-only security-scoped bookmark where sandboxed.",
+  "Logical SourceID assigned; hints stored; access record device-local; identity 'unverified'; source bookmark created with read-only option; zero source writes; scopes balanced."))
+F.append(ref("M1-REF-002","Stale bookmark refresh while access is valid","reference/stale-bookmark","Move/rename source while access remains valid so resolution reports stale.",
+  "Bookmark refreshed (still read-only) only with valid access; identity remains unverified until explicit confirmation; no substitution."))
+F.append(ref("M1-REF-003","Regrant required","reference/regrant","Bookmark unresolvable or access expired/denied.",
+  "State 'regrant required' (access denied/unknown, not missing); no automatic replacement; regrant path offered."))
+F.append(ref("M1-REF-004","Moved source","reference/moved","Move source within temp tree.",
+  "Location 'candidate-moved' or unresolved; explicit relink required; identity unverified; zero writes."))
+F.append(ref("M1-REF-005","Copied source (original still present)","reference/copied","Copy source; optionally delete original later.",
+  "Copy is never auto-selected; ambiguity surfaced; explicit choice required."))
+F.append(ref("M1-REF-006","Renamed source","reference/renamed","Rename in place.",
+  "Name hint updated only after explicit relink/confirmation; identity unverified."))
+F.append(ref("M1-REF-007","Same-name substitute","reference/same-name-substitute","Replace file at original path with different bytes and same name (includes the bookmark-resolves-replacement counterexample).",
+  "Never silently accepted; identity 'changed' or 'unverified'; explicit confirmation required; zero writes."))
+F.append(ref("M1-REF-008","Denied access","reference/denied","POSIX permission removal on generated file/dir.",
+  "access=denied; never labelled missing; distinct remedy."))
+F.append(ref("M1-REF-009","Missing source","reference/missing","Delete generated file.",
+  "location=unresolved, missing labelled distinct from denied/unknown; relink offered."))
+F.append(ref("M1-REF-010","Changed source metadata","reference/changed","Change size/modification date via append to generated file.",
+  "identity=changed (metadata evidence) or unverified; never auto-confirmed."))
+F.append(ref("M1-REF-011","Cloud placeholder residency (test double)","reference/cloud-placeholder","Inject resource-value double reporting placeholder/not-downloaded/unknown.",
+  "residency=placeholder or unknown exactly as reported; no generic classifier; OFF makes zero download requests.",
+  limits=LIM_REF + " Test double only; real iCloud values are M1-SRC-ON-PROV-001 (grant C)."))
+F.append(ref("M1-REF-012","Download progress known/unknown (test double)","reference/download-progress","Double emits determinate, indeterminate and absent progress.",
+  "Determinate progress only when reported; otherwise 'Progress unknown'; accessible text values.",limits=LIM_REF + " Test double only."))
+F.append(ref("M1-REF-013","Download cancel (test double)","reference/cancel","Cancel transfer at seeded points.",
+  "transfer=cancelled; no partial state presented as available; scopes balanced.",limits=LIM_REF + " Test double only."))
+F.append(ref("M1-REF-014","Download retry (test double)","reference/retry","Fail then retry.",
+  "Exactly one active request; honest state transitions.",limits=LIM_REF + " Test double only."))
+F.append(ref("M1-REF-015","Offline source provider (test double)","reference/offline","Double reports offline/network unavailable.",
+  "transfer=failed/offline with retry; residency unchanged; no fake availability.",limits=LIM_REF + " Test double only."))
+F.append(ref("M1-REF-016","Scope balance under injected error/cancel","reference/scope-lifecycle","Inject errors/cancellation at each scope acquire/use/release point across all reference, document and library-folder bookmark operations.",
+  "Every successful start is balanced by exactly one stop; leaked-scope counter == 0; zero source writes.",hold=150,extra={"frozenGate": "zero leaked scopes (WW-006)"}))
+F.append(ref("M1-REF-017","Cross-machine relink (simulated: no device-local access record)","reference/cross-machine-simulated","Open a show document whose sources have no access records on this device.",
+  "All sources 'relink required'; hints shown as hints; explicit relink only."))
+F.append(syn("M1-REF-018","Zero-source-write invariant audit","reference/immutability-audit","reference",["WW-006","WW-012"],
+  "Harness digests every generated source (outside the app process) before and after every REF/SRC/DUR-029 case.",
+  "All digests unchanged; no rename/move/delete; leaked scopes = 0; substitutions = 0.",0,0,"invariant over all REF/SRC cases (not additional cases)",LIM_REF + " Harness-side digests of generated files only; the app never hashes sources.",
+  extra={"frozenGate": "zero source writes / substitutions (WW-006)"}))
+F.append(syn("M1-REF-019","Recorder groups, epochs, channels, speakers, primary/backup","organization/groups-speakers","organization",["WW-012","WW-011"],
+  "Generate episodes with 1-6 groups, 1-8 clips per group, unknown/known channel counts from synthetic safe metadata, speakers, primary/backup assignments and corrections with undo.",
+  "Group clock distinct from clip start; UNKNOWN duration/channels stay UNKNOWN; provisional vs user-confirmed labels honest; primary change marks dependents stale; named undo restores exact state.",10,100,"episodes",LIM_REF))
+F.append(syn("M1-REF-020","Sandboxed native panel grant/regrant/relaunch (sources read-only; documents/library folder read-write)","reference/native-grant","reference",["WW-006","WW-008","WW-012"],
+  "Launch the sandboxed ad-hoc-signed app; select synthetic source files, a synthetic show document and a library folder via NSOpenPanel/NSSavePanel; quit; relaunch; resolve bookmarks; reopen show from library and Save; attempt source access after revocation/move to drive regrant.",
+  "Panel grant -> bookmark of the correct mode (source read-only; document and library folder read-write) -> relaunch resolve -> start/stop balanced; reopen+Save succeeds; regrant path works; zero source writes.",
+  2,20,"GUI scenarios","Single claimed host, ad-hoc signed; not Developer ID/notarized/clean-install (WW-041/052).",permission=granted("A")))
+# ---------------- Source availability ----------------
+F.append(syn("M1-SRC-OFF-001","Metadata-only (source availability OFF) trial set","source/metadata-only-OFF","source-availability",["WW-006","WW-012"],
+  "OFF; run add reference, open show, relink, library rebuild, index rebuild, primary/backup edits, placeholder sources (double).",
+  "Recording gateway: zero content reads, hashes, header reads, previews/thumbnails/QuickLook, decodes and download requests; forbidden-API check clean.",10,200,"workflows",
+  "LABELLED DEFAULT-OFF METADATA SET. Proves app requests only; OS/provider/picker activity not proven absent. Not evidence for default-ON behavior.",
+  extra={"trialLabel": "default-OFF metadata-only", "frozenGate": "zero app content/hash/header/preview/decode/download requests (WW-006)"}))
+F.append(syn("M1-SRC-ON-001","Default-ON source availability (synthetic provider double)","source/default-ON","source-availability",["WW-006","WW-012"],
+  "ON (default); double reports placeholder residency, determinate/indeterminate/absent progress, offline, errors; cancel/retry seeded.",
+  "Requests availability only for placeholder sources; accessible progress/unknown/offline/cancel/retry states; no generic classifier; OFF control reachable and effective.",10,200,"workflows",
+  "LABELLED DEFAULT-ON SYNTHETIC SET. Test double only; does not qualify any real provider.",extra={"trialLabel": "default-ON synthetic double"}))
+F.append(syn("M1-SRC-ON-002","Toggle source availability mid-transfer","source/toggle","source-availability",["WW-006","WW-012"],
+  "Switch ON->OFF and OFF->ON while transfers are pending/in progress (double).",
+  "ON->OFF stops issuing new requests and cancels or reports in-flight ones honestly; OFF->ON resumes only for placeholders.",10,100,"interleavings","Test double only.",extra={"trialLabel": "default-ON synthetic double"}))
+F.append(syn("M1-SRC-ON-PROV-001","Real provider source availability: iCloud Drive trial folder","source/default-ON/icloud-trial","source-availability",["WW-006","WW-012"],
+  "Generated synthetic source files (random bytes, never decoded) inside 'WaveWrangler-M1-Synthetic-Trial'; brctl evict to create placeholders; then OFF (metadata-only) and ON runs: observe residency/progress/offline/cancel/retry; brctl download where needed. Delete the folder afterwards.",
+  "OFF: zero app content/download requests while placeholders stay placeholders as observed. ON: observed residency/progress (or 'Progress unknown')/cancel/retry; zero source writes; provider work observed separately.",
+  5,100,"evict/availability cycles (50 OFF, 50 ON holdout)",
+  "iCloud Drive on this Mac only, synthetic files only; OFF and ON reported as separately labelled sets; no OneDrive/Dropbox claim.",
+  permission=granted("C"), extra={"trialLabel": "real iCloud: separate default-OFF and default-ON subsets"}))
+for n, prov in [(2,"OneDrive"),(3,"Dropbox")]:
+    F.append(blocked(f"M1-SRC-ON-PROV-00{n}",f"Real provider source availability: {prov}","source/default-ON/provider","source-availability",["WW-006","WW-012"],
+      f"Not granted 2026-10-04; requires exact consent: {prov} folder containing generated (non-recording) files, operations, network use.",
+      "Observed residency/progress/offline/cancel/retry; zero source writes; provider work observed separately.",
+      f"No {prov} support claim until executed."))
+# ---------------- Scale ----------------
+F.append(syn("M1-SCALE-001","Library scale: 100 projects / 1,000 references","scale","scale",["WW-007","WW-011"],
+  "Generate 100 show documents (>=2 episodes each), 1,000 distinct logical references, collections, >=1 unavailable show; measure model+view-model open per show and defined interactions (select show/episode, toggle collection, rename, filter sidebar). Native-window timing variant under grant A.",
+  "p95 (nearest-rank ceil(0.95n)) open <1 s and interaction <100 ms on claimed host; zero main-thread provider I/O; first-open and warm reported separately.",20,600,"timing samples (100 open-first, 100 open-warm, 400 interaction)",
+  "Claimed host only (macOS 27.0.1/128 GiB) -- NOT the macOS 26/16 GB reference (WW-052). Model/view-model and (grant A) native-window measurements reported separately.",
+  extra={"frozenGate": "p95 open <1 s, interaction <100 ms (WW-007, provisional)"}))
+# ---------------- Accessibility ----------------
+TASKS = "WW-004 18 core tasks + source ON/OFF/unknown/offline/cancel/retry, relink, primary/backup, save/conflict/autosave ON/OFF/explicit Save, library location choose/move, edit-checkpoint restore"
+F.append(syn("M1-A11Y-001","Keyboard-only core M1 task suite","accessibility/keyboard","accessibility",["WW-007","WW-011","WW-012"],
+  "XCUITest/computer-use keyboard-only scripts over synthetic documents: " + TASKS + "; plus Xcode accessibility audits.",
+  "100% core tasks completable by keyboard with visible focus; accessibility audit issues triaged with zero unresolved blockers.",2,1,"full suite runs (each covers every core task)","Scripted, single host; not participant usability (WW-052).",permission=granted("A")))
+F.append(syn("M1-A11Y-002","VoiceOver core M1 task suite","accessibility/voiceover","accessibility",["WW-007","WW-011","WW-012"],
+  "Temporarily enable VoiceOver; operator-driven (computer-use/manual) core task suite: " + TASKS + "; restore VoiceOver to its original state.",
+  "100% core tasks completable with VoiceOver; names/values/states/blocked reasons announced; no unsolicited focus change; VoiceOver state restored.",1,1,"full suite runs","Single operator/host; not broader participant studies (WW-052).",permission=granted("B","A"),automated=False))
+F.append(syn("M1-A11Y-003","200% text, Increase Contrast, Reduce Motion, cold/warm/recovery","accessibility/visual","accessibility",["WW-007","WW-011","WW-012"],
+  "Record original OS values; temporarily enable Increase Contrast, Reduce Motion and larger text; run core task views cold/warm/recovery; restore and verify original values.",
+  "Essential names/state/controls visible and reflowed at larger text/200% app text; contrast acceptable with Increase Contrast; no essential motion; original OS values restored exactly.",1,1,"full suite runs","Single host; measured contrast ratios reported where tooling allows; reference device -> WW-052.",permission=granted("D","A")))
+F.append(syn("M1-A11Y-004","Static accessibility audit","accessibility/static","accessibility",["WW-007","WW-011","WW-012"],
+  "Enumerate controls/status values from view models and source; check labels, values, hints, identifiers, non-colour status text, menu/keyboard equivalents for each core task.",
+  "100% core-task controls have accessible name/value/action and a keyboard/menu path; status text never colour-only.",0,1,"audit run",
+  "Static/code-level only; NOT a VoiceOver or human usability result."))
+# ---------------- User-provided ----------------
+F.append({"id": "M1-USER-001","title": "User-provided local disposable episode copy (path withheld)","stratum": "manual/real-media-organizer","family": "user-provided",
+  "issues": ["WW-012","WW-011","WW-006"],"automated": False,
+  "generator": {"kind": "user-provided","seedDerivation": None,"recipe": "Selected by the user/coordinator-designated operator through the app's native panel at validation time. Path, file names and content are never recorded here, in tests, logs committed to the repo, or PR text."},
+  "expectedTruth": "Manual checklist: references added without source writes; recorder grouping/speaker/primary-backup assignment and correction work; relink path works; metadata-only and default-ON states shown honestly; duration/channels UNKNOWN unless safe metadata. Operator records pass/fail per checklist item only.",
+  "permission": {"class": "consent-relayed-manual","status": "consented (relayed by M1 coordinator 2026-10-04; Lead has not seen the original user message)",
+    "scope": "M1 manual import/library/recorder-grouping/primary-backup/relink validation only; read-only; no decode, analysis, hashing, preview or transcription; never in automated tests or the repository; disposable copy."},
+  "provenance": "User-supplied disposable copy; provenance details intentionally withheld for privacy.",
+  "split": {"calibration": 0,"holdout": 0,"unit": "manual validation session (not a statistical sample)"},
+  "supportedClaimLimits": "One user-provided episode; supports only 'the organizer workflow was manually exercised on one real episode copy'. No media, format, provider, accuracy or performance claim.",
+  "evidenceStatus": "not-yet-executed"})
+
+LATER = [
+  {"milestone": "M2", "strata": "short/long durations, rates, shared-clock, unequal starts, affine/nonlinear drift, discontinuities, acoustic-delay negatives, noise/silence/bleed/overlap", "issues": ["WW-015 (#10)","WW-016 (#15)","WW-017 (#11)","WW-018 (#13)"]},
+  {"milestone": "M2", "strata": "import priming/padding/rate/channel/codec cases", "issues": ["WW-050 (#45)","WW-020 (#19)"]},
+  {"milestone": "M3", "strata": "English native/Whisper timing/provisioning/offline", "issues": ["WW-026 (#23)","WW-027 (#21)"]},
+  {"milestone": "M3", "strata": "common-map shortening, mode changes, partial inverses, occurrences, crossfades, protected speech", "issues": ["WW-028 (#25)","WW-043 (#40)","WW-045 (#41)"]},
+  {"milestone": "M3", "strata": "review keyboard/VoiceOver", "issues": ["WW-029 (#26)","WW-044 (#48)"]},
+  {"milestone": "M4", "strata": "neutral stems/record/restoration and listening", "issues": ["WW-036 (#34)","WW-038 (#33)","WW-040 (#37)"]},
+]
+
+def build():
+    ids = [f["id"] for f in F]
+    assert len(ids) == len(set(ids)), "duplicate ids"
+    for f in F:
+        for k in ["id","stratum","generator","expectedTruth","permission","provenance","split","supportedClaimLimits"]:
+            assert f.get(k) not in (None, ""), (f["id"], k)
+    by_class = collections.Counter(f["permission"]["class"] for f in F)
+    def tot(cls, key):
+        return sum(f["split"][key] for f in F if f["permission"]["class"] == cls)
+    counts = {
+      "entries": len(F),
+      "byPermissionClass": dict(sorted(by_class.items())),
+      "consentBlockedEntries": sum(1 for f in F if f["evidenceStatus"] == "consent-blocked"),
+      "consentBlockedVariants": sum(1 for f in F for v in f.get("variants", []) if v.get("evidenceStatus") == "consent-blocked"),
+      "authorizedSynthetic": {"calibration": tot("authorized-synthetic","calibration"), "holdout": tot("authorized-synthetic","holdout")},
+      "authorizedUserGrant": {"calibration": tot("authorized-user-grant","calibration"), "holdout": tot("authorized-user-grant","holdout")},
+      "ww006LifecycleHoldout": sum(f["split"]["holdout"] for f in F if f.get("countsToward")),
+      "showPublicationBoundaries": len(P), "libraryPublicationBoundaries": len(L),
+      "perBoundaryHoldoutMinimum": 100,
+    }
+    assert counts["ww006LifecycleHoldout"] >= 1000, counts
+    for f in F:
+        if "perBoundary" in f:
+            assert f["perBoundary"]["holdout"] >= 100, f["id"]
+    d6 = next(f for f in F if f["id"] == "M1-DUR-006")
+    assert d6["split"]["holdout"] == 100 * sum(len(b["paths"]) for b in P), "DUR-006 cells"
+    return {
+     "registryVersion": "m1-fixtures-v2-draft",
+     "date": "2026-10-04",
+     "generatedBy": "docs/m1/fixtures/generate-registry.py (do not hand-edit; regenerate)",
+     "owner": "Lead (protocol); WW-003 informational owner Pipeline",
+     "issue": "https://github.com/brandonmartinez/WaveWrangler/issues/5",
+     "protocol": "docs/m1/ww-003-fixture-protocol.md",
+     "status": "PROTOCOL-DEFINED / NOT FROZEN / NOT EXECUTED",
+     "freezeRule": "Each family is frozen (generator source hash, recipe, truth, counts, gate) in a dated freeze record before its first holdout case runs. Counts may increase before freeze; never decrease below a frozen gate minimum without explicit Lead/Brandon approval.",
+     "seedDerivation": SEED,
+     "claimedHost": "macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), 18-core Apple silicon, 128 GiB -- not the macOS 26/16 GB reference",
+     "userGrants20261004": GRANT,
+     "stillBlocked": ["second device", "OneDrive", "Dropbox", "disk-image (real full-volume) tests"],
+     "permissionClasses": {
+       "authorized-synthetic": "Generated deterministic data in temp dirs; authorized by the pasted M1 kickoff.",
+       "authorized-user-grant": "Synthetic data exercised through a user grant of 2026-10-04 (A-D) relayed by the M1 coordinator, within its exact scope.",
+       "consent-relayed-manual": "Specific user consent relayed by the M1 coordinator; manual use within stated scope only.",
+       "not-authorized": "Not granted; exact user consent required."},
+     "showPublicationBoundaries": P,
+     "libraryPublicationBoundaries": L,
+     "nsdocumentPathCoverage": NSDOC_NOTE,
+     "counts": counts,
+     "fixtures": F,
+     "laterMilestonePointers": {"note": "Pointers only; NOT M1 obligations. Qualification remains in each domain issue.", "items": LATER},
+    }
+
+def render(reg):
+    return json.dumps(reg, indent=2, ensure_ascii=False) + "\n"
+
+if __name__ == "__main__":
+    reg = build(); text = render(reg)
+    if "--check" in sys.argv[1:]:
+        current = open(OUT, encoding="utf-8").read() if os.path.exists(OUT) else ""
+        if current != text:
+            print("m1-fixture-registry.json is out of date; regenerate.", file=sys.stderr); sys.exit(1)
+        print("registry up to date")
+    else:
+        open(OUT, "w", encoding="utf-8").write(text)
+    print(json.dumps(reg["counts"], indent=1))

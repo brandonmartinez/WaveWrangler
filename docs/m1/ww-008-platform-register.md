@@ -47,8 +47,8 @@ App Sandbox is **ON** for the M1 app target. Reasons: least privilege; security-
 | Entitlement / key | M1 value | Why | Status |
 | --- | --- | --- | --- |
 | `com.apple.security.app-sandbox` | `true` | Contain damage; least privilege ([DocC](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.app-sandbox)) | *to evidence* in build settings |
-| `com.apple.security.files.user-selected.read-write` | `true` | Show documents are created/saved at user-chosen (including cloud) locations via panels ([DocC](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.files.user-selected.read-write)) | *to evidence* |
-| Source access mode | Read-only **per bookmark** (`.securityScopeAllowOnlyReadAccess`) | The entitlement is app-wide read-write for documents, so source immutability is enforced at the bookmark plus the app's no-write invariant ([DocC](https://developer.apple.com/documentation/foundation/nsurl/bookmarkcreationoptions/securityscopeallowonlyreadaccess)) | *to evidence* (`M1-REF-018/020`) |
+| `com.apple.security.files.user-selected.read-write` | `true` | Show documents are created/saved, and the library folder is chosen (C2a), at user-chosen (including cloud) locations via panels ([DocC](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.files.user-selected.read-write)) | *to evidence* |
+| Bookmark modes (split) | **Sources:** read-only per bookmark (`.withSecurityScope` + `.securityScopeAllowOnlyReadAccess`). **Show documents and the chosen library folder:** read-write (`.withSecurityScope` only) | The entitlement is app-wide read-write, so source immutability is enforced at the source bookmark plus the app's no-write invariant ([DocC](https://developer.apple.com/documentation/foundation/nsurl/bookmarkcreationoptions/securityscopeallowonlyreadaccess)); documents/library need write access to be reopened from the library after relaunch and saved | *to evidence* (`M1-REF-018/020`, `M1-DUR-029`) |
 | `com.apple.security.files.bookmarks.app-scope` | Not added unless a sandboxed build test shows it is required | Apple's current [sandbox file-access article](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox) describes security-scoped bookmarks without naming it, and its DocC entitlement page returned **404** on 2026-10-04 | **U**. Mac verifies with an actual sandboxed build |
 | `com.apple.security.network.client` / `.server` | **absent** | M1 has no network features. Provider sync runs in the provider's own processes. No telemetry | **D**. A test asserts the entitlement is absent |
 | iCloud container / `NSUbiquitousContainers` / CloudKit | **absent** | Canonical documents live at user-chosen locations, not an app ubiquity container | **D** |
@@ -66,8 +66,9 @@ Basis: Apple, [Accessing files from the macOS App Sandbox](https://developer.app
    - Folder grants extend recursively.
    - **D:** M1 grants individual files; "Add Folder" is subject to Design/coordinator scope.
 2. **Persist.**
-   - Create bookmark data with `.withSecurityScope` + `.securityScopeAllowOnlyReadAccess`.
-   - Store it **only** in the device-local access record, never in the portable show document.
+   - **Sources:** create bookmark data with `.withSecurityScope` + `.securityScopeAllowOnlyReadAccess`; a source scope is never used for writing.
+   - **Show documents (library/recent entries) and the library folder (C2a):** `.withSecurityScope` (read-write), so a show can be reopened from the library after relaunch and saved (`M1-DUR-029`).
+   - Store bookmarks **only** in device-local access records/preferences, never in the portable show document.
 3. **Resolve on later use.**
    - Resolve with `.withSecurityScope` plus `.withoutUI`/`.withoutMounting` where appropriate.
    - The system does **not** extend the sandbox automatically for resolved stored bookmarks; the app must call `startAccessingSecurityScopedResource()`.
@@ -77,7 +78,7 @@ Basis: Apple, [Accessing files from the macOS App Sandbox](https://developer.app
 5. **Release.** Every successful start is balanced by exactly one stop on every path (success/error/cancel). Leaked scopes are counted in tests (`M1-REF-016`, gate: zero).
 6. **Failure states.** Resolution failure leads to `regrant required`; permission errors to `access denied` (never "missing"); no item to `missing`. All three are distinct.
 7. **Not a lock.** A scope grants permission; it does not provide coordination or exclusivity.
-8. **G:** sandboxed panel grant → relaunch → resolve proof needs GUI-launch consent (`M1-REF-020`). TCC/ACL/privacy denial is observed separately; POSIX/ACL denials can still occur inside granted scope (F: same Apple article).
+8. **G:** sandboxed panel grant → relaunch → resolve → reopen-and-Save proof runs under user grant A of 2026-10-04 (`M1-REF-020`); until it passes, sandbox grant behavior is unevidenced. TCC/ACL/privacy denial is observed separately; POSIX/ACL denials can still occur inside granted scope (F: same Apple article).
 
 ## 5. Cloud/provider and ubiquitous-item register
 
@@ -85,10 +86,10 @@ Basis: Apple, [Accessing files from the macOS App Sandbox](https://developer.app
 | --- | --- | --- |
 | `URLResourceKey.isUbiquitousItemKey`, `ubiquitousItemDownloadingStatusKey`, `ubiquitousItemIsDownloadingKey`, `ubiquitousItemDownloadRequestedKey`, `ubiquitousItemDownloadingErrorKey` | Residency/transfer observations (C7/C8) where populated | **F**: DocC (macOS 10.7–10.10+) documents these as **iCloud** keys. **U** whether OneDrive/Dropbox File Provider domains populate them |
 | `FileManager.startDownloadingUbiquitousItem(at:)` | ON-mode availability request / explicit Make Available | **F**: DocC "Starts downloading (if necessary)". Never called in OFF except by explicit user action |
-| `FileManager.evictUbiquitousItem(at:)` | **Never used**: it would remove local copies of user sources | **D** (prohibited) |
+| `FileManager.evictUbiquitousItem(at:)` | **Never used by the app**: it would remove local copies of user sources | **D** (prohibited in app code). The grant-C trial harness may run `brctl evict`/`download` on **its own generated files** in `WaveWrangler-M1-Synthetic-Trial` only |
 | `NSMetadataQuery` ubiquitous scopes / percent-downloaded key | Not selected: these target app ubiquity containers, not user-chosen locations | **D/U** |
 | Moving a provider placeholder | **Prohibited**: it can download/remove the item ([research](../planning/research.md#external-sources-and-file-provider-contract)) | **D** |
-| Provider atomicity / ordering | Never assumed | **G**: `M1-DUR-024`, `M1-SRC-ON-PROV-*` (not authorized) |
+| Provider atomicity / ordering | Never assumed | **G**: iCloud Drive observed only via the grant-C trial (`M1-DUR-024`, `M1-SRC-ON-PROV-001`) on this Mac, one folder, synthetic files, folder deleted afterwards. OneDrive/Dropbox (`M1-DUR-030`, `M1-SRC-ON-PROV-002/003`) and second device (`M1-DUR-025`) **not authorized** |
 
 No generic "pending/downloading" classifier is invented. Unknown is shown as unknown.
 
@@ -100,7 +101,7 @@ No generic "pending/downloading" classifier is invented. Unknown is shown as unk
 | Telemetry / analytics / crash-reporting SDKs | **None** (D) |
 | Source content access | None in M1 (no decode/hash/header/preview). OFF makes zero content requests (C8) |
 | Logging | Unified logging. Source paths/names are logged only at `private` privacy level, never `public`. No source content. No committed logs with user paths (D; *to evidence* by code review) |
-| Device-local data | Access records, recovery checkpoints, library and derived index live in the app container. Deleting them loses library aliases/collections (R6) but never source files |
+| Device-local data | Access records, published prior checkpoints, unpublished edit-checkpoint records (C2b) and the derived index live in the app container; never source files. The **library location is configurable** (C2a): default app container, or a user-chosen folder (e.g., iCloud Drive/OneDrive/Dropbox) reached via a read-write bookmark and published with C3–C5. While the container default is in use, the app shows "Library stored on this Mac only" (R6) |
 | Privacy manifest (`PrivacyInfo.xcprivacy`) | **Recommended** for M1 (D). Required-reason API categories likely touched: `NSPrivacyAccessedAPICategoryFileTimestamp` (modification dates), `NSPrivacyAccessedAPICategoryUserDefaults` (settings), possibly `NSPrivacyAccessedAPICategoryDiskSpace` (disk-full messaging). Categories are F ([DocC](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype)); exact reason codes are **U** until Mac lists actual API use. Enforcement on the direct route is **U** → WW-041 |
 | Usage-description strings | None needed in M1 (no mic/camera/speech/contacts) |
 
@@ -134,12 +135,13 @@ No generic "pending/downloading" classifier is invented. Unknown is shown as unk
 1. Exact public AppKit hooks for honest OFF skipping and dirty-Quit coverage (AS01 unestablished, AS05 partial).
 2. Whether `files.bookmarks.app-scope` is needed on current macOS for persisted security-scoped bookmarks.
 3. File Provider (OneDrive/Dropbox) population of ubiquitous keys, coordination semantics, conflict versions and placeholder behavior.
-4. iCloud Drive publication ordering/atomicity for whole-file replace under coordination.
+4. iCloud Drive publication ordering/atomicity for whole-file replace under coordination (partially observable in the grant-C trial; not generalizable).
 5. macOS 26 runtime behavior and 16 GB performance.
 6. Privacy-manifest reason codes and their direct-distribution enforcement.
 7. The show-document UTI/extension identifier (Mac to record).
 8. `preservesVersions` behavior on cloud locations.
 9. Whether the user wants a device-local crash snapshot while autosave is OFF (WW-009 Q3).
+10. Whether nested coordination for the C3 base check inside AppKit's coordinated save is safe, and where a library folder's provider conflicts surface (`NSFileVersion`) for a non-`NSDocument` file.
 
 ## 11. Acceptance mapping
 
@@ -148,7 +150,7 @@ No generic "pending/downloading" classifier is invented. Unknown is shown as unk
 | Exact floors evaluated against macOS 26+/Apple silicon/English | §1. Target 26 compile *to evidence* in Mac's build; claimed host recorded | macOS 26 runtime / 16 GB / 8 GB → WW-052 |
 | 16 GB initial reference, 8 GB later, Intel/non-English deferred | Recorded §1; no claim made | WW-052 |
 | Fair native Speech eligibility, not selection | §9 | WW-026 |
-| Direct signed/notarized grant/reopen/cancel with zero source writes | **Internal:** ad-hoc sandboxed grant/reopen/cancel with zero source writes via `M1-REF-*` (programmatic) + `M1-REF-020` (GUI, consent-blocked) | Signed/notarized artifact → WW-041/052 |
+| Direct signed/notarized grant/reopen/cancel with zero source writes | **Internal:** ad-hoc sandboxed grant/reopen/cancel with zero source writes via `M1-REF-*` (programmatic) + `M1-DUR-029` (relaunch reopen+Save) + `M1-REF-020` (GUI, grant A) | Signed/notarized artifact → WW-041/052 |
 | Signing/hardened runtime/permissions/privacy/notices 100% identified | §3, §6, §7, §8 (this register) | Artifact proof → WW-041 |
 | Artifact-specific license/patent unknowns explicit | §7, §10 | WW-018/026/041 |
 | App Store deferred; no paid/legal budget; notarization ≠ App Review | §8 | — |
