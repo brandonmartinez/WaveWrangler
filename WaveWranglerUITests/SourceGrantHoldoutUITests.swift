@@ -97,9 +97,10 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         check(Acceptance.waitFor(timeout: 10) { self.statuses(names)[names[0]]?.contains("permission") == true },
               "without a record the source needs permission (never Not found): \(statuses(names))")
         select(names[0])
-        menu("Source", "Grant Access…")
-        choosePath(folder.appending(path: names[0]).path, confirm: true)
-        confirmRelinkSheet()
+        if menu("Source", "Grant Access…") {
+            choosePath(folder.appending(path: names[0]).path, confirm: true)
+            confirmRelinkSheet()
+        }
         check(Acceptance.waitFor(timeout: 10) { self.statuses(names)[names[0]]?.hasPrefix("Ready") == true }, "regranted source Ready: \(statuses(names))")
         check(try fingerprint(folder) == fingerprints, "zero source writes")
         record(cycle, "regrant", failures, statuses(names))
@@ -118,9 +119,10 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         let afterMove = statuses(names)[names[1]] ?? "missing"
         Acceptance.record(self, "REF-020 status after the harness moved \(names[1]): \(afterMove)")
         select(names[1])
-        menu("Source", "Relink Source…")
-        choosePath(moved.appending(path: names[1]).path, confirm: true)
-        confirmRelinkSheet()
+        if menu("Source", "Relink Source…") {
+            choosePath(moved.appending(path: names[1]).path, confirm: true)
+            confirmRelinkSheet()
+        }
         check(Acceptance.waitFor(timeout: 10) { self.statuses(names)[names[1]]?.hasPrefix("Ready") == true }, "relinked source Ready: \(statuses(names))")
         check(try fingerprint(folder).merging(try fingerprint(moved)) { $1 } == fingerprints, "zero source writes")
         record(cycle, "relink (moved: \(afterMove))", failures, statuses(names))
@@ -159,6 +161,10 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         // snapshot stalls while it is up, so keys go to the service.
         let service = XCUIApplication(bundleIdentifier: "com.apple.appkit.xpc.openAndSavePanelService")
         Thread.sleep(forTimeInterval: 2.0)
+        guard service.state != .notRunning || app.sheets.firstMatch.exists else {
+            failures.append("open panel shown")
+            return
+        }
         let target: XCUIApplication = service.state == .notRunning ? app : service
         Acceptance.record(self, "REF-020 panel host: \(target === service ? "openAndSavePanelService" : "app")")
         target.typeKey("g", modifierFlags: [.command, .shift])
@@ -185,15 +191,17 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
-    private func menu(_ bar: String, _ title: String) {
+    @discardableResult
+    private func menu(_ bar: String, _ title: String) -> Bool {
         app.menuBars.menuBarItems[bar].click()
         let item = app.menuBars.menuBarItems[bar].menuItems[title]
         guard item.waitForExistence(timeout: 3), item.isEnabled else {
             failures.append("\(bar) › \(title) available")
             app.typeKey(.escape, modifierFlags: [])
-            return
+            return false
         }
         item.click()
+        return true
     }
 
     /// Status values of the Sources rows whose name is in `names`.

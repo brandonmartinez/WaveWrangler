@@ -122,6 +122,9 @@ enum AcceptanceAudit {
     @MainActor
     static func run(_ app: XCUIApplication, surface: String, test: XCTestCase) throws -> [String] {
         var unwaived: [String] = []
+        // With a modal sheet up, AppKit dims the window content behind it; that content is audited separately
+        // without the sheet (lane suites' policy), so contrast findings outside the sheet are waived.
+        let sheetFrame: CGRect? = app.sheets.firstMatch.exists ? app.sheets.firstMatch.frame : nil
         var contrast: [(XCUIElement, String)] = []
         // Audits of large trees can time out (XCTest error -56); run contrast separately and retry once.
         func audit(_ kinds: XCUIAccessibilityAuditType, _ handler: @escaping (XCUIAccessibilityAuditIssue) -> Bool) throws {
@@ -155,6 +158,10 @@ enum AcceptanceAudit {
             return true
         }
         for (element, description) in contrast {
+            if let sheetFrame, element.exists, !sheetFrame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) {
+                print("AUDIT WAIVED \(description) — window content dimmed behind a modal sheet; audited separately without the sheet")
+                continue
+            }
             let measured = element.exists ? ContrastMeter.measure(element.screenshot().image) : nil
             let ratio = measured?["ratio"] as? Double ?? 0
             if ratio >= 4.5 {

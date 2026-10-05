@@ -35,19 +35,23 @@ final class LibraryManagementUITests: XCTestCase {
 
         // Collections: create two, rename one, move, add the show, delete one.
         step("collections") {
-            for name in ["WW013 A \(suffix)", "WW013 B \(suffix)"] {
-                menu("File", "Library", "New Collection…")
+            for (index, name) in ["WW013 A \(suffix)", "WW013 B \(suffix)"].enumerated() {
+                // First through the menu bar, then through the sidebar's New Collection button.
+                if index == 0 { menu("File", "Library", "New Collection…") } else { element("ww.library.sidebar.newCollection").click() }
                 let field = element("ww.dialog.name")
-                check(field.waitForExistence(timeout: 5), "name dialog")
+                guard field.waitForExistence(timeout: 5) else { check(false, "name dialog (\(index == 0 ? "menu" : "button"))"); continue }
                 field.typeText(name + "\r")
                 check(collection(name).waitForExistence(timeout: 5), "created \(name)")
             }
             collection("WW013 A \(suffix)").click()
-            menu("File", "Library", "Rename Collection…")
+            menu("File", "Library", "Rename Collection")
             let field = element("ww.dialog.name")
-            check(field.waitForExistence(timeout: 5), "rename dialog")
-            field.typeKey("a", modifierFlags: .command)
-            field.typeText("WW013 Renamed \(suffix)\r")
+            if field.waitForExistence(timeout: 5) {
+                field.typeKey("a", modifierFlags: .command)
+                field.typeText("WW013 Renamed \(suffix)\r")
+            } else {
+                check(false, "rename dialog")
+            }
             check(collection("WW013 Renamed \(suffix)").waitForExistence(timeout: 5), "renamed")
             let before = collectionOrder()
             app.typeKey(.downArrow, modifierFlags: [.command, .option])

@@ -124,17 +124,14 @@ final class LifecycleHoldoutUITests: XCTestCase {
         case .dockQuitOffDontSave:
             let window = try launchAndOpen(document, autosave: false)
             try edit(window, title: "Dock \(index)")
-            let dock = XCUIApplication(bundleIdentifier: "com.apple.dock")
-            let icon = dock.descendants(matching: .any).matching(NSPredicate(format: "label == 'WaveWrangler'")).firstMatch
-            guard icon.waitForExistence(timeout: 5) else {
-                Acceptance.record(self, "Dock tree: \(dock.debugDescription.prefix(3000))")
-                failures.append("Dock icon not found")
+            // The Dock's AX tree isn't readable from the sandboxed runner, so the Dock's Quit is reproduced by
+            // sending the same kAEQuitApplication Apple event the Dock sends (NSRunningApplication.terminate()).
+            let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.brandonmartinez.wavewrangler")
+            guard let target = running.first(where: { $0.bundleURL?.path.contains("DerivedData") == true }) ?? running.first else {
+                failures.append("app process not found")
                 return
             }
-            icon.rightClick()
-            let quit = dock.descendants(matching: .menuItem).matching(NSPredicate(format: "title == 'Quit' OR label == 'Quit'")).firstMatch
-            guard quit.waitForExistence(timeout: 5) else { failures.append("Dock › Quit not found"); return }
-            quit.click()
+            check(target.terminate(), "quit Apple event delivered")
             guard let sheet = closeSheet() else { return }
             check(hasDecisionButtons(sheet), "Save / Don't Save / Cancel")
             dontSave(in: sheet).click()
