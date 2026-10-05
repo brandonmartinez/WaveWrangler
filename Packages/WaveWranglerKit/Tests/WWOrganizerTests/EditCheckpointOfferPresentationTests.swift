@@ -26,6 +26,14 @@ struct EditCheckpointOfferPresentationTests {
         #expect(!p.actions.contains(.restore))
     }
 
+    @Test func anotherSessionWhileARestoreIsInEffectOpensOnlyAsCopy() {
+        let p = EditCheckpointOfferPresentation(.anotherSession(createdAt: date), showName: "Show", formatTime: time)
+        #expect(p.heading == "More unsaved changes from 10:42 PM")
+        #expect(p.body.contains("already restored") && p.body.contains("separate untitled copy"))
+        #expect(p.actions == [.openAsCopy, .discard] && !p.actions.contains(.restore))
+        #expect(EditCheckpointOfferPresentation.confirmation(for: .discard, state: .anotherSession(createdAt: date), formatTime: time) != nil)
+    }
+
     @Test func unusableRecordsAreReportedNotApplied() {
         let damaged = EditCheckpointOfferPresentation(.unusable(damaged: 1, newerFormat: 0), showName: "Show")
         let newer = EditCheckpointOfferPresentation(.unusable(damaged: 0, newerFormat: 2), showName: "Show")

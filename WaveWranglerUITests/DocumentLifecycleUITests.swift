@@ -98,12 +98,17 @@ final class DocumentLifecycleUITests: XCTestCase {
         let first = bar.label
         bar.buttons["Restore Unsaved Changes"].click()
         XCTAssertEqual(showTitleField(window).value as? String, "Session B edits", "the newest record is offered first")
-        // The other session's record is still offered (never deleted with B).
-        XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).exists && self.messageBar(window).label.hasPrefix("Restore unsaved changes from ") })
+        // The other session's record is still offered (never deleted with B), but only as a separate copy while
+        // B's restore is in effect, so a second restore can never replace the first.
+        XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).exists && self.messageBar(window).label.hasPrefix("More unsaved changes from ") })
         record("two sessions: first \(first) | then \(messageBar(window).label)")
-        messageBar(window).buttons["Restore Unsaved Changes"].click()
-        XCTAssertEqual(showTitleField(window).value as? String, "Session A edits")
-        XCTAssertEqual(diskTitle(document), "Synthetic Trial Show 1", "restores never save")
+        XCTAssertFalse(messageBar(window).buttons["Restore Unsaved Changes"].exists)
+        messageBar(window).buttons["Open as Separate Copy"].click()
+        let copy = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 10))
+        XCTAssertEqual(showTitleField(copy).value as? String, "Session A edits")
+        XCTAssertEqual(showTitleField(window).value as? String, "Session B edits", "B's restore is untouched")
+        XCTAssertEqual(diskTitle(document), "Synthetic Trial Show 1", "restores and copies never save")
     }
 
     /// C2b: if the show was saved since the checkpoint's base, the offer is "Unsaved changes based on an older

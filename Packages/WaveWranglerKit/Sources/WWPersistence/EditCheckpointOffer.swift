@@ -47,6 +47,25 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
     /// records (each from a different session, with different edits) are offered one after another.
     public var candidate: Candidate? { usable.first }
 
+    /// How the shown record may be used.
+    public enum CandidateMode: Sendable, Equatable {
+        /// Based on exactly the publication on disk and no other restore in effect: "Restore unsaved changes".
+        case restore
+        /// Based on the publication on disk, but another record's restore is in effect in this window. A second
+        /// restore would replace the first (and its record could then be resolved by a save that doesn't hold
+        /// it), so this record opens only as a separate copy.
+        case copyOnlyWhileAnotherRestoreIsInEffect
+        /// Based on another (older) publication: opens only as a separate copy; never restored over newer work.
+        case copyOnlyOlderRevision
+    }
+
+    /// At most one restore is in effect per document; every other record is copy-only.
+    public func candidateMode(restoreInEffect: Bool) -> CandidateMode? {
+        guard let candidate else { return nil }
+        guard candidate.relation == .basedOnCurrent else { return .copyOnlyOlderRevision }
+        return restoreInEffect ? .copyOnlyWhileAnotherRestoreIsInEffect : .restore
+    }
+
     public var isEmpty: Bool { candidate == nil && problems.isEmpty }
 
     public static func assess(
@@ -114,6 +133,9 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
 /// undo or edits during the save). Anything else stays for a later save, or for the next launch.
 public enum RestoredEditCheckpoints {
     public static func resolved(byPublicationStartedWith atStart: Set<URL>, restoredNow: Set<URL>, publishedEqualsCurrent: Bool) -> Set<URL> {
-        publishedEqualsCurrent ? atStart.intersection(restoredNow) : []
+        // Only one restore can be in effect (`EditCheckpointOffer.candidateMode`), so the published model is that
+        // record's snapshot plus later edits. If more than one is ever marked, it's ambiguous: delete none.
+        guard publishedEqualsCurrent, atStart.count <= 1, restoredNow.count <= 1 else { return [] }
+        return atStart.intersection(restoredNow)
     }
 }

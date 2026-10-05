@@ -13,10 +13,13 @@ protocol EditCheckpointOfferProviding: AnyObject {
 extension ShowDocument: EditCheckpointOfferProviding {
     var editCheckpointOfferState: EditCheckpointOfferState? {
         guard let offer = status.editCheckpointOffer else { return nil }
-        if let candidate = offer.candidate {
-            return candidate.relation == .basedOnCurrent
-                ? .restore(createdAt: candidate.record.createdAt)
-                : .olderRevision(createdAt: candidate.record.createdAt)
+        if let candidate = offer.candidate, let mode = offer.candidateMode(restoreInEffect: isEditCheckpointRestoreInEffect) {
+            let createdAt = candidate.record.createdAt
+            return switch mode {
+            case .restore: .restore(createdAt: createdAt)
+            case .copyOnlyWhileAnotherRestoreIsInEffect: .anotherSession(createdAt: createdAt)
+            case .copyOnlyOlderRevision: .olderRevision(createdAt: createdAt)
+            }
         }
         guard !offer.problems.isEmpty else { return nil }
         let newer = offer.problems.filter { if case .newerFormat = $0 { true } else { false } }.count

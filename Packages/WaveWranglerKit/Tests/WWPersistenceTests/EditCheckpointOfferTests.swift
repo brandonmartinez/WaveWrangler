@@ -152,6 +152,36 @@ struct EditCheckpointOfferTests {
         #expect(after.usable.map(\.payload) == [sessionA])
     }
 
+    /// Re-review probe: restore B, then A (another session, same base) must not be restorable over B; otherwise
+    /// a save holding only A's edits would resolve (delete) both and lose B.
+    @Test func secondSessionIsCopyOnlyWhileARestoreIsInEffect() throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 846)
+        let (current, base) = try rig.seedTwoRevisions(model, at: rig.url())
+        let key = DocumentKey.show(model.show.id)
+        try rig.recovery.writeEditCheckpoint(snapshot: coder.encode(current.renamingShow(to: "A"), revision: 3), base: base, schemaVersion: 1, for: key,
+                                             at: Date(timeIntervalSince1970: 1_000))
+        try rig.recovery.setAsideEditCheckpoints(for: key)
+        try rig.recovery.writeEditCheckpoint(snapshot: coder.encode(current.renamingShow(to: "B"), revision: 3), base: base, schemaVersion: 1, for: key,
+                                             at: Date(timeIntervalSince1970: 2_000))
+        try rig.recovery.setAsideEditCheckpoints(for: key)
+        let offer = assess(rig, key, model, onDisk: base)
+        let b = try #require(offer.candidate)
+        #expect(b.payload.show.title == "B" && offer.candidateMode(restoreInEffect: false) == .restore)
+        // B restored: A (same base) is offered, but copy-only.
+        let afterB = offer.excluding([b.url])
+        let a = try #require(afterB.candidate)
+        #expect(a.payload.show.title == "A" && a.relation == .basedOnCurrent)
+        #expect(afterB.candidateMode(restoreInEffect: true) == .copyOnlyWhileAnotherRestoreIsInEffect)
+        // Saving resolves B only; A stays on disk and is offered again (restorable once B's restore is saved).
+        let resolved = RestoredEditCheckpoints.resolved(byPublicationStartedWith: [b.url], restoredNow: [b.url], publishedEqualsCurrent: true)
+        #expect(resolved == [b.url])
+        // Even if two were ever marked restored, a save would delete neither.
+        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a.url, b.url], restoredNow: [a.url, b.url], publishedEqualsCurrent: true).isEmpty)
+        try rig.recovery.discardOfferedEditCheckpoints(Array(resolved), for: key)
+        #expect(assess(rig, key, model, onDisk: base).usable.map(\.payload.show.title) == ["A"])
+    }
+
     /// A verified save resolves a restored record only if it contains the restore (#84 review).
     @Test func restoredRecordsResolveOnlyWhenThePublicationContainsTheRestore() {
         let a = URL(fileURLWithPath: "/offered/a.wwedit"), b = URL(fileURLWithPath: "/offered/b.wwedit")
@@ -163,8 +193,9 @@ struct EditCheckpointOfferTests {
         #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [], restoredNow: [a], publishedEqualsCurrent: true).isEmpty)
         // Edits (or an undo) happened during the save, so the published candidate isn't the current model: kept.
         #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a], restoredNow: [a], publishedEqualsCurrent: false).isEmpty)
-        // Only the records restored at both ends.
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a, b], restoredNow: [b], publishedEqualsCurrent: true) == [b])
+        // Only the record restored at both ends (at most one restore is ever in effect).
+        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [b], restoredNow: [b], publishedEqualsCurrent: true) == [b])
+        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a], restoredNow: [b], publishedEqualsCurrent: true).isEmpty)
     }
 
     @Test func discardNeverDeletesOutsideTheOfferedRecords() throws {

@@ -343,7 +343,8 @@ final class ShowDocument: NSDocument {
     /// whole snapshot as one undoable edit; the document is dirty and is never marked saved by a restore.
     func restoreOfferedEditCheckpoint() {
         refreshEditCheckpointOffer()
-        guard let offer = status.editCheckpointOffer, let candidate = offer.candidate, candidate.relation == .basedOnCurrent else { return }
+        guard let offer = status.editCheckpointOffer, let candidate = offer.candidate,
+              offer.candidateMode(restoreInEffect: isEditCheckpointRestoreInEffect) == .restore else { return }
         // One undo step: the model change (which marks the document dirty) and the "restored" mark, so Undo of the
         // restore also un-marks the record and offers it again; Redo marks it again.
         let undo = undoManager
@@ -396,6 +397,9 @@ final class ShowDocument: NSDocument {
         setAsideOfferURLs.formUnion(offer.problems.map(\.url))
         refreshEditCheckpointOffer()
     }
+
+    /// A restored record is in effect (until it's saved, undone or discarded with Don't Save).
+    var isEditCheckpointRestoreInEffect: Bool { !restoredOfferURLs.isEmpty }
 
     var editCheckpointProblemURLs: [URL] { status.editCheckpointOffer?.problems.map(\.url) ?? [] }
 
