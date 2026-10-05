@@ -221,8 +221,10 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         let rows = app.outlines["ww.setup.sources"].outlineRows.allElementsBoundByIndex
         for row in rows {
             let name = row.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND NOT identifier ENDSWITH '.status'")).firstMatch
-            let label = (name.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? name.label
-            guard let match = names.first(where: { label.contains($0) }) else { continue }
+            // Since #112 the Name cell's value carries the hidden columns ("epoch …, channels …"); the file name
+            // is in its label. Match either.
+            let text = name.label + " " + ((name.value as? String) ?? "")
+            guard let match = names.first(where: { text.contains($0) }) else { continue }
             let status = row.descendants(matching: .any).matching(NSPredicate(format: "identifier ENDSWITH '.status'")).firstMatch
             result[match] = status.value as? String ?? ""
         }
