@@ -6,15 +6,19 @@ import WWOrganizer
 struct LibraryView: View {
     @Bindable var state: LibraryWindowState
     @FocusState private var focus: LibraryWindowState.Region?
+    @State private var contentHeight: CGFloat = 600
 
     private var store: LibraryUIStore { state.store }
 
     var body: some View {
         VStack(spacing: 0) {
             // Opaque bar above the split view (not an inset over translucent sidebar material) for contrast.
-            LibraryMessageBar(state: state)
+            // #109: at large text sizes it scrolls within at most 40% of the window instead of pushing the split
+            // view out of the window.
+            ScrollingIfTaller(maxHeight: max(120, contentHeight * 0.4)) { LibraryMessageBar(state: state) }
             splitView
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         .onChange(of: focus) { _, region in
             // The AppKit entry outline reports its own focus; SwiftUI sees it as no focused region.
             if region != nil || !(state.window?.firstResponder is EntryOutlineView) { state.focusedRegion = region }
@@ -28,6 +32,11 @@ struct LibraryView: View {
             LibrarySidebar(state: state, focus: $focus)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 360)
         } content: {
+            // #109: every column's content fits the window at any in-app text size. A column whose minimum height
+            // exceeds the window (e.g. vertically fixed-size text, measured for the column's minimum at a tiny
+            // width) makes the split view taller than the window, and its top overflows under the title bar
+            // (`sizingOptions = []` keeps the window from resizing to SwiftUI's minimum). Column content that
+            // can grow (empty states, details) scrolls instead.
             LibraryEntryList(state: state)
                 .focused($focus, equals: .entries)
                 .navigationSplitViewColumnWidth(min: 320, ideal: 520)
@@ -66,25 +75,38 @@ private struct LibrarySidebar: View {
                 }
                 .onMove { source, destination in state.moveCollections(fromOffsets: source, toOffset: destination) }
             } header: {
-                HStack {
-                    Text("Collections")
-                    Spacer()
-                    Button {
-                        state.newCollection()
-                    } label: {
-                        Image(systemName: "plus")
-                            .accessibilityLabel("New Collection")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("New Collection…")
-                    .accessibilityIdentifier("ww.library.sidebar.newCollection")
-                }
+                Text("Collections")
             }
         }
         .listStyle(.sidebar)
         .focused(focus, equals: .sidebar)
         .accessibilityLabel("Library sidebar")
         .accessibilityIdentifier("ww.library.sidebar")
+        // #110: "New Collection" is a real button in a bar below the list. In a sidebar section header, the List
+        // merged it into the heading's static text, so VoiceOver and Full Keyboard Access couldn't press it.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            HStack {
+                Button {
+                    state.newCollection()
+                } label: {
+                    Label("New Collection", systemImage: "plus")
+                        .labelStyle(.iconOnly)
+                        .padding(4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .help("New Collection…")
+                .accessibilityLabel("New Collection")
+                .accessibilityHint("Creates a collection. Collections group shows without moving them.")
+                .accessibilityIdentifier("ww.library.collections.add")
+                Spacer(minLength: 0)
+            }
+            .wwFont(.body)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.bar)
+            .overlay(alignment: .top) { Divider() }
+        }
     }
 
     @ViewBuilder
@@ -140,6 +162,7 @@ private struct LibraryEntryList: View {
         let title = LibraryPresentation.contentTitle(for: item, library: state.store.library, rowCount: rows.count)
         Group {
             if rows.isEmpty {
+                CenteredScrollView {
                 ContentUnavailableView {
                     Label(emptyTitle(item), systemImage: emptySymbol(item))
                 } description: {
@@ -151,6 +174,7 @@ private struct LibraryEntryList: View {
                     }
                 }
                 .wwFont(.body)
+                }
             } else if !Self.usesSwiftUITable {
                 LibraryEntryOutline(
                     state: state,
@@ -302,6 +326,7 @@ private struct LibraryEntryDetail: View {
         if rows.count == 1, let row = rows.first {
             detail(row)
         } else {
+            CenteredScrollView {
             VStack(spacing: 8) {
                 Image(systemName: "books.vertical")
                     .wwFont(.largeTitle)
@@ -314,8 +339,7 @@ private struct LibraryEntryDetail: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 
@@ -382,7 +406,6 @@ private struct LibraryEntryDetail: View {
 /// Library-window message bar (ST-32 and the honest in-memory notice). Persistent until dismissed.
 private struct LibraryMessageBar: View {
     @Bindable var state: LibraryWindowState
-    @State private var inMemoryNoticeDismissed = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -422,15 +445,47 @@ private struct LibraryMessageBar: View {
                     identifier: "ww.library.messageBar"
                 )
             }
-            if !state.store.isDurable, !inMemoryNoticeDismissed {
+            if !state.store.isDurable, !state.inMemoryNoticeDismissed {
                 MessageBar(
                     heading: "The library isn't saved yet in this version",
                     message: "Collections and recent shows are kept only while WaveWrangler is open. Your shows aren't affected.",
                     symbolName: "info.circle",
-                    actions: [("Dismiss", { inMemoryNoticeDismissed = true })],
+                    actions: [("Dismiss", { state.inMemoryNoticeDismissed = true })],
                     identifier: "ww.library.messageBar.inMemory"
                 )
             }
         }
+    }
+}
+
+/// #109: content that is centred when it fits and scrolls when it doesn't (large in-app text, short windows),
+/// so it never raises its split-view column's minimum height above the window.
+struct CenteredScrollView<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        GeometryReader { viewport in
+            ScrollView {
+                content
+                    .padding()
+                    .frame(maxWidth: .infinity, minHeight: viewport.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+    }
+}
+
+/// #109: content at its natural height up to `maxHeight`; taller content scrolls within `maxHeight`.
+struct ScrollingIfTaller<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ViewThatFits(in: .vertical) {
+            content
+            ScrollView { content }
+                .scrollBounceBehavior(.basedOnSize)
+        }
+        .frame(maxHeight: maxHeight)
     }
 }

@@ -28,6 +28,8 @@ final class LibraryWindowState {
     var columnVisibility: NavigationSplitViewVisibility = .all
     /// Inline outcome of the last open/locate attempt, shown in the detail column.
     var actionMessage: String?
+    /// The in-memory library notice was dismissed (window state, so every layout of the message bar agrees).
+    var inMemoryNoticeDismissed = false
 
     @ObservationIgnored weak var window: NSWindow?
     let store: LibraryUIStore

@@ -83,8 +83,9 @@ final class LibraryWorkspaceUITests: XCTestCase {
         // window isolated on the primary display; tracked in #59 (P2, M1).
         // Cells can extend past the outline's clip frame horizontally, so match by the table's left edge and
         // vertical extent.
+        // Rows partly scrolled out of the outline (at 200% text) are still table cells, so match any overlap.
         if issue.auditType == .contrast, let frame = entryTableFrame,
-           element.frame.minX >= frame.minX, element.frame.minY >= frame.minY, element.frame.maxY <= frame.maxY,
+           element.frame.minX >= frame.minX, element.frame.minY < frame.maxY, element.frame.maxY > frame.minY,
            element.frame.minX < frame.maxX {
             return "issue #59: system table text contrast (tracked)"
         }
@@ -244,6 +245,68 @@ final class LibraryWorkspaceUITests: XCTestCase {
         sheet.buttons["Delete"].click()
         XCTAssertFalse(created.waitForExistence(timeout: 2))
         XCTAssertEqual(value(element("ww.library.sidebar.shows")), "100 shows", "Deleting a collection never deletes shows")
+    }
+
+    /// #110: "New Collection" is a real, pressable button (not merged into the Collections heading).
+    func testNewCollectionButtonIsAnAccessibleButton() throws {
+        launch(["-WWUITestLibraryFixture", "lib100"])
+        let add = app.buttons["ww.library.collections.add"]
+        waitFor(add)
+        XCTAssertEqual(add.label, "New Collection")
+        XCTAssertTrue(add.isHittable, "on screen and pressable: \(add.frame)")
+        let headings = app.outlines["ww.library.sidebar"].staticTexts.matching(NSPredicate(format: "label CONTAINS 'New Collection'"))
+        XCTAssertEqual(headings.count, 0, "not merged into the Collections heading")
+        add.click()
+        let nameField = element("ww.dialog.name")
+        waitFor(nameField)
+        nameField.typeText("From The Button\r")
+        let created = app.outlines["ww.library.sidebar"].descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.sidebar.collection.' AND label == %@", "From The Button, collection")).firstMatch
+        waitFor(created)
+        try audit("Library sidebar with New Collection button")
+    }
+
+    /// #109: at in-app 200% text the Library window's content stays inside the window: sidebar rows, the message
+    /// bar (in the content column, #59) and the entry list are below the title bar and reachable.
+    func testLibraryAt200PercentTextStaysInsideTheWindow() throws {
+        launch(["-WWUITestLibraryFixture", "lib100"])
+        let window = app.windows["Library"]
+        waitFor(element("ww.library.sidebar"))
+        let bar = element("ww.library.messageBar.inMemory")
+        waitFor(bar)
+        for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
+        let shows = element("ww.library.sidebar.shows")
+        let entries = app.outlines["ww.library.entries"]
+        waitFor(entries)
+        // Let the 200% layout settle (the text size change re-lays out every column).
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in shows.frame.height > 30 }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [settled], timeout: 5), .completed, "200% applied: Shows row \(shows.frame)")
+        let frame = window.frame
+        // The unified title bar and toolbar take the top ~52 pt; content must start below it.
+        let contentTop = frame.minY + 50
+        func assertInside(_ element: XCUIElement, _ name: String, file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertTrue(element.exists, "\(name) exists", file: file, line: line)
+            XCTAssertGreaterThanOrEqual(element.frame.minY, contentTop, "\(name) \(element.frame) is below the title bar of \(frame)", file: file, line: line)
+            XCTAssertLessThanOrEqual(element.frame.maxY, frame.maxY + 0.5, "\(name) \(element.frame) ends inside \(frame)", file: file, line: line)
+        }
+        assertInside(shows, "Shows row")
+        assertInside(element("ww.library.sidebar.recent"), "Recent row")
+        assertInside(app.buttons["ww.library.collections.add"], "New Collection button")
+        let heading = bar.staticTexts["The library isn't saved yet in this version"]
+        assertInside(heading, "Message bar heading")
+        let dismiss = bar.buttons["Dismiss"]
+        // The bar's action is reachable: visible, or scrolled into view inside the capped bar.
+        if !dismiss.isHittable { bar.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -400) }
+        XCTAssertTrue(dismiss.isHittable, "message bar action reachable at 200%: \(dismiss.frame)")
+        XCTAssertGreaterThan(entries.frame.height, 60, "entry list keeps room below the bar: \(entries.frame)")
+        assertInside(entries, "Entry list")
+        XCTAssertGreaterThanOrEqual(entries.frame.minY, bar.frame.maxY - 0.5, "list below the bar")
+        try audit("Library window at 200% text (lib100, message bar)")
+
+        // Dismissing the notice gives the list the full column.
+        dismiss.click()
+        XCTAssertFalse(bar.waitForExistence(timeout: 2))
+        assertInside(entries, "Entry list without the bar")
     }
 
     // MARK: - Show window (T01–T03, T06, T24; K02, K03, K24)
