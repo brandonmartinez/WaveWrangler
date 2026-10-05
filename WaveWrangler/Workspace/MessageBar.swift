@@ -35,6 +35,11 @@ struct MessageBar: View {
             Spacer(minLength: 0)
         }
         .padding(10)
+        // The bar never raises its container's minimum height. Its vertically fixed-size text, asked for a minimum
+        // at zero width (as the hosting controller does to size the window), wraps per character and reports
+        // thousands of points, which pushed the whole show window's content off-screen. Laid out at the real
+        // width it still gets its full ideal height.
+        .frame(minHeight: 0)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) { Divider() }
@@ -43,3 +48,4 @@ struct MessageBar: View {
         .accessibilityIdentifier(identifier)
     }
 }
+

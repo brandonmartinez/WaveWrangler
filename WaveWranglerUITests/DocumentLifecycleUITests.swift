@@ -31,6 +31,118 @@ final class DocumentLifecycleUITests: XCTestCase {
 
     // MARK: - Tests
 
+    /// C2b recovery presentation (#84; M1-DUR-026 relaunch route): after a crash with unpublished edits, reopening
+    /// the show offers "Restore unsaved changes from <time>". Discard asks first (Esc cancels). Restore puts the
+    /// changes back as unsaved (dirty, disk unchanged); ⌘S publishes them, and the offer is resolved.
+    func testRelaunchWithEditCheckpointOffersRestore() throws {
+        let document = try makeDocument("Relaunch Restore")
+        try crashWithUnpublishedEdit(document, title: "Unsaved before the crash")
+
+        var window = try launchAndOpen(document, autosave: true, extraArguments: Self.slowAutosave)
+        let bar = messageBar(window)
+        XCTAssertTrue(bar.waitForExistence(timeout: 10), "the unsaved-changes offer appears on open")
+        record("offer: \(bar.label) | \(bar.value as? String ?? "")")
+        XCTAssertTrue(bar.label.hasPrefix("Restore unsaved changes from "), bar.label)
+        // VoiceOver: a group labelled by its heading; the heading (header trait) and body are its children.
+        let body = bar.staticTexts.matching(NSPredicate(format: "value CONTAINS 'never saved' OR label CONTAINS 'never saved'")).firstMatch
+        XCTAssertTrue(body.exists, "the body text is exposed to VoiceOver")
+        XCTAssertTrue(bar.buttons["Restore Unsaved Changes"].exists && bar.buttons["Discard…"].exists)
+        XCTAssertEqual(diskTitle(document), "Synthetic Trial Show 1", "opening never applies or publishes the checkpoint")
+
+        bar.buttons["Discard…"].click()
+        let confirm = app.sheets.firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Discard asks for confirmation")
+        record("discard sheet buttons: \(confirm.buttons.allElementsBoundByIndex.map(\.title))")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitFor(timeout: 3) { !confirm.exists })
+        XCTAssertTrue(bar.exists, "Cancel keeps the offer")
+
+        bar.buttons["Restore Unsaved Changes"].click()
+        XCTAssertTrue(waitFor(timeout: 5) { !bar.exists }, "the offer is resolved by Restore")
+        let field = showTitleField(window)
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "Unsaved before the crash")
+        XCTAssertEqual(diskTitle(document), "Synthetic Trial Show 1", "a restore never saves")
+        let status = window.descendants(matching: .any).matching(identifier: "ww.show.saveStatus").firstMatch
+        if status.exists { XCTAssertFalse((status.value as? String ?? "").hasPrefix("Saved"), "restored changes are unsaved") }
+
+        // Undo of the restore offers the record again; Redo restores it again (one undo step).
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(messageBar(window).waitForExistence(timeout: 5), "Undo of Restore offers the unsaved changes again")
+        XCTAssertTrue(messageBar(window).label.hasPrefix("Restore unsaved changes from "))
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(waitFor(timeout: 5) { !self.messageBar(window).exists }, "Redo restores again")
+        XCTAssertEqual(showTitleField(window).value as? String, "Unsaved before the crash")
+
+        app.typeKey("s", modifierFlags: .command)
+        XCTAssertTrue(waitFor(timeout: 5) { self.diskTitle(document) == "Unsaved before the crash" }, "⌘S publishes the restored changes")
+        forceQuit()
+        window = try launchAndOpen(document, autosave: true, extraArguments: Self.slowAutosave)
+        Thread.sleep(forTimeInterval: 1.5)
+        XCTAssertFalse(messageBar(window).exists, "a verified save resolved the offer")
+    }
+
+    /// Two crashed sessions leave two records with different edits: each is offered on its own, newest first, and
+    /// acting on one never removes the other.
+    func testTwoCrashedSessionsAreOfferedOneAfterAnother() throws {
+        let document = try makeDocument("Relaunch Two Sessions")
+        try crashWithUnpublishedEdit(document, title: "Session A edits")
+        // Session B: reopen, leave A's offer undecided, edit and crash again.
+        var window = try launchAndOpen(document, autosave: true, extraArguments: Self.slowAutosave)
+        XCTAssertTrue(messageBar(window).waitForExistence(timeout: 10))
+        try edit(window, title: "Session B edits")
+        assertDiskTitle(document, stays: "Synthetic Trial Show 1", for: 3)
+        forceQuit()
+
+        window = try launchAndOpen(document, autosave: true, extraArguments: Self.slowAutosave)
+        let bar = messageBar(window)
+        XCTAssertTrue(bar.waitForExistence(timeout: 10))
+        let first = bar.label
+        bar.buttons["Restore Unsaved Changes"].click()
+        XCTAssertEqual(showTitleField(window).value as? String, "Session B edits", "the newest record is offered first")
+        // The other session's record is still offered (never deleted with B), but only as a separate copy while
+        // B's restore is in effect, so a second restore can never replace the first.
+        XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).exists && self.messageBar(window).label.hasPrefix("More unsaved changes from ") })
+        record("two sessions: first \(first) | then \(messageBar(window).label)")
+        XCTAssertFalse(messageBar(window).buttons["Restore Unsaved Changes"].exists)
+        messageBar(window).buttons["Open as Separate Copy"].click()
+        let copy = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 10))
+        XCTAssertEqual(showTitleField(copy).value as? String, "Session A edits")
+        XCTAssertEqual(diskTitle(document), "Synthetic Trial Show 1", "restores and copies never save")
+        let original = try closeCopyWithoutSaving(copy, original: "Relaunch Two Sessions")
+        XCTAssertEqual(showTitleField(original).value as? String, "Session B edits", "B's restore is untouched")
+        XCTAssertTrue(messageBar(original).waitForExistence(timeout: 5), "A copy closed without saving offers its changes again")
+        XCTAssertTrue(messageBar(original).label.hasPrefix("More unsaved changes from "))
+    }
+
+    /// C2b: if the show was saved since the checkpoint's base, the offer is "Unsaved changes based on an older
+    /// revision" and opens only as a separate untitled copy: never restored over, merged into or published.
+    func testRelaunchAfterNewerSaveOffersOnlySeparateCopy() throws {
+        let document = try makeDocument("Relaunch Older")
+        try crashWithUnpublishedEdit(document, title: "Unsaved on the old revision")
+        try runProbe(["save", "--file", document.path, "--title", "Saved elsewhere"])
+        XCTAssertEqual(diskTitle(document), "Saved elsewhere")
+
+        let window = try launchAndOpen(document, autosave: true, extraArguments: Self.slowAutosave)
+        let bar = messageBar(window)
+        XCTAssertTrue(bar.waitForExistence(timeout: 10))
+        record("offer: \(bar.label) | \(bar.value as? String ?? "")")
+        XCTAssertEqual(bar.label, "Unsaved changes based on an older revision")
+        XCTAssertFalse(bar.buttons["Restore Unsaved Changes"].exists)
+        bar.buttons["Open as Separate Copy"].click()
+        let copy = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 10), "a separate untitled copy opens")
+        let copyField = showTitleField(copy)
+        XCTAssertTrue(copyField.waitForExistence(timeout: 5))
+        XCTAssertEqual(copyField.value as? String, "Unsaved on the old revision", "the whole typing burst was checkpointed")
+        XCTAssertEqual(diskTitle(document), "Saved elsewhere", "never merged or published")
+        let original = try closeCopyWithoutSaving(copy, original: "Relaunch Older")
+        XCTAssertEqual(showTitleField(original).value as? String, "Saved elsewhere")
+        XCTAssertTrue(messageBar(original).waitForExistence(timeout: 5), "A copy closed without saving offers its changes again")
+        XCTAssertEqual(messageBar(original).label, "Unsaved changes based on an older revision")
+    }
+
     /// AS05 (Close): OFF never autosaves; Close offers Save / Don't Save / Cancel; Cancel keeps the work.
     func testAutosaveOffCloseOffersSaveDontSaveCancel() throws {
         let document = try makeDocument("Close Off")
@@ -84,6 +196,11 @@ final class DocumentLifecycleUITests: XCTestCase {
         let elapsed = Date().timeIntervalSince(committed)
         record("ON committed-edit-to-disk (native app, 1 s policy) \(String(format: "%.3f", elapsed)) s")
         XCTAssertLessThanOrEqual(elapsed, 2.0, "WW-005 provisional ≤2 s")
+        // #87: once the autosave is verified ("Saved"), the window no longer says "Edited" either.
+        let status = window.descendants(matching: .any).matching(identifier: "ww.show.saveStatus").firstMatch
+        XCTAssertTrue(waitFor(timeout: 3) { (status.value as? String ?? status.label).hasPrefix("Saved") }, "status reaches Saved")
+        XCTAssertTrue(waitFor(timeout: 3) { !self.windowSaysEdited(window) }, "no \"— Edited\" after a verified autosave")
+        record("after autosave: title \(window.title) | status \(status.value as? String ?? status.label)")
 
         app.typeKey("w", modifierFlags: .command)
         XCTAssertFalse(app.sheets.firstMatch.waitForExistence(timeout: 1.5), "no prompt with autosave ON")
@@ -141,13 +258,13 @@ final class DocumentLifecycleUITests: XCTestCase {
         return url
     }
 
-    private func launchAndOpen(_ document: URL, autosave: Bool) throws -> XCUIElement {
+    private func launchAndOpen(_ document: URL, autosave: Bool, extraArguments: [String] = []) throws -> XCUIElement {
         app = XCUIApplication()
         app.launchArguments = [
             "-WWUITestHooks", "YES",
             "-WWUITestAutosave", autosave ? "ON" : "OFF",
             "-ApplePersistenceIgnoreState", "YES",
-        ]
+        ] + extraArguments
         app.launch()
         // A clean launch-time Untitled show would host the document as a tab; close it first (clean ⇒ no prompt).
         let untitled = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
@@ -166,6 +283,57 @@ final class DocumentLifecycleUITests: XCTestCase {
         return window
     }
 
+    /// Ends the app abruptly (like a crash or force quit): no save, no close, no termination review.
+    private func forceQuit() {
+        for running in NSRunningApplication.runningApplications(withBundleIdentifier: "com.brandonmartinez.wavewrangler") {
+            running.forceTerminate()
+        }
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10), "app force-quit")
+    }
+
+    private func runProbe(_ arguments: [String]) throws {
+        let probe = Process()
+        probe.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["WW_PROBE"]!)
+        probe.arguments = arguments
+        probe.standardOutput = FileHandle.nullDevice
+        try probe.run()
+        probe.waitUntilExit()
+        XCTAssertEqual(probe.terminationStatus, 0)
+    }
+
+    private func messageBar(_ window: XCUIElement) -> XCUIElement {
+        window.descendants(matching: .any).matching(identifier: "ww.show.messageBar").firstMatch
+    }
+
+    private func showTitleField(_ window: XCUIElement) -> XCUIElement {
+        let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
+        if showInfo.waitForExistence(timeout: 5) { showInfo.click() }
+        return window.textFields["Show title"]
+    }
+
+    /// Edits with autosave ON but a 30 s cadence (no publication expected within 1.5 s, so ShowDocument writes a
+    /// C2b edit checkpoint at quiescence), then force-quits before anything is published.
+    private func crashWithUnpublishedEdit(_ document: URL, title: String) throws {
+        let window = try launchAndOpen(document, autosave: true, extraArguments: Self.slowAutosave)
+        try edit(window, title: title)
+        assertDiskTitle(document, stays: "Synthetic Trial Show 1", for: 3)
+        forceQuit()
+        XCTAssertEqual(diskTitle(document), "Synthetic Trial Show 1", "nothing was published before the crash")
+    }
+
+    /// The copy opens as a tab of the original's window. Closing it without saving shows the original again. An
+    /// untitled document with autosave ON gets AppKit's Delete / Cancel / Save sheet.
+    private func closeCopyWithoutSaving(_ copy: XCUIElement, original name: String) throws -> XCUIElement {
+        copy.click()
+        app.typeKey("w", modifierFlags: .command)
+        try closeSheet().buttons["Delete"].click()
+        let original = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", name)).firstMatch
+        XCTAssertTrue(original.waitForExistence(timeout: 10), "the original show is shown again")
+        return original
+    }
+
+    private static let slowAutosave = ["-WWUITestAutosaveDelay", "30"]
+
     private func edit(_ window: XCUIElement, title: String) throws {
         // The show title lives in the Show Info inspector of the library/workspace UI.
         let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
@@ -176,6 +344,12 @@ final class DocumentLifecycleUITests: XCTestCase {
         field.typeKey("a", modifierFlags: .command)
         field.typeText(title)
         field.typeKey(.return, modifierFlags: [])
+    }
+
+    /// "— Edited" in the window title or subtitle (AppKit's edited-document suffix).
+    private func windowSaysEdited(_ window: XCUIElement) -> Bool {
+        window.title.contains("Edited")
+            || window.staticTexts.matching(NSPredicate(format: "value CONTAINS '— Edited' OR label CONTAINS '— Edited'")).count > 0
     }
 
     private func closeSheet() throws -> XCUIElement {

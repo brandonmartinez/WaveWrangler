@@ -43,21 +43,38 @@ public struct FileSystemFingerprint: Sendable, Codable, Equatable, Hashable {
     /// Fields that identify the *file object* rather than its current content state.
     static let objectFields: Set<FingerprintField> = [.fileIdentifier, .volumeUUID]
 
-    /// Compares every field. Equal known values match; any known difference is reported; a field
-    /// unknown on either side is reported as unknown. Exact match requires every field known and equal.
+    /// Timestamp comparison tolerance: 1 ms.
+    ///
+    /// Observed (sources holdout M1-SRC-ON-PROV-001, iCloud Drive, 2026-10-05): after a provider
+    /// evicts and rematerializes an unchanged file, its creation/modification dates move by ±1.19e-7 s
+    /// (sub-microsecond precision noise; bytes identical), so exact comparison reported a false
+    /// "changed". 1 ms is ~8,400x the largest observed shift and far below any genuine edit's timestamp
+    /// change. Size, file identifier, volume and type are always compared exactly; dates never match
+    /// when unknown on either side.
+    public static let timestampTolerance: TimeInterval = 0.001
+
+    /// Compares every field. Equal known values match (timestamps within `timestampTolerance`); any
+    /// known difference is reported; a field unknown on either side is reported as unknown. Exact match
+    /// requires every field known and equal.
     public func compare(to candidate: FileSystemFingerprint) -> IdentityComparison {
         var differing: [FingerprintField] = []
         var unknown: [FingerprintField] = []
-        func check<T>(_ field: FingerprintField, _ lhs: Knowledge<T>, _ rhs: Knowledge<T>) {
+        func check<T>(_ field: FingerprintField, _ lhs: Knowledge<T>, _ rhs: Knowledge<T>, equal: (T, T) -> Bool) {
             guard let left = lhs.value, let right = rhs.value else {
                 unknown.append(field)
                 return
             }
-            if left != right { differing.append(field) }
+            if !equal(left, right) { differing.append(field) }
+        }
+        func check<T: Equatable>(_ field: FingerprintField, _ lhs: Knowledge<T>, _ rhs: Knowledge<T>) {
+            check(field, lhs, rhs, equal: ==)
+        }
+        func sameInstant(_ a: Date, _ b: Date) -> Bool {
+            abs(a.timeIntervalSince(b)) <= Self.timestampTolerance
         }
         check(.fileSize, fileSize, candidate.fileSize)
-        check(.creationDate, creationDate, candidate.creationDate)
-        check(.contentModificationDate, contentModificationDate, candidate.contentModificationDate)
+        check(.creationDate, creationDate, candidate.creationDate, equal: sameInstant)
+        check(.contentModificationDate, contentModificationDate, candidate.contentModificationDate, equal: sameInstant)
         check(.fileIdentifier, fileIdentifier, candidate.fileIdentifier)
         check(.volumeUUID, volumeUUID, candidate.volumeUUID)
         check(.contentType, contentType, candidate.contentType)

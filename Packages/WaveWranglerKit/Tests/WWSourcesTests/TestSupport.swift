@@ -34,6 +34,9 @@ final class SimulatedCloudItem: @unchecked Sendable {
         case stall
         case error(SourceErrorDescriptor)
         case complete
+        /// Reports "stalled" (no change) and does not advance until the harness calls
+        /// `HarnessIO.releaseHold(_:)`. Makes stall-then-X interleavings deterministic.
+        case hold
     }
 
     enum Kind { case iCloud, datalessUnknownProvider, unreported }
@@ -47,6 +50,7 @@ final class SimulatedCloudItem: @unchecked Sendable {
     var error: SourceErrorDescriptor?
     var stepIndex = 0
     var requestError: SourceErrorDescriptor?
+    var holdReleased = false
 
     init(kind: Kind = .iCloud, status: UbiquitousDownloadingStatus = .notDownloaded, script: [Step] = [.complete], requestError: SourceErrorDescriptor? = nil) {
         self.kind = kind
@@ -69,11 +73,12 @@ final class SimulatedCloudItem: @unchecked Sendable {
     func advance() {
         guard requested, isDownloading, stepIndex < script.count else { return }
         let step = script[stepIndex]
+        if step == .hold && !holdReleased { return }
         stepIndex += 1
         switch step {
         case let .progress(value):
             fraction = Knowledge(value)
-        case .stall:
+        case .stall, .hold:
             break
         case let .error(descriptor):
             error = descriptor
@@ -134,6 +139,18 @@ final class HarnessIO: SourceIO, @unchecked Sendable {
     }
 
     func simulated(_ url: URL) -> SimulatedCloudItem? { lock.withLock { cloud[Self.key(url)] } }
+
+    /// Mutates a simulated item under the harness lock (the observer reads it under the same lock).
+    func mutateSimulated(_ url: URL, _ body: (SimulatedCloudItem) -> Void) {
+        lock.withLock {
+            if let item = cloud[Self.key(url)] { body(item) }
+        }
+    }
+
+    /// Releases a `.hold` step so the simulated provider continues its script.
+    func releaseHold(_ url: URL) {
+        lock.withLock { cloud[Self.key(url)]?.holdReleased = true }
+    }
 
     static func key(_ url: URL) -> String {
         url.resolvingSymlinksInPath().standardizedFileURL.path
@@ -309,6 +326,22 @@ final class StateLog: @unchecked Sendable {
     var states: [TransferState] { lock.withLock { _states } }
 }
 
+/// `waitUntilSettled` with a liveness limit: returns nil (instead of hanging the suite) if the transfer
+/// does not settle within `limit`; the caller records that as a failure.
+func settled(_ controller: SourceTransferController, _ key: DeviceAccessKey, limit: Duration = .seconds(30)) async -> TransferState? {
+    await withTaskGroup(of: TransferState?.self) { group in
+        group.addTask { await controller.waitUntilSettled(key) }
+        group.addTask {
+            try? await Task.sleep(for: limit)
+            return nil
+        }
+        let first = await group.next() ?? nil
+        if first == nil { await controller.cancelAll() }
+        group.cancelAll()
+        return first
+    }
+}
+
 // MARK: - Synthetic trees and immutability snapshots
 
 /// Generated random-byte files in a private temp directory. Never real audio, never user media.
@@ -421,4 +454,41 @@ func makeContext(_ io: HarnessIO) -> SourceAccessContext {
 
 extension Knowledge {
     static func reported(_ value: Value?) -> Knowledge { Knowledge(value) }
+}
+
+/// Wraps an in-memory store; an armed gate *suspends* (never blocks a thread) the next `record(for:)`
+/// until released, so tests can hold a refresh in flight without starving the cooperative pool.
+actor GatedDeviceAccessStore: DeviceAccessStore {
+    private let base: InMemoryDeviceAccessStore
+    private var armed = false
+    private var waiting: CheckedContinuation<Void, Never>?
+    private(set) var entered = false
+
+    init(_ records: [DeviceAccessRecord] = []) {
+        base = InMemoryDeviceAccessStore(records)
+    }
+
+    func arm() { armed = true; entered = false }
+
+    func release() {
+        armed = false
+        waiting?.resume()
+        waiting = nil
+    }
+
+    func record(for key: DeviceAccessKey) async throws -> DeviceAccessRecord? {
+        if armed {
+            armed = false
+            entered = true
+            await withCheckedContinuation { waiting = $0 }
+        }
+        return await base.record(for: key)
+    }
+
+    func records(in showID: ShowID) async throws -> [DeviceAccessRecord] { await base.records(in: showID) }
+    func allRecords() async throws -> [DeviceAccessRecord] { await base.allRecords() }
+    func save(_ record: DeviceAccessRecord) async throws { await base.save(record) }
+    func save(_ records: [DeviceAccessRecord]) async throws { await base.save(records) }
+    func removeRecord(for key: DeviceAccessKey) async throws { await base.removeRecord(for: key) }
+    func removeRecords(in showID: ShowID) async throws { await base.removeRecords(in: showID) }
 }

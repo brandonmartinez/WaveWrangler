@@ -9,7 +9,7 @@ import WWCore
 ///  "publicationID":"…UUID…","revision":3,"schemaVersion":1}
 /// ```
 ///
-/// Read order: version header `{format, schemaVersion}` only → format → schema range (unknown-newer
+/// Read order: strict JSON structure (well-formed, no duplicate keys anywhere) → version header `{format, schemaVersion}` only → format → schema range (unknown-newer
 /// refusal happens before any version-specific field or the payload is decoded) → version-specific header
 /// `{checksum, publicationID, revision}` → revision → payload decode → checksum → no unrecognized content
 /// → semantic validation. `{format, schemaVersion}` is the only envelope shape frozen across versions.
@@ -31,6 +31,14 @@ public struct JSONEnvelopeCoder<Payload: Codable & Sendable>: CanonicalDocumentC
     }
 
     public func decode(_ data: Data) throws(PersistenceError) -> DecodedDocument<Payload> {
+        // Strict structure first: duplicate keys would make envelope fields (revision, schemaVersion) ambiguous.
+        do {
+            try StrictJSON.validate(data)
+        } catch let .duplicateKey(key) {
+            throw .malformed("Duplicate key \"\(key)\"")
+        } catch {
+            throw .malformed("Malformed JSON")
+        }
         let decoder = Self.makeDecoder()
         let version: VersionHeader
         do {

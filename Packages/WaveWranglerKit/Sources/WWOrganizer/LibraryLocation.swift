@@ -216,18 +216,35 @@ public enum LibraryRegrantWording {
     }
 }
 
-/// Persistence reports library *file* URLs (`<folder>/Library.wwlibrary`) in move and regrant outcomes.
-/// The UI names folders and passes folders back to `useLibrary(in:)`, so it always reduces to the folder.
+/// Persistence reports library *file* URLs in move and regrant outcomes, always built as
+/// `folder.appending(path: setting.fileName)` — and the file name changes after Recover Earlier Version
+/// ("Library (Recovered r<N> …).wwlibrary"). The UI names folders and passes folders back to
+/// `useLibrary(in:)`, so outcome URLs are reduced exactly once, in the persistence adapter, by dropping the
+/// last component with no name check. Folders from Settings or the location status never pass through
+/// here, so a folder named "*.wwlibrary" is never stripped.
 public enum LibraryFolderURL {
-    public static let libraryFileExtension = "wwlibrary"
-
-    /// The folder holding the library: strips a trailing `*.wwlibrary` file component; folders pass through.
-    public static func folder(for url: URL) -> URL {
-        url.pathExtension.lowercased() == libraryFileExtension ? url.deletingLastPathComponent() : url
+    /// The folder holding the library file `url` (an outcome URL from persistence).
+    public static func folder(ofLibraryFile url: URL) -> URL {
+        url.deletingLastPathComponent()
     }
 
-    /// Folder display name for UI text (never a path).
-    public static func displayName(for url: URL) -> String {
-        folder(for: url).lastPathComponent
+    /// Folder display name for an outcome URL (never a path).
+    public static func displayName(ofLibraryFile url: URL) -> String {
+        folder(ofLibraryFile: url).lastPathComponent
+    }
+}
+
+/// Why the canonical library couldn't be adopted on load (used in "Couldn't read the library: …").
+/// Plain-language reasons; no internal terms (revision, checkpoint) in primary UI.
+public enum LibraryLoadWording {
+    public static let loadedWithoutContent = "the library loaded without content"
+    public static let newerFormat = "the library was saved by a newer version of WaveWrangler"
+    public static let needsMigration = "the library needs to be updated to the current format"
+
+    public static func damaged(_ reason: String) -> String { "the library is damaged (\(reason))" }
+
+    /// L2/L3: the folder can't be reached. Edits are queued (not read-only); say only what's known.
+    public static func unreachable(_ reason: String) -> String {
+        "WaveWrangler can't reach your library folder (\(reason))"
     }
 }

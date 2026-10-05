@@ -11,6 +11,8 @@ final class LibraryWorkspaceUITests: XCTestCase {
     private var app: XCUIApplication!
     /// Frame of the Library entry table, captured before an audit (queries inside the audit handler are unreliable).
     private var entryTableFrame: CGRect?
+    /// Toolbar/title-bar frames captured before an audit (window titles there are drawn by AppKit).
+    private var toolbarFrames: [CGRect] = []
 
     override func setUp() async throws {
         continueAfterFailure = false
@@ -58,6 +60,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
         var findings: [String] = []
         let table = app.outlines["ww.library.entries"]
         entryTableFrame = table.exists ? table.frame : nil
+        toolbarFrames = app.toolbars.allElementsBoundByIndex.map(\.frame)
         try app.performAccessibilityAudit(for: [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]) { issue in
             let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(240) ?? "no element")"
             if let rationale = self.waiver(for: issue) {
@@ -109,6 +112,11 @@ final class LibraryWorkspaceUITests: XCTestCase {
         // The system "emoji & symbols" input item (Touch Bar / menu bar), not app UI.
         if element.elementType == .popUpButton, element.label == "emoji & symbols" {
             return "system input item, not app UI"
+        }
+        // Window title/subtitle text in the unified title bar is drawn by AppKit (no identifier).
+        if issue.auditType == .contrast, element.elementType == .staticText, element.identifier.isEmpty,
+           toolbarFrames.contains(where: { $0.insetBy(dx: -1, dy: -1).contains(element.frame) }) {
+            return "system window title text"
         }
         // macOS injects the Siri waveform overlay (an untitled Dialog with a 'siri' button) into every
         // app's AX tree on this host; it is not WaveWrangler UI.
@@ -319,5 +327,53 @@ final class LibraryWorkspaceUITests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         waitFor(app.popUpButtons["ww.settings.textSize"])
         waitForValue(app.popUpButtons["ww.settings.textSize"], "100%")
+    }
+
+    // MARK: - #88: the library remembers show locations across relaunch
+
+    func testLibraryReopensShowAfterRelaunchAndSaves() throws {
+        let folder = "WWUITests-Relaunch"
+        // Launch 1: create a show (verified save) in a stable synthetic folder; the window records its location.
+        launch(["-WWUITestResetStorage", "YES", "-WWUITestOpenShow", "Relaunch Show", "-WWUITestShowEpisodes", "1",
+                "-WWUITestShowFolder", folder, "-WWUITestAutosave", "ON"])
+        let window = app.windows.matching(identifier: "ww.show.window").firstMatch
+        waitFor(window, timeout: 15)
+        let status = element("ww.show.saveStatus")
+        let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Saved'"), object: status)
+        XCTAssertEqual(XCTWaiter().wait(for: [saved], timeout: 10), .completed)
+        Thread.sleep(forTimeInterval: 2) // let the device-local location record land
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15), "quit")
+
+        // Launch 2: a fresh process reads only persisted data.
+        launch([])
+        app.typeKey("l", modifierFlags: [.command, .shift])
+        let entries = app.outlines["ww.library.entries"]
+        waitFor(entries, timeout: 10)
+        let row = entries.outlineRows.containing(NSPredicate(format: "value == 'Relaunch Show'")).firstMatch
+        waitFor(row, timeout: 10)
+        let statusCell = row.staticTexts.matching(NSPredicate(format: "label == 'Status'")).firstMatch
+        let available = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Available'"), object: statusCell)
+        XCTAssertEqual(XCTWaiter().wait(for: [available], timeout: 10), .completed, "status resolves (never stuck Checking…): \(value(statusCell))")
+        XCTAssertTrue(row.staticTexts.matching(NSPredicate(format: "value == %@", folder)).firstMatch.exists, "location remembered")
+        try audit("Library after relaunch")
+
+        row.cells.firstMatch.click()
+        let open = element("ww.library.detail.open")
+        waitFor(open)
+        open.click()
+        let reopened = app.windows.matching(identifier: "ww.show.window").firstMatch
+        waitFor(reopened, timeout: 15)
+        XCTAssertTrue(reopened.title.hasPrefix("Relaunch Show"), "opened the same show: \(reopened.title)")
+
+        // Edit and save through the reopened (bookmark-resolved) location.
+        reopened.typeKey("n", modifierFlags: [.command, .shift])
+        let rename = element("ww.show.sidebar.rename")
+        waitFor(rename)
+        app.typeText("After Relaunch\r")
+        reopened.typeKey("s", modifierFlags: .command)
+        let reopenedStatus = element("ww.show.saveStatus")
+        let savedAgain = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Saved'"), object: reopenedStatus)
+        XCTAssertEqual(XCTWaiter().wait(for: [savedAgain], timeout: 10), .completed, "saved after relaunch: \(value(reopenedStatus))")
     }
 }

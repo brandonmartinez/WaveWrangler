@@ -15,6 +15,8 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
     public private(set) var status: DocumentSaveStatus
     /// Non-nil when edits and saves are refused (newer format, recovered checkpoint).
     public private(set) var readOnlyReason: String?
+    /// False for unknown-newer documents: Save As/duplicate would be a down-save and is refused too.
+    public nonisolated let allowsCopies: Bool
 
     private let publisher: DocumentPublisher<Coder>
     private let gate: AutosaveGate?
@@ -27,7 +29,8 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
         revision: Int,
         publisher: DocumentPublisher<Coder>,
         gate: AutosaveGate? = nil,
-        readOnlyReason: String? = nil
+        readOnlyReason: String? = nil,
+        allowsCopies: Bool = true
     ) {
         self.key = key
         self.url = url
@@ -38,6 +41,7 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
         self.publisher = publisher
         self.gate = gate
         self.readOnlyReason = readOnlyReason
+        self.allowsCopies = allowsCopies
         self.status = DocumentSaveStatus(state: .clean(revision: base == nil ? nil : revision))
     }
 
@@ -60,6 +64,24 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
         case let other:
             return .failure(OpenFailure(outcome: other))
         }
+    }
+
+    /// A document written by a newer WaveWrangler, shown read-only: edit, Save, autosave, Save As and
+    /// duplicate (down-save) are all refused; nothing is ever written.
+    public static func refusingNewerFormat(
+        key: DocumentKey,
+        url: URL,
+        payload: Coder.Payload,
+        found: Int,
+        supported: Int,
+        publisher: DocumentPublisher<Coder>
+    ) -> CanonicalDocumentSession<Coder> {
+        let session = CanonicalDocumentSession(
+            key: key, url: url, payload: payload, base: nil, revision: 0, publisher: publisher,
+            readOnlyReason: "Saved by a newer version of WaveWrangler (format \(found); this version supports \(supported)).",
+            allowsCopies: false
+        )
+        return session
     }
 
     /// Opens a validated recovery checkpoint read-only (it can only be kept via `duplicate`).
@@ -133,8 +155,12 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
     /// Save As: publishes a new document at `destination` and continues editing there. The original file
     /// is never written.
     @discardableResult
-    public func saveAs(_ destination: URL, replacingExisting: Bool = false) -> Result<PublicationReceipt, PublicationError> {
-        let result = duplicate(to: destination, replacingExisting: replacingExisting)
+    public func saveAs(
+        _ destination: URL,
+        replacingExisting: Bool = false,
+        isCancelled: () -> Bool = { false }
+    ) -> Result<PublicationReceipt, PublicationError> {
+        let result = duplicate(to: destination, replacingExisting: replacingExisting, isCancelled: isCancelled)
         if case let .success(receipt) = result {
             url = destination
             base = receipt.fingerprint
@@ -147,13 +173,18 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
     }
 
     /// Duplicate/keep-a-copy: publishes the current value at `destination`; this session is unchanged.
-    /// Allowed for read-only recovered sessions (that is how a recovered checkpoint is kept), refused for
-    /// newer-format sessions by the caller never constructing one.
-    public func duplicate(to destination: URL, replacingExisting: Bool = false) -> Result<PublicationReceipt, PublicationError> {
+    /// Allowed for read-only recovered sessions (that is how a recovered checkpoint is kept); refused for
+    /// newer-format sessions (`allowsCopies == false`), where it would be a down-save.
+    public func duplicate(
+        to destination: URL,
+        replacingExisting: Bool = false,
+        isCancelled: () -> Bool = { false }
+    ) -> Result<PublicationReceipt, PublicationError> {
+        guard allowsCopies else { return .failure(.readOnly(readOnlyReason ?? "This document can't be copied.")) }
         do {
             let receipt = try publisher.publish(
                 payload, revision: max(revision, 1), key: key, to: destination,
-                target: .saveAs(replacingExisting: replacingExisting)
+                target: .saveAs(replacingExisting: replacingExisting), isCancelled: isCancelled
             )
             return .success(receipt)
         } catch let error as PublicationError {

@@ -584,10 +584,16 @@ struct StallFollowUpTests {
         // An automatic call while stalled does nothing new.
         _ = await controller.makeAvailable(key, at: file)
         #expect(io.count(.downloadRequest) == 1)
-        io.simulated(file)?.evictAgain(script: [.progress(0.5), .complete])
+        // Freeze the stalled observer mid-poll so the provider change and the retry cannot interleave with
+        // it (#85): otherwise it can observe the change first and publish inProgress, and an explicit
+        // Retry during inProgress is currently a no-op (tracked separately).
+        await io.fractionGate.arm()
+        #expect(await io.fractionGate.waitUntilEntered())
+        io.mutateSimulated(file) { $0.evictAgain(script: [.progress(0.5), .complete]) }
         #expect(await controller.retry(key, at: file) == .requested)
         #expect(io.count(.downloadRequest) == 2)
-        #expect(await controller.waitUntilSettled(key) == .idle)
+        await io.fractionGate.release()
+        #expect(await settled(controller, key) == .idle)
     }
 
     @Test func offCancelsAStalledAutomaticTransfer() async throws {
@@ -635,20 +641,76 @@ struct StallFollowUpTests {
 }
 
 
-final class SleepLog: @unchecked Sendable {
+/// A sleeper driven by the test: each `sleep` publishes its duration on `requests` and suspends (on a
+/// continuation, not a thread) until `step()`; task cancellation resumes it with `CancellationError`.
+final class SteppedSleeper: @unchecked Sendable {
+    let requests: AsyncStream<Duration>
+    private let requestContinuation: AsyncStream<Duration>.Continuation
     private let lock = NSLock()
-    private var _durations: [Duration] = []
-    func record(_ duration: Duration) { lock.withLock { _durations.append(duration) } }
-    var durations: [Duration] { lock.withLock { _durations } }
+    private var pending: CheckedContinuation<Void, any Error>?
+    private var cancelled = false
+
+    init() {
+        (requests, requestContinuation) = AsyncStream<Duration>.makeStream()
+    }
+
+    func sleep(_ duration: Duration) async throws {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                let alreadyCancelled = lock.withLock { () -> Bool in
+                    if cancelled { return true }
+                    pending = continuation
+                    return false
+                }
+                if alreadyCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    requestContinuation.yield(duration)
+                }
+            }
+        } onCancel: {
+            let continuation = lock.withLock { () -> CheckedContinuation<Void, any Error>? in
+                cancelled = true
+                defer { pending = nil }
+                return pending
+            }
+            continuation?.resume(throwing: CancellationError())
+        }
+    }
+
+    /// Lets the currently suspended sleep return.
+    func step() {
+        let continuation = lock.withLock { () -> CheckedContinuation<Void, any Error>? in
+            defer { pending = nil }
+            return pending
+        }
+        continuation?.resume()
+    }
 }
 
-/// Polling has stopped if the metadata call count does not move over a window far longer than any
-/// test poll interval (1–2 ms). A still-running observer would make ~20+ calls in that window.
+/// Polling has stopped once the metadata call count stays unchanged for 40 ms (a live test observer
+/// polls every 1–2 ms). Waits up to 5 s for that, so one late in-flight poll under load is tolerated.
 func pollingStopped(_ io: HarnessIO) async throws -> Bool {
-    try await Task.sleep(for: .milliseconds(10))
+    let clock = ContinuousClock()
+    let deadline = clock.now + .seconds(5)
+    while clock.now < deadline {
+        let before = io.count(.metadata)
+        try await Task.sleep(for: .milliseconds(40))
+        if io.count(.metadata) == before { return true }
+    }
+    return false
+}
+
+/// Polling continues if the metadata call count increases within 5 s (liveness, not a timing window).
+func pollingContinues(_ io: HarnessIO) async throws -> Bool {
+    let clock = ContinuousClock()
+    let deadline = clock.now + .seconds(5)
     let before = io.count(.metadata)
-    try await Task.sleep(for: .milliseconds(40))
-    return io.count(.metadata) == before
+    while clock.now < deadline {
+        try await Task.sleep(for: .milliseconds(1))
+        if io.count(.metadata) > before { return true }
+    }
+    return false
 }
 
 @Suite("Stall follow-up: observer lifetime and backoff schedule", .timeLimit(.minutes(1)))
@@ -668,12 +730,97 @@ struct StallLifetimeTests {
         monitor.start()
         try await monitor.adopt([record])
         #expect((await collector.value).last?.isOfflineOrUnknown == true)
-        #expect(try await !pollingStopped(io))
+        #expect(try await pollingContinues(io))
         await monitor.stop()
         #expect(try await pollingStopped(io))
         #expect(await monitor.transfers.activeCount == 0)
         // Teardown is not a user decision.
         #expect(await monitor.transfers.reportableState(of: record.key) == nil)
+        #expect(context.ledger.snapshot.openScopes == 0)
+    }
+
+    /// A refresh already in flight when the monitor stops must not request a download afterwards. The
+    /// refresh is held by an async (non-blocking) store gate, so no cooperative thread is ever parked.
+    @Test @MainActor func stoppedMonitorNeverRequestsFromInFlightRefresh() async throws {
+        let tree = try SyntheticTree(label: "stop-inflight")
+        var rng = SplitMix64(seed: 18)
+        let file = try tree.file("late.wav", bytes: 64, rng: &rng)
+        let io = HarnessIO()
+        let context = makeContext(io)
+        let record = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
+        io.simulate(file, SimulatedCloudItem(script: [.complete]))
+        let store = GatedDeviceAccessStore([record])
+        let monitor = SourceAvailabilityMonitor(showID: testShow, store: store, context: context, setting: .on, transferPolicy: StallFollowUpTests.policy)
+        monitor.start()
+        await store.arm()
+        let refresh = Task { await monitor.refresh([record.sourceID]) }
+        while await !store.entered { await Task.yield() }
+        await monitor.stop()
+        await store.release()
+        await refresh.value
+        await monitor.makeAvailable(record.sourceID)
+        #expect(monitor.isStopped)
+        #expect(io.count(.downloadRequest) == 0, "no transfer after stop()")
+        #expect(await monitor.transfers.activeCount == 0)
+        #expect(context.ledger.snapshot.openScopes == 0)
+    }
+
+    /// Direct-caller race: a request decided before a shutdown began is refused even if it reaches the
+    /// controller afterwards; a decision made after the shutdown began is honored.
+    @Test func controllerRefusesRequestsDecidedBeforeShutdownBegan() async throws {
+        let tree = try SyntheticTree(label: "decided-before-stop")
+        var rng = SplitMix64(seed: 19)
+        let file = try tree.file("raced.wav", bytes: 64, rng: &rng)
+        let io = HarnessIO()
+        let context = makeContext(io)
+        let record = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
+        io.simulate(file, SimulatedCloudItem(script: [.complete]))
+        let controller = SourceTransferController(context: context, policy: StallFollowUpTests.policy, setting: .on)
+
+        let decided = controller.shutdownTicket()
+        let ticket = controller.beginShutdown()
+        let refused = await controller.makeAvailable(record.key, at: file, userRequested: true, decidedAt: decided)
+        #expect(refused == .unknown)
+        #expect(io.count(.downloadRequest) == 0, "request decided before the shutdown began")
+        #expect(await controller.activeCount == 0)
+        await controller.shutdown(through: ticket)
+
+        let fresh = controller.shutdownTicket()
+        await controller.makeAvailable(record.key, at: file, userRequested: true, decidedAt: fresh)
+        #expect(io.count(.downloadRequest) == 1, "a decision after the shutdown began is honored")
+        #expect(await controller.waitUntilSettled(record.key) == .idle)
+        #expect(context.ledger.snapshot.openScopes == 0)
+    }
+
+    /// Reviewer's interleaving: `beginShutdown()` runs while `makeAvailable` is doing its I/O. Inside
+    /// `requestDownload` (request already out): no observer survives, the transfer is reported cancelled
+    /// and counted. During the metadata read: nothing is requested at all.
+    @Test(arguments: [InterleavePoint.requestDownload, .metadata])
+    func shutdownBeginningDuringMakeAvailableLeavesNoTransfer(_ point: InterleavePoint) async throws {
+        let tree = try SyntheticTree(label: "interleave-\(point)")
+        var rng = SplitMix64(seed: 20)
+        let file = try tree.file("raced.wav", bytes: 64, rng: &rng)
+        let base = HarnessIO()
+        let io = InterleavingIO(base: base, point: point)
+        let context = SourceAccessContext(io: io, ledger: SecurityScopeLedger())
+        let record = try #require(try await SourceImporter(context: makeContext(base)).plan(selection: [file], showID: testShow).items.first?.accessRecord)
+        base.simulate(file, SimulatedCloudItem(script: [.complete]))
+        let controller = SourceTransferController(context: context, policy: StallFollowUpTests.policy, setting: .on)
+        io.onPoint = { _ = controller.beginShutdown() }
+
+        let decided = controller.shutdownTicket()
+        let state = await controller.makeAvailable(record.key, at: file, userRequested: true, decidedAt: decided)
+        await controller.shutdown(through: controller.shutdownTicket())
+        #expect(await controller.activeCount == 0)
+        switch point {
+        case .requestDownload:
+            #expect(base.count(.downloadRequest) == 1, "the request had already gone out")
+            #expect(await controller.downloadRequestCount == 1, "counted")
+            #expect(state == .cancelled)
+            #expect(await controller.state(of: record.key) == .cancelled)
+        case .metadata:
+            #expect(base.count(.downloadRequest) == 0, "refused before any request")
+        }
         #expect(context.ledger.snapshot.openScopes == 0)
     }
 
@@ -708,7 +855,7 @@ struct StallLifetimeTests {
         let collector = await eventCollector(controller!, key: key) { $0.isOfflineOrUnknown }
         _ = await controller?.makeAvailable(key, at: file)
         #expect((await collector.value).last?.isOfflineOrUnknown == true)
-        #expect(try await !pollingStopped(io))
+        #expect(try await pollingContinues(io))
         controller = nil
         #expect(try await pollingStopped(io))
     }
@@ -724,38 +871,46 @@ struct StallLifetimeTests {
         let collector = await eventCollector(controller, key: key) { $0.isOfflineOrUnknown }
         _ = await controller.makeAvailable(key, at: file)
         _ = await collector.value
-        let waiter = Task { await controller.waitUntilSettled(key) }
-        try await Task.sleep(for: .milliseconds(10))
-        io.simulated(file)?.evictAgain(script: [.progress(0.5), .complete])
+        let waiter = Task { await settled(controller, key) }
+        // Freeze the stalled observer before changing the provider and retrying (see above).
+        await io.fractionGate.arm()
+        #expect(await io.fractionGate.waitUntilEntered())
+        io.mutateSimulated(file) { $0.evictAgain(script: [.progress(0.5), .complete]) }
         #expect(await controller.retry(key, at: file) == .requested)
+        await io.fractionGate.release()
         #expect(await waiter.value == .idle)
     }
 
+    /// Event-driven (#85 follow-up): the injected sleeper hands each requested duration to the test and
+    /// suspends on a continuation until the test steps it — no wall clock, no parked threads.
     @Test func stalledBackoffScheduleInsideTheObservationLoop() async throws {
         let tree = try SyntheticTree(label: "stall-backoff")
         var rng = SplitMix64(seed: 21)
         let file = try tree.file("long.wav", bytes: 64, rng: &rng)
         let io = HarnessIO()
         io.simulate(file, SimulatedCloudItem(script: Self.stallForever))
-        let log = SleepLog()
+        let sleeper = SteppedSleeper()
         let policy = TransferPolicy(pollInterval: .milliseconds(1), stallAfterUnchangedPolls: 3, stalledPollInterval: .milliseconds(4), maxStalledPollInterval: .milliseconds(16))
         let controller = SourceTransferController(context: makeContext(io), policy: policy, setting: .on) { duration in
-            log.record(duration)
-            try await Task.sleep(for: .microseconds(200))
+            try await sleeper.sleep(duration)
         }
         let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
         _ = await controller.makeAvailable(key, at: file)
-        let clock = ContinuousClock()
-        let deadline = clock.now + .seconds(30)
-        while log.durations.count < 10 && clock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        var durations: [Duration] = []
+        for await duration in sleeper.requests {
+            durations.append(duration)
+            if durations.count == 10 { break }
+            sleeper.step()
+        }
         await controller.cancel(key)
-        let durations = Array(log.durations.prefix(10))
         // 1 poll establishes the signature, 3 unchanged polls trigger the stall, then 4 → 8 → 16 (cap).
         #expect(durations == [.milliseconds(1), .milliseconds(1), .milliseconds(1), .milliseconds(1),
                               .milliseconds(4), .milliseconds(8), .milliseconds(16), .milliseconds(16),
                               .milliseconds(16), .milliseconds(16)])
         #expect(await controller.state(of: key) == .cancelled)
+        #expect(await controller.activeCount == 0)
         #expect(io.count(.downloadRequest) == 1)
+        #expect(io.leakedScopes == 0)
     }
 }
 
@@ -824,4 +979,55 @@ struct TeardownOrderingTests {
         #expect(!laterStates.isEmpty)
         await controller.cancel(newKey)
     }
+}
+
+
+enum InterleavePoint: String, Sendable, CustomTestStringConvertible {
+    case requestDownload
+    case metadata
+    var testDescription: String { rawValue }
+}
+
+/// Delegates to `HarnessIO` and runs `onPoint` once, synchronously, at the chosen I/O call (as a
+/// nonisolated `beginShutdown()` on another thread would interleave).
+final class InterleavingIO: SourceIO, @unchecked Sendable {
+    let base: HarnessIO
+    let point: InterleavePoint
+    private let lock = NSLock()
+    private var _onPoint: (@Sendable () -> Void)?
+    var onPoint: (@Sendable () -> Void)? {
+        get { lock.withLock { _onPoint } }
+        set { lock.withLock { _onPoint = newValue } }
+    }
+
+    init(base: HarnessIO, point: InterleavePoint) {
+        self.base = base
+        self.point = point
+    }
+
+    private func fire(_ at: InterleavePoint) {
+        guard at == point else { return }
+        let hook = lock.withLock { () -> (@Sendable () -> Void)? in
+            defer { _onPoint = nil }
+            return _onPoint
+        }
+        hook?()
+    }
+
+    var provenance: ObservationProvenance { base.provenance }
+    func metadata(at url: URL) -> MetadataResult {
+        let result = base.metadata(at: url)
+        fire(.metadata)
+        return result
+    }
+    func listItems(under directory: URL) -> DirectoryListing { base.listItems(under: directory) }
+    func makeReadOnlyBookmark(for url: URL) throws -> Data { try base.makeReadOnlyBookmark(for: url) }
+    func resolveBookmark(_ data: Data) -> BookmarkResolution { base.resolveBookmark(data) }
+    func startAccessingSecurityScope(_ url: URL) -> Bool { base.startAccessingSecurityScope(url) }
+    func stopAccessingSecurityScope(_ url: URL) { base.stopAccessingSecurityScope(url) }
+    func requestDownload(of url: URL) throws {
+        try base.requestDownload(of: url)
+        fire(.requestDownload)
+    }
+    func downloadFraction(of url: URL) async -> Knowledge<Double> { await base.downloadFraction(of: url) }
 }

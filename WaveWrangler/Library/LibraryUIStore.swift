@@ -181,7 +181,8 @@ final class LibraryUIStore {
     /// `hasUnsavedChanges`: the window's document has edits not yet coherently saved, so its in-memory
     /// title must not become the library's title (P6); only recents are updated then.
     func showDidOpen(id: ShowID, model: ShowDocumentModel, fileURL: URL?, hasUnsavedChanges: Bool) {
-        if !hasUnsavedChanges { services.entries.noteOpenShow(id: id, model: model, fileURL: fileURL) }
+        // The location is always recorded; the summary only from coherently saved content.
+        services.entries.noteOpenShow(id: id, model: hasUnsavedChanges ? nil : model, fileURL: fileURL)
         services.entries.noteOpened(id: id)
         let item = LibrarySession.Bookkeeping.opened(
             id, confirmedTitle: hasUnsavedChanges ? nil : model.show.title, provisionalTitle: model.show.title

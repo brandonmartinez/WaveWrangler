@@ -158,3 +158,70 @@ struct IdentityEvidenceTests {
         #expect(FingerprintField.allCases.count == 6)
     }
 }
+
+@Suite("Identity timestamp tolerance (#78)")
+struct IdentityTimestampToleranceTests {
+    static let base = Date(timeIntervalSinceReferenceDate: 812_345_678.123_456_7)
+
+    static func fingerprint(created: Date = base, modified: Date = base, size: Int64 = 1_000, fileID: UInt64 = 42, volume: String = "VOL") -> FileSystemFingerprint {
+        FileSystemFingerprint(
+            fileSize: .known(size),
+            creationDate: .known(created),
+            contentModificationDate: .known(modified),
+            fileIdentifier: .known(fileID),
+            volumeUUID: .known(volume),
+            contentType: .known("com.microsoft.waveform-audio")
+        )
+    }
+
+    @Test(arguments: [1.19e-7, -1.19e-7, 1e-6, 5e-4, 9.99e-4, -9.99e-4])
+    func subToleranceShiftsMatch(delta: Double) {
+        let recorded = Self.fingerprint()
+        #expect(recorded.compare(to: Self.fingerprint(created: Self.base.addingTimeInterval(delta), modified: Self.base.addingTimeInterval(delta))) == .matches)
+        #expect(RecordedIdentity(fingerprint: recorded, confirmation: .userConfirmed, recordedAt: .now)
+            .identityState(for: recorded.compare(to: Self.fingerprint(modified: Self.base.addingTimeInterval(delta)))) == .matchesRecorded)
+    }
+
+    @Test(arguments: [1.1e-3, -1.1e-3, 0.01, 1, 3_600])
+    func aboveToleranceShiftsAreChanges(delta: Double) {
+        let recorded = Self.fingerprint()
+        #expect(recorded.compare(to: Self.fingerprint(modified: Self.base.addingTimeInterval(delta))) == .differs([.contentModificationDate], unknown: []))
+        #expect(recorded.compare(to: Self.fingerprint(created: Self.base.addingTimeInterval(delta))) == .differs([.creationDate], unknown: []))
+    }
+
+    @Test func sizeOrObjectDifferencesNeverMatchEvenWithSubToleranceDates() {
+        let recorded = Self.fingerprint()
+        let tiny = Self.base.addingTimeInterval(1.19e-7)
+        let identity = RecordedIdentity(fingerprint: recorded, confirmation: .userConfirmed, recordedAt: .now)
+        #expect(recorded.compare(to: Self.fingerprint(created: tiny, modified: tiny, size: 1_001)) == .differs([.fileSize], unknown: []))
+        #expect(identity.identityState(for: recorded.compare(to: Self.fingerprint(modified: tiny, fileID: 43))) == .mismatch([.fileIdentifier]))
+        #expect(identity.identityState(for: recorded.compare(to: Self.fingerprint(modified: tiny, volume: "OTHER"))) == .mismatch([.volumeUUID]))
+        #expect(Self.fingerprint(size: 0).compare(to: Self.fingerprint(size: 1)) != .matches)
+    }
+
+    @Test func unknownDatesNeverMatch() {
+        var candidate = Self.fingerprint()
+        candidate.contentModificationDate = .unknown
+        #expect(Self.fingerprint().compare(to: candidate) == .unknown([.contentModificationDate]))
+    }
+
+    /// Observed on the local file system: a real file's dates moved by sub-tolerance and above-tolerance
+    /// amounts (harness `setAttributes`, outside the app).
+    @Test(arguments: [(0.000_000_2, true), (0.000_5, true), (0.002, false), (2.0, false)])
+    func evaluatorOnRealFiles(delta: Double, expectMatch: Bool) async throws {
+        let tree = try SyntheticTree(label: "tolerance")
+        var rng = SplitMix64(seed: 78)
+        let file = try tree.file("take.wav", bytes: 128, rng: &rng)
+        let context = makeContext(HarnessIO())
+        var record = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
+        record = RelinkEvaluator(context: context).confirmIdentity(of: record)
+        let recordedModified = try #require(record.recordedIdentity?.fingerprint.contentModificationDate.value)
+        try setDates(file, modification: recordedModified.addingTimeInterval(delta), creation: nil)
+        let identity = SourceAvailabilityEvaluator(context: context).evaluate(key: record.key, record: record, setting: .on).observation.identity
+        if expectMatch {
+            #expect(identity == .matchesRecorded, "delta \(delta): \(identity)")
+        } else {
+            #expect(identity == .changed([.contentModificationDate]), "delta \(delta): \(identity)")
+        }
+    }
+}
