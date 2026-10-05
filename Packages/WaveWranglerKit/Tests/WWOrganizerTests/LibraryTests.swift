@@ -132,6 +132,11 @@ struct LibraryPresentationTests {
         #expect(LibraryEntryStatePresentation(.needsPermission, showName: "x").remedies == [.grantAccess])
         #expect(LibraryEntryStatePresentation(.locationUnavailable, showName: "x").statusText == "Location unavailable")
         #expect(LibraryEntryStatePresentation(.outOfDate, showName: "x").needsAttention == false)
+        let unknown = LibraryEntryStatePresentation(.locationUnknown, showName: "Garage Talk")
+        #expect(unknown.statusText == "Location unknown")
+        #expect(unknown.symbolName == "location.slash", "a final state with a symbol, not a spinner")
+        #expect(unknown.remedies == [.locate, .removeFromLibrary])
+        #expect(unknown.needsAttention)
     }
 
     @Test func recentAndCollectionKeepUserOrder() throws {
