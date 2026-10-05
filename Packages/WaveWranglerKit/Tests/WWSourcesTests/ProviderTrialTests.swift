@@ -302,7 +302,16 @@ extension ProviderTrialTests {
     /// Frozen calibration is 5 cycles; this lane runs 5 OFF + 5 ON calibration cycles (more, never fewer).
     static let calibrationCycles = 5
     /// `WW_ICLOUD_SPLIT=calibration` runs the calibration split (separate seeds, reported separately).
-    static let provSplit = ProcessInfo.processInfo.environment["WW_ICLOUD_SPLIT"] == "calibration" ? "calibration" : "holdout"
+    /// `WW_ICLOUD_SPLIT=recheck-78` runs 50 ON-only regression cycles for #78 on their own seeds
+    /// (not holdout) and requires the identity verdict after download to be unchanged.
+    static let provSplit: String = {
+        switch ProcessInfo.processInfo.environment["WW_ICLOUD_SPLIT"] {
+        case "calibration": "calibration"
+        case "recheck-78": "recheck-78"
+        default: "holdout"
+        }
+    }()
+    static var runOffCycles: Bool { provSplit != "recheck-78" }
 
     struct LStat: Equatable {
         var ino: UInt64
@@ -383,7 +392,7 @@ extension ProviderTrialTests {
 
         // 1. Generate one random-byte file per holdout index (seeded per the registry derivation).
         let split = Self.provSplit
-        let cycles = split == "holdout" ? max(Self.frozenOffCycles, Self.frozenOnCycles) : Self.calibrationCycles
+        let cycles = split == "calibration" ? Self.calibrationCycles : max(Self.frozenOffCycles, Self.frozenOnCycles)
         log.add("setup", "*", "split=\(split) cycles per set=\(cycles)")
         var generated: [(url: URL, data: Data, seed: UInt64)] = []
         for index in 0..<cycles {
@@ -411,7 +420,7 @@ extension ProviderTrialTests {
         var offRecords: [Int: ProviderCycleRecord] = [:]
         var offContexts: [Int: (SourceAccessContext, HarnessIOObserved)] = [:]
         var offAccess: [Int: DeviceAccessRecord] = [:]
-        for batchStart in stride(from: 0, to: cycles, by: 10) {
+        for batchStart in stride(from: 0, to: Self.runOffCycles ? cycles : 0, by: 10) {
             let batch = Array(batchStart..<min(batchStart + 10, cycles))
             for index in batch {
                 let item = generated[index]
@@ -533,6 +542,9 @@ extension ProviderTrialTests {
             }
             record.inodeSizeMtimeUnchanged = after.map { LStat(ino: $0.ino, size: $0.size, mtimeSec: $0.mtimeSec, mtimeNsec: $0.mtimeNsec, dataless: false) } == baseline[item.url]?.map { LStat(ino: $0.ino, size: $0.size, mtimeSec: $0.mtimeSec, mtimeNsec: $0.mtimeNsec, dataless: false) }
             if timedOut { record.failures.append("did not settle within 180 s") }
+            if split == "recheck-78", identity.observation.identity != .unverified(.baselineNotUserConfirmed) {
+                record.failures.append("#78: identity after download \(identity.observation.identity)")
+            }
             if final != .idle { record.failures.append("final \(final)") }
             if record.bytesUnchanged != true { record.failures.append("bytes differ from generated") }
             if context.ledger.snapshot.openScopes != 0 { record.failures.append("open scopes") }
@@ -547,7 +559,7 @@ extension ProviderTrialTests {
         let on = records.filter { $0.set == "ON" }
         print("M1-SRC-ON-PROV-001 split=\(split) OFF cycles=\(off.count) passed=\(off.filter(\.passed).count) downloadRequests=\(off.map(\.downloadRequests).reduce(0, +)) progressQueries=\(off.map(\.progressQueries).reduce(0, +)) stillEvicted=\(off.filter { $0.stillEvictedAfterHold == true }.count)")
         print("M1-SRC-ON-PROV-001 split=\(split) ON cycles=\(on.count) passed=\(on.filter(\.passed).count) idle=\(on.filter { $0.finalState == "idle" }.count) bytesUnchanged=\(on.filter { $0.bytesUnchanged == true }.count) knownProgressReports=\(on.map(\.knownProgressReports).reduce(0, +)) downloadRequests=\(on.map(\.downloadRequests).reduce(0, +))")
-        #expect(off.count >= cycles)
+        #expect(off.count >= (Self.runOffCycles ? cycles : 0))
         #expect(on.count >= cycles)
         let failedCycles = records.filter { !$0.passed }.count
         #expect(failedCycles == 0)

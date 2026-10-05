@@ -116,6 +116,28 @@ Run C is **harness and model-operation evidence only. It does not count as M1-RE
 - **Named undo restores exact state:** needs product undo; deferred to Run D.
 - **"Primary change marks dependents stale":** **not evidenced**. Schema v1 has no dependent derived work to mark stale, so this clause cannot pass as written. It needs a Lead freeze revision (N/A for schema v1, or an M2+ pointer) and is not claimed.
 
+## Regression re-check for #78 (not holdout)
+
+**Fix under test:** `FileSystemFingerprint.compare` now compares creation and modification dates within **1 ms** (`timestampTolerance`). Size, file identifier, volume and type are still compared exactly, and unknown values never match. This re-check runs **50 ON-only cycles** on their own seeds (`split=recheck-78`). It is not holdout.
+
+| Field | Value |
+| --- | --- |
+| Commit | `359575b487efd3a0b41edaaabb77c56676b67a2f` (contains the fix; clean tree) |
+| Test tree `WWSourcesTests` | `362c66c2c85bb3533bcd38a1621708ea2827f2a0` |
+| Code under test `WWSources` | `ce1cd612e73387ce132cfeeedd87c7bd2abd05a0` |
+| Command | `WW_ICLOUD_TRIAL=1 WW_ICLOUD_HOLDOUT=1 WW_ICLOUD_SPLIT=recheck-78 swift test … --filter frozenHoldoutCycles` |
+| Time | 2026-10-05T07:49:13Z → 07:51:22Z, exit 0 |
+| Every cycle | [`sources-holdout/recheck-78-on-cycles.jsonl`](sources-holdout/recheck-78-on-cycles.jsonl) |
+
+**Results:**
+- **50/50 passed.** All reached `idle` with identical bytes.
+- Variants: 17 automatic, 17 cancel-then-retry, 16 explicit with the setting OFF.
+- **Identity after download: unchanged (`unverified(baselineNotUserConfirmed)`) in 50/50**, where it was 9/50 before the fix.
+- **The provider shifts still occurred**, so the tolerance was exercised: nonzero creation-date deltas in 20 cycles and modification-date deltas in 22, with a maximum of 1.19×10⁻⁷ s. lstat `mtime` differed in 49/50.
+- Cancel never stopped iCloud (17/17); 67 download requests in total.
+
+**Folder:** at the start the trial root held `persistence/`, which belongs to another lane. This harness creates and removes only `sources/`. At cleanup, `sources/` was deleted and the root was empty: the other lane removed its own folder in the meantime. This harness never touches it.
+
 ## Calibration and pre-freeze runs (not holdout)
 
 | Run | Commit | What | Result |
