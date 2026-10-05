@@ -280,12 +280,12 @@ Pixel WCAG ratios (`ContrastMeter`: element screenshot at 2×; background = the 
 | --- | --- | --- |
 | [#84](https://github.com/brandonmartinez/WaveWrangler/issues/84) No "Restore unsaved changes" UI | P1, M1 must-fix | Fixed by #95; verified (DUR-026 routes 9/18) |
 | [#86](https://github.com/brandonmartinez/WaveWrangler/issues/86) A focused inspector field kept a discarded draft after Revert or an external change | P1 | **Fixed in this PR**; verified (DUR-026 Revert, T24, all `DocumentLifecycleUITests`) |
-| [#104](https://github.com/brandonmartinez/WaveWrangler/issues/104) Setup shows one Sources row at the default size; Role/Status clipped | P1 | Open (Mac) |
+| [#104](https://github.com/brandonmartinez/WaveWrangler/issues/104) Setup shows one Sources row at the default size; Role/Status clipped | P1 | Open (episode setup lane) |
 | [#105](https://github.com/brandonmartinez/WaveWrangler/issues/105) First open p95 1.048 s (holdout) | P1 | Fixed by #107; post-fix p95 461 ms |
 | [#106](https://github.com/brandonmartinez/WaveWrangler/issues/106) "Shows" sidebar selection 165–177 ms (holdout) | P1 | Fixed by #108; post-fix p95 52 ms |
 | [#59](https://github.com/brandonmartinez/WaveWrangler/issues/59) Entry list blurred under a Library message bar | real failure | **Fixed in this PR**; verified. Artefact surfaces documented. |
 | [#109](https://github.com/brandonmartinez/WaveWrangler/issues/109) Library window content overflows at in-app 200% | P1 (C03) | Open. Pre-existing; worse with the #59 fix. |
-| [#110](https://github.com/brandonmartinez/WaveWrangler/issues/110) Sidebar "New Collection" (+) isn't an accessible button | P2 | Open (menu path works) |
+| [#110](https://github.com/brandonmartinez/WaveWrangler/issues/110) Sidebar "New Collection" (+) isn't an accessible button | P1 (coordinator triage) | Open (menu path works) |
 | [#66](https://github.com/brandonmartinez/WaveWrangler/issues/66) No D6 Conflict / Save Mine as a Copy after Save Anyway | P2 (M2) | Existing; T16 cites it |
 | UI-test runs wrote source access records into the user's device-local store | test isolation | **Fixed in this PR**. `WaveWrangler-UITests/DeviceAccess` is used in UI-test runs, plus a `-WWUITestResetSourceAccess YES` hook. |
 
