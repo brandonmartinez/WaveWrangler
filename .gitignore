@@ -23,3 +23,12 @@
 !.env.sample
 !.env.template
 .DS_Store
+
+# Build outputs (scripts/build.sh, scripts/test.sh, SwiftPM)
+.build/
+DerivedData/
+*.xcresult
+xcuserdata/
+*.xcuserstate
+.swiftpm/
+Packages/WaveWranglerKit/.build/
