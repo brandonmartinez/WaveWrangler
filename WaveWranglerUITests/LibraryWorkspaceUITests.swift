@@ -240,8 +240,9 @@ final class LibraryWorkspaceUITests: XCTestCase {
         let sheet = app.sheets.firstMatch
         waitFor(sheet)
         XCTAssertTrue(sheet.staticTexts["Delete the collection “Season Two”?"].exists, "⌫ falls back to the selected collection")
-        // Return = Delete (the sheet's default button; keyboard path K05).
-        app.typeKey(.return, modifierFlags: [])
+        // Confirm with the sheet's Delete button (as main's acceptance WW-013 does). Return on this sheet is not
+        // delivered on macOS 27 when a system remote view holds keyboard focus (#114; also fails on main).
+        sheet.buttons["Delete"].click()
         if !sheet.waitForNonExistence(timeout: 5) {
             XCTFail("sheet dismissed by its default button; windows: \(app.windows.allElementsBoundByIndex.map { "\($0.identifier) \($0.frame) hittable=\($0.isHittable)" }), sheet: \(sheet.debugDescription.prefix(2500))")
         }
