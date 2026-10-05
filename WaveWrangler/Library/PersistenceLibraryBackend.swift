@@ -168,39 +168,74 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
         // location stays in use until verification, so nothing is lost by letting it finish.
     }
 
-    func perform(_ action: LibraryLevelAction) async {
+    /// Folder offered after Grant Access… found a different library (nothing changed yet).
+    @ObservationIgnored private var offeredFolder: URL?
+
+    func perform(_ action: LibraryLevelAction) async -> LibraryActionFollowUp {
         switch action {
         case .tryAgain:
             await store.retryPendingEdits()
+            await controller.reload()
         case .combine:
             await store.resolveConflictByCombining()
             if let summary = store.lastMergeSummary { resultMessage = Self.combineMessage(summary) }
         case .useOtherMacsVersion:
             await store.resolveConflictUsingOtherVersion()
+            await controller.reload()
             resultMessage = "Using the other Mac's library. This Mac's version was kept as a backup copy."
         case .grantAccess:
             let panel = NSOpenPanel()
             panel.canChooseDirectories = true
             panel.canChooseFiles = false
-            panel.message = "Choose your library folder again to let WaveWrangler use it."
-            if case .folder(let url, _) = store.locationStatus { panel.directoryURL = url }
-            guard await panel.begin() == .OK, let url = panel.url else { return }
-            await controller.choose(url)
-            await store.refresh()
-            // Surface failures; re-granting an unloaded library needs a persistence re-grant-and-reload API.
-            if case .failure(let error) = controller.lastOutcome {
-                resultMessage = "Couldn't use that folder: \(LibraryUIStore.sentence(error.localizedDescription)) Your library wasn't changed."
-            } else if case .success(.destinationUnusable(_, let reason)) = controller.lastOutcome {
-                resultMessage = "Couldn't use that folder: \(LibraryUIStore.sentence(reason)) Your library wasn't changed."
-            } else if store.library == nil {
-                resultMessage = "WaveWrangler still can't read your library from that folder. Your library wasn't changed."
+            panel.message = LibraryRegrantWording.panelMessage
+            panel.prompt = "Grant Access"
+            switch store.locationStatus {
+            case .folder(let url, _): panel.directoryURL = url
+            case .unavailable(let path, _): panel.directoryURL = URL(filePath: path)
+            default: break
             }
+            guard await panel.begin() == .OK, let url = panel.url else { return .none }
+            await controller.regrantAccess(to: url)
+            guard let outcome = controller.lastRegrantOutcome else { return .none }
+            let result = Self.map(outcome)
+            if case .differentLibrary(let folder, _) = outcome { offeredFolder = folder }
+            resultMessage = LibraryRegrantWording.message(for: result)
+            return LibraryRegrantWording.followUp(for: result)
         case .recoverEarlierVersion:
             if case .damaged(let revisions) = store.levelState, let newest = revisions.max() {
                 _ = await store.recover(revision: newest)
+                await controller.reload()
             }
         case .librarySettings:
             SettingsWindowController.show(pane: .general)
+        }
+        return .none
+    }
+
+    func useOfferedLibrary() async -> LibraryMoveResult {
+        guard let folder = offeredFolder else { return .failed(reason: "there's no library to use") }
+        offeredFolder = nil
+        return await useExistingLibrary(in: folder)
+    }
+
+    /// Persistence regrant outcome → UI result. `.regranted` never claims the same library was verified:
+    /// persistence may accept a folder by its configured path when the library identity can't be read.
+    static func map(_ outcome: LibraryRegrantOutcome) -> LibraryRegrantResult {
+        switch outcome {
+        case .regranted(_, let pending):
+            let saved: Bool = switch pending {
+            case .applied?, .merged?: true
+            default: false
+            }
+            return .regranted(pendingEditsSaved: saved)
+        case .differentLibrary(let url, _):
+            return .differentLibrary(folderDisplayName: url.lastPathComponent)
+        case .noLibraryThere(let url):
+            return .noLibraryThere(folderDisplayName: url.lastPathComponent)
+        case .cannotVerify(let reason):
+            return .cannotVerify(reason: reason)
+        @unknown default:
+            return .cannotVerify(reason: "the result wasn't recognized")
         }
     }
 }

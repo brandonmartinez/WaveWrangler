@@ -158,3 +158,60 @@ public struct LibraryLevelPresentation: Sendable, Equatable {
         return ("WaveWrangler couldn't save \(noun).", "If you quit now, they'll be lost.")
     }
 }
+
+/// Outcome of L3 "Grant Access…" (persistence's `LibraryRegrantOutcome`, mapped by the app adapter).
+public enum LibraryRegrantResult: Sendable, Equatable {
+    /// Access was granted to the library folder and the library reloaded. Persistence may accept a folder by
+    /// its configured path when the library's identity can't be read, so the wording doesn't claim it was
+    /// verified to be the same library.
+    case regranted(pendingEditsSaved: Bool)
+    /// The folder holds a different WaveWrangler library; nothing was changed.
+    case differentLibrary(folderDisplayName: String)
+    case noLibraryThere(folderDisplayName: String)
+    case cannotVerify(reason: String)
+}
+
+/// What the Library window should do after a library-level action.
+public enum LibraryActionFollowUp: Sendable, Equatable {
+    case none
+    /// Offer Use That Library · Choose Another Folder… · Cancel (no default) for `folder`; nothing changed yet.
+    case offerDifferentLibrary(folderDisplayName: String)
+}
+
+public enum LibraryRegrantWording {
+    public static let panelMessage = "Choose your library folder again to let WaveWrangler use it."
+
+    /// Message-bar text; `nil` for `.differentLibrary`, which is a sheet (`differentLibrarySheet`).
+    public static func message(for result: LibraryRegrantResult) -> String? {
+        switch result {
+        case .regranted(let pendingSaved):
+            pendingSaved
+                ? "Access granted to the library folder. Your waiting library changes were saved."
+                : "Access granted to the library folder."
+        case .differentLibrary:
+            nil
+        case .noLibraryThere(let folder):
+            "There's no WaveWrangler library in “\(folder)”, so nothing was changed. Choose the folder that holds your library."
+        case .cannotVerify(let reason):
+            "WaveWrangler can't use the library in that folder: \(sentence(reason)) Nothing was changed."
+        }
+    }
+
+    public static func differentLibrarySheet(folderDisplayName: String) -> (title: String, text: String) {
+        (
+            "“\(folderDisplayName)” has a different WaveWrangler library",
+            "It isn't the library WaveWrangler was using, so nothing was changed. You can use that library instead — your current library is kept as a backup and its collections are added — or choose another folder."
+        )
+    }
+
+    public static func followUp(for result: LibraryRegrantResult) -> LibraryActionFollowUp {
+        if case .differentLibrary(let folder) = result { return .offerDifferentLibrary(folderDisplayName: folder) }
+        return .none
+    }
+
+    static func sentence(_ text: String) -> String {
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix(".") { trimmed.removeLast() }
+        return trimmed + "."
+    }
+}

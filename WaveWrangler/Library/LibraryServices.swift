@@ -78,7 +78,10 @@ protocol LibraryLocationControlling: AnyObject {
     /// "Use That Library": combine into the library already in `folder` (ST-36), then switch.
     func useExistingLibrary(in folder: URL) async -> LibraryMoveResult
     func cancelMove()
-    func perform(_ action: LibraryLevelAction) async
+    /// Performs a library-level action; may ask the window to offer a choice (e.g. a different library).
+    func perform(_ action: LibraryLevelAction) async -> LibraryActionFollowUp
+    /// "Use That Library" for the folder offered by the last `.offerDifferentLibrary` follow-up.
+    func useOfferedLibrary() async -> LibraryMoveResult
 }
 
 /// Errors the in-memory stand-in reports in plain language.
@@ -221,5 +224,9 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
 
     func cancelMove() {}
 
-    func perform(_ action: LibraryLevelAction) async {}
+    func perform(_ action: LibraryLevelAction) async -> LibraryActionFollowUp { .none }
+
+    func useOfferedLibrary() async -> LibraryMoveResult {
+        .failed(reason: LibraryBackendError.libraryStorageNotConnected.localizedDescription)
+    }
 }
