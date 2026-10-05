@@ -138,7 +138,7 @@ Run C is **harness and model-operation evidence only. It does not count as M1-RE
 
 **Folder:** at the start the trial root held `persistence/`, which belongs to another lane. This harness creates and removes only `sources/`. At cleanup, `sources/` was deleted and the root was empty: the other lane removed its own folder in the meantime. This harness never touches it.
 
-
+## Calibration and pre-freeze runs (not holdout)
 
 | Run | Commit | What | Result |
 | --- | --- | --- | --- |
