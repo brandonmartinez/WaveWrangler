@@ -83,10 +83,10 @@ final class LibraryWorkspaceUITests: XCTestCase {
         // window isolated on the primary display; tracked in #59 (P2, M1).
         // Cells can extend past the outline's clip frame horizontally, so match by the table's left edge and
         // vertical extent.
-        // Rows partly scrolled out of the outline (at 200% text) are still table cells, so match any overlap.
+        // At 200% text, rows partly or wholly clipped below the outline's visible area are still table cells
+        // (the audit measures their unrendered pixels), so match anything below the table's top.
         if issue.auditType == .contrast, let frame = entryTableFrame,
-           element.frame.minX >= frame.minX, element.frame.minY < frame.maxY, element.frame.maxY > frame.minY,
-           element.frame.minX < frame.maxX {
+           element.frame.minX >= frame.minX, element.frame.maxY > frame.minY, element.frame.minX < frame.maxX {
             return "issue #59: system table text contrast (tracked)"
         }
         // Window chrome (traffic lights, toolbar overflow, split-view dividers) is drawn by AppKit.
@@ -234,10 +234,10 @@ final class LibraryWorkspaceUITests: XCTestCase {
         XCTAssertFalse(edit.menuItems["Remove from Collection"].exists, "no stale entries focus once the list is gone")
         XCTAssertTrue(edit.menuItems["Delete Collection…"].isEnabled, "⌫ falls back to the selected collection")
         app.typeKey(.escape, modifierFlags: [])
-        // Undo the removal so the collection deleted below still has its show; then focus the sidebar row.
+        // Undo the removal so the collection deleted below still has its show; ⇧Tab back to the sidebar.
         app.typeKey("z", modifierFlags: .command)
         waitForValue(created, "1 item")
-        created.click()
+        app.typeKey("\t", modifierFlags: .shift)
         app.typeKey(.delete, modifierFlags: [])
         let sheet = app.sheets.firstMatch
         waitFor(sheet)
@@ -274,9 +274,13 @@ final class LibraryWorkspaceUITests: XCTestCase {
         waitFor(element("ww.library.sidebar"))
         let bar = element("ww.library.messageBar.inMemory")
         waitFor(bar)
-        // 100%: the bar sits directly under the toolbar (no doubled safe-area inset) and row 1 is clickable.
+        // 100%: the bar's content sits directly under the toolbar (no empty or doubled inset) and row 1 is
+        // clickable. (The bar's background, and so its AX frame, extends up under the toolbar.)
         let toolbarBottom = window.frame.minY + 52
-        XCTAssertLessThanOrEqual(abs(bar.frame.minY - toolbarBottom), 12, "bar \(bar.frame) right under the toolbar of \(window.frame)")
+        let barHeading = bar.staticTexts["The library isn't saved yet in this version"]
+        XCTAssertTrue(barHeading.exists)
+        XCTAssertTrue((toolbarBottom - 2...toolbarBottom + 24).contains(barHeading.frame.minY),
+                      "bar heading \(barHeading.frame) right under the toolbar of \(window.frame)")
         let firstCell = app.outlines["ww.library.entries"].cells.firstMatch
         waitFor(firstCell)
         XCTAssertTrue(firstCell.isHittable, "row 1 hittable below the bar: \(firstCell.frame), bar \(bar.frame)")
