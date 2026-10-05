@@ -155,16 +155,20 @@ final class SourceGrantHoldoutUITests: XCTestCase {
 
     /// In the open panel (a sheet): Go to Folder (⇧⌘G), type the path, Return; then Return to confirm.
     private func choosePath(_ path: String, confirm: Bool) {
-        let panel = app.sheets.firstMatch
-        guard panel.waitForExistence(timeout: 10) else { failures.append("open panel shown"); return }
-        app.typeKey("g", modifierFlags: [.command, .shift])
-        Thread.sleep(forTimeInterval: 0.8)
-        app.typeText(path)
-        Thread.sleep(forTimeInterval: 0.3)
-        app.typeKey(.return, modifierFlags: [])
+        // The sandboxed open panel is drawn by the out-of-process panel service (powerbox); the app's own AX
+        // snapshot stalls while it is up, so keys go to the service.
+        let service = XCUIApplication(bundleIdentifier: "com.apple.appkit.xpc.openAndSavePanelService")
+        Thread.sleep(forTimeInterval: 2.0)
+        let target: XCUIApplication = service.state == .notRunning ? app : service
+        Acceptance.record(self, "REF-020 panel host: \(target === service ? "openAndSavePanelService" : "app")")
+        target.typeKey("g", modifierFlags: [.command, .shift])
         Thread.sleep(forTimeInterval: 1.0)
-        if confirm { app.typeKey(.return, modifierFlags: []) }
-        Thread.sleep(forTimeInterval: 1.0)
+        target.typeText(path)
+        Thread.sleep(forTimeInterval: 0.5)
+        target.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 1.5)
+        if confirm { target.typeKey(.return, modifierFlags: []) }
+        Thread.sleep(forTimeInterval: 1.5)
     }
 
     private func confirmRelinkSheet() {

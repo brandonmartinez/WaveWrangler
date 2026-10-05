@@ -35,12 +35,14 @@ final class ContrastEvidenceUITests: XCTestCase {
             Thread.sleep(forTimeInterval: 1)
             // Move keyboard focus away from the sidebar's selected row so "Recent" is an ordinary unselected row.
             var measured: [[String: Any]] = []
+            let names = entries.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.'"))
             let targets: [(String, XCUIElement)] = [
                 ("sidebar unselected row 'Recent'", app.descendants(matching: .any)["ww.library.sidebar.recent"]),
                 ("sidebar unselected row 'Unavailable'", app.descendants(matching: .any)["ww.library.sidebar.unavailable"]),
-                ("entry table name cell (row 1)", entries.outlineRows.element(boundBy: 0).cells.element(boundBy: 0)),
-                ("entry table episodes cell (row 1)", entries.outlineRows.element(boundBy: 0).cells.element(boundBy: 1)),
-                ("entry table last-opened cell (row 2)", entries.outlineRows.element(boundBy: 1).cells.element(boundBy: 3)),
+                ("entry table name text (row 1)", names.element(boundBy: 0)),
+                ("entry table name text (row 2)", names.element(boundBy: 1)),
+                ("entry table name text (row 5)", names.element(boundBy: 4)),
+                ("entry table column header 'Name'", entries.descendants(matching: .any).matching(NSPredicate(format: "label == 'Name' AND elementType != 48")).firstMatch),
             ]
             for (name, element) in targets where element.exists {
                 let screenshot = element.screenshot()

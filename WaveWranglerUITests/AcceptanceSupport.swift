@@ -123,11 +123,31 @@ enum AcceptanceAudit {
     static func run(_ app: XCUIApplication, surface: String, test: XCTestCase) throws -> [String] {
         var unwaived: [String] = []
         var contrast: [(XCUIElement, String)] = []
-        try app.performAccessibilityAudit(for: types) { issue in
+        // Audits of large trees can time out (XCTest error -56); run contrast separately and retry once.
+        func audit(_ kinds: XCUIAccessibilityAuditType, _ handler: @escaping (XCUIAccessibilityAuditIssue) -> Bool) throws {
+            do {
+                try app.performAccessibilityAudit(for: kinds, handler)
+            } catch let error as NSError where error.code == -56 {
+                print("AUDIT \(surface): timed out once for \(kinds); retrying")
+                try app.performAccessibilityAudit(for: kinds, handler)
+            }
+        }
+        try audit(types.subtracting(.contrast)) { issue in
             let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(200) ?? "no element")"
             if let rationale = structuralWaiver(for: issue) {
                 print("AUDIT WAIVED \(description) — \(rationale)")
             } else if issue.auditType == .contrast, let element = issue.element {
+                contrast.append((element, description))
+            } else {
+                unwaived.append(description)
+            }
+            return true
+        }
+        try audit(.contrast) { issue in
+            let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(200) ?? "no element")"
+            if let rationale = structuralWaiver(for: issue) {
+                print("AUDIT WAIVED \(description) — \(rationale)")
+            } else if let element = issue.element {
                 contrast.append((element, description))
             } else {
                 unwaived.append(description)

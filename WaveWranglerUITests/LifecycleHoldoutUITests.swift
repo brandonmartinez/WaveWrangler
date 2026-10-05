@@ -126,7 +126,11 @@ final class LifecycleHoldoutUITests: XCTestCase {
             try edit(window, title: "Dock \(index)")
             let dock = XCUIApplication(bundleIdentifier: "com.apple.dock")
             let icon = dock.descendants(matching: .any).matching(NSPredicate(format: "label == 'WaveWrangler'")).firstMatch
-            guard icon.waitForExistence(timeout: 5) else { failures.append("Dock icon not found"); return }
+            guard icon.waitForExistence(timeout: 5) else {
+                Acceptance.record(self, "Dock tree: \(dock.debugDescription.prefix(3000))")
+                failures.append("Dock icon not found")
+                return
+            }
             icon.rightClick()
             let quit = dock.descendants(matching: .menuItem).matching(NSPredicate(format: "title == 'Quit' OR label == 'Quit'")).firstMatch
             guard quit.waitForExistence(timeout: 5) else { failures.append("Dock › Quit not found"); return }

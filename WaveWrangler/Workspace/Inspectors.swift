@@ -144,11 +144,13 @@ struct EpisodeInspector: View {
     /// Undo/redo or another window changed the model: refresh fields that aren't being edited.
     private func syncFromModel() {
         guard let episode else { return }
-        if focused != .title, Self.trim(titleDraft) != episode.title { titleDraft = episode.title; titleError = nil }
-        if focused != .number, numberError == nil, (try? EpisodeNumberInput.parse(numberDraft).get()) != episode.number {
+        // Also while focused: a focused field must not keep showing text the model no longer has (Revert,
+        // undo from another window), or the next keystroke would re-apply the discarded edit.
+        if Self.trim(titleDraft) != episode.title { titleDraft = episode.title; titleError = nil }
+        if numberError == nil, (try? EpisodeNumberInput.parse(numberDraft).get()) != episode.number {
             numberDraft = episode.number.map(String.init) ?? ""
         }
-        if focused != .notes, notesDraft != episode.notes { notesDraft = episode.notes }
+        if notesDraft != episode.notes { notesDraft = episode.notes }
     }
 
     private func applyTitle(_ draft: String) {
@@ -265,8 +267,9 @@ struct ShowInfoInspector: View {
             store.apply(UndoActionName.editShowInfo, coalescing: "show-notes") { model throws(DomainError) in model.settingShowNotes(value) }
         }
         .onChange(of: store.model.show) { _, show in
-            if focused != .title, Self.trim(titleDraft) != show.title { titleDraft = show.title }
-            if focused != .notes, notesDraft != show.notes { notesDraft = show.notes }
+            // Also while focused (Revert, undo from another window): never show text the model no longer has.
+            if Self.trim(titleDraft) != show.title { titleDraft = show.title; titleError = nil }
+            if notesDraft != show.notes { notesDraft = show.notes }
         }
         .onChange(of: focused) { old, _ in
             guard old != nil else { return }
