@@ -75,7 +75,30 @@ Limits:
 - `Responsiveness.begin` uses `NSApp.currentEvent.timestamp` whenever that event is less than 1 s old.
 - With no input event (the programmatic open), the current event in about 26% of launches was a stale launch/activation event 933–1,000 ms old. The bound comes from the `< 1 s` guard.
 - In those samples, every `ShowOpen` stage took the same time as in fast samples, and the main thread was idle; the gap is the hook's own 1 s wait.
-- **Hypothesis for the XCUITest harness (to verify):** its slow cluster at 0.91–1.12 s has the same shape, about 0.2–0.3 s of open plus a stale event under 1 s old. If the Return handler runs where `NSApp.currentEvent` is not the Return keyDown (for example, an earlier arrow-key event), the interval starts too early. Logging the event's type, key code and age in `Responsiveness.begin` would settle it.
+- **The XCUITest harness is not affected (verified).** In its 30-sample run, the event that started `show.open` was the Return keyDown (keyCode 36, about 6 ms old) in every sample. So the harness's start time is correct, and its slow samples are real time.
+
+### XCUITest harness: 30 cold samples, "after" build, with event logging (2026-10-05)
+
+`ResponsivenessUITests.testColdLaunchAndFirstOpen` with `WW_SCALE_SAMPLES=30`, on the local "after" build. A local-only log line
+records the type, key code and age of the event that starts `show.open`.
+
+| `show.open` (n = 30) | p50 | p95 | max | ≥ 0.9 s |
+|---|---:|---:|---:|---:|
+| From the Return keyDown | 281 ms | 317 ms | 904 ms | 1/30 |
+
+Stage medians across the 30: open request → `document.init` 8 ms; `makeWindowControllers` 111 ms; `window.attachCommit` 65 ms.
+
+The one slow sample (904 ms) had two stalls, both outside persistence:
+- **~250 ms inside `NSDocumentController.openDocument`** before the document was created (median 8 ms).
+- **A 453 ms commit after the window attached** (median 65 ms).
+
+Its persistence stages (read, decode, deferred work) were normal. This sample can't attribute the stalls further. A spindump or a
+Time Profiler trace of a slow launch is needed, for example to rule out XCUITest's accessibility snapshots, which run on the app's
+main thread.
+
+These 30 samples aren't comparable with the acceptance lane's 100-sample run on `cb42138` (different build, smaller n). **No gate
+result is claimed from them.** The SCALE-001 native first-open gate stays as the acceptance lane measured it until its holdout is
+re-run.
 
 **Stage attribution (after, n = 100, p50 / p95):**
 - `library.openShow` 209 / 226 ms (the Task through NSDocumentController's return), which includes:
