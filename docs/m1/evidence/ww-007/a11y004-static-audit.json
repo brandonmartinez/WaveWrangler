@@ -1,0 +1,86 @@
+{
+  "iconOnlyButtonsWithoutLabel": [],
+  "dragOrTapInteractions": [],
+  "contextMenuWithoutMenuBar": [],
+  "colourOnlyCandidates": [],
+  "controls": {
+    "WaveWrangler/Library/LibraryView.swift": {
+      "controls": 19,
+      "identifiers": 6,
+      "labels": 6,
+      "hints": 0,
+      "help": 6
+    },
+    "WaveWrangler/Settings/SettingsWindowController.swift": {
+      "controls": 5,
+      "identifiers": 4,
+      "labels": 0,
+      "hints": 0,
+      "help": 2
+    },
+    "WaveWrangler/Sources/EpisodeSetupView.swift": {
+      "controls": 39,
+      "identifiers": 14,
+      "labels": 13,
+      "hints": 2,
+      "help": 0
+    },
+    "WaveWrangler/Sources/SetupInspectorView.swift": {
+      "controls": 25,
+      "identifiers": 12,
+      "labels": 10,
+      "hints": 1,
+      "help": 2
+    },
+    "WaveWrangler/Sources/SetupSheets.swift": {
+      "controls": 20,
+      "identifiers": 18,
+      "labels": 5,
+      "hints": 1,
+      "help": 1
+    },
+    "WaveWrangler/Workspace/Inspectors.swift": {
+      "controls": 8,
+      "identifiers": 8,
+      "labels": 7,
+      "hints": 1,
+      "help": 0
+    },
+    "WaveWrangler/Workspace/MessageBar.swift": {
+      "controls": 1,
+      "identifiers": 1,
+      "labels": 1,
+      "hints": 0,
+      "help": 0
+    },
+    "WaveWrangler/Workspace/SetupContainerView.swift": {
+      "controls": 1,
+      "identifiers": 2,
+      "labels": 4,
+      "hints": 0,
+      "help": 1
+    },
+    "WaveWrangler/Workspace/ShowWorkspaceView.swift": {
+      "controls": 11,
+      "identifiers": 9,
+      "labels": 5,
+      "hints": 0,
+      "help": 4
+    },
+    "WaveWrangler/Workspace/WorkspaceToolbar.swift": {
+      "controls": 3,
+      "identifiers": 4,
+      "labels": 3,
+      "hints": 2,
+      "help": 2
+    }
+  },
+  "totals": {
+    "controls": 132,
+    "identifiers": 78,
+    "labels": 54,
+    "hints": 7,
+    "help": 18
+  },
+  "menuBarTitles": 76
+}

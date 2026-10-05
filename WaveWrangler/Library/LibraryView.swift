@@ -175,9 +175,6 @@ private struct LibraryEntryList: View {
                 } primaryAction: { ids in
                     for id in ids { state.open(id) }
                 }
-                // #59: the column's top scroll-edge effect sat over the column headers and the first row (the
-                // split view is below the opaque message bar, not under the toolbar), blurring them illegibly.
-                .scrollEdgeEffectHidden(true, for: .top)
                 .accessibilityLabel(title)
                 .accessibilityIdentifier("ww.library.entries")
             }
