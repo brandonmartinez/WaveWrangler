@@ -106,6 +106,8 @@ public actor LibraryStore {
     /// the current library doesn't contain: L4 until combined or set aside (#117).
     public private(set) var providerConflicts: [ProviderConflictVersion] = []
     private var providerConflictPayloads: [String: LibraryModel] = [:]
+    /// The retained checkpoint each provider version forked from (when this Mac kept one).
+    private var providerConflictBases: [String: LibraryModel] = [:]
     /// Provider conflict versions that can't be read or decoded, hold a different library, or couldn't be backed
     /// up: reported (the Library window's notice), kept unresolved and never applied.
     public private(set) var unusableProviderConflicts: [ProviderConflictVersion] = []
@@ -223,6 +225,7 @@ public actor LibraryStore {
         hasConflict = false
         providerConflicts = []
         providerConflictPayloads = [:]
+        providerConflictBases = [:]
         unusableProviderConflicts = []
         displayedBase = nil
         displayedBaseBytes = nil
@@ -445,11 +448,13 @@ public actor LibraryStore {
                 unusable.append(version)
                 continue
             }
-            if LibraryMerge.isContained(decoded.payload, in: current) {
+            let bases = forkBases(forRevision: decoded.revision)
+            if LibraryMerge.isIncluded(decoded.payload, forkBases: bases, in: current) {
                 included.append(version)
             } else {
                 usable.append(version)
                 payloads[version.id] = decoded.payload
+                providerConflictBases[version.id] = bases.first
             }
         }
         providerConflicts = usable
@@ -458,6 +463,12 @@ public actor LibraryStore {
         if !included.isEmpty { resolveProviderVersions(included, at: url) }
         if !usable.isEmpty { hasConflict = true }
     }
+    /// This Mac's retained checkpoints of this library one revision before `revision`: where a concurrent copy of
+    /// that revision can have forked from.
+    private func forkBases(forRevision revision: Int) -> [LibraryModel] {
+        libraryCandidates(url: nil).filter { $0.document.revision == revision - 1 }.map(\.document.payload)
+    }
+
     /// Two IDs are the same library unless both are real (schema 2+) and differ.
     private static func sameLibrary(_ a: LibraryID, _ b: LibraryID) -> Bool {
         guard let a = real(a), let b = real(b) else { return true }
@@ -477,6 +488,7 @@ public actor LibraryStore {
         for version in versions {
             providerConflicts.removeAll { $0.id == version.id }
             providerConflictPayloads[version.id] = nil
+            providerConflictBases[version.id] = nil
             if resolved.contains(version.id) {
                 resolvedProviderConflicts.append(version)
             } else if !unusableProviderConflicts.contains(where: { $0.id == version.id }) {
@@ -522,9 +534,17 @@ public actor LibraryStore {
         // Provider conflict versions (#117): every other Mac's concurrent copy is combined the same way.
         let combinedVersions = providerConflicts.filter { providerConflictPayloads[$0.id] != nil }
         for version in combinedVersions {
-            let (next, part) = LibraryMerge.combineWithSummary(thisMac: providerConflictPayloads[version.id]!, into: combined)
+            var (next, part) = LibraryMerge.combineWithSummary(thisMac: providerConflictPayloads[version.id]!, into: combined)
             combined = next
+            // With a fork base, every uncarried change (renames, removals, reorders…) is listed below instead.
+            if providerConflictBases[version.id] != nil { part.entryChangesNotCarried = [] }
             summary.add(part)
+        }
+        // Surfacing, not merging: whatever the other copies changed that Combine (ST-36) doesn't apply — removals,
+        // reorders, renames — is listed for the user; the copies themselves are backed up before resolution.
+        for version in combinedVersions {
+            summary.entryChangesNotCarried += LibraryMerge.uncarriedProviderChanges(
+                providerConflictPayloads[version.id]!, forkBase: providerConflictBases[version.id], in: combined)
         }
         // ST-36 keeps every entry, collection and recent item, but it is not a field merge: queued changes it
         // can't carry (for example an alias edited on both sides) are reported and kept in a backup copy.
