@@ -64,6 +64,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
         toolbarFrames = app.toolbars.allElementsBoundByIndex.map(\.frame)
         let windowRects = OffscreenAuditWaiver.windowRects(of: app)
         var notOnScreen = 0
+        var contrast: [(XCUIAccessibilityAuditIssue, String)] = []
         try app.performAccessibilityAudit(for: [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]) { issue in
             let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(240) ?? "no element")"
             if let rationale = self.waiver(for: issue) {
@@ -75,8 +76,36 @@ final class LibraryWorkspaceUITests: XCTestCase {
                 print("AUDIT WAIVED [notOnScreen] \(description) — \(offscreen)")
                 return true
             }
+            // Contrast findings are measured after the audit (screenshots), never blanket-waived.
+            if issue.auditType == .contrast { contrast.append((issue, description)); return true }
             findings.append(description)
             return true
+        }
+        // Cross-lane edit in #111 (Design, coordinator-authorized 2026-10-05): measured, per-instance contrast
+        // waivers replace the former blanket "#59 tracked" waivers. A partly clipped edge cell is measured on its
+        // visible part only (`PartialClipContrast`); Library sidebar rows and entry-table text are measured from
+        // their own screenshot. Either way a waiver needs >= 100 glyph pixels with p75 >= 4.5:1, else it fails.
+        for (issue, description) in contrast {
+            if let partial = PartialClipContrast.measure(issue, in: app) {
+                if partial.waived {
+                    print("AUDIT WAIVED [partlyClipped] \(description) — visible part measured \(partial.record)")
+                } else {
+                    findings.append("\(description) — partly clipped; visible part measured \(partial.record)")
+                }
+                continue
+            }
+            guard let element = issue.element, element.exists, isLibraryText(element) else {
+                findings.append(description)
+                continue
+            }
+            let m = ContrastMeter.measure(element.screenshot().image) ?? [:]
+            let count = m["glyphPixels"] as? Int ?? 0, p75 = m["glyphP75"] as? Double ?? 0
+            let stats = "glyphPixels \(count), p75 \(p75), max \(m["ratio"] ?? 0)"
+            if count >= 100 && p75 >= 4.5 {
+                print("AUDIT WAIVED [measured] \(description) — Library system text measured legible now: \(stats)")
+            } else {
+                findings.append("\(description) — measured \(stats)")
+            }
         }
         for finding in findings {
             XCTFail("AUDIT \(finding)", file: file, line: line)
@@ -85,17 +114,18 @@ final class LibraryWorkspaceUITests: XCTestCase {
         print("AUDIT \(surface): \(findings.isEmpty ? "no unwaived issues" : "\(findings.count) unwaived issue(s)")")
     }
 
+    /// Library sidebar rows and entry-table text (system label colour, no custom styling): the surfaces whose
+    /// contrast findings may be waived, each only after its own measurement (see `audit`). Cells can extend past
+    /// the outline's clip frame horizontally, so the table match uses its left edge and vertical extent.
+    private func isLibraryText(_ element: XCUIElement) -> Bool {
+        if element.identifier.hasPrefix("ww.library.sidebar.") || element.identifier.hasPrefix("ww.library.entry.") { return true }
+        guard let frame = entryTableFrame else { return false }
+        return element.frame.minX >= frame.minX && element.frame.minY >= frame.minY && element.frame.maxY <= frame.maxY
+            && element.frame.minX < frame.maxX
+    }
+
     private func waiver(for issue: XCUIAccessibilityAuditIssue) -> String? {
         guard let element = issue.element else { return nil }
-        // Entry-table cells (system table text, no custom styling) fail contrast even with the Library
-        // window isolated on the primary display; tracked in #59 (P2, M1).
-        // Cells can extend past the outline's clip frame horizontally, so match by the table's left edge and
-        // vertical extent.
-        if issue.auditType == .contrast, let frame = entryTableFrame,
-           element.frame.minX >= frame.minX, element.frame.minY >= frame.minY, element.frame.maxY <= frame.maxY,
-           element.frame.minX < frame.maxX {
-            return "issue #59: system table text contrast (tracked)"
-        }
         // Window chrome (traffic lights, toolbar overflow, split-view dividers) is drawn by AppKit.
         if [.window, .toolbar, .splitter, .menuBar, .menuBarItem, .touchBar].contains(element.elementType) {
             return "system window chrome"
@@ -109,14 +139,6 @@ final class LibraryWorkspaceUITests: XCTestCase {
         // VoiceOver (VO-Space) and click, as these tests and keyboard checks show.
         if issue.auditType == .action, element.elementType == .popUpButton {
             return "system pop-up button exposes AXShowMenu"
-        }
-        // Tracked in issue #59 (P2): unselected system sidebar rows on translucent sidebar material fail
-        // the contrast audit on macOS 27; text uses the system label colour with no custom styling.
-        // Library sidebar rows and entry-table name cells (system label colour, no custom styling) still fail
-        // with each window isolated on the main display; tracked in #59 (P2, M1) for Increase Contrast checks.
-        if issue.auditType == .contrast,
-           element.identifier.hasPrefix("ww.library.sidebar.") || element.identifier.hasPrefix("ww.library.entry.") {
-            return "issue #59: system sidebar/table text contrast (tracked)"
         }
         // The system "emoji & symbols" input item (Touch Bar / menu bar), not app UI.
         if element.elementType == .popUpButton, element.label == "emoji & symbols" {
