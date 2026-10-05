@@ -12,6 +12,7 @@ import WWPersistence
 //   versions  --file F
 //   autosave  --file F --enabled 0|1 [--delay S] [--recovery DIR]
 //   kill-at   --file F --boundary P1..P6 [--recovery DIR]     (real process exit at that boundary)
+//   library   --file SETTINGS.json --container DIR --recovery DIR --cache FILE [--move-to FOLDER] [--add N]
 
 struct Arguments {
     let command: String
@@ -116,6 +117,7 @@ struct Probe {
         case "versions": return versions()
         case "autosave": return await autosave()
         case "kill-at": return await killAt()
+        case "library": return await library()
         default:
             emit(["error": "unknown command \(args.command)"])
             return 2
@@ -227,6 +229,67 @@ struct Probe {
         _ = await session.save()
         emit(["result": "boundaryNotReached"])
         return 1
+    }
+}
+
+/// File-backed location setting for the probe (the app uses UserDefaults).
+final class FileLibrarySettings: LibraryLocationSettingsStoring {
+    let url: URL
+    init(url: URL) { self.url = url }
+    func load() -> LibraryLocationSetting {
+        (try? JSONDecoder().decode(LibraryLocationSetting.self, from: Data(contentsOf: url))) ?? LibraryLocationSetting()
+    }
+    func save(_ setting: LibraryLocationSetting) throws {
+        try JSONEncoder().encode(setting).write(to: url, options: .atomic)
+    }
+}
+
+/// Path "bookmarks" for the unsandboxed probe (no security scope exists outside the sandbox).
+struct PathBookmarks: FolderBookmarking {
+    func bookmark(for folder: URL) throws -> Data { Data(folder.path.utf8) }
+    func resolve(_ bookmark: Data) throws -> (url: URL, isStale: Bool) {
+        (URL(fileURLWithPath: String(decoding: bookmark, as: UTF8.self), isDirectory: true), false)
+    }
+    func startAccessing(_ url: URL) -> Bool { false }
+    func stopAccessing(_ url: URL) {}
+}
+
+extension Probe {
+    func library() async -> Int32 {
+        guard let container = args.url("container"), let recovery, let cache = args.url("cache") else {
+            emit(["error": "library needs --container --recovery --cache"])
+            return 2
+        }
+        let store = LibraryStore(containerFolder: container, settings: FileLibrarySettings(url: file), bookmarks: PathBookmarks(),
+                                 recovery: recovery, indexCache: LibraryIndexCache(url: cache))
+        var start = ContinuousClock.now
+        let loaded = await store.load()
+        var object: [String: Any] = ["load": "\(loaded)", "loadSeconds": seconds(.now - start)]
+        if let count = Int(args["add"] ?? "") {
+            start = .now
+            let result = try? await store.update { library in
+                var library = library
+                for index in 0..<count {
+                    library = LibraryReconciler.registering(ShowID(), title: "Synthetic Library Show \(index)", publication: nil, in: library)
+                }
+                library.collections.append(LibraryCollection(name: "Synthetic Collection \(library.collections.count + 1)",
+                                                             showIDs: library.entries.prefix(3).map(\.showID)))
+                return library
+            }
+            object["update"] = result.map { if case let .success(receipt) = $0 { "saved r\(receipt.revision)" } else { "\($0)" } } ?? "threw"
+            object["updateSeconds"] = seconds(.now - start)
+        }
+        if let folder = args.url("move-to") {
+            start = .now
+            object["move"] = "\(await store.moveLibrary(to: folder))"
+            object["moveSeconds"] = seconds(.now - start)
+        }
+        let library = await store.library
+        object["entries"] = library?.entries.count ?? -1
+        object["collections"] = library?.collections.count ?? -1
+        object["location"] = "\(await store.locationStatus.title)"
+        emit(object)
+        return 0
     }
 }
 

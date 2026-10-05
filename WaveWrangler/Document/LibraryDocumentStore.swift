@@ -50,7 +50,7 @@ final class LibraryDocumentStore {
         let result = try? await store.update(transform)
         await refresh()
         switch result {
-        case .success: lastError = nil; return true
+        case .success, .failure(.cancelled): lastError = nil; return true // `.cancelled`: nothing changed
         case let .failure(error): lastError = error; return false
         case nil: return false
         }

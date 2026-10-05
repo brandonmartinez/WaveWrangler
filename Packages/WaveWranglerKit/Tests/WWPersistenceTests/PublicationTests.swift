@@ -313,3 +313,42 @@ struct MigrationTests {
         #expect(try Data(contentsOf: url) == original)
     }
 }
+
+@Suite("C2b edit-checkpoint records")
+struct EditCheckpointTests {
+    @Test func sequenceRetentionRelationAndDamage() throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 60)
+        let url = rig.url()
+        let (current, base) = try rig.seedTwoRevisions(model, at: url)
+        let key = DocumentKey.show(model.show.id)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        for index in 1...3 {
+            let snapshot = try coder.encode(try current.renamingShow(to: "Unsaved \(index)"), revision: 3)
+            let record = try rig.recovery.writeEditCheckpoint(snapshot: snapshot, base: base, schemaVersion: 1, for: key)
+            #expect(record.checkpointSequence == index)
+        }
+        let records = rig.recovery.editCheckpoints(for: key)
+        #expect(records.count == 1, "older records are pruned once the newer one is verified")
+        let latest = try #require(rig.recovery.latestEditCheckpoint(for: key))
+        #expect(latest.unpublished && latest.recordKind == "edit-checkpoint" && latest.baseRevision == 2)
+        #expect(latest.basePublicationID == base.publicationID && latest.baseChecksum == base.checksum)
+        #expect(try coder.decode(latest.snapshot).payload.show.title == "Unsaved 3")
+        #expect(latest.relation(to: base) == .basedOnCurrent)
+        #expect(latest.relation(to: RevisionFingerprint(of: Data("other".utf8))) == .basedOnOtherRevision)
+        // The canonical document was never touched.
+        guard case let .editable(document, fingerprint) = rig.opener.open(url) else { Issue.record("not editable"); return }
+        #expect(document.payload == current && fingerprint == base)
+
+        // A damaged record is reported and retained, never applied or purged.
+        let damaged = rig.recovery.root.appending(path: "edit-checkpoints/\(key.rawValue)/0000000099.wwedit")
+        try Data("{broken".utf8).write(to: damaged)
+        let results = rig.recovery.editCheckpoints(for: key)
+        #expect(results.contains { if case .failure(.damaged) = $0 { true } else { false } })
+        #expect(rig.recovery.latestEditCheckpoint(for: key)?.checkpointSequence == 3)
+        #expect(FileManager.default.fileExists(atPath: damaged.path))
+
+        try rig.recovery.discardEditCheckpoints(for: key)
+        #expect(rig.recovery.editCheckpoints(for: key).isEmpty)
+    }
+}

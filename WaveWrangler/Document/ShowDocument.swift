@@ -44,6 +44,8 @@ final class ShowDocument: NSDocument {
         store = ShowDocumentStore(model: .untitled())
         super.init()
         store.document = self
+        // Ensures preference changes written directly to UserDefaults (Settings) reach the autosave gate.
+        _ = AutosavePolicyController.shared
         scheduler = QuiescenceScheduler(
             gate: PersistenceEnvironment.autosaveGate,
             queue: .main,
