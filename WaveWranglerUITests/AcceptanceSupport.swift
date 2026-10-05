@@ -115,16 +115,15 @@ enum Acceptance {
 
 /// Accessibility audit policy for the acceptance suites (accessibility-acceptance §4.2): the macOS audit
 /// types and the lane suites' structural waivers (system chrome, non-interactive SwiftUI containers, pop-up
-/// AXShowMenu, system overlays, AppKit alert icons). For `.contrast`, a finding is waived only when **both**:
-/// 1. the element is one of the surfaces whose audit-artefact status was measured and evidenced in #59
-///    (`measuredArtefact`: the Library sidebar Recent/Unavailable rows and the Episode inspector's Title,
-///    Number, Recording date and Notes labels while the Episode inspector is shown), and
-/// 2. its screenshot, measured now, shows real text with A1 contrast: at least 100 glyph pixels (pixels
-///    ≥ 1.5:1 against the background) whose 75th-percentile ratio is ≥ 4.5:1. A blurred or clipped label has
-///    only a handful of glyph pixels (the #59 blur measured 4), so a single bright pixel can't pass.
-/// Findings on window content behind a modal sheet (dimmed by AppKit) are waived but measured and listed.
-/// Every waiver — structural or contrast — is recorded with its element and rationale (and, for contrast,
-/// the glyph statistics) in an `audit-<surface>` evidence record.
+/// AXShowMenu, system overlays, AppKit alert icons). For `.contrast`, every finding is screenshotted (crop
+/// attached) and measured, and it is waived only as:
+/// - **measured artefact**: a surface in `measuredArtefact` (each measured from pixels and cited there) **and**
+///   the screenshot taken now shows legible text: ≥ 100 glyph pixels (≥ 1.5:1 against the background) whose
+///   75th-percentile ratio is ≥ 4.5:1. A blurred, clipped or low-contrast instance stays unwaived;
+/// - **offscreen**: not hittable and no glyph pixels (scrolled out of view: nothing is drawn);
+/// - **behind a modal sheet**: content dimmed by AppKit, measured and listed.
+/// Every waiver — structural or contrast — is recorded with its element, rationale and (for contrast) the
+/// glyph statistics and crop name in an `audit-<surface>` evidence record. No blanket waivers.
 enum AcceptanceAudit {
     static let types: XCUIAccessibilityAuditType = [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]
 
@@ -132,17 +131,43 @@ enum AcceptanceAudit {
     /// four were measured; the "Episode" heading and the Show Info inspector's labels were not.
     static let inspectorLabels: Set<String> = ["Title", "Number", "Recording date", "Notes"]
 
-    /// Surfaces measured as audit artefacts in #59: Library sidebar unselected rows (18.1 / 15.7:1) and the
-    /// Episode inspector's labels inside `ww.inspector` (15.7–15.9:1).
+    /// Surfaces whose `.contrast` audit findings were measured from pixels as legible system text (#59, and the
+    /// Mac mini run of 479eb9e: `docs/m1/evidence/ww-007/audit-records-mini-479eb9e.jsonl`). A waiver on these
+    /// surfaces still requires the glyph test to pass on the screenshot taken now, so a blurred, clipped or
+    /// low-contrast instance (e.g. a selected row measured 4.02:1) stays unwaived.
     @MainActor
-    static func measuredArtefact(_ element: XCUIElement, inspectorFrame: CGRect?, episodeInspectorShown: Bool) -> String? {
-        if ["ww.library.sidebar.recent", "ww.library.sidebar.unavailable"].contains(element.identifier) {
-            return "Library sidebar unselected row (#59: measured 18.1:1 light / 15.7:1 dark)"
-        }
+    static func measuredArtefact(_ element: XCUIElement, inspectorFrame: CGRect?, episodeInspectorShown: Bool,
+                                 entriesFrame: CGRect?, windowFrames: [CGRect], inSheet: Bool) -> String? {
+        let id = element.identifier
         let text = (element.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? element.label
-        if episodeInspectorShown, element.elementType == .staticText, inspectorLabels.contains(text), let inspectorFrame,
-           inspectorFrame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) {
-            return "Episode inspector label (#59: measured 15.7–15.9:1)"
+        let mid = CGPoint(x: element.frame.midX, y: element.frame.midY)
+        guard element.elementType == .staticText else { return nil }
+        if ["ww.library.sidebar.recent", "ww.library.sidebar.unavailable"].contains(id) {
+            return "Library sidebar unselected row (#59: 18.1:1 light / 15.7:1 dark)"
+        }
+        if id == "ww.show.sidebar.showInfo" || id.hasPrefix("ww.show.sidebar.episode.") {
+            return "show sidebar row (mini 479eb9e: unselected 15.7–15.9:1)"
+        }
+        if episodeInspectorShown, inspectorLabels.contains(text), let inspectorFrame, inspectorFrame.contains(mid) {
+            return "Episode inspector label (#59: 15.7–15.9:1)"
+        }
+        if let inspectorFrame, inspectorFrame.contains(mid), text == "Not set" {
+            return "inspector value text (mini 479eb9e: 14.1:1)"
+        }
+        if let entriesFrame, entriesFrame.contains(mid) {
+            return "Library entry list cell, system text (#59 after fix and mini 479eb9e: 11.0–16.3:1)"
+        }
+        if id.hasPrefix("ww.setup.source.") || id.hasPrefix("ww.setup.group.") {
+            return "Setup Sources cell, system text (mini 479eb9e: 7.4–17.2:1)"
+        }
+        if id == "AX_EDITING_STATE" || windowFrames.contains(where: { $0.contains(mid) && mid.y - $0.minY < 52 }) {
+            return "window title / subtitle drawn by AppKit (mini 479eb9e: 7.5–15.7:1)"
+        }
+        if text == "No episodes yet" {
+            return "empty-state title (mini 479eb9e: 6.15:1)"
+        }
+        if inSheet, id.hasPrefix("_NS:") {
+            return "AppKit sheet message text (mini 479eb9e: 9.75:1)"
         }
         return nil
     }
@@ -162,6 +187,9 @@ enum AcceptanceAudit {
         let inspectorFrame: CGRect? = inspector.exists ? inspector.frame : nil
         // The Episode inspector (not Show Info) is showing when its Title field exists.
         let episodeInspectorShown = app.descendants(matching: .any).matching(identifier: "ww.inspector.episode.title").firstMatch.exists
+        let entries = app.outlines["ww.library.entries"]
+        let entriesFrame: CGRect? = entries.exists ? entries.frame : nil
+        let windowFrames = app.windows.allElementsBoundByIndex.map(\.frame)
         var contrast: [(XCUIElement, String)] = []
         func describe(_ issue: XCUIAccessibilityAuditIssue) -> String {
             "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(200) ?? "no element")"
@@ -189,16 +217,31 @@ enum AcceptanceAudit {
         }
         try audit(types.subtracting(.contrast))
         try audit(.contrast)
-        for (element, description) in contrast {
-            let measured = element.exists ? ContrastMeter.measure(element.screenshot().image) : nil
-            let stats = measured.map { m in ["glyphPixels": m["glyphPixels"] ?? 0, "glyphP75": m["glyphP75"] ?? 0, "max": m["ratio"] ?? 0] } ?? [:]
-            if let sheetFrame, element.exists, !sheetFrame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) {
+        for (index, (element, description)) in contrast.enumerated() {
+            let shot = element.exists ? element.screenshot() : nil
+            let measured = shot.flatMap { ContrastMeter.measure($0.image) }
+            let crop = "audit-crop-\(surface.replacingOccurrences(of: " ", with: "_"))-\(index).png"
+            if let shot { Acceptance.attach(test, png: shot.pngRepresentation, name: crop) }
+            var stats: [String: Any] = measured.map { m in ["glyphPixels": m["glyphPixels"] ?? 0, "glyphP75": m["glyphP75"] ?? 0, "max": m["ratio"] ?? 0] } ?? [:]
+            stats["crop"] = crop
+            let mid = CGPoint(x: element.frame.midX, y: element.frame.midY)
+            let inSheet = sheetFrame?.contains(mid) ?? false
+            if let sheetFrame, element.exists, !sheetFrame.contains(mid) {
                 waived.append(["finding": description, "kind": "behind-modal-sheet", "measured": stats,
                                "rationale": "window content dimmed behind a modal sheet; that surface is audited without the sheet"])
                 print("AUDIT WAIVED \(description) — dimmed behind a modal sheet; measured \(stats)")
                 continue
             }
-            if let artefact = measuredArtefact(element, inspectorFrame: inspectorFrame, episodeInspectorShown: episodeInspectorShown), passesGlyphContrast(measured) {
+            // Scrolled out of view: nothing is rendered where the element is (its screenshot has no glyphs).
+            if element.exists, !element.isHittable, (stats["glyphPixels"] as? Int ?? 0) < 20 {
+                waived.append(["finding": description, "kind": "offscreen", "measured": stats,
+                               "rationale": "element not visible (not hittable, no glyph pixels): scrolled out of view, not a colour"])
+                print("AUDIT WAIVED \(description) — offscreen; measured \(stats)")
+                continue
+            }
+            if let artefact = measuredArtefact(element, inspectorFrame: inspectorFrame, episodeInspectorShown: episodeInspectorShown,
+                                               entriesFrame: entriesFrame, windowFrames: windowFrames, inSheet: inSheet),
+               passesGlyphContrast(measured) {
                 waived.append(["finding": description, "kind": "measured-artefact", "measured": stats, "rationale": artefact])
                 print("AUDIT WAIVED \(description) — \(artefact); measured now \(stats)")
             } else {

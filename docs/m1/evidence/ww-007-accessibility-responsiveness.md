@@ -292,6 +292,28 @@ Pixel WCAG ratios (`ContrastMeter`: element screenshot at 2×; background = the 
   - The setup source-name top row (`ww.inspector.source.name`) from the coordinator note wasn't measured in this lane, so it isn't waived here. Its lane keeps its own identifier-scoped waiver.
   - **Status of results produced under the superseded policy (max-pixel waiver, waivers not recorded per finding):** the T01, T17 and T20 audits (CoreTasks), the full-suite audits on `241396a`, and the ContrastEvidence-based C03 Setup and C07 results. They're marked "Pass under superseded waiver policy; not re-run" above. A re-run under the scoped policy is queued for the Mac mini GUI lane and will replace these marks with its results.
 
+### 7.1 Contrast findings under the scoped policy (Mac mini run, `479eb9e`)
+
+Run: Mac mini (Macsimus), Apple M2 Pro, macOS 27.0.1, 12-core/32 GiB. `xcodebuild test-without-building` of products built on the 18-core host at `479eb9e`. Result bundle `run1.xcresult` is kept by Design.
+
+Under the scoped policy, **ContrastEvidence passed 5/5** (#59 verified again: row 1 15.91 / 12.39:1). **CoreTasks failed 6/6, all on the audit:** findings on surfaces that weren't yet in the measured allowlist are now unwaived. Raw per-finding records with glyph statistics: [`audit-records-mini-479eb9e.jsonl`](ww-007/audit-records-mini-479eb9e.jsonl). That run didn't attach per-finding crops; the harness now does (`audit-crop-*`), so the next run produces them. Classification:
+
+| Surface (example finding) | Glyph px · p75 · max | Classification | Action |
+| --- | --- | --- | --- |
+| Show sidebar unselected rows ("Show Info", "2 Synthetic Episode…") | 1,435–2,603 · 15.72–15.91 | Legible system text: **artefact** | Added to the scoped allowlist (still gated per instance) |
+| **Selected** sidebar rows ("1 Synthetic Episode…", Library "Shows") | 1,564–9,484 · **4.02** · 4.02 | **Real failure**: white on the default system-blue selection (#007AFF = 4.02:1) | **Fixed in the product:** the app's `AccentColor` is now #0064E1, so white text on the selection is 5.37:1. This applies when the system accent is Multicolor, the default on both hosts. To be verified in the next mini run. |
+| Library entry cells (dates, counts, locations) | 133–2,198 · 11.0–16.3 (most) | Legible system text: **artefact** | Allowlisted (entries frame), gated |
+| Library entry cells with p75 2.06–4.23 (bottom row at the window edge in dark mode; some date cells in light mode) | 999–3,973 · 2.06–4.42 | **Unresolved**: likely clipped at the window/scroll edge; needs crops | Stays unwaived; crops next run |
+| Setup Sources cells ("none" placeholders, names, "Access denied; …") | 114–812 · 7.42–17.22 | Legible: **artefact** | Allowlisted (`ww.setup.source.*` / `ww.setup.group.*`), gated |
+| Setup Sources cells with 0 glyph pixels | 0 · — · 1.05–1.38 | Scrolled out of view (#104 layout) | New **offscreen** rule (not hittable and no glyphs), recorded |
+| Window title / subtitle / "Edited" (`AX_EDITING_STATE`), "Library" | 1,134–4,275 · 7.55–15.72 | AppKit title bar text: **artefact** | Allowlisted (top 52 pt of a window), gated |
+| T01 empty state "No episodes yet" | 4,083 · 6.15 | Legible: **artefact** | Allowlisted by text, gated |
+| Inspector "Not set" | 2,333 · 14.09 | Legible: **artefact** | Allowlisted (inside `ww.inspector`), gated |
+| T16 AppKit sheet message ("This document's file has been changed…") | 12,000 · 9.75 | Legible: **artefact** | Allowlisted (`_NS:` text inside a sheet), gated |
+| T16 "Edit the show's title…" (window content under the sheet's band) | 18,550 · 3.15 | Content dimmed behind the sheet, but its midpoint lies inside the sheet's frame | Stays unwaived; to be re-checked with the crop |
+| **T17 recovery alert text** ("The document “Recover…” could not be opened", "A complete earlier revision…") | 8,626–10,462 · **2.85–2.95** | **Unresolved**: an NSAlert measuring below 3:1 is unexpected (possibly an inactive or occluded alert window); needs the crop | Stays unwaived. **T17 audit = Fail** until explained. |
+| 200% Library rows | — | Overflow under the title bar | [#109](https://github.com/brandonmartinez/WaveWrangler/issues/109) |
+
 ## 8. Findings and issues
 
 | Issue | Severity | Status |
