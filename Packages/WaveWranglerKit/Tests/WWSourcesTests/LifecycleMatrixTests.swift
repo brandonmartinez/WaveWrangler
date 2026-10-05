@@ -758,7 +758,7 @@ enum MatrixScenarios {
         try await monitor.adopt(records)
         for record in records { _ = await monitor.transfers.waitUntilSettled(record.key) }
         env.writes += TreeSnapshot.take(env.tree.sources).differences(from: before)
-        monitor.stop()
+        await monitor.stop()
         env.check(monitor.observations.count == records.count, "monitor observations")
     }
 
@@ -847,7 +847,6 @@ extension MatrixScenarios {
         let store = InMemoryDeviceAccessStore([record])
         let monitor = SourceAvailabilityMonitor(showID: env.showID, store: store, context: env.context, setting: .on, transferPolicy: env.transferPolicy)
         monitor.start()
-        defer { monitor.stop() }
         let id = record.sourceID
         let before = TreeSnapshot.take(env.tree.sources)
         defer { env.writes += TreeSnapshot.take(env.tree.sources).differences(from: before) }
@@ -907,6 +906,7 @@ extension MatrixScenarios {
             env.check(final == .idle, "after access restored \(final)")
             env.check(env.io.count(.downloadRequest) == 1, "requests \(env.io.count(.downloadRequest))")
         }
+        await monitor.stop()
     }
 }
 

@@ -235,7 +235,7 @@ struct ProviderTrialTests {
         let monitor = SourceAvailabilityMonitor(showID: show, store: InMemoryDeviceAccessStore(), context: context, setting: .off)
         monitor.start()
         try await monitor.adopt(records)
-        monitor.stop()
+        await monitor.stop()
     }
 }
 

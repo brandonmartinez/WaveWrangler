@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import WWCore
 
 public struct TransferPolicy: Sendable, Equatable {
@@ -90,8 +91,11 @@ public actor SourceTransferController {
     private var draining: [DeviceAccessKey: [Task<Void, Never>]] = [:]
     /// The authoritative availability setting for automatic requests.
     public private(set) var setting: SourceAvailabilitySetting
-    private var generation = 0
-    private var continuations: [UUID: AsyncStream<TransferEvent>.Continuation] = [:]
+    /// Monotonic epoch shared by transfer generations and event subscriptions. Readable without
+    /// awaiting (`shutdownTicket()`), so an owner can say "shut down what exists *now*" and a late
+    /// shutdown never touches transfers or subscriptions created afterwards.
+    private let epoch = Mutex(0)
+    private var continuations: [UUID: (epoch: Int, continuation: AsyncStream<TransferEvent>.Continuation)] = [:]
     /// Total download requests issued to the gateway (for audits/tests).
     public private(set) var downloadRequestCount = 0
     private let sleep: Sleeper
@@ -138,7 +142,7 @@ public actor SourceTransferController {
     public func events() -> AsyncStream<TransferEvent> {
         let id = UUID()
         let (stream, continuation) = AsyncStream<TransferEvent>.makeStream(bufferingPolicy: .bufferingNewest(256))
-        continuations[id] = continuation
+        continuations[id] = (nextEpoch(), continuation)
         continuation.onTermination = { [weak self] _ in
             Task { await self?.removeContinuation(id) }
         }
@@ -210,8 +214,7 @@ public actor SourceTransferController {
             return state
         case .request, .observeOnly:
             cancelledByUser.remove(key)
-            generation += 1
-            let current = generation
+            let current = nextEpoch()
             let initial: TransferState = if case .request = decision { .requested } else { .inProgress(fractionCompleted: .unknown) }
             publish(key, initial)
             let owner = WeakOwner(self)
@@ -275,21 +278,38 @@ public actor SourceTransferController {
         for key in Array(active.keys) { await cancel(key) }
     }
 
-    /// Owner teardown (window closed, monitor stopped/deallocated): stops every observer without
-    /// recording a user cancel, finishes event streams and returns once all observers have finished.
-    /// The originals are untouched.
-    public func shutdown() async {
+    /// The current epoch. Pass it to `shutdown(through:)` to limit teardown to what exists now.
+    public nonisolated func shutdownTicket() -> Int {
+        epoch.withLock { $0 }
+    }
+
+    /// Owner teardown (window closed, monitor stopped/deallocated): stops observers without recording
+    /// a user cancel, finishes event streams and returns once those observers have finished. With a
+    /// `ticket`, only transfers and subscriptions created at or before it are affected, so a late
+    /// teardown never cancels a request made afterwards. Cancelled transfers publish `.cancelled`
+    /// (so remaining subscribers are not left stale). The originals are untouched.
+    public func shutdown(through ticket: Int? = nil) async {
+        let limit = ticket ?? Int.max
         var stopped: [Task<Void, Never>] = draining.values.flatMap { $0 }
         draining.removeAll()
-        for (key, running) in active {
+        for (key, running) in active where running.generation <= limit {
+            active[key] = nil
             running.task.cancel()
             stopped.append(running.task)
-            states[key] = .cancelled
+            publish(key, .cancelled)
         }
-        active.removeAll()
-        for continuation in continuations.values { continuation.finish() }
-        continuations.removeAll()
+        for (id, entry) in continuations where entry.epoch <= limit {
+            entry.continuation.finish()
+            continuations[id] = nil
+        }
         for task in stopped { await task.value }
+    }
+
+    private func nextEpoch() -> Int {
+        epoch.withLock {
+            $0 += 1
+            return $0
+        }
     }
 
     // MARK: - Observation
@@ -398,7 +418,7 @@ public actor SourceTransferController {
     private func publish(_ key: DeviceAccessKey, _ state: TransferState) {
         states[key] = state
         let event = TransferEvent(key: key, state: state, provenance: context.io.provenance)
-        for continuation in continuations.values { continuation.yield(event) }
+        for entry in continuations.values { entry.continuation.yield(event) }
     }
 
     private func removeContinuation(_ id: UUID) {

@@ -304,7 +304,7 @@ struct MonitorTests {
         await monitor.refresh([cloudID])
         #expect(monitor.observations[cloudID]?.residency == .local)
         #expect(io.count(.downloadRequest) == 1)
-        monitor.stop()
+        await monitor.stop()
         #expect(context.ledger.snapshot.openScopes == 0)
     }
 }
@@ -630,7 +630,7 @@ struct StallFollowUpTests {
         #expect(monitor.observations[record.sourceID]?.transfer == .idle)
         #expect(monitor.observations[record.sourceID]?.residency == .local)
         #expect(io.count(.downloadRequest) == 1)
-        monitor.stop()
+        await monitor.stop()
     }
 }
 
@@ -669,7 +669,7 @@ struct StallLifetimeTests {
         try await monitor.adopt([record])
         #expect((await collector.value).last?.isOfflineOrUnknown == true)
         #expect(try await !pollingStopped(io))
-        monitor.stop()
+        await monitor.stop()
         #expect(try await pollingStopped(io))
         #expect(await monitor.transfers.activeCount == 0)
         // Teardown is not a user decision.
@@ -756,5 +756,72 @@ struct StallLifetimeTests {
                               .milliseconds(16), .milliseconds(16)])
         #expect(await controller.state(of: key) == .cancelled)
         #expect(io.count(.downloadRequest) == 1)
+    }
+}
+
+
+@Suite("Teardown never swallows later requests", .timeLimit(.minutes(1)))
+struct TeardownOrderingTests {
+    /// Mirrors the review probe: stop(); start(); makeAvailable back-to-back. A teardown that lands
+    /// after the new request must not cancel it.
+    @Test(arguments: [false, true]) @MainActor
+    func stopThenStartThenMakeAvailableReachesIdle(transferRunningAtStop: Bool) async throws {
+        let tree = try SyntheticTree(label: "stop-start")
+        var rng = SplitMix64(seed: 22)
+        let file = try tree.file("take.wav", bytes: 64, rng: &rng)
+        let other = try tree.file("other.wav", bytes: 64, rng: &rng)
+        let io = HarnessIO()
+        let context = makeContext(io)
+        let plan = try await SourceImporter(context: context).plan(selection: [file, other], showID: testShow)
+        let record = try #require(plan.items.first { $0.sourceRecord.displayNameHint == "take.wav" }?.accessRecord)
+        let otherRecord = try #require(plan.items.first { $0.sourceRecord.displayNameHint == "other.wav" }?.accessRecord)
+        io.simulate(file, SimulatedCloudItem(script: (1...30).map { .progress(Double($0) / 40) } + [.complete]))
+        io.simulate(other, SimulatedCloudItem(script: StallLifetimeTests.stallForever))
+        let monitor = SourceAvailabilityMonitor(showID: testShow, store: InMemoryDeviceAccessStore(), context: context, setting: .off, transferPolicy: StallFollowUpTests.policy)
+        monitor.start()
+        try await monitor.adopt(plan.accessRecords)
+        if transferRunningAtStop {
+            await monitor.makeAvailable(otherRecord.sourceID)
+            #expect(await monitor.transfers.isActive(otherRecord.key))
+        }
+
+        await monitor.stop()
+        monitor.start()
+        await monitor.makeAvailable(record.sourceID)
+
+        #expect(await monitor.transfers.waitUntilSettled(record.key) == .idle)
+        for _ in 0..<500 where monitor.observations[record.sourceID]?.transfer != .idle { await Task.yield() }
+        #expect(monitor.observations[record.sourceID]?.transfer == .idle)
+        #expect(monitor.observations[record.sourceID]?.residency == .local)
+        #expect(await !monitor.transfers.isActive(otherRecord.key))
+        #expect(io.count(.downloadRequest) == (transferRunningAtStop ? 2 : 1))
+        await monitor.stop()
+    }
+
+    @Test func lateShutdownOnlyAffectsWhatExistedAtTheTicket() async throws {
+        let tree = try SyntheticTree(label: "ticket")
+        var rng = SplitMix64(seed: 23)
+        let old = try tree.file("old.wav", bytes: 64, rng: &rng)
+        let new = try tree.file("new.wav", bytes: 64, rng: &rng)
+        let io = HarnessIO()
+        io.simulate(old, SimulatedCloudItem(script: StallLifetimeTests.stallForever))
+        io.simulate(new, SimulatedCloudItem(script: StallLifetimeTests.stallForever))
+        let controller = SourceTransferController(context: makeContext(io), policy: StallFollowUpTests.policy, setting: .on)
+        let oldKey = DeviceAccessKey(showID: testShow, sourceID: SourceID())
+        let newKey = DeviceAccessKey(showID: testShow, sourceID: SourceID())
+        let oldEvents = await eventCollector(controller, key: oldKey) { $0 == .cancelled }
+        _ = await controller.makeAvailable(oldKey, at: old)
+        let ticket = controller.shutdownTicket()
+        // Created after the ticket: must survive the late shutdown.
+        let newEvents = await eventCollector(controller, key: newKey, limit: .milliseconds(300)) { $0 == .cancelled }
+        _ = await controller.makeAvailable(newKey, at: new)
+        await controller.shutdown(through: ticket)
+        #expect(await !controller.isActive(oldKey))
+        #expect(await controller.isActive(newKey))
+        #expect((await oldEvents.value).last == .cancelled)
+        let laterStates = await newEvents.value
+        #expect(!laterStates.contains(.cancelled))
+        #expect(!laterStates.isEmpty)
+        await controller.cancel(newKey)
     }
 }
