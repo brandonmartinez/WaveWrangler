@@ -59,7 +59,7 @@ struct SaveStatusTests {
         .edited, .saving(cancellable: false), .notConfirmed, .conflict(changedAt: nil), .locationUnavailable,
         .diskFull(volumeName: "Data"), .failed(reason: "WaveWrangler doesn't have permission to save in this folder"),
         .cancelled, .recovered(incompleteSaveAt: date, openedVersionAt: date), .readOnlyNewerFormat, .readOnlyDamaged,
-        .updateNeeded, .updateFailed, .readOnlyLocation,
+        .updateNeeded, .updateFailed, .readOnlyLocation, .readOnly(reason: "it's a recovered copy"),
     ]
 
     private func present(_ state: DocumentSaveState, autosave: Bool = true, retrying: Bool = false) -> SaveStatusPresentation {
@@ -90,6 +90,14 @@ struct SaveStatusTests {
         let saved = present(.saved(at: Self.date, folderDisplayName: nil))
         #expect(!saved.showsEditedSuffix)
         #expect(!saved.showsDirtyDot)
+    }
+
+    @Test func savedWithoutKnownTimeAndGenericReadOnly() {
+        let saved = present(.saved(at: nil, folderDisplayName: "Podcasts"))
+        #expect(saved.popoverText.hasPrefix("Saved to “The Daily Wrangle” in Podcasts."))
+        let readOnly = present(.readOnly(reason: "it's a recovered copy"))
+        #expect(readOnly.isReadOnly)
+        #expect(readOnly.messageBar?.heading == "This show is read-only")
     }
 
     @Test func dirtyDotOnlyWithAutosaveOff() {

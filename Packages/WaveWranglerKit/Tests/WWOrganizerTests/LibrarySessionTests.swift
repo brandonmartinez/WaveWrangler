@@ -113,6 +113,37 @@ struct LibrarySessionTests {
         #expect(session.library.entry(fresh)?.lastKnownTitle == "New show", "a new show is never dropped")
     }
 
+    @Test func flushReportsItemsSoStorageAppliesTheSameBookkeeping() {
+        var session = LibrarySession()
+        _ = session.didLoad(stored, allowsEdits: true)
+        let id = ShowID()
+        let changed = session.record(.opened(id, confirmedTitle: "S", provisionalTitle: "S"), allowsEdits: true)
+        #expect(changed)
+        #expect(session.lastFlushed == [.opened(id, confirmedTitle: "S", provisionalTitle: "S")])
+        // Storage applies the items to its own canonical value (which may have moved on) — not a snapshot.
+        var canonical = stored
+        canonical.collections.append(LibraryCollection(name: "Made on another Mac"))
+        let applied = LibrarySession.applying(session.lastFlushed, to: canonical)
+        #expect(applied.entry(id) != nil)
+        #expect(applied.collections.map(\.name).contains("Made on another Mac"))
+        session.adoptCanonical(applied)
+        #expect(session.library == applied)
+    }
+
+    @Test func diffBasedEditComposesWithConcurrentCanonicalChanges() throws {
+        var session = LibrarySession()
+        _ = session.didLoad(stored, allowsEdits: true)
+        let applied = try session.apply(allowsEdits: true) { library throws(LibraryError) in try library.addingCollection(LibraryCollection(name: "Mine")) }
+        let change = try #require(applied)
+        var canonical = stored
+        let acknowledged = ShowID()
+        canonical = canonical.upsertingEntry(showID: acknowledged, title: "Saved elsewhere").recordingOpened(acknowledged)
+        let result = canonical.applyingDifference(from: change.before, to: change.after)
+        #expect(result.collections.map(\.name).contains("Mine"))
+        #expect(result.entry(acknowledged) != nil)
+        #expect(result.recentShowIDs.first == acknowledged)
+    }
+
     @Test func confirmedTitleOnlyRefreshesKnownEntries() {
         var session = LibrarySession()
         _ = session.didLoad(stored, allowsEdits: true)

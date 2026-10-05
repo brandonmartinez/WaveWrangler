@@ -364,13 +364,31 @@ private struct LibraryMessageBar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let level = LibraryLevelPresentation(state.store.services.location.libraryState) {
+            let location = state.store.services.location
+            if let level = LibraryLevelPresentation(location.libraryState) {
                 MessageBar(
                     heading: level.heading,
-                    message: [level.body, level.pendingText].compactMap { $0 }.joined(separator: " "),
+                    message: [level.body, location.pendingEditsStatus ?? level.pendingText].compactMap { $0 }.joined(separator: " "),
                     symbolName: level.symbolName,
                     actions: level.actions.map { action in (action.rawValue, { state.perform(action) }) },
                     identifier: "ww.library.messageBar"
+                )
+            } else if let pending = location.pendingEditsStatus {
+                MessageBar(
+                    heading: "Edits waiting",
+                    message: pending,
+                    symbolName: "clock",
+                    actions: [("Try Again", { state.perform(.tryAgain) })],
+                    identifier: "ww.library.messageBar"
+                )
+            }
+            if let result = location.resultMessage {
+                MessageBar(
+                    heading: "Library updated",
+                    message: result,
+                    symbolName: "info.circle",
+                    actions: [("Dismiss", { location.dismissResultMessage() })],
+                    identifier: "ww.library.messageBar.result"
                 )
             }
             if let failure = state.store.persistenceFailure {

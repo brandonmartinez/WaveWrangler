@@ -30,10 +30,26 @@ final class LibraryUIStore {
     @ObservationIgnored let services: LibraryServices
     @ObservationIgnored private var saveChain: Task<Void, Never>?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingSaves = 0
 
     init(services: LibraryServices) {
         self.services = services
         observeLibraryLevelState()
+        observeCanonicalLibrary()
+    }
+
+    /// Follows the canonical value when storage changes it elsewhere (e.g. persistence acknowledging a
+    /// verified show save, a combine, another Mac). Local edits in flight win until their write returns.
+    private func observeCanonicalLibrary() {
+        withObservationTracking {
+            _ = services.persistence.currentLibrary
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if pendingSaves == 0, let canonical = services.persistence.currentLibrary { session.adoptCanonical(canonical) }
+                observeCanonicalLibrary()
+            }
+        }
     }
 
     /// When the library becomes read-only (L4/L5) its undo history is cleared so no undo step is silently
@@ -52,7 +68,7 @@ final class LibraryUIStore {
 
     func libraryLevelStateDidChange() {
         if allowsEdits {
-            if session.flush(allowsEdits: true) { persist() }
+            if session.flush(allowsEdits: true) { persistFlushed() }
         } else {
             undoManager.removeAllActions(withTarget: self)
         }
@@ -71,7 +87,7 @@ final class LibraryUIStore {
             guard let self else { return }
             do {
                 let model = try await services.persistence.loadLibrary()
-                if session.didLoad(model, allowsEdits: allowsEdits) { persist() }
+                if session.didLoad(model, allowsEdits: allowsEdits) { persistFlushed() }
                 await services.entries.refresh(session.library.entries.map(\.showID))
             } catch {
                 session.didFailLoad(reason: error.localizedDescription)
@@ -92,7 +108,7 @@ final class LibraryUIStore {
                 return true
             }
             lastError = nil
-            persist()
+            persist { $0.applyingDifference(from: change.before, to: change.after) }
             registerUndo(change, actionName: actionName, isUndo: true)
             return true
         } catch {
@@ -111,8 +127,13 @@ final class LibraryUIStore {
                     store.lastError = Self.message(for: store.isLoaded ? .readOnly : .notLoaded)
                     return
                 }
-                if isUndo { store.session.undo(change) } else { store.session.redo(change) }
-                store.persist()
+                if isUndo {
+                    store.session.undo(change)
+                    store.persist { $0.applyingDifference(from: change.after, to: change.before) }
+                } else {
+                    store.session.redo(change)
+                    store.persist { $0.applyingDifference(from: change.before, to: change.after) }
+                }
                 store.registerUndo(change, actionName: actionName, isUndo: !isUndo)
             }
         }
@@ -131,26 +152,37 @@ final class LibraryUIStore {
         let item = LibrarySession.Bookkeeping.opened(
             id, confirmedTitle: hasUnsavedChanges ? nil : model.show.title, provisionalTitle: model.show.title
         )
-        if session.record(item, allowsEdits: allowsEdits) { persist() }
+        if session.record(item, allowsEdits: allowsEdits) { persistFlushed() }
     }
 
     /// Called only after a coherent save (D1) so the library never runs ahead of the show on disk (P6).
     func showDidSaveCoherently(id: ShowID, model: ShowDocumentModel, fileURL: URL?) {
         services.entries.noteOpenShow(id: id, model: model, fileURL: fileURL)
-        if session.record(.confirmedTitle(id, title: model.show.title), allowsEdits: allowsEdits) { persist() }
+        if session.record(.confirmedTitle(id, title: model.show.title), allowsEdits: allowsEdits) { persistFlushed() }
     }
 
-    private func persist() {
+    private func persistFlushed() {
+        let items = session.lastFlushed
+        guard !items.isEmpty else { return }
+        persist { LibrarySession.applying(items, to: $0) }
+    }
+
+    /// Applies an edit to canonical storage as a transform (never a whole snapshot), in order.
+    private func persist(_ transform: @escaping @Sendable (LibraryModel) -> LibraryModel) {
         guard session.canPersist(allowsEdits: allowsEdits) else { return }
-        let snapshot = session.library
         let previous = saveChain
         let persistence = services.persistence
+        pendingSaves += 1
         saveChain = Task { [weak self] in
             await previous?.value
             do {
-                try await persistence.saveLibrary(snapshot)
+                let canonical = try await persistence.applyEdit(transform)
+                self?.pendingSaves -= 1
+                if self?.pendingSaves == 0 { self?.session.adoptCanonical(canonical) }
             } catch {
+                self?.pendingSaves -= 1
                 self?.persistenceFailure = "Couldn't update the library: \(error.localizedDescription). Your shows aren't affected."
+                if self?.pendingSaves == 0, let canonical = persistence.currentLibrary { self?.session.adoptCanonical(canonical) }
             }
         }
     }

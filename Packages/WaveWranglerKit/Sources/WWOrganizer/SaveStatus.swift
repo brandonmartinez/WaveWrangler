@@ -8,7 +8,7 @@ public enum DocumentSaveState: Sendable, Equatable {
     /// ST-01: observation finished without an answer.
     case unknown(reason: String)
     /// D1. Latest edits confirmed on disk as one complete version.
-    case saved(at: Date, folderDisplayName: String?)
+    case saved(at: Date?, folderDisplayName: String?)
     /// D2 (autosave On) / D3 (autosave Off). Edits exist and no save is in progress.
     case edited
     /// D4.
@@ -37,6 +37,8 @@ public enum DocumentSaveState: Sendable, Equatable {
     case updateFailed
     /// D16.
     case readOnlyLocation
+    /// Read-only for another reason reported by persistence (e.g. a recovered copy shown for review).
+    case readOnly(reason: String)
 }
 
 /// One observation of a document's save status.
@@ -78,13 +80,13 @@ extension DocumentSaveState {
         switch self {
         case .edited, .saving, .notConfirmed, .conflict, .locationUnavailable, .diskFull, .failed, .cancelled: true
         case .checking, .unknown, .saved, .recovered, .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded,
-             .updateFailed, .readOnlyLocation: false
+             .updateFailed, .readOnlyLocation, .readOnly: false
         }
     }
 
     public var isReadOnly: Bool {
         switch self {
-        case .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updateFailed, .readOnlyLocation: true
+        case .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updateFailed, .readOnlyLocation, .readOnly: true
         default: false
         }
     }
@@ -176,7 +178,8 @@ public struct SaveStatusPresentation: Sendable, Equatable {
             text = "Saved"
             symbol = "checkmark.circle"
             let place = folder.map { " in \($0)" } ?? ""
-            popover = "Saved at \(formatTime(at)) to “\(showName)”\(place). WaveWrangler saved this Mac's copy. If this folder syncs, your cloud service uploads it separately."
+            let when = at.map { "Saved at \(formatTime($0)) to" } ?? "Saved to"
+            popover = "\(when) “\(showName)”\(place). WaveWrangler saved this Mac's copy. If this folder syncs, your cloud service uploads it separately."
             actions = [.showInFinder]
             suffix = false
         case .edited:
@@ -267,6 +270,13 @@ public struct SaveStatusPresentation: Sendable, Equatable {
             popover = "The original is unchanged. You can view it read-only."
             actions = [.tryAgain, .showDetails]
             message = MessageBarContent(heading: "Couldn't update this show", body: popover, actions: actions)
+            suffix = false
+        case .readOnly(let reason):
+            text = "Read-only"
+            symbol = "lock.fill"
+            popover = "You can view “\(showName)” but not edit it: \(reason). Use File › Duplicate to keep a copy you can edit."
+            actions = [.duplicate]
+            message = MessageBarContent(heading: "This show is read-only", body: popover, actions: actions)
             suffix = false
         case .readOnlyLocation:
             text = "Read-only"

@@ -44,13 +44,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    /// ST-34: quitting with queued library changes asks first (no default button).
+    /// ST-34: quitting with queued library changes asks first (no default button). The queued edits are kept
+    /// on this Mac by persistence, and the wording says so.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let pending = LibraryUIStore.shared.services.location.libraryState.pendingChanges
-        guard let warning = LibraryLevelPresentation.quitWarning(pendingChanges: pending) else { return .terminateNow }
+        guard let warning = LibraryUIStore.shared.services.location.quitWarning else { return .terminateNow }
         let alert = NSAlert()
-        alert.messageText = warning.message
-        alert.informativeText = warning.informative
+        alert.messageText = "Quit WaveWrangler?"
+        alert.informativeText = warning
         let cancel = alert.addButton(withTitle: "Cancel")
         cancel.keyEquivalent = "\u{1b}"
         let quit = alert.addButton(withTitle: "Quit Anyway")

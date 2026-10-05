@@ -17,7 +17,7 @@ public enum SymbolCatalog {
             .checking, .unknown(reason: "x"), .saved(at: date, folderDisplayName: nil), .edited, .saving(cancellable: true),
             .notConfirmed, .conflict(changedAt: nil), .locationUnavailable, .diskFull(volumeName: "x"),
             .failed(reason: "x"), .cancelled, .recovered(incompleteSaveAt: nil, openedVersionAt: nil),
-            .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updateFailed, .readOnlyLocation,
+            .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updateFailed, .readOnlyLocation, .readOnly(reason: "x"),
         ]
         for state in saveStates {
             for autosave in [true, false] {
@@ -32,7 +32,7 @@ public enum SymbolCatalog {
         for state in entryStates {
             if let symbol = LibraryEntryStatePresentation(state, showName: "x").symbolName { names.insert(symbol) }
         }
-        for state in [LibraryLevelState.unreachable(folderDisplayName: "x", pendingChanges: 1), .needsPermission(pendingChanges: 0), .conflict, .newerFormat(folderDisplayName: "x")] {
+        for state in [LibraryLevelState.unreachable(folderDisplayName: "x", pendingChanges: 1), .needsPermission(pendingChanges: 0), .conflict, .newerFormat(folderDisplayName: "x"), .damaged] {
             if let presentation = LibraryLevelPresentation(state) { names.insert(presentation.symbolName) }
         }
         return names

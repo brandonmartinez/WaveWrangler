@@ -97,6 +97,13 @@ extension LibraryModel {
 
 /// ST-33 step 4/6 wording.
 public enum LibraryMoveWording {
+    /// After a combine that couldn't carry some queued edits (they stay in the backup copy on this Mac).
+    public static func queuedChangesNotCarried(_ descriptions: [String]) -> String? {
+        guard !descriptions.isEmpty else { return nil }
+        let count = descriptions.count == 1 ? "1 change you made" : "\(descriptions.count) changes you made"
+        return "\(count) while the library was unavailable couldn't be combined. A backup copy with them was kept on this Mac: \(descriptions.joined(separator: "; "))."
+    }
+
     public static func moved(to folder: String, previous: String) -> String {
         "Your library is now stored in “\(folder)”. The previous copy was kept in \(previous) as a backup."
     }
@@ -112,6 +119,7 @@ public enum LibraryMoveWording {
     public static func existingLibraryBlockedReason(_ state: LibraryLevelState) -> String? {
         switch state {
         case .ready, .conflict: nil
+        case .damaged: "The library in this folder can't be read, so this version can't add to it."
         case .unreachable: "WaveWrangler can't reach the library in this folder right now."
         case .needsPermission: "WaveWrangler needs permission to use the library in this folder."
         case .newerFormat: "The library in this folder was saved by a newer version of WaveWrangler, so this version can't add to it."

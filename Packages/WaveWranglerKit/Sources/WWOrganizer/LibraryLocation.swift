@@ -62,11 +62,14 @@ public enum LibraryLevelState: Sendable, Equatable {
     case needsPermission(pendingChanges: Int)
     case conflict
     case newerFormat(folderDisplayName: String)
+    /// The canonical library is damaged or missing; whole earlier versions can be recovered as a new copy.
+    /// (Not in Design's L1–L5 table; wording proposed to Design.)
+    case damaged
 
     public var allowsEdits: Bool {
         switch self {
         case .ready, .unreachable, .needsPermission: true
-        case .conflict, .newerFormat: false
+        case .conflict, .newerFormat, .damaged: false
         }
     }
 
@@ -84,6 +87,7 @@ public enum LibraryLevelAction: String, Sendable, Equatable, CaseIterable {
     case grantAccess = "Grant Access…"
     case combine = "Combine (Keep Everything)"
     case useOtherMacsVersion = "Use Other Mac's Version"
+    case recoverEarlierVersion = "Recover Earlier Version…"
 }
 
 public struct LibraryLevelPresentation: Sendable, Equatable {
@@ -115,6 +119,12 @@ public struct LibraryLevelPresentation: Sendable, Equatable {
             body = "Another Mac saved changes to your library while this Mac also had changes. WaveWrangler hasn't overwritten either."
             symbolName = "arrow.triangle.branch"
             actions = [.combine, .useOtherMacsVersion]
+            pendingText = nil
+        case .damaged:
+            heading = "Your library can't be read"
+            body = "WaveWrangler couldn't read your library completely and hasn't changed it. You can recover an earlier complete version as a new copy. Your shows aren't affected, and you can still open them with File › Open."
+            symbolName = "exclamationmark.lock"
+            actions = [.recoverEarlierVersion]
             pendingText = nil
         case .newerFormat(let folder):
             heading = "Your library needs a newer WaveWrangler"

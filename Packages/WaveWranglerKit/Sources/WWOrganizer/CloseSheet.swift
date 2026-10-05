@@ -30,7 +30,7 @@ public struct CloseSheet: Sendable, Equatable {
 extension CloseDecision {
     public init(state: DocumentSaveState, autosaveEnabled: Bool, showName: String, shortReason: String? = nil) {
         switch state {
-        case .saved, .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updateFailed, .readOnlyLocation,
+        case .saved, .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updateFailed, .readOnlyLocation, .readOnly,
              .recovered, .checking, .unknown:
             self = .closeImmediately
         case .edited where autosaveEnabled:

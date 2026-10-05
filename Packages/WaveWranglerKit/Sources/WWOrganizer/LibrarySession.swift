@@ -72,11 +72,25 @@ public struct LibrarySession: Sendable, Equatable {
         return flush(allowsEdits: allowsEdits)
     }
 
+    /// Items applied by the most recent successful `flush`, so storage can apply the same bookkeeping to
+    /// its canonical value (never a whole-library snapshot).
+    public private(set) var lastFlushed: [Bookkeeping] = []
+
     /// Applies queued bookkeeping when loaded and editable. Returns `true` if the library changed.
     public mutating func flush(allowsEdits: Bool) -> Bool {
+        lastFlushed = []
         guard isLoaded, allowsEdits, !queued.isEmpty else { return false }
         let original = library
-        for item in queued {
+        library = Self.applying(queued, to: library)
+        lastFlushed = queued
+        queued.removeAll()
+        return library != original
+    }
+
+    /// Pure application of bookkeeping items (used for the session and for canonical storage).
+    public static func applying(_ items: [Bookkeeping], to model: LibraryModel) -> LibraryModel {
+        var library = model
+        for item in items {
             switch item {
             case let .opened(id, confirmed, provisional):
                 if let confirmed {
@@ -89,8 +103,14 @@ public struct LibrarySession: Sendable, Equatable {
                 if library.entry(id) != nil { library = library.upsertingEntry(showID: id, title: title) }
             }
         }
-        queued.removeAll()
-        return library != original
+        return library
+    }
+
+    /// Adopts the canonical value after storage applied an edit, or when it changed elsewhere (another
+    /// Mac, persistence acknowledging a verified show save). Ignored until loaded.
+    public mutating func adoptCanonical(_ model: LibraryModel) {
+        guard isLoaded else { return }
+        library = model
     }
 
     // MARK: - Undoable edits

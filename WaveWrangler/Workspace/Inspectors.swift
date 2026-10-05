@@ -227,7 +227,9 @@ struct ShowInfoInspector: View {
                 TextField("Title", text: $titleDraft)
                     .textFieldStyle(.roundedBorder)
                     .focused($focused, equals: .title)
+                    .accessibilityLabel("Show title")
                     .accessibilityIdentifier("ww.inspector.show.title")
+                    .onSubmit { store.endCoalescing() }
                 if let titleError {
                     Label(titleError, systemImage: "exclamationmark.triangle")
                         .accessibilityLabel("Title: \(titleError)")

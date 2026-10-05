@@ -82,7 +82,10 @@ struct GeneralSettingsView: View {
             Section {
                 let connected = AutosavePolicyConnection.isConnected
                 let effective = AutosavePolicyConnection.effectiveAutosaveEnabled
-                Toggle(SettingsWording.autosaveTitle, isOn: connected ? $settings.autosaveEnabled : .constant(true))
+                Toggle(SettingsWording.autosaveTitle, isOn: Binding(
+                    get: { effective },
+                    set: { AutosavePolicyConnection.setEnabled($0) }
+                ))
                     .toggleStyle(.switch)
                     .disabled(!connected)
                     .help(SettingsWording.autosaveCaption(enabled: effective))
@@ -168,7 +171,7 @@ private struct LibraryLocationControl: View {
                 Text(LibraryLocationChoice.chooseFolderTitle).tag(Selection.chooseFolder)
             }
             .accessibilityIdentifier("ww.settings.libraryLocation")
-            .onChange(of: selection) { _, choice in handle(choice) }
+            .onChange(of: selection) { _, choice in handleChoice(choice) }
             caption(location.caption)
             if let phase = controller.movePhase {
                 HStack {
@@ -181,7 +184,10 @@ private struct LibraryLocationControl: View {
             if let level = LibraryLevelPresentation(controller.libraryState) {
                 Label(level.heading, systemImage: level.symbolName)
                     .fixedSize(horizontal: false, vertical: true)
-                if let pending = level.pendingText { Text(pending) }
+                if let pending = controller.pendingEditsStatus ?? level.pendingText { Text(pending) }
+            }
+            if let result = controller.resultMessage {
+                Text(result).fixedSize(horizontal: false, vertical: true)
             }
             if !controller.isConnected {
                 Label("This version keeps the library only while WaveWrangler is open; it isn't saved to disk yet.", systemImage: "info.circle")
@@ -195,7 +201,7 @@ private struct LibraryLocationControl: View {
         }
     }
 
-    private func handle(_ choice: Selection) {
+    private func handleChoice(_ choice: Selection) {
         switch choice {
         case .current:
             return
@@ -222,18 +228,53 @@ private struct LibraryLocationControl: View {
 
     private func move(to url: URL?, choice: LibraryLocationChoice) {
         let wording = choice.moveConfirmation
-        let old = controller.location.title
         Task {
             guard await Dialogs.confirm(
                 in: NSApp.keyWindow, message: wording.message, informative: wording.informative, confirmTitle: wording.button,
                 destructive: false
             ) else { return }
-            do {
-                moveError = nil
-                try await controller.moveLibrary(to: url)
-            } catch {
-                moveError = "Couldn't move your library: \(error.localizedDescription). WaveWrangler is still using your library in \(old); nothing was changed."
+            moveError = nil
+            handle(await controller.moveLibrary(to: url))
+        }
+    }
+
+    private func handle(_ result: LibraryMoveResult) {
+        switch result {
+        case .moved:
+            moveError = nil
+        case .failed(let reason):
+            moveError = "Couldn't move your library: \(reason)"
+        case .destinationHasLibrary(let folder, let blockedReason):
+            Task { await offerExistingLibrary(in: folder, blockedReason: blockedReason) }
+        }
+    }
+
+    /// ST-33 step 6: Use That Library · Choose Another Folder… · Cancel, with no default button.
+    private func offerExistingLibrary(in folder: URL, blockedReason: String?) async {
+        let alert = NSAlert()
+        alert.messageText = LibraryMoveWording.existingLibraryTitle(folder.lastPathComponent)
+        alert.informativeText = blockedReason ?? LibraryMoveWording.existingLibraryCombineText
+        let use = alert.addButton(withTitle: "Use That Library")
+        use.isEnabled = blockedReason == nil
+        use.keyEquivalent = ""
+        alert.addButton(withTitle: "Choose Another Folder…").keyEquivalent = ""
+        let cancel = alert.addButton(withTitle: "Cancel")
+        cancel.keyEquivalent = "\u{1b}"
+        let response: NSApplication.ModalResponse
+        if let window = NSApp.keyWindow {
+            response = await withCheckedContinuation { continuation in
+                alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
             }
+        } else {
+            response = alert.runModal()
+        }
+        switch response {
+        case .alertFirstButtonReturn:
+            handle(await controller.useExistingLibrary(in: folder))
+        case .alertSecondButtonReturn:
+            handleChoice(.chooseFolder)
+        default:
+            break
         }
     }
 }

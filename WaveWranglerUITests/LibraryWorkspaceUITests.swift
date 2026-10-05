@@ -24,7 +24,8 @@ final class LibraryWorkspaceUITests: XCTestCase {
 
     private func launch(_ arguments: [String]) {
         app = XCUIApplication()
-        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestResetPreferences", "YES", "-WWUITestCenterWindows", "YES"] + arguments
+        // -WWUITestHooks isolates persistence storage/preferences from the user's (Document/UITestHooks).
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES", "-WWUITestCenterWindows", "YES"] + arguments
         app.launch()
         app.activate()
     }
