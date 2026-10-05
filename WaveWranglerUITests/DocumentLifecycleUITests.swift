@@ -78,11 +78,12 @@ final class DocumentLifecycleUITests: XCTestCase {
     func testAutosaveOnPublishesAndCloseDoesNotPrompt() throws {
         let document = try makeDocument("Close On")
         let window = try launchAndOpen(document, autosave: true)
-        let start = Date()
         try edit(window, title: "Autosaved ON")
+        let committed = Date()
         XCTAssertTrue(waitFor(timeout: 5) { self.diskTitle(document) == "Autosaved ON" })
-        let elapsed = Date().timeIntervalSince(start)
-        record("ON edit-to-disk (UI, includes typing) \(String(format: "%.3f", elapsed)) s")
+        let elapsed = Date().timeIntervalSince(committed)
+        record("ON committed-edit-to-disk (native app, 1 s policy) \(String(format: "%.3f", elapsed)) s")
+        XCTAssertLessThanOrEqual(elapsed, 2.0, "WW-005 provisional ≤2 s")
 
         app.typeKey("w", modifierFlags: .command)
         XCTAssertFalse(app.sheets.firstMatch.waitForExistence(timeout: 1.5), "no prompt with autosave ON")
@@ -148,6 +149,13 @@ final class DocumentLifecycleUITests: XCTestCase {
             "-ApplePersistenceIgnoreState", "YES",
         ]
         app.launch()
+        // A clean launch-time Untitled show would host the document as a tab; close it first (clean ⇒ no prompt).
+        let untitled = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
+        if untitled.waitForExistence(timeout: 3) {
+            untitled.click()
+            app.typeKey("w", modifierFlags: .command)
+            _ = waitFor(timeout: 3) { !untitled.exists }
+        }
         app.open(document)
         let name = document.deletingPathExtension().lastPathComponent
         let window = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", name)).firstMatch
@@ -170,11 +178,13 @@ final class DocumentLifecycleUITests: XCTestCase {
     private func closeSheet() throws -> XCUIElement {
         let sheet = app.sheets.firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 5), "native Save / Don't Save / Cancel decision")
+        let labels = sheet.buttons.allElementsBoundByIndex.map(\.title)
+        record("sheet buttons: \(labels)")
         return sheet
     }
 
     private func dontSave(in sheet: XCUIElement) -> XCUIElement {
-        sheet.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Don'")).firstMatch
+        sheet.buttons.matching(NSPredicate(format: "title BEGINSWITH 'Don' OR label BEGINSWITH 'Don'")).firstMatch
     }
 
     private func post(_ name: Notification.Name) {

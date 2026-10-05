@@ -77,8 +77,10 @@ final class AutosavePolicyController {
 
     private init() {
         preference = PersistenceEnvironment.autosaveGate.preference
-        observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { AutosavePolicyController.shared.syncFromDefaults() }
+        // Capture weakly instead of reaching through `shared`: the notification is posted synchronously by our
+        // own writes, which can happen while `shared` is still being initialized.
+        observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.syncFromDefaults() }
         }
         UITestHooks.installIfRequested(self)
     }
