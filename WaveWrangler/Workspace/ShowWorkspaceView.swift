@@ -16,7 +16,7 @@ struct ShowWorkspaceView: View {
                 TextField("Show title", text: $titleDraft)
                     .textFieldStyle(.roundedBorder)
                     .focused($titleFocused)
-                    .onSubmit(commitTitle)
+                    .onSubmit(finishTitleEditing)
             }
 
             Text("Episodes")
@@ -49,19 +49,32 @@ struct ShowWorkspaceView: View {
         .padding()
         .frame(minWidth: 520, minHeight: 360)
         .onAppear { titleDraft = store.model.show.title }
+        .onChange(of: titleDraft) { _, newValue in applyTitleLive(newValue) }
         .onChange(of: store.model.show.title) { _, newValue in
-            if !titleFocused { titleDraft = newValue }
+            // Undo/redo or a reload changed the title; don't fight in-progress whitespace while typing.
+            if Self.trimmed(titleDraft) != newValue { titleDraft = newValue }
         }
         .onChange(of: titleFocused) { _, focused in
-            if !focused { commitTitle() }
+            if !focused { finishTitleEditing() }
         }
     }
 
-    private func commitTitle() {
-        guard titleDraft != store.model.show.title else { return }
-        if !store.apply("Rename Show", { model throws(DomainError) in try model.renamingShow(to: titleDraft) }) {
-            titleDraft = store.model.show.title
-        }
+    /// Applies every keystroke to the model (one coalesced "Rename Show" undo step per editing burst), so
+    /// Save/autosave/Close/Quit never miss a typed title. An empty draft is not applied; the last
+    /// non-empty title stays in the model and is restored when editing ends.
+    private func applyTitleLive(_ draft: String) {
+        let title = Self.trimmed(draft)
+        guard !title.isEmpty, title != store.model.show.title else { return }
+        store.apply("Rename Show", coalescing: "show-title") { model throws(DomainError) in try model.renamingShow(to: title) }
+    }
+
+    private func finishTitleEditing() {
+        store.endCoalescing()
+        titleDraft = store.model.show.title
+    }
+
+    private static func trimmed(_ string: String) -> String {
+        string.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func addEpisode() {

@@ -143,6 +143,21 @@ struct ShowOperationTests {
         #expect(throws: DomainError.emptyTitle) { try f.model.renamingShow(to: "   ") }
     }
 
+    @Test func duplicateGetsNewShowIDAndKeepsShowScopedIDs() {
+        let copy = f.model.duplicatedAsNewShow()
+        #expect(copy.show.id != f.model.show.id)
+        #expect(copy.show.title == f.model.show.title)
+        #expect(copy.episodes == f.model.episodes)
+        #expect(copy.speakers == f.model.speakers)
+        #expect(copy.validationIssues().isEmpty)
+
+        let library = LibraryModel(entries: [
+            LibraryShowEntry(showID: f.model.show.id, lastKnownTitle: "Original"),
+            LibraryShowEntry(showID: copy.show.id, lastKnownTitle: "Copy"),
+        ])
+        #expect(library.validationIssues().isEmpty)
+    }
+
     @Test func addsAndRemovesEpisodes() throws {
         let second = Episode(title: "Second", number: 2)
         let added = try f.model.addingEpisode(second)

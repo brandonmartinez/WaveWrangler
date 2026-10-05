@@ -5,11 +5,16 @@ import WWCore
 /// Versioned single-value JSON envelope:
 ///
 /// ```json
-/// {"checksum":"sha256:…","format":"com.brandonmartinez.wavewrangler.show","payload":{…},"revision":3,"schemaVersion":1}
+/// {"checksum":"sha256:…","format":"com.brandonmartinez.wavewrangler.show","payload":{…},
+///  "publicationID":"…UUID…","revision":3,"schemaVersion":1}
 /// ```
 ///
-/// Read order: header → format → schema range (unknown-newer refusal happens *before* the payload is
-/// decoded) → revision → payload decode → checksum → no unrecognized content → semantic validation. The checksum is SHA-256 over
+/// Read order: version header `{format, schemaVersion}` only → format → schema range (unknown-newer
+/// refusal happens before any version-specific field or the payload is decoded) → version-specific header
+/// `{checksum, publicationID, revision}` → revision → payload decode → checksum → no unrecognized content
+/// → semantic validation. `{format, schemaVersion}` is the only envelope shape frozen across versions.
+///
+/// `revision` is an ordering hint; `publicationID` (fresh per write) and `checksum` identify a publication. The checksum is SHA-256 over
 /// the canonical encoding of the payload (sorted keys); it is integrity bookkeeping, not authenticity.
 ///
 /// This coder only maps values to bytes. Publication (staging, prior-checkpoint retention, coordinated
@@ -27,20 +32,27 @@ public struct JSONEnvelopeCoder<Payload: Codable & Sendable>: CanonicalDocumentC
 
     public func decode(_ data: Data) throws(PersistenceError) -> DecodedDocument<Payload> {
         let decoder = Self.makeDecoder()
-        let header: EnvelopeHeader
+        let version: VersionHeader
         do {
-            header = try decoder.decode(EnvelopeHeader.self, from: data)
+            version = try decoder.decode(VersionHeader.self, from: data)
         } catch {
             throw .malformed("Unreadable envelope header: \(error.localizedDescription)")
         }
-        guard header.format == format.identifier else {
-            throw .formatMismatch(expected: format.identifier, found: header.format)
+        guard version.format == format.identifier else {
+            throw .formatMismatch(expected: format.identifier, found: version.format)
         }
-        guard header.schemaVersion <= format.currentSchemaVersion else {
-            throw .unknownNewerSchema(found: header.schemaVersion, supported: format.currentSchemaVersion)
+        guard version.schemaVersion <= format.currentSchemaVersion else {
+            throw .unknownNewerSchema(found: version.schemaVersion, supported: format.currentSchemaVersion)
         }
-        guard header.schemaVersion >= format.minimumReadableSchemaVersion else {
-            throw .unsupportedOlderSchema(found: header.schemaVersion, minimum: format.minimumReadableSchemaVersion)
+        guard version.schemaVersion >= format.minimumReadableSchemaVersion else {
+            throw .unsupportedOlderSchema(found: version.schemaVersion, minimum: format.minimumReadableSchemaVersion)
+        }
+
+        let header: PublicationHeader
+        do {
+            header = try decoder.decode(PublicationHeader.self, from: data)
+        } catch {
+            throw .malformed("Unreadable envelope header: \(error.localizedDescription)")
         }
         guard header.revision >= 1 else { throw .invalidRevision(header.revision) }
 
@@ -59,24 +71,33 @@ public struct JSONEnvelopeCoder<Payload: Codable & Sendable>: CanonicalDocumentC
             throw .unrecognizedContent
         }
 
-        let issues = validate(payload, header.schemaVersion)
+        let issues = validate(payload, version.schemaVersion)
         guard issues.isEmpty else { throw .invalidPayload(issues) }
-        return DecodedDocument(payload: payload, revision: header.revision)
+        return DecodedDocument(
+            payload: payload,
+            publication: PublicationStamp(revision: header.revision, publicationID: header.publicationID, checksum: header.checksum)
+        )
     }
 
-    public func encode(_ payload: Payload, revision: Int) throws(PersistenceError) -> Data {
+    public func encodeDocument(_ payload: Payload, revision: Int, publicationID: UUID) throws(PersistenceError) -> EncodedDocument {
         guard revision >= 1 else { throw .invalidRevision(revision) }
         let issues = validate(payload, format.currentSchemaVersion)
         guard issues.isEmpty else { throw .invalidPayload(issues) }
+        let publication = PublicationStamp(
+            revision: revision,
+            publicationID: publicationID,
+            checksum: Self.checksum(of: try Self.canonicalBytes(of: payload))
+        )
         let envelope = Envelope(
-            checksum: Self.checksum(of: try Self.canonicalBytes(of: payload)),
+            checksum: publication.checksum,
             format: format.identifier,
             payload: payload,
+            publicationID: publicationID,
             revision: revision,
             schemaVersion: format.currentSchemaVersion
         )
         do {
-            return try Self.makeEncoder().encode(envelope)
+            return EncodedDocument(data: try Self.makeEncoder().encode(envelope), publication: publication)
         } catch {
             throw .encodingFailed(error.localizedDescription)
         }
@@ -119,11 +140,17 @@ public struct JSONEnvelopeCoder<Payload: Codable & Sendable>: CanonicalDocumentC
         return decoder
     }
 
-    private struct EnvelopeHeader: Decodable {
-        let checksum: String
+    /// The only envelope fields whose shape is frozen across schema versions.
+    private struct VersionHeader: Decodable {
         let format: String
-        let revision: Int
         let schemaVersion: Int
+    }
+
+    /// Version-specific publication fields, decoded only after the schema version is supported.
+    private struct PublicationHeader: Decodable {
+        let checksum: String
+        let publicationID: UUID
+        let revision: Int
     }
 
     private struct PayloadBox<Value: Decodable>: Decodable {
@@ -134,6 +161,7 @@ public struct JSONEnvelopeCoder<Payload: Codable & Sendable>: CanonicalDocumentC
         let checksum: String
         let format: String
         let payload: Payload
+        let publicationID: UUID
         let revision: Int
         let schemaVersion: Int
     }

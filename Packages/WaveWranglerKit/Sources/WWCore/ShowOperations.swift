@@ -33,6 +33,14 @@ extension ShowDocumentModel {
         return copy
     }
 
+    /// A copy that is a distinct show: it gets a new `ShowID`. Episode, source, speaker and other logical
+    /// IDs are scoped to their show and are kept, so the copy still refers to the same referenced originals.
+    public func duplicatedAsNewShow(id: ShowID = ShowID()) -> ShowDocumentModel {
+        var copy = self
+        copy.show.id = id
+        return copy
+    }
+
     public func addingEpisode(_ episode: Episode) throws(DomainError) -> ShowDocumentModel {
         guard self.episode(episode.id) == nil else { throw .duplicateEpisode(episode.id) }
         guard !episode.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw .emptyTitle }
