@@ -43,7 +43,9 @@ final class DocumentLifecycleUITests: XCTestCase {
         XCTAssertTrue(bar.waitForExistence(timeout: 10), "the unsaved-changes offer appears on open")
         record("offer: \(bar.label) | \(bar.value as? String ?? "")")
         XCTAssertTrue(bar.label.hasPrefix("Restore unsaved changes from "), bar.label)
-        XCTAssertTrue((bar.value as? String)?.contains("never saved") == true, "VoiceOver value is the visible body")
+        // VoiceOver: a group labelled by its heading; the heading (header trait) and body are its children.
+        let body = bar.staticTexts.matching(NSPredicate(format: "value CONTAINS 'never saved' OR label CONTAINS 'never saved'")).firstMatch
+        XCTAssertTrue(body.exists, "the body text is exposed to VoiceOver")
         XCTAssertTrue(bar.buttons["Restore Unsaved Changes"].exists && bar.buttons["Discard…"].exists)
         XCTAssertEqual(diskTitle(document), "Synthetic Trial Show 1", "opening never applies or publishes the checkpoint")
 
@@ -107,8 +109,11 @@ final class DocumentLifecycleUITests: XCTestCase {
         let copy = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
         XCTAssertTrue(copy.waitForExistence(timeout: 10))
         XCTAssertEqual(showTitleField(copy).value as? String, "Session A edits")
-        XCTAssertEqual(showTitleField(window).value as? String, "Session B edits", "B's restore is untouched")
         XCTAssertEqual(diskTitle(document), "Synthetic Trial Show 1", "restores and copies never save")
+        let original = try closeCopyWithoutSaving(copy, original: "Relaunch Two Sessions")
+        XCTAssertEqual(showTitleField(original).value as? String, "Session B edits", "B's restore is untouched")
+        XCTAssertTrue(messageBar(original).waitForExistence(timeout: 5), "A copy closed without saving offers its changes again")
+        XCTAssertTrue(messageBar(original).label.hasPrefix("More unsaved changes from "))
     }
 
     /// C2b: if the show was saved since the checkpoint's base, the offer is "Unsaved changes based on an older
@@ -130,9 +135,12 @@ final class DocumentLifecycleUITests: XCTestCase {
         XCTAssertTrue(copy.waitForExistence(timeout: 10), "a separate untitled copy opens")
         let copyField = showTitleField(copy)
         XCTAssertTrue(copyField.waitForExistence(timeout: 5))
-        XCTAssertEqual(copyField.value as? String, "Unsaved on the old revision")
+        XCTAssertEqual(copyField.value as? String, "Unsaved on the old revision", "the whole typing burst was checkpointed")
         XCTAssertEqual(diskTitle(document), "Saved elsewhere", "never merged or published")
-        XCTAssertEqual(showTitleField(window).value as? String, "Saved elsewhere")
+        let original = try closeCopyWithoutSaving(copy, original: "Relaunch Older")
+        XCTAssertEqual(showTitleField(original).value as? String, "Saved elsewhere")
+        XCTAssertTrue(messageBar(original).waitForExistence(timeout: 5), "A copy closed without saving offers its changes again")
+        XCTAssertEqual(messageBar(original).label, "Unsaved changes based on an older revision")
     }
 
     /// AS05 (Close): OFF never autosaves; Close offers Save / Don't Save / Cancel; Cancel keeps the work.
@@ -311,6 +319,17 @@ final class DocumentLifecycleUITests: XCTestCase {
         assertDiskTitle(document, stays: "Synthetic Trial Show 1", for: 3)
         forceQuit()
         XCTAssertEqual(diskTitle(document), "Synthetic Trial Show 1", "nothing was published before the crash")
+    }
+
+    /// The copy opens as a tab of the original's window. Closing it without saving shows the original again. An
+    /// untitled document with autosave ON gets AppKit's Delete / Cancel / Save sheet.
+    private func closeCopyWithoutSaving(_ copy: XCUIElement, original name: String) throws -> XCUIElement {
+        copy.click()
+        app.typeKey("w", modifierFlags: .command)
+        try closeSheet().buttons["Delete"].click()
+        let original = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", name)).firstMatch
+        XCTAssertTrue(original.waitForExistence(timeout: 10), "the original show is shown again")
+        return original
     }
 
     private static let slowAutosave = ["-WWUITestAutosaveDelay", "30"]

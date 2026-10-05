@@ -300,6 +300,13 @@ final class ShowDocument: NSDocument {
         }
     }
 
+    /// A coalesced edit changed the model without a new undo step (and so without `updateChangeCount`): restart
+    /// quiescence so the next edit checkpoint or autosave contains the whole burst.
+    func coalescedEditDidChangeModel() {
+        guard isDocumentEdited else { return }
+        scheduleAutosaving()
+    }
+
     private func performQuiescentWork(_ work: QuiescentWork) {
         switch work {
         case .publish:

@@ -14,7 +14,7 @@ struct EditCheckpointOfferPresentationTests {
         #expect(p.body.contains("“The Daily Wrangle”") && p.body.contains("never saved") && p.body.contains("unsaved changes"))
         #expect(!p.body.localizedCaseInsensitiveContains("saved to"))
         #expect(p.actions == [.restore, .discard])
-        #expect(p.announcement == p.heading && p.accessibilityValue == p.body)
+        #expect(p.announcement == p.heading)
         #expect(EditCheckpointAction.restore.rawValue == "Restore Unsaved Changes")
     }
 

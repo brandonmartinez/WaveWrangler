@@ -29,8 +29,6 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
     public var symbolName: String
     public var actions: [EditCheckpointAction]
 
-    /// VoiceOver (ST-03): the bar's label is its heading; its value is the visible body text.
-    public var accessibilityValue: String { body }
     /// Announced once when the bar first appears (states §7, "Recovered … on open"); never moves focus.
     public var announcement: String { heading }
 

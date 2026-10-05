@@ -8,8 +8,6 @@ struct MessageBar: View {
     let symbolName: String
     let actions: [(String, () -> Void)]
     var identifier = "ww.show.messageBar"
-    /// VoiceOver value for the bar (ST-03); `nil` leaves the default.
-    var accessibilityValue: String?
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -37,20 +35,17 @@ struct MessageBar: View {
             Spacer(minLength: 0)
         }
         .padding(10)
+        // The bar never raises its container's minimum height. Its vertically fixed-size text, asked for a minimum
+        // at zero width (as the hosting controller does to size the window), wraps per character and reports
+        // thousands of points, which pushed the whole show window's content off-screen. Laid out at the real
+        // width it still gets its full ideal height.
+        .frame(minHeight: 0)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) { Divider() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(heading)
-        .modifier(OptionalAccessibilityValue(value: accessibilityValue))
         .accessibilityIdentifier(identifier)
     }
 }
 
-private struct OptionalAccessibilityValue: ViewModifier {
-    let value: String?
-
-    func body(content: Content) -> some View {
-        if let value { content.accessibilityValue(value) } else { content }
-    }
-}

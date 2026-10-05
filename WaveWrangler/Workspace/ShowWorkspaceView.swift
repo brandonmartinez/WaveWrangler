@@ -46,11 +46,13 @@ private struct ShowWindowContent: View {
             ShowSidebar(state: state)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 230, max: 380)
         } detail: {
-            VStack(spacing: 0) {
-                ShowMessageBar(state: state)
-                ShowDetailContent(state: state)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            // The message bar is a top safe-area inset of the detail content: the content's own (possibly very tall)
+            // ideal height can't push the bar out of the window.
+            ShowDetailContent(state: state)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    ShowMessageBar(state: state)
+                }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -299,13 +301,12 @@ private struct ShowMessageBar: View {
     var body: some View {
         let presentation = state.presentation
         // The unsaved-changes offer (C2b) takes the bar first; save-state messages follow once it is resolved.
-        if let offer = state.editCheckpointOffer {
+        if state.isWindowAttached, let offer = state.editCheckpointOffer {
             MessageBar(
                 heading: offer.presentation.heading,
                 message: offer.presentation.body,
                 symbolName: offer.presentation.symbolName,
-                actions: offer.presentation.actions.map { action in (action.rawValue, { state.performEditCheckpointAction(action) }) },
-                accessibilityValue: offer.presentation.accessibilityValue
+                actions: offer.presentation.actions.map { action in (action.rawValue, { state.performEditCheckpointAction(action) }) }
             )
             .onAppear { state.editCheckpointOfferDidAppear(offer.presentation) }
             .onChange(of: offer.presentation.heading) { _, _ in state.editCheckpointOfferDidAppear(offer.presentation) }

@@ -24,6 +24,9 @@ final class ShowWindowState {
     var titleFocusRequest = 0
     var saveStatusPopoverShown = false
     var dismissedMessageBar: String?
+    /// Set one main-queue turn after the window is attached. A message bar present at the window's very first
+    /// layout (the C2b offer exists before the window does) broke the split view's layout; it appears after.
+    var isWindowAttached = false
     /// The C2b offer heading already announced in this window (announced once, never moving focus).
     @ObservationIgnored private var announcedEditCheckpointHeading: String?
     /// Whether the Episodes list has keyboard focus (Edit › Delete / Move act on the focused list only).
@@ -248,6 +251,7 @@ final class ShowWindowState {
         // view (re-entrant constraint updates); apply them on the next main-queue turn.
         DispatchQueue.main.async { [weak self, weak window] in
             guard let self, let window else { return }
+            self.isWindowAttached = true
             if let hosting = window.contentViewController as? NSHostingController<ShowWorkspaceView> {
                 hosting.sceneBridgingOptions = [.toolbars]
             }
