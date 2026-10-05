@@ -29,6 +29,17 @@ swift test \
   --scratch-path "$ROOT/.build/swiftpm" \
   --jobs "$JOBS"
 
+# Timing gates (WW-005 ≤2 s edit-to-quiescent checkpoint, publication cost, library scale p95) run one at a
+# time after the parallel suite, so the fault harness's own I/O does not distort the measurements.
+for timing_test in editToQuiescentCheckpointLatency publicationPipelineCost hundredShowsThousandSourceRefs; do
+  echo "==> swift test timing pass: $timing_test"
+  WW_TIMING_TESTS=1 swift test \
+    --package-path "$ROOT/Packages/WaveWranglerKit" \
+    --scratch-path "$ROOT/.build/swiftpm" \
+    --jobs "$JOBS" \
+    --filter "$timing_test"
+done
+
 if [[ "$PACKAGE_ONLY" == 1 ]]; then
   exit 0
 fi

@@ -377,3 +377,21 @@ enum Evidence {
         }
     }
 }
+
+// MARK: - Waiting and timing gates
+
+/// Polls `condition` until it holds or `timeout` elapses (functional tests must not depend on host load).
+func eventually(timeout: Double = 15, _ condition: @Sendable () async -> Bool) async -> Bool {
+    let deadline = ContinuousClock.now + .seconds(timeout)
+    while ContinuousClock.now < deadline {
+        if await condition() { return true }
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    return await condition()
+}
+
+/// Timing gates (≤2 s checkpoint, p95 budgets) are measured in a dedicated serialized pass
+/// (`WW_TIMING_TESTS=1`, see scripts/test.sh) so the harness's own parallel I/O does not distort them.
+enum TimingGate {
+    static let enabled = ProcessInfo.processInfo.environment["WW_TIMING_TESTS"] == "1"
+}

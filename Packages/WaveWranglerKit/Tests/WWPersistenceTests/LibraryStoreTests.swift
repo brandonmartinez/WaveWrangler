@@ -243,7 +243,8 @@ struct LibraryStoreTests {
 @Suite("Scale (headless, this host)", .serialized)
 struct LibraryScaleTests {
     /// 100 show documents carrying 1,000 logical source references, a 100-entry library; p95 timings.
-    @Test func hundredShowsThousandSourceRefs() async throws {
+    @Test(.enabled(if: TimingGate.enabled, "timing pass (WW_TIMING_TESTS=1)"))
+    func hundredShowsThousandSourceRefs() async throws {
         let rig = LibraryRig("scale")
         let docs = rig.dir.sub("Shows")
         let shows = (0..<100).map { Fixtures.show(seed: 10_000 + UInt64($0), episodes: 2, sourcesPerEpisode: 5) }

@@ -89,9 +89,11 @@ struct MultiProcessTests {
             let url = rig.url("Kill-\(index).wwshow")
             let (old2, _) = try rig.seedTwoRevisions(model, at: url)
             let (process, pipe) = try Self.launch(["kill-at", "--file", url.path, "--boundary", boundary.rawValue, "--recovery", rig.recovery.root.path])
-            _ = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             process.waitUntilExit()
-            if process.terminationStatus == 73 { killed += 1 }
+            if process.terminationStatus == 73 { killed += 1 } else {
+                Issue.record("probe did not die at \(boundary.rawValue): status \(process.terminationStatus) \(output)")
+            }
             switch rig.opener.open(url, key: .show(model.show.id)) {
             case let .editable(document, _):
                 if document.payload == old2, document.revision == 2 { old += 1 }

@@ -63,9 +63,8 @@ struct AutosavePolicyTests {
         #expect(scheduler.noteEdit())
         try await Task.sleep(for: .milliseconds(200))
         gate.preference.enabled = false
-        try await Task.sleep(for: .milliseconds(1300))
+        #expect(await eventually { skipped.count == 1 })
         #expect(ran.count == 0)
-        #expect(skipped.count == 1)
     }
 
     @Test func turningOnWithPendingEditsPublishes() async throws {
@@ -83,8 +82,7 @@ struct AutosavePolicyTests {
         scheduler.noteEdit()
         gate.preference.enabled = true
         scheduler.reschedulePending()
-        try await Task.sleep(for: .milliseconds(1600))
-        #expect(published.count == 1)
+        #expect(await eventually { published.count == 1 })
         #expect(await !session.isDirty)
         guard case let .editable(document, _) = rig.opener.open(url) else { Issue.record("not editable"); return }
         #expect(document.payload.show.title == "Pending while off")
@@ -102,9 +100,8 @@ struct AutosavePolicyTests {
         let before = try Data(contentsOf: url)
         try await session.edit { try $0.renamingShow(to: "Drafted") }
         scheduler.noteEdit()
-        try await Task.sleep(for: .milliseconds(1500))
+        #expect(await eventually { drafts.count == 1 })
         scheduler.cancelPending()
-        #expect(drafts.count == 1)
         #expect(try Data(contentsOf: url) == before, "an edit checkpoint is not a save")
         let record = try #require(rig.recovery.latestEditCheckpoint(for: session.key))
         #expect(record.unpublished && record.recordKind == "edit-checkpoint" && record.checkpointSequence == 1)
@@ -119,7 +116,8 @@ struct AutosavePolicyTests {
 
     /// WW-005 provisional gate: ≤2 s from the last edit to a coherent, independently read-back checkpoint.
     /// Headless measurement on this host; it does not establish native NSDocument scheduling timing.
-    @Test func editToQuiescentCheckpointLatency() async throws {
+    @Test(.enabled(if: TimingGate.enabled, "timing pass (WW_TIMING_TESTS=1)"))
+    func editToQuiescentCheckpointLatency() async throws {
         let rig = Rig()
         // Default policy: publication after 1 s quiescence.
         let gate = AutosaveGate(AutosavePreference(enabled: true, delaySeconds: 1))
@@ -176,7 +174,8 @@ struct AutosavePolicyTests {
         scheduler.cancelPending()
     }
 
-    @Test func publicationPipelineCost() throws {
+    @Test(.enabled(if: TimingGate.enabled, "timing pass (WW_TIMING_TESTS=1)"))
+    func publicationPipelineCost() throws {
         let rig = Rig()
         var model = Fixtures.show(seed: 44, episodes: 6, sourcesPerEpisode: 8)
         let url = rig.url()

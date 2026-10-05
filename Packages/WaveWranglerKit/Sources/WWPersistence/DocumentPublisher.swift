@@ -269,8 +269,9 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
                            isCancelled: isCancelled, step: step, followUp: followUp)
     }
 
-    /// Publishes already-encoded bytes (used for exact copies such as library relocation).
-    func publish(
+    /// Publishes already-encoded bytes (exact copies such as library relocation, or the candidate an
+    /// NSDocument save will write through `.external`).
+    public func publish(
         encoded: EncodedDocument,
         key: DocumentKey,
         to url: URL,
