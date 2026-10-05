@@ -14,14 +14,17 @@ let package = Package(
         .library(name: "WWPersistence", targets: ["WWPersistence"]),
         .library(name: "WWSources", targets: ["WWSources"]),
         .library(name: "WWEpisodeSetup", targets: ["WWEpisodeSetup"]),
+        // Headless persistence probe for multi-process and observed-provider trials (synthetic documents only).
+        .executable(name: "wwpersist-probe", targets: ["WWPersistenceProbe"]),
     ],
     targets: [
         .target(name: "WWCore"),
         .target(name: "WWPersistence", dependencies: ["WWCore"]),
         .target(name: "WWSources", dependencies: ["WWCore"]),
         .target(name: "WWEpisodeSetup", dependencies: ["WWCore", "WWSources"]),
+        .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
-        .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore"]),
+        .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore", "WWPersistenceProbe"]),
         .testTarget(name: "WWSourcesTests", dependencies: ["WWSources", "WWCore"]),
         .testTarget(name: "WWEpisodeSetupTests", dependencies: ["WWEpisodeSetup", "WWCore", "WWSources"]),
     ],

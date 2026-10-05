@@ -65,9 +65,9 @@ final class CaseEnv: @unchecked Sendable {
     var failures: [String] = []
     /// Stall detection by unchanged polls, never wall-clock time, so results do not depend on host load.
     /// No non-stall script has more than 10 consecutive unchanged polls.
-    let transferPolicy = TransferPolicy(pollInterval: .milliseconds(1), stallAfterUnchangedPolls: 500)
+    let transferPolicy = TransferPolicy(pollInterval: .milliseconds(1), stallAfterUnchangedPolls: 500, stalledPollInterval: .milliseconds(1), maxStalledPollInterval: .milliseconds(2))
     /// Only for the dedicated REF-015 stall cases.
-    let stallPolicy = TransferPolicy(pollInterval: .milliseconds(1), stallAfterUnchangedPolls: 5)
+    let stallPolicy = TransferPolicy(pollInterval: .milliseconds(1), stallAfterUnchangedPolls: 5, stalledPollInterval: .milliseconds(1), maxStalledPollInterval: .milliseconds(2))
 
     init(family: MatrixFamily, split: String, index: Int) throws {
         self.family = family
@@ -197,7 +197,7 @@ enum MatrixScenarios {
         case .ref012: try await progress(env, variant: index % 3)
         case .ref013: try await cancel(env)
         case .ref014: try await retry(env, variant: index % 3)
-        case .ref015: try await offline(env, variant: index % 3)
+        case .ref015: try await offline(env, variant: index % 4)
         case .ref016: try await scopeInjection(env, op: index % 6, injection: (index / 6) % 5)
         case .ref017: try await crossMachine(env, variant: index % 3)
         case .srcOff001: try await offWorkflow(env, useMonitor: index % 3 == 0)
@@ -570,20 +570,45 @@ enum MatrixScenarios {
     }
 
     // M1-REF-015
+    /// Variants: 0 offline at request time, 1 provider-reported unavailable, 2 stall then user cancel,
+    /// 3 stall then the provider completes (observation continues with backoff and flips to idle).
     static func offline(_ env: CaseEnv, variant: Int) async throws {
         let (url, record, _) = try await env.importOne()
         switch variant {
         case 0: env.io.simulate(url, SimulatedCloudItem(script: [], requestError: SourceErrorDescriptor(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)))
         case 1: env.io.simulate(url, SimulatedCloudItem(script: [.progress(nil), .error(SourceErrorDescriptor(domain: NSCocoaErrorDomain, code: NSUbiquitousFileUnavailableError))]))
-        default: env.io.simulate(url, SimulatedCloudItem(script: Array(repeating: .stall, count: 10_000)))
+        case 2: env.io.simulate(url, SimulatedCloudItem(script: Array(repeating: .stall, count: 100_000)))
+        default: env.io.simulate(url, SimulatedCloudItem(script: Array(repeating: .stall, count: env.int(8...40)) + [.complete]))
         }
-        let controller = SourceTransferController(context: env.context, policy: variant == 2 ? env.stallPolicy : env.transferPolicy, setting: .on)
+        let controller = SourceTransferController(context: env.context, policy: variant >= 2 ? env.stallPolicy : env.transferPolicy, setting: .on)
+        let collector = await eventCollector(controller, key: record.key) { $0.isOfflineOrUnknown || $0 == .idle || $0.isFailed }
         _ = await env.app { await controller.makeAvailable(record.key, at: url) }
-        let final = await controller.waitUntilSettled(record.key)
-        env.check(final.isOfflineOrUnknown, "final \(final)")
-        let evaluation = await env.evaluate(record, transfer: final)
+        let firstTerminal = (await collector.value).last
+        env.check(firstTerminal?.isOfflineOrUnknown == true, "first terminal \(String(describing: firstTerminal))")
+        if variant >= 2 {
+            env.check(await controller.isActive(record.key), "stalled transfer stopped observing")
+        }
+        let reported = await controller.reportableState(of: record.key)
+        let evaluation = await env.evaluate(record, transfer: reported)
         env.check(evaluation.observation.residency == .cloudPlaceholder || evaluation.observation.residency == .downloading, "residency \(evaluation.observation.residency)")
+        env.check(evaluation.observation.transfer.isOfflineOrUnknown, "transfer \(evaluation.observation.transfer)")
         env.check(evaluation.observation.remedies.contains(.retryTransfer), "remedies \(evaluation.observation.remedies)")
+        switch variant {
+        case 2:
+            await controller.cancel(record.key)
+            let afterCancel = await controller.state(of: record.key)
+            env.check(afterCancel == .cancelled, "after cancel \(afterCancel)")
+            env.check(env.context.ledger.snapshot.openScopes == 0, "scope open after cancel returned")
+            env.check(await controller.activeCount == 0, "still observing after cancel")
+        case 3:
+            let final = await controller.waitUntilSettled(record.key)
+            env.check(final == .idle, "stall then complete \(final)")
+            let after = await env.evaluate(record, transfer: await controller.reportableState(of: record.key))
+            env.check(after.observation.residency == .local && after.observation.transfer == .idle, "after completion \(after.observation.residency) \(after.observation.transfer)")
+        default:
+            break
+        }
+        env.check(env.io.count(.downloadRequest) == 1, "requests \(env.io.count(.downloadRequest))")
     }
 
     // M1-REF-016
@@ -733,7 +758,7 @@ enum MatrixScenarios {
         try await monitor.adopt(records)
         for record in records { _ = await monitor.transfers.waitUntilSettled(record.key) }
         env.writes += TreeSnapshot.take(env.tree.sources).differences(from: before)
-        monitor.stop()
+        await monitor.stop()
         env.check(monitor.observations.count == records.count, "monitor observations")
     }
 
@@ -822,7 +847,6 @@ extension MatrixScenarios {
         let store = InMemoryDeviceAccessStore([record])
         let monitor = SourceAvailabilityMonitor(showID: env.showID, store: store, context: env.context, setting: .on, transferPolicy: env.transferPolicy)
         monitor.start()
-        defer { monitor.stop() }
         let id = record.sourceID
         let before = TreeSnapshot.take(env.tree.sources)
         defer { env.writes += TreeSnapshot.take(env.tree.sources).differences(from: before) }
@@ -882,6 +906,7 @@ extension MatrixScenarios {
             env.check(final == .idle, "after access restored \(final)")
             env.check(env.io.count(.downloadRequest) == 1, "requests \(env.io.count(.downloadRequest))")
         }
+        await monitor.stop()
     }
 }
 

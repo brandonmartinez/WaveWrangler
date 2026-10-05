@@ -199,7 +199,8 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
 
     isolated deinit {
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
-        monitor.stop()
+        let monitor = monitor
+        Task { await monitor.stop() }
     }
 
     /// Applies the current "Download sources automatically" preference to the engine.
