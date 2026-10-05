@@ -87,7 +87,7 @@ public final class ShowLocationStore: Sendable {
 
     /// Records (or replaces) the location of `showID` with a fresh read-write bookmark to `url`.
     public func record(_ showID: ShowID, at url: URL, date: Date = Date()) throws {
-        let record = ShowLocationRecord(showID: showID, bookmark: try bookmarks.bookmark(for: url), pathHint: url.standardizedFileURL.path, recordedAt: Self.wholeMilliseconds(date))
+        let record = ShowLocationRecord(showID: showID, bookmark: try bookmarks.bookmark(for: url), pathHint: Self.canonicalPath(url), recordedAt: Self.wholeMilliseconds(date))
         try write(record)
     }
 
@@ -111,7 +111,7 @@ public final class ShowLocationStore: Sendable {
             return (.regrantRequired(reason: "The saved permission for this show can't be used any more."), nil)
         }
         let url = resolved.url.standardizedFileURL
-        guard url.path == record.pathHint else {
+        guard Self.canonicalPath(url) == record.pathHint else {
             return (.relinkRequired(candidate: url, reason: "The show is no longer where it was last opened."), nil)
         }
         let started = bookmarks.startAccessing(url)
@@ -157,6 +157,11 @@ public final class ShowLocationStore: Sendable {
         let staged = staging.appending(path: UUID().uuidString)
         try ops.writeNew(data, to: staged)
         try ops.replace(recordURL(record.showID), withStaged: staged)
+    }
+
+    /// Path with symlinks resolved (e.g. `/var` → `/private/var`) so hints compare reliably.
+    static func canonicalPath(_ url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     static func wholeMilliseconds(_ date: Date) -> Date {
