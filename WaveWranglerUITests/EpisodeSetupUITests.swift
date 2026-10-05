@@ -344,6 +344,55 @@ final class EpisodeSetupUITests: XCTestCase {
         for _ in 0..<4 { menu("View", "Text Size", "Smaller") }
     }
 
+    // MARK: #104 — default window layout
+
+    /// Source rows (name cells) fully inside the Sources outline's visible frame.
+    private func visibleSourceRows(_ outline: XCUIElement) -> [XCUIElement] {
+        let frame = outline.frame
+        return app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND NOT (identifier CONTAINS '.status') AND NOT (identifier ENDSWITH '.epoch') AND NOT (identifier ENDSWITH '.channel') AND NOT (identifier ENDSWITH '.speaker') AND NOT (identifier ENDSWITH '.role')"))
+            .allElementsBoundByIndex
+            .filter { $0.exists && $0.frame.minY >= frame.minY - 1 && $0.frame.maxY <= frame.maxY + 1 && $0.frame.height > 0 }
+    }
+
+    private func assertStatusVisible(_ outline: XCUIElement, _ context: String, file: StaticString = #filePath, line: UInt = #line) {
+        let status = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status'")).firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 3), "\(context): status cell exists", file: file, line: line)
+        let frame = outline.frame
+        XCTAssertGreaterThanOrEqual(status.frame.minX, frame.minX - 1, "\(context): status inside the table", file: file, line: line)
+        XCTAssertLessThanOrEqual(status.frame.maxX, frame.maxX + 1, "\(context): status not clipped (\(status.frame) vs \(frame))", file: file, line: line)
+        XCTAssertGreaterThan(status.frame.width, 20, "\(context): status has width", file: file, line: line)
+    }
+
+    /// At the default show-window size Sources shows several rows with Status readable (no horizontal
+    /// scrolling), Speakers stays usable, details collapse to a bar, and 200% text still shows Status.
+    func testDefaultWindowShowsSeveralSourceRowsWithStatus() {
+        importFixture()
+        menu("Window", "Zoom")  // back to the default window size
+        let outline = app.outlines["ww.setup.sources"]
+        let shrunk = expectation(for: NSPredicate { _, _ in outline.frame.width < 900 }, evaluatedWith: nil)
+        wait(for: [shrunk], timeout: 3)
+
+        XCTAssertGreaterThanOrEqual(visibleSourceRows(outline).count, 4, "several source rows at the default size (\(outline.frame))")
+        assertStatusVisible(outline, "default window")
+        XCTAssertGreaterThanOrEqual(app.outlines["ww.setup.speakers"].frame.height, 28 + 4 * 22, "Speakers stays usable")
+
+        let toggle = element("ww.setup.detailsToggle")
+        XCTAssertTrue(toggle.exists, "details collapse to a bar in a short, narrow window")
+        XCTAssertEqual(toggle.label, "Show Details")
+        toggle.click()
+        XCTAssertTrue(element("ww.setup.inspector").waitForExistence(timeout: 2), "details can be opened")
+        element("ww.setup.detailsToggle").click()
+
+        for _ in 0..<4 { menu("View", "Text Size", "Bigger") }
+        let grown = expectation(for: NSPredicate { _, _ in self.visibleSourceRows(outline).allSatisfy { $0.frame.height >= 30 } }, evaluatedWith: nil)
+        wait(for: [grown], timeout: 5)
+        assertStatusVisible(outline, "200% text")
+        XCTAssertGreaterThanOrEqual(visibleSourceRows(outline).count, 1, "rows visible at 200% text")
+        for _ in 0..<4 { menu("View", "Text Size", "Smaller") }
+        menu("Window", "Zoom")
+    }
+
     // MARK: T18/T29 — cancel and retry downloads (simulated provider state)
 
     func testT18CancelDownloadConfirmsAndT29Retry() {

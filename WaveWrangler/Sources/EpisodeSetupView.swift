@@ -103,19 +103,41 @@ struct EpisodeSetupView: View {
         // The details panel sits beside the tables when there is room, otherwise below them, so the
         // content always fits its column (no clipped, unreachable rows).
         GeometryReader { geometry in
-            let wide = geometry.size.width >= 860
-            let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
-            layout {
-                tables
-                if showsInspector {
-                    Divider()
-                    SetupInspectorView(model: model)
-                        .frame(width: wide ? 300 : nil)
-                        .frame(maxHeight: wide ? .infinity : max(120, geometry.size.height * 0.25))
-                        .focusSection()
+            let placement = SetupDetailsPlacement.plan(width: geometry.size.width, height: geometry.size.height, scale: scale, userExpanded: model.detailsExpanded)
+            Group {
+                switch placement {
+                case let .beside(width):
+                    HStack(spacing: 0) {
+                        tables
+                        if showsInspector {
+                            Divider()
+                            SetupInspectorView(model: model).frame(width: width).focusSection()
+                        }
+                    }
+                case let .below(height):
+                    VStack(spacing: 0) {
+                        tables
+                        if showsInspector {
+                            Divider()
+                            DetailsBar(model: model, expanded: true)
+                            SetupInspectorView(model: model).frame(height: height).focusSection()
+                        }
+                    }
+                case .collapsed:
+                    VStack(spacing: 0) {
+                        tables
+                        if showsInspector {
+                            Divider()
+                            DetailsBar(model: model, expanded: false)
+                        }
+                    }
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
+            .onChange(of: model.inspectorFocusRequest) {
+                // Return in a table opens the details when they are collapsed.
+                if case .collapsed = placement { model.detailsExpanded = true }
+            }
         }
         .transaction { $0.animation = nil }
         .onChange(of: focusedTable) { model.focusedTable = focusedTable }
@@ -225,8 +247,10 @@ private struct SourcesSection: View {
             if let progress = model.episodeProgress {
                 EpisodeProgressView(progress: progress)
             }
-            SourcesTable(model: model, rows: presentation.sourceRows)
-                .focused(focusedTable, equals: .sources)
+            GeometryReader { geometry in
+                SourcesTable(model: model, rows: presentation.sourceRows, width: geometry.size.width)
+                    .focused(focusedTable, equals: .sources)
+            }
                 .overlay {
                     if model.episode?.sources.isEmpty ?? true {
                         VStack(spacing: 8) {
@@ -307,28 +331,45 @@ private struct EpisodeProgressView: View {
 private struct SourcesTable: View {
     @Bindable var model: EpisodeSetupModel
     let rows: [SetupSourceRow]
-    @Environment(\.setupTextScale) private var scale
+    let width: Double
+    @Environment(\.setupTextScale) private var textScale
+    @State private var customization = TableColumnCustomization<SetupSourceRow>()
+
+    private var scale: Double { Double(textScale) }
+    /// Columns that fit (#104): Status always; Name truncates first; hidden values stay in the details
+    /// panel and the row's VoiceOver value.
+    private var columns: [SetupSourceColumn] { SetupColumnPlan.columns(forWidth: width, scale: scale) }
 
     var body: some View {
-        Table(of: SetupSourceRow.self, selection: $model.selection) {
+        let shown = columns
+        let hidden = Set(SetupSourceColumn.allCases).subtracting(shown)
+        Table(of: SetupSourceRow.self, selection: $model.selection, columnCustomization: $customization) {
             TableColumn("Name") { row in
-                NameCell(row: row)
+                NameCell(row: row, hidden: hidden)
             }
-            .width(min: 140, ideal: 220)
+            .width(min: SetupSourceColumn.nameMinimum(scale: scale), ideal: SetupColumnPlan.nameWidth(shown, tableWidth: width, scale: scale))
+            .customizationID(SetupSourceColumn.name.rawValue)
+            .disabledCustomizationBehavior(.visibility)
             TableColumn("Epoch") { row in SourceCell(row: row, cell: row.epoch, label: "Epoch", column: "epoch") }
-                .width(min: 44 * scale, ideal: 54 * scale)
+                .width(min: 36 * scale, ideal: SetupSourceColumn.epoch.width(scale: scale))
+                .customizationID(SetupSourceColumn.epoch.rawValue)
             TableColumn("Ch") { row in SourceCell(row: row, cell: row.channel, label: "Channel", column: "channel") }
-                .width(min: 36 * scale, ideal: 44 * scale)
+                .width(min: 28 * scale, ideal: SetupSourceColumn.channel.width(scale: scale))
+                .customizationID(SetupSourceColumn.channel.rawValue)
             TableColumn("Speaker") { row in SourceCell(row: row, cell: row.speaker, label: "Speaker", column: "speaker") }
-                .width(min: 70, ideal: 110)
+                .width(min: 56 * scale, ideal: SetupSourceColumn.speaker.width(scale: scale))
+                .customizationID(SetupSourceColumn.speaker.rawValue)
             TableColumn("Role") { row in SourceCell(row: row, cell: row.role, label: "Role", column: "role") }
-                .width(min: 70, ideal: 120)
+                .width(min: 56 * scale, ideal: SetupSourceColumn.role.width(scale: scale))
+                .customizationID(SetupSourceColumn.role.rawValue)
             TableColumn("Status") { row in
                 if let status = row.status, case let .source(id) = row.id {
                     StatusCell(summary: status, identifier: "ww.setup.source.\(id).status")
                 }
             }
-            .width(min: 110, ideal: 180)
+            .width(min: 100 * scale, ideal: SetupSourceColumn.status.width(scale: scale))
+            .customizationID(SetupSourceColumn.status.rawValue)
+            .disabledCustomizationBehavior(.visibility)
         } rows: {
             ForEach(rows) { group in
                 DisclosureTableRow(group, isExpanded: Binding(
@@ -354,6 +395,14 @@ private struct SourcesTable: View {
         .onDeleteCommand { model.requestDeleteFromSources() }
         .onChange(of: model.selection) { model.inspectorFollowsSpeakers = false }
         .environment(\.defaultMinListRowHeight, 22 * scale)
+        .onAppear { apply(shown) }
+        .onChange(of: shown) { apply(shown) }
+    }
+
+    private func apply(_ shown: [SetupSourceColumn]) {
+        for column in SetupSourceColumn.allCases where column != .name && column != .status {
+            customization[visibility: column.rawValue] = shown.contains(column) ? .visible : .hidden
+        }
     }
 
     static func flattened(_ rows: [SetupSourceRow]) -> [SetupSourceRow] {
@@ -363,6 +412,7 @@ private struct SourcesTable: View {
 
 private struct NameCell: View {
     let row: SetupSourceRow
+    var hidden: Set<SetupSourceColumn> = []
 
     var body: some View {
         Group {
@@ -375,10 +425,22 @@ private struct NameCell: View {
                 Text(row.name).setupFont(.body)
             }
         }
-        .lineLimit(2)
+        .lineLimit(1)
         .truncationMode(.middle)
         .accessibilityLabel(row.accessibilityLabel)
+        .accessibilityValue(hiddenSummary)
         .accessibilityIdentifier(row.id.accessibilityIdentifier)
+    }
+
+    /// Values of columns hidden for width, so VoiceOver users don't lose them.
+    private var hiddenSummary: String {
+        guard case .source = row.id else { return "" }
+        var parts: [String] = []
+        if hidden.contains(.epoch) { parts.append("epoch \(row.epoch.accessibilityValue)") }
+        if hidden.contains(.channel) { parts.append("channel \(row.channel.accessibilityValue)") }
+        if hidden.contains(.speaker) { parts.append("speaker \(row.speaker.accessibilityValue)") }
+        if hidden.contains(.role) { parts.append("role \(row.role.accessibilityValue)") }
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -708,6 +770,36 @@ private struct SplitHandle: View {
             }
             .accessibilityValue("\(Int((fraction * 100).rounded())) percent")
             .accessibilityIdentifier("ww.setup.split")
+        }
+    }
+}
+
+/// The details panel's header bar in narrow windows: names the selection and shows or hides the details
+/// (#104). Collapsed by default when the window is short, so the tables keep their rows.
+private struct DetailsBar: View {
+    @Bindable var model: EpisodeSetupModel
+    let expanded: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title).setupFont(.headline).lineLimit(1).truncationMode(.middle)
+                .accessibilityAddTraits(.isHeader)
+            Spacer()
+            Button(expanded ? "Hide Details" : "Show Details") { model.detailsExpanded = !expanded }
+                .accessibilityIdentifier("ww.setup.detailsToggle")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("ww.setup.detailsBar")
+    }
+
+    private var title: String {
+        switch model.inspectorSubject {
+        case let .source(id): "Details — \(model.episode?.source(id)?.displayNameHint ?? "Source")"
+        case let .group(id): "Details — \(model.groupName(id))"
+        case let .speaker(id): "Details — \(model.speakerName(id))"
+        case .none: "Details"
         }
     }
 }
