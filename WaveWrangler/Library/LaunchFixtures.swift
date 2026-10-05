@@ -9,6 +9,7 @@ import WWOrganizer
 /// - `-WWUITestLibraryFixture lib100|empty`: seed the in-memory library (F-LIB100 / F-EMPTY).
 /// - `-WWUITestResetStorage YES` (with `-WWUITestHooks YES`): delete the isolated UI-test storage (library,
 ///   show locations, recovery) so a test starts clean; later launches without it keep the data (relaunch).
+/// - `-WWUITestOpenWithoutShowWindows <folder/name.wwshow>`: see `UITestHooks` (restoration-equivalent open).
 /// - `-WWUITestOpenShow <name>` (+ `-WWUITestShowEpisodes <n>`): create a synthetic show and open it
 ///   (the Library window is then not shown at launch).
 /// - `-WWUITestCenterWindows YES` (implied by `-WWUITestHooks YES`): place windows fully on the primary
@@ -89,6 +90,7 @@ enum LaunchFixtures {
         // suite in UI-test runs, so a plain argument doesn't reach them). Allowed values: 1/2/5/10/30 s.
         let delay = defaults.double(forKey: "WWUITestAutosaveDelaySeconds")
         if delay > 0 { AutosavePolicyController.shared.delaySeconds = delay }
+        UITestHooks.openWithoutShowWindowsIfRequested()
         guard let name = defaults.string(forKey: "WWUITestOpenShow"), !name.isEmpty else { return }
         let count = max(0, defaults.integer(forKey: "WWUITestShowEpisodes"))
         // A stable folder name when asked (relaunch tests reopen the same show); otherwise unique.

@@ -10,7 +10,8 @@ public enum SyntheticLibraryFixture {
     }
 
     /// F-LIB100: `shows` shows carrying `sourceReferences` source references in total, `collections`
-    /// collections and three unavailable entries (not found, needs permission, newer format).
+    /// collections and three unavailable entries (not found, needs permission, newer format; the newer-format
+    /// entry's episode count is unknown).
     public static func make(
         shows: Int = 100,
         sourceReferences: Int = 1_000,
@@ -40,7 +41,9 @@ public enum SyntheticLibraryFixture {
                 state: state,
                 locationDisplayName: locations[index % locations.count],
                 lastOpened: base.addingTimeInterval(Double(index) * 3_600),
-                episodes: episodes,
+                // A show saved by a newer WaveWrangler can't be read, so its episode count is unknown ("—").
+                // The episode IDs are still generated so every other fixture ID stays the same.
+                episodes: state == .newerFormat ? nil : episodes,
                 sourceReferenceCount: refs
             )
         }

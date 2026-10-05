@@ -57,6 +57,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate, NSWin
         window.setFrameAutosaveName("WaveWranglerLibraryWindow")
         state.window = window
         store.undoManagerProvider = { [weak window] in window?.undoManager }
+        #if DEBUG
+        SidebarSwitchBenchmark.startIfRequested(state: state)
+        #endif
     }
 
     @available(*, unavailable)
