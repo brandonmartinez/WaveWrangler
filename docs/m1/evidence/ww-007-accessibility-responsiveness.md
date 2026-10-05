@@ -301,19 +301,28 @@ Under the scoped policy, **ContrastEvidence passed 5/5** (#59 verified again: ro
 | Surface (example finding) | Glyph px · p75 · max | Classification | Action |
 | --- | --- | --- | --- |
 | Show sidebar unselected rows ("Show Info", "2 Synthetic Episode…") | 1,435–2,603 · 15.72–15.91 | Legible system text: **artefact** | Added to the scoped allowlist (still gated per instance) |
-| **Selected** sidebar rows ("1 Synthetic Episode…", Library "Shows") | 1,564–9,484 · **4.02** · 4.02 | **Real failure**: white on the default system-blue selection (#007AFF = 4.02:1) | **Fixed in the product:** the app's `AccentColor` is now #0064E1, so white text on the selection is 5.37:1. This applies when the system accent is Multicolor, the default on both hosts. To be verified in the next mini run. |
+| **Selected** sidebar rows ("1 Synthetic Episode…", Library "Shows") | 1,564–9,484 · **4.02** · 4.02 | **Real failure**: white on the default system-blue selection (#007AFF = 4.02:1) | **Fixed and verified** on the mini at `de30c99`. `AccentColor` is #0064E1 in light and #0A6CF0 in dark. Text on accent measures 5.37–7.17 in light and 4.76–8.31 in dark (`testAccentTintedControls`, crops `contrast-crops/mini-de30c99-accent-*`). |
 | Library entry cells (dates, counts, locations) | 133–2,198 · 11.0–16.3 (most) | Legible system text: **artefact** | Allowlisted (entries frame), gated |
-| Library entry cells with p75 2.06–4.23 (bottom row at the window edge in dark mode; some date cells in light mode) | 999–3,973 · 2.06–4.42 | **Unresolved**: likely clipped at the window/scroll edge; needs crops | Stays unwaived; crops next run |
+| Library entry cells with p75 2.06–4.23 (bottom row at the window edge in dark mode; some date cells in light mode) | 999–3,973 · 2.06–4.42 | **Unresolved.** These came from `testVisualOverridesLightDarkReduceMotion200` (Library at 100%), which wasn't in the `de30c99` slot, so there are no crops yet. | Stays unwaived. Re-run that test with crops in the C04/C05 slot. **Not run.** |
 | Setup Sources cells ("none" placeholders, names, "Access denied; …") | 114–812 · 7.42–17.22 | Legible: **artefact** | Allowlisted (`ww.setup.source.*` / `ww.setup.group.*`), gated |
 | Setup Sources cells with 0 glyph pixels | 0 · — · 1.05–1.38 | Scrolled out of view (#104 layout) | New **offscreen** rule (not hittable and no glyphs), recorded |
 | Window title / subtitle / "Edited" (`AX_EDITING_STATE`), "Library" | 1,134–4,275 · 7.55–15.72 | AppKit title bar text: **artefact** | Allowlisted (top 52 pt of a window), gated |
 | T01 empty state "No episodes yet" | 4,083 · 6.15 | Legible: **artefact** | Allowlisted by text, gated |
 | Inspector "Not set" | 2,333 · 14.09 | Legible: **artefact** | Allowlisted (inside `ww.inspector`), gated |
 | T16 AppKit sheet message ("This document's file has been changed…") | 12,000 · 9.75 | Legible: **artefact** | Allowlisted (`_NS:` text inside a sheet), gated |
-| T16 "Edit the show's title…" (window content under the sheet's band) | 18,550 · 3.15 | Content dimmed behind the sheet, but its midpoint lies inside the sheet's frame | Stays unwaived; to be re-checked with the crop |
-| **T17 recovery alert text** ("The document “Recover…” could not be opened", "A complete earlier revision…") | 8,626–10,462 · **2.85–2.95** | **Unresolved**: an NSAlert measuring below 3:1 is unexpected (possibly an inactive or occluded alert window); needs the crop | Stays unwaived. **T17 audit = Fail** until explained. |
-| Other accent-tinted controls (default button, switches, checkboxes, toolbar destination fill, focus ring) | computed only so far | The accent change affects them. In dark mode the computed accent-vs-background contrast is lower than with system blue (see the [design spec accent decision](../design/states-and-recovery.md#1-rules-for-every-state-indicator)). | Measured light and dark by `ContrastEvidenceUITests.testAccentTintedControls`: text ≥ 4.5 (glyph p75), state fills ≥ 3:1. **Not run yet** (next mini slot). |
+| T16 "Edit the show's title…" (window content under the sheet's band) | 1,029–2,452 · 3.15–3.85 | **Modal dim (measured)**: the crop shows the window's own text dimmed by AppKit while the document-modal sheet is up. Not interactive, not the sheet's content. Coordinator decision 2026-10-05. | Classified as the modal dim from the crop (`contrast-crops/mini-de30c99-audit-crop-T16_external-change_sheet-10.png`). The T16 audit still records it. T16 is a Fail anyway because of #66. |
+| **T17/T20 alert text** (`_NS:74` message, `_NS:58` informative) | 6,264–10,462 · **2.85–2.95** | **Real rendered failure**: the crops show sharp white bold text on the app-modal NSAlert's translucent material, which shows the light desktop behind it in dark mode. Not a blur or dim artefact. | [#126](https://github.com/brandonmartinez/WaveWrangler/issues/126) (P1, Mac). **T17 and T20 audits = Fail.** Crops `contrast-crops/mini-de30c99-audit-crop-T17_*`, `…T20_*`. |
+| Other accent-tinted controls (default button, switches, checkboxes, toolbar destination fill) | see [design spec](../design/states-and-recovery.md#1-rules-for-every-state-indicator) | **Measured** on the mini at `de30c99`. Light: switches 5.28, default bezel 5.37, toolbar destination text 12.02. Dark with #0064E1: switches **2.99 (failed)**, fixed with the dark variant #0A6CF0. Dark at `de30c99`: switches 3.37, bezel 3.51, destination text 6.5. Checkbox: the first run measured accent on the selection highlight (a harness defect). | The harness now measures the checkmark against the fill in a selected row and the fill against its surroundings in an unselected row (`cb586ba`). **Checkbox result Not run yet.** The focus ring isn't measured (FKA not granted). |
+| T03 setup "Role" cell `ww.setup.source.<id>.role` ("none") | 0 · — · 1.06 | Clipped: the column is 12 pt wide at the default window size, so no glyph is visible. Hittable, so the offscreen rule doesn't apply. | Layout problem [#104](https://github.com/brandonmartinez/WaveWrangler/issues/104). Stays unwaived; the T03 audit = Fail. |
 | 200% Library rows | — | Overflow under the title bar | [#109](https://github.com/brandonmartinez/WaveWrangler/issues/109) |
+
+Raw records for the `457dbd1`/`de30c99` mini runs: [`audit-records-mini-de30c99.jsonl`](ww-007/audit-records-mini-de30c99.jsonl). It includes the `accent-controls-*` records.
+
+The `457dbd1` run skipped CoreTasks because WW_PROBE wasn't set; it is reported as **not a CoreTasks run**.
+
+CoreTasks at `de30c99`:
+- **Pass:** T01, T24.
+- **Fail:** T02/T03/T15 on the T03 "Role" cell (#104); T16 on #66, plus the status wording in #125; T17 and T20 on #126.
 
 ## 8. Findings and issues
 
