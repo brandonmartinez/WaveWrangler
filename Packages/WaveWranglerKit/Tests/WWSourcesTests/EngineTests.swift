@@ -562,6 +562,9 @@ struct StallFollowUpTests {
         _ = await collector.value
         #expect(await controller.isActive(key))
         await controller.cancel(key)
+        // cancel returns only after the observer finished: no open scope, no further polls.
+        #expect(controller.context.ledger.snapshot.openScopes == 0)
+        #expect(io.leakedScopes == 0)
         #expect(await controller.state(of: key) == .cancelled)
         #expect(await controller.activeCount == 0)
         #expect(await controller.waitUntilSettled(key) == .cancelled)
@@ -620,12 +623,138 @@ struct StallFollowUpTests {
         let collector = await eventCollector(monitor.transfers, key: record.key) { $0 == .idle }
         monitor.start()
         try await monitor.adopt([record])
-        _ = await collector.value
+        let states = await collector.value
+        #expect(states.contains { $0.isOfflineOrUnknown }, "stall was never observed: \(states)")
         // The monitor's event consumer runs on the main actor; give it a turn.
         for _ in 0..<100 where monitor.observations[record.sourceID]?.transfer != .idle { await Task.yield() }
         #expect(monitor.observations[record.sourceID]?.transfer == .idle)
         #expect(monitor.observations[record.sourceID]?.residency == .local)
         #expect(io.count(.downloadRequest) == 1)
         monitor.stop()
+    }
+}
+
+
+final class SleepLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _durations: [Duration] = []
+    func record(_ duration: Duration) { lock.withLock { _durations.append(duration) } }
+    var durations: [Duration] { lock.withLock { _durations } }
+}
+
+/// Polling has stopped if the metadata call count does not move over a window far longer than any
+/// test poll interval (1–2 ms). A still-running observer would make ~20+ calls in that window.
+func pollingStopped(_ io: HarnessIO) async throws -> Bool {
+    try await Task.sleep(for: .milliseconds(10))
+    let before = io.count(.metadata)
+    try await Task.sleep(for: .milliseconds(40))
+    return io.count(.metadata) == before
+}
+
+@Suite("Stall follow-up: observer lifetime and backoff schedule", .timeLimit(.minutes(1)))
+struct StallLifetimeTests {
+    static let stallForever: [SimulatedCloudItem.Step] = Array(repeating: .stall, count: 1_000_000)
+
+    @Test @MainActor func stoppingTheMonitorStopsStalledObservers() async throws {
+        let tree = try SyntheticTree(label: "stall-stop")
+        var rng = SplitMix64(seed: 17)
+        let file = try tree.file("long.wav", bytes: 64, rng: &rng)
+        let io = HarnessIO()
+        let context = makeContext(io)
+        let record = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
+        io.simulate(file, SimulatedCloudItem(script: Self.stallForever))
+        let monitor = SourceAvailabilityMonitor(showID: testShow, store: InMemoryDeviceAccessStore(), context: context, setting: .on, transferPolicy: StallFollowUpTests.policy)
+        let collector = await eventCollector(monitor.transfers, key: record.key) { $0.isOfflineOrUnknown }
+        monitor.start()
+        try await monitor.adopt([record])
+        #expect((await collector.value).last?.isOfflineOrUnknown == true)
+        #expect(try await !pollingStopped(io))
+        monitor.stop()
+        #expect(try await pollingStopped(io))
+        #expect(await monitor.transfers.activeCount == 0)
+        // Teardown is not a user decision.
+        #expect(await monitor.transfers.reportableState(of: record.key) == nil)
+        #expect(context.ledger.snapshot.openScopes == 0)
+    }
+
+    @Test @MainActor func droppingTheMonitorStopsStalledObservers() async throws {
+        let tree = try SyntheticTree(label: "stall-drop-monitor")
+        var rng = SplitMix64(seed: 18)
+        let file = try tree.file("long.wav", bytes: 64, rng: &rng)
+        let io = HarnessIO()
+        let context = makeContext(io)
+        let record = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
+        io.simulate(file, SimulatedCloudItem(script: Self.stallForever))
+        var monitor: SourceAvailabilityMonitor? = SourceAvailabilityMonitor(showID: testShow, store: InMemoryDeviceAccessStore(), context: context, setting: .on, transferPolicy: StallFollowUpTests.policy)
+        weak var weakController = monitor?.transfers
+        let collector = await eventCollector(monitor!.transfers, key: record.key) { $0.isOfflineOrUnknown }
+        monitor?.start()
+        try await monitor?.adopt([record])
+        #expect((await collector.value).last?.isOfflineOrUnknown == true)
+        monitor = nil
+        #expect(try await pollingStopped(io))
+        #expect(weakController == nil)
+        #expect(context.ledger.snapshot.openScopes == 0)
+    }
+
+    @Test func droppingTheControllerStopsItsObservers() async throws {
+        let tree = try SyntheticTree(label: "stall-drop-controller")
+        var rng = SplitMix64(seed: 19)
+        let file = try tree.file("long.wav", bytes: 64, rng: &rng)
+        let io = HarnessIO()
+        io.simulate(file, SimulatedCloudItem(script: Self.stallForever))
+        let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
+        var controller: SourceTransferController? = SourceTransferController(context: makeContext(io), policy: StallFollowUpTests.policy, setting: .on)
+        let collector = await eventCollector(controller!, key: key) { $0.isOfflineOrUnknown }
+        _ = await controller?.makeAvailable(key, at: file)
+        #expect((await collector.value).last?.isOfflineOrUnknown == true)
+        #expect(try await !pollingStopped(io))
+        controller = nil
+        #expect(try await pollingStopped(io))
+    }
+
+    @Test func waitUntilSettledFollowsARetryThatReplacesTheTransfer() async throws {
+        let tree = try SyntheticTree(label: "stall-wait-retry")
+        var rng = SplitMix64(seed: 20)
+        let file = try tree.file("long.wav", bytes: 64, rng: &rng)
+        let io = HarnessIO()
+        io.simulate(file, SimulatedCloudItem(script: Self.stallForever))
+        let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
+        let controller = SourceTransferController(context: makeContext(io), policy: StallFollowUpTests.policy, setting: .on)
+        let collector = await eventCollector(controller, key: key) { $0.isOfflineOrUnknown }
+        _ = await controller.makeAvailable(key, at: file)
+        _ = await collector.value
+        let waiter = Task { await controller.waitUntilSettled(key) }
+        try await Task.sleep(for: .milliseconds(10))
+        io.simulated(file)?.evictAgain(script: [.progress(0.5), .complete])
+        #expect(await controller.retry(key, at: file) == .requested)
+        #expect(await waiter.value == .idle)
+    }
+
+    @Test func stalledBackoffScheduleInsideTheObservationLoop() async throws {
+        let tree = try SyntheticTree(label: "stall-backoff")
+        var rng = SplitMix64(seed: 21)
+        let file = try tree.file("long.wav", bytes: 64, rng: &rng)
+        let io = HarnessIO()
+        io.simulate(file, SimulatedCloudItem(script: Self.stallForever))
+        let log = SleepLog()
+        let policy = TransferPolicy(pollInterval: .milliseconds(1), stallAfterUnchangedPolls: 3, stalledPollInterval: .milliseconds(4), maxStalledPollInterval: .milliseconds(16))
+        let controller = SourceTransferController(context: makeContext(io), policy: policy, setting: .on) { duration in
+            log.record(duration)
+            try await Task.sleep(for: .microseconds(200))
+        }
+        let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
+        _ = await controller.makeAvailable(key, at: file)
+        let clock = ContinuousClock()
+        let deadline = clock.now + .seconds(30)
+        while log.durations.count < 10 && clock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        await controller.cancel(key)
+        let durations = Array(log.durations.prefix(10))
+        // 1 poll establishes the signature, 3 unchanged polls trigger the stall, then 4 → 8 → 16 (cap).
+        #expect(durations == [.milliseconds(1), .milliseconds(1), .milliseconds(1), .milliseconds(1),
+                              .milliseconds(4), .milliseconds(8), .milliseconds(16), .milliseconds(16),
+                              .milliseconds(16), .milliseconds(16)])
+        #expect(await controller.state(of: key) == .cancelled)
+        #expect(io.count(.downloadRequest) == 1)
     }
 }

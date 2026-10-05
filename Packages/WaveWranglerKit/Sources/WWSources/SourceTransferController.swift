@@ -67,9 +67,14 @@ public struct TransferEvent: Sendable, Equatable {
 /// - A stall publishes `offlineOrUnknown` but keeps observing with backoff, so a provider that keeps
 ///   downloading still flips the source to available; an explicit retry issues a fresh request.
 /// - Switching availability OFF cancels automatic transfers (user-requested ones continue).
+/// - Observation never outlives its owner: `shutdown()` stops every observer, and observers hold the
+///   controller only weakly between polls, so dropping the controller also stops polling.
 public actor SourceTransferController {
-    public let context: SourceAccessContext
-    public let policy: TransferPolicy
+    /// Sleep used between polls (injectable so tests can assert the backoff schedule deterministically).
+    public typealias Sleeper = @Sendable (Duration) async throws -> Void
+
+    public nonisolated let context: SourceAccessContext
+    public nonisolated let policy: TransferPolicy
 
     private struct Active {
         var generation: Int
@@ -80,17 +85,27 @@ public actor SourceTransferController {
     private var states: [DeviceAccessKey: TransferState] = [:]
     private var active: [DeviceAccessKey: Active] = [:]
     private var cancelledByUser: Set<DeviceAccessKey> = []
+    /// Observers that were replaced (explicit retry of a stalled transfer) and may still be finishing
+    /// their last poll; `waitUntilSettled` drains them so no scope or poll outlives the call.
+    private var draining: [DeviceAccessKey: [Task<Void, Never>]] = [:]
     /// The authoritative availability setting for automatic requests.
     public private(set) var setting: SourceAvailabilitySetting
     private var generation = 0
     private var continuations: [UUID: AsyncStream<TransferEvent>.Continuation] = [:]
     /// Total download requests issued to the gateway (for audits/tests).
     public private(set) var downloadRequestCount = 0
+    private let sleep: Sleeper
 
-    public init(context: SourceAccessContext, policy: TransferPolicy = TransferPolicy(), setting: SourceAvailabilitySetting = .default) {
+    public init(
+        context: SourceAccessContext,
+        policy: TransferPolicy = TransferPolicy(),
+        setting: SourceAvailabilitySetting = .default,
+        sleep: @escaping Sleeper = { try await Task.sleep(for: $0) }
+    ) {
         self.context = context
         self.policy = policy
         self.setting = setting
+        self.sleep = sleep
     }
 
     public func state(of key: DeviceAccessKey) -> TransferState {
@@ -142,6 +157,7 @@ public actor SourceTransferController {
             if userRequested, case .offlineOrUnknown = state(of: key) {
                 // Explicit retry of a stalled transfer: stop the backoff observer and request again.
                 running.task.cancel()
+                draining[key, default: []].append(running.task)
                 active[key] = nil
             } else {
                 // An explicit request upgrades an in-flight automatic transfer so OFF will not cancel it.
@@ -198,18 +214,23 @@ public actor SourceTransferController {
             let current = generation
             let initial: TransferState = if case .request = decision { .requested } else { .inProgress(fractionCompleted: .unknown) }
             publish(key, initial)
-            let task = Task { await self.observe(key, url: url, generation: current) }
+            let owner = WeakOwner(self)
+            let task = Task.detached { [context, policy, sleep] in
+                await Self.observe(owner: owner, context: context, policy: policy, sleep: sleep, key: key, url: url, generation: current)
+            }
             active[key] = Active(generation: current, task: task, userRequested: userRequested)
             return initial
         }
     }
 
-    /// The user stopped the transfer. The original is never evicted or modified.
-    public func cancel(_ key: DeviceAccessKey) {
+    /// The user stopped the transfer. The original is never evicted or modified. Returns once the
+    /// observer has finished, so no poll or security scope outlives the call.
+    public func cancel(_ key: DeviceAccessKey) async {
         guard let running = active.removeValue(forKey: key) else { return }
         running.task.cancel()
         cancelledByUser.insert(key)
         publish(key, .cancelled)
+        await running.task.value
     }
 
     /// Re-requests after cancel/failure/offline. A no-op while a request is active (except that an
@@ -221,32 +242,70 @@ public actor SourceTransferController {
 
     /// Stores the setting. ON→OFF cancels automatic transfers honestly (state `.cancelled`); OFF→ON
     /// issues nothing by itself — callers re-evaluate sources and request only placeholders.
-    public func availabilitySettingChanged(to setting: SourceAvailabilitySetting) {
+    public func availabilitySettingChanged(to setting: SourceAvailabilitySetting) async {
         self.setting = setting
         guard setting == .off else { return }
+        var stopped: [Task<Void, Never>] = []
         for (key, running) in active where !running.userRequested {
             active[key] = nil
             running.task.cancel()
+            stopped.append(running.task)
             publish(key, .cancelled)
         }
+        for task in stopped { await task.value }
     }
 
-    /// Waits for the current request (if any) to finish and returns the final state. A stalled transfer
-    /// keeps observing, so this returns only once it completes, fails or is cancelled.
+    /// Waits until no transfer is active for `key` (following any replacement started by a retry while
+    /// waiting) and returns the final state. A stalled transfer keeps observing, so this returns only
+    /// once it completes, fails or is cancelled.
     public func waitUntilSettled(_ key: DeviceAccessKey) async -> TransferState {
-        if let running = active[key] {
-            await running.task.value
+        while true {
+            if let running = active[key] {
+                await running.task.value
+            } else if let replaced = draining.removeValue(forKey: key) {
+                for task in replaced { await task.value }
+            } else {
+                break
+            }
         }
         return state(of: key)
     }
 
-    public func cancelAll() {
-        for key in Array(active.keys) { cancel(key) }
+    public func cancelAll() async {
+        for key in Array(active.keys) { await cancel(key) }
+    }
+
+    /// Owner teardown (window closed, monitor stopped/deallocated): stops every observer without
+    /// recording a user cancel, finishes event streams and returns once all observers have finished.
+    /// The originals are untouched.
+    public func shutdown() async {
+        var stopped: [Task<Void, Never>] = draining.values.flatMap { $0 }
+        draining.removeAll()
+        for (key, running) in active {
+            running.task.cancel()
+            stopped.append(running.task)
+            states[key] = .cancelled
+        }
+        active.removeAll()
+        for continuation in continuations.values { continuation.finish() }
+        continuations.removeAll()
+        for task in stopped { await task.value }
     }
 
     // MARK: - Observation
 
-    private func observe(_ key: DeviceAccessKey, url: URL, generation: Int) async {
+    /// Polls metadata for one transfer generation. Runs detached and holds the controller only weakly
+    /// between polls; it exits when the controller is gone, the generation was replaced/cancelled, or
+    /// the transfer finished.
+    private static func observe(
+        owner: WeakOwner,
+        context: SourceAccessContext,
+        policy: TransferPolicy,
+        sleep: Sleeper,
+        key: DeviceAccessKey,
+        url: URL,
+        generation: Int
+    ) async {
         let clock = ContinuousClock()
         var lastChange = clock.now
         var unchangedPolls = 0
@@ -255,14 +314,14 @@ public actor SourceTransferController {
         var interval = policy.pollInterval
         while !Task.isCancelled {
             do {
-                try await Task.sleep(for: interval)
+                try await sleep(interval)
             } catch {
                 return
             }
-            guard isCurrent(key, generation) else { return }
+            guard let controller = owner.value, await controller.isCurrent(key, generation) else { return }
             let metadata = context.withScopedAccess(to: url) { context.io.metadata(at: $0) }
             let fraction = await context.withScopedAccess(to: url) { await context.io.downloadFraction(of: $0) }
-            guard isCurrent(key, generation), !Task.isCancelled else { return }
+            guard !Task.isCancelled else { return }
 
             let next: TransferState
             var finished = false
@@ -293,21 +352,29 @@ public actor SourceTransferController {
                     } else if stalled {
                         interval = policy.nextStalledInterval(after: interval)
                         continue
-                    } else if Self.isStalled(policy.stallDetection, unchangedPolls: &unchangedPolls, since: lastChange, now: clock.now) {
+                    } else if isStalled(policy.stallDetection, unchangedPolls: &unchangedPolls, since: lastChange, now: clock.now) {
                         // Say so honestly, but keep watching: the provider may still finish.
                         stalled = true
                         interval = policy.stalledPollInterval
-                        publish(key, .offlineOrUnknown(nil))
+                        guard await controller.publishIfCurrent(key, generation, .offlineOrUnknown(nil)) else { return }
                         continue
                     }
                 }
             }
             if finished {
-                finish(key, generation, next)
+                await controller.finish(key, generation, next)
                 return
             }
-            if state(of: key) != next { publish(key, next) }
+            guard await controller.publishIfCurrent(key, generation, next) else { return }
         }
+    }
+
+    /// Publishes `state` if `generation` is still the active one (and the state changed). Returns false
+    /// when the generation is no longer current, so the observer stops.
+    private func publishIfCurrent(_ key: DeviceAccessKey, _ generation: Int, _ state: TransferState) -> Bool {
+        guard isCurrent(key, generation) else { return false }
+        if self.state(of: key) != state { publish(key, state) }
+        return true
     }
 
     private static func isStalled(_ detection: TransferPolicy.StallDetection, unchangedPolls: inout Int, since lastChange: ContinuousClock.Instant, now: ContinuousClock.Instant) -> Bool {
@@ -337,4 +404,16 @@ public actor SourceTransferController {
     private func removeContinuation(_ id: UUID) {
         continuations[id] = nil
     }
+}
+
+/// Weak reference to the controller for detached observers.
+final class WeakOwner: @unchecked Sendable {
+    private let lock = NSLock()
+    private weak var _value: SourceTransferController?
+
+    init(_ value: SourceTransferController) {
+        _value = value
+    }
+
+    var value: SourceTransferController? { lock.withLock { _value } }
 }

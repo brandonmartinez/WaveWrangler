@@ -51,9 +51,19 @@ public final class SourceAvailabilityMonitor {
         }
     }
 
+    /// Stops consuming events and tears down every transfer observer (not recorded as a user cancel).
+    /// Call when the owning window closes; deinit does the same.
     public func stop() {
         eventTask?.cancel()
         eventTask = nil
+        let transfers = transfers
+        Task { await transfers.shutdown() }
+    }
+
+    isolated deinit {
+        eventTask?.cancel()
+        let transfers = transfers
+        Task { await transfers.shutdown() }
     }
 
     /// Observes the given sources (metadata only) and, when availability is ON, requests downloads for

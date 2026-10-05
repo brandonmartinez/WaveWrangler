@@ -598,6 +598,7 @@ enum MatrixScenarios {
             await controller.cancel(record.key)
             let afterCancel = await controller.state(of: record.key)
             env.check(afterCancel == .cancelled, "after cancel \(afterCancel)")
+            env.check(env.context.ledger.snapshot.openScopes == 0, "scope open after cancel returned")
             env.check(await controller.activeCount == 0, "still observing after cancel")
         case 3:
             let final = await controller.waitUntilSettled(record.key)
