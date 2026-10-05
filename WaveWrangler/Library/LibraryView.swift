@@ -10,6 +10,17 @@ struct LibraryView: View {
     private var store: LibraryStore { state.store }
 
     var body: some View {
+        VStack(spacing: 0) {
+            // Opaque bar above the split view (not an inset over translucent sidebar material) for contrast.
+            LibraryMessageBar(state: state)
+            splitView
+        }
+        .onChange(of: focus) { _, region in state.focusedRegion = region }
+        .onAppear { DispatchQueue.main.async { focus = .sidebar } }
+        .task { if !store.isLoaded { await store.load() } }
+    }
+
+    private var splitView: some View {
         NavigationSplitView(columnVisibility: $state.columnVisibility) {
             LibrarySidebar(state: state, focus: $focus)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 360)
@@ -21,9 +32,6 @@ struct LibraryView: View {
             LibraryEntryDetail(state: state)
                 .navigationSplitViewColumnWidth(min: 240, ideal: 300)
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            LibraryMessageBar(state: state)
-        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button("New Show", systemImage: "plus") { CommandRouter.shared.newShow(nil) }
@@ -32,9 +40,6 @@ struct LibraryView: View {
                     .help("Open… (⌘O)")
             }
         }
-        .onChange(of: focus) { _, region in state.focusedRegion = region }
-        .onAppear { DispatchQueue.main.async { focus = .sidebar } }
-        .task { if !store.isLoaded { await store.load() } }
     }
 }
 
