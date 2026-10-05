@@ -1,4 +1,5 @@
 import Foundation
+import WWCore
 
 /// Result of opening a canonical document. Opening never writes to the document.
 public enum OpenOutcome<Payload: Sendable>: Sendable {

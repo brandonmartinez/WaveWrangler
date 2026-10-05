@@ -1,4 +1,5 @@
 import Foundation
+import WWCore
 
 /// Upgrades one supported older schema to a whole current-schema payload.
 public struct MigrationStep<Payload: Sendable>: Sendable {
@@ -43,41 +44,47 @@ public struct DocumentMigrator<Coder: CanonicalDocumentCoding>: Sendable {
 
     public func migrate(_ url: URL, key: DocumentKey, isCancelled: () -> Bool = { false }) throws -> MigrationReceipt {
         guard let recovery = publisher.recovery else {
-            throw PublicationError.failed(stage: .migrationStage, kind: .other, detail: "migration requires a recovery store")
+            throw PublicationError.failed(stage: .migrationOriginalRead, kind: .other, detail: "migration requires a recovery store")
         }
         let ops = publisher.ops
         let original: Data
         do {
             original = try publisher.coordination.coordinateReading(at: url) { try ops.read($0) }
         } catch where !(error is any InjectedInterruption) {
-            throw PublicationError.failed(stage: .migrationStage, kind: WriteFailureKind(classifying: error), detail: "\(error)")
+            throw PublicationError.failed(stage: .migrationOriginalRead, kind: WriteFailureKind(classifying: error), detail: "\(error)")
         }
         let originalFingerprint = RevisionFingerprint(of: original)
         guard let schema = originalFingerprint.schemaVersion, let step = steps[schema] else {
-            throw PublicationError.failed(stage: .migrationStage, kind: .other, detail: "no migration from schema \(originalFingerprint.schemaVersion.map(String.init) ?? "?")")
+            throw PublicationError.failed(stage: .migrationOriginalRead, kind: .other, detail: "no migration from schema \(originalFingerprint.schemaVersion.map(String.init) ?? "?")")
         }
 
-        try publisher.hooks.willEnter(.migrationStage)
+        try publisher.hooks.reached(.migrationOriginalRead)
         let backup: URL
-        let staged: (payload: Coder.Payload, originalRevision: Int)
         do {
             backup = try recovery.preserveMigrationBackup(original, schemaVersion: schema, for: key)
             guard try ops.read(backup) == original else {
-                throw PublicationError.failed(stage: .migrationStage, kind: .other, detail: "backup does not match original bytes")
+                throw PublicationError.failed(stage: .migrationOriginalRead, kind: .other, detail: "backup does not match original bytes")
             }
-            staged = try step.migrate(original)
         } catch let error as PublicationError {
             throw error
+        } catch where !(error is any InjectedInterruption) {
+            throw PublicationError.failed(stage: .migrationOriginalRead, kind: WriteFailureKind(classifying: error), detail: "\(error)")
+        }
+        try publisher.hooks.reached(.migrationBackupPreserved)
+
+        let staged: (payload: Coder.Payload, originalRevision: Int)
+        do {
+            staged = try step.migrate(original)
         } catch let error as PersistenceError {
             throw PublicationError.invalidCandidate(error)
         } catch where !(error is any InjectedInterruption) {
-            throw PublicationError.failed(stage: .migrationStage, kind: WriteFailureKind(classifying: error), detail: "\(error)")
+            throw PublicationError.failed(stage: .migrationBackupPreserved, kind: .other, detail: "\(error)")
         }
         let failures = step.expectations(original, staged.payload)
         guard failures.isEmpty else {
-            throw PublicationError.failed(stage: .migrationStage, kind: .other, detail: failures.joined(separator: "; "))
+            throw PublicationError.failed(stage: .migrationBackupPreserved, kind: .other, detail: failures.joined(separator: "; "))
         }
-        try publisher.hooks.didComplete(.migrationStage)
+        try publisher.hooks.reached(.migrationValidated)
 
         guard !isCancelled() else { throw PublicationError.cancelled }
 
@@ -90,7 +97,6 @@ public struct DocumentMigrator<Coder: CanonicalDocumentCoding>: Sendable {
                 revision: nil, schemaVersion: schema, checksum: nil, byteDigest: originalFingerprint.byteDigest
             )),
             retainPrior: false,
-            boundaries: (publish: .migrationPublish, stage: .stageWrite),
             isCancelled: isCancelled
         )
         return MigrationReceipt(backup: backup, originalFingerprint: originalFingerprint, publication: receipt)

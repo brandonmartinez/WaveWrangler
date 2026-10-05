@@ -143,27 +143,68 @@ public struct RecoveryStore: Sendable {
         try records(in: folder("migration-backups", key), extension: "wwbackup")
     }
 
-    /// Records a quiescent recovery draft of unsaved edits made on top of `base`. Keeps only the newest.
-    public func writeDraft(_ bytes: Data, base: RevisionFingerprint?, for key: DocumentKey) throws {
-        let name = "base-\(base?.shortDigest ?? "none")-\(RevisionFingerprint(of: bytes).shortDigest).wwdraft"
-        let url = folder("drafts", key).appending(path: name)
-        try writeRecord(bytes, to: url)
-        for other in try records(in: folder("drafts", key), extension: "wwdraft") where other.lastPathComponent != url.lastPathComponent {
-            try ops.remove(other)
+    // MARK: - Unpublished edit checkpoints (C2b)
+
+    /// Atomically writes an unpublished edit-checkpoint record (stage → verify → exclusive move), then prunes
+    /// older records only after the new one is read back. Never touches the canonical location.
+    @discardableResult
+    public func writeEditCheckpoint(
+        snapshot: Data,
+        base: RevisionFingerprint?,
+        schemaVersion: Int,
+        for key: DocumentKey,
+        at date: Date = Date()
+    ) throws -> EditCheckpointRecord {
+        let existing = editCheckpointFiles(for: key)
+        let sequence = (existing.compactMap { Self.sequence(of: $0) }.max() ?? 0) + 1
+        // Whole milliseconds, so the record round-trips exactly through its canonical timestamp.
+        let date = Date(timeIntervalSince1970: TimeInterval(Int64((date.timeIntervalSince1970 * 1000).rounded())) / 1000)
+        let record = EditCheckpointRecord(
+            documentID: key.rawValue, baseRevision: base?.revision, baseChecksum: base?.checksum,
+            basePublicationID: base?.publicationID, baseByteDigest: base?.byteDigest,
+            checkpointSequence: sequence, createdAt: date, schemaVersion: schemaVersion,
+            payloadChecksum: EnvelopeHeaderInfo.peek(snapshot)?.checksum ?? "", snapshot: snapshot
+        )
+        let bytes = try record.encoded()
+        let url = folder("edit-checkpoints", key).appending(path: String(format: "%010d", sequence) + ".wwedit")
+        let staged = try stage(bytes)
+        guard try ops.read(staged) == bytes, (try? EditCheckpointRecord.decode(bytes)) == record else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try ops.createDirectory(url.deletingLastPathComponent())
+        try ops.moveNew(staged, to: url)
+        guard (try? EditCheckpointRecord.decode(ops.read(url))) == record else { throw CocoaError(.fileWriteUnknown) }
+        for older in existing where older.lastPathComponent != url.lastPathComponent {
+            try ops.remove(older)
+        }
+        return record
+    }
+
+    /// Edit-checkpoint records for `key`, newest first. Unreadable records are reported, not deleted.
+    public func editCheckpoints(for key: DocumentKey) -> [Result<EditCheckpointRecord, EditCheckpointRecord.ReadError>] {
+        editCheckpointFiles(for: key).map { url in
+            guard let data = try? ops.read(url) else { return .failure(.unreadable(url)) }
+            do { return .success(try EditCheckpointRecord.decode(data)) } catch { return .failure(.damaged(url)) }
         }
     }
 
-    public func draft(for key: DocumentKey) throws -> (bytes: Data, baseShortDigest: String)? {
-        guard let url = try records(in: folder("drafts", key), extension: "wwdraft").first else { return nil }
-        let parts = url.deletingPathExtension().lastPathComponent.split(separator: "-")
-        guard parts.count == 3 else { return nil }
-        return (try ops.read(url), String(parts[1]))
+    public func latestEditCheckpoint(for key: DocumentKey) -> EditCheckpointRecord? {
+        for result in editCheckpoints(for: key) { if case let .success(record) = result { return record } }
+        return nil
     }
 
-    public func discardDraft(for key: DocumentKey) throws {
-        for url in try records(in: folder("drafts", key), extension: "wwdraft") {
-            try ops.remove(url)
-        }
+    /// Deletes edit checkpoints once a verified publication contains all their edits, or after an explicit
+    /// Don't Save/Discard.
+    public func discardEditCheckpoints(for key: DocumentKey) throws {
+        for url in editCheckpointFiles(for: key) { try ops.remove(url) }
+    }
+
+    private func editCheckpointFiles(for key: DocumentKey) -> [URL] {
+        ((try? records(in: folder("edit-checkpoints", key), extension: "wwedit")) ?? [])
+    }
+
+    private static func sequence(of url: URL) -> Int? {
+        Int(url.deletingPathExtension().lastPathComponent)
     }
 
     /// Removes interrupted staging leftovers (app-owned, never canonical).
@@ -214,5 +255,67 @@ public struct RecoveryStore: Sendable {
         let staged = staging.appending(path: UUID().uuidString)
         try ops.writeNew(bytes, to: staged)
         return staged
+    }
+}
+
+/// C2b unpublished edit-checkpoint record: a whole-model snapshot of not-yet-published edits. Explicitly
+/// `unpublished`; never a revision or a save, never written to the canonical location, never advances the
+/// library/index, never clears dirty state.
+public struct EditCheckpointRecord: Sendable, Equatable, Codable {
+    public enum ReadError: Error, Sendable, Equatable {
+        case unreadable(URL)
+        case damaged(URL)
+    }
+
+    /// How a record relates to what is on disk now.
+    public enum Relation: Sendable, Equatable {
+        /// Based on the current on-disk publication: offer "Restore unsaved changes" (restored = dirty, not saved).
+        case basedOnCurrent
+        /// Based on another publication: offer to open as a separate untitled copy or compare; never auto-merge.
+        case basedOnOtherRevision
+    }
+
+    public var recordKind = "edit-checkpoint"
+    public let documentID: String
+    public let baseRevision: Int?
+    public let baseChecksum: String?
+    public let basePublicationID: UUID?
+    public let baseByteDigest: String?
+    public let checkpointSequence: Int
+    public let createdAt: Date
+    public let schemaVersion: Int
+    public var unpublished = true
+    public let payloadChecksum: String
+    /// The whole model snapshot as a validated canonical envelope (decode with the document's coder).
+    public let snapshot: Data
+
+    public func relation(to onDisk: RevisionFingerprint?) -> Relation {
+        baseByteDigest != nil && baseByteDigest == onDisk?.byteDigest ? .basedOnCurrent : .basedOnOtherRevision
+    }
+
+    func encoded() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(CanonicalDate.string(from: date))
+        }
+        return try encoder.encode(self)
+    }
+
+    static func decode(_ data: Data) throws -> EditCheckpointRecord {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            guard let date = CanonicalDate.date(from: try container.decode(String.self)) else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "timestamp")
+            }
+            return date
+        }
+        let record = try decoder.decode(EditCheckpointRecord.self, from: data)
+        guard record.recordKind == "edit-checkpoint", record.unpublished else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "not an unpublished edit checkpoint"))
+        }
+        return record
     }
 }

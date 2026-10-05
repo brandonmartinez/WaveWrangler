@@ -1,4 +1,5 @@
 import Foundation
+import WWCore
 
 /// Honest per-document persistence status (C3 acknowledgement states). Every state has distinct accessible
 /// text; none is conveyed by colour alone, and no state implies provider sync.
@@ -21,7 +22,7 @@ public enum DocumentSaveState: Sendable, Equatable {
     case conflict(onDiskRevision: Int?, missing: Bool)
     /// Publication may have happened but was not verified. Reopen to verify.
     case acknowledgementUncertain(message: String)
-    /// A quiescent device-local recovery draft (not a save) exists for unsaved edits.
+    /// A C2b unpublished edit checkpoint (not a save) protects the unsaved edits on this Mac.
     case recoveryCheckpoint(at: Date)
     /// An automatic save was skipped because autosave is OFF; edits remain open and unsaved.
     case autosaveSkipped
@@ -43,7 +44,7 @@ public enum DocumentSaveState: Sendable, Equatable {
         case let .saveFailed(retained, _, _): "Save failed — revision \(retained.map(String.init) ?? "on disk") retained"
         case let .conflict(_, missing): missing ? "Conflict — the document was moved or deleted" : "Conflict — another revision is on disk"
         case .acknowledgementUncertain: "Save may have completed — reopen to verify"
-        case .recoveryCheckpoint: "Recovery checkpoint on this Mac (not saved)"
+        case let .recoveryCheckpoint(at): "Unsaved changes protected on this Mac (checkpoint \(at.formatted(date: .omitted, time: .standard))) — not saved"
         case .autosaveSkipped: "Not saved — autosave is off"
         case .readOnlyNewerFormat: "Read-only — newer format"
         case let .recoveredReadOnly(revision): "Recovered revision \(revision) — read-only"

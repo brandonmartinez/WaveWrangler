@@ -90,14 +90,14 @@ struct AutosavePolicyTests {
         #expect(document.payload.show.title == "Pending while off")
     }
 
-    @Test func longerDelayStillRecordsRecoveryDraftFirst() async throws {
+    @Test func longerDelayStillRecordsEditCheckpointFirst() async throws {
         let rig = Rig()
         let gate = AutosaveGate(AutosavePreference(enabled: true, delaySeconds: 5))
         let (session, url) = try makeSession(rig, seed: 42, gate: gate)
         let drafts = Counter()
         let scheduler = QuiescenceScheduler(gate: gate, queue: .global()) { kind in
-            guard kind == .recoveryDraft else { return }
-            Task { if await session.writeRecoveryDraft() { drafts.increment() } }
+            guard kind == .editCheckpoint else { return }
+            Task { if await session.writeEditCheckpoint() { drafts.increment() } }
         }
         let before = try Data(contentsOf: url)
         try await session.edit { try $0.renamingShow(to: "Drafted") }
@@ -105,10 +105,16 @@ struct AutosavePolicyTests {
         try await Task.sleep(for: .milliseconds(1500))
         scheduler.cancelPending()
         #expect(drafts.count == 1)
-        #expect(try Data(contentsOf: url) == before, "a draft is not a save")
-        let draft = try #require(try rig.recovery.draft(for: session.key))
-        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(draft.bytes).payload.show.title == "Drafted")
+        #expect(try Data(contentsOf: url) == before, "an edit checkpoint is not a save")
+        let record = try #require(rig.recovery.latestEditCheckpoint(for: session.key))
+        #expect(record.unpublished && record.recordKind == "edit-checkpoint" && record.checkpointSequence == 1)
+        #expect(record.relation(to: RevisionFingerprint(of: before)) == .basedOnCurrent)
+        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(record.snapshot).payload.show.title == "Drafted")
         #expect(await session.isDirty)
+        #expect(await !session.status.state.isVerifiedOnDisk)
+        // A verified publication containing the edits prunes the record.
+        guard case .success = await session.save() else { Issue.record("save failed"); return }
+        #expect(rig.recovery.latestEditCheckpoint(for: session.key) == nil)
     }
 
     /// WW-005 provisional gate: ≤2 s from the last edit to a coherent, independently read-back checkpoint.
@@ -146,12 +152,12 @@ struct AutosavePolicyTests {
         #expect(Stats.percentile(latencies, 95) <= 2.0)
         #expect(latencies.max() ?? 99 <= 2.0)
 
-        // Longer configured delay (5 s): the device-local recovery draft lands first.
+        // Longer configured delay (5 s): the C2b edit checkpoint lands first, at quiescence.
         gate.preference = AutosavePreference(enabled: true, delaySeconds: 5)
         let (draftStream, draftContinuation) = AsyncStream<ContinuousClock.Instant>.makeStream()
         let draftScheduler = QuiescenceScheduler(gate: gate, queue: .global()) { kind in
-            guard kind == .recoveryDraft else { return }
-            Task { if await session.writeRecoveryDraft() { draftContinuation.yield(.now) } }
+            guard kind == .editCheckpoint else { return }
+            Task { if await session.writeEditCheckpoint() { draftContinuation.yield(.now) } }
         }
         var draftIterator = draftStream.makeAsyncIterator()
         var draftLatencies: [Double] = []
@@ -160,12 +166,12 @@ struct AutosavePolicyTests {
             draftScheduler.noteEdit()
             let lastEdit = ContinuousClock.now
             let written = try #require(await draftIterator.next())
-            let draft = try #require(try rig.recovery.draft(for: session.key))
-            #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(draft.bytes).payload.show.title == "Draft sample \(sample)")
+            let record = try #require(rig.recovery.latestEditCheckpoint(for: session.key))
+            #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(record.snapshot).payload.show.title == "Draft sample \(sample)")
             draftLatencies.append(Stats.seconds(written - lastEdit))
             draftScheduler.cancelPending()
         }
-        Evidence.record("autosave edit-to-recovery-draft (delay 5 s configured) \(Stats.summary(draftLatencies)) [headless WWPersistence, this host]")
+        Evidence.record("autosave edit-to-quiescent C2b edit checkpoint (delay 5 s configured, quiescence 0.5 s) \(Stats.summary(draftLatencies)) [headless WWPersistence, this host]")
         #expect((draftLatencies.max() ?? 99) <= 2.0)
         scheduler.cancelPending()
     }

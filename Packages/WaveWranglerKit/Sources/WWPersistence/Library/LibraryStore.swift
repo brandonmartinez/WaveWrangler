@@ -15,6 +15,15 @@ public enum LibraryLoadOutcome: Sendable, Equatable {
     case damaged(reason: String, recoveryRevisions: [Int])
     /// The configured location cannot be reached. Nothing is created there silently.
     case unavailable(reason: String)
+    /// The location cannot be reached; the last validated prior checkpoint is shown **read-only** (labelled).
+    case unavailableShowingPrior(reason: String, revision: Int)
+
+    public var isReadOnly: Bool {
+        switch self {
+        case .ready, .created: false
+        default: true
+        }
+    }
 }
 
 /// The canonical library document store (C2/C5 for the library): a separate versioned document with its own
@@ -87,8 +96,9 @@ public actor LibraryStore {
         library = nil
         index = nil
         guard let folder = resolveFolder() else {
-            if case let .unavailable(_, reason) = locationStatus { return .unavailable(reason: reason) }
-            return .unavailable(reason: "The library location could not be resolved.")
+            var reason = "The library location could not be resolved."
+            if case let .unavailable(_, detail) = locationStatus { reason = detail }
+            return showPriorReadOnly(reason: reason)
         }
         let url = folder.appending(path: settings.load().fileName)
         if !publisher.ops.exists(url) {
@@ -97,7 +107,7 @@ public actor LibraryStore {
                 return .damaged(reason: "The library file is missing.", recoveryRevisions: candidates.map(\.document.revision))
             }
             guard case .appContainer = settings.load().place else {
-                return .unavailable(reason: "No library was found in the chosen folder. It may still be downloading or offline.")
+                return showPriorReadOnly(reason: "No library was found in the chosen folder. It may still be downloading or offline.")
             }
             return await createEmpty(at: url) ? .created : .unavailable(reason: "A new library could not be created.")
         }
@@ -114,10 +124,17 @@ public actor LibraryStore {
             return .needsMigration(fromSchema: schema)
         case let .damaged(error, candidates):
             return .damaged(reason: error.errorDescription ?? "\(error)", recoveryRevisions: candidates.map(\.document.revision))
-        case let .unreadable(_, detail, candidates):
-            if candidates.isEmpty { return .unavailable(reason: detail) }
-            return .damaged(reason: detail, recoveryRevisions: candidates.map(\.document.revision))
+        case let .unreadable(kind, detail, _):
+            return showPriorReadOnly(reason: kind == .permissionDenied ? "Permission to the library must be granted again." : detail)
         }
+    }
+
+    /// C2a: an unreachable location shows the last validated prior read-only; never a new empty library.
+    private func showPriorReadOnly(reason: String) -> LibraryLoadOutcome {
+        guard let prior = opener.candidates(url: nil, key: .library).first else { return .unavailable(reason: reason) }
+        library = prior.document.payload
+        index = LibraryIndex.build(from: prior.document.payload, libraryDigest: prior.checkpoint.fingerprint.byteDigest)
+        return .unavailableShowingPrior(reason: reason, revision: prior.document.revision)
     }
 
     private func createEmpty(at url: URL) async -> Bool {
@@ -160,8 +177,8 @@ public actor LibraryStore {
 
     /// Records a verified show publication (C3 step 8). Never called for failed/uncertain saves.
     @discardableResult
-    public func acknowledgeShowPublication(_ showID: ShowID, title: String, revision: Int) async -> Result<PublicationReceipt, PublicationError>? {
-        try? await update { LibraryReconciler.acknowledging(showID, title: title, revision: revision, in: $0) }
+    public func acknowledgeShowPublication(_ showID: ShowID, title: String, publication: PublicationStamp) async -> Result<PublicationReceipt, PublicationError>? {
+        try? await update { LibraryReconciler.acknowledging(showID, title: title, publication: publication, in: $0) }
     }
 
     public func recordRecent(_ showID: ShowID) async {
@@ -177,10 +194,10 @@ public actor LibraryStore {
     /// Publishes a validated checkpoint as a **new** library file next to the damaged/missing one, switches to
     /// it and leaves the suspect file untouched.
     public func recoverAsNewCopy(revision: Int) async -> Result<PublicationReceipt, PublicationError> {
-        guard let folder = resolveFolder() else { return .failure(.failed(stage: .baseCheck, kind: .unavailable, detail: "location unavailable")) }
+        guard let folder = resolveFolder() else { return .failure(.failed(stage: .candidateValidated, kind: .unavailable, detail: "location unavailable")) }
         let current = folder.appending(path: settings.load().fileName)
         guard let candidate = opener.candidates(url: current, key: .library).first(where: { $0.document.revision == revision }) else {
-            return .failure(.failed(stage: .baseCheck, kind: .other, detail: "no checkpoint at revision \(revision)"))
+            return .failure(.failed(stage: .candidateValidated, kind: .other, detail: "no checkpoint at revision \(revision)"))
         }
         let name = "Library (Recovered r\(revision) \(UUID().uuidString.prefix(8))).wwlibrary"
         let destination = folder.appending(path: name)
@@ -195,11 +212,11 @@ public actor LibraryStore {
         return result
     }
 
-    // MARK: - Location
+    // MARK: - Location (C2a + Design merge rules)
 
     /// Copies the library into `folder`, verifies the copy independently, then switches the setting. The
-    /// previous copy is never deleted. An identical copy already there is adopted; a different library there
-    /// is never overwritten.
+    /// previous copy is **kept** as a backup and never deleted. An identical copy already there is adopted;
+    /// a different library there is never overwritten (`.destinationHasLibrary` → `useLibrary(in:)` or cancel).
     public func moveLibrary(to folder: URL) async -> Result<LibraryMoveOutcome, PublicationError> {
         await relocate(to: folder, place: { try .folder(bookmark: self.bookmarks.bookmark(for: folder), displayPath: folder.path) })
     }
@@ -209,15 +226,49 @@ public actor LibraryStore {
         await relocate(to: containerFolder, place: { .appContainer })
     }
 
-    /// Switches to the library already in `folder` (after `.destinationHasDifferentLibrary`). Nothing is
-    /// copied or deleted; the previous library stays where it was.
-    public func adoptLibrary(in folder: URL) async throws -> LibraryLoadOutcome {
-        var setting = settings.load()
-        setting.place = folder.standardizedFileURL == containerFolder.standardizedFileURL
-            ? .appContainer
-            : .folder(bookmark: try bookmarks.bookmark(for: folder), displayPath: folder.path)
-        try settings.save(setting)
-        return await load()
+    /// "Use That Library": combines this Mac's library into the library already in `folder` (collections,
+    /// entries including unavailable ones, and recents — nothing dropped), publishes the combined library
+    /// there with the full protocol, then switches to it. If the target is unreachable, needs permission or
+    /// has a newer format, nothing is written. The previous location is kept as a backup and never deleted.
+    public func useLibrary(in folder: URL) async -> Result<LibraryMoveOutcome, PublicationError> {
+        guard let mine = library else { return .failure(.readOnly("The library must be loaded first.")) }
+        let previous = currentLibraryURL()
+        let isContainer = folder.standardizedFileURL == containerFolder.standardizedFileURL
+        let started = isContainer ? false : bookmarks.startAccessing(folder)
+        defer { if started { bookmarks.stopAccessing(folder) } }
+        let destination = folder.appending(path: settings.load().fileName)
+        let ops = publisher.ops
+        let bytes: Data
+        do {
+            bytes = try publisher.coordination.coordinateReading(at: destination) { try ops.read($0) }
+        } catch {
+            return .failure(.failed(stage: .candidateValidated, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
+        }
+        let theirs: DecodedDocument<LibraryModel>
+        do {
+            theirs = try publisher.coder.decode(bytes)
+        } catch let .unknownNewerSchema(found, supported) {
+            return .failure(.readOnly("That library was saved by a newer version of WaveWrangler (format \(found); this version supports \(supported))."))
+        } catch {
+            return .failure(.invalidCandidate(error))
+        }
+        let combined = LibraryMerge.combine(thisMac: mine, into: theirs.payload)
+        if combined != theirs.payload {
+            do {
+                _ = try publisher.publish(
+                    combined, revision: theirs.revision + 1, key: .library, to: destination,
+                    target: .inPlace(expectedBase: RevisionFingerprint(of: bytes))
+                )
+            } catch let error as PublicationError {
+                return .failure(error)
+            } catch {
+                return .failure(.acknowledgementUncertain("\(error)"))
+            }
+        }
+        let place: () throws -> LibraryLocationSetting.Place = {
+            isContainer ? .appContainer : .folder(bookmark: try self.bookmarks.bookmark(for: folder), displayPath: folder.path)
+        }
+        return await switchSetting(place: place, outcome: .combined(into: destination, previousCopyKept: previous))
     }
 
     private func relocate(to folder: URL, place: () throws -> LibraryLocationSetting.Place) async -> Result<LibraryMoveOutcome, PublicationError> {
@@ -233,14 +284,14 @@ public actor LibraryStore {
         do {
             bytes = try publisher.coordination.coordinateReading(at: sourceURL) { try ops.read($0) }
         } catch {
-            return .failure(.failed(stage: .baseCheck, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
+            return .failure(.failed(stage: .candidateValidated, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
         }
-        guard RevisionFingerprint.digest(bytes) == base.byteDigest else {
+        // (1) validate the current library: exactly our verified base.
+        guard RevisionFingerprint.digest(bytes) == base.byteDigest, let current = try? publisher.coder.decode(bytes) else {
             return .failure(.conflict(PublicationConflict(expected: base, onDisk: RevisionFingerprint(of: bytes), preservedCandidate: nil)))
         }
-        let fileName = settings.load().fileName
-        let destination = folder.appending(path: fileName)
-        let started = folder == containerFolder ? false : bookmarks.startAccessing(folder)
+        let destination = folder.appending(path: settings.load().fileName)
+        let started = folder.standardizedFileURL == containerFolder.standardizedFileURL ? false : bookmarks.startAccessing(folder)
         defer { if started { bookmarks.stopAccessing(folder) } }
 
         if ops.exists(destination) {
@@ -251,23 +302,25 @@ public actor LibraryStore {
                 return await switchSetting(place: place, outcome: .adoptedIdentical(destination))
             }
             if let decoded = try? publisher.coder.decode(existing) {
-                return .success(.destinationHasDifferentLibrary(destination, revision: decoded.revision))
+                return .success(.destinationHasLibrary(destination, revision: decoded.revision))
             }
             return .success(.destinationUnusable(destination, reason: "A file that is not a readable library is already there."))
         }
 
+        // (2) coordinated copy of the exact bytes, (3) independent read-back inside the publisher.
         do {
             try ops.createDirectory(folder)
             _ = try recovery.retainCheckpoint(bytes, for: .library)
             _ = try publisher.publish(
-                candidate: bytes, revision: base.revision ?? 1, key: .library, to: destination, target: .newLocation,
-                retainPrior: false, boundaries: (.publish, .stageWrite), isCancelled: { false }, step: .stagedReplace, acknowledge: nil
+                encoded: EncodedDocument(data: bytes, publication: current.publication), key: .library, to: destination,
+                target: .newLocation, retainPrior: false, isCancelled: { false }, step: .stagedReplace, followUp: .none
             )
         } catch let error as PublicationError {
             return .failure(error)
         } catch {
-            return .failure(.failed(stage: .publish, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
+            return .failure(.failed(stage: .candidateValidated, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
         }
+        // (4) switch; the previous copy stays where it was.
         return await switchSetting(place: place, outcome: .moved(to: destination, previousCopyKept: sourceURL))
     }
 
@@ -277,7 +330,7 @@ public actor LibraryStore {
             setting.place = try place()
             try settings.save(setting)
         } catch {
-            return .failure(.failed(stage: .acknowledge, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
+            return .failure(.failed(stage: .readBackVerified, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
         }
         await load()
         return .success(outcome)
@@ -292,9 +345,9 @@ public actor LibraryStore {
     private func save(_ session: CanonicalDocumentSession<LibraryCoder>) async -> Result<PublicationReceipt, PublicationError> {
         let cache = indexCache
         let model = library
-        let result = await session.save(acknowledge: { receipt in
+        let result = await session.save(followUp: PublicationFollowUp(updateIndex: { receipt in
             if let model { try cache.store(LibraryIndex.build(from: model, libraryDigest: receipt.fingerprint.byteDigest)) }
-        })
+        }))
         if case let .success(receipt) = result, let model {
             index = LibraryIndex.build(from: model, libraryDigest: receipt.fingerprint.byteDigest)
         }

@@ -116,8 +116,8 @@ struct PublicationTests {
         let url = clean.url()
         let (current, base) = try clean.seedTwoRevisions(model, at: url)
         let before = try Data(contentsOf: url)
-        for boundary in [PublicationBoundary.stageWrite, .publish] {
-            let faults = FaultState(.failWrite(boundary, errno: code))
+        for boundary in [PublicationBoundary.baseChecked, .stagedFlushed] {
+            let faults = FaultState(.failWrite(after: boundary, errno: code))
             let faulty = Rig(ops: FaultInjectingFileOperations(faults: faults), hooks: FaultHooks(faults: faults), dir: dir)
             #expect {
                 try faulty.publisher.publish(try current.renamingShow(to: "X"), revision: 3, key: .show(model.show.id), to: url, target: .inPlace(expectedBase: base))

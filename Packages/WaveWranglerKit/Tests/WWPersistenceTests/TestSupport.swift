@@ -70,7 +70,7 @@ enum Fixtures {
         var rng = SeededGenerator(seed: seed)
         let entries = shows.enumerated().map { index, show in
             LibraryShowEntry(showID: show.show.id, alias: index.isMultiple(of: 3) ? "Alias \(index)" : nil,
-                             lastKnownTitle: show.show.title, lastKnownRevision: 1)
+                             lastKnownTitle: show.show.title)
         }
         let ids = shows.map(\.show.id)
         let collections = [
@@ -173,26 +173,25 @@ struct SimulatedCrash: InjectedInterruption, Equatable {
     let detail: String
 }
 
-enum FaultPhase: String, Sendable, CaseIterable { case before, after }
-
-/// One injected fault. File-level faults fire on the first matching operation after `armed`.
+/// One injected fault. File-level faults fire on the first matching operation after boundary `after`.
 enum Fault: Sendable, Equatable {
-    case crash(PublicationBoundary, FaultPhase)
-    /// Crash part-way through writing a new file inside the boundary (`fraction` of bytes written).
-    case partialWrite(PublicationBoundary, fraction: Double)
-    /// Provider-like non-atomic publication: destination overwritten in place with a prefix, then crash.
+    /// Process death exactly at a boundary.
+    case crash(at: PublicationBoundary)
+    /// Crash part-way through writing a new file in the step that follows `after`.
+    case partialWrite(after: PublicationBoundary, fraction: Double)
+    /// Provider-like non-atomic publication after P4: destination overwritten in place with a prefix, then crash.
     case tornPublish(fraction: Double)
-    /// Publication appears to succeed, but read-back observes other bytes (stale provider read).
+    /// After P5, read-back observes other bytes (stale provider read); no crash.
     case staleReadBack
-    /// A write fails with an errno (disk full, permission, offline) without crashing.
-    case failWrite(PublicationBoundary, errno: Int32)
+    /// A write in the step after `after` fails with an errno (disk full, permission, offline); no crash.
+    case failWrite(after: PublicationBoundary, errno: Int32)
 }
 
 /// Shared fault state for `FaultInjectingFileOperations` + `FaultHooks`, plus a write audit log.
 final class FaultState: Sendable {
     struct State {
         var fault: Fault?
-        var currentBoundary: PublicationBoundary?
+        var lastReached: PublicationBoundary?
         var dead = false
         var fired = false
         var writes: [URL] = []
@@ -219,17 +218,12 @@ final class FaultState: Sendable {
 struct FaultHooks: PublicationHooks {
     let faults: FaultState
 
-    func willEnter(_ boundary: PublicationBoundary) throws {
+    func reached(_ boundary: PublicationBoundary) throws {
         let fault = faults.state.withLock { state -> Fault? in
-            state.currentBoundary = boundary
+            state.lastReached = boundary
             return state.fault
         }
-        if fault == .crash(boundary, .before) { throw faults.crash(boundary, "before") }
-    }
-
-    func didComplete(_ boundary: PublicationBoundary) throws {
-        let fault = faults.state.withLock { $0.fault }
-        if fault == .crash(boundary, .after) { throw faults.crash(boundary, "after") }
+        if fault == .crash(at: boundary) { throw faults.crash(boundary, "at boundary") }
     }
 }
 
@@ -250,8 +244,8 @@ struct FaultInjectingFileOperations: FileOperations {
     func read(_ url: URL) throws -> Data {
         try checkAlive()
         let data = try base.read(url)
-        let (fault, boundary, fired) = faults.state.withLock { ($0.fault, $0.currentBoundary, $0.fired) }
-        if fault == .staleReadBack, boundary == .readBackVerify, !fired {
+        let (fault, boundary, fired) = faults.state.withLock { ($0.fault, $0.lastReached, $0.fired) }
+        if fault == .staleReadBack, boundary == .published, !fired {
             faults.state.withLock { $0.fired = true }
             return data.dropLast(7) + Data("STALE!}".utf8)
         }
@@ -268,12 +262,12 @@ struct FaultInjectingFileOperations: FileOperations {
     func writeNew(_ data: Data, to url: URL) throws {
         try checkAlive()
         record(url)
-        let (fault, boundary) = faults.state.withLock { ($0.fault, $0.currentBoundary) }
+        let (fault, boundary) = faults.state.withLock { ($0.fault, $0.lastReached) }
         switch fault {
-        case let .partialWrite(target, fraction) where target == boundary:
+        case let .partialWrite(after, fraction) where after == boundary:
             try base.writeNew(data.prefix(Int(Double(data.count) * fraction)), to: url)
             throw faults.crash(boundary, "partial write \(fraction)")
-        case let .failWrite(target, code) where target == boundary:
+        case let .failWrite(after, code) where after == boundary:
             faults.state.withLock { $0.fired = true }
             throw POSIXError(POSIXErrorCode(rawValue: code)!)
         default:
@@ -284,16 +278,20 @@ struct FaultInjectingFileOperations: FileOperations {
     func replace(_ destination: URL, withStaged staged: URL) throws {
         try checkAlive()
         record(destination)
-        let (fault, boundary) = faults.state.withLock { ($0.fault, $0.currentBoundary) }
+        let (fault, boundary) = faults.state.withLock { ($0.fault, $0.lastReached) }
         switch fault {
-        case let .tornPublish(fraction) where boundary == .publish || boundary == .migrationPublish:
+        case let .tornPublish(fraction) where boundary == .stagedFlushed:
             let data = try base.read(staged)
-            let handle = try FileHandle(forWritingTo: destination)
-            try handle.truncate(atOffset: 0)
-            try handle.write(contentsOf: data.prefix(max(1, Int(Double(data.count) * fraction))))
-            try handle.close()
+            if base.exists(destination) {
+                let handle = try FileHandle(forWritingTo: destination)
+                try handle.truncate(atOffset: 0)
+                try handle.write(contentsOf: data.prefix(max(1, Int(Double(data.count) * fraction))))
+                try handle.close()
+            } else {
+                try base.writeNew(data.prefix(max(1, Int(Double(data.count) * fraction))), to: destination)
+            }
             throw faults.crash(boundary, "torn publish \(fraction)")
-        case let .failWrite(target, code) where target == boundary:
+        case let .failWrite(after, code) where after == boundary:
             faults.state.withLock { $0.fired = true }
             throw POSIXError(POSIXErrorCode(rawValue: code)!)
         default:

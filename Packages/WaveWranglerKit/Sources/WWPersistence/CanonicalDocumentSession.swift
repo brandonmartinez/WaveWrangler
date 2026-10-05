@@ -1,4 +1,5 @@
 import Foundation
+import WWCore
 
 /// A headless open canonical document: in-memory value, the exact on-disk base it was read from or last
 /// published, honest dirty state and status. Used by the library store, the harness and CLI trials; the app's
@@ -93,7 +94,7 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
     public func save(
         automatic: Bool = false,
         isCancelled: () -> Bool = { false },
-        acknowledge: ((PublicationReceipt) throws -> Void)? = nil
+        followUp: PublicationFollowUp = .none
     ) -> Result<PublicationReceipt, PublicationError> {
         if let readOnlyReason { return .failure(.readOnly(readOnlyReason)) }
         if automatic, let gate, !gate.isEnabled {
@@ -107,18 +108,21 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
         let next = max(revision, base?.revision ?? 0) + 1
         do {
             let receipt = try publisher.publish(
-                payload, revision: next, key: key, to: url, target: target, isCancelled: isCancelled, acknowledge: acknowledge
+                payload, revision: next, key: key, to: url, target: target, isCancelled: isCancelled, followUp: followUp
             )
             base = receipt.fingerprint
             revision = receipt.revision
             isDirty = false
-            try? publisher.recovery?.discardDraft(for: key)
+            // The verified publication contains every edit: unpublished edit checkpoints are no longer needed.
+            try? publisher.recovery?.discardEditCheckpoints(for: key)
             status.state = receipt.followUpIncomplete
                 ? .savedFollowUpIncomplete(revision: receipt.revision, at: receipt.verifiedAt)
                 : .saved(revision: receipt.revision, at: receipt.verifiedAt)
             return .success(receipt)
         } catch let error as PublicationError {
             status.state = DocumentSaveState.from(error, retainedRevision: base?.revision)
+            // C2b: an automatic publication that failed or is uncertain still gets an edit checkpoint.
+            if automatic, error != .cancelled { writeEditCheckpoint(keepingStatus: true) }
             return .failure(error)
         } catch {
             status.state = .acknowledgementUncertain(message: "\(error)")
@@ -159,19 +163,26 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
         }
     }
 
-    /// Records a device-local recovery draft of unsaved edits (not a save). Skipped while autosave is OFF.
+    /// Records a C2b unpublished edit checkpoint (not a save). ON only; OFF creates none.
     @discardableResult
-    public func writeRecoveryDraft() -> Bool {
+    public func writeEditCheckpoint(keepingStatus: Bool = false) -> Bool {
         guard isDirty, readOnlyReason == nil, gate?.isEnabled ?? true, let recovery = publisher.recovery,
-              let bytes = try? publisher.coder.encode(payload, revision: max(revision, base?.revision ?? 0) + 1)
+              let snapshot = try? publisher.coder.encode(payload, revision: max(revision, base?.revision ?? 0) + 1)
         else { return false }
         do {
-            try recovery.writeDraft(bytes, base: base, for: key)
-            status.state = .recoveryCheckpoint(at: Date())
+            let record = try recovery.writeEditCheckpoint(
+                snapshot: snapshot, base: base, schemaVersion: publisher.coder.format.currentSchemaVersion, for: key
+            )
+            if !keepingStatus { status.state = .recoveryCheckpoint(at: record.createdAt) }
             return true
         } catch {
             return false
         }
+    }
+
+    /// Explicit Don't Save/Discard: the user chose to drop unsaved edits, so their checkpoints go too.
+    public func discardUnsavedChanges() {
+        try? publisher.recovery?.discardEditCheckpoints(for: key)
     }
 
     public func refreshProviderConflicts() {

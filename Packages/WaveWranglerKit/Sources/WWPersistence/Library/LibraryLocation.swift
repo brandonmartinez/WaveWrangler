@@ -98,12 +98,16 @@ public enum LibraryLocationStatus: Sendable, Equatable {
 
 /// Outcome of moving the library to another folder.
 public enum LibraryMoveOutcome: Sendable, Equatable {
-    /// Copied, independently verified, setting switched. The previous copy was kept untouched.
+    /// Copied, independently verified, setting switched. The previous copy was kept as a backup.
     case moved(to: URL, previousCopyKept: URL)
     /// The destination already held this exact library (e.g. an interrupted earlier move); adopted.
     case adoptedIdentical(URL)
-    /// The destination holds a different library. Nothing was overwritten; choose to adopt it or cancel.
-    case destinationHasDifferentLibrary(URL, revision: Int?)
+    /// The destination holds a different library. Nothing was overwritten; offer "Use That Library"
+    /// (`useLibrary(in:)`, which combines) or cancel.
+    case destinationHasLibrary(URL, revision: Int?)
     /// The destination holds something that is not a readable library. Nothing was changed.
     case destinationUnusable(URL, reason: String)
+    /// This Mac's library was combined into the destination library, which is now in use. The previous
+    /// location was kept as a backup.
+    case combined(into: URL, previousCopyKept: URL?)
 }

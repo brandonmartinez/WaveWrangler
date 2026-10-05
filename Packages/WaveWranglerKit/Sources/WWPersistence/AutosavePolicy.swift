@@ -11,9 +11,13 @@ public struct AutosavePreference: Sendable, Equatable, Codable {
     /// Bounded set of quiescence delays (seconds after the last edit).
     public static let allowedDelays: [Double] = [1, 2, 5, 10, 30]
     public static let defaultDelay: Double = 1
-    /// A device-local recovery draft is recorded after this quiet period whenever the configured publication
-    /// delay is longer, so a longer cadence never removes the ≤2 s recovery checkpoint.
-    public static let recoveryDraftDelay: Double = 1
+    /// Quiet period after which an edit burst counts as settled (C2b "at quiescence").
+    public static let quiescenceSeconds: Double = 0.5
+    /// A verified publication must be expected by this long after the last edit (≤2 s gate with a ≥0.5 s
+    /// margin); otherwise an unpublished edit checkpoint is written at quiescence.
+    public static let publicationExpectedWithin: Double = 1.5
+    /// Measured headroom for stage + flush + verify + read-back on this host (p95 well under this; see tests).
+    public static let publicationAllowance: Double = 0.25
 
     public var enabled: Bool
     public var delaySeconds: Double
@@ -34,8 +38,11 @@ public struct AutosavePreference: Sendable, Equatable, Codable {
         defaults.set(delaySeconds, forKey: Self.delayKey)
     }
 
-    /// Whether a separate recovery draft is needed before the configured publication fires.
-    public var needsRecoveryDraft: Bool { enabled && delaySeconds > Self.recoveryDraftDelay }
+    /// Whether an unpublished edit checkpoint must be written at quiescence because a verified publication is
+    /// not expected within `publicationExpectedWithin` of the last edit.
+    public var needsEditCheckpoint: Bool {
+        enabled && delaySeconds + Self.publicationAllowance > Self.publicationExpectedWithin
+    }
 }
 
 /// Thread-safe holder of the *actual* enabled flag, consulted at every scheduling boundary and again when
@@ -59,8 +66,8 @@ public final class AutosaveGate: Sendable {
 public enum QuiescentWork: Sendable, Equatable {
     /// Publish the document (automatic save) — only issued while the gate is enabled at fire time.
     case publish
-    /// Record a device-local recovery draft (not a save) — only while enabled.
-    case recoveryDraft
+    /// Record a C2b unpublished edit checkpoint (not a save) — only while enabled.
+    case editCheckpoint
 }
 
 /// Debounces edits into quiescent automatic work. Checks the gate when scheduling *and* when a queued timer
@@ -97,8 +104,8 @@ public final class QuiescenceScheduler: Sendable {
         }
         let preference = gate.preference
         guard preference.enabled else { return false }
-        if preference.needsRecoveryDraft {
-            schedule(.recoveryDraft, after: AutosavePreference.recoveryDraftDelay, generation: generation)
+        if preference.needsEditCheckpoint {
+            schedule(.editCheckpoint, after: AutosavePreference.quiescenceSeconds, generation: generation)
         }
         schedule(.publish, after: preference.delaySeconds, generation: generation)
         return true

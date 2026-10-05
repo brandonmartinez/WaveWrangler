@@ -3,8 +3,8 @@ import WWCore
 
 /// What reconciliation observed about one show document on this Mac.
 public enum ShowObservation: Sendable, Equatable {
-    /// A validated coherent revision was read at the hinted location.
-    case available(title: String, revision: Int)
+    /// A validated coherent publication was read at the hinted location.
+    case available(title: String, publication: PublicationStamp)
     /// Nothing at the hinted location (moved, deleted, offline or never downloaded — not distinguished).
     case missing
     /// Permission to the hinted location is denied or needs a regrant.
@@ -44,9 +44,9 @@ public enum LibraryReconciler {
             let entry = result.entries[index]
             guard let observation = observations[entry.showID] else { continue }
             switch observation {
-            case let .available(title, revision):
+            case let .available(title, publication):
                 result.entries[index].lastKnownTitle = title
-                result.entries[index].lastKnownRevision = revision
+                result.entries[index].lastKnownPublication = publication
                 result.entries[index].unavailable = nil
             default:
                 let note = observation.unavailableNote ?? ""
@@ -59,10 +59,10 @@ public enum LibraryReconciler {
     }
 
     /// Adds a logical show reference if it is not already present.
-    public static func registering(_ showID: ShowID, title: String, revision: Int?, in library: LibraryModel) -> LibraryModel {
+    public static func registering(_ showID: ShowID, title: String, publication: PublicationStamp?, in library: LibraryModel) -> LibraryModel {
         guard !library.entries.contains(where: { $0.showID == showID }) else { return library }
         var result = library
-        result.entries.append(LibraryShowEntry(showID: showID, lastKnownTitle: title, lastKnownRevision: revision))
+        result.entries.append(LibraryShowEntry(showID: showID, lastKnownTitle: title, lastKnownPublication: publication))
         return result
     }
 
@@ -76,9 +76,61 @@ public enum LibraryReconciler {
         return result
     }
 
-    /// Records the last coherent revision acknowledged after a verified show publication.
-    public static func acknowledging(_ showID: ShowID, title: String, revision: Int, in library: LibraryModel, at date: Date = Date()) -> LibraryModel {
-        reconcile(registering(showID, title: title, revision: revision, in: library),
-                  observations: [showID: .available(title: title, revision: revision)], at: date)
+    /// Records the publication acknowledged after a verified show publication (C3 step 8).
+    public static func acknowledging(_ showID: ShowID, title: String, publication: PublicationStamp, in library: LibraryModel, at date: Date = Date()) -> LibraryModel {
+        reconcile(registering(showID, title: title, publication: publication, in: library),
+                  observations: [showID: .available(title: title, publication: publication)], at: date)
+    }
+
+    /// Whether the show on disk is a different publication from the one the library last reconciled
+    /// (compared by publication ID and checksum; the revision number is only an ordering hint).
+    public static func hasChanged(_ entry: LibraryShowEntry, observed: PublicationStamp) -> Bool {
+        entry.lastKnownPublication?.publicationID != observed.publicationID || entry.lastKnownPublication?.checksum != observed.checksum
+    }
+}
+
+/// Design's "Use That Library" combine rules: nothing is dropped.
+public enum LibraryMerge {
+    public static let thisMacSuffix = "from this Mac"
+
+    /// Combines `thisMac` into `target`:
+    /// - entries: every target entry, plus this Mac's entries for shows the target lacks (including
+    ///   unavailable ones); for shared shows the target's entry wins but a missing alias is filled in;
+    /// - collections: target collections first; this Mac's collections follow unless an identical one
+    ///   (same name, same members in the same order) exists. A same-named collection that differs in members
+    ///   or order is kept as "<name> (from this Mac)", "<name> (from this Mac 2)", …;
+    /// - recents: target recents, then this Mac's recents not already present.
+    public static func combine(thisMac: LibraryModel, into target: LibraryModel) -> LibraryModel {
+        var result = target
+        for entry in thisMac.entries {
+            if let index = result.entries.firstIndex(where: { $0.showID == entry.showID }) {
+                if result.entries[index].alias == nil { result.entries[index].alias = entry.alias }
+            } else {
+                result.entries.append(entry)
+            }
+        }
+        for collection in thisMac.collections {
+            if result.collections.contains(where: { $0.name == collection.name && $0.showIDs == collection.showIDs }) { continue }
+            var kept = collection
+            if result.collections.contains(where: { $0.name == collection.name }) {
+                kept.name = uniqueName(for: collection.name, existing: Set(result.collections.map(\.name)))
+            }
+            if result.collections.contains(where: { $0.id == kept.id }) { kept.id = CollectionID() }
+            result.collections.append(kept)
+        }
+        for showID in thisMac.recentShowIDs where !result.recentShowIDs.contains(showID) {
+            result.recentShowIDs.append(showID)
+        }
+        return result
+    }
+
+    static func uniqueName(for name: String, existing: Set<String>) -> String {
+        var candidate = "\(name) (\(thisMacSuffix))"
+        var number = 2
+        while existing.contains(candidate) {
+            candidate = "\(name) (\(thisMacSuffix) \(number))"
+            number += 1
+        }
+        return candidate
     }
 }
