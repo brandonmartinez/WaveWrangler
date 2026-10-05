@@ -33,7 +33,13 @@ public enum WWSourcesStatusMapping {
     }
 
     static func access(_ observation: AvailabilityObservation) -> AccessStatus {
-        switch observation.access {
+        // A file that isn't at its location has nothing to grant: an unusable grant or unobserved access
+        // is a consequence of the missing file, not a permission problem (denied ≠ missing). Relink is
+        // the remedy, offered by Location.
+        if case .missing = observation.location, observation.access != .denied, observation.access != .granted {
+            return .notChecked(reason: "the file wasn't found")
+        }
+        return switch observation.access {
         case .granted: .granted
         // A stale bookmark still reported after evaluation could not be refreshed automatically.
         case .staleBookmark, .needsRegrant: .needsPermission

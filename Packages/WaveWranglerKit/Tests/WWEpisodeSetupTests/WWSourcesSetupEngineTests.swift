@@ -103,6 +103,7 @@ struct WWSourcesSetupEngineTests {
         await engine.refresh([tr2ID])
         let missing = WWSourcesStatusMapping.snapshot(engine.monitor.observations[tr2ID])
         #expect(["Not found", "Moved"].contains(missing.summary.text), "\(missing)")
+        #expect(missing.access != .needsPermission, "a moved/missing file is not a permission problem")
 
         let comparison = await engine.compare(candidate: moved, for: tr2ID)
         #expect(comparison.canConfirm)
@@ -284,6 +285,36 @@ struct WWSourcesSetupEngineTests {
         #expect(TransferAnnouncement.decide(from: downloading, to: failed)?.text(for: "tr2.wav") == "Download failed for tr2.wav: no progress was reported")
     }
 
+    /// #90: a deleted source is Not found with Relink — never "needs your permission again".
+    @Test(.timeLimit(.minutes(1))) func deletedSourceIsMissingNotAPermissionProblem() async throws {
+        let root = try makeTree()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let io = CountingIO()
+        let engine = WWSourcesSetupEngine(showID: ShowID(), store: InMemoryDeviceAccessStore(), context: SourceAccessContext(io: io), preference: FixedPreference(false))
+        let scan = try await engine.scanForImport([root], episodeSourceIDs: [])
+        let items = ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: []).importItems()
+        try await engine.commitImport(Dictionary(uniqueKeysWithValues: items.map { ($0.candidateID, $0.item.source.id) }), fromScan: scan.token)
+        let tr1 = try #require(items.first { $0.item.source.displayNameHint == "tr1.wav" }?.item.source.id)
+
+        // Outside the app: copy the file elsewhere (a new file object), delete the original; the folder
+        // stays fully readable.
+        let original = root.appending(path: "ZOOM0001/tr1.wav")
+        let elsewhere = root.deletingLastPathComponent().appending(path: "Elsewhere")
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: original, to: elsewhere.appending(path: "tr1.wav"))
+        try FileManager.default.removeItem(at: original)
+
+        await engine.refresh([tr1])
+        let snapshot = WWSourcesStatusMapping.snapshot(engine.monitor.observations[tr1])
+        if case .missing = snapshot.location {} else { Issue.record("location \(snapshot.location)") }
+        #expect(snapshot.access == .notChecked(reason: "the file wasn't found"))
+        #expect(snapshot.access != .needsPermission && snapshot.access != .denied)
+        #expect(snapshot.summary.text == "Not found")
+        #expect(!snapshot.summary.accessibilityValue.localizedCaseInsensitiveContains("permission"))
+        #expect(snapshot.access.presentation.inspectorText == "Not checked — the file wasn't found")
+        #expect(io.downloads == 0)
+    }
+
     @Test func mappingIsHonest() {
         #expect(WWSourcesStatusMapping.transfer(.offlineOrUnknown(nil)) == .failed(reason: "no progress was reported"))
         #expect(WWSourcesStatusMapping.transfer(.offlineOrUnknown(nil)).presentation.summaryText != "No connection")
@@ -301,6 +332,15 @@ struct WWSourcesSetupEngineTests {
         #expect(WWSourcesStatusMapping.residency(.downloading) == .cloudOnly)
         let missing = AvailabilityObservation(observedAt: Date(), location: .missing(lastKnownPathOccupied: .known(true)), access: .granted)
         #expect(WWSourcesStatusMapping.snapshot(missing).location == .missing(sameNamedFileAtOriginalLocation: true))
+        // #90: an unusable grant or unobserved access on a missing file is not a permission problem.
+        for access in [AccessState.needsRegrant, .staleBookmark, .unknown] {
+            let gone = WWSourcesStatusMapping.snapshot(AvailabilityObservation(observedAt: Date(), location: .missing(lastKnownPathOccupied: .known(false)), access: access))
+            #expect(gone.access == .notChecked(reason: "the file wasn't found"), "\(access)")
+            #expect(gone.summary.text == "Not found", "\(access)")
+        }
+        // Denied stays denied, and a present file with an unusable grant still needs permission.
+        #expect(WWSourcesStatusMapping.snapshot(AvailabilityObservation(observedAt: Date(), location: .unknown, access: .denied)).access == .denied)
+        #expect(WWSourcesStatusMapping.snapshot(AvailabilityObservation(observedAt: Date(), location: .present, access: .needsRegrant)).access == .needsPermission)
     }
 }
 
