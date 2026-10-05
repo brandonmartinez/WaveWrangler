@@ -243,7 +243,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
         waitFor(sheet)
         XCTAssertTrue(sheet.staticTexts["Delete the collection “Season Two”?"].exists)
         sheet.buttons["Delete"].click()
-        XCTAssertFalse(created.waitForExistence(timeout: 2))
+        XCTAssertTrue(created.waitForNonExistence(timeout: 5), "collection deleted")
         XCTAssertEqual(value(element("ww.library.sidebar.shows")), "100 shows", "Deleting a collection never deletes shows")
     }
 
@@ -309,10 +309,13 @@ final class LibraryWorkspaceUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(entries.frame.minY, bar.frame.maxY - 0.5, "list below the bar")
         try audit("Library window at 200% text (lib100, message bar)")
 
-        // Dismissing the notice gives the list the full column.
+        // Dismissing the notice gives the list the full height: with no messages the bar area is 0 pt tall, so
+        // the split view starts right under the toolbar.
         dismiss.click()
-        XCTAssertFalse(bar.waitForExistence(timeout: 2))
+        XCTAssertTrue(bar.waitForNonExistence(timeout: 5), "notice dismissed")
         assertInside(entries, "Entry list without the bar")
+        let sidebarScroll = app.outlines["ww.library.sidebar"].frame
+        XCTAssertLessThanOrEqual(abs(sidebarScroll.minY - toolbarBottom), 12, "no empty bar area: sidebar \(sidebarScroll) vs toolbar bottom \(toolbarBottom)")
     }
 
     // MARK: - Show window (T01–T03, T06, T24; K02, K03, K24)

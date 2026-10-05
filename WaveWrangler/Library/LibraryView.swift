@@ -162,18 +162,29 @@ private struct LibraryEntryList: View {
         let title = LibraryPresentation.contentTitle(for: item, library: state.store.library, rowCount: rows.count)
         Group {
             if rows.isEmpty {
+                // Same shape as ContentUnavailableView, but with primary-contrast text: its secondary description
+                // failed the contrast audit, and it now scrolls when it doesn't fit (#109).
                 CenteredScrollView {
-                ContentUnavailableView {
-                    Label(emptyTitle(item), systemImage: emptySymbol(item))
-                } description: {
-                    Text(emptyDescription(item))
-                } actions: {
-                    if item == .shows {
-                        Button("New Show…") { CommandRouter.shared.newShow(nil) }
-                        Button("Open…") { CommandRouter.shared.openDocument(nil) }
+                    VStack(spacing: 8) {
+                        Image(systemName: emptySymbol(item))
+                            .wwFont(.largeTitle)
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                        Text(emptyTitle(item))
+                            .wwFont(.title3)
+                            .accessibilityAddTraits(.isHeader)
+                        Text(emptyDescription(item))
+                            .wwFont(.body)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if item == .shows {
+                            HStack {
+                                Button("New Show…") { CommandRouter.shared.newShow(nil) }
+                                Button("Open…") { CommandRouter.shared.openDocument(nil) }
+                            }
+                            .padding(.top, 4)
+                        }
                     }
-                }
-                .wwFont(.body)
                 }
             } else if !Self.usesSwiftUITable {
                 LibraryEntryOutline(
@@ -475,17 +486,34 @@ struct CenteredScrollView<Content: View>: View {
     }
 }
 
-/// #109: content at its natural height up to `maxHeight`; taller content scrolls within `maxHeight`.
+/// #109: content at its natural height up to `maxHeight` (0 pt when empty); taller content scrolls within
+/// `maxHeight`. Never taller than its content: a plain `.frame(maxHeight:)` would fill to the cap.
 struct ScrollingIfTaller<Content: View>: View {
     let maxHeight: CGFloat
     @ViewBuilder let content: Content
 
     var body: some View {
-        ViewThatFits(in: .vertical) {
-            content
-            ScrollView { content }
-                .scrollBounceBehavior(.basedOnSize)
+        HeightCapLayout(maxHeight: maxHeight) {
+            ViewThatFits(in: .vertical) {
+                content
+                ScrollView { content }
+                    .scrollBounceBehavior(.basedOnSize)
+            }
         }
-        .frame(maxHeight: maxHeight)
+    }
+}
+
+/// Sizes its single subview to min(natural height at the proposed width, `maxHeight`).
+struct HeightCapLayout: Layout {
+    let maxHeight: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let subview = subviews.first else { return .zero }
+        let natural = subview.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(width: proposal.width ?? natural.width, height: min(natural.height, max(0, maxHeight)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(bounds.size))
     }
 }
