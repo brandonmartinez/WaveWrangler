@@ -25,20 +25,17 @@ extension Probe {
         return DeviceAccessKey(showID: ShowID(show), sourceID: SourceID(source))
     }
 
-    func recordURL(_ key: DeviceAccessKey) -> URL { file.appending(path: "\(key.sourceID.rawValue.uuidString).json") }
+    /// The app's own device-access store (WWSources `FileDeviceAccessStore`), so records round-trip exactly as
+    /// in the app (full-precision dates). `--file` is the store's folder.
+    var accessStore: FileDeviceAccessStore { FileDeviceAccessStore(fileURL: file.appending(path: "source-access-records.json")) }
 
-    func loadRecord(_ key: DeviceAccessKey) -> DeviceAccessRecord? {
-        guard let data = try? Data(contentsOf: recordURL(key)) else { return nil }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(DeviceAccessRecord.self, from: data)
+    func loadRecord(_ key: DeviceAccessKey) async -> DeviceAccessRecord? {
+        try? await accessStore.record(for: key)
     }
 
-    func saveRecord(_ record: DeviceAccessRecord) throws {
+    func saveRecord(_ record: DeviceAccessRecord) async throws {
         try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        try encoder.encode(record).write(to: recordURL(record.key), options: .atomic)
+        try await accessStore.save(record)
     }
 
     func comparisonText(_ comparison: IdentityComparison) -> String {
@@ -78,14 +75,14 @@ extension Probe {
         }
     }
 
-    func sourceRecord() -> Int32 {
+    func sourceRecord() async -> Int32 {
         guard let key = sourceKey(), let candidate = args.url("source-file") else { emit(["error": "src-record needs --show --source --source-file"]); return 2 }
         let evaluator = RelinkEvaluator(context: sourceContext)
         let proposal = evaluator.evaluate(candidate: candidate, for: key, record: nil)
         do {
             // Initial import on this Mac: the user chose the file, so it is the confirmed baseline.
             let record = try evaluator.apply(proposal, to: nil, userConfirmed: true)
-            try saveRecord(record)
+            try await saveRecord(record)
             emit(["result": "recorded", "comparison": comparisonText(proposal.comparison)])
             return 0
         } catch {
@@ -94,9 +91,9 @@ extension Probe {
         }
     }
 
-    func sourceEvaluate() -> Int32 {
+    func sourceEvaluate() async -> Int32 {
         guard let key = sourceKey() else { emit(["error": "src-eval needs --show --source"]); return 2 }
-        let record = loadRecord(key)
+        let record = await loadRecord(key)
         let evaluation = SourceAvailabilityEvaluator(context: sourceContext).evaluate(key: key, record: record, setting: .off)
         let observation = evaluation.observation
         emit(["hasRecord": record != nil, "location": "\(observation.location)", "access": observation.access.rawValue,
@@ -105,16 +102,16 @@ extension Probe {
         return 0
     }
 
-    func sourceRelink() -> Int32 {
+    func sourceRelink() async -> Int32 {
         guard let key = sourceKey(), let candidate = args.url("source-file") else { emit(["error": "src-relink needs --show --source --source-file"]); return 2 }
         let evaluator = RelinkEvaluator(context: sourceContext)
-        let record = loadRecord(key)
+        let record = await loadRecord(key)
         let proposal = evaluator.evaluate(candidate: candidate, for: key, record: record)
         var object: [String: Any] = ["hasRecord": record != nil, "comparison": comparisonText(proposal.comparison),
                                      "requiresConfirmation": proposal.requiresConfirmation, "canApply": proposal.canApply, "host": hostLabel()]
         do {
             let updated = try evaluator.apply(proposal, to: record, userConfirmed: args["confirm"] == "1")
-            try saveRecord(updated)
+            try await saveRecord(updated)
             object["result"] = "applied"
         } catch let error as RelinkError {
             object["result"] = "\(error)"

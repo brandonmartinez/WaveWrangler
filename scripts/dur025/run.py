@@ -449,16 +449,30 @@ def case_relink(dev, split, index, rng):
     # A (which holds the evidence) reports the moved / replaced source as different, never substituted.
     a_eval = dev.run("A", ["src-eval", "--file", records_a, "--show", show_id, "--source", sid])
     if variant == "same":
-        # Untouched source: present, same file object. iCloud can rewrite its dates after upload (observed in
-        # calibration); a date-only "changed" is allowed and recorded — it is never a substitution.
-        identity = a_eval.get("identity", "")
-        dates_only = identity.startswith("changed(") and all(f in ("creationDate", "contentModificationDate")
-                                                             for f in identity[identity.index("[") + 1:identity.rindex("]")].replace("WWSources.FingerprintField.", "").split(", "))
-        a_ok = a_eval.get("location") == "present" and (identity == "matchesRecorded" or dates_only)
+        # Untouched source: present and matching A's recorded baseline exactly. (Calibration-1/2's date-only
+        # "changed" was the probe's own record encoding truncating dates to whole seconds — fixed by using the
+        # app's FileDeviceAccessStore — not iCloud; see the evidence document.)
+        a_ok = a_eval.get("location") == "present" and a_eval.get("identity") == "matchesRecorded"
     elif variant == "moved":
         a_ok = a_eval.get("location", "").startswith("moved") or a_eval.get("location", "").startswith("missing")
     else:
         a_ok = a_eval.get("identity", "").startswith(("mismatch", "changed")) or a_eval.get("access") in ("staleBookmark", "needsRegrant")
+    # #121 data: raw dates of the relinked source — A's recorded baseline (its access record) and what each
+    # host's file system reports now (UTC, ms), so any drift is measured rather than inferred.
+    stat_script = ("import os,sys,json,datetime as d; s=os.stat(sys.argv[1]); f=lambda t: d.datetime.fromtimestamp(t,d.timezone.utc).isoformat(timespec='milliseconds');"
+                   "print(json.dumps({'creation': f(s.st_birthtime), 'modification': f(s.st_mtime_ns/1e9), 'inode': s.st_ino}))")
+    dates = {}
+    for host in ("A", "B"):
+        out = dev.shell(host, f"python3 -c {shlex.quote(stat_script)} {shlex.quote(supplied)}")
+        try:
+            dates[host] = json.loads(out.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            dates[host] = {"error": out.stderr[-200:]}
+    try:
+        with open(f"{records_a}/{sid.upper()}.json") as handle:
+            dates["A recorded baseline"] = json.load(handle).get("recordedIdentity", {}).get("fingerprint")
+    except OSError as error:
+        dates["A recorded baseline"] = {"error": str(error)}
     # Zero source writes: every source digest on both hosts is exactly what A generated.
     digests = {h: {p: dev.run(h, ["digest", "--file", p]).get("sha256") for p in expected} for h in ("A", "B")}
     zero_writes = all(digests[h][p] == expected[p] for h in digests for p in expected)
@@ -469,6 +483,7 @@ def case_relink(dev, split, index, rng):
             "bConfirmed": confirmed.get("result"), "bAfterRegrant": {k: b_after.get(k) for k in ("access", "identity")},
             "aReportsChangedSource": {k: a_eval.get(k) for k in ("location", "identity", "access")}, "aCorrect": a_ok,
             "aUntouchedSourceDatesChangedBySync": variant == "same" and a_eval.get("identity", "").startswith("changed("),
+            "sourceDates": dates,
             "zeroSourceWrites": zero_writes, "sourceFiles": len(expected)}
 
 
