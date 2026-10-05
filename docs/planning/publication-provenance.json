@@ -1,0 +1,651 @@
+{
+  "schema_version": 1,
+  "notice": "Public sanitized-provenance companions are NOT byte-identical to archived originals after pointer redaction or dated policy updates. Original artifact hashes identify local archives, not these public files.",
+  "redaction_policy": "Local research artifact roots -> <research-artifacts>; worktree roots -> <workspace>; other personal home pointers -> <user-home>; local session identifiers -> <local-session-id>. No measurements, pins, artifact hashes or failure dispositions are redacted.",
+  "source_snapshot_sha256": "065cef4251a87715d0f59f6cc6631539245b7ae6d8ff3d8fb76cd2d8103597dd",
+  "source_file_count": 64,
+  "local_pointer_redacted_file_count": 17,
+  "new_document_policy": "The runbook, kickoff and live index are newly authored publication documents, not archived research mirrors; provenance does not recursively hash itself.",
+  "files": [
+    {
+      "path": ".github/agents/squad.agent.md",
+      "archived_original_sha256": "69697f343c962ec7c0032d6130e41de133ba2adbc277e81a2a00c87df16da039",
+      "archived_original_bytes": 83661,
+      "published_sha256": "1d6cbc0a7ef9b276b3d4db6b65a22293ca32fbfe04963df4f6cd188c92f4c6e9",
+      "published_bytes": 88625,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": ".github/skills/agent-collaboration/SKILL.md",
+      "archived_original_sha256": "e1943766f6aa5efeb145f22d1583f5b38d4d8a7109ae17f085ec064dada4b9bf",
+      "archived_original_bytes": 2010,
+      "published_sha256": "e1943766f6aa5efeb145f22d1583f5b38d4d8a7109ae17f085ec064dada4b9bf",
+      "published_bytes": 2010,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/coordinator-init-mode/SKILL.md",
+      "archived_original_sha256": "3e74448a48372968a7d14c43e7461bed1aee968073461341a6e33d57de0f85e1",
+      "archived_original_bytes": 7868,
+      "published_sha256": "3e74448a48372968a7d14c43e7461bed1aee968073461341a6e33d57de0f85e1",
+      "published_bytes": 7868,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/coordinator-response-mode/SKILL.md",
+      "archived_original_sha256": "9e022fe051a61eb2f03568fc19c30c27e3f932dd3139cb01bdd76ada634954a1",
+      "archived_original_bytes": 5020,
+      "published_sha256": "162c8e52d59b6502765d27dac48425ab4e5ca1a106d2fa2d26072fdcfaf8f60e",
+      "published_bytes": 5018,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": ".github/skills/coordinator-source-of-truth/SKILL.md",
+      "archived_original_sha256": "cecc9c969a2c5d5963a1f02e62be62cabbf4af22ce07d5e95ba5934d4bc1253b",
+      "archived_original_bytes": 5909,
+      "published_sha256": "cecc9c969a2c5d5963a1f02e62be62cabbf4af22ce07d5e95ba5934d4bc1253b",
+      "published_bytes": 5909,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/cross-squad/SKILL.md",
+      "archived_original_sha256": "8f62616ee39835c8e2954cb9327cf813cf1c6d5f6d8652773c82f042aa076270",
+      "archived_original_bytes": 10010,
+      "published_sha256": "8f62616ee39835c8e2954cb9327cf813cf1c6d5f6d8652773c82f042aa076270",
+      "published_bytes": 10010,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/cross-squad-communication/SKILL.md",
+      "archived_original_sha256": "6395ca6690cbe65d3ad846838b34d2a9763bab86edb47d59f78a98b6deab0439",
+      "archived_original_bytes": 19574,
+      "published_sha256": "c8d7744cd194cf070ba53537586b6a4f19dfe09024b6cc18ffd85bd65f5aed70",
+      "published_bytes": 19570,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": ".github/skills/error-recovery/SKILL.md",
+      "archived_original_sha256": "a6bc62ea076cfbbd61b8348fc269014a87400c7b69c8d7cb14c1469f0ce87977",
+      "archived_original_bytes": 3466,
+      "published_sha256": "a6bc62ea076cfbbd61b8348fc269014a87400c7b69c8d7cb14c1469f0ce87977",
+      "published_bytes": 3466,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/git-workflow/SKILL.md",
+      "archived_original_sha256": "0591afc3b9be5918c096a9d90756e632c132642d21a73e793c061c8cc112f6f9",
+      "archived_original_bytes": 6147,
+      "published_sha256": "0591afc3b9be5918c096a9d90756e632c132642d21a73e793c061c8cc112f6f9",
+      "published_bytes": 6147,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/iterative-retrieval/SKILL.md",
+      "archived_original_sha256": "a1ac94cbaed7ddbf49cc452f4045521d33a0303458c63c356bd523941ee4f22c",
+      "archived_original_bytes": 6341,
+      "published_sha256": "a1ac94cbaed7ddbf49cc452f4045521d33a0303458c63c356bd523941ee4f22c",
+      "published_bytes": 6341,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/reflect/SKILL.md",
+      "archived_original_sha256": "a844dcf8212258d8184a1cc50c6e05094c36984c0c363cb23588a4c6aac3f413",
+      "archived_original_bytes": 8198,
+      "published_sha256": "a844dcf8212258d8184a1cc50c6e05094c36984c0c363cb23588a4c6aac3f413",
+      "published_bytes": 8198,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/reviewer-protocol/SKILL.md",
+      "archived_original_sha256": "1cabc792d13166834c04aa61154582c4bedc7e065f03ed90865ace5e6feb2559",
+      "archived_original_bytes": 4340,
+      "published_sha256": "1cabc792d13166834c04aa61154582c4bedc7e065f03ed90865ace5e6feb2559",
+      "published_bytes": 4340,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/secret-handling/SKILL.md",
+      "archived_original_sha256": "b9222aa132746bb312ac06b7060e3893c6b2f0126f2e33753037bd98c0c6b47b",
+      "archived_original_bytes": 7547,
+      "published_sha256": "b59ecbc69e0e5d295f0dcf6a90cd555e86c244eaacef786a753fca0e78ea8765",
+      "published_bytes": 7524,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": ".github/skills/session-recovery/SKILL.md",
+      "archived_original_sha256": "54a7c1feba619de57cc212774406331fd53447d48d565430489a6202a0e6b67a",
+      "archived_original_bytes": 5174,
+      "published_sha256": "54a7c1feba619de57cc212774406331fd53447d48d565430489a6202a0e6b67a",
+      "published_bytes": 5174,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/squad/SKILL.md",
+      "archived_original_sha256": "5e4c08f0c9b297b194baf5ad73cafae644fead47a929ef4286cd0c3c58b5c142",
+      "archived_original_bytes": 10874,
+      "published_sha256": "5e4c08f0c9b297b194baf5ad73cafae644fead47a929ef4286cd0c3c58b5c142",
+      "published_bytes": 10874,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/squad-conventions/SKILL.md",
+      "archived_original_sha256": "7e1a53f10ceed067e38de48865bfc212deb1fdb04fee65038a7a135753e25c7c",
+      "archived_original_bytes": 3440,
+      "published_sha256": "7e1a53f10ceed067e38de48865bfc212deb1fdb04fee65038a7a135753e25c7c",
+      "published_bytes": 3440,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/squad-help/SKILL.md",
+      "archived_original_sha256": "d2696395847e146dffc88668890adbd4104b3a9fe72be3fb47d773511eb9a4f8",
+      "archived_original_bytes": 4198,
+      "published_sha256": "d2696395847e146dffc88668890adbd4104b3a9fe72be3fb47d773511eb9a4f8",
+      "published_bytes": 4198,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/squad-version-check/SKILL.md",
+      "archived_original_sha256": "c533dd40c2074fc10833ef68bf110e8f80422dcd7de1b17cc11929901e406617",
+      "archived_original_bytes": 6296,
+      "published_sha256": "c533dd40c2074fc10833ef68bf110e8f80422dcd7de1b17cc11929901e406617",
+      "published_bytes": 6296,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/test-discipline/SKILL.md",
+      "archived_original_sha256": "6efe81cabcd2a0caef3913b9ffad497969683510c00a8e70d11ac9643aaeecfe",
+      "archived_original_bytes": 1939,
+      "published_sha256": "6efe81cabcd2a0caef3913b9ffad497969683510c00a8e70d11ac9643aaeecfe",
+      "published_bytes": 1939,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".github/skills/tiered-memory/SKILL.md",
+      "archived_original_sha256": "f9aa7ffa3685a3aff3bce044b52b13c96ec04db6082fd5b3a9b8a6d8fc769a60",
+      "archived_original_bytes": 7372,
+      "published_sha256": "61ed1c582fc7ac1380161f3d630354c118ba36eeb5b05bb7336ed16bb856d8a8",
+      "published_bytes": 7371,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": ".squad/agents/alignment/charter.md",
+      "archived_original_sha256": "c121b5bde17f3ff98c967658c6587b80b421e9e6b51050a4702e2981b01f9839",
+      "archived_original_bytes": 1473,
+      "published_sha256": "c121b5bde17f3ff98c967658c6587b80b421e9e6b51050a4702e2981b01f9839",
+      "published_bytes": 1473,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/agents/design/charter.md",
+      "archived_original_sha256": "ceb7ce690ab04e2cec041f8c6d99a8a955791138e7333fdc8c320bc3d200cc99",
+      "archived_original_bytes": 2140,
+      "published_sha256": "ceb7ce690ab04e2cec041f8c6d99a8a955791138e7333fdc8c320bc3d200cc99",
+      "published_bytes": 2140,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/agents/fact-checker/charter.md",
+      "archived_original_sha256": "7178855fe9c8f12b994b0f4aad2990ab0630f3e2bf41b59804a034d2aceed9b9",
+      "archived_original_bytes": 3431,
+      "published_sha256": "7178855fe9c8f12b994b0f4aad2990ab0630f3e2bf41b59804a034d2aceed9b9",
+      "published_bytes": 3431,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/agents/lead/charter.md",
+      "archived_original_sha256": "193df9744d8f1265fa31188b393b8a602a6363bcc68ae07ac70276e39ebfa0aa",
+      "archived_original_bytes": 1604,
+      "published_sha256": "193df9744d8f1265fa31188b393b8a602a6363bcc68ae07ac70276e39ebfa0aa",
+      "published_bytes": 1604,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/agents/mac/charter.md",
+      "archived_original_sha256": "6a1a76cdc5ab4014c01b7d36f0e4e54ca9181adb32beb727a95c881af06378b8",
+      "archived_original_bytes": 1351,
+      "published_sha256": "6a1a76cdc5ab4014c01b7d36f0e4e54ca9181adb32beb727a95c881af06378b8",
+      "published_bytes": 1351,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/agents/pipeline/charter.md",
+      "archived_original_sha256": "69dfd5f2a0637854a1df8c63d07a4ad5d668a4f602cf474631c83b4ff4933269",
+      "archived_original_bytes": 1393,
+      "published_sha256": "69dfd5f2a0637854a1df8c63d07a4ad5d668a4f602cf474631c83b4ff4933269",
+      "published_bytes": 1393,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/agents/rai/charter.md",
+      "archived_original_sha256": "79e862e50094d32d215183da7749757efa503a618caec39a4d1c29044ccc0654",
+      "archived_original_bytes": 1389,
+      "published_sha256": "79e862e50094d32d215183da7749757efa503a618caec39a4d1c29044ccc0654",
+      "published_bytes": 1389,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/agents/ralph/charter.md",
+      "archived_original_sha256": "dead15a63ea579be2935517104e28f8abab35633fa6bff8e3c057479910ada5f",
+      "archived_original_bytes": 1099,
+      "published_sha256": "dead15a63ea579be2935517104e28f8abab35633fa6bff8e3c057479910ada5f",
+      "published_bytes": 1099,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/agents/scribe/charter.md",
+      "archived_original_sha256": "28af665a8ff5e0052ed5c506a09e7c625802dea32213164bcec4a4a1512f2a09",
+      "archived_original_bytes": 9262,
+      "published_sha256": "28af665a8ff5e0052ed5c506a09e7c625802dea32213164bcec4a4a1512f2a09",
+      "published_bytes": 9262,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/config.json",
+      "archived_original_sha256": "22960f4afd2b67637624479f0478035ac7f0c57a488e9fdef2fd59647c23b504",
+      "archived_original_bytes": 45,
+      "published_sha256": "22960f4afd2b67637624479f0478035ac7f0c57a488e9fdef2fd59647c23b504",
+      "published_bytes": 45,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/decisions/inbox/copilot-directive-2026-10-04-native-document-local-backlog.md",
+      "archived_original_sha256": "33e153002959cb21e912c8fedd429d5c3cfbc2e5b06b26aef2d4d495979bb1d3",
+      "archived_original_bytes": 1140,
+      "published_sha256": "33e153002959cb21e912c8fedd429d5c3cfbc2e5b06b26aef2d4d495979bb1d3",
+      "published_bytes": 1140,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/decisions/inbox/copilot-directive-2026-10-04-q01-q10.md",
+      "archived_original_sha256": "4cafa6ed7af62fc5853fbadce17a3c5862bc16a73c7e9d24df1b4a39eb52ef62",
+      "archived_original_bytes": 7135,
+      "published_sha256": "4cafa6ed7af62fc5853fbadce17a3c5862bc16a73c7e9d24df1b4a39eb52ef62",
+      "published_bytes": 7135,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/decisions/inbox/copilot-parallel-research-2026-10-04.md",
+      "archived_original_sha256": "e8a7f710645db8edcf3d55bd2a4a0650468e580a82723633e8f2f5eb87258f63",
+      "archived_original_bytes": 1526,
+      "published_sha256": "e8a7f710645db8edcf3d55bd2a4a0650468e580a82723633e8f2f5eb87258f63",
+      "published_bytes": 1526,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/decisions/inbox/lead-foundation-execution-2026-10-04.md",
+      "archived_original_sha256": "98220f058c9dd38212b19025ac556ec20aaa2bff6b6a73b05b682a1a646b604e",
+      "archived_original_bytes": 2278,
+      "published_sha256": "98220f058c9dd38212b19025ac556ec20aaa2bff6b6a73b05b682a1a646b604e",
+      "published_bytes": 2278,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/decisions/inbox/lead-foundation-final-integration-2026-10-04.md",
+      "archived_original_sha256": "5c6c53c364365938f9decdb128542c4db04ad4fa419d8b6ffc5a79d9ee171ca2",
+      "archived_original_bytes": 2450,
+      "published_sha256": "5c6c53c364365938f9decdb128542c4db04ad4fa419d8b6ffc5a79d9ee171ca2",
+      "published_bytes": 2450,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": ".squad/decisions.md",
+      "archived_original_sha256": "cedc91eed65c29ee687a5483c43bf65c2a88a26a03d2ada8a3c406fa34d1beba",
+      "archived_original_bytes": 4636,
+      "published_sha256": "371d25f079ccef0eb45099f5330145742366ec23d0ba0d80ab94fadd0ebc6410",
+      "published_bytes": 8499,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": ".squad/routing.md",
+      "archived_original_sha256": "bdea43d74125ea171733f85f8bc5f1f5cba9b75562d3bd322e6a3c2ed9a52e0d",
+      "archived_original_bytes": 4641,
+      "published_sha256": "2bcae2217648cffec3f40fef8d864db5880bdb0d1076638c41342fea76c23ede",
+      "published_bytes": 5394,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": ".squad/team.md",
+      "archived_original_sha256": "1a5a3082920e6cd73885d506019f520010b8f9a250d6b64914d9a7f0a7a898a9",
+      "archived_original_bytes": 3964,
+      "published_sha256": "e5249880733426c6cd82d66297e842b60c4941bb1d16a1abc0ac3607367b8c0e",
+      "published_bytes": 5037,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "README.md",
+      "archived_original_sha256": "7badabd433edd71d2d4cbe530ce7e0cbaabbff000412fb0f873c59813669c960",
+      "archived_original_bytes": 13716,
+      "published_sha256": "f4cc59f6be77a0b5dbc170f118e5b3d7de6a6d260e13aecbe9d180aea03e0ef4",
+      "published_bytes": 16200,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/planning/backlog.md",
+      "archived_original_sha256": "54eb1043e4cc4c31b7be258c8762e490ae394548e533e120ec1fbaeb6fd5cf58",
+      "archived_original_bytes": 101486,
+      "published_sha256": "98bd9036d6c825fa432947c461957a183e2f92056fcfe7057afdeeaaaafa57e8",
+      "published_bytes": 106045,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/planning/product-brief.md",
+      "archived_original_sha256": "6542842a69894a590a96bf26d6feaf486e554b4f906c40c398deb18703ba8ea9",
+      "archived_original_bytes": 23081,
+      "published_sha256": "5ce0f639a1a4f1dace99af1a2186ade16affb416ab1e3601e0ba8c8790d46bb2",
+      "published_bytes": 25036,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/planning/research.md",
+      "archived_original_sha256": "dfd9fe36ea0859a0d824778a40571206c283849aeba0007f0c154c9975b74494",
+      "archived_original_bytes": 117271,
+      "published_sha256": "31c0eecd9ccb8fefe7abfde49d437c3d57a51254de4d73d8b4ed5a89a011de3c",
+      "published_bytes": 119985,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/research/fixture-import-time-results.md",
+      "archived_original_sha256": "fe1de3cf980e9eded89ebc4392e7b158daaa6ee8e69ab7ddb30021636a52bfc8",
+      "archived_original_bytes": 3711,
+      "published_sha256": "66809b9495df8c7c8c48a52fa73e2c957079bac7076ce41e8d9c34d2dd651acf",
+      "published_bytes": 3954,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/research/foundation-results.json",
+      "archived_original_sha256": "17aae5ef68c5fbe5151aa57fbc2fe722882428855f1653118eaa16a4293941e8",
+      "archived_original_bytes": 360608,
+      "published_sha256": "5bf69aca18ab2aa15aa2dbe41acaa155a18f5166fb54450c1c0f757c46a748a0",
+      "published_bytes": 358296,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": "docs/research/foundation-spikes.md",
+      "archived_original_sha256": "465103cdaa5953ae71da45681604f04d10173fcce8bb434bbfec7852ed63618b",
+      "archived_original_bytes": 72819,
+      "published_sha256": "3c525de9d2a0d4a319ffdc3f284335f5815846e6b9e3f99baedd40303be3890a",
+      "published_bytes": 73624,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/research/native-document-results.json",
+      "archived_original_sha256": "d25b1dbe3e00b5a287c3162b722f5fb473810d00f03ee1984a369c5f76e4b4d7",
+      "archived_original_bytes": 27789,
+      "published_sha256": "6d278d3d4c75657207cb3941faf5c74e1d40c8804664ef420058d0f9f23d4e12",
+      "published_bytes": 27653,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": "docs/research/native-document-spike.md",
+      "archived_original_sha256": "44bb897a7ae0b0669b44c2182cdce4949f95f6f8b1441061ea582c47cbd9f193",
+      "archived_original_bytes": 25813,
+      "published_sha256": "dcca041a5a4c9e70552236ea6407c04cdba59cecc4a6254227b84f6fa518d856",
+      "published_bytes": 27585,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/research/native-policy-library-readiness-results.json",
+      "archived_original_sha256": "9d4aa571d344f189273b0b7eaba6b4d0a6795b88c5e6eb59b9199862a891bc80",
+      "archived_original_bytes": 9839,
+      "published_sha256": "1c193c76008ae05531a40fff65d325558c445c8ecf7bd017e52c4ef526c561d1",
+      "published_bytes": 9159,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": "docs/research/native-policy-library-readiness.md",
+      "archived_original_sha256": "4b419852b21a58f2744a874ed87dad67525bb44085e2b13e1acd3198c8fc05dd",
+      "archived_original_bytes": 6281,
+      "published_sha256": "56815c0d1a6d4d8e75a385cea9803ea30fddc31b4b45ca4f01f061e0b3fd5e5f",
+      "published_bytes": 6836,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/research/native-review-contract-readiness-results.json",
+      "archived_original_sha256": "e176f50ffeeab08aa704f440cf1817f667e1dbb964f0fbf6df328ed935eaa81e",
+      "archived_original_bytes": 2904,
+      "published_sha256": "3595b782e215de65f4da0c9fa0faa5ece25ebe267aadda7bdc18122e94fff386",
+      "published_bytes": 2836,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": "docs/research/native-review-contract-readiness.md",
+      "archived_original_sha256": "d53049f9abaf23367072ec526496e19b45dd8f9013445f9b7c6e88e95f07be80",
+      "archived_original_bytes": 7644,
+      "published_sha256": "a199496b3813be033b1f6798c2cb3e044ce3f0c13e103a38c068821a7814360b",
+      "published_bytes": 8199,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/research/parallel-readiness-reconciliation-results.json",
+      "archived_original_sha256": "9f523865dc608dd1a26aaa1f0a48f049f59f97c3b76090bd75e6778a90a314b8",
+      "archived_original_bytes": 16459,
+      "published_sha256": "708547dbef88ec53c6da72d794489bc72fefc5e669ba46ddd58bd11cfb65dbce",
+      "published_bytes": 16363,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": "docs/research/parallel-readiness-reconciliation.md",
+      "archived_original_sha256": "f69212da5e053d24b1fc919aed4c2ec08cf226a61327facdad59045283545f4b",
+      "archived_original_bytes": 7483,
+      "published_sha256": "07dcd0abdfb21453d5d4b9b0ec2aa1aea56bc8382e33836356b8b1276ed4fd4a",
+      "published_bytes": 8038,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/research/project-format-recovery-results.json",
+      "archived_original_sha256": "87c4cac098d45b8fbc7ab677b79da31e29e6d8d2b7d9b17750ff8fdd49615b89",
+      "archived_original_bytes": 9992,
+      "published_sha256": "87c4cac098d45b8fbc7ab677b79da31e29e6d8d2b7d9b17750ff8fdd49615b89",
+      "published_bytes": 9992,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": "docs/research/project-format-recovery.md",
+      "archived_original_sha256": "eaae95d8623fd09b851fea3283e64f0f91c05ba066cb48733681fbd695d1e178",
+      "archived_original_bytes": 31661,
+      "published_sha256": "f4a96dd12930cafc71948a719752e152d359b7ac7b8aa34cc1991c0949ed453a",
+      "published_bytes": 32490,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/research/source-reconstruction-speech-readiness-results.json",
+      "archived_original_sha256": "e2bd786890218f31505e17de8e008bd0ead08994e2558d4d46c18acecc93a83d",
+      "archived_original_bytes": 5054,
+      "published_sha256": "e2bd786890218f31505e17de8e008bd0ead08994e2558d4d46c18acecc93a83d",
+      "published_bytes": 5054,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": "docs/research/source-reconstruction-speech-readiness.md",
+      "archived_original_sha256": "21e1e074f83fa2671a9fc1ab21a6fe31ff112e6f18254eb059947ffc76c3e652",
+      "archived_original_bytes": 7336,
+      "published_sha256": "4bf5e29c859ffd9d2e33488b5a20f503a5a430d8c4ed92df1b86e33b1d4b2ce6",
+      "published_bytes": 7891,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/research/speech-evaluation-cpp-proposal.md",
+      "archived_original_sha256": "d81fbb21c09d44690b052a7c17f6efceaa59f492a14a52eba8408f60dc1ddba8",
+      "archived_original_bytes": 2138,
+      "published_sha256": "536cfd74afa554a30a5797d649a5c7b9563d2989087e2841d22b05f16c926650",
+      "published_bytes": 2761,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/research/speech-evaluation-download-proposals.json",
+      "archived_original_sha256": "c18df2cc0626ff10b373f2f7a8793a6f9340d796a22fa2981cbea721b644e3a0",
+      "archived_original_bytes": 18500,
+      "published_sha256": "c18df2cc0626ff10b373f2f7a8793a6f9340d796a22fa2981cbea721b644e3a0",
+      "published_bytes": 18500,
+      "byte_identical": true,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": "docs/research/speech-evaluation-whisperkit-proposal.md",
+      "archived_original_sha256": "912f0a312efe9725325bf489f6038c56f3c4f794cef80ae10e4586b7563ae853",
+      "archived_original_bytes": 2699,
+      "published_sha256": "9740fde0bb89dc8fe44acdeb652a69aee0a677069fdf534b8585ea20c172b7bd",
+      "published_bytes": 3322,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": false,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/research/waveform-clock-render-readiness-results.json",
+      "archived_original_sha256": "9b8e2e75929fdd096ba55a6c213a76d81363ff03304b0d7d5e23bf045919f706",
+      "archived_original_bytes": 19485,
+      "published_sha256": "c283a8d3513f03a53e18338f281d59ce88dc348b69ddbd552f8a2dd3cec39fd7",
+      "published_bytes": 18533,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": "docs/research/waveform-clock-render-readiness.md",
+      "archived_original_sha256": "3f3e75f784497cbdd6927cf05f2aa8d1b8d1e0ab5e71bd9e15b50340016e8c74",
+      "archived_original_bytes": 6410,
+      "published_sha256": "07ad978f7dee11dcea2b483bb40372dad773f515da2bb743e1212442f24c2285",
+      "published_bytes": 6965,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": true
+    },
+    {
+      "path": "docs/research/windowed-document-results.json",
+      "archived_original_sha256": "bb1a12bbd9f21cb7a0cadaebae63a61bd1e43c5eae55fde9bdb0f0ab674b86e9",
+      "archived_original_bytes": 28342,
+      "published_sha256": "a207a17b7cb40c1d39c7a22d96a22a82fb2773aef3384a1a5f69cdd57b85528a",
+      "published_bytes": 28206,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": false
+    },
+    {
+      "path": "docs/research/windowed-document-spike.md",
+      "archived_original_sha256": "2fff06bff0213a4f86ef5825a7cea8de623e266980c53a78a0a5f9b14029a2df",
+      "archived_original_bytes": 29525,
+      "published_sha256": "fe55a212958dbf8a945330097416f1b33da77b27816b487046aa19bcbdeb21c8",
+      "published_bytes": 30329,
+      "byte_identical": false,
+      "local_pointer_redaction_applied": true,
+      "publication_notice_link_or_policy_edit_applied": true
+    }
+  ]
+}

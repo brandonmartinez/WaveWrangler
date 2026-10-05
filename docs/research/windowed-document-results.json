@@ -1,0 +1,248 @@
+{
+  "schema_version": 1,
+  "status": "UI_BATCH_CLOSED",
+  "date": "2026-10-04",
+  "requested_by": "Brandon Martinez (@brandonmartinez)",
+  "integration_owner": "Lead",
+  "qualification": "LOCAL partial synthetic UI evidence; not whole-spike, M1, accessibility or production completion",
+  "report": "windowed-document-spike.md",
+  "source_root": "<research-artifacts>/research/macos-window",
+  "authoritative_scratch_result": "<research-artifacts>/research/macos-window/results.json",
+  "repository_mirror": "docs/research/windowed-document-results.json",
+  "sources": {
+    "P": "operator/ui-case-plan.json",
+    "O": "operator/original-build-observations.json",
+    "C": "operator/corrected-build-observations.json",
+    "W": "operator/off-window-observation.json",
+    "R": "experiment/runtime/events.jsonl",
+    "V": "experiment/corrections/draft-preservation-v3/runtime/events.jsonl",
+    "B": "experiment/build-ready.json",
+    "B3": "experiment/corrections/draft-preservation-v3/build-ready.json",
+    "S3": "experiment/corrections/draft-preservation-v3/final-static-verification.json"
+  },
+  "source_observations": "Frozen/unmodified; historical prelaunch and then-building fields remain historical, not current UI status",
+  "launch_accounting": {
+    "original": 1, "corrected": 2, "total": 3,
+    "authorization": "Original one-launch scope; subsequent explicit fix/restart and Reopen corrected selections per C",
+    "journal_entries": {"R": 806, "V": 2707},
+    "journal_sequences_reset_each_launch": true,
+    "V_citations_launch": 2,
+    "no_fourth_correction_or_integration_execution": true
+  },
+  "accounting": {
+    "planned_ids": 14,
+    "original": {"pass": 3, "partial": 1, "blocked": 1, "not-tested": 1, "not-executed": 8},
+    "corrected": {"pass": 1, "pass-limited": 5, "partial": 1, "failed-candidate": 1, "blocked": 1, "not-executed": 2, "not-retested": 3},
+    "closed_retained": {"pass": 4, "pass-limited": 5, "partial": 1, "failed-candidate": 1, "blocked": 1, "not-executed": 2},
+    "interpretation": "Same fourteen IDs across stages, not 28 independent tests; pass means bounded observation, not every plan expectation"
+  },
+  "cases": [
+    {"id":"UI01","goal":"Launch/inspect AX window","original":"pass","corrected":"not-retested","outcome":"pass","evidence":["P:UI01","O:UI01"],"observed":"Window9396, research banner, labelled fields/table/autosave control","unmet":"Full keyboard, visual and VoiceOver coverage"},
+    {"id":"UI02","goal":"Native New","original":"pass","corrected":"not-retested","outcome":"pass","evidence":["P:UI02","O:UI02"],"observed":"Unanchored Cmd-N created window9611; anchored dispatch had no safe candidate","unmet":"Full menu-surface expectations"},
+    {"id":"UI03","goal":"Field edit/commit","original":"partial","corrected":"pass-limited","outcome":"pass-limited","evidence":["P:UI03","O:UI03","C:UI03-corrected","V:205-212"],"observed":"Original draft reset/no commit/revision0; corrected focused set_value+AXConfirm committed one Rename Show/revision1/Synthetic UI Show A with dirty/unautosaved state","unmet":"Unfocused AX draft and general focus-preservation behavior; original editor-attachment diagnosis inferred"},
+    {"id":"UI04","goal":"Initial native Save","original":"pass","corrected":"not-retested","outcome":"pass","evidence":["P:UI04","O:UI04","R:17-24"],"observed":"Native Save sheet created A, parent parsed coherent revision0/original title","unmet":"Initial untitled native saveAs is not named UI05/UI06 success or crash/cloud proof"},
+    {"id":"UI05","goal":"Named Save As/cancel","original":"blocked","corrected":"blocked","outcome":"blocked","evidence":["P:UI05","O:UI05","C:UI05/UI06"],"observed":"Shortcut done acknowledgement without established sheet or subsequent native save","unmet":"Cancellation, URL/content/focus retention and cause"},
+    {"id":"UI06","goal":"Save As second B file","original":"not-executed","corrected":"not-executed","outcome":"not-executed","evidence":["P:UI06","O:unlisted-cases","C:UI05/UI06"],"observed":"No second file or cancellation outcome established","unmet":"Native Save As/new URL/prior bytes/new content"},
+    {"id":"UI07","goal":"Committed document Undo/Redo","original":"not-executed","corrected":"pass-limited","outcome":"pass-limited","evidence":["P:UI07","O:unlisted-cases","C:UI07","V:628-633","V:663-668"],"observed":"Field-editor Cmd-Z initially text-only; table-focused document Undo restored original title/revision2, Redo title A/revision3","unmet":"General history, checkpoint and clean-flag persistence guarantees"},
+    {"id":"UI08","goal":"Native automatic ON save","original":"not-executed","corrected":"pass-limited","outcome":"pass-limited","evidence":["P:UI08","O:unlisted-cases","C:UI08","V:205-212","V:224-236"],"observed":"17:29:42Z rename followed by stock autosaveInPlace at17:29:47Z; revision1/title A, parent parsing and sampled full-envelope equality","unmet":"Strict <=2s checkpoint requirement or guaranteed latency; planned Synthetic UI Autosave Observation was not a separate edit"},
+    {"id":"UI09","goal":"OFF/edit/explicit Save","original":"not-executed","corrected":"failed-candidate","outcome":"failed-candidate","evidence":["P:UI09","O:unlisted-cases","C:UI09","W","V:860","V:939","V:956-1057","V:1134-1144","V:1162"],"observed":"Checkbox0/nil OFF; revision4 memory; four continued native empty-type saves failed1004/Not Saved. Sixteen passive samples over8.05966941601946s stayed disk revision3. Cmd-S persisted revision4; ON restored","unmet":"Safe disablement/acceptable OFF UX; unchanged bytes reflected failed saves, not disabled scheduling"},
+    {"id":"UI10","goal":"Native Open valid fixture","original":"not-executed","corrected":"pass-limited","outcome":"pass-limited","evidence":["P:UI10","O:unlisted-cases","C:UI10","V:1394-1403"],"observed":"Working-scoped panel followed by window10521/schema1/revision0/two episodes/matching disk","unmet":"AXOpen no_viable_candidate despite later effects; blanket transport reliability or causality"},
+    {"id":"UI11","goal":"Newer/malformed refusal","original":"not-executed","corrected":"pass","outcome":"pass","evidence":["P:UI11","O:unlisted-cases","C:UI11","V:1911-1912","V:2069-2070"],"observed":"Subclass read refusal1002/1001 with native alerts/OK dismissal; parent fixture-preservation checks","unmet":"Migration or protection of every future edit/save path; no independent Lead fixture hashing"},
+    {"id":"UI12","goal":"Close/unsaved decision cancel","original":"not-executed","corrected":"partial","outcome":"partial","evidence":["P:UI12","O:unlisted-cases","C:UI12","V:2401"],"observed":"Clean valid-working window closed via Cmd-W at17:43:05Z","unmet":"Unsaved-close/cancellation/discard/recovery expectations"},
+    {"id":"UI13","goal":"Native Revert","original":"not-executed","corrected":"not-executed","outcome":"not-executed","evidence":["P:UI13","O:unlisted-cases","C:UI13"],"observed":"Skipped without specific destructive consent","unmet":"Revert/restored-content/version/recovery proof"},
+    {"id":"UI14","goal":"Clean Close/Quit","original":"not-tested","corrected":"pass-limited","outcome":"pass-limited","evidence":["P:UI14","O:UI14","R:805-806","C:UI14","V:2456-2457"],"observed":"Original disappearance not attributed to Quit. Corrected Cmd-Q closed two clean windows at17:43:32Z; parent exact corrected executable probe returned no PIDs","unmet":"Unsaved-cancel/discard/forced termination/crash recovery; no fresh reviewer/Lead process probe"}
+  ],
+  "autosave": {
+    "configured_delay_seconds": 5,
+    "rename_utc": "2026-10-04T17:29:42Z",
+    "native_ON_save_utc": "2026-10-04T17:29:47Z",
+    "timestamp_resolution_seconds": 1,
+    "observed_delta_seconds_approximate": 5,
+    "strict_checkpoint_target_seconds": 2,
+    "strict_target_met_in_this_case": false,
+    "guaranteed_latency": false,
+    "OFF_candidate": "FAILED: nil did not disable native scheduling; four empty-type encoding errors WaveWranglerResearch/1004 and native Not Saved popover",
+    "passive_OFF_seconds": 8.05966941601946,
+    "passive_OFF_samples": 16,
+    "passive_disk_revision": 3,
+    "explicit_Save_recovery_revision": 4,
+    "requested_ON_restored": true
+  },
+  "native_boundary": {
+    "stock_retained": ["automatic scheduling","safe staging/publication/completion","change tokens","native document/window/panel lifecycle","versions behavior"],
+    "subclass_owned": ["JSON validation/serialization","edits/undo registrations","scope guards/panel customization","requested OFF candidate","one-second observation-only presentation timer"],
+    "qualification": "Relevant arguments/tokens forwarded unchanged; samples are uncoordinated, not checkpoints. Retaining versions is not recovery validation; harness/correction not production architecture",
+    "stable_working_root": "experiment/working",
+    "new_corrected_telemetry": "experiment/corrections/draft-preservation-v3/runtime/events.jsonl",
+    "normal_OS_synthetic_metadata_may_occur": ["autosave","draft","version","recent-item","restoration"],
+    "zero_hidden_activity_claim": false,
+    "private_cache_or_version_store_browsing": false
+  },
+  "build_and_host": {
+    "compiler": "Apple Swift6.4",
+    "swift_language_mode": 6,
+    "target": "arm64-apple-macos26.0",
+    "original": {"attempt01_exit":1,"attempt02_exit":0,"executable_sha256":"04798b952ab286fe0d28acd3b780b26882f086efb6069f8334c6c041f4b97b8f","evidence":"B"},
+    "corrected": {"compiler_cycle":3,"invocations_this_cycle":1,"exit_code":0,"static_checks":33,"executable_sha256":"fd59f64ae81a1759ae0779415f2ed7d8536f59f8b2eb7e74998347efbf4f31e9","evidence":["B3","S3"]},
+    "host": {"macos":"27.0.1","build":"26A434","architecture":"arm64","memory_GiB":128,"provenance":"Operator/build-reported, not Lead host probe"},
+    "runtime_macos26_or_16GB_qualified": false,
+    "historical_prelaunch_manifests_preserved": true,
+    "build_or_static_success_is_UI_proof": false
+  },
+  "saved_content": {
+    "provenance": "Parent parsed/hashed generated documents per O/C/W; authorized journal serialization/scoped point-in-time equality corroborates. No Lead/reviewer document reads or independent hashing",
+    "initial_A": {"revision":0,"title":"Synthetic Research Show","sha256":"0b8478e91b125764fb7c3df81e01c088b6f7a304a5fabb9bcf7583fe4ffcba25","evidence":["O:UI04","R:17-24"]},
+    "ON_A": {"revision":1,"title":"Synthetic UI Show A","sha256":"29e250fffc680508ebf84b9ab12e0405e7b0257d675906df40e9e57d3a6d1e86","evidence":["C:UI08","V:236"]},
+    "OFF_passive_A": {"revision":3,"title":"Synthetic UI Show A","sha256":"ae627b57f10a6932a1ab3129837dc38c9479dde4700dc310d0f84c61ecbde635","evidence":["W"]},
+    "final_A": {"path":"experiment/working/ui-operator-show-a.wwresearch","revision":4,"title":"Synthetic UI Manual Save Observation","sha256":"d4f93ee0b3459886a9f4ee645c6fa9557e8e36b1c4401338ae357ba32387468c","evidence":["C:final_generated_saved_document","V:1137","V:1144"]},
+    "valid_working": {"revision":0,"sha256":"b850354f0b31a86b244103b4d3e192835730076c1323cf2511e82577dbe6ceef","evidence":["C:UI10","V:1403"]},
+    "fixture_preservation": {"masters_and_original_working_unchanged":true,"provenance":"Parent C/UI11; no independent Lead/reviewer fixture verification"}
+  },
+  "reviews": [
+    {"reviewer":"Mac","kind":"author-role technical review, not independent reproduction","scope":["P","O","C","W","R","V","v3 ResearchDocument/ResearchModel/ResearchWindow/ResearchMain.swift","B3","S3"],"verdict":"Integration supportable WITH failures/unknowns intact; local backlog remains partial","verdict_kind":"Recommendation synthesis; exact returned text in report appendix","reproduction":false,"writes_builds_launches_tests_process_probes_Git":false,"independent_file_hashing":false,"human_user_VoiceOver_testing":false,"verbatim_ref":"windowed-document-spike.md#appendix--actual-returned-reviews-unedited"},
+    {"reviewer":"Design","kind":"read-only evidence review","scope":["P","O","C","W"],"verdict":"LOCAL partial evidence only.","verdict_kind":"Actual returned verdict; complete unedited text in report appendix","reproduction":false,"human_user_VoiceOver_testing":false,"verbatim_ref":"windowed-document-spike.md#appendix--actual-returned-reviews-unedited"}
+  ],
+  "process_closure": {
+    "original_disappearance_cause": "Unknown; not native Quit evidence",
+    "corrected": "Parent native Cmd-Q after saved-content/clean-window checks; two windows closed",
+    "utc": "2026-10-04T17:43:32Z",
+    "exact_corrected_executable_PIDs": [],
+    "provenance": "Parent C/UI14 and launch accounting; V:2456-2457 corroborates window closure, not process absence",
+    "Lead_or_reviewer_independent_process_probe": false
+  },
+  "unmet_requirements": [
+    {"owners":["Mac"],"backlog":["WW-005","WW-049"],"requirement":"Safe ON/configurable/OFF and explicit Save; candidate OFF failed; strict <=2s checkpoint target not met here","policy_may_be_weakened_without_approval":false},
+    {"owners":["Mac"],"backlog":["WW-005"],"requirement":"Named Save As/cancel/B-file/focus retention, consented Revert/unsaved close/cancel/discard, crash recovery, all newer-format edit/save paths, concurrent processes/library reconciliation and >=100 boundary interruptions"},
+    {"owners":["Mac","Design"],"backlog":["WW-007","WW-008","WW-029"],"requirement":"Unfocused draft/focus, full keyboard/menus/VoiceOver/human/visual/contrast/200% text/reduced-motion, runtime26/16GB and distribution"},
+    {"owners":["Mac"],"backlog":["WW-006","WW-049"],"requirement":"Source scopes/downloads/regrant/provider/offline/two-machine/cloud consistency; no local-only MVP rescope"}
+  ],
+  "follow_up_disposition": "Explicit local scope/permission decisions required; no executing GUI replay recommendation or new execution authorization",
+  "local_backlog": {
+    "path": "docs/planning/backlog.md",
+    "issue_promotion": "Not authorized; LOCAL",
+    "before": {"stable_ids":51,"edges":196,"completed":3,"partial":14,"pending":34},
+    "after": {"stable_ids":51,"edges":196,"completed":3,"partial":14,"pending":34},
+    "acyclic": true,
+    "topological_nodes": 51,
+    "higher_numeric_prerequisites": 23,
+    "evidence_updated_ids": ["WW-005","WW-008","WW-049"],
+    "updated_id_statuses": {"WW-005":"PARTIAL","WW-008":"PARTIAL","WW-049":"PARTIAL"},
+    "evidence_change_sha256": {
+      "convention": "SHA256 of json.dumps(list of Status/Evidence lines, sort_keys=True), UTF-8",
+      "WW-005": {"before":"697ab1eef5f3855bfa821e08ab2d7546399d3458f251f23dbc8274a97eab11d6","after":"63adb83a73c528a9f2fb94a4880f60561deb545f3998435a89bee7ab4874cf66"},
+      "WW-008": {"before":"8c169ad28501e9821fefdab847aea05639a08073f9a1e823d5d14f69b09810b1","after":"7810e690193a91ec36598007741b2b454a004d22dd671f8ccae42abccf8a37cf"},
+      "WW-049": {"before":"92612e61e400234186879e67310984f285fa6cd85920ec5638a96195029b5230","after":"e1604a00072a60cfc85f9928500b6fb7b5b35894b6a55dfa186079d32f2ac195"}
+    },
+    "status_changes": [],
+    "ids_added_or_removed": [],
+    "edges_added_or_removed": [],
+    "documentary_completed_ids": ["WW-001","WW-002","WW-004"],
+    "partial_ids": ["WW-003","WW-005","WW-006","WW-008","WW-014","WW-015","WW-016","WW-017","WW-025","WW-026","WW-028","WW-036","WW-043","WW-049"],
+    "M1_and_WW007_009_010_011_012": "PENDING/unapproved",
+    "ids_sha256": "ef7636a264b2972b9972abc1c6dcadf2298f9810e89a462f95f996815cdb1a56",
+    "ordered_dependency_sha256": "c6692502c03ab1f318f412ff67b4cec1a7edbe5c96cad63460d5916d30c10c43",
+    "statuses_sha256": "f91698e6827aa96642bf99b1aaf452e508ef2f5bbd049bfe912b6fb37f3f59a6"
+  },
+  "integration_checks": {
+    "kind": "Inline stdlib documentary checks, not application tests",
+    "permitted_local_links_checked": 93,
+    "unchanged_other_item_blocks": 48,
+    "unchanged_non_evidence_fields": true,
+    "verbatim_review_sha256": {"Mac":"6b4c652b7c8dcd66e471e5b4889351e6711302703605e6bf46a6636c14d77142","Design":"ca661c0779c36e6a43636c4d1060d5bb1fbf25f02319582a18fda2a6ae064727"},
+    "checks": ["JSON parses","P UI01-UI14 exact coverage","Original/corrected/retained accounting","Before/after IDs/edges/statuses","Acyclic/topological graph","Unchanged non-evidence fields and other48 item blocks","Exact supplied review text","New local links/anchors","Scratch/repository result byte equality and SHA256"],
+    "permitted_write_footprint": ["README.md","docs/planning/research.md","docs/planning/backlog.md","docs/research/windowed-document-spike.md","docs/research/windowed-document-results.json","authoritative_scratch_result"],
+    "raw_sources_previous_reports_prototype_build_fixtures_modified": false,
+    "Git_GUI_process_network_install_issue_Squad_state_actions": false,
+    "no_new_production_architecture_or_milestone_completion": true
+  },
+  "off_scheduling_policy_recommendation": {
+    "date": "2026-10-04",
+    "kind": "Documentary future recommendation only; focused prototype scheduling-policy defect, not impossible OFF or a product-choice change",
+    "existing_backlog_ids": ["WW-005", "WW-049"],
+    "candidate_owner": "Mac",
+    "policy": [
+      "Keep valid serialization/document filetype for native explicit Save; do not disable via autosavingFileType=nil or empty type",
+      "Use the actual enabled flag at public automatic scheduling and queued/autosave boundaries; preserve native dirty/unsaved state",
+      "Exact legal hooks and native protocol-compliant skipped/non-save handling remain unverified; identify and verify them before presuming coverage"
+    ],
+    "candidate_coverage": [
+      "Already queued ON work when toggled OFF",
+      "OFF edits remain unsaved/preserved without attempted automatic publication or error loops",
+      "Native explicit Save remains available with a valid filetype",
+      "ON re-enable with pending edits",
+      "Native close/quit decisions preserve work when autosave is skipped"
+    ],
+    "safety": "Honest skipped/non-save accounting; no fabricated saved callbacks, cleared dirty state/checkpoint claims for skipped work, private/unsafe hooks, deadlocked native callbacks or silent work loss; verify native protocol compliance",
+    "design_consultation": "Existing Design consult for native unsaved close/quit UX only if later authorized; destructive decisions require precise user consent",
+    "evidence_preserved": "UI_BATCH_CLOSED; all 14 outcomes/accounting; UI09 failed candidate/four errors; ~5s ON observation does not meet <=2s; original/corrected provenance, verbatim reviews/hashes, prior integration checks and historical numeric/change-scope records unchanged",
+    "requirements_unchanged": "Accepted ON/configurable/OFF and cloud canonical MVP; strict <=2s; existing scope/owners/criteria/statuses",
+    "execution_authorized": false,
+    "limits": "Small next candidate under existing WW-005/049 only; neither a fourth correction cycle nor automatic trial/launch or production-adoption permission"
+  },
+  "autosave_policy_v1": {
+    "date": "2026-10-04",
+    "status": "LOCAL_PARTIAL",
+    "report_section": "windowed-document-spike.md#autosave-policy-v1--separate-partial-results-2026-10-04",
+    "historical_scope": "Additive separate candidate, not a rewrite of CLOSED v3/UI09 or the frozen immediate-callback failure; existing scratch-mirror/check metadata describes the historical closed-batch snapshot, not this repository-only addition",
+    "sources": {
+      "operator_root": "autosave-policy-operator",
+      "operator_files": ["observations.json", "plan.json", "as01-observation.json", "as01-trial3-observation.json", "as02-observation.json", "as04-observation.json"],
+      "supplement_root": "experiment/corrections/autosave-policy-v1/build/async-console-supplement-v1",
+      "supplement_files": ["HANDOFF.md", "results.json", "TERMINATION-INSPECTION.md", "public-sdk-contracts.json", "public-terminate-reference.json", "run/run.json", "run/stdout.txt", "run/stderr.txt", "run/output-provenance.json", "fingerprint-manifest.json"],
+      "provenance": "Lead documentary integration of exactly six parent operator files plus allowed Mac supplement records; no adjacent operator/verification, app journal, screenshots/helpers, generated-document reads or independent process/hash checks",
+      "historical_metadata": "Plan UI_execution=Not yet performed and Mac inline-only/wait fields retained as pre-integration facts; actual parent observations now supplied",
+      "label_precedence": "Parent observations are ground truth for spaced names; compressed Mac inline labels are not copied as actual model values"
+    },
+    "gui": {
+      "authorization": "Parent plan records user selection: Approve the focused fix and tests (Recommended), one opening only",
+      "app_openings": {"parent": 1, "Lead": 0, "Mac_supplement": 0, "another_trial_authorized": false},
+      "real_event_loop_and_initial_native_Save": "Parent observed successful opening and initial native Save",
+      "accounting": {"planned_ids": 5, "pass-limited": 3, "inconclusive-setup": 1, "partial": 1, "all_five_passed": false},
+      "cases": [
+        {"id":"AS01","status":"inconclusive-setup","invalid_setups":3,"queued_dirty_race":"UNESTABLISHED: neither passed nor failed; every ON edit published before OFF; stable later bytes are not race cancellation evidence","trial2_utc":{"commit":"2026-10-04T19:05:21Z","save":"2026-10-04T19:05:26Z","OFF":"2026-10-04T19:05:27Z"},"trial3":{"commit_utc":"2026-10-04T19:07:18Z","save_utc":"2026-10-04T19:07:23Z","OFF_utc":"2026-10-04T19:07:23Z","OFF_sequence":627,"publication_preceded_OFF":true},"fourth_app_trial_authorized":false},
+        {"id":"AS02","status":"pass-limited","memory_revision":4,"memory_showTitle":"Synthetic AS02 OFF Edits","dirty_and_unautosaved":true,"policyScheduleBlocked_sequence":779,"passive_duration_seconds":11.067549458006397,"disk_revision":3,"disk_sha256":"aedb9420aa28e75adb369e3226920ada4e14ea6b4f8b3526ece2b69089748a2b","type1004_or_error_loop_observed":false,"limit":"Finite interval, not all timing interleavings"},
+        {"id":"AS03","status":"pass-limited","operation":"Genuine native Command-S while OFF, stock staging and actual successful completion","native_sequences":[914,915,916,917,918,919,920,921],"independent_full_model_revision":4,"showTitle":"Synthetic AS02 OFF Edits","sha256":"d0e51129f774bb2f9afa1e84470d3ec318146bda8094eb2a871208782c3bd1ca","native_dirty_cleared_by_successful_Save":true},
+        {"id":"AS04","status":"pass-limited","pending_OFF_revision":5,"episode_001_title":"Synthetic AS04 Pending Episode","ON_sequences":[1541,1542],"ON_utc":"2026-10-04T19:14:41Z","native_autosave_sequences":[1555,1556,1557,1558,1559,1560,1561,1562,1563,1564],"native_save_utc":"2026-10-04T19:14:46Z","independent_disk_revision":5,"sha256":"80fcb3e281b96d50aa488ed93a6596dad3a7b19ff3e16964d2a50d1d853b718f","limit":"Configured delay5; not <=2-second qualification"},
+        {"id":"AS05","status":"partial","dirty_OFF_revision":6,"Close_Save_Cancel_sheet":true,"Cancel_sequences":[2010,2036],"Cancel_retained":"Window, dirty memory revision6 and disk revision5","dirty_CommandQ":{"sheet_observed":false,"implicit":false,"cancellation_code":3072,"sequences":[2055,2056,2057],"work_remained_open":true},"later_Close_Save_sequences":[2325,2326,2328,2332,2333,2334],"later_Save_persisted_before_closure":true,"full_dirty_Quit_UX":"INCOMPLETE"}
+      ],
+      "final_saved_work": {"path":"working/autosave-policy-operator-a.wwresearch","revision":6,"showTitle":"Synthetic AS02 OFF Edits","episode_001_title":"Synthetic AS05 Close Protection","sha256":"b7a147e8f342cf8551a575607ab4b4c8072aab80bc8a33a52d7e32347f8f0cdb","provenance":"Parent independent full-envelope/hash report, not Lead file inspection","loss_deletion_or_discard_reported":false},
+      "shutdown": {"new_clean_Untitled_window":10760,"reopen_cause":"UNKNOWN","clean_CommandQ_hook_sequences":[2341,2342,2343],"exact_executable_probe_PIDs":[],"app_stopped":true,"provenance":"Parent clean native Quit and exact process probe; no Lead probe","dirty_Quit_UX_validated_by_clean_Quit":false}
+    },
+    "async_supplement": {
+      "status": "NATIVE_ASSERTIONS_PASSED_WITH_POST_RUN_OUTPUT_SCOPE_STOP",
+      "compile": {"invocations":1,"exit_code":0,"Swift_language":6,"strict_concurrency":"complete","warnings_as_errors":true,"target":"arm64-apple-macos26.0","candidate_app_rebuilds":0},
+      "run": {"invocations":1,"exit_code":0,"signal":null,"timed_out":false,"flushed_PASS_lines":19,"FAIL_lines":0,"stderr_bytes":0,"actual_callbacks":6,"policy_cancellation_callbacks":5,"native_SaveAs_callbacks":1,"cancellation_events_including_writeSafely":8,"cancellation_domain":"NSCocoaErrorDomain","cancellation_code":3072},
+      "actual_results": "OFF cancellations retained real dirty/unautosaved flags and full model; awaited genuine native SaveAs alone cleared flags and stayed OFF; independent full-envelope/exact-byte/stdlib Python disk equality passed; six callbacks each delivered once in this bounded run",
+      "saved_fixture": {"path":"working/async-native-save-supplement-v1.wwresearch","revision":1,"bytes":381,"sha256":"b38241437437759efa15bc9486ee65f56f4f9c50f738b823bb1b814b64e5f504"},
+      "ON_scope": "Actual schedule forwarding and pending dirty revision2 retention only; no native ON publication or queued timer race proof",
+      "original_console_failure": {"preserved":true,"signal":"SIGTRAP","returncode":-5,"stdout_bytes":0,"assertion":"saveCalls == 1 && saveError == nil","old_PASS_count_inferred":false},
+      "callback_contract": "Retained public NSDocument.h:394-400 permits completion after return even without concurrent writing; separate awaited pass retires the immediate-callback assumption, not historical failure or unobserved original values/call stack",
+      "frozen_preservation": {"named_files_compared":225,"bytes_hashes_modes_unchanged":true,"app_source_and_executable_unchanged":true,"app_executable_sha256":"dce877445bcf6d86cd6e72bd32620443b6e1e100ea64c2cf68302a6d37680a36","provenance":"Mac retained named fingerprint comparisons, not an exhaustive root/OS inventory or new Lead verification"}
+    },
+    "native_output_scope": {
+      "native_writeSafely_and_publication_retained": true,
+      "known_fact": "Supplement telemetry recorded normal native NSDocument temporary staging outside the candidate",
+      "outside_path_read_hashed_enumerated_deleted": false,
+      "outside_bytes_and_present_existence": "UNKNOWN",
+      "all_outputs_inside_candidate_claim": false,
+      "Mac_scope_stop": "After the completed exit0 run/19 passed assertions, not an assertion failure; no follow-up OS inspection or execution"
+    },
+    "termination_readonly": {
+      "confirmed_public_order": "Retained Apple terminate documentation: document-controller save preflight precedes applicationShouldTerminate",
+      "Mac_frozen_code_facts": "ResearchMain:92 directly targets terminate; closeAllDocuments occurs in later applicationShouldTerminate at33-40",
+      "assessment": "Public hook-placement gap explains earlier dirty OFF cancellation; exact internal caller/callstack unobserved",
+      "small_recommendation_only": "Public menu/Command-Q closeAllDocuments preflight first; actual false keeps work open, actual true starts ordinary terminate",
+      "callback_safety": "Earlier callback must not prematurely call replyToApplicationShouldTerminate without terminateLater handshake or strand terminationPending",
+      "implementation_rebuild_replay_authorized_here": false,
+      "Dock_system_or_all_exit_routes_claim": false,
+      "new_Untitled_cause": "UNKNOWN"
+    },
+    "unchanged_disposition": {
+      "existing_backlog_statuses": {"WW-005":"PARTIAL","WW-049":"PARTIAL"},
+      "backlog": {"stable_ids":51,"edges":196,"documentary_completed":3,"partial":14,"pending":34},
+      "unestablished": ["AS01 queued dirty race","Full AS05 dirty Quit UX","Strict <=2s checkpoint","macOS26 runtime/16GB qualification","Whole-spike/M1 completion","Cloud/provider validation","Production/framework adoption"],
+      "integration_writes_only": ["docs/research/windowed-document-spike.md","docs/research/windowed-document-results.json"],
+      "integration_is_app_source_build_console_GUI_Git_or_Squad_execution": false
+    }
+  }
+}
