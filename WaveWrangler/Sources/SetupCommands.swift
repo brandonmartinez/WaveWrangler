@@ -63,8 +63,63 @@ final class EpisodeSetupViewController: NSViewController, SetupCommandActions, N
     override func viewDidAppear() {
         super.viewDidAppear()
         model.window = { [weak self] in self?.view.window }
-        SetupMenus.installIfNeeded()
+        if let window = view.window { Self.register(self, for: window) }
         model.startObserving()
+    }
+
+    // MARK: Registry (one Setup controller per show window)
+
+    private struct Weak { weak var controller: EpisodeSetupViewController? }
+    private static var registry: [ObjectIdentifier: Weak] = [:]
+
+    static func register(_ controller: EpisodeSetupViewController, for window: NSWindow) {
+        registry = registry.filter { $0.value.controller != nil }
+        registry[ObjectIdentifier(window)] = Weak(controller: controller)
+    }
+
+    /// The Setup controller hosted in `window`, if its Setup content is on screen.
+    static func controller(for window: NSWindow?) -> EpisodeSetupViewController? {
+        guard let window, let controller = registry[ObjectIdentifier(window)]?.controller, controller.view.window === window else { return nil }
+        return controller
+    }
+
+    /// Whether keyboard focus is inside this Setup content (Edit › Delete / Move act on the focused list).
+    var hasKeyboardFocus: Bool {
+        guard let responder = view.window?.firstResponder as? NSView else { return false }
+        return responder.isDescendant(of: view)
+    }
+
+    // MARK: Edit › Delete / Move (SourceCommandHandling hooks)
+
+    var deleteTitle: String? {
+        guard hasKeyboardFocus else { return nil }
+        if model.inspectorFollowsSpeakers { return singleSpeaker == nil ? nil : "Delete Speaker…" }
+        if !sources.isEmpty { return sources.count == 1 ? "Remove Source from Episode…" : "Remove \(sources.count) Sources from Episode…" }
+        if groupID != nil { return "Delete Recorder Group…" }
+        return nil
+    }
+
+    func moveTitle(by offset: Int) -> String? {
+        guard hasKeyboardFocus else { return nil }
+        let direction = offset < 0 ? "Up" : "Down"
+        if model.inspectorFollowsSpeakers { return singleSpeaker == nil ? nil : "Move Speaker \(direction)" }
+        return singleSource == nil ? nil : "Move Source \(direction)"
+    }
+
+    func canMove(by offset: Int) -> Bool {
+        guard let episode = model.episode else { return false }
+        if model.inspectorFollowsSpeakers {
+            guard let id = singleSpeaker, let index = episode.speakerAssignments.firstIndex(where: { $0.speakerID == id }) else { return false }
+            return episode.speakerAssignments.indices.contains(index + offset)
+        }
+        guard let id = singleSource, let source = episode.source(id) else { return false }
+        let peers = episode.sources(inRecorderGroup: source.placement.recorderGroupID).map(\.id)
+        guard let index = peers.firstIndex(of: id) else { return false }
+        return peers.indices.contains(index + offset)
+    }
+
+    func move(by offset: Int) {
+        model.moveSelected(offset < 0 ? .up : .down)
     }
 
     func replaceModel(_ newModel: EpisodeSetupModel) {
@@ -243,16 +298,6 @@ final class EpisodeSetupViewController: NSViewController, SetupCommandActions, N
     private func canTransfer(_ action: TransferAction) -> Bool {
         sources.contains { model.availableActions(for: $0).contains(action) }
     }
-
-    /// The Setup controller that would receive a menu command right now (focused window's chain).
-    static var active: EpisodeSetupViewController? {
-        var responder = NSApp.keyWindow?.firstResponder
-        while let current = responder {
-            if let controller = current as? EpisodeSetupViewController { return controller }
-            responder = current.nextResponder
-        }
-        return nil
-    }
 }
 
 /// Builds the Setup menu-bar items and installs any that the app's main menu doesn't already provide.
@@ -285,7 +330,7 @@ enum SetupMenus {
         func menuNeedsUpdate(_ menu: NSMenu) {
             MainActor.assumeIsolated {
                 menu.removeAllItems()
-                guard let model = EpisodeSetupViewController.active?.model else {
+                guard let model = SetupCommandProxy.shared.controller?.model else {
                     let item = NSMenuItem(title: "Select sources in an episode's Setup", action: nil, keyEquivalent: "")
                     item.isEnabled = false
                     menu.addItem(item)
@@ -323,6 +368,7 @@ enum SetupMenus {
 
     static func item(_ title: String, _ action: Selector?, _ key: String = "", _ modifiers: NSEvent.ModifierFlags = [.command], represented: Any? = nil) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.target = SetupCommandProxy.shared
         item.keyEquivalentModifierMask = key.isEmpty ? [] : modifiers
         item.representedObject = represented
         return item
@@ -400,17 +446,20 @@ enum SetupMenus {
         ]
     }
 
+    /// Adds Setup's Episode and View items to the app's main menu (File, Edit and Source items are
+    /// provided by the Commands lane through `SourceCommandHandling`).
     static func installIfNeeded(in mainMenu: NSMenu? = NSApp.mainMenu) {
         guard let mainMenu else { return }
-        if let file = topMenu("File", in: mainMenu) { append(makeFileItems(), to: file) }
-        if let edit = topMenu("Edit", in: mainMenu) { append(makeEditItems(), to: edit) }
         if let view = topMenu("View", in: mainMenu) { append(makeViewItems(), to: view) }
+        if let episode = topMenu("Episode", in: mainMenu) { append(makeEpisodeItems(), to: episode) }
+    }
 
-        let episode = topMenu("Episode", in: mainMenu) ?? insertTopMenu(NSMenu(title: "Episode"), after: "View", in: mainMenu)
-        append(makeEpisodeItems(), to: episode)
-        if topMenu("Source", in: mainMenu) == nil {
-            insertTopMenu(makeSourceMenu(), after: "Episode", in: mainMenu)
-        }
+    /// Source menu items (without Relink Source…, which the Commands lane appends).
+    static func makeSourceMenuItems() -> [NSMenuItem] {
+        makeSourceMenu().items.filter { $0.title != "Relink Source…" }.map { item in
+            item.menu?.removeItem(item)
+            return item
+        }.dropLastSeparators()
     }
 
     private static func topMenu(_ title: String, in mainMenu: NSMenu) -> NSMenu? {
@@ -437,5 +486,40 @@ enum SetupMenus {
         guard !missing.isEmpty else { return }
         if let last = menu.items.last, !last.isSeparatorItem { menu.addItem(.separator()) }
         missing.forEach(menu.addItem)
+    }
+}
+
+extension Array where Element == NSMenuItem {
+    fileprivate func dropLastSeparators() -> [NSMenuItem] {
+        var items = self
+        while items.last?.isSeparatorItem == true { items.removeLast() }
+        while items.first?.isSeparatorItem == true { items.removeFirst() }
+        return items
+    }
+}
+
+/// Menu target for Setup commands. Forwards to the Setup controller of the key (or main) show window,
+/// so commands work from the menu bar whichever list has focus, and are dimmed with a reason in the
+/// window when no Setup content is shown.
+@MainActor
+final class SetupCommandProxy: NSObject, NSMenuItemValidation {
+    static let shared = SetupCommandProxy()
+
+    var controller: EpisodeSetupViewController? {
+        EpisodeSetupViewController.controller(for: NSApp.keyWindow) ?? EpisodeSetupViewController.controller(for: NSApp.mainWindow)
+    }
+
+    override func responds(to aSelector: Selector!) -> Bool {
+        if super.responds(to: aSelector) { return true }
+        return EpisodeSetupViewController.instancesRespond(to: aSelector)
+    }
+
+    override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        controller
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard let controller else { return false }
+        return controller.validateMenuItem(item)
     }
 }

@@ -99,10 +99,3 @@ extension View {
         modifier(ScaledFont(style: style, weight: weight))
     }
 }
-
-enum SetupTextScale {
-    static var launchOverride: CGFloat? {
-        let value = UserDefaults.standard.double(forKey: "WWSetupTextScale")
-        return value >= 1 && value <= 2 ? CGFloat(value) : nil
-    }
-}

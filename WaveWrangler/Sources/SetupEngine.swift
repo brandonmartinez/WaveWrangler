@@ -19,7 +19,7 @@ enum SetupEngineProvider {
     static func engine(for showID: ShowID) -> any SourceSetupEngine {
         if let fixture { return fixture }
         if let existing = engines[showID] { return existing }
-        let engine = WWSourcesSetupEngine(showID: showID, store: store, context: context, preference: UserDefaultsSourceDownloadPreference())
+        let engine = WWSourcesSetupEngine(showID: showID, store: store, context: context, preference: AppSettingsDownloadPreference.shared)
         engines[showID] = engine
         return engine
     }

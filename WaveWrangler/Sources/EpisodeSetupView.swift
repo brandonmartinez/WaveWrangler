@@ -12,7 +12,7 @@ struct EpisodeSetupContent: NSViewControllerRepresentable {
     let store: ShowDocumentStore
     let episodeID: EpisodeID
     var showsInspector = true
-    var textScale: CGFloat = SetupTextScale.launchOverride ?? 1
+    var textScale: CGFloat = 1
 
     func makeNSViewController(context: Context) -> EpisodeSetupViewController {
         EpisodeSetupViewController(model: Self.makeModel(store: store, episodeID: episodeID), showsInspector: showsInspector, textScale: textScale)
@@ -32,7 +32,7 @@ struct EpisodeSetupContent: NSViewControllerRepresentable {
     @MainActor
     static func makeModel(store: ShowDocumentStore, episodeID: EpisodeID) -> EpisodeSetupModel {
         let engine = SetupEngineProvider.engine(for: store.model.show.id)
-        let model = EpisodeSetupModel(store: store, episodeID: episodeID, engine: engine, preference: UserDefaultsSourceDownloadPreference())
+        let model = EpisodeSetupModel(store: store, episodeID: episodeID, engine: engine, preference: AppSettingsDownloadPreference.shared)
         if let real = engine as? WWSourcesSetupEngine {
             real.sourceNames = { [weak store] id in
                 store?.model.episodes.lazy.compactMap { $0.source(id)?.displayNameHint }.first ?? "another source"
@@ -565,6 +565,6 @@ extension EpisodeSetupModel {
 enum SetupSettingsLink {
     @MainActor
     static func open() {
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        SettingsWindowController.show(pane: .sources)
     }
 }

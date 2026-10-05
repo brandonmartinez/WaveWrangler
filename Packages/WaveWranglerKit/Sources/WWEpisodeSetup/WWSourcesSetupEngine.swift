@@ -190,7 +190,8 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         let setting = SourceAvailabilitySetting(downloadSourcesAutomatically: preference?.downloadsAutomatically)
         monitor = SourceAvailabilityMonitor(showID: showID, store: store, context: context, setting: setting, transferPolicy: transferPolicy)
         monitor.start()
-        if preference is UserDefaultsSourceDownloadPreference {
+        if preference != nil {
+            // Settings writes "Download sources automatically" to UserDefaults; follow it live.
             defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.syncSetting() }
             }
