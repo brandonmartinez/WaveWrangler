@@ -12,7 +12,7 @@ Use these exact nouns in UI text, menus, VoiceOver labels and help. Do not use i
 
 | User-facing term | Meaning (product model) | Notes |
 | --- | --- | --- |
-| **Library** | App-level, durable organisation of shows, collections, recent and unavailable entries. | Canonical semantic data (collections, membership, order) is never treated as a disposable cache; the lookup index is rebuildable. |
+| **Library** | App-level, durable organisation of shows, collections, recent and unavailable entries. Stored in WaveWrangler by default or in a user-chosen folder ([states §5.1](states-and-recovery.md#51-library-location-coordinator-decision-2026-10-04)). | Canonical semantic data (collections, membership, order) is never treated as a disposable cache; the lookup index is rebuildable. |
 | **Show** | One durable project document per podcast; contains many episodes. | Canonical show document lives where the user chose, including iCloud Drive/OneDrive/Dropbox folders. |
 | **Episode** | One recording/edit/export unit inside a show. | Ordered by the user. |
 | **Collection** | User-named group of shows and episodes in the library. | Membership is a reference; removing from a collection never deletes anything. |
@@ -29,7 +29,7 @@ Use these exact nouns in UI text, menus, VoiceOver labels and help. Do not use i
 | --- | --- | --- | --- |
 | **Library** | App window (not a document) | Exactly one; Window › Library (⇧⌘L) | Find, organise and open shows; see unavailable entries and their remedies. |
 | **Show window** | `NSDocument` window hosting SwiftUI | One per open show by default; more via File › New Window for “Show” | Edit one show: its episodes, sources, groups, speakers and metadata. |
-| **Settings** | App settings window | One; ⌘, | General (Autosave, Text Size) and Sources (Download sources automatically). [A12] |
+| **Settings** | App settings window | One; ⌘, | General (Autosave, Text Size, Library location) and Sources (Download sources automatically). [A12] |
 | Sheets and panels | Modal to one window | — | Native Open/Save panels, Import Review, Relink, Resolve Conflict, Recover, close-with-unsaved-changes. |
 
 - **IA-01: One show = one document.** Opening a show that is already open brings its frontmost window forward. It never opens a second document instance.
@@ -44,20 +44,22 @@ Use these exact nouns in UI text, menus, VoiceOver labels and help. Do not use i
 The Library window uses a three-column split view [A18]: sidebar → entry list → entry detail. The sidebar has **two levels** (section → item) [A3]. The show → episode hierarchy appears in the content and detail columns, never as a third sidebar level.
 
 ```
-┌─ Library ──────────────────────────────────────────────────────────────────────────────────────┐
-│ ◧  Library                                            [New Show]  [Open…]   🔍 Search          │
-├──────────────────────┬───────────────────────────────────────────┬─────────────────────────────┤
-│ LIBRARY              │ Shows (24)                                 │ The Daily Wrangle           │
-│  📚 Shows            │ Name               Episodes Location   St. │ iCloud Drive › Podcasts     │
-│  🕘 Recent           │ The Daily Wrangle      12  iCloud…   ✓ OK  │ Last opened today 9:40 PM   │
-│  ⚠ Unavailable  (3)  │ Garage Talk             4  OneDrive  ⚠ No  │                             │
-│ COLLECTIONS       +  │                                 permission │ Episodes (as of last open)  │
-│  ▭ In Progress       │ Old Show                9  Dropbox   🔒 Re │  12 Interview with Ana      │
-│  ▭ Season 2          │                                  ad-only   │  11 Listener Roundup        │
-│                      │                                            │                             │
-│                      │                                            │ [Open Show]  [Open Episode] │
-└──────────────────────┴───────────────────────────────────────────┴─────────────────────────────┘
+┌─ Library ─────────────────────────────────────────────────────────────────────────────────────────┐
+│ ◧  Library                                  [New Show]  [Open…]   🔍 Search                       │
+├──────────────────────┬──────────────────────────────────────────────┬─────────────────────────────┤
+│ LIBRARY              │ Shows (24)                                   │ The Daily Wrangle           │
+│  📚 Shows             │ Name               Ep. Location  Status      │ iCloud Drive › Podcasts     │
+│  🕘 Recent            │ The Daily Wrangle  12  iCloud…   ✓ Available │ Last opened today 9:40 PM   │
+│  ⚠ Unavailable (2)   │ Garage Talk         4  OneDrive  🔑 Needs     │                             │
+│ COLLECTIONS       +  │                                   permission │ Episodes (as of last open)  │
+│  ▭ In Progress       │ Old Show            9  Dropbox   🔒 Needs     │  12 Interview with Ana      │
+│  ▭ Season 2          │                                   newer      │  11 Listener Roundup        │
+│                      │                                  WaveWrangler│                             │
+│                      │                                              │ [Open Show]  [Open Episode] │
+└──────────────────────┴──────────────────────────────────────────────┴─────────────────────────────┘
 ```
+
+*Illustrative mockup.* Layout and widths are not to scale. Status cells use the exact catalog wording from [states §5](states-and-recovery.md#5-library-entries-reconciliation-and-unavailable-shows), wrapping instead of truncating, as required at large text sizes.
 
 ### 3.1 Library sidebar items
 
@@ -70,7 +72,7 @@ The Library window uses a three-column split view [A18]: sidebar → entry list 
 
 - **IA-07:** The **New Collection** affordance is a "+" button in the Collections section header and File › Library › New Collection…. It is never placed at the bottom of the sidebar [A3].
 - **IA-08:** Unavailable entries also stay in Shows/Recent/Collections, with their status shown. The Unavailable item is a filtered view, not a move. The library never auto-removes an entry.
-- **IA-09:** The "(3)" count is text, not a coloured dot. The item stays visible when the count is zero (value "None").
+- **IA-09:** The count (for example "(2)") is text, not a coloured dot. The item stays visible when the count is zero (value "None").
 
 ### 3.2 Entry list (content column)
 
@@ -92,21 +94,23 @@ This column shows the show name, display location, last-opened time, and the epi
 │  11 Listener…  │ Sources  14 · 2 need attention            [Import Sources…]  │ tr2.wav          │
 │  10 Live from… │  Name             Epoch  Ch   Speaker  Role     Status        │ Recorder group   │
 │ SHOW           │  ▾ Zoom H6 — recorder group · 3 sources                      │ [Zoom H6     ▾]  │
-│  Show Info     │     tr1.wav         1     1   Ana      Primary  ✓ On Mac     │ Epoch  [ 1 ]⇅    │
-│                │     tr2.wav         1     2   Ben      Primary  ☁ Not downl… │ Channel[ 2 ]⇅    │
-│                │     tr3.wav         1     ?   —        —        ✓ On Mac     │ Speaker[ Ben ▾]  │
+│  Show Info     │     tr1.wav         1     1   Ana      Primary  ✓ Ready      │ Epoch  [ 1 ]⇅    │
+│                │     tr2.wav         1     2   Ben      Primary  ↓ Downloadi… │ Channel[ 2 ]⇅    │
+│                │     tr3.wav         1     ?   —        —        ✓ Ready      │ Speaker[ Ben ▾]  │
 │                │  ▾ Ana's laptop — recorder group · 1 source                  │ Role   (•)Primary│
-│                │     ana-zoom.m4a    1     ?   Ana      Backup   🔑 Needs perm │        ( )Backup │
+│                │     ana-zoom.m4a    1     ?   Ana      Backup   🔑 Needs per… │        ( )Backup │
 │                │  ▾ Ungrouped · 2 sources                                     │ ── Availability ─│
-│                │     intro.wav       —     ?   —        —        ⚠ Not found  │ Location  Known  │
-│                │ ──────────────────────────────────────────────────────────── │ Access    Granted│
-│                │ Speakers  3                                   [New Speaker…] │ On Mac    No …   │
-│                │  Speaker  Primary                Backups  Status             │ Download  42%    │
-│                │  Ana      tr1.wav · channel 1      1      ✓ Primary chosen   │ Identity  Not ch │
+│                │     intro.wav       —     ?   —        —        ? Not found  │ Location: At its │
+│                │ ──────────────────────────────────────────────────────────── │  saved location  │
+│                │ Speakers  3                                   [New Speaker…] │ Access: … permis…│
+│                │  Speaker  Primary                Backups  Status             │ Downloading — 42%│
+│                │  Ana      tr1.wav · channel 1      1      ✓ Primary chosen   │ Identity: Not ch…│
 │                │  Ben      tr2.wav · channel 2      0      ✓ Primary chosen   │ [Pause] [Cancel] │
-│                │  Guest    — No primary —           0      ! Choose primary   │ [Relink…]        │
+│                │  Guest    None                     0      ! Choose primary   │ [Relink…]        │
 └────────────────┴──────────────────────────────────────────────────────────────┴──────────────────┘
 ```
+
+*Illustrative mockup.* The cells ending in "…" are truncated only because of mockup width. The real strings are in [states §3](states-and-recovery.md#3-source-states-five-independent-dimensions): tr2.wav's summary is "Downloading 42%" (priority 4 outranks "Not downloaded"), ana-zoom.m4a's is "Needs permission", and the inspector rows read "Location: At its saved location · Access: WaveWrangler has permission · Residency: In the cloud — not downloaded · Download: Downloading — 42% · Identity: Not checked". The implementation wraps rather than truncates essential text (CMD-20).
 
 ### 4.1 Show sidebar (two levels)
 
@@ -217,7 +221,8 @@ Stable identifiers do not change with localisation. Pattern: `ww.<window>.<regio
 | `ww.inspector` / `ww.inspector.source.group` / `.epoch` / `.channel` / `.speaker` / `.role` / `.location` / `.access` / `.residency` / `.transfer` / `.identity` | Inspector fields |
 | `ww.import.review` / `ww.import.row.<n>` / `ww.import.confirm` | Import Review sheet |
 | `ww.relink.sheet` / `ww.relink.compare` / `ww.relink.confirm` | Relink sheet |
-| `ww.settings.autosave` / `ww.settings.downloadSources` / `ww.settings.textSize` | Settings controls |
+| `ww.settings.autosave` / `ww.settings.downloadSources` / `ww.settings.textSize` / `ww.settings.libraryLocation` | Settings controls |
+| `ww.library.messageBar` | Library-window message bar (library-level states L2–L5, move results) |
 
 ## 8. Scale and responsiveness implications (WW-007)
 

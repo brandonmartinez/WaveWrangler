@@ -27,7 +27,7 @@ The **save-status item** sits at the toolbar trailing edge as symbol + short tex
 | **D4 Saving** | A save (auto or explicit) is in progress | "Saving…" · inline spinner (indeterminate, no percent) | Suffix unchanged until result | "Saving your changes…" | Cancel Save (when cancellable) | Yes until D1 |
 | **D5 Save not confirmed** | Write finished but coherence/acknowledgement is uncertain | "Not confirmed" · `questionmark.circle` | "— Edited" (+ dot if autosave off) | "WaveWrangler wrote your changes but couldn't confirm the saved show is complete. Your changes are still open and still count as unsaved. The previous saved version is kept." | Check Again · Save a Copy… | **Yes** |
 | **D6 Changed elsewhere (conflict)** | Disk has a different version from another Mac/app/window lineage | "Conflict" · `arrow.triangle.branch` | "— Edited" | "“The Daily Wrangle” was changed somewhere else (another Mac or app) since you opened it. WaveWrangler hasn't overwritten either version." | Resolve… (opens §2.2) | Yes |
-| **D7 Location unavailable** | Save location can't currently be reached (provider/volume/folder unavailable) | "Can't reach" · `icloud.slash` | "— Edited" | "WaveWrangler can't reach the folder where this show is saved. Your changes are still open in this window, and the last saved version hasn't been changed. WaveWrangler will try again when the folder is available." | Try Again · Save a Copy Elsewhere… | Yes |
+| **D7 Location unavailable** | Save location can't currently be reached (provider/volume/folder unavailable) | "Can't reach" · `icloud.slash` | "— Edited" (+ dot if autosave off) | "WaveWrangler can't reach the folder where this show is saved. Your changes are still open in this window, and the last saved version hasn't been changed." Then Autosave On: "WaveWrangler will try again automatically." Autosave Off: "Choose Try Again when the folder is available." | Try Again · Save a Copy Elsewhere… | Yes |
 | **D8 Disk full** | Write failed for lack of space | "Not saved" · `xmark.octagon` | "— Edited" | "Couldn't save because “<volume>” is full. Your changes are still open, and the last saved version hasn't been changed. Free up space, then choose Try Again." | Try Again · Save a Copy Elsewhere… | Yes |
 | **D9 Couldn't save (other)** | Permission denied, read-only volume, or other failure | "Not saved" · `xmark.octagon` | "— Edited" | "Couldn't save: <plain reason, e.g. 'WaveWrangler doesn't have permission to save in this folder'>. Your changes are still open, and the last saved version hasn't been changed." | Try Again · Save a Copy Elsewhere… · Details | Yes |
 | **D10 Save cancelled** | User cancelled before the new version was published | "Not saved" · `pencil.circle` | "— Edited" | "Save cancelled. Your changes are still open; the last saved version hasn't been changed." | Save Now | Yes |
@@ -48,6 +48,7 @@ VoiceOver for the save-status item: label "Save status"; value = item text + fir
 - **ST-13:** Toggling Autosave Off→On while D3 starts a normal automatic save of the pending edits. On→Off while D4 lets the in-flight save finish or fail honestly. Queued automatic work is dropped, and the state becomes D1 or D3 accordingly.
 - **ST-14:** Read-only states (D12, D13, D15, D16) disable every editing command and Save, Save As and Duplicate-over-original. In D12, Duplicate and Save As are also disabled, because a down-save is prohibited. The reason appears in the message bar, not just through dimmed menu items [A15].
 - **ST-15:** A library index update failing after D1 does **not** change the document state. The library entry shows its own state (§5).
+- **ST-16: Save a Copy Elsewhere…** (from D5/D7–D9 or the close sheet) opens the native save panel with the name "<Show> copy" and behaves like Save As. The window then edits the new copy, which must reach D1. The original location's last saved version is untouched. The library adds an entry for the copy and keeps the original's entry with its own status (for example "Location unavailable"). The message bar reads: "You're now editing “<Show> copy” in <folder>. The original at <old folder> wasn't changed."
 
 ### 2.2 Resolve Conflict sheet (D6)
 
@@ -62,8 +63,18 @@ Title: "Resolve changes to “<Show>”". Body: "This window has changes that ar
 
 ### 2.3 Close, quit and revert
 
-- Close/Quit with D3, D5, D7–D10: standard native sheet. Message: "Do you want to save the changes you made to “<Show>”?" Informative text: "Your changes will be lost if you don't save them." Buttons: **Save** (default), **Cancel**, **Don't Save**. Escape = Cancel [A4, A13]. Close or quit never happens silently while dirty, whatever the autosave state.
-- With Autosave On and D2 at close: attempt the save first. Close only after D1. If the save fails, show the sheet above with the failure reason prefixed.
+Close or quit **never happens silently while dirty**, whatever the autosave state. Escape = Cancel in every close sheet [A4, A13]. Quit applies these rules to each dirty show in turn; Cancel on any of them cancels the quit.
+
+| State at Close/Quit | Behaviour | Sheet buttons (default first) |
+| --- | --- | --- |
+| D1, read-only states | Close immediately | — |
+| D2 (Autosave On) | Attempt the save first. Close only after D1. If that save ends in D5/D7–D9, continue with that state's row below | — |
+| **D4 Saving** | **Wait** for the in-flight save to finish (the window shows "Saving…" and the close is pending; **Cancel Close** in the save-status popover, or Esc while it is open, abandons the close but not the save). Then apply the row for the resulting state (D1 closes) | — while waiting |
+| D3, D10 | Message "Do you want to save the changes you made to “<Show>”?" Informative text "Your changes will be lost if you don't save them." | **Save** · Cancel · Don't Save |
+| D5, D7, D8, D9 | Message "“<Show>” couldn't be saved: <short reason>." Informative text "Save a copy somewhere else, or your changes will be lost. The last saved version hasn't been changed." | **Save a Copy Elsewhere…** · Cancel · Don't Save |
+| **D6 Conflict** | **Never offer a plain Save** (it would overwrite the other version). Message "“<Show>” was changed somewhere else. Choose how to keep your changes before closing." | **Save Mine as a Copy…** · Cancel · Don't Save. **Keep Mine…** appears only under the same condition as §2.2 and still requires its confirmation |
+
+After **Save a Copy Elsewhere…** or **Save Mine as a Copy…** completes as D1 for the new copy, the original window closes. If the copy also fails, the window stays open in its failure state.
 - **File › Revert To ›** lists **Last Saved Version** plus up to 10 recent complete versions ("Today 10:40 PM", …), then **Browse Saved Versions…**. Browse opens a list sheet showing time, episode count and a short change description where known. Choosing one shows: "Replace this window's content with the version from <time>? Your current content will be kept as an earlier version." **Revert** / **Cancel**. Reverting is reversible through the same menu. Only coherent complete versions appear [research: prior valid revisions].
 
 ## 3. Source states: five independent dimensions
@@ -180,6 +191,38 @@ The library records each show's last-known location, name, episode summary and l
 - **ST-31: Rebuild Library Index…** (File › Library) shows inline progress in the Library window toolbar ("Rebuilding library index — 34 of 100 shows", determinate, with Cancel). The sheet text promises: "Your collections and their order are kept; only search and lookup information is rebuilt." Cancel leaves the previous index in use.
 - **ST-32:** A library write failure shows a Library-window message bar: "Couldn't update the library: <reason>. Your shows aren't affected." It never shows as a show save failure.
 
+### 5.1 Library location (coordinator decision, 2026-10-04)
+
+The canonical library (collections and their order, recent items, unavailable entries, library entries) is stored at a **configurable location**. The default is **In WaveWrangler** (the app's container on this Mac). The user may choose any folder through a native open panel, including iCloud Drive, OneDrive or Dropbox folders. Shows are separate documents and never move when the library moves.
+
+**Settings › General › Library location** (`ww.settings.libraryLocation`) is a pop-up: **In WaveWrangler** (default) · *‹current folder display name›* (when one is chosen) · **Choose Folder…**
+
+| Location | Caption (exact) |
+| --- | --- |
+| In WaveWrangler | "Your library (collections, recent items and unavailable shows) is stored inside WaveWrangler on this Mac. Your shows stay wherever you saved them." |
+| A chosen folder | "Your library is stored in “<folder display name>”. If this folder syncs, WaveWrangler on your other Macs can use the same library. Your shows stay wherever you saved them." |
+
+**Changing the location (ST-33).**
+1. **Choose Folder…** opens a native open panel (folders only, New Folder allowed). Prompt: "Choose a folder for your WaveWrangler library". Cancel changes nothing.
+2. A confirmation sheet asks: "Move your library to “<folder>”?" Body: "WaveWrangler copies your library there, checks that the copy is complete, and then stops using the old copy. Collections, recent items and unavailable shows are all kept. The old copy stays where it is as a backup; WaveWrangler doesn't delete it." Buttons: **Move Library** (default) · **Cancel**. Choosing **In WaveWrangler** uses the same sheet with "Move your library back into WaveWrangler?".
+3. Progress appears inline in Settings and in the Library window toolbar: "Moving library — copying…" then "Moving library — checking copy…" (indeterminate unless counts are known). **Cancel** is available until the switch; cancelling leaves the old location in use and unchanged.
+4. **Switch only after verification.** The new copy must contain every collection, its membership and order, every recent item and every library entry, including unavailable ones. Only then does WaveWrangler switch to it and **retire** the old copy: it no longer reads or writes it and keeps it as a backup. Message bar: "Your library is now stored in “<folder>”. The previous copy was kept in <old location display name> as a backup."
+5. **Failure:** "Couldn't move your library: <reason>. WaveWrangler is still using your library in <old location>; nothing was changed." The partial copy is left in place, and nothing in the old copy is touched.
+6. **The folder already has a WaveWrangler library:** a sheet titled "“<folder>” already has a WaveWrangler library" offers **Use That Library** (your current library is retired and kept as a backup, and its collections are **not** dropped: WaveWrangler adds them to the folder's library, renaming same-named collections "<name> (from this Mac)"), **Choose Another Folder…** and **Cancel**. There is no default button.
+
+**Library-level states** appear in a Library-window message bar (`ww.library.messageBar`) and in Settings under the Library location control. They never appear as a show save state, and shows can always still be opened with File › Open.
+
+| ID | State | Message bar heading · symbol | Body (exact) | Actions | Library edits |
+| --- | --- | --- | --- | --- | --- |
+| L1 | Ready | — | — | — | Allowed |
+| L2 | Unreachable (folder or provider unavailable) | "Can't reach your library" · `icloud.slash` | "WaveWrangler can't reach “<folder>”, where your library is stored. Your shows aren't affected, and you can still open them with File › Open. Library changes are kept on this Mac and saved when the folder is available again." | Try Again · Library Settings… | Allowed; queued. The pending count shows as "<n> library changes not saved yet". Retries at most every 30 s |
+| L3 | Needs permission | "WaveWrangler needs permission to use your library folder" · `key.slash` | "Choose the folder again to let WaveWrangler use your library." | **Grant Access…** (open panel pre-pointed at the folder) | Queued, as L2 |
+| L4 | Changed on another Mac (conflict) | "Your library was changed on another Mac" · `arrow.triangle.branch` | "Another Mac saved changes to your library while this Mac also had changes. WaveWrangler hasn't overwritten either." | **Combine (Keep Everything)** (default): the union of collections, entries and recents; same-named collections with different members are kept as "<name>" and "<name> (from this Mac)" · **Use Other Mac's Version** (this Mac's version is kept as a backup copy) · Cancel (stays in L4) | Read-only until resolved |
+| L5 | Newer format | "Your library needs a newer WaveWrangler" · `lock.fill` | "The library in “<folder>” was saved by a newer version of WaveWrangler. You can see it, but it can't be changed here, so its newer information isn't lost. Your shows aren't affected." | Library Settings… | Read-only; no save or down-save |
+
+- **ST-34:** Quitting with queued library changes (L2/L3) asks: "WaveWrangler couldn't save <n> library changes. If you quit now, they'll be lost." Buttons: **Cancel** · **Quit Anyway**, with no default button [A13].
+- **ST-35:** Library location changes, L4 resolution and ST-33 moves are not undoable. They are confirmed explicitly instead.
+
 ## 6. Source download setting: On and Off
 
 Settings › Sources › **Download sources automatically** (default **On**).
@@ -200,6 +243,8 @@ Settings › Sources › **Download sources automatically** (default **On**).
 | Save completes after an explicit ⌘S | "Saved" | low |
 | Any save failure (D5, D7–D9) | "Couldn't save “<Show>”. <short reason>." | high |
 | Conflict detected (D6) | "“<Show>” was changed somewhere else. Your changes are kept." | high |
+| Library state L2–L5 appears; library move completes or fails | Message bar heading | default |
+| Automatic retry succeeds after D7 | "Saved" | low |
 | Recovered / read-only on open (D11–D13, D15) | Message bar heading | default |
 | Download progress (focused source only) | Start; then at 25%, 50% and 75% at most every 10 s; completion "Downloaded tr2.wav" | low |
 | Download failure | "Download failed for tr2.wav: <reason>" | default |

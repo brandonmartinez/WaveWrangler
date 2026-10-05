@@ -46,8 +46,8 @@ Companion documents: [information architecture](information-architecture.md) · 
 | Import Sources… | ⇧⌘I | Writable show with an episode selected | Opens the [Import Review](information-architecture.md#5-import-review-messy-folder) flow |
 | Relink Source… | — | One source selected | [Relink flow](states-and-recovery.md#4-relink-and-regrant) |
 | Resolve Unavailable Sources… | — | Show window key | Batch sheet (ST-22) |
-| Library ▸ | — | Always | New Collection… · Add to Collection ▸ · Remove from Collection · Remove from Library… · Locate Show… · Rebuild Library Index… |
-| Show in Finder | — | Show window key | Reveals the show file (never a source write) |
+| Library ▸ | — | Always (items act on the Library window's selection) | Open Show · Open in New Window — New Collection… · Rename Collection · Delete Collection… — Add to Collection ▸ · Remove from Collection · Remove from Library… — Locate Show… · Grant Access… · Try Again — Rebuild Library Index… |
+| Show in Finder | — | Show window key, or a show selected in the Library window | Reveals the show file (never a source write) |
 
 ### Edit
 
@@ -56,7 +56,7 @@ Companion documents: [information architecture](information-architecture.md) · 
 | Undo *‹action›* | ⌘Z | Title names the action (§3) [A5, A11] |
 | Redo *‹action›* | ⇧⌘Z | |
 | Cut · Copy · Paste | ⌘X · ⌘C · ⌘V | Text fields: standard. Rows: Copy copies display names as text; Cut and Paste are disabled for rows in M1 |
-| Delete | ⌫ | Acts on the focused list: Delete Episode… / Remove Source from Episode… / Delete Speaker… / Remove from Collection / Remove from Library… (confirmation wording §6) |
+| Delete | ⌫ | Acts on the focused list: Delete Episode… / Remove Source from Episode… / Delete Speaker… / Delete Collection… (collection selected in the Library sidebar) / Remove from Collection / Remove from Library… (confirmation wording §6) |
 | Select All | ⌘A | |
 | Move Up · Move Down | ⌥⌘↑ · ⌥⌘↓ | Title adapts: "Move Episode Up", "Move Source Up", "Move Speaker Up", "Move Collection Up". Disabled at the list edge |
 | Find ▸ Find… | ⌘F | Focuses the window's search/filter field |
@@ -87,6 +87,10 @@ The Episode menu is ordered more general than the Source menu, mirroring the hie
 | Duplicate Episode | — | Copies setup (references, groups, speakers, assignments); never copies source files. "Undo Duplicate Episode" |
 | New Recorder Group… | — | Name sheet; "Undo New Recorder Group" |
 | New Speaker… | — | Name sheet; "Undo New Speaker" |
+| Rename Recorder Group | — | Enabled when a recorder group row is selected; inline rename in the Sources table. "Undo Rename Recorder Group" |
+| Rename Speaker | — | Enabled when a speaker is selected; inline rename in the Speakers table. "Undo Rename Speaker" |
+| Set Primary for Speaker ▸ | — | Enabled when one speaker is selected: that speaker's assigned sources/channels · None. "Undo Change Primary for “Ana”" |
+| Delete Speaker… | — | Same as Edit › Delete on a speaker |
 | Suggest Groups… | — | Import Review sheet in suggestion-only mode (IA-15) |
 | Add to Collection ▸ | — | Collections list · New Collection… |
 | Delete Episode… | — | Same as Edit › Delete on an episode |
@@ -99,7 +103,7 @@ Source items act on the selected source rows in the Sources table. With multiple
 | --- | --- |
 | Assign to Recorder Group ▸ | Each group · Ungrouped · New Recorder Group… — "Undo Assign to Group “Zoom H6”" |
 | Set Epoch… | Numeric sheet (whole number ≥ 1; Return applies). "Undo Set Epoch" |
-| Start New Epoch | Increments the epoch of the selected sources by 1 |
+| Start New Epoch | Increments the epoch of the selected sources by 1 (with a recorder group row selected: all of that group's sources). "Undo Start New Epoch" |
 | Set Channel… | Numeric sheet (whole number ≥ 1, or **Unknown** checkbox). Caption "WaveWrangler doesn't check this against the file in this version." "Undo Set Channel" |
 | Assign Speaker ▸ | Each speaker · Unassigned · New Speaker… — "Undo Assign Speaker “Ana”" |
 | Use as Primary | Enabled when exactly one source/channel with a speaker is selected. Replaces that speaker's previous primary, which becomes a Backup. "Undo Change Primary for “Ana”" |
@@ -157,9 +161,9 @@ Toolbar items are reached through Full Keyboard Access (⌃F5) [A6]. Every toolb
 | Key | Library entries | Episode sidebar | Sources / Speakers tables | Import Review table |
 | --- | --- | --- | --- | --- |
 | ↑ ↓ | Move selection | Move selection (content follows) | Move selection; ← → collapse/expand group rows | Move selection |
-| Return | Open | Rename | Focus the inspector's first editable field | Toggle Include |
+| Return | Open | Rename | Focus the inspector's first editable field | Activates the default **Import N** button (never toggles a row) |
 | Space | Quick Look is **not** used (it would read content) | — | — | Toggle Include |
-| ⌫ | Remove from Library… | Delete Episode… | Remove Source… / Delete Speaker… | Exclude row |
+| ⌫ | Remove from Library… (on a collection in the Library sidebar: Delete Collection…) | Delete Episode… | Remove Source… / Delete Speaker… | Exclude row |
 | ⌘↓ | Open | — | — | — |
 | Type letters | Type-select by name | Type-select | Type-select | Type-select |
 | ⇧↑/⇧↓, ⌘-click equivalent ⌘A | Extend selection | — (single selection) | Extend selection | Extend selection |
@@ -183,15 +187,17 @@ All drags are undoable with the same names as their menu equivalents [A7].
 
 ## 6. Context menus
 
-| Element | Items (groups separated by "—") |
-| --- | --- |
-| Library entry (show) | Open Show · Open in New Window — Add to Collection ▸ · Show in Finder — Remove from Library… |
-| Library entry (unavailable) | the entry's remedies (Locate…, Grant Access…, Try Again) — Remove from Library… |
-| Collection (sidebar) | Rename · New Collection… — Delete Collection… |
-| Episode (sidebar) | Rename · Episode Info · Duplicate Episode — Add to Collection ▸ · Move Up · Move Down — Delete Episode… |
-| Recorder group row | Rename · Start New Epoch — New Recorder Group… |
-| Source row | Assign to Recorder Group ▸ · Assign Speaker ▸ · Use as Primary/Use as Backup — Download/Pause/Cancel/Retry (applicable ones) · Relink Source…/Grant Access… — Show Source in Finder · Remove from Episode… |
-| Speaker row | Rename · Set Primary ▸ — Delete Speaker… |
+Every context-menu item has the menu-bar equivalent listed in the last column (CMD-01). The A-06 menu test asserts this mapping.
+
+| Element | Items (groups separated by "—") | Menu-bar equivalents |
+| --- | --- | --- |
+| Library entry (show) | Open Show · Open in New Window — Add to Collection ▸ · Show in Finder — Remove from Library… | File › Library › Open Show / Open in New Window / Add to Collection ▸ / Remove from Library…; File › Show in Finder |
+| Library entry (unavailable) | the entry's remedies (Locate…, Grant Access…, Try Again) — Remove from Library… | File › Library › Locate Show… / Grant Access… / Try Again / Remove from Library… |
+| Collection (sidebar) | Rename · New Collection… — Move Up · Move Down — Delete Collection… | File › Library › Rename Collection / New Collection… / Delete Collection…; Edit › Move Collection Up/Down; Edit › Delete |
+| Episode (sidebar) | Rename · Episode Info · Duplicate Episode — Add to Collection ▸ · Move Up · Move Down — Delete Episode… | Episode › Rename Episode / Episode Info / Duplicate Episode / Add to Collection ▸ / Delete Episode…; Edit › Move Episode Up/Down |
+| Recorder group row | Rename · Start New Epoch — New Recorder Group… | Episode › Rename Recorder Group / New Recorder Group…; Source › Start New Epoch (applies to all sources in the selected group) |
+| Source row | Assign to Recorder Group ▸ · Assign Speaker ▸ · Use as Primary/Use as Backup — Download/Pause/Cancel/Retry (applicable ones) · Relink Source…/Grant Access… — Show Source in Finder · Remove from Episode… | Source menu items of the same names |
+| Speaker row | Rename · Set Primary ▸ — Delete Speaker… | Episode › Rename Speaker / Set Primary for Speaker ▸ / Delete Speaker… |
 
 Confirmation wording for removals (these are uncommon destructive actions [A13], so each one confirms):
 - Delete Episode: "Delete “<Episode>”? Its setup is removed from this show. Source files aren't deleted." **Delete** / **Cancel**. Undoable.
@@ -207,6 +213,7 @@ The Settings window has a non-customisable toolbar with two panes. Its title mat
 | --- | --- | --- | --- |
 | **General** (`gearshape`) | Toggle **Save changes automatically** | **On** | On: "WaveWrangler saves your changes as you work. You can also choose File › Save at any time." Off: "Changes are saved only when you choose File › Save (⌘S). WaveWrangler will ask before closing a show with unsaved changes." |
 | General | Pop-up **Text size**: 100% · 125% · 150% · 175% · 200% | **100%** | "Makes text in WaveWrangler windows larger. Also in View › Text Size." |
+| General | Pop-up **Library location** (`ww.settings.libraryLocation`): In WaveWrangler · *‹chosen folder›* · Choose Folder… | **In WaveWrangler** | See [states §5.1](states-and-recovery.md#51-library-location-coordinator-decision-2026-10-04) for the captions, the copy → verify → retire move and the library-level states. Library-level state messages also appear under this control |
 | **Sources** (`music.mic`) | Toggle **Download sources automatically** | **On** | See [states §6](states-and-recovery.md#6-source-download-setting-on-and-off) for the On and Off captions |
 
 VoiceOver: the toggles are switches. Each label is the toggle text, the value is "on"/"off", and the caption is the accessibility help.
@@ -227,7 +234,7 @@ These are the canonical key sequences. [Accessibility acceptance](accessibility-
 | K02 | Add an episode | ⇧⌘N → inline rename active → type title → Return |
 | K03 | Edit episode metadata | ⌘I → Title field focused → edit → Tab to Number, Season, Recording date, Notes → each commit on Tab/Return creates a named undo |
 | K04 | Edit show metadata | Arrow to Show Info in the sidebar → Tab to inspector fields → edit |
-| K05 | Organise collections | ⇧⌘L → Menu › File › Library › New Collection… → type name → Return → Tab to entry list → select show → Menu › File › Library › Add to Collection › *name* |
+| K05 | Organise collections | ⇧⌘L → Menu › File › Library › New Collection… → type name → Return → Tab to entry list → select show → Menu › File › Library › Add to Collection › *name* → ⇧Tab to the sidebar, arrow to the collection → Menu › File › Library › Rename Collection → type → Return → ⌥⌘↑/⌥⌘↓ to reorder → ⌫ (or Menu › File › Library › Delete Collection…) → Return confirms **Delete** |
 | K06 | Reorder | Select a row → ⌥⌘↑ / ⌥⌘↓ |
 | K07 | Import a messy folder | ⇧⌘I → choose folder in the panel (⌘⇧G path entry or arrow navigation) → Return → Import Review: arrows through rows, Space toggles Include, Tab to the pop-ups, ⌥↓ or Space opens a pop-up → **Accept All Suggestions** or edit rows → Return = **Import N** |
 | K08 | Confirm/correct grouping | Select sources (⇧↓) → Menu › Source › Assign to Recorder Group › *group* (or Return → inspector "Recorder group" pop-up) |
@@ -238,13 +245,16 @@ These are the canonical key sequences. [Accessibility acceptance](accessibility-
 | K13 | Toggle autosave | ⌘, → General pane → Tab to **Save changes automatically** → Space |
 | K14 | Toggle source downloads | ⌘, → ⌃F5 (settings toolbar) → → to **Sources** → Space → Tab to the toggle → Space |
 | K15 | Explicit save | ⌘S; check with Menu › View › Show Save Status |
-| K16 | Resolve a conflict | Menu › View › Show Save Status → **Resolve…** → Return default **Save Mine as a Copy…** (or Tab to other choices) |
+| K16 | Resolve a conflict | Menu › View › Show Save Status → **Resolve…** → Return default **Save Mine as a Copy…** (or Tab to other choices). Close while conflicted: ⌘W → conflict close sheet → Return = **Save Mine as a Copy…**, Esc = Cancel, ⌘⌫ = Don't Save (no plain Save offered) |
 | K17 | Recover prior work | Menu › File › Revert To › Browse Saved Versions… → arrows → Return → confirm **Revert** |
 | K18 | Cancel/retry a download | Select source → Menu › Source › Cancel Download → confirm (Tab to **Cancel Download**, Space) → later Menu › Source › Retry Download |
 | K19 | Unknown-newer refusal | ⌘O → open the file → message bar is read; Tab reaches **Close Show**; edit commands and Save, Duplicate and Save As are dimmed |
-| K20 | Close with unsaved changes | ⌘W → sheet: Return = Save, Esc = Cancel, ⌘⌫ = Don't Save (standard) |
+| K20 | Close with unsaved changes | ⌘W → sheet per [close rules](states-and-recovery.md#23-close-quit-and-revert): Return = default (**Save**, **Save a Copy Elsewhere…** or **Save Mine as a Copy…** by state), Esc = Cancel, ⌘⌫ = Don't Save. During D4 the close waits; Menu › View › Show Save Status → **Cancel Close** (or Esc) abandons the pending close |
 | K21 | Open recent / reopen | Menu › File › Open Recent › *show*; or ⇧⌘L → arrows → Return |
 | K22 | Second window on a show | Menu › File › New Window for “*Show*” → ⌘` cycles windows |
 | K23 | Change text size | ⌘+ repeatedly up to 200%; ⌘0 resets |
 | K24 | Navigate destinations | ⌘1–⌘4; on a blocked panel, Tab to **Go to Setup** → Space |
 | K25 | Resolve unavailable show (library) | ⇧⌘L → arrows to Unavailable → Tab to the entry list → arrows → Tab to the detail remedy (Locate…/Grant Access…/Try Again) → Space |
+| K26 | Change the library location | ⌘, → General → Tab to **Library location** → Space opens the pop-up → arrows to **Choose Folder…** → Return → choose a folder in the panel → Return → sheet: Return = **Move Library** → progress is read in Settings → message bar in the Library window. Library-level states: ⇧⌘L → Tab reaches the message bar buttons first (Try Again / Grant Access… / Combine (Keep Everything) …) |
+| K27 | Save when the show's folder is unreachable | Read the state with Menu › View › Show Save Status → Tab to **Try Again** or **Save a Copy Elsewhere…** → Space → save panel → Return. With Autosave On, no keys are needed for automatic retries; the state is read the same way |
+| K28 | Source can't download (no connection) | Select the source → read Status/inspector → Menu › Source › Retry Download (or inspector **Retry** → Space). With downloads On, an automatic retry on reconnect needs no keys |
