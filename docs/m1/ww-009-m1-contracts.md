@@ -293,7 +293,7 @@ End-to-end authorized synthetic task/recovery run plus the coordinator's M1 exit
 | **Grant D** — temporary Increase Contrast, Reduce Motion and larger text, with original values recorded and restored | **Granted 2026-10-04** — `M1-A11Y-003` |
 | **Grant E** — synthetic iCloud Drive testing on this Mac and the user's Mac mini (same Apple account), including deliberate multi-device testing; UI stays on the Mac mini | **Granted by the user directly, 2026-10-05** — `M1-DUR-025`, frozen by `m1-freeze-2` ([#116](https://github.com/brandonmartinez/WaveWrangler/pull/116)) before execution |
 | Standing consent — all ongoing and future UI, VoiceOver and related accessibility work on the Mac mini; the disposable episode copy at the same location on the mini under the same consent | **Granted by the user directly, 2026-10-05** |
-| OneDrive; Dropbox; disk-image (real full-volume) tests; any network trial beyond grant C | **Not authorized** — `M1-DUR-030`, `M1-SRC-ON-PROV-002/003`, `M1-DUR-013` real-volume variant |
+| OneDrive; Dropbox; disk-image (real full-volume) tests; network disconnection; any provider trial beyond grants C and E | **Not authorized** — `M1-DUR-030`, `M1-SRC-ON-PROV-002/003`, `M1-DUR-013` real-volume variant |
 | Recording/sample-folder browsing, model downloads, signing credentials, publishing | **Not authorized** |
 
 ## 10. Change log
