@@ -351,29 +351,29 @@ private struct SourcesTable: View {
             TableColumn("Name") { row in
                 NameCell(row: row, hidden: hidden)
             }
-            .width(min: SetupSourceColumn.nameMinimum(scale: scale), ideal: SetupColumnPlan.nameWidth(shown, tableWidth: width, scale: scale))
+            .width(min: SetupSourceColumn.nameMinimum(scale: scale), ideal: SetupColumnPlan.idealWidth(.name, scale: scale))
             if shown.contains(.epoch) {
                 TableColumn("Epoch") { row in SourceCell(row: row, cell: row.epoch, label: "Epoch", column: "epoch") }
-                    .width(min: 36 * scale, ideal: SetupSourceColumn.epoch.width(scale: scale))
+                    .width(min: 36 * scale, ideal: SetupColumnPlan.idealWidth(.epoch, scale: scale))
             }
             if shown.contains(.channel) {
                 TableColumn("Ch") { row in SourceCell(row: row, cell: row.channel, label: "Channel", column: "channel") }
-                    .width(min: 28 * scale, ideal: SetupSourceColumn.channel.width(scale: scale))
+                    .width(min: 28 * scale, ideal: SetupColumnPlan.idealWidth(.channel, scale: scale))
             }
             if shown.contains(.speaker) {
                 TableColumn("Speaker") { row in SourceCell(row: row, cell: row.speaker, label: "Speaker", column: "speaker") }
-                    .width(min: 56 * scale, ideal: SetupSourceColumn.speaker.width(scale: scale))
+                    .width(min: 56 * scale, ideal: SetupColumnPlan.idealWidth(.speaker, scale: scale))
             }
             if shown.contains(.role) {
                 TableColumn("Role") { row in SourceCell(row: row, cell: row.role, label: "Role", column: "role") }
-                    .width(min: 56 * scale, ideal: SetupSourceColumn.role.width(scale: scale))
+                    .width(min: 56 * scale, ideal: SetupColumnPlan.idealWidth(.role, scale: scale))
             }
             TableColumn("Status") { row in
                 if let status = row.status, case let .source(id) = row.id {
                     StatusCell(summary: status, identifier: "ww.setup.source.\(id).status")
                 }
             }
-            .width(min: 100 * scale, ideal: SetupSourceColumn.status.width(scale: scale))
+            .width(min: 100 * scale, ideal: SetupColumnPlan.idealWidth(.status, scale: scale))
         } rows: {
             ForEach(rows) { group in
                 DisclosureTableRow(group, isExpanded: Binding(

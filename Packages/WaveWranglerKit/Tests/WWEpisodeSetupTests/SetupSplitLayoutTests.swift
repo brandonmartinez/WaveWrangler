@@ -82,7 +82,23 @@ struct SetupDefaultLayoutTests {
             let widths = SetupColumnPlan.tiers.map { SetupColumnPlan.requiredWidth($0, scale: scale) }
             #expect(widths == widths.sorted(by: >))
         }
-        #expect(SetupColumnPlan.nameWidth([.name, .status], tableWidth: 600, scale: 1) > SetupSourceColumn.nameMinimum(scale: 1))
-        #expect(SetupColumnPlan.nameWidth(SetupSourceColumn.allCases, tableWidth: 100, scale: 1) == SetupSourceColumn.nameMinimum(scale: 1))
+    }
+
+    /// #129: ideal widths are constants per text size, so resizing never feeds back into them.
+    @Test func idealWidthsDoNotDependOnTableWidth() {
+        for scale in [1.0, 1.5, 2.0] {
+            for column in SetupSourceColumn.allCases {
+                let ideal = SetupColumnPlan.idealWidth(column, scale: scale)
+                #expect(ideal.isFinite && ideal > 0)
+                #expect(ideal == column.width(scale: scale))
+            }
+            #expect(SetupColumnPlan.idealWidth(.name, scale: scale) >= SetupSourceColumn.nameMinimum(scale: scale))
+        }
+    }
+
+    @Test func nonFiniteWidthsChooseTheNarrowestTier() {
+        #expect(SetupColumnPlan.columns(forWidth: .nan, scale: 1) == [.name, .status])
+        #expect(SetupColumnPlan.columns(forWidth: .infinity, scale: 1) == [.name, .status])
+        #expect(SetupColumnPlan.columns(forWidth: 0, scale: 1) == [.name, .status])
     }
 }

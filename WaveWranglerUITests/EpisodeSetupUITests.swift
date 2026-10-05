@@ -378,6 +378,22 @@ final class EpisodeSetupUITests: XCTestCase {
         XCTAssertGreaterThan(status.frame.width, 20, "\(context): status has width", file: file, line: line)
     }
 
+    /// #129: repeated Window › Zoom out/in must not grow the columns (a width-derived Name ideal used to
+    /// compound with column autoresizing until Status scrolled off and the frame width became NaN).
+    func testColumnsStayStableAcrossRepeatedZoom() {
+        importFixture()
+        let outline = app.outlines["ww.setup.sources"]
+        for cycle in 1...3 {
+            menu("Window", "Zoom")  // default size
+            assertStatusVisible(outline, "zoom cycle \(cycle), default size")
+            menu("Window", "Zoom")  // zoomed
+            assertStatusVisible(outline, "zoom cycle \(cycle), zoomed")
+        }
+        let status = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status'")).firstMatch
+        XCTAssertLessThan(status.frame.minX - outline.frame.minX, outline.frame.width * 0.85, "Name and the other columns haven't grown to fill the table")
+        select("tr2.wav")
+    }
+
     /// At the default show-window size Sources shows several rows with Status readable (no horizontal
     /// scrolling), Speakers stays usable, details collapse to a bar, and 200% text still shows Status.
     func testDefaultWindowShowsSeveralSourceRowsWithStatus() {
