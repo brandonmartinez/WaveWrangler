@@ -198,6 +198,8 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
 
     func openShow(_ id: ShowID, readOnly: Bool) async throws {
         guard let url = locations[id] else { throw LibraryBackendError.showLocationUnknown }
+        let interval = OpenSignposts.begin("library.openShow")
+        defer { OpenSignposts.end(interval) }
         _ = try await NSDocumentController.shared.openDocument(withContentsOf: url, display: true)
     }
 

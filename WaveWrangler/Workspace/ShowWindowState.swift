@@ -255,7 +255,14 @@ final class ShowWindowState {
         // view (re-entrant constraint updates); apply them on the next main-queue turn.
         DispatchQueue.main.async { [weak self, weak window] in
             guard let self, let window else { return }
+            let interval = OpenSignposts.begin("window.attach")
+            defer { OpenSignposts.end(interval) }
+            // The attach pass through its commit (the acceptance lane's show.open endpoint).
+            OpenSignposts.endAfterCommit(OpenSignposts.begin("window.attachCommit"))
             self.isWindowAttached = true
+            // Deferred open work (C2b offer scan, provider versions) on every display path, including windows
+            // restored at launch, which never go through showWindows().
+            self.store.document?.windowDidAttach()
             if let hosting = window.contentViewController as? NSHostingController<ShowWorkspaceView> {
                 hosting.sceneBridgingOptions = [.toolbars]
             }
@@ -266,11 +273,17 @@ final class ShowWindowState {
             Responsiveness.showWindowAttached()
             DispatchQueue.main.async { self.reportsInteractions = true }
             self.updateSubtitle()
-            let model = self.store.model
-            LibraryUIStore.shared.showDidOpen(
-                id: model.show.id, model: model, fileURL: self.store.document?.fileURL,
-                hasUnsavedChanges: self.saveStatus.hasUnsavedChanges || self.store.document?.isDocumentEdited == true
-            )
+            // Library bookkeeping (location, summary, Last Opened, recents) updates and re-renders the Library
+            // window. It runs after this window's first commit so it doesn't delay the show appearing. It reads the
+            // document's state when it runs (so a save in between is never recorded over by an older title).
+            let store = self.store
+            OpenSignposts.afterFirstFrame { [weak self] in
+                let model = store.model
+                let hasUnsavedChanges = (self?.saveStatus.hasUnsavedChanges ?? false) || store.document?.isDocumentEdited == true
+                OpenSignposts.measure("library.showDidOpen") {
+                    LibraryUIStore.shared.showDidOpen(id: model.show.id, model: model, fileURL: store.document?.fileURL, hasUnsavedChanges: hasUnsavedChanges)
+                }
+            }
         }
     }
 

@@ -375,3 +375,30 @@ public enum LibraryEntryRefresh {
         return updated
     }
 }
+
+/// Sortable entry-list columns (Name, Location, Status), compared as Finder does (`localizedStandardCompare`).
+public enum LibraryEntrySortKey: String, Sendable, CaseIterable {
+    case name, location, status
+
+    func compare(_ a: LibraryEntryRow, _ b: LibraryEntryRow) -> ComparisonResult {
+        switch self {
+        case .name: a.name.localizedStandardCompare(b.name)
+        case .location: a.locationText.localizedStandardCompare(b.locationText)
+        case .status: a.status.statusText.localizedStandardCompare(b.status.statusText)
+        }
+    }
+}
+
+extension LibraryPresentation {
+    /// Rows sorted by the given keys in priority order; stable, and unchanged when there are no keys.
+    public static func sorted(_ rows: [LibraryEntryRow], by keys: [(key: LibraryEntrySortKey, ascending: Bool)]) -> [LibraryEntryRow] {
+        guard !keys.isEmpty else { return rows }
+        return rows.enumerated().sorted { lhs, rhs in
+            for (key, ascending) in keys {
+                let order = key.compare(lhs.element, rhs.element)
+                if order != .orderedSame { return ascending ? order == .orderedAscending : order == .orderedDescending }
+            }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
+    }
+}
