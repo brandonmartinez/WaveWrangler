@@ -60,7 +60,7 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
         case .needsMigration: LibraryLoadWording.needsMigration
         case .damaged(let reason, _): LibraryLoadWording.damaged(reason)
         case .unavailable(let reason): reason
-        case .unavailableShowingPrior(let reason, _): LibraryLoadWording.unavailableShowingPrior(reason)
+        case .unavailableShowingPrior(let reason, _): LibraryLoadWording.unreachable(reason)
         }
     }
 

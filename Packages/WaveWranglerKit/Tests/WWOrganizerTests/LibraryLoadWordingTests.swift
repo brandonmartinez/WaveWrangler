@@ -3,11 +3,13 @@ import Testing
 
 @Suite("Library load wording")
 struct LibraryLoadWordingTests {
-    @Test func unavailableShowingPriorSaysReadOnlyLastSavedCopyWithoutInternalTerms() {
-        let text = LibraryLoadWording.unavailableShowingPrior("the folder is offline")
-        #expect(text == "WaveWrangler can't reach your library folder (the folder is offline), so it's showing the last saved copy, read-only")
-        #expect(!text.localizedCaseInsensitiveContains("revision"))
-        #expect(!text.localizedCaseInsensitiveContains("checkpoint"))
+    @Test func unreachableStatesOnlyTheReason() {
+        let text = LibraryLoadWording.unreachable("the folder is offline")
+        #expect(text == "WaveWrangler can't reach your library folder (the folder is offline)")
+        // L2/L3 queue edits: no read-only, copy or internal-term claims.
+        for word in ["read-only", "copy", "revision", "checkpoint"] {
+            #expect(!text.localizedCaseInsensitiveContains(word), "\(word)")
+        }
     }
 
     @Test func otherReasons() {

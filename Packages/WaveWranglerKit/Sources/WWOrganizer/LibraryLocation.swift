@@ -243,8 +243,8 @@ public enum LibraryLoadWording {
 
     public static func damaged(_ reason: String) -> String { "the library is damaged (\(reason))" }
 
-    /// L2/L3 while only the last saved copy can be shown, read-only (states-and-recovery §5.1).
-    public static func unavailableShowingPrior(_ reason: String) -> String {
-        "WaveWrangler can't reach your library folder (\(reason)), so it's showing the last saved copy, read-only"
+    /// L2/L3: the folder can't be reached. Edits are queued (not read-only); say only what's known.
+    public static func unreachable(_ reason: String) -> String {
+        "WaveWrangler can't reach your library folder (\(reason))"
     }
 }
