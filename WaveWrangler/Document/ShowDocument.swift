@@ -43,6 +43,13 @@ final class ShowDocument: NSDocument {
     private var resolvesOffer: OfferResolution?
 
     var revision: Int { publication?.revision ?? 0 }
+
+    #if DEBUG
+    /// Debug-only fault injection at the C3 boundaries (native holdout runner); `nil` in normal use.
+    static var debugPublicationHooks: (any PublicationHooks)?
+    /// Debug-only replacement for the shared library acknowledgement (native holdout runner).
+    static var debugLibraryAcknowledger: (@MainActor (ShowID, String, PublicationStamp) async -> Void)?
+    #endif
     var documentKey: DocumentKey { .show(store.model.show.id) }
     private var gate: AutosaveGate { PersistenceEnvironment.autosaveGate }
     private var recovery: RecoveryStore { PersistenceEnvironment.recovery }
@@ -152,9 +159,10 @@ final class ShowDocument: NSDocument {
         lastReceipt = nil
         let adopts = Self.adoptsPublication(saveOperation)
         if adopts { status.set(.saving) }
+        let candidateBytes = pendingCandidate?.data
         super.save(to: url, ofType: typeName, for: saveOperation) { [weak self] error in
             guard let self else { return completionHandler(error) }
-            self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error)
+            self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error, url: url, candidateBytes: candidateBytes)
             completionHandler(error)
         }
     }
@@ -169,7 +177,7 @@ final class ShowDocument: NSDocument {
         }
     }
 
-    private func finishSave(saveOperation: NSDocument.SaveOperationType, adopts: Bool, error: Error?) {
+    private func finishSave(saveOperation: NSDocument.SaveOperationType, adopts: Bool, error: Error?, url: URL, candidateBytes: Data?) {
         let receipt = lastReceipt
         lastReceipt = nil
         pendingCandidate = nil
@@ -183,12 +191,21 @@ final class ShowDocument: NSDocument {
             resolveOfferRecordsAfterVerifiedSave()
             status.set(.saved(revision: receipt.revision, at: receipt.verifiedAt))
             let model = store.model
+            #if DEBUG
+            if let acknowledge = Self.debugLibraryAcknowledger {
+                Task { await acknowledge(model.show.id, model.show.title, receipt.publication) }
+                return
+            }
+            #endif
             Task { await LibraryDocumentStore.shared.acknowledgeShowPublication(model.show.id, title: model.show.title, publication: receipt.publication) }
         } else if let error {
             if let publicationError = error as? PublicationError {
                 status.set(DocumentSaveState.from(publicationError, retainedRevision: publication?.revision))
             } else if (error as NSError).domain == NSCocoaErrorDomain, (error as NSError).code == NSUserCancelledError {
                 status.set(gate.isEnabled ? .cancelled : .autosaveSkipped)
+            } else if let candidateBytes, (try? Data(contentsOf: url)) == candidateBytes {
+                // The candidate is on disk although the save reported an error: never "failed, retained".
+                status.set(.acknowledgementUncertain(message: error.localizedDescription))
             } else {
                 status.set(.saveFailed(retainedRevision: publication?.revision, kind: WriteFailureKind(classifying: error), message: error.localizedDescription))
             }
@@ -209,7 +226,11 @@ final class ShowDocument: NSDocument {
                 // User-confirmed Save As / Save To destination, or AppKit's own autosave-elsewhere location.
                 .saveAs(replacingExisting: true)
             }
-            let publisher = DocumentPublisher(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery)
+            var hooks: any PublicationHooks = NoPublicationHooks()
+            #if DEBUG
+            if let debugHooks = Self.debugPublicationHooks { hooks = debugHooks }
+            #endif
+            let publisher = DocumentPublisher(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery, hooks: hooks)
             lastReceipt = try publisher.publish(
                 encoded: candidate, key: documentKey, to: url, target: target, retainPrior: inPlace,
                 isCancelled: { false },
