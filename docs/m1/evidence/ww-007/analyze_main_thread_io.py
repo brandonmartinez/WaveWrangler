@@ -8,6 +8,7 @@ the given process, and groups main-thread rows by path category. Paths are reduc
 basename for synthetic fixture documents) so no user path is printed.
 """
 import argparse
+import re
 import collections
 import json
 import subprocess
@@ -49,6 +50,9 @@ def category(path):
 
 
 def home(path):
+    # Per-user temp/cache directories carry a per-user random component: never print it.
+    if re.search(r"(^|/)(private/)?var/folders/", path):
+        return "<per-user temp>"
     parts = path.split("/")
     if len(parts) > 2 and parts[1] == "Users":
         return "~/" + "/".join(parts[3:])
