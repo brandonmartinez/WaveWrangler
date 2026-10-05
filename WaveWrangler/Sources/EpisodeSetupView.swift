@@ -104,32 +104,29 @@ struct EpisodeSetupView: View {
         // content always fits its column (no clipped, unreachable rows).
         GeometryReader { geometry in
             let placement = SetupDetailsPlacement.plan(width: geometry.size.width, height: geometry.size.height, scale: scale, userExpanded: model.detailsExpanded)
-            Group {
+            // One layout whose children keep their identity across placements (AnyLayout, not a switch):
+            // re-creating the tables when the details open or close would drop keyboard focus and the
+            // table's scroll position (#104).
+            let beside: Bool = { if case .beside = placement { return true } else { return false } }()
+            let panel: (width: Double?, height: Double?)? = {
                 switch placement {
-                case let .beside(width):
-                    HStack(spacing: 0) {
-                        tables
-                        if showsInspector {
-                            Divider()
-                            SetupInspectorView(model: model).frame(width: width).focusSection()
-                        }
+                case let .beside(width): (width, nil)
+                case let .below(height): (nil, height)
+                case .collapsed: nil
+                }
+            }()
+            let layout = beside ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
+            layout {
+                tables
+                if showsInspector {
+                    Divider()
+                    if !beside {
+                        DetailsBar(model: model, expanded: panel != nil)
                     }
-                case let .below(height):
-                    VStack(spacing: 0) {
-                        tables
-                        if showsInspector {
-                            Divider()
-                            DetailsBar(model: model, expanded: true)
-                            SetupInspectorView(model: model).frame(height: height).focusSection()
-                        }
-                    }
-                case .collapsed:
-                    VStack(spacing: 0) {
-                        tables
-                        if showsInspector {
-                            Divider()
-                            DetailsBar(model: model, expanded: false)
-                        }
+                    if let panel {
+                        SetupInspectorView(model: model)
+                            .frame(width: panel.width.map { CGFloat($0) }, height: panel.height.map { CGFloat($0) })
+                            .focusSection()
                     }
                 }
             }
