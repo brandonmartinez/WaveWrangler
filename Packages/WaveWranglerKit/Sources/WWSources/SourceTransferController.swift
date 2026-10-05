@@ -401,6 +401,8 @@ public actor SourceTransferController {
 
             let next: TransferState
             var finished = false
+            // Carried on the existing publish hop (no extra suspension point in this loop).
+            var idleEvidence: Bool?
             switch metadata {
             case .failure(.permissionDenied), .failure(.notFound):
                 next = .notRequested(.awaitingAccess)
@@ -417,8 +419,7 @@ public actor SourceTransferController {
                     finished = true
                 } else {
                     next = .inProgress(fractionCompleted: fraction)
-                    let idle = value.residency.0 == .cloudPlaceholder && value.ubiquitous.downloadRequested.value != true
-                    guard await controller.noteProviderIdle(key, generation, idle) else { return }
+                    idleEvidence = value.residency.0 == .cloudPlaceholder && value.ubiquitous.downloadRequested.value != true
                     let signature = "\(String(describing: fraction.value))|\(String(describing: value.ubiquitous.isDownloading.value))|\(String(describing: value.ubiquitous.downloadingStatus.value))"
                     if signature != lastSignature {
                         // Any reported change (including after a stall) resumes normal observation.
@@ -434,7 +435,7 @@ public actor SourceTransferController {
                         // Say so honestly, but keep watching: the provider may still finish.
                         stalled = true
                         interval = policy.stalledPollInterval
-                        guard await controller.publishIfCurrent(key, generation, .offlineOrUnknown(nil)) else { return }
+                        guard await controller.publishIfCurrent(key, generation, .offlineOrUnknown(nil), providerIdle: idleEvidence) else { return }
                         continue
                     }
                 }
@@ -443,21 +444,16 @@ public actor SourceTransferController {
                 await controller.finish(key, generation, next)
                 return
             }
-            guard await controller.publishIfCurrent(key, generation, next) else { return }
+            guard await controller.publishIfCurrent(key, generation, next, providerIdle: idleEvidence) else { return }
         }
-    }
-
-    /// Records the observer's latest provider-idle evidence; false when the generation is no longer current.
-    private func noteProviderIdle(_ key: DeviceAccessKey, _ generation: Int, _ idle: Bool) -> Bool {
-        guard isCurrent(key, generation) else { return false }
-        providerIdle[key] = idle
-        return true
     }
 
     /// Publishes `state` if `generation` is still the active one (and the state changed). Returns false
     /// when the generation is no longer current, so the observer stops.
-    private func publishIfCurrent(_ key: DeviceAccessKey, _ generation: Int, _ state: TransferState) -> Bool {
+    /// Also records the observer's latest provider-idle evidence (see `providerIsIdle`).
+    private func publishIfCurrent(_ key: DeviceAccessKey, _ generation: Int, _ state: TransferState, providerIdle idle: Bool? = nil) -> Bool {
         guard isCurrent(key, generation) else { return false }
+        if let idle { providerIdle[key] = idle }
         if self.state(of: key) != state { publish(key, state) }
         return true
     }
