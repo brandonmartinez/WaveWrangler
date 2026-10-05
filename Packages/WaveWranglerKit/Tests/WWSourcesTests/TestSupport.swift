@@ -34,6 +34,9 @@ final class SimulatedCloudItem: @unchecked Sendable {
         case stall
         case error(SourceErrorDescriptor)
         case complete
+        /// Reports "stalled" (no change) and does not advance until the harness calls
+        /// `HarnessIO.releaseHold(_:)`. Makes stall-then-X interleavings deterministic.
+        case hold
     }
 
     enum Kind { case iCloud, datalessUnknownProvider, unreported }
@@ -47,6 +50,7 @@ final class SimulatedCloudItem: @unchecked Sendable {
     var error: SourceErrorDescriptor?
     var stepIndex = 0
     var requestError: SourceErrorDescriptor?
+    var holdReleased = false
 
     init(kind: Kind = .iCloud, status: UbiquitousDownloadingStatus = .notDownloaded, script: [Step] = [.complete], requestError: SourceErrorDescriptor? = nil) {
         self.kind = kind
@@ -69,11 +73,12 @@ final class SimulatedCloudItem: @unchecked Sendable {
     func advance() {
         guard requested, isDownloading, stepIndex < script.count else { return }
         let step = script[stepIndex]
+        if step == .hold && !holdReleased { return }
         stepIndex += 1
         switch step {
         case let .progress(value):
             fraction = Knowledge(value)
-        case .stall:
+        case .stall, .hold:
             break
         case let .error(descriptor):
             error = descriptor
@@ -134,6 +139,11 @@ final class HarnessIO: SourceIO, @unchecked Sendable {
     }
 
     func simulated(_ url: URL) -> SimulatedCloudItem? { lock.withLock { cloud[Self.key(url)] } }
+
+    /// Releases a `.hold` step so the simulated provider continues its script.
+    func releaseHold(_ url: URL) {
+        lock.withLock { cloud[Self.key(url)]?.holdReleased = true }
+    }
 
     static func key(_ url: URL) -> String {
         url.resolvingSymlinksInPath().standardizedFileURL.path

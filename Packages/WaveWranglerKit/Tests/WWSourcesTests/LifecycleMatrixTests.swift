@@ -610,8 +610,11 @@ enum MatrixScenarios {
         switch variant {
         case 0: env.io.simulate(url, SimulatedCloudItem(script: [], requestError: SourceErrorDescriptor(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)))
         case 1: env.io.simulate(url, SimulatedCloudItem(script: [.progress(nil), .error(SourceErrorDescriptor(domain: NSCocoaErrorDomain, code: NSUbiquitousFileUnavailableError))]))
-        case 2: env.io.simulate(url, SimulatedCloudItem(script: Array(repeating: .stall, count: 100_000)))
-        default: env.io.simulate(url, SimulatedCloudItem(script: Array(repeating: .stall, count: env.int(8...40)) + [.complete]))
+        // Stall variants start with a harness-controlled `.hold`: the provider stays stalled until the
+        // harness has observed and evaluated the published stall, so completion can never race the
+        // checks (#85). Recipe, truth, seeds and counts are unchanged (the RNG draw is kept).
+        case 2: env.io.simulate(url, SimulatedCloudItem(script: [.hold]))
+        default: env.io.simulate(url, SimulatedCloudItem(script: [.hold] + Array(repeating: .stall, count: env.int(8...40)) + [.complete]))
         }
         let controller = SourceTransferController(context: env.context, policy: variant >= 2 ? env.stallPolicy : env.transferPolicy, setting: .on)
         let collector = await eventCollector(controller, key: record.key) { $0.isOfflineOrUnknown || $0 == .idle || $0.isFailed }
@@ -634,6 +637,8 @@ enum MatrixScenarios {
             env.check(env.context.ledger.snapshot.openScopes == 0, "scope open after cancel returned")
             env.check(await controller.activeCount == 0, "still observing after cancel")
         case 3:
+            // The provider resumes only now, after the stall was observed and evaluated.
+            env.io.releaseHold(url)
             let final = await controller.waitUntilSettled(record.key)
             env.check(final == .idle, "stall then complete \(final)")
             let after = await env.evaluate(record, transfer: await controller.reportableState(of: record.key))

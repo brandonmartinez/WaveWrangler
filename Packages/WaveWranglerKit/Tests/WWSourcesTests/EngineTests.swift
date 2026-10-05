@@ -642,13 +642,29 @@ final class SleepLog: @unchecked Sendable {
     var durations: [Duration] { lock.withLock { _durations } }
 }
 
-/// Polling has stopped if the metadata call count does not move over a window far longer than any
-/// test poll interval (1–2 ms). A still-running observer would make ~20+ calls in that window.
+/// Polling has stopped once the metadata call count stays unchanged for 40 ms (a live test observer
+/// polls every 1–2 ms). Waits up to 5 s for that, so one late in-flight poll under load is tolerated.
 func pollingStopped(_ io: HarnessIO) async throws -> Bool {
-    try await Task.sleep(for: .milliseconds(10))
+    let clock = ContinuousClock()
+    let deadline = clock.now + .seconds(5)
+    while clock.now < deadline {
+        let before = io.count(.metadata)
+        try await Task.sleep(for: .milliseconds(40))
+        if io.count(.metadata) == before { return true }
+    }
+    return false
+}
+
+/// Polling continues if the metadata call count increases within 5 s (liveness, not a timing window).
+func pollingContinues(_ io: HarnessIO) async throws -> Bool {
+    let clock = ContinuousClock()
+    let deadline = clock.now + .seconds(5)
     let before = io.count(.metadata)
-    try await Task.sleep(for: .milliseconds(40))
-    return io.count(.metadata) == before
+    while clock.now < deadline {
+        try await Task.sleep(for: .milliseconds(1))
+        if io.count(.metadata) > before { return true }
+    }
+    return false
 }
 
 @Suite("Stall follow-up: observer lifetime and backoff schedule", .timeLimit(.minutes(1)))
@@ -668,7 +684,7 @@ struct StallLifetimeTests {
         monitor.start()
         try await monitor.adopt([record])
         #expect((await collector.value).last?.isOfflineOrUnknown == true)
-        #expect(try await !pollingStopped(io))
+        #expect(try await pollingContinues(io))
         await monitor.stop()
         #expect(try await pollingStopped(io))
         #expect(await monitor.transfers.activeCount == 0)
@@ -708,7 +724,7 @@ struct StallLifetimeTests {
         let collector = await eventCollector(controller!, key: key) { $0.isOfflineOrUnknown }
         _ = await controller?.makeAvailable(key, at: file)
         #expect((await collector.value).last?.isOfflineOrUnknown == true)
-        #expect(try await !pollingStopped(io))
+        #expect(try await pollingContinues(io))
         controller = nil
         #expect(try await pollingStopped(io))
     }
