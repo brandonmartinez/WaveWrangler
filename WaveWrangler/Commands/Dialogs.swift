@@ -30,19 +30,16 @@ enum Dialogs {
         return field.stringValue
     }
 
-    /// Confirms an uncommon destructive action. Cancel is bound to Esc. Per A13 ("destructive style only for
-    /// unchosen destruction"):
-    /// - `destructiveIsDefault` (the user chose the action, e.g. Delete Collection, Remove from Library): the
-    ///   confirm button is the default button (Return), without destructive styling.
-    /// - otherwise (e.g. discarding unsaved changes): destructive styling and no default button.
-    /// macOS 27 never lets a button be both: `hasDestructiveAction` clears its Return key equivalent (#114).
+    /// Confirms an uncommon destructive action. Cancel is bound to Esc. Buttons follow `ConfirmationButtons`
+    /// (A13): pass `destructiveIsDefault: true` only when the user chose the action (Return confirms); the
+    /// default, `false`, gives no default button.
     static func confirm(
         in window: NSWindow?,
         message: String,
         informative: String,
         confirmTitle: String,
         destructive: Bool = true,
-        destructiveIsDefault: Bool = true
+        destructiveIsDefault: Bool = false
     ) async -> Bool {
         let alert = NSAlert()
         alert.messageText = message
@@ -50,13 +47,7 @@ enum Dialogs {
         alert.alertStyle = destructive ? .warning : .informational
         let confirm = alert.addButton(withTitle: confirmTitle)
         let cancel = alert.addButton(withTitle: "Cancel")
-        cancel.keyEquivalent = "\u{1b}"
-        if destructiveIsDefault {
-            confirm.keyEquivalent = "\r"
-        } else {
-            confirm.hasDestructiveAction = destructive
-            confirm.keyEquivalent = ""
-        }
+        ConfirmationButtons.configure(confirm: confirm, cancel: cancel, destructive: destructive, destructiveIsDefault: destructiveIsDefault)
         return await run(alert, in: window) == .alertFirstButtonReturn
     }
 
