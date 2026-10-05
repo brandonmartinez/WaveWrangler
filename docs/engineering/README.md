@@ -26,7 +26,7 @@ Packages/WaveWranglerKit/         Local Swift package linked by the app
   Sources/WWCore/                 Domain model, logical IDs, schema versions, pure validated operations
   Sources/WWPersistence/          Formats/coder, publication protocol, recovery store, migration, autosave policy, library store
   Sources/WWPersistenceProbe/     `wwpersist-probe` headless CLI for multi-process/provider trials (synthetic files only)
-  Sources/WWSources/              Device-local source access/availability model (stub)
+  Sources/WWSources/              Source references: read-only gateway, access records, availability, import, relink
   Tests/WW*Tests/                 Swift Testing suites per module
 scripts/build.sh, scripts/test.sh Established build/test commands (CI runs the same scripts)
 .github/workflows/ci.yml          Ordinary build/test CI
@@ -71,9 +71,25 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; nothing depends
   While the folder is unreachable or needs permission (L2/L3), organizing edits go to a device-local
   pending-edits journal ("Edits waiting") and are applied through the base check (ST-36 combine on
   divergence) when it is reachable again; the journal is cleared only after verified publication.
-- **Device-local access records** (`WWSources.SourceAccessRecord`): logical source ID → bookmark,
-  location hint and independent access/presence/residency/transfer/identity observations. Never
-  written into canonical documents. Storage location is decided by the sources owner.
+- **Device-local access records** (`WWSources.DeviceAccessRecord`, keyed by `DeviceAccessKey`
+  = (ShowID, SourceID), so a duplicated show never shares or overwrites the original's grants): read-only
+  security-scoped bookmark, last-known path/volume hints, a metadata-only identity baseline
+  (`FileSystemFingerprint`: size, creation/modification dates, persistent file identifier, volume UUID,
+  extension-derived type; provisional until the user confirms) and the latest observation. Stored as a
+  versioned JSON file in Application Support (`FileDeviceAccessStore`); never written into canonical
+  documents. Paths, names and bookmarks are hints, never identity.
+- **Source gateway** (`WWSources.SourceIO`): the only path to referenced originals. It exposes metadata
+  reads, directory listing, read-only bookmark create/resolve, scope start/stop and an iCloud download
+  request — no read/hash/preview/decode/write/move/delete API exists. `SecurityScopeLedger` pairs every
+  scope start with a stop (`withScopedAccess`). A source-scan test forbids content-capable or mutating
+  APIs elsewhere in WWSources.
+- **Source engine:** `SourceImporter` (metadata-only, UTType-by-extension audio filter, provisional
+  group/epoch/speaker suggestions), `SourceAvailabilityEvaluator` (independent location / access /
+  residency / transfer / identity dimensions; denied ≠ missing; stale bookmarks refreshed only when
+  identity evidence matches), `RelinkEvaluator` (explicit, user-chosen candidates; confirmation for
+  anything but an exact match), `SourceTransferController` (download/progress/cancel/retry/offline) and
+  the `@MainActor @Observable` `SourceAvailabilityMonitor` for the Sources UI. The availability setting
+  is injected as `SourceAvailabilitySetting(downloadSourcesAutomatically:)` from the app preference.
 - **Derived index/cache:** `LibraryIndex` in Caches, rebuilt whenever missing/stale/damaged; never authoritative.
 - **Envelope** (`WWPersistence.JSONEnvelopeCoder`, behind `CanonicalDocumentCoding`):
   `{checksum, format, payload, publicationID, revision, schemaVersion}` with sorted keys. Only
