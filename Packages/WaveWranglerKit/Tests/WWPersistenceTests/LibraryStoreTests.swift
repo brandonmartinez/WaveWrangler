@@ -37,10 +37,12 @@ struct LibraryStoreTests {
         guard case .published = try await store.update({ _ in library }) else { Issue.record("update failed"); return }
         let reopened = rig.store()
         #expect(await reopened.load() == .ready(revision: 2))
-        #expect(await reopened.library == library)
+        #expect(await reopened.library?.content == library.content)
         let priors = try rig.recovery.validatedCheckpoints(for: .library, coder: LibraryCoder.library)
         #expect(priors.map(\.document.revision) == [2, 1], "verified current and the prior are both retained")
-        #expect(priors.last?.document.payload == LibraryModel())
+        #expect(priors.last?.document.payload.entries.isEmpty == true)
+        #expect(priors.map(\.document.payload.libraryID) == Array(repeating: try #require(await reopened.library?.libraryID), count: 2),
+                "edits never change the library's identity")
     }
 
     @Test func newerLibraryIsRefusedAndNeverWritten() async throws {
@@ -115,7 +117,7 @@ struct LibraryStoreTests {
         let reopened = rig.store()
         _ = await reopened.load()
         #expect(await reopened.index == indexBefore)
-        #expect(await reopened.library == library)
+        #expect(await reopened.library?.content == library.content)
         #expect(try Data(contentsOf: rig.containerFile) == canonicalBefore)
         // Every semantic collection/alias/order is in the canonical library, not only in the index.
         let rebuilt = try #require(await reopened.index)
@@ -141,7 +143,7 @@ struct LibraryStoreTests {
         #expect(try Data(contentsOf: destination) == original, "exact verified copy")
         #expect(try Data(contentsOf: kept) == original, "old copy kept")
         guard case .folder = rig.settings.load().place else { Issue.record("setting not switched"); return }
-        #expect(await store.library == library)
+        #expect(await store.library?.content == library.content)
         // Edits now publish in the new location only.
         _ = try await store.update { LibraryReconciler.recordingRecent($0.entries[4].showID, in: $0) }
         #expect(try Data(contentsOf: rig.containerFile) == original)
@@ -234,7 +236,7 @@ struct LibraryStoreTests {
         let reopened = rig.store()
         guard case let .unavailableShowingPrior(_, revision) = await reopened.load() else { Issue.record("expected read-only prior"); return }
         #expect(revision == 2)
-        #expect(await reopened.library == library)
+        #expect(await reopened.library?.content == library.content)
         #expect(!FileManager.default.fileExists(atPath: folder.path), "nothing silently recreated")
     }
 

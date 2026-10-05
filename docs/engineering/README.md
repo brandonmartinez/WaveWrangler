@@ -73,6 +73,12 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; nothing depends
   While the folder is unreachable or needs permission (L2/L3), organizing edits go to a device-local
   pending-edits journal ("Edits waiting") and are applied through the base check (ST-36 combine on
   divergence) when it is reachable again; the journal is cleared only after verified publication.
+  **Library identity:** schema 2 adds `LibraryModel.libraryID`; edits can't change it. "Grant Access…"
+  (`LibraryStore.regrantAccess(to:)`, `LibraryLocationController.regrantAccess(to:)`) saves a new folder grant
+  only when the re-selected folder holds the same library ID, then reloads and replays queued edits
+  (`reload()` re-adopts after recovery or "Use Other Mac's Version"). Schema 1 libraries are read through
+  `LibraryCoder` with an ID derived from their publication ID; their bytes are backed up before the first
+  schema 2 publication.
 - **Device-local access records** (`WWSources.DeviceAccessRecord`, keyed by `DeviceAccessKey`
   = (ShowID, SourceID), so a duplicated show never shares or overwrites the original's grants): read-only
   security-scoped bookmark, last-known path/volume hints, a metadata-only identity baseline
