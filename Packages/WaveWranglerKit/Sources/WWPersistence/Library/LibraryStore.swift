@@ -101,6 +101,14 @@ public actor LibraryStore {
     private var session: CanonicalDocumentSession<LibraryCoder>?
     private var accessedFolder: URL?
     private var hasConflict = false
+    private let providerVersions: any ProviderVersionInspecting
+    /// Provider conflict versions of the library file (iCloud kept another Mac's concurrent copy) whose changes
+    /// the current library doesn't contain: L4 until combined or set aside (#117).
+    public private(set) var providerConflicts: [ProviderConflictVersion] = []
+    private var providerConflictPayloads: [String: LibraryModel] = [:]
+    /// Provider conflict versions that can't be read or decoded, or hold a different library: reported, kept
+    /// unresolved and never applied.
+    public private(set) var unusableProviderConflicts: [ProviderConflictVersion] = []
     /// Queued edits (L2/L3), mirrored from the device-local journal.
     public private(set) var pendingEdits: PendingLibraryEdits?
     /// True when the journal exists but cannot be read; it is reported and never overwritten.
@@ -121,8 +129,10 @@ public actor LibraryStore {
         ops: any FileOperations = LocalFileOperations(),
         coordination: any FileCoordinating = NSFileCoordination(),
         hooks: any PublicationHooks = NoPublicationHooks(),
-        migrations: [MigrationStep<LibraryModel>] = []
+        migrations: [MigrationStep<LibraryModel>] = [],
+        providerVersions: any ProviderVersionInspecting = FileVersionInspector()
     ) {
+        self.providerVersions = providerVersions
         self.containerFolder = containerFolder
         self.settings = settings
         self.bookmarks = bookmarks
@@ -207,6 +217,9 @@ public actor LibraryStore {
 
     private func loadFromLocation() async -> LibraryLoadOutcome {
         hasConflict = false
+        providerConflicts = []
+        providerConflictPayloads = [:]
+        unusableProviderConflicts = []
         displayedBase = nil
         displayedBaseBytes = nil
         session = nil
@@ -242,6 +255,7 @@ public actor LibraryStore {
             refreshIndex(digest: fingerprint.byteDigest)
             retainVerifiedCurrent(at: url, fingerprint: fingerprint)
             recordLocationIdentity(document.payload.libraryID)
+            detectProviderConflicts(at: url, current: document.payload)
             return .ready(revision: document.revision)
         case let .refusedNewerFormat(found, supported, _):
             return .refusedNewerFormat(found: found, supported: supported)
@@ -296,6 +310,8 @@ public actor LibraryStore {
                 return .failed(.readOnly("The library can't be changed right now."))
             }
         }
+        // A concurrent copy from another Mac may have arrived since the load (#117): never edit over it unseen.
+        detectProviderConflicts(at: await session.url, current: current)
         guard !hasConflict else {
             return .failed(.readOnly("Your library was changed on another Mac. Combine or choose a version first."))
         }
@@ -398,6 +414,56 @@ public actor LibraryStore {
         }
     }
 
+    // MARK: - Provider conflict versions (#117)
+
+    /// iCloud (or another provider) keeps the losing copy of two concurrent library publications as an
+    /// unresolved conflict version. A version holding changes the current library lacks puts the library in L4;
+    /// one whose changes are already included is backed up and marked resolved; one that can't be read or holds
+    /// a different library is reported and left unresolved.
+    private func detectProviderConflicts(at url: URL, current: LibraryModel) {
+        var usable: [ProviderConflictVersion] = []
+        var payloads: [String: LibraryModel] = [:]
+        var unusable: [ProviderConflictVersion] = []
+        var included: [ProviderConflictVersion] = []
+        for version in providerVersions.unresolvedConflictVersions(of: url) {
+            guard let bytes = version.bytes, let decoded = try? publisher.coder.decode(bytes),
+                  Self.sameLibrary(decoded.payload.libraryID, current.libraryID) else {
+                unusable.append(version)
+                continue
+            }
+            if LibraryMerge.combine(thisMac: decoded.payload, into: current) == current {
+                included.append(version)
+            } else {
+                usable.append(version)
+                payloads[version.id] = decoded.payload
+            }
+        }
+        providerConflicts = usable
+        providerConflictPayloads = payloads
+        unusableProviderConflicts = unusable
+        if !included.isEmpty { resolveProviderVersions(included, at: url) }
+        if !usable.isEmpty { hasConflict = true }
+    }
+
+    /// Two IDs are the same library unless both are real (schema 2+) and differ.
+    private static func sameLibrary(_ a: LibraryID, _ b: LibraryID) -> Bool {
+        guard let a = real(a), let b = real(b) else { return true }
+        return a == b
+    }
+
+    /// Backs each version up in the device-local recovery store, then marks only the backed-up ones resolved.
+    /// A version that can't be backed up stays unresolved (and in L4 if it was a conflict).
+    private func resolveProviderVersions(_ versions: [ProviderConflictVersion], at url: URL) {
+        var backedUp: Set<String> = []
+        for version in versions {
+            guard let bytes = version.bytes, (try? recovery.preserveConflictCandidate(bytes, for: .library)) != nil else { continue }
+            backedUp.insert(version.id)
+        }
+        guard !backedUp.isEmpty, (try? providerVersions.markResolved(backedUp, of: url)) != nil else { return }
+        providerConflicts.removeAll { backedUp.contains($0.id) }
+        for id in backedUp { providerConflictPayloads[id] = nil }
+    }
+
     // MARK: - Library-level state and L4 resolution
 
     /// Design L1–L5 (plus damaged) for the message bar.
@@ -432,6 +498,13 @@ public actor LibraryStore {
             return .failure(.readOnly(error.errorDescription ?? "\(error)"))
         }
         var (combined, summary) = LibraryMerge.combineWithSummary(thisMac: mine, into: theirs.payload)
+        // Provider conflict versions (#117): every other Mac's concurrent copy is combined the same way.
+        let combinedVersions = providerConflicts.filter { providerConflictPayloads[$0.id] != nil }
+        for version in combinedVersions {
+            let (next, part) = LibraryMerge.combineWithSummary(thisMac: providerConflictPayloads[version.id]!, into: combined)
+            combined = next
+            summary.add(part)
+        }
         // ST-36 keeps every entry, collection and recent item, but it is not a field merge: queued changes it
         // can't carry (for example an alias edited on both sides) are reported and kept in a backup copy.
         if let pendingEdits {
@@ -448,6 +521,8 @@ public actor LibraryStore {
             return .failure(.acknowledgementUncertain("\(error)"))
         }
         hasConflict = false
+        // The combined library is published and verified: back each provider version up, then mark it resolved.
+        resolveProviderVersions(combinedVersions, at: url)
         // Keep the queued edits as a backup copy before retiring the journal; never delete them unbacked.
         if let pendingEdits {
             do {
@@ -465,6 +540,10 @@ public actor LibraryStore {
     /// L4 "Use Other Mac's Version": this Mac's version is kept as a backup copy in the recovery store, then
     /// the on-disk version is loaded.
     private func resolveConflictUsingOtherVersionUnlocked() async -> LibraryLoadOutcome {
+        // Provider conflict versions (#117) are set aside the same way: backed up, then marked resolved.
+        if let url = currentLibraryURL() {
+            resolveProviderVersions(providerConflicts, at: url)
+        }
         if let mine = library, let bytes = try? publisher.coder.encode(mine, revision: max(1, (await session?.revision) ?? 1)) {
             _ = try? recovery.preserveConflictCandidate(bytes, for: .library)
         }
