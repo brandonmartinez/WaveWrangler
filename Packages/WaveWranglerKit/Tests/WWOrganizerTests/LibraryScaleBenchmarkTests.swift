@@ -48,6 +48,31 @@ struct LibraryScaleBenchmarkTests {
         #expect(p95 < Self.interactionBudget)
     }
 
+    /// #106: the model half of one sidebar switch (rows for the selected item, sorted by a column), as the
+    /// entry outline does on every switch. The view half is measured natively (scripts/measure-sidebar-switches.sh).
+    @Test func sidebarSwitchModelWorkFor100Shows() {
+        let fixture = SyntheticLibraryFixture.make(shows: 100, sourceReferences: 1_000)
+        let items: [LibrarySidebarItem] = [.shows, .recent, .unavailable] + fixture.library.collections.map { .collection($0.id) }
+        let clock = ContinuousClock()
+        var samples: [Duration] = []
+        var checksum = 0
+        for index in 0..<Self.iterations {
+            let item = index.isMultiple(of: 2) ? LibrarySidebarItem.shows : items[index % items.count]
+            let elapsed = clock.measure {
+                let rows = LibraryPresentation.entries(for: item, library: fixture.library, details: fixture.details)
+                checksum &+= LibraryPresentation.sorted(rows, by: [(.status, true), (.name, true)]).count
+            }
+            samples.append(elapsed)
+        }
+        samples.sort()
+        let p50 = Self.percentile(samples, 0.50)
+        let p95 = Self.percentile(samples, 0.95)
+        print(String(format: "WW-007 sidebar switch model work (100 shows, sorted, %d iterations): p50 %.3f ms, p95 %.3f ms",
+                     Self.iterations, Self.milliseconds(p50), Self.milliseconds(p95)))
+        #expect(checksum > 0)
+        #expect(p95 < Self.interactionBudget)
+    }
+
     @Test func collectionEditPlusRebuildFor100Shows() throws {
         let fixture = SyntheticLibraryFixture.make(shows: 100, sourceReferences: 1_000)
         let collection = try #require(fixture.library.collections.first)

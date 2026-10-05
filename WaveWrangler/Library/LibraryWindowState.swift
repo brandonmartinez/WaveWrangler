@@ -15,7 +15,12 @@ final class LibraryWindowState {
     }
 
     var sidebarSelection: LibrarySidebarItem? = .shows {
-        didSet { if oldValue != sidebarSelection { entrySelection = [] } }
+        didSet {
+            if oldValue != sidebarSelection {
+                entrySelection = []
+                Responsiveness.interaction("library.sidebarSelection")
+            }
+        }
     }
 
     var entrySelection: Set<ShowID> = []
