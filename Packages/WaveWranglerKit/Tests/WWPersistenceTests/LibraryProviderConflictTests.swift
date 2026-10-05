@@ -177,6 +177,43 @@ struct LibraryProviderConflictTests {
 
     // MARK: Review findings (#118)
 
+    /// The other Mac removed a collection (or reordered collections): that is a change, not "included" — L4,
+    /// and Combine (which keeps everything) reports it.
+    @Test func removalOrReorderOnlyVersionReachesL4AndIsReported() async throws {
+        for change in ["remove", "reorder"] {
+            let rig = Rig()
+            let store = rig.store()
+            _ = await store.load()
+            _ = try await store.update { var l = $0; l.collections = [LibraryCollection(name: "Keep"), LibraryCollection(name: "Drop")]; return l }
+            let fork = try rig.disk()
+            var theirs = fork.payload
+            if change == "remove" { theirs.collections.removeLast() } else { theirs.collections.reverse() }
+            _ = try await store.update { var l = $0; l.recentShowIDs = []; l.collections.append(LibraryCollection(name: "Here")); return l }
+            let id = rig.provider.add(try LibraryCoder.library.encode(theirs, revision: fork.revision + 1), to: rig.rig.containerFile)
+            _ = await store.reload()
+            #expect(await store.levelState == .changedElsewhere, "\(change): reaches L4")
+            #expect(rig.provider.resolved.isEmpty, "\(change): not resolved silently")
+            guard case let .success(summary) = await store.resolveConflictByCombining() else { Issue.record("combine failed"); continue }
+            let expected = change == "remove" ? "removal of collection “Drop”" : "the order of collections"
+            #expect(summary.message.contains(expected), "\(change): \(summary.message)")
+            #expect(rig.provider.resolved == [id] && rig.provider.everyResolutionWasBackedUpFirst)
+        }
+    }
+
+    /// No retained checkpoint to compare with: the version can't be shown to be included, so it reaches L4.
+    @Test func versionWithoutARetainedForkBaseReachesL4() async throws {
+        let rig = Rig()
+        let store = rig.store()
+        _ = await store.load()
+        _ = try await store.update { var l = $0; l.collections.append(LibraryCollection(name: "Shared")); return l }
+        let disk = try rig.disk()
+        var theirs = disk.payload
+        theirs.collections.removeAll()
+        rig.provider.add(try LibraryCoder.library.encode(theirs, revision: disk.revision + 7), to: rig.rig.containerFile)
+        _ = await store.reload()
+        #expect(await store.levelState == .changedElsewhere)
+    }
+
     /// The other Mac renamed the same show differently. That is not "already included": L4, and Combine reports
     /// the rename it can't carry instead of dropping it.
     @Test func sameEntryRenamedDifferentlyGoesToL4AndCombineReportsIt() async throws {
@@ -310,36 +347,46 @@ struct LibraryProviderConflictTests {
     }
 }
 
-@Suite("Library containment (#117 review)")
-struct LibraryContainmentTests {
+@Suite("Library provider-version inclusion (#117 review)")
+struct LibraryInclusionTests {
     func base() -> LibraryModel {
         var library = LibraryModel()
-        let ids = [ShowID(), ShowID()]
+        let ids = [ShowID(), ShowID(), ShowID()]
         library = LibraryReconciler.registering(ids[0], title: "A", publication: PublicationStamp(revision: 2, publicationID: UUID(), checksum: "sha256:a"), in: library)
         library = LibraryReconciler.registering(ids[1], title: "B", publication: nil, in: library)
-        library.collections = [LibraryCollection(name: "C", showIDs: ids)]
-        library.recentShowIDs = [ids[0]]
+        library = LibraryReconciler.registering(ids[2], title: "C", publication: nil, in: library)
+        library.collections = [LibraryCollection(name: "One", showIDs: Array(ids[0...1])), LibraryCollection(name: "Two", showIDs: Array(ids[1...2]))]
+        library.recentShowIDs = [ids[0], ids[1]]
         return library
     }
 
-    @Test func fieldForField() {
-        let current = base()
-        #expect(LibraryMerge.isContained(current, in: current))
-        var renamed = current; renamed.entries[0].alias = "Other"
-        #expect(!LibraryMerge.isContained(renamed, in: current), "alias")
-        var reordered = current; reordered.collections[0].showIDs.reverse()
-        #expect(!LibraryMerge.isContained(reordered, in: current), "member order")
-        var recent = current; recent.recentShowIDs.append(current.entries[1].showID)
-        #expect(!LibraryMerge.isContained(recent, in: current), "recents")
-        var newer = current; newer.entries[0].lastKnownPublication = PublicationStamp(revision: 3, publicationID: UUID(), checksum: "sha256:n")
-        #expect(!LibraryMerge.isContained(newer, in: current), "newer publication")
-        var sameRevisionOther = current; sameRevisionOther.entries[0].lastKnownPublication = PublicationStamp(revision: 2, publicationID: UUID(), checksum: "sha256:o")
-        #expect(!LibraryMerge.isContained(sameRevisionOther, in: current), "different save of the same revision")
-        var older = current; older.entries[0].lastKnownPublication = PublicationStamp(revision: 1, publicationID: UUID(), checksum: "sha256:o")
-        #expect(LibraryMerge.isContained(older, in: current), "an older recorded publication is contained")
-        var unavailable = current; unavailable.entries[1].unavailable = UnavailableRecord(note: "missing", recordedAt: Date())
-        #expect(!LibraryMerge.isContained(unavailable, in: current), "unavailable record")
-        var fewer = current; fewer.collections = []
-        #expect(LibraryMerge.isContained(fewer, in: current), "a subset is contained (ST-36 keeps everything)")
+    @Test func everyChangeSinceTheForkBaseMustBeInTheCurrentLibrary() {
+        let fork = base()
+        var current = fork; current.collections.append(LibraryCollection(name: "Added here"))
+        #expect(LibraryMerge.isIncluded(fork, forkBases: [fork], in: current), "an unchanged copy of the base is included")
+        #expect(LibraryMerge.isIncluded(current, forkBases: [], in: current), "identical is included even without a base")
+        var renamed = fork; renamed.entries[0].alias = "Other"
+        #expect(!LibraryMerge.isIncluded(renamed, forkBases: [fork], in: current), "alias")
+        var removedCollection = fork; removedCollection.collections.removeFirst()
+        #expect(!LibraryMerge.isIncluded(removedCollection, forkBases: [fork], in: current), "removal of a collection")
+        var removedEntry = fork; removedEntry.entries.removeLast(); removedEntry.collections[1].showIDs.removeLast()
+        #expect(!LibraryMerge.isIncluded(removedEntry, forkBases: [fork], in: current), "removal of an entry")
+        var removedRecent = fork; removedRecent.recentShowIDs.removeLast()
+        #expect(!LibraryMerge.isIncluded(removedRecent, forkBases: [fork], in: current), "removal of a recent")
+        var reorderedMembers = fork; reorderedMembers.collections[0].showIDs.reverse()
+        #expect(!LibraryMerge.isIncluded(reorderedMembers, forkBases: [fork], in: current), "member order")
+        var reorderedCollections = fork; reorderedCollections.collections.reverse()
+        #expect(!LibraryMerge.isIncluded(reorderedCollections, forkBases: [fork], in: current), "collection order")
+        #expect(!LibraryMerge.isIncluded(removedCollection, forkBases: [], in: current), "no retained base → not included (L4)")
+    }
+
+    @Test func uncarriedChangesAreWorded() {
+        let fork = base()
+        var removed = fork; removed.collections.removeFirst()
+        let changes = LibraryMerge.uncarriedProviderChanges(removed, forkBase: fork, in: fork)
+        #expect(changes.contains { $0.contains("removal of collection “One”") })
+        var reordered = fork; reordered.collections.reverse()
+        #expect(LibraryMerge.uncarriedProviderChanges(reordered, forkBase: fork, in: fork).contains { $0.contains("the order of collections") })
+        #expect(LibraryMerge.uncarriedProviderChanges(removed, forkBase: nil, in: fork).contains { $0.contains("“One” isn't in the other copy") })
     }
 }
