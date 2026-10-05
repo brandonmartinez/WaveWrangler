@@ -72,8 +72,9 @@ private struct SourceInspector: View {
 
     var body: some View {
         Text("Source").setupFont(.headline).accessibilityAddTraits(.isHeader)
+        // LabeledContent draws its value in the secondary colour; essential text uses the label colour.
         LabeledContent("Name") {
-            Text(source.displayNameHint).setupFont(.body).textSelection(.enabled).lineLimit(3)
+            Text(source.displayNameHint).setupFont(.body).foregroundStyle(.primary).textSelection(.enabled).lineLimit(3)
         }
         .setupFont(.body)
 
@@ -291,9 +292,9 @@ private struct RecordedFactsView: View {
         let facts = SetupPresentation.recordedFacts(for: source)
         VStack(alignment: .leading, spacing: 4) {
             Text("Recording").setupFont(.subheadline, weight: .semibold).accessibilityAddTraits(.isHeader)
-            LabeledContent("Duration") { Text(facts.duration.text) }
-            LabeledContent("Channels") { Text(facts.channelCount.text) }
-            LabeledContent("Sample rate") { Text(facts.sampleRate.text) }
+            LabeledContent("Duration") { Text(facts.duration.text).foregroundStyle(.primary) }
+            LabeledContent("Channels") { Text(facts.channelCount.text).foregroundStyle(.primary) }
+            LabeledContent("Sample rate") { Text(facts.sampleRate.text).foregroundStyle(.primary) }
             Text("WaveWrangler doesn't read audio in this version, so these stay Unknown.")
                 .setupFont(.callout)
                 
