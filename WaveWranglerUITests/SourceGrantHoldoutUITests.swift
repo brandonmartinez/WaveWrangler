@@ -72,7 +72,7 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         choosePath(folder.path, confirm: true)
         let review = element("ww.import.review")
         check(review.waitForExistence(timeout: 10), "Import Review shown")
-        Acceptance.record(self, "REF-020 review: \(element("ww.import.confirm").label)")
+        Acceptance.record(self, "REF-020 review: \(element("ww.import.confirm").exists ? element("ww.import.confirm").label : "not shown")")
         if review.exists { app.typeKey(.return, modifierFlags: []) }
         check(Acceptance.waitFor(timeout: 10) { self.statuses(names).count == names.count }, "imported rows present: \(statuses(names))")
         check(Acceptance.waitFor(timeout: 10) { self.statuses(names).values.allSatisfy { $0.hasPrefix("Ready") } }, "granted sources Ready: \(statuses(names))")
