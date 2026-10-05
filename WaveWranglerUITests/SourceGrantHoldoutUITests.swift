@@ -96,22 +96,23 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         try launchAndOpen(document, extra: ["-WWUITestResetSourceAccess", "YES"])
         check(Acceptance.waitFor(timeout: 10) { self.statuses(names)[names[0]]?.contains("permission") == true },
               "without a record the source needs permission (never Not found): \(statuses(names))")
-        select(names[0])
+        // Regrant "b" (row clicks on the first row under the group header don't select reliably in XCUITest).
+        select(names[1])
         Acceptance.record(self, "REF-020 before Grant Access: outline \(app.outlines["ww.setup.sources"].value ?? "nil"), inspector access \(element("ww.inspector.access").exists ? "\(element("ww.inspector.access").value ?? "nil")" : "not shown")")
         var granted = menu("Source", "Grant Access…")
         if !granted {
             // Fallback: the row's context menu (records that the menu-bar item was unavailable).
-            let row = app.outlines["ww.setup.sources"].outlineRows.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", names[0], names[0])).firstMatch
+            let row = app.outlines["ww.setup.sources"].outlineRows.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", names[1], names[1])).firstMatch
             row.rightClick()
             let item = app.menuItems["Grant Access…"].firstMatch
             if item.waitForExistence(timeout: 3), item.isEnabled { item.click(); granted = true } else { app.typeKey(.escape, modifierFlags: []) }
             Acceptance.record(self, "REF-020 context-menu Grant Access… used: \(granted)")
         }
         if granted {
-            choosePath(folder.appending(path: names[0]).path, confirm: true)
+            choosePath(folder.appending(path: names[1]).path, confirm: true)
             confirmRelinkSheet()
         }
-        check(Acceptance.waitFor(timeout: 10) { self.statuses(names)[names[0]]?.hasPrefix("Ready") == true }, "regranted source Ready: \(statuses(names))")
+        check(Acceptance.waitFor(timeout: 10) { self.statuses(names)[names[1]]?.hasPrefix("Ready") == true }, "regranted source Ready: \(statuses(names))")
         check(try fingerprint(folder) == fingerprints, "zero source writes")
         record(cycle, "regrant", failures, statuses(names))
 
