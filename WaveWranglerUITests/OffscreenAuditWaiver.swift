@@ -5,6 +5,7 @@ import XCTest
 /// measured (the audit samples pixels that were never drawn, e.g. text of a partly visible last row that lies
 /// wholly below the window edge). Partial intersection never qualifies. Each use is logged with the element frame
 /// and the window rects, and counted against a pinned maximum per audit.
+@MainActor
 enum OffscreenAuditWaiver {
     /// At most one partly visible row's cells per audit.
     static let pinnedMaximumPerAudit = 5
@@ -13,7 +14,7 @@ enum OffscreenAuditWaiver {
 
     /// The app's window frames at audit time (call before `performAccessibilityAudit`).
     static func windowRects(of app: XCUIApplication) -> [CGRect] {
-        app.windows.allElementsBoundByIndex.map(\.frame).filter { !$0.isEmpty }
+        app.windows.allElementsBoundByIndex.map { $0.frame }.filter { !$0.isEmpty }
     }
 
     /// The waiver log line when `element` lies wholly outside every window rect; nil otherwise.

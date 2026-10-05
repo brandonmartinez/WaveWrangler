@@ -66,13 +66,13 @@ final class LibraryWorkspaceUITests: XCTestCase {
         var notOnScreen = 0
         try app.performAccessibilityAudit(for: [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]) { issue in
             let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(240) ?? "no element")"
+            if let rationale = self.waiver(for: issue) {
+                print("AUDIT WAIVED \(description) — \(rationale)")
+                return true
+            }
             if let offscreen = OffscreenAuditWaiver.waiver(for: issue.element, windowRects: windowRects) {
                 notOnScreen += 1
                 print("AUDIT WAIVED [notOnScreen] \(description) — \(offscreen)")
-                return true
-            }
-            if let rationale = self.waiver(for: issue) {
-                print("AUDIT WAIVED \(description) — \(rationale)")
                 return true
             }
             findings.append(description)
@@ -249,7 +249,14 @@ final class LibraryWorkspaceUITests: XCTestCase {
         let sheet = app.sheets.firstMatch
         waitFor(sheet)
         XCTAssertTrue(sheet.staticTexts["Delete the collection “Season Two”?"].exists)
-        sheet.buttons["Delete"].click()
+        // Confirm with Return (Delete is the sheet's default button; keyboard path K05). XCUITest can't compute a
+        // hit point for this sheet's buttons on this host (it falls back to the centre point and the click is
+        // dropped), so a click wouldn't show whether the confirm action fires.
+        XCTAssertTrue(sheet.buttons["Delete"].exists)
+        app.typeKey(.return, modifierFlags: [])
+        if !sheet.waitForNonExistence(timeout: 5) {
+            XCTFail("sheet dismissed by its default button; windows: \(app.windows.allElementsBoundByIndex.map { "\($0.identifier) \($0.frame) hittable=\($0.isHittable)" }), sheet: \(sheet.debugDescription.prefix(2500))")
+        }
         if !created.waitForNonExistence(timeout: 5) {
             XCTFail("collection deleted; sheets: \(app.sheets.count), message bars: \(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.messageBar'")).allElementsBoundByIndex.map(\.label)), first responder region: \(app.windows["Library"].debugDescription.prefix(3000))")
         }
@@ -320,7 +327,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
         XCTAssertTrue(dismiss.isHittable, "message bar action reachable at 200%: \(dismiss.frame)")
         XCTAssertGreaterThan(entries.frame.height, 60, "entry list keeps room below the bar: \(entries.frame)")
         assertInside(entries, "Entry list")
-        XCTAssertGreaterThanOrEqual(entries.frame.minY, bar.frame.maxY - 0.5, "list below the bar")
+        XCTAssertGreaterThanOrEqual(entries.frame.minY, bar.frame.maxY - 1.5, "list below the bar (outline's 1 pt AX border)")
         try audit("Library window at 200% text (lib100, message bar)")
 
         // Dismissing the notice gives the list the full height: with no messages the bar area is 0 pt tall, so
