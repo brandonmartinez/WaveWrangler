@@ -18,7 +18,11 @@ final class LibraryStore {
     /// The most recent refused operation, explained inline.
     private(set) var lastError: String?
 
-    @ObservationIgnored let undoManager = UndoManager()
+    /// The Library window's own undo history (IA-03). The window controller points this at the undo
+    /// manager the window actually validates Edit › Undo against.
+    @ObservationIgnored var undoManagerProvider: (() -> UndoManager?)?
+    @ObservationIgnored private let fallbackUndoManager = UndoManager()
+    var undoManager: UndoManager { undoManagerProvider?() ?? fallbackUndoManager }
     @ObservationIgnored let services: LibraryServices
     @ObservationIgnored private var saveChain: Task<Void, Never>?
 

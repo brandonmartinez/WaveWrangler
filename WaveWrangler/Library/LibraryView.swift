@@ -11,8 +11,7 @@ struct LibraryView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $state.columnVisibility) {
-            LibrarySidebar(state: state)
-                .focused($focus, equals: .sidebar)
+            LibrarySidebar(state: state, focus: $focus)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 360)
         } content: {
             LibraryEntryList(state: state)
@@ -33,15 +32,15 @@ struct LibraryView: View {
                     .help("Open… (⌘O)")
             }
         }
-        .navigationTitle("Library")
         .onChange(of: focus) { _, region in state.focusedRegion = region }
-        .onAppear { focus = .sidebar }
+        .onAppear { DispatchQueue.main.async { focus = .sidebar } }
         .task { if !store.isLoaded { await store.load() } }
     }
 }
 
 private struct LibrarySidebar: View {
     @Bindable var state: LibraryWindowState
+    var focus: FocusState<LibraryWindowState.Region?>.Binding
 
     var body: some View {
         let snapshot = state.store.sidebar
@@ -75,6 +74,7 @@ private struct LibrarySidebar: View {
             }
         }
         .listStyle(.sidebar)
+        .focused(focus, equals: .sidebar)
         .accessibilityLabel("Library sidebar")
         .accessibilityIdentifier("ww.library.sidebar")
     }
@@ -101,7 +101,6 @@ private struct SidebarRowView: View {
             if let count = row.countText {
                 Text(count)
                     .wwFont(.body)
-                    .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
         }
@@ -172,8 +171,6 @@ private struct LibraryEntryList: View {
                 .accessibilityIdentifier("ww.library.entries")
             }
         }
-        .navigationTitle(title)
-        .navigationSubtitle("")
     }
 
     private func sorted(_ rows: [LibraryEntryRow]) -> [LibraryEntryRow] {
@@ -256,10 +253,9 @@ struct StatusLabel: View {
             }
             Text(text)
                 .lineLimit(2)
+                .accessibilityLabel("Status")
+                .accessibilityValue(text)
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Status")
-        .accessibilityValue(text)
     }
 
     private var color: Color {
@@ -323,14 +319,14 @@ private struct LibraryEntryDetail: View {
                     .accessibilityAddTraits(.isHeader)
                 if let episodes = details?.episodes {
                     if episodes.isEmpty {
-                        Text("No episodes").foregroundStyle(.secondary)
+                        Text("No episodes")
                     } else {
                         ForEach(episodes) { episode in
                             Text(episode.displayTitle).lineLimit(2)
                         }
                     }
                 } else {
-                    Text("Unknown until the show is opened").foregroundStyle(.secondary)
+                    Text("Unknown until the show is opened")
                 }
                 Divider()
                 HStack {

@@ -39,7 +39,15 @@ final class WaveWranglerUITests: XCTestCase {
         XCTAssertTrue(element.waitForExistence(timeout: timeout), "Missing \(element)", file: file, line: line)
     }
 
-    private func value(_ element: XCUIElement) -> String { element.value as? String ?? "" }
+    private func value(_ element: XCUIElement) -> String { element.value as? String ?? "\(element.value ?? "")" }
+
+    private func waitForValue(_ element: XCUIElement, _ expected: String, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line) {
+        let predicate = NSPredicate { _, _ in self.value(element) == expected }
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: nil)
+        if XCTWaiter().wait(for: [expectation], timeout: timeout) != .completed {
+            XCTFail("Expected value \(expected), got \(value(element)) for \(element)", file: file, line: line)
+        }
+    }
 
     /// Audit types available on macOS (acceptance §4.2). Issues on system-drawn controls that we can't
     /// change are waived with a rationale; everything else fails the test.
@@ -66,6 +74,16 @@ final class WaveWranglerUITests: XCTestCase {
         if [.window, .toolbar, .splitter, .menuBar, .menuBarItem].contains(element.elementType) {
             return "system window chrome"
         }
+        // Non-interactive layout containers SwiftUI creates for split-view columns and overlays (AX "Group",
+        // not enabled, no actions). VoiceOver skips them; every interactive element is checked.
+        if issue.auditType == .sufficientElementDescription, element.elementType == .group, !element.isEnabled {
+            return "non-interactive layout container"
+        }
+        // macOS injects the Siri waveform overlay (an untitled Dialog with a 'siri' button) into every
+        // app's AX tree on this host; it is not WaveWrangler UI.
+        if element.elementType == .dialog, element.title.isEmpty, element.buttons["siri"].exists {
+            return "system Siri overlay, not app UI"
+        }
         return nil
     }
 
@@ -85,16 +103,16 @@ final class WaveWranglerUITests: XCTestCase {
         XCTAssertEqual(value(element("ww.library.sidebar.recent")), "10 items")
 
         // Keyboard: arrow from Shows → Recent → Unavailable; the entry list follows the selection.
-        sidebar.typeKey(.downArrow, modifierFlags: [])
-        sidebar.typeKey(.downArrow, modifierFlags: [])
-        let entries = element("ww.library.entries")
+        app.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.downArrow, modifierFlags: [])
+        let entries = app.outlines["ww.library.entries"]
         waitFor(entries)
-        let unavailableTable = app.tables["ww.library.entries"]
-        XCTAssertTrue(unavailableTable.waitForExistence(timeout: 5))
-        XCTAssertEqual(unavailableTable.tableRows.count, 3, "Unavailable is a filter showing exactly the 3 unavailable entries")
+        let followed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Unavailable (3)'"), object: entries)
+        XCTAssertEqual(XCTWaiter().wait(for: [followed], timeout: 5), .completed, "Entry list follows the sidebar: \(entries.label)")
+        XCTAssertEqual(entries.outlineRows.count, 3, "Unavailable is a filter showing exactly the 3 unavailable entries")
         for status in ["Can't find show file", "Needs permission", "Needs newer WaveWrangler"] {
-            XCTAssertTrue(unavailableTable.staticTexts[status].exists || unavailableTable.descendants(matching: .any)
-                .matching(NSPredicate(format: "value == %@", status)).firstMatch.exists, "Status text \(status)")
+            let cell = entries.staticTexts.matching(NSPredicate(format: "label == 'Status' AND value == %@", status)).firstMatch
+            XCTAssertTrue(cell.exists, "Status text \(status) (text, not colour)")
         }
         try audit("Library window (F-LIB100, Unavailable)")
     }
@@ -109,7 +127,7 @@ final class WaveWranglerUITests: XCTestCase {
         let nameField = element("ww.dialog.name")
         waitFor(nameField)
         nameField.typeText("Season Two\r")
-        let created = app.outlines["ww.library.sidebar"].outlineRows.containing(NSPredicate(format: "label == %@", "Season Two, collection")).firstMatch
+        let created = app.outlines["ww.library.sidebar"].buttons.matching(NSPredicate(format: "label == %@", "Season Two, collection")).firstMatch
         waitFor(created)
         XCTAssertEqual(app.outlines["ww.library.sidebar"].outlineRows.count, before + 1)
         app.menuBars.menuBarItems["Edit"].click()
@@ -117,29 +135,35 @@ final class WaveWranglerUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
 
         // New collection is selected and empty; Move Up (⌥⌘↑) moves it above the last fixture collection.
-        XCTAssertEqual(value(created), "0 items")
-        created.typeKey(.upArrow, modifierFlags: [.command, .option])
-        let rows = app.outlines["ww.library.sidebar"].outlineRows.allElementsBoundByIndex.map(\.label)
+        waitForValue(created, "0 items")
+        app.typeKey(.upArrow, modifierFlags: [.command, .option])
+        let rows = app.outlines["ww.library.sidebar"].buttons.allElementsBoundByIndex.map(\.label)
         let moved = rows.firstIndex(of: "Season Two, collection")
         let last = rows.firstIndex(of: "Synthetic Collection 5, collection")
         XCTAssertNotNil(moved)
         XCTAssertNotNil(last)
         if let moved, let last { XCTAssertLessThan(moved, last, "Move Collection Up reorders without drag") }
 
-        // Add a show via File › Library › Add to Collection ▸ (non-drag path).
-        element("ww.library.sidebar.shows").click()
-        let table = app.tables["ww.library.entries"]
-        waitFor(table)
-        table.tableRows.firstMatch.click()
+        // Add a show via File › Library › Add to Collection ▸ (non-drag path), keyboard-selected (K05).
+        for _ in 0..<10 { app.typeKey(.upArrow, modifierFlags: []) }
+        let table = app.outlines["ww.library.entries"]
+        let showsSelected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Shows (100)'"), object: table)
+        XCTAssertEqual(XCTWaiter().wait(for: [showsSelected], timeout: 5), .completed, "Up arrows reach Shows: \(table.label)")
+        app.typeKey("\t", modifierFlags: [])
+        app.typeKey(.downArrow, modifierFlags: [])
         menuItem("Add to Collection").hover()
         let target = app.menuBars.menuItems["Season Two"].firstMatch
         waitFor(target)
         target.click()
-        XCTAssertEqual(value(created), "1 item")
+        waitForValue(created, "1 item")
 
         // ⌫ on the collection → confirm → collection removed, shows kept.
-        created.click()
-        created.typeKey(.delete, modifierFlags: [])
+        // ⇧Tab back to the sidebar, arrow to the collection (Shows → … → Season Two is 7 rows down).
+        app.typeKey("\t", modifierFlags: .shift)
+        for _ in 0..<7 { app.typeKey(.downArrow, modifierFlags: []) }
+        let collectionSelected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Season Two (1)'"), object: table)
+        XCTAssertEqual(XCTWaiter().wait(for: [collectionSelected], timeout: 5), .completed, "Arrowed to the collection: \(table.label)")
+        app.typeKey(.delete, modifierFlags: [])
         let sheet = app.sheets.firstMatch
         waitFor(sheet)
         XCTAssertTrue(sheet.staticTexts["Delete the collection “Season Two”?"].exists)
@@ -187,7 +211,7 @@ final class WaveWranglerUITests: XCTestCase {
         number.click()
         number.typeKey("a", modifierFlags: .command)
         number.typeText("abc")
-        waitFor(app.staticTexts["Enter a whole number"])
+        waitFor(app.staticTexts.matching(NSPredicate(format: "value == 'Number: Enter a whole number'")).firstMatch)
         number.typeKey("a", modifierFlags: .command)
         number.typeText("12\t")
         waitFor(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "12 Pilot")).firstMatch)
@@ -216,21 +240,21 @@ final class WaveWranglerUITests: XCTestCase {
         launch(["-WWUITestLibraryFixture", "lib100"])
         waitFor(element("ww.library.sidebar"))
         app.typeKey(",", modifierFlags: .command)
-        let autosave = element("ww.settings.autosave")
+        let autosave = app.switches["ww.settings.autosave"]
         waitFor(autosave)
-        XCTAssertEqual(value(autosave), "1", "Autosave ON by default")
-        XCTAssertEqual(value(element("ww.settings.libraryLocation")), "In WaveWrangler")
+        waitForValue(autosave, "1")
+        waitForValue(app.popUpButtons["ww.settings.libraryLocation"], "In WaveWrangler")
         XCTAssertTrue(app.staticTexts["WaveWrangler saves your changes as you work. You can also choose File › Save at any time."].exists)
         try audit("Settings › General")
         autosave.click()
-        XCTAssertEqual(value(autosave), "0")
+        waitForValue(autosave, "0")
         waitFor(app.staticTexts["Changes are saved only when you choose File › Save (⌘S). WaveWrangler will ask before closing a show with unsaved changes."])
         autosave.click()
 
         app.toolbars.buttons["Sources"].click()
-        let downloads = element("ww.settings.downloadSources")
+        let downloads = app.switches["ww.settings.downloadSources"]
         waitFor(downloads)
-        XCTAssertEqual(value(downloads), "1", "Source downloads ON by default")
+        waitForValue(downloads, "1")
         try audit("Settings › Sources")
 
         // K23: ⌘+ up to 200%, ⌘0 resets.
@@ -239,14 +263,14 @@ final class WaveWranglerUITests: XCTestCase {
         for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
         app.typeKey(",", modifierFlags: .command)
         app.toolbars.buttons["General"].click()
-        let textSize = element("ww.settings.textSize")
+        let textSize = app.popUpButtons["ww.settings.textSize"]
         waitFor(textSize)
-        XCTAssertEqual(value(textSize), "200%")
+        waitForValue(textSize, "200%")
         app.typeKey("w", modifierFlags: .command)
         try audit("Library window at 200% text")
         app.typeKey("0", modifierFlags: .command)
         app.typeKey(",", modifierFlags: .command)
-        waitFor(element("ww.settings.textSize"))
-        XCTAssertEqual(value(element("ww.settings.textSize")), "100%")
+        waitFor(app.popUpButtons["ww.settings.textSize"])
+        waitForValue(app.popUpButtons["ww.settings.textSize"], "100%")
     }
 }

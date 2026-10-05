@@ -28,6 +28,20 @@ private struct ShowWindowContent: View {
     private var store: ShowDocumentStore { state.store }
 
     var body: some View {
+        core
+            // No inspectorColumnWidth(min:ideal:max:): inside an AppKit-hosted window it caused a
+            // re-entrant constraint-update loop (crash) on macOS 27; the default inspector width is used.
+            .inspector(isPresented: $state.inspectorPresented) {
+                InspectorContainer(state: state)
+            }
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    DestinationControl(state: state)
+                }
+            }
+    }
+
+    private var core: some View {
         NavigationSplitView(columnVisibility: $state.sidebarVisibility) {
             ShowSidebar(state: state)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 230, max: 380)
@@ -38,14 +52,7 @@ private struct ShowWindowContent: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .inspector(isPresented: $state.inspectorPresented) {
-            InspectorContainer(state: state)
-                .inspectorColumnWidth(min: 240, ideal: 300, max: 460)
-        }
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                DestinationControl(state: state)
-            }
             ToolbarItemGroup(placement: .primaryAction) {
                 SaveStatusItem(state: state)
                 Button {
@@ -276,7 +283,6 @@ private struct ShowInfoSummary: View {
                 LabeledContent("Location") { Text(ShowInfoInspector.locationText(state.store.document?.fileURL)) }
                 LabeledContent("Save status") { Text(state.presentation.itemText) }
                 Text("Edit the show's title and notes in the inspector (View › Show Inspector, ⌃⌘I).")
-                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .wwFont(.body)

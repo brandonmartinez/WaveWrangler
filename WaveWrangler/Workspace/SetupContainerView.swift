@@ -32,7 +32,6 @@ struct SetupContainerView: View {
                             .wwFont(.title3)
                             .accessibilityAddTraits(.isHeader)
                         Text("\(episode.sources.count)")
-                            .foregroundStyle(.secondary)
                             .accessibilityLabel("\(episode.sources.count) sources")
                         Spacer()
                         Button("Import Sources…") {
@@ -44,7 +43,6 @@ struct SetupContainerView: View {
                     Text("Recordings you add to “\(episode.title)” appear here, grouped by recorder. WaveWrangler adds references to your files and never moves, renames or changes them.")
                         .fixedSize(horizontal: false, vertical: true)
                     Text("Organizing sources isn't available in this version yet.")
-                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityElement(children: .contain)
@@ -59,11 +57,10 @@ struct SetupContainerView: View {
                             .wwFont(.title3)
                             .accessibilityAddTraits(.isHeader)
                         Text("\(speakers.count)")
-                            .foregroundStyle(.secondary)
                             .accessibilityLabel("\(speakers.count) speakers")
                     }
                     if speakers.isEmpty {
-                        Text("No speakers yet.").foregroundStyle(.secondary)
+                        Text("No speakers yet.")
                     } else {
                         ForEach(speakers) { speaker in
                             Text(speaker.name)

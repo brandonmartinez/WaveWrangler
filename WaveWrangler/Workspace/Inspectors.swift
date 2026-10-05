@@ -16,7 +16,6 @@ struct InspectorContainer: View {
                         .id(episode.id)
                 } else {
                     Text("Nothing selected")
-                        .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
@@ -104,7 +103,6 @@ struct EpisodeInspector: View {
             content()
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel("\(label): \(error)")
             }
@@ -127,7 +125,7 @@ struct EpisodeInspector: View {
                 .accessibilityIdentifier("ww.inspector.episode.recordingDate")
                 Button("Remove Recording Date") { applyDate(nil) }
             } else {
-                Text("Not set").foregroundStyle(.secondary)
+                Text("Not set")
                 Button("Add Recording Date") { applyDate(DayConversion.day(from: Date())) }
                     .accessibilityIdentifier("ww.inspector.episode.addRecordingDate")
             }
@@ -232,7 +230,6 @@ struct ShowInfoInspector: View {
                     .accessibilityIdentifier("ww.inspector.show.title")
                 if let titleError {
                     Label(titleError, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.secondary)
                         .accessibilityLabel("Title: \(titleError)")
                 }
             }
@@ -252,7 +249,6 @@ struct ShowInfoInspector: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Save status")
                 Text(state.presentation.popoverText)
-                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

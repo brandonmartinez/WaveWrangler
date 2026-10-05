@@ -14,6 +14,7 @@ enum LaunchFixtures {
         #if DEBUG
         let defaults = UserDefaults.standard
         if defaults.bool(forKey: "WWUITestResetPreferences") {
+            defaults.removeObject(forKey: "NSWindow Frame WaveWranglerLibraryWindow")
             for key in [PreferenceKey.autosaveEnabled, PreferenceKey.downloadSourcesAutomatically, PreferenceKey.textSizePercent, PreferenceKey.settingsLastPane] {
                 defaults.removeObject(forKey: key)
             }

@@ -20,13 +20,25 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate, NSWin
 
     static func show() {
         shared.showWindow(nil)
-        shared.window?.makeKeyAndOrderFront(nil)
+        guard let window = shared.window else { return }
+        // Keep a restored/autosaved frame on screen and within the visible height.
+        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame, !visible.contains(window.frame) {
+            var frame = window.frame
+            frame.size.height = min(frame.height, visible.height)
+            frame.size.width = min(frame.width, visible.width)
+            frame.origin.x = min(max(frame.minX, visible.minX), visible.maxX - frame.width)
+            frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
+            window.setFrame(frame, display: true)
+        }
+        window.makeKeyAndOrderFront(nil)
     }
 
     private init(store: LibraryStore) {
         state = LibraryWindowState(store: store)
         let hosting = NSHostingController(rootView: LibraryView(state: state).wwAppEnvironment())
-        hosting.sceneBridgingOptions = [.toolbars, .title]
+        hosting.sceneBridgingOptions = [.toolbars]
+        hosting.sizingOptions = []
+        hosting.view.setAccessibilityLabel("Library")
         let window = NSWindow(contentViewController: hosting)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.title = "Library"
@@ -42,15 +54,11 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate, NSWin
         window.delegate = self
         window.setFrameAutosaveName("WaveWranglerLibraryWindow")
         state.window = window
+        store.undoManagerProvider = { [weak window] in window?.undoManager }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-    // Library edits use the Library window's own undo history (IA-03).
-    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
-        state.store.undoManager
-    }
 
     static func restoreWindow(
         withIdentifier identifier: NSUserInterfaceItemIdentifier,

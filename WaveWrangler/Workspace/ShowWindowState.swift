@@ -207,14 +207,20 @@ final class ShowWindowState {
     func attach(to window: NSWindow) {
         self.window = window
         ShowWindowRegistry.register(self, for: window)
-        if let hosting = window.contentViewController as? NSHostingController<ShowWorkspaceView> {
-            hosting.sceneBridgingOptions = [.toolbars]
+        // Window chrome and bridging must not change while AppKit/SwiftUI are attaching and laying out the
+        // view (re-entrant constraint updates); apply them on the next main-queue turn.
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window else { return }
+            if let hosting = window.contentViewController as? NSHostingController<ShowWorkspaceView> {
+                hosting.sceneBridgingOptions = [.toolbars]
+            }
+            window.contentView?.setAccessibilityLabel("Show")
+            window.toolbarStyle = .unified
+            window.setAccessibilityIdentifier("ww.show.window")
+            self.updateSubtitle()
+            let model = self.store.model
+            LibraryStore.shared.showDidOpen(id: model.show.id, model: model, fileURL: self.store.document?.fileURL)
         }
-        window.toolbarStyle = .unified
-        window.setAccessibilityIdentifier("ww.show.window")
-        updateSubtitle()
-        let model = store.model
-        LibraryStore.shared.showDidOpen(id: model.show.id, model: model, fileURL: store.document?.fileURL)
     }
 
     /// IA-06: subtitle = selected episode's title.

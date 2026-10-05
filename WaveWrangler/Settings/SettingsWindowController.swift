@@ -46,6 +46,7 @@ private final class SettingsTabViewController: NSTabViewController {
             let hosting = NSHostingController(rootView: root)
             hosting.sizingOptions = .preferredContentSize
             hosting.title = pane.title
+            hosting.view.setAccessibilityLabel("\(pane.title) settings")
             let item = NSTabViewItem(viewController: hosting)
             item.label = pane.title
             item.identifier = pane.rawValue
@@ -80,7 +81,7 @@ struct GeneralSettingsView: View {
             Section {
                 Toggle(SettingsWording.autosaveTitle, isOn: $settings.autosaveEnabled)
                     .toggleStyle(.switch)
-                    .accessibilityHint(SettingsWording.autosaveCaption(enabled: settings.autosaveEnabled))
+                    .help(SettingsWording.autosaveCaption(enabled: settings.autosaveEnabled))
                     .accessibilityIdentifier("ww.settings.autosave")
                 caption(SettingsWording.autosaveCaption(enabled: settings.autosaveEnabled))
             }
@@ -112,7 +113,7 @@ struct SourcesSettingsView: View {
             Section {
                 Toggle(SettingsWording.downloadTitle, isOn: $settings.downloadSourcesAutomatically)
                     .toggleStyle(.switch)
-                    .accessibilityHint(SettingsWording.downloadCaption(enabled: settings.downloadSourcesAutomatically))
+                    .help(SettingsWording.downloadCaption(enabled: settings.downloadSourcesAutomatically))
                     .accessibilityIdentifier("ww.settings.downloadSources")
                 caption(SettingsWording.downloadCaption(enabled: settings.downloadSourcesAutomatically))
             }
@@ -126,10 +127,9 @@ struct SourcesSettingsView: View {
 @MainActor @ViewBuilder
 private func caption(_ text: String) -> some View {
     Text(text)
-        .wwFont(.callout)
-        .foregroundStyle(.secondary)
+        .wwFont(.body)
+        .foregroundStyle(Color.primary)
         .fixedSize(horizontal: false, vertical: true)
-        .accessibilityHidden(true)
 }
 
 /// Settings › General › Library location (states-and-recovery §5.1). A UI shell over the persistence
@@ -174,12 +174,11 @@ private struct LibraryLocationControl: View {
             if let level = LibraryLevelPresentation(controller.libraryState) {
                 Label(level.heading, systemImage: level.symbolName)
                     .fixedSize(horizontal: false, vertical: true)
-                if let pending = level.pendingText { Text(pending).foregroundStyle(.secondary) }
+                if let pending = level.pendingText { Text(pending) }
             }
             if !controller.isConnected {
                 Label("This version keeps the library only while WaveWrangler is open; it isn't saved to disk yet.", systemImage: "info.circle")
                     .wwFont(.callout)
-                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let moveError {
