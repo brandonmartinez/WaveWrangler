@@ -37,6 +37,11 @@ struct EpisodeInspector: View {
     @State private var titleDraft = ""
     @State private var numberDraft = ""
     @State private var notesDraft = ""
+    /// The values this inspector last wrote to the model. A model value that differs from them came from
+    /// elsewhere (Revert, undo, another window) and replaces the draft even while the field has focus (#86).
+    @State private var appliedTitle: String?
+    @State private var appliedNumber: Int??
+    @State private var appliedNotes: String?
     @State private var titleError: String?
     @State private var numberError: String?
     @FocusState private var focused: Field?
@@ -139,16 +144,32 @@ struct EpisodeInspector: View {
         titleDraft = episode.title
         numberDraft = episode.number.map(String.init) ?? ""
         notesDraft = episode.notes
+        appliedTitle = episode.title
+        appliedNumber = .some(episode.number)
+        appliedNotes = episode.notes
     }
 
-    /// Undo/redo or another window changed the model: refresh fields that aren't being edited.
+    /// Undo/redo, Revert or another window changed the model: refresh fields that aren't being edited, and
+    /// discard a focused field's draft when the change didn't come from that field, so the next keystroke can't
+    /// re-apply a discarded edit (#86). The field's own live edits leave its draft alone (no lost keystrokes).
     private func syncFromModel() {
         guard let episode else { return }
-        if focused != .title, Self.trim(titleDraft) != episode.title { titleDraft = episode.title; titleError = nil }
-        if focused != .number, numberError == nil, (try? EpisodeNumberInput.parse(numberDraft).get()) != episode.number {
-            numberDraft = episode.number.map(String.init) ?? ""
+        let externalTitle = episode.title != appliedTitle
+        if focused != .title || externalTitle, Self.trim(titleDraft) != episode.title {
+            titleDraft = episode.title
+            titleError = nil
         }
-        if focused != .notes, notesDraft != episode.notes { notesDraft = episode.notes }
+        if externalTitle { appliedTitle = episode.title }
+        let externalNumber = appliedNumber.map { $0 != episode.number } ?? true
+        if (focused != .number && numberError == nil) || externalNumber,
+           (try? EpisodeNumberInput.parse(numberDraft).get()) != episode.number {
+            numberDraft = episode.number.map(String.init) ?? ""
+            numberError = nil
+        }
+        if externalNumber { appliedNumber = .some(episode.number) }
+        let externalNotes = episode.notes != appliedNotes
+        if focused != .notes || externalNotes, notesDraft != episode.notes { notesDraft = episode.notes }
+        if externalNotes { appliedNotes = episode.notes }
     }
 
     private func applyTitle(_ draft: String) {
@@ -160,6 +181,7 @@ struct EpisodeInspector: View {
         }
         titleError = nil
         guard title != episode.title else { return }
+        appliedTitle = title
         store.apply(UndoActionName.editTitle, coalescing: "episode-title-\(episodeID)") { model throws(DomainError) in
             try model.renamingEpisode(episodeID, to: title)
         }
@@ -170,6 +192,7 @@ struct EpisodeInspector: View {
         case .success(let number):
             numberError = nil
             guard number != episode?.number else { return }
+            appliedNumber = .some(number)
             store.apply(UndoActionName.editNumber, coalescing: "episode-number-\(episodeID)") { model throws(DomainError) in
                 try model.settingEpisodeNumber(episodeID, to: number)
             }
@@ -180,6 +203,7 @@ struct EpisodeInspector: View {
 
     private func applyNotes(_ draft: String) {
         guard draft != episode?.notes else { return }
+        appliedNotes = draft
         store.apply(UndoActionName.editNotes, coalescing: "episode-notes-\(episodeID)") { model throws(DomainError) in
             try model.settingEpisodeNotes(episodeID, to: draft)
         }
@@ -210,6 +234,9 @@ struct ShowInfoInspector: View {
     @Bindable var state: ShowWindowState
     @State private var titleDraft = ""
     @State private var notesDraft = ""
+    /// Values this inspector last wrote; a different model value came from elsewhere (#86).
+    @State private var appliedTitle: String?
+    @State private var appliedNotes: String?
     @State private var titleError: String?
     @FocusState private var focused: Field?
 
@@ -258,15 +285,27 @@ struct ShowInfoInspector: View {
         .onAppear {
             titleDraft = store.model.show.title
             notesDraft = store.model.show.notes
+            appliedTitle = store.model.show.title
+            appliedNotes = store.model.show.notes
         }
         .onChange(of: titleDraft) { _, value in applyTitle(value) }
         .onChange(of: notesDraft) { _, value in
             guard value != store.model.show.notes else { return }
+            appliedNotes = value
             store.apply(UndoActionName.editShowInfo, coalescing: "show-notes") { model throws(DomainError) in model.settingShowNotes(value) }
         }
         .onChange(of: store.model.show) { _, show in
-            if focused != .title, Self.trim(titleDraft) != show.title { titleDraft = show.title }
-            if focused != .notes, notesDraft != show.notes { notesDraft = show.notes }
+            // Refresh fields that aren't being edited; a change that didn't come from the focused field (Revert,
+            // undo, another window) also replaces its draft, so a discarded edit can't come back (#86).
+            let externalTitle = show.title != appliedTitle
+            if focused != .title || externalTitle, Self.trim(titleDraft) != show.title {
+                titleDraft = show.title
+                titleError = nil
+            }
+            if externalTitle { appliedTitle = show.title }
+            let externalNotes = show.notes != appliedNotes
+            if focused != .notes || externalNotes, notesDraft != show.notes { notesDraft = show.notes }
+            if externalNotes { appliedNotes = show.notes }
         }
         .onChange(of: focused) { old, _ in
             guard old != nil else { return }
@@ -288,6 +327,7 @@ struct ShowInfoInspector: View {
         }
         titleError = nil
         guard title != store.model.show.title else { return }
+        appliedTitle = title
         store.apply(UndoActionName.editShowInfo, coalescing: "show-title") { model throws(DomainError) in try model.renamingShow(to: title) }
     }
 

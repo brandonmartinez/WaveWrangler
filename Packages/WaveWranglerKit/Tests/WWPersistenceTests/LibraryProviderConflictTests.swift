@@ -196,8 +196,38 @@ struct LibraryProviderConflictTests {
             guard case let .success(summary) = await store.resolveConflictByCombining() else { Issue.record("combine failed"); continue }
             let expected = change == "remove" ? "removal of collection “Drop”" : "the order of collections"
             #expect(summary.message.contains(expected), "\(change): \(summary.message)")
+            #expect(summary.message.contains("kept in a backup copy: \(expected)"), "\(change): worded without “the other copy's the …” (#131): \(summary.message)")
             #expect(rig.provider.resolved == [id] && rig.provider.everyResolutionWasBackedUpFirst)
         }
+    }
+
+    /// #131 (found by the DUR-025 holdout): this Mac renamed a show while the other Mac reordered a collection's
+    /// members. Combine keeps the other Mac's order as the ST-36 copy "Beta (from this Mac)", so the message
+    /// must not say that reorder "couldn't be combined".
+    @Test func reorderKeptAsACopyIsNotReportedAsUncarried() async throws {
+        let rig = Rig()
+        let store = rig.store()
+        _ = await store.load()
+        let shows = [ShowID(), ShowID(), ShowID()]
+        _ = try await store.update { var l = $0
+            for (index, id) in shows.enumerated() { l = LibraryReconciler.registering(id, title: "Show \(index)", publication: nil, in: l) }
+            l.collections = [LibraryCollection(name: "Beta", showIDs: shows)]
+            return l }
+        let fork = try rig.disk()
+        var theirs = fork.payload
+        theirs.collections[0].showIDs = shows.reversed()
+        _ = try await store.update { var l = $0; l.entries[0].alias = "Renamed here"; return l }
+        let id = rig.provider.add(try LibraryCoder.library.encode(theirs, revision: fork.revision + 1), to: rig.rig.containerFile)
+        _ = await store.reload()
+        #expect(await store.levelState == .changedElsewhere, "a reorder is a change: still L4, never resolved silently")
+        guard case let .success(summary) = await store.resolveConflictByCombining() else { Issue.record("combine failed"); return }
+        let published = try rig.disk().payload
+        #expect(published.collections.contains { $0.name == "Beta (from this Mac)" && $0.showIDs == shows.reversed() }, "kept as the ST-36 copy")
+        #expect(published.collections.contains { $0.name == "Beta" && $0.showIDs == shows })
+        #expect(summary.collectionsKeptAsCopies == 1)
+        #expect(summary.entryChangesNotCarried.isEmpty, "\(summary.entryChangesNotCarried)")
+        #expect(!summary.message.contains("couldn't be combined"), "\(summary.message)")
+        #expect(rig.provider.resolved == [id] && rig.provider.everyResolutionWasBackedUpFirst)
     }
 
     /// No retained checkpoint to compare with: the version can't be shown to be included, so it reaches L4.
@@ -388,5 +418,38 @@ struct LibraryInclusionTests {
         var reordered = fork; reordered.collections.reverse()
         #expect(LibraryMerge.uncarriedProviderChanges(reordered, forkBase: fork, in: fork).contains { $0.contains("the order of collections") })
         #expect(LibraryMerge.uncarriedProviderChanges(removed, forkBase: nil, in: fork).contains { $0.contains("“One” isn't in the other copy") })
+    }
+
+    /// #131: a member reorder Combine kept as an ST-36 copy (exact members, exact order) is carried for the
+    /// report, but inclusion stays strict so the version still asks (L4). A copy with another order is not it.
+    @Test func reorderCarriedAsACopyCountsForTheReportOnly() {
+        let fork = base()
+        var reordered = fork; reordered.collections[0].showIDs.reverse()
+        let (combined, summary) = LibraryMerge.combineWithSummary(thisMac: reordered, into: fork)
+        #expect(summary.collectionsKeptAsCopies == 1)
+        #expect(LibraryMerge.uncarriedProviderChanges(reordered, forkBase: fork, in: combined).isEmpty)
+        #expect(QueuedLibraryEdits.missingChanges(base: fork, mine: reordered, in: combined, countingCopies: true).isEmpty)
+        #expect(QueuedLibraryEdits.missingChanges(base: fork, mine: reordered, in: combined) == ["the order of “One”"])
+        #expect(!LibraryMerge.isIncluded(reordered, forkBases: [fork], in: combined), "inclusion doesn't count copies")
+        var wrongOrder = combined
+        wrongOrder.collections[wrongOrder.collections.count - 1].showIDs = fork.collections[0].showIDs
+        #expect(LibraryMerge.uncarriedProviderChanges(reordered, forkBase: fork, in: wrongOrder) == ["the order of “One”"])
+        var unrelated = combined
+        unrelated.collections[unrelated.collections.count - 1].name = "One (from another place)"
+        #expect(LibraryMerge.uncarriedProviderChanges(reordered, forkBase: fork, in: unrelated) == ["the order of “One”"])
+        // Genuinely uncarried changes are still reported alongside a carried copy.
+        var both = reordered; both.collections.removeLast()
+        let (combinedBoth, _) = LibraryMerge.combineWithSummary(thisMac: both, into: fork)
+        #expect(LibraryMerge.uncarriedProviderChanges(both, forkBase: fork, in: combinedBoth) == ["removal of collection “Two”"])
+    }
+
+    @Test func copyNamesFollowST36Suffixes() {
+        #expect(LibraryMerge.isCopyName("Beta (from this Mac)", of: "Beta"))
+        #expect(LibraryMerge.isCopyName("Beta (from this Mac 2)", of: "Beta"))
+        #expect(LibraryMerge.isCopyName("Beta (from this Mac 12)", of: "Beta"))
+        #expect(!LibraryMerge.isCopyName("Beta", of: "Beta"))
+        #expect(!LibraryMerge.isCopyName("Beta (from this Mac 1)", of: "Beta"))
+        #expect(!LibraryMerge.isCopyName("Beta (from this Macx)", of: "Beta"))
+        #expect(!LibraryMerge.isCopyName("Betamax (from this Mac)", of: "Beta"))
     }
 }

@@ -52,6 +52,7 @@ final class ShowDocumentStore {
                 replace(with: updated, actionName: actionName)
             }
             coalescingKey = key
+            Responsiveness.interaction("show.edit")
             return true
         } catch {
             lastError = error
