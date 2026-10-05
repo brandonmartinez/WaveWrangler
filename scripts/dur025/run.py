@@ -313,18 +313,6 @@ def edit_presence(model, edit):
     return "current" if edit["showID"] in model.get("recents", []) else None
 
 
-def contained(version, current):
-    """Python mirror of LibraryMerge.isContained for the user-edit fields (truth 4 cross-check)."""
-    cur_entries = {e["showID"]: e for e in current.get("entries", [])}
-    for e in version.get("entries", []):
-        if e["showID"] not in cur_entries or (e["alias"] and e["alias"] != cur_entries[e["showID"]]["alias"]):
-            return False
-    cur_cols = {(c["name"], tuple(c["showIDs"])) for c in current.get("collections", [])}
-    if any((c["name"], tuple(c["showIDs"])) not in cur_cols for c in version.get("collections", [])):
-        return False
-    return all(r in current.get("recents", []) for r in version.get("recents", []))
-
-
 def case_library(dev, split, index, rng):
     """Both hosts use one synthetic library in the trial folder (same libraryID, synced and verified); each makes
     a different seeded organizing edit at a shared trigger time. §4.2.1 + truth 2: L4 → Combine on both hosts."""
@@ -359,15 +347,19 @@ def case_library(dev, split, index, rng):
     a, b, settle_ms, settled, surfaced_versions = settle_tracking(
         dev, ["lib-inspect", "--file", libfile], lib_key, lambda r: len(r.get("unresolvedConflictVersions", [])), t0)
     versions_seen = version_counts_lib(a, b)
-    # Truth 4: a host holding an unresolved version with changes the current library lacks must open in L4.
-    must_l4 = {h: any(not contained(v.get("model", {}), r.get("current", {}).get("model", {})) for v in r.get("unresolvedConflictVersions", []))
-               for h, r in (("A", a), ("B", b))}
     # Each host opens the library in turn (as the user would); a host in L4 resolves it with Combine.
-    combine = {}
-    timings = {}
+    # Truth 4 / §4.2.1(4), observed directly: a host that holds unresolved conflict versions when it opens the
+    # library must open in L4, or have every one of them resolved (backed up) or reported as unusable.
+    combine, timings, truth4 = {}, {}, {}
     for host in ("A", "B"):
+        before = dev.run(host, ["lib-inspect", "--file", libfile])
+        held = len(before.get("unresolvedConflictVersions", []))
         combine[host] = dev.run(host, lib_args(dev, host, index, ["--combine", "1"]))
         timings[host] = now_ms() - t0
+        after = dev.run(host, ["lib-inspect", "--file", libfile])
+        in_l4 = combine[host].get("levelAfterLoad") == "changedElsewhere"
+        accounted = len(after.get("unresolvedConflictVersions", [])) <= int(combine[host].get("unusableProviderConflicts") or 0)
+        truth4[host] = {"heldOnOpen": held, "openedInL4": in_l4, "ok": held == 0 or in_l4 or accounted}
         settle_tracking(dev, ["lib-inspect", "--file", libfile], lib_key, lambda r: 0, t0)
     finals = {h: dev.run(h, lib_args(dev, h, index, [])) for h in ("A", "B")}
     a3, b3, final_ms, settled3, _ = settle_tracking(dev, ["lib-inspect", "--file", libfile], lib_key, lambda r: 0, t0)
@@ -378,21 +370,21 @@ def case_library(dev, split, index, rng):
     app_detected = {h: str(updates[h].get("update", "")).startswith("failed") for h in ("A", "B")}
     l4_seen = {h: combine[h].get("levelAfterLoad") == "changedElsewhere" for h in ("A", "B")}
     provider_versions = any(r.get("unresolvedConflictVersions") for r in (a, b))
-    truth4 = all(l4_seen[h] or not must_l4[h] or combine_preceded(h, combine) for h in ("A", "B"))
+    truth4_ok = all(t["ok"] for t in truth4.values())
     backups = {h: combine[h].get("conflictBackups", 0) for h in ("A", "B")}
     resolved_left = sum(len(r.get("unresolvedConflictVersions", [])) for r in (a3, b3))
     finals_ready = all(finals[h].get("levelState") == "ready" for h in finals)
     acked = [h for h in ("A", "B") if str(updates[h].get("update", "")).startswith("published")]
     conflict_happened = provider_versions or any(app_detected.values()) or len(acked) > 1
     detected = any(l4_seen.values()) or any(app_detected.values())
-    ok = (one_current and both_present_on_both and finals_ready and resolved_left == 0 and truth4
+    ok = (one_current and both_present_on_both and finals_ready and resolved_left == 0 and truth4_ok
           and (not conflict_happened or detected)
           and (not provider_versions or sum(backups.values()) > 0))
     path = ("appDetected" if any(app_detected.values()) else "providerL4" if any(l4_seen.values()) else
             "noConflictObserved" if not conflict_happened else "undetected")
     return {"verdict": "pass" if ok else "fail", "skewMs": skew, "first": first, "edits": {h: edits[h]["kind"] for h in edits},
             "localAcks": acked, "updateResults": {h: updates[h].get("update") for h in updates}, "detectionPath": path,
-            "l4OnLoad": l4_seen, "mustBeL4OnLoad": must_l4, "combine": {h: combine[h].get("combine", "-") for h in combine},
+            "l4OnLoad": l4_seen, "truth4": truth4, "combine": {h: combine[h].get("combine", "-") for h in combine},
             "conflictBackups": backups, "presence": presence, "bothChangesOnBothHosts": both_present_on_both,
             "oneCurrentByteIdentical": bool(one_current), "unresolvedLeft": resolved_left, "finalLevels": {h: finals[h].get("levelState") for h in finals},
             "unusableProviderConflicts": {h: finals[h].get("unusableProviderConflicts") for h in finals},
@@ -401,12 +393,6 @@ def case_library(dev, split, index, rng):
             "versionCounts": versions_seen, "finalSettleMs": final_ms,
             "conflictVersionComputers": sorted({v.get("savingComputer", "") for r in (a, b) for v in r.get("unresolvedConflictVersions", [])}),
             "propagationAtoBMs": propagation_ms(dev, t_move, seen)}
-
-
-def combine_preceded(host, combine):
-    """Truth 4 is about opening in L1 with an unsurfaced version. If the other host's Combine already resolved
-    it before this host opened, there was nothing left to surface here."""
-    return host == "B" and combine["A"].get("levelAfterLoad") == "changedElsewhere"
 
 
 def version_counts_lib(a, b):
