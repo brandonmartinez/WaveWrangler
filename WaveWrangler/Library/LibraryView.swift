@@ -10,9 +10,15 @@ struct LibraryView: View {
     private var store: LibraryUIStore { state.store }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Opaque bar above the split view (not an inset over translucent sidebar material) for contrast.
-            LibraryMessageBar(state: state)
+        // Opaque bar above the split view (not an inset over translucent sidebar material) for contrast.
+        // #109: at large text sizes it scrolls within at most 40% of the window instead of pushing the split
+        // view out of the window. Sized by a stateless layout (no geometry → state → layout feedback).
+        MessageBarStack(maxBarFraction: 0.4, minBarCap: 120) {
+            ViewThatFits(in: .vertical) {
+                LibraryMessageBar(state: state)
+                ScrollView { LibraryMessageBar(state: state) }
+                    .scrollBounceBehavior(.basedOnSize)
+            }
             splitView
         }
         .onChange(of: focus) { _, region in
@@ -28,6 +34,11 @@ struct LibraryView: View {
             LibrarySidebar(state: state, focus: $focus)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 360)
         } content: {
+            // #109: every column's content fits the window at any in-app text size. A column whose minimum height
+            // exceeds the window (e.g. vertically fixed-size text, measured for the column's minimum at a tiny
+            // width) makes the split view taller than the window, and its top overflows under the title bar
+            // (`sizingOptions = []` keeps the window from resizing to SwiftUI's minimum). Column content that
+            // can grow (empty states, details) scrolls instead.
             LibraryEntryList(state: state)
                 .focused($focus, equals: .entries)
                 .navigationSplitViewColumnWidth(min: 320, ideal: 520)
@@ -66,25 +77,38 @@ private struct LibrarySidebar: View {
                 }
                 .onMove { source, destination in state.moveCollections(fromOffsets: source, toOffset: destination) }
             } header: {
-                HStack {
-                    Text("Collections")
-                    Spacer()
-                    Button {
-                        state.newCollection()
-                    } label: {
-                        Image(systemName: "plus")
-                            .accessibilityLabel("New Collection")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("New Collection…")
-                    .accessibilityIdentifier("ww.library.sidebar.newCollection")
-                }
+                Text("Collections")
             }
         }
         .listStyle(.sidebar)
         .focused(focus, equals: .sidebar)
         .accessibilityLabel("Library sidebar")
         .accessibilityIdentifier("ww.library.sidebar")
+        // #110: "New Collection" is a real button in a bar below the list. In a sidebar section header, the List
+        // merged it into the heading's static text, so VoiceOver and Full Keyboard Access couldn't press it.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            HStack {
+                Button {
+                    state.newCollection()
+                } label: {
+                    Label("New Collection", systemImage: "plus")
+                        .labelStyle(.iconOnly)
+                        .padding(4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .help("New Collection…")
+                .accessibilityLabel("New Collection")
+                .accessibilityHint("Creates a collection. Collections group shows without moving them.")
+                .accessibilityIdentifier("ww.library.collections.add")
+                Spacer(minLength: 0)
+            }
+            .wwFont(.body)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.bar)
+            .overlay(alignment: .top) { Divider() }
+        }
     }
 
     @ViewBuilder
@@ -140,17 +164,30 @@ private struct LibraryEntryList: View {
         let title = LibraryPresentation.contentTitle(for: item, library: state.store.library, rowCount: rows.count)
         Group {
             if rows.isEmpty {
-                ContentUnavailableView {
-                    Label(emptyTitle(item), systemImage: emptySymbol(item))
-                } description: {
-                    Text(emptyDescription(item))
-                } actions: {
-                    if item == .shows {
-                        Button("New Show…") { CommandRouter.shared.newShow(nil) }
-                        Button("Open…") { CommandRouter.shared.openDocument(nil) }
+                // Same shape as ContentUnavailableView, but with primary-contrast text: its secondary description
+                // failed the contrast audit, and it now scrolls when it doesn't fit (#109).
+                CenteredScrollView {
+                    VStack(spacing: 8) {
+                        Image(systemName: emptySymbol(item))
+                            .wwFont(.largeTitle)
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                        Text(emptyTitle(item))
+                            .wwFont(.title3)
+                            .accessibilityAddTraits(.isHeader)
+                        Text(emptyDescription(item))
+                            .wwFont(.body)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if item == .shows {
+                            HStack {
+                                Button("New Show…") { CommandRouter.shared.newShow(nil) }
+                                Button("Open…") { CommandRouter.shared.openDocument(nil) }
+                            }
+                            .padding(.top, 4)
+                        }
                     }
                 }
-                .wwFont(.body)
             } else if !Self.usesSwiftUITable {
                 LibraryEntryOutline(
                     state: state,
@@ -302,6 +339,7 @@ private struct LibraryEntryDetail: View {
         if rows.count == 1, let row = rows.first {
             detail(row)
         } else {
+            CenteredScrollView {
             VStack(spacing: 8) {
                 Image(systemName: "books.vertical")
                     .wwFont(.largeTitle)
@@ -314,8 +352,7 @@ private struct LibraryEntryDetail: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 
@@ -382,7 +419,6 @@ private struct LibraryEntryDetail: View {
 /// Library-window message bar (ST-32 and the honest in-memory notice). Persistent until dismissed.
 private struct LibraryMessageBar: View {
     @Bindable var state: LibraryWindowState
-    @State private var inMemoryNoticeDismissed = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -404,6 +440,17 @@ private struct LibraryMessageBar: View {
                     identifier: "ww.library.messageBar"
                 )
             }
+            if let conflicts = location.providerConflictNotice {
+                // #117: informational and persistent while the unusable versions exist (nothing to do in M1; the
+                // versions are kept, never applied). Text, not colour, carries the meaning.
+                MessageBar(
+                    heading: "Other copies of your library weren't used",
+                    message: conflicts,
+                    symbolName: "doc.on.doc",
+                    actions: [],
+                    identifier: "ww.library.messageBar.providerConflicts"
+                )
+            }
             if let result = location.resultMessage {
                 MessageBar(
                     heading: "Library",
@@ -422,15 +469,62 @@ private struct LibraryMessageBar: View {
                     identifier: "ww.library.messageBar"
                 )
             }
-            if !state.store.isDurable, !inMemoryNoticeDismissed {
+            if !state.store.isDurable, !state.inMemoryNoticeDismissed {
                 MessageBar(
                     heading: "The library isn't saved yet in this version",
                     message: "Collections and recent shows are kept only while WaveWrangler is open. Your shows aren't affected.",
                     symbolName: "info.circle",
-                    actions: [("Dismiss", { inMemoryNoticeDismissed = true })],
+                    actions: [("Dismiss", { state.inMemoryNoticeDismissed = true })],
                     identifier: "ww.library.messageBar.inMemory"
                 )
             }
         }
+    }
+}
+
+/// #109: content that is centred when it fits and scrolls when it doesn't (large in-app text, short windows),
+/// so it never raises its split-view column's minimum height above the window.
+struct CenteredScrollView<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        GeometryReader { viewport in
+            ScrollView {
+                content
+                    .padding()
+                    .frame(maxWidth: .infinity, minHeight: viewport.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+    }
+}
+
+/// #109: a message bar above the main content. The bar gets its natural height (0 pt when it shows nothing), at
+/// most `maxBarFraction` of the height (but at least `minBarCap`); the content gets the rest. The bar subview is
+/// proposed its capped height, so a `ViewThatFits` bar switches to scrolling when it doesn't fit.
+struct MessageBarStack: Layout {
+    let maxBarFraction: CGFloat
+    let minBarCap: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else { return }
+        let barHeight = Self.barHeight(
+            natural: subviews[0].sizeThatFits(ProposedViewSize(width: bounds.width, height: nil)).height,
+            available: bounds.height, maxBarFraction: maxBarFraction, minBarCap: minBarCap
+        )
+        subviews[0].place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: barHeight))
+        subviews[1].place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY + barHeight), anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height - barHeight)
+        )
+    }
+
+    static func barHeight(natural: CGFloat, available: CGFloat, maxBarFraction: CGFloat, minBarCap: CGFloat) -> CGFloat {
+        let cap = min(available, max(minBarCap, available * maxBarFraction))
+        return max(0, min(natural, cap))
     }
 }
