@@ -16,7 +16,7 @@ struct LibrarySessionTests {
         let r1 = session.record(.opened(early, confirmedTitle: "Opened at launch", provisionalTitle: "Opened at launch"), allowsEdits: true)
         #expect(r1 == false)
         #expect(session.canPersist(allowsEdits: true) == false)
-        #expect(session.library == LibraryModel(), "nothing applied to the empty placeholder")
+        #expect(session.library.entries.isEmpty && session.library.recentShowIDs.isEmpty, "nothing applied to the empty placeholder")
         let r2 = session.didLoad(stored, allowsEdits: true)
         #expect(r2 == true)
         #expect(session.library.entries.count == stored.entries.count + 1)

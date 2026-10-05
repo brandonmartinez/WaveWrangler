@@ -271,13 +271,47 @@ final class LibraryWindowState {
             return
         }
         Task {
-            await store.services.location.perform(action)
+            let followUp = await store.services.location.perform(action)
             switch action {
             case .combine, .useOtherMacsVersion, .recoverEarlierVersion, .grantAccess, .tryAgain:
                 await store.libraryWasReplaced()
             case .librarySettings:
                 break
             }
+            if case .offerDifferentLibrary(let folder) = followUp {
+                await offerDifferentLibrary(folderDisplayName: folder)
+            }
+        }
+    }
+
+    /// Grant Access… chose a folder with a different library: Use That Library · Choose Another Folder… ·
+    /// Cancel, no default button. Nothing has changed until the user chooses.
+    private func offerDifferentLibrary(folderDisplayName: String) async {
+        let wording = LibraryRegrantWording.differentLibrarySheet(folderDisplayName: folderDisplayName)
+        let alert = NSAlert()
+        alert.messageText = wording.title
+        alert.informativeText = wording.text
+        alert.addButton(withTitle: "Use That Library").keyEquivalent = ""
+        alert.addButton(withTitle: "Choose Another Folder…").keyEquivalent = ""
+        alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+        let response: NSApplication.ModalResponse
+        if let window, window.isVisible {
+            response = await withCheckedContinuation { continuation in
+                alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
+            }
+        } else {
+            response = alert.runModal()
+        }
+        switch response {
+        case .alertFirstButtonReturn:
+            if case .failed(let reason) = await store.services.location.useOfferedLibrary() {
+                actionMessage = "Couldn't use that library: \(reason)"
+            }
+            await store.libraryWasReplaced()
+        case .alertSecondButtonReturn:
+            perform(.grantAccess)
+        default:
+            break
         }
     }
 
