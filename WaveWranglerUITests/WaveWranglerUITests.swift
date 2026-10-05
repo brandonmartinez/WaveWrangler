@@ -79,6 +79,11 @@ final class WaveWranglerUITests: XCTestCase {
         if issue.auditType == .sufficientElementDescription, element.elementType == .group, !element.isEnabled {
             return "non-interactive layout container"
         }
+        // SwiftUI Picker's AppKit pop-up exposes AXShowMenu rather than AXPress; it opens with Space,
+        // VoiceOver (VO-Space) and click, as these tests and keyboard checks show.
+        if issue.auditType == .action, element.elementType == .popUpButton {
+            return "system pop-up button exposes AXShowMenu"
+        }
         // macOS injects the Siri waveform overlay (an untitled Dialog with a 'siri' button) into every
         // app's AX tree on this host; it is not WaveWrangler UI.
         if element.elementType == .dialog, element.title.isEmpty, element.buttons["siri"].exists {
@@ -127,7 +132,7 @@ final class WaveWranglerUITests: XCTestCase {
         let nameField = element("ww.dialog.name")
         waitFor(nameField)
         nameField.typeText("Season Two\r")
-        let created = app.outlines["ww.library.sidebar"].buttons.matching(NSPredicate(format: "label == %@", "Season Two, collection")).firstMatch
+        let created = app.outlines["ww.library.sidebar"].descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.sidebar.collection.' AND label == %@", "Season Two, collection")).firstMatch
         waitFor(created)
         XCTAssertEqual(app.outlines["ww.library.sidebar"].outlineRows.count, before + 1)
         app.menuBars.menuBarItems["Edit"].click()
@@ -137,7 +142,8 @@ final class WaveWranglerUITests: XCTestCase {
         // New collection is selected and empty; Move Up (⌥⌘↑) moves it above the last fixture collection.
         waitForValue(created, "0 items")
         app.typeKey(.upArrow, modifierFlags: [.command, .option])
-        let rows = app.outlines["ww.library.sidebar"].buttons.allElementsBoundByIndex.map(\.label)
+        let rows = app.outlines["ww.library.sidebar"].descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.sidebar.collection.'")).allElementsBoundByIndex.map(\.label)
         let moved = rows.firstIndex(of: "Season Two, collection")
         let last = rows.firstIndex(of: "Synthetic Collection 5, collection")
         XCTAssertNotNil(moved)
@@ -208,12 +214,13 @@ final class WaveWranglerUITests: XCTestCase {
         let title = element("ww.inspector.episode.title")
         waitFor(title)
         let number = element("ww.inspector.episode.number")
-        number.click()
-        number.typeKey("a", modifierFlags: .command)
-        number.typeText("abc")
+        app.typeKey("\t", modifierFlags: [])
+        app.typeKey("a", modifierFlags: .command)
+        app.typeText("abc")
         waitFor(app.staticTexts.matching(NSPredicate(format: "value == 'Number: Enter a whole number'")).firstMatch)
-        number.typeKey("a", modifierFlags: .command)
-        number.typeText("12\t")
+        app.typeKey("a", modifierFlags: .command)
+        app.typeText("12\t")
+        XCTAssertEqual(value(number), "12")
         waitFor(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "12 Pilot")).firstMatch)
 
         // K24: ⌘2 shows the blocked Alignment panel; Go to Setup returns.
