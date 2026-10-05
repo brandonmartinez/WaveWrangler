@@ -93,6 +93,8 @@ private struct WindowReader: NSViewRepresentable {
 struct EpisodeSetupView: View {
     @Bindable var model: EpisodeSetupModel
     var showsInspector: Bool
+    @Environment(\.setupTextScale) private var textScale
+    private var scale: Double { Double(textScale) }
     @FocusState private var focusedTable: EpisodeSetupModel.FocusedTable?
 
     var body: some View {
@@ -109,7 +111,7 @@ struct EpisodeSetupView: View {
                     Divider()
                     SetupInspectorView(model: model)
                         .frame(width: wide ? 300 : nil)
-                        .frame(maxHeight: wide ? .infinity : max(160, geometry.size.height * 0.4))
+                        .frame(maxHeight: wide ? .infinity : max(120, geometry.size.height * 0.25))
                         .focusSection()
                 }
             }
@@ -136,17 +138,22 @@ struct EpisodeSetupView: View {
         }
     }
 
+    /// Sources above Speakers. Speakers keeps a usable default share (about four rows minimum, scaled
+    /// with text size) and grows with the window (#89); the handle resizes it (drag or VoiceOver adjust).
     private var tables: some View {
-        VStack(spacing: 0) {
-            SourcesSection(model: model, focusedTable: $focusedTable)
-                .frame(minHeight: 120, maxHeight: .infinity)
-                .layoutPriority(2)
-                .focusSection()
-            Divider()
-            SpeakersSection(model: model, focusedTable: $focusedTable)
-                .frame(minHeight: 100, maxHeight: .infinity)
-                .layoutPriority(1)
-                .focusSection()
+        GeometryReader { geometry in
+            let handle = 9.0 * scale
+            let split = SetupSplitLayout.heights(total: geometry.size.height - handle, scale: scale, speakersFraction: model.speakersFraction)
+            VStack(spacing: 0) {
+                SourcesSection(model: model, focusedTable: $focusedTable)
+                    .frame(height: split.sources)
+                    .focusSection()
+                SplitHandle(fraction: $model.speakersFraction, total: geometry.size.height, height: handle)
+                SpeakersSection(model: model, focusedTable: $focusedTable)
+                    .frame(height: split.speakers)
+                    .focusSection()
+            }
+            .coordinateSpace(name: SplitHandle.space)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -308,13 +315,13 @@ private struct SourcesTable: View {
                 NameCell(row: row)
             }
             .width(min: 140, ideal: 220)
-            TableColumn("Epoch") { row in CellView(cell: row.epoch, label: "Epoch", identifier: "\(row.id.accessibilityIdentifier).epoch") }
+            TableColumn("Epoch") { row in SourceCell(row: row, cell: row.epoch, label: "Epoch", column: "epoch") }
                 .width(min: 44 * scale, ideal: 54 * scale)
-            TableColumn("Ch") { row in CellView(cell: row.channel, label: "Channel", identifier: "\(row.id.accessibilityIdentifier).channel") }
+            TableColumn("Ch") { row in SourceCell(row: row, cell: row.channel, label: "Channel", column: "channel") }
                 .width(min: 36 * scale, ideal: 44 * scale)
-            TableColumn("Speaker") { row in CellView(cell: row.speaker, label: "Speaker", identifier: "\(row.id.accessibilityIdentifier).speaker") }
+            TableColumn("Speaker") { row in SourceCell(row: row, cell: row.speaker, label: "Speaker", column: "speaker") }
                 .width(min: 70, ideal: 110)
-            TableColumn("Role") { row in CellView(cell: row.role, label: "Role", identifier: "\(row.id.accessibilityIdentifier).role") }
+            TableColumn("Role") { row in SourceCell(row: row, cell: row.role, label: "Role", column: "role") }
                 .width(min: 70, ideal: 120)
             TableColumn("Status") { row in
                 if let status = row.status, case let .source(id) = row.id {
@@ -375,14 +382,37 @@ private struct NameCell: View {
     }
 }
 
+/// A Sources-outline cell. Group rows have no epoch/channel/speaker/role, so those cells are empty (the
+/// group row's own label carries its meaning).
+private struct SourceCell: View {
+    let row: SetupSourceRow
+    let cell: CellText
+    let label: String
+    let column: String
+
+    var body: some View {
+        if case .group = row.id {
+            EmptyView()
+        } else {
+            CellView(cell: cell, label: label, identifier: "\(row.id.accessibilityIdentifier).\(column)")
+        }
+    }
+}
+
 private struct CellView: View {
     let cell: CellText
     let label: String
     let identifier: String
 
+    static func isPlaceholder(_ cell: CellText) -> Bool { cell == .none || cell == .unknown }
+
     var body: some View {
         Text(cell.text)
             .setupFont(.body)
+            // Single-glyph placeholders ("—" none, "?" unknown) are drawn bold so their thin strokes keep
+            // full label-colour contrast (#100); the VoiceOver value says "none" / "unknown".
+            .fontWeight(Self.isPlaceholder(cell) ? .bold : nil)
+            .foregroundStyle(.primary)
             .lineLimit(2)
             .accessibilityLabel(label)
             .accessibilityValue(cell.accessibilityValue)
@@ -641,5 +671,43 @@ enum SetupSettingsLink {
     @MainActor
     static func open() {
         SettingsWindowController.show(pane: .sources)
+    }
+}
+
+/// Resize handle between the Sources and Speakers tables. Default sizes are usable without it (CMD §5);
+/// VoiceOver users adjust it with increment/decrement.
+private struct SplitHandle: View {
+    static let space = "ww.setup.tables"
+    @Binding var fraction: Double
+    let total: Double
+    let height: Double
+    @State private var hovering = false
+
+    var body: some View {
+        ZStack {
+            Color.clear
+            Divider()
+        }
+        .frame(height: height)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            guard inside != hovering else { return }
+            hovering = inside
+            if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .named(Self.space))
+                .onChanged { value in
+                    fraction = SetupSplitLayout.fraction(forHandleAt: value.location.y, total: total)
+                }
+        )
+        // Exposed as a slider (increment/decrement by 5%), so assistive tech gets a real role and value.
+        .accessibilityRepresentation {
+            Slider(value: $fraction, in: SetupSplitLayout.fractionRange, step: 0.05) {
+                Text("Speakers table height")
+            }
+            .accessibilityValue("\(Int((fraction * 100).rounded())) percent")
+            .accessibilityIdentifier("ww.setup.split")
+        }
     }
 }

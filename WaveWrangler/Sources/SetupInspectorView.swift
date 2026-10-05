@@ -31,6 +31,9 @@ struct SetupInspectorView: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // The toolbar's top scroll-edge effect softens the first rows under it, which fails the contrast
+        // audit for essential text; the details panel has its own opaque background instead.
+        .scrollEdgeEffectHidden(true, for: .top)
         .background(Color(nsColor: .textBackgroundColor))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Selection details")
@@ -72,9 +75,15 @@ private struct SourceInspector: View {
 
     var body: some View {
         Text("Source").setupFont(.headline).accessibilityAddTraits(.isHeader)
-        LabeledContent("Name") {
-            Text(source.displayNameHint).setupFont(.body).textSelection(.enabled).lineLimit(3)
+        // Plain label-colour text (not LabeledContent's secondary value, not a selectable field AppKit
+        // dims): the file name is essential text.
+        HStack(alignment: .firstTextBaseline) {
+            Text("Name").setupFont(.body)
+            Spacer()
+            Text(source.displayNameHint).setupFont(.body).foregroundStyle(.primary).lineLimit(3).multilineTextAlignment(.trailing)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("ww.inspector.source.name")
         .setupFont(.body)
 
         Picker("Recorder group", selection: groupBinding) {
@@ -291,9 +300,9 @@ private struct RecordedFactsView: View {
         let facts = SetupPresentation.recordedFacts(for: source)
         VStack(alignment: .leading, spacing: 4) {
             Text("Recording").setupFont(.subheadline, weight: .semibold).accessibilityAddTraits(.isHeader)
-            LabeledContent("Duration") { Text(facts.duration.text) }
-            LabeledContent("Channels") { Text(facts.channelCount.text) }
-            LabeledContent("Sample rate") { Text(facts.sampleRate.text) }
+            HStack { Text("Duration"); Spacer(); Text(facts.duration.text).foregroundStyle(.primary) }.accessibilityElement(children: .combine)
+            HStack { Text("Channels"); Spacer(); Text(facts.channelCount.text).foregroundStyle(.primary) }.accessibilityElement(children: .combine)
+            HStack { Text("Sample rate"); Spacer(); Text(facts.sampleRate.text).foregroundStyle(.primary) }.accessibilityElement(children: .combine)
             Text("WaveWrangler doesn't read audio in this version, so these stay Unknown.")
                 .setupFont(.callout)
                 

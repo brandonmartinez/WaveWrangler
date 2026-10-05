@@ -24,6 +24,9 @@ public enum AccessStatus: Hashable, Sendable {
     case needsPermission
     case denied
     case unknown(reason: String)
+    /// Not applicable right now (e.g. the file isn't at its location, so there is nothing to grant).
+    /// Never shown as a permission problem.
+    case notChecked(reason: String)
 }
 
 public enum ResidencyStatus: Hashable, Sendable {
@@ -185,6 +188,8 @@ extension AccessStatus {
             .init(.access, "macOS or the file's owner denied access", .symbol("hand.raised.slash"), summary: "Access denied", spoken: "access denied", priority: 1, attention: true, tint: .failed)
         case let .unknown(reason):
             .init(.access, "Permission unknown — \(reason)", .symbol("questionmark.circle"), summary: "Permission unknown", spoken: "permission unknown", priority: 1, attention: true, tint: .secondary)
+        case let .notChecked(reason):
+            .init(.access, "Not checked — \(reason)", .symbol("questionmark.circle"), summary: nil, spoken: nil, priority: nil, tint: .secondary)
         }
     }
 }
@@ -341,7 +346,7 @@ public enum SourceStatusCatalog {
     ]
 
     public static let allLocations: [LocationStatus] = [.checking, .known, .moved(newFolder: "Archive"), .moved(newFolder: nil), .missing(sameNamedFileAtOriginalLocation: false), .missing(sameNamedFileAtOriginalLocation: true), .unknown(reason: "the drive isn't connected")]
-    public static let allAccess: [AccessStatus] = [.checking, .granted, .refreshing, .needsPermission, .denied, .unknown(reason: "macOS didn't say")]
+    public static let allAccess: [AccessStatus] = [.checking, .granted, .refreshing, .needsPermission, .denied, .unknown(reason: "macOS didn't say"), .notChecked(reason: "the file wasn't found")]
     public static let allResidency: [ResidencyStatus] = [.checking, .local, .cloudOnly, .unknown]
     public static let allTransfers: [TransferStatus] = [.idle, .queued, .downloading(fraction: 0.42), .downloading(fraction: nil), .paused, .cancelled, .failed(reason: "the cloud service stopped responding"), .noConnection, .downloadsOff, .unsupportedLocation, .providerMayFinish]
     public static let allIdentity: [IdentityStatus] = [.checking, .notChecked, .detailsMatch, .changed(differences: "size differs", acceptedByUser: false), .changed(differences: "size differs", acceptedByUser: true), .mismatch(differences: "size and created date differ")]

@@ -118,10 +118,6 @@ final class LibraryWorkspaceUITests: XCTestCase {
            toolbarFrames.contains(where: { $0.insetBy(dx: -1, dy: -1).contains(element.frame) }) {
             return "system window title text"
         }
-        // Tracked in #100 (P2, sources lane): Setup table placeholder cells fail contrast.
-        if issue.auditType == .contrast, element.identifier.hasPrefix("ww.setup.") {
-            return "issue #100: setup table placeholder contrast (tracked)"
-        }
         // macOS injects the Siri waveform overlay (an untitled Dialog with a 'siri' button) into every
         // app's AX tree on this host; it is not WaveWrangler UI.
         if element.elementType == .dialog, element.title.isEmpty, element.buttons["siri"].exists {
