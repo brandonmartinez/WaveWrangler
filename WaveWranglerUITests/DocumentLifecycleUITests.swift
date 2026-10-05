@@ -293,15 +293,9 @@ final class DocumentLifecycleUITests: XCTestCase {
             "-WWUITestAutosave", autosave ? "ON" : "OFF",
             "-ApplePersistenceIgnoreState", "YES",
         ] + extraArguments
-        app.launch()
-        // A clean launch-time Untitled show would host the document as a tab; close it first (clean ⇒ no prompt).
-        let untitled = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
-        if untitled.waitForExistence(timeout: 3) {
-            untitled.click()
-            app.typeKey("w", modifierFlags: .command)
-            _ = waitFor(timeout: 3) { !untitled.exists }
-        }
-        app.open(document)
+        // One launch, opening the document: not launch() + open(), which starts two app processes (see
+        // `XCUIApplication.launchOnce(opening:)`). Launched for a document, the app opens no Untitled show.
+        app.launchOnce(opening: document)
         let name = document.deletingPathExtension().lastPathComponent
         let window = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", name)).firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "document window opened")
