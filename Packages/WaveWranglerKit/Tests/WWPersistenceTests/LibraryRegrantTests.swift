@@ -120,6 +120,42 @@ struct LibraryRegrantTests {
         #expect(rr.rig.settings.load() == settingBefore)
     }
 
+    /// #60 review repro 2: after "Use That Library" the old library's higher-revision priors must not be taken
+    /// for this library's identity or its read-only prior.
+    @Test func regrantAfterUseThatLibraryUsesTheNewIdentity() async throws {
+        let rig = LibraryRig("regrant-use-that")
+        let bookmarks = RevocableBookmarks()
+        func store() -> LibraryStore {
+            LibraryStore(containerFolder: rig.container, settings: rig.settings, bookmarks: bookmarks,
+                         recovery: rig.recovery, indexCache: LibraryIndexCache(url: rig.cacheURL))
+        }
+        // Library A in the container, revision 10.
+        let a = store()
+        _ = await a.load()
+        for index in 1...9 {
+            _ = try await a.update { var l = $0; l.collections.append(LibraryCollection(name: "A \(index)")); return l }
+        }
+        guard case .ready(revision: 10) = await a.reload() else { Issue.record("A not at r10"); return }
+        let aID = try #require(await a.library?.libraryID)
+        // Library B (a different library) in a folder, revision 1.
+        let folder = rig.dir.sub("B Folder")
+        let b = LibraryModel(collections: [LibraryCollection(name: "B")])
+        _ = try DocumentPublisher(coder: LibraryCoder.library, recovery: nil)
+            .publish(b, revision: 1, key: .library, to: folder.appending(path: LibraryLocationSetting.defaultFileName), target: .newLocation)
+        guard case .success(.combined) = await a.useLibrary(in: folder) else { Issue.record("combine failed"); return }
+        #expect(await a.library?.libraryID == b.libraryID)
+        #expect(rig.settings.load().libraryID == b.libraryID)
+
+        bookmarks.revoke(folder)
+        let locked = store()
+        guard case let .unavailableShowingPrior(_, revision) = await locked.load() else { Issue.record("expected L3"); return }
+        #expect(revision == 2, "the read-only prior is B's own verified revision, not A's r10")
+        #expect(await locked.library?.libraryID == b.libraryID)
+        #expect(await locked.expectedLibraryID() == b.libraryID)
+        #expect(aID != b.libraryID)
+        guard case .regranted(.ready(revision: 2), nil) = await locked.regrantAccess(to: folder) else { Issue.record("expected regrant of B"); return }
+    }
+
     @Test func reloadReadoptsAfterUseOtherVersion() async throws {
         let rr = try await RegrantRig()
         let store = rr.store()
@@ -157,6 +193,30 @@ struct LibrarySchemaUpgradeTests {
         #expect(upgraded.payload.libraryID == id && upgraded.payload.collections.map(\.name) == ["Old", "New"])
         let backups = try rig.recovery.migrationBackups(for: .library)
         #expect(try backups.map { try Data(contentsOf: $0) }.contains(original), "schema 1 bytes kept as a non-overwriting backup")
+    }
+
+    /// #60 review repro 1: two stores upgrade the same schema 1 file; the second must see a conflict (L4),
+    /// not a permanent "couldn't be backed up" failure.
+    @Test func concurrentSchema1UpgradeIsAConflict() async throws {
+        let rig = LibraryRig("schema1-conflict")
+        let shows = (0..<2).map { Fixtures.show(seed: 6_000 + UInt64($0)) }
+        let original = try Self.schema1Bytes(entries: shows.map { LibraryShowEntry(showID: $0.show.id, lastKnownTitle: $0.show.title) })
+        try original.write(to: rig.containerFile)
+        let a = rig.store(), b = rig.store()
+        _ = await a.load()
+        _ = await b.load()
+        guard case .published = try await b.update({ var l = $0; l.collections.append(LibraryCollection(name: "From B")); return l })
+        else { Issue.record("B failed"); return }
+        let afterB = try Data(contentsOf: rig.containerFile)
+        guard case .failed(.conflict) = try await a.update({ var l = $0; l.collections.append(LibraryCollection(name: "From A")); return l })
+        else { Issue.record("expected conflict"); return }
+        #expect(await a.levelState == .changedElsewhere)
+        #expect(try Data(contentsOf: rig.containerFile) == afterB, "nothing overwritten")
+        #expect(try rig.recovery.migrationBackups(for: .library).map { try Data(contentsOf: $0) } == [original],
+                "only the genuine original was backed up")
+        guard case .success = await a.resolveConflictByCombining() else { Issue.record("combine failed"); return }
+        let names = try LibraryCoder.library.decode(Data(contentsOf: rig.containerFile)).payload.collections.map(\.name)
+        #expect(names.contains("From A") && names.contains("From B"))
     }
 
     @Test func schema1TamperingIsRefused() throws {

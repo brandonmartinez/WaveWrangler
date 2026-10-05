@@ -214,7 +214,7 @@ public actor LibraryStore {
         }
         let url = folder.appending(path: settings.load().fileName)
         if !publisher.ops.exists(url) {
-            let candidates = opener.candidates(url: url, key: .library)
+            let candidates = libraryCandidates(url: url)
             if !candidates.isEmpty {
                 return .damaged(reason: "The library file is missing.", recoveryRevisions: candidates.map(\.document.revision))
             }
@@ -230,13 +230,14 @@ public actor LibraryStore {
             library = document.payload
             refreshIndex(digest: fingerprint.byteDigest)
             retainVerifiedCurrent(at: url, fingerprint: fingerprint)
+            recordLocationIdentity(document.payload.libraryID)
             return .ready(revision: document.revision)
         case let .refusedNewerFormat(found, supported, _):
             return .refusedNewerFormat(found: found, supported: supported)
         case let .needsMigration(schema, _):
             return .needsMigration(fromSchema: schema)
-        case let .damaged(error, candidates):
-            return .damaged(reason: error.errorDescription ?? "\(error)", recoveryRevisions: candidates.map(\.document.revision))
+        case let .damaged(error, _):
+            return .damaged(reason: error.errorDescription ?? "\(error)", recoveryRevisions: libraryCandidates(url: url).map(\.document.revision))
         case let .unreadable(kind, detail, _):
             return showPriorReadOnly(reason: kind == .permissionDenied ? "Permission to the library must be granted again." : detail)
         }
@@ -244,7 +245,7 @@ public actor LibraryStore {
 
     /// C2a: an unreachable location shows the last validated prior read-only; never a new empty library.
     private func showPriorReadOnly(reason: String) -> LibraryLoadOutcome {
-        guard let prior = opener.candidates(url: nil, key: .library).first else { return .unavailable(reason: reason) }
+        guard let prior = libraryCandidates(url: nil).first else { return .unavailable(reason: reason) }
         library = prior.document.payload
         displayedBase = prior.checkpoint.fingerprint
         displayedBaseBytes = try? recovery.bytes(of: prior.checkpoint)
@@ -262,6 +263,7 @@ public actor LibraryStore {
             return false
         }
         adopt(session)
+        recordLocationIdentity(empty.libraryID)
         return true
     }
 
@@ -492,7 +494,7 @@ public actor LibraryStore {
     private func recoverAsNewCopyUnlocked(revision: Int) async -> Result<PublicationReceipt, PublicationError> {
         guard let folder = resolveFolder() else { return .failure(.failed(stage: .candidateValidated, kind: .unavailable, detail: "location unavailable")) }
         let current = folder.appending(path: settings.load().fileName)
-        guard let candidate = opener.candidates(url: current, key: .library).first(where: { $0.document.revision == revision }) else {
+        guard let candidate = libraryCandidates(url: current).first(where: { $0.document.revision == revision }) else {
             return .failure(.failed(stage: .candidateValidated, kind: .other, detail: "no checkpoint at revision \(revision)"))
         }
         let name = "Library (Recovered r\(revision) \(UUID().uuidString.prefix(8))).wwlibrary"
@@ -569,7 +571,7 @@ public actor LibraryStore {
         let place: () throws -> LibraryLocationSetting.Place = {
             isContainer ? .appContainer : .folder(bookmark: try self.bookmarks.bookmark(for: folder), displayPath: folder.path)
         }
-        return await switchSetting(place: place, outcome: .combined(into: destination, previousCopyKept: previous, summary: summary))
+        return await switchSetting(place: place, libraryID: combined.libraryID, outcome: .combined(into: destination, previousCopyKept: previous, summary: summary))
     }
 
     private func relocate(to folder: URL, place: () throws -> LibraryLocationSetting.Place) async -> Result<LibraryMoveOutcome, PublicationError> {
@@ -600,7 +602,7 @@ public actor LibraryStore {
                 return .success(.destinationUnusable(destination, reason: "The existing file could not be read."))
             }
             if RevisionFingerprint.digest(existing) == base.byteDigest {
-                return await switchSetting(place: place, outcome: .adoptedIdentical(destination))
+                return await switchSetting(place: place, libraryID: current.payload.libraryID, outcome: .adoptedIdentical(destination))
             }
             if let decoded = try? publisher.coder.decode(existing) {
                 return .success(.destinationHasLibrary(destination, revision: decoded.revision))
@@ -622,13 +624,14 @@ public actor LibraryStore {
             return .failure(.failed(stage: .candidateValidated, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
         }
         // (4) switch; the previous copy stays where it was.
-        return await switchSetting(place: place, outcome: .moved(to: destination, previousCopyKept: sourceURL))
+        return await switchSetting(place: place, libraryID: current.payload.libraryID, outcome: .moved(to: destination, previousCopyKept: sourceURL))
     }
 
-    private func switchSetting(place: () throws -> LibraryLocationSetting.Place, outcome: LibraryMoveOutcome) async -> Result<LibraryMoveOutcome, PublicationError> {
+    private func switchSetting(place: () throws -> LibraryLocationSetting.Place, libraryID: LibraryID, outcome: LibraryMoveOutcome) async -> Result<LibraryMoveOutcome, PublicationError> {
         var setting = settings.load()
         do {
             setting.place = try place()
+            setting.libraryID = libraryID
             try settings.save(setting)
         } catch {
             return .failure(.failed(stage: .readBackVerified, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
@@ -683,13 +686,39 @@ public actor LibraryStore {
         await exclusively { await regrantAccessUnlocked(to: folder) }
     }
 
-    /// The identity of the library this Mac was last using: queued edits first, then the library shown, then
-    /// the latest verified or retained revision. `nil` when nothing is known.
+    /// The identity of the library this Mac uses: the identity recorded with the location setting when it was
+    /// last verified (load, move/combine, Grant Access), else queued edits, the library shown, or the newest
+    /// verified record. `nil` when nothing is known.
     public func expectedLibraryID() -> LibraryID? {
+        if let recorded = settings.load().libraryID { return recorded }
         if let pendingEdits, let queued = try? publisher.coder.decode(pendingEdits.snapshot) { return queued.payload.libraryID }
         if let library { return library.libraryID }
-        let known = (try? recovery.validatedCheckpoints(for: .library, coder: publisher.coder)) ?? []
-        return known.first?.document.payload.libraryID
+        return libraryCandidates(url: nil).first?.document.payload.libraryID
+    }
+
+    /// Whole validated recovery records of **this** library (by the expected identity), the verified-current
+    /// record first, then priors newest first. Records of other libraries kept under the same key (for example
+    /// the previous library after "Use That Library") are never offered as this library's.
+    private func libraryCandidates(url: URL?) -> [RecoveryCandidate<LibraryModel>] {
+        let all = opener.candidates(url: url, key: .library)
+        let identity = settings.load().libraryID
+            ?? pendingEdits.flatMap { try? publisher.coder.decode($0.snapshot).payload.libraryID }
+            ?? recovery.verifiedCurrent(for: .library).flatMap { try? publisher.coder.decode(recovery.bytes(of: $0)).payload.libraryID }
+        let current = recovery.verifiedCurrent(for: .library)?.fingerprint.byteDigest
+        return all
+            .filter { identity == nil || $0.document.payload.libraryID == identity }
+            .sorted { lhs, rhs in
+                let lhsCurrent = lhs.checkpoint.fingerprint.byteDigest == current, rhsCurrent = rhs.checkpoint.fingerprint.byteDigest == current
+                if lhsCurrent != rhsCurrent { return lhsCurrent }
+                return lhs.document.revision > rhs.document.revision
+            }
+    }
+
+    private func recordLocationIdentity(_ id: LibraryID) {
+        var setting = settings.load()
+        guard setting.libraryID != id else { return }
+        setting.libraryID = id
+        try? settings.save(setting)
     }
 
     private func regrantAccessUnlocked(to folder: URL) async -> LibraryRegrantOutcome {
@@ -733,6 +762,7 @@ public actor LibraryStore {
         updated.place = folder.standardizedFileURL == containerFolder.standardizedFileURL
             ? .appContainer
             : .folder(bookmark: bookmark, displayPath: folder.path)
+        updated.libraryID = found.payload.libraryID
         do {
             try settings.save(updated)
         } catch {
@@ -802,12 +832,16 @@ public actor LibraryStore {
 
     private func save(_ session: CanonicalDocumentSession<LibraryCoder>) async -> Result<PublicationReceipt, PublicationError> {
         // Upgrading a schema 1 library: keep its exact bytes as a non-overwriting migration backup first.
+        // Only when the coordinated on-disk bytes are still exactly that base: if another writer replaced them,
+        // they are not the original being replaced and the publisher's base check reports the conflict (L4).
         if let base = await session.base, base.schemaVersion == 1 {
             let url = await session.url
-            guard let original = try? publisher.ops.read(url), RevisionFingerprint.digest(original) == base.byteDigest,
-                  (try? recovery.preserveMigrationBackup(original, schemaVersion: 1, for: .library)) != nil
-            else {
-                return .failure(.failed(stage: .candidateValidated, kind: .other, detail: "The previous library format couldn't be backed up before updating."))
+            let ops = publisher.ops
+            if let original = try? publisher.coordination.coordinateReading(at: url, { try ops.read($0) }),
+               RevisionFingerprint.digest(original) == base.byteDigest {
+                guard (try? recovery.preserveMigrationBackup(original, schemaVersion: 1, for: .library)) != nil else {
+                    return .failure(.failed(stage: .candidateValidated, kind: .other, detail: "The previous library format couldn't be backed up before updating."))
+                }
             }
         }
         let cache = indexCache
