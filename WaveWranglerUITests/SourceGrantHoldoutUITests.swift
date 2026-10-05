@@ -97,7 +97,7 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         check(Acceptance.waitFor(timeout: 10) { self.statuses(names)[names[0]]?.contains("permission") == true },
               "without a record the source needs permission (never Not found): \(statuses(names))")
         select(names[0])
-        Acceptance.record(self, "REF-020 before Grant Access: outline \(app.outlines["ww.setup.sources"].value ?? "nil"), inspector access \(element("ww.inspector.access").value ?? "nil")")
+        Acceptance.record(self, "REF-020 before Grant Access: outline \(app.outlines["ww.setup.sources"].value ?? "nil"), inspector access \(element("ww.inspector.access").exists ? "\(element("ww.inspector.access").value ?? "nil")" : "not shown")")
         var granted = menu("Source", "Grant Access…")
         if !granted {
             // Fallback: the row's context menu (records that the menu-bar item was unavailable).
