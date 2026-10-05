@@ -37,7 +37,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
     /// T01 (K01): ⌘N → save panel (location first) → name + folder by keyboard → Create → new show window.
     func testT01CreateShowFromSavePanel() throws {
         try task("T01") {
-            launch([])
+            launch(["-WWUITestResetStorage", "YES"])
             app.typeKey("n", modifierFlags: .command)
             check(app.buttons["Create"].waitForExistence(timeout: 5), "save panel shown (Create button)")
             app.typeKey("a", modifierFlags: .command)
@@ -81,7 +81,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
         app.terminate()
         let metadata = try makeDocument("Metadata T03")
         try task("T03 + T15") {
-            let window = try launchAndOpen(metadata, autosave: false)
+            let window = try launchAndOpen(metadata, autosave: false, freshStorage: false)
             let document = metadata
             window.typeKey("i", modifierFlags: .command)
             let title = element("ww.inspector.episode.title")
@@ -239,7 +239,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
         try JSONSerialization.data(withJSONObject: object).write(to: document)
         let bytes = try Data(contentsOf: document)
         try task("T20") {
-            _ = try openOptionally(document, autosave: true)
+            _ = try openOptionally(document, autosave: true, freshStorage: true)
             Thread.sleep(forTimeInterval: 2)
             let texts = app.descendants(matching: .staticText).allElementsBoundByIndex.prefix(40).map { "\($0.value ?? $0.label)" }
             Acceptance.record(self, "T20 after open: windows \(app.windows.allElementsBoundByIndex.map(\.title)) texts \(texts)")
@@ -302,8 +302,10 @@ final class CoreTasksKeyboardUITests: XCTestCase {
     }
 
     @discardableResult
-    private func openOptionally(_ document: URL, autosave: Bool, expectWindow: Bool = false) throws -> XCUIElement? {
-        launch(["-WWUITestAutosave", autosave ? "ON" : "OFF"])
+    /// `freshStorage` deletes the isolated UI-test storage (library, recovery, edit checkpoints) left by earlier
+    /// suites, e.g. the DUR-026 checkpoint scenario, whose restore offer would otherwise cover the window.
+    private func openOptionally(_ document: URL, autosave: Bool, expectWindow: Bool = false, freshStorage: Bool = false) throws -> XCUIElement? {
+        launch(["-WWUITestAutosave", autosave ? "ON" : "OFF"] + (freshStorage ? ["-WWUITestResetStorage", "YES"] : []))
         app.open(document)
         let name = document.deletingPathExtension().lastPathComponent
         let window = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", name)).firstMatch
@@ -318,8 +320,8 @@ final class CoreTasksKeyboardUITests: XCTestCase {
         return app.windows.matching(identifier: "ww.show.window").firstMatch
     }
 
-    private func launchAndOpen(_ document: URL, autosave: Bool) throws -> XCUIElement {
-        guard let window = try openOptionally(document, autosave: autosave, expectWindow: true) else {
+    private func launchAndOpen(_ document: URL, autosave: Bool, freshStorage: Bool = true) throws -> XCUIElement {
+        guard let window = try openOptionally(document, autosave: autosave, expectWindow: true, freshStorage: freshStorage) else {
             throw NSError(domain: "CoreTasks", code: 1)
         }
         return window
