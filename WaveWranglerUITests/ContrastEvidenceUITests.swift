@@ -117,6 +117,19 @@ final class ContrastEvidenceUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.5)
         app.typeKey(.return, modifierFlags: [])
         Thread.sleep(forTimeInterval: 1.5)
+        // Episode inspector labels (flagged for contrast in a Setup audit): measure from pixels.
+        let inspector = app.descendants(matching: .any).matching(identifier: "ww.inspector").firstMatch
+        var labels: [[String: Any]] = []
+        for text in ["Episode", "Title", "Number", "Recording date", "Notes"] {
+            let label = inspector.staticTexts.matching(NSPredicate(format: "value == %@ OR label == %@", text, text)).firstMatch
+            guard label.exists else { continue }
+            let shot = label.screenshot()
+            Acceptance.attach(self, png: shot.pngRepresentation, name: "inspector-label-\(text).png")
+            labels.append(["label": text, "frame": "\(label.frame)"].merging(ContrastMeter.measure(shot.image) ?? [:]) { $1 })
+        }
+        Acceptance.record(self, "Episode inspector labels: \(labels.map { "\($0["label"] ?? ""): \($0["ratio"] ?? "n/a") \($0["text"] ?? "") on \($0["background"] ?? "")" })")
+        Acceptance.writeEvidence("contrast-episode-inspector-labels", ["revision": Acceptance.revision(), "labels": labels], test: self)
+        _ = try AcceptanceAudit.run(app, surface: "Setup with episode inspector", test: self)
         for (key, name) in [("1", "setup"), ("2", "alignment-blocked")] {
             window.typeKey(key, modifierFlags: .command)
             Thread.sleep(forTimeInterval: 1)
