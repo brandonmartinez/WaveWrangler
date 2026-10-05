@@ -31,6 +31,15 @@ final class EpisodeSetupUITests: XCTestCase {
         app?.terminate()
     }
 
+    /// Keeps the app's accessibility tree with the result bundle when a step misbehaves.
+    private func attachState(_ name: String) {
+        let attachment = XCTAttachment(string: app.debugDescription)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        add(XCTAttachment(screenshot: app.screenshot()))
+    }
+
     /// The synthetic show opens on its first episode; View › Setup (⌘1) makes sure Setup is shown.
     private func openSetup() throws {
         let sources = app.descendants(matching: .any)["ww.setup.sources"]
@@ -224,6 +233,7 @@ final class EpisodeSetupUITests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 2))
         XCTAssertFalse(field.isEnabled, "channel starts Unknown")
         element("ww.setup.numberUnknown").click()
+        XCTAssertTrue(app.textFields.matching(NSPredicate(format: "identifier == 'ww.setup.numberField' AND enabled == true")).firstMatch.waitForExistence(timeout: 3), "field enabled after turning off Unknown")
         field.click()
         field.typeText("0")
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
@@ -294,8 +304,10 @@ final class EpisodeSetupUITests: XCTestCase {
         let confirm = element("ww.relink.confirm")
         XCTAssertEqual(confirm.label, "Use This File Anyway")
         XCTAssertFalse(confirm.isEnabled, "needs the acknowledgement checkbox")
-        element("ww.relink.acknowledge").click()
-        XCTAssertTrue(confirm.isEnabled)
+        let acknowledge = element("ww.relink.acknowledge")
+        acknowledge.click()
+        if !confirm.isEnabled { attachState("relink after acknowledge") }
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier == 'ww.relink.confirm' AND enabled == true")).firstMatch.waitForExistence(timeout: 3), "acknowledgement enables Use This File Anyway (checkbox value \(acknowledge.value ?? "nil"))")
         confirm.click()
         app.menuBars.menuBarItems["Edit"].click()
         XCTAssertTrue(app.menuItems["Undo Relink “intro.wav”"].waitForExistence(timeout: 3))
@@ -321,7 +333,7 @@ final class EpisodeSetupUITests: XCTestCase {
     func testSpeakersTableIsUsableAndGrowsWithTheWindow() {
         let speakers = app.outlines["ww.setup.speakers"]
         XCTAssertTrue(speakers.waitForExistence(timeout: 5))
-        let rowsAt100 = 28.0 + 4 * 22.0  // column header + four rows
+        let rowsAt100 = 28.0 + 3 * 22.0  // column header + three rows (Sources has priority when short, #104)
         let zoomed = speakers.frame.height
         XCTAssertGreaterThanOrEqual(zoomed, rowsAt100, "zoomed window: \(zoomed) pt")
 
@@ -449,7 +461,10 @@ final class EpisodeSetupUITests: XCTestCase {
         let confirmation = app.sheets.firstMatch
         XCTAssertTrue(confirmation.buttons["Keep Downloading"].waitForExistence(timeout: 2), "cancel asks when progress may be lost")
         confirmation.buttons["Cancel Download"].click()
-        XCTAssertTrue(waitForValue("ww.inspector.transfer", beginsWith: "Download cancelled"))
+        if !waitForValue("ww.inspector.transfer", beginsWith: "Download cancelled") {
+            attachState("after Cancel Download")
+            XCTFail("transfer reads \(value("ww.inspector.transfer") ?? "nil")")
+        }
 
         select("offline.wav")
         XCTAssertEqual(value("ww.inspector.transfer"), "Can't download — no network connection. Checked \(checkedTime())")

@@ -403,6 +403,11 @@ private struct SourcesTable: View {
         } primaryAction: { _ in
             model.requestInspectorFocus()
         }
+        // Return (K08/K09): move to the details' first editable field, opening them if collapsed.
+        .onKeyPress(.return) {
+            model.requestInspectorFocus()
+            return .handled
+        }
         .onDeleteCommand { model.requestDeleteFromSources() }
         .onChange(of: model.selection) { model.inspectorFollowsSpeakers = false }
         .environment(\.defaultMinListRowHeight, 22 * scale)
@@ -435,15 +440,15 @@ private struct NameCell: View {
         .accessibilityIdentifier(row.id.accessibilityIdentifier)
     }
 
-    /// Values of columns hidden for width, so VoiceOver users don't lose them.
+    /// The name, then values of columns hidden for width, so VoiceOver users don't lose them.
     private var hiddenSummary: String {
-        guard case .source = row.id else { return "" }
+        guard case .source = row.id else { return row.name }
         var parts: [String] = []
         if hidden.contains(.epoch) { parts.append("epoch \(row.epoch.accessibilityValue)") }
         if hidden.contains(.channel) { parts.append("channel \(row.channel.accessibilityValue)") }
         if hidden.contains(.speaker) { parts.append("speaker \(row.speaker.accessibilityValue)") }
         if hidden.contains(.role) { parts.append("role \(row.role.accessibilityValue)") }
-        return parts.joined(separator: ", ")
+        return ([row.name] + parts).joined(separator: ", ")
     }
 }
 
@@ -604,6 +609,10 @@ private struct SpeakersSection: View {
                 SpeakerContextMenu(model: model, ids: ids)
             } primaryAction: { _ in
                 model.requestInspectorFocus()
+            }
+            .onKeyPress(.return) {
+                model.requestInspectorFocus()
+                return .handled
             }
             .onDeleteCommand {
                 if let id = model.speakerSelection.first { model.confirmation = .deleteSpeaker(id) }

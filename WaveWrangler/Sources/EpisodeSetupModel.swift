@@ -76,8 +76,9 @@ final class EpisodeSetupModel {
     var detailsExpanded: Bool?
     /// Set by the layout: whether the details are on screen, and whether the current layout can collapse
     /// them (narrow windows only).
-    var detailsShown = true
-    var detailsCanCollapse = false
+    /// (Read by menu validation only; not observed, so layout publishing never re-renders views.)
+    @ObservationIgnored var detailsShown = true
+    @ObservationIgnored var detailsCanCollapse = false
     /// Share of the tables' height given to Speakers (#89).
     var speakersFraction = SetupSplitLayout.defaultSpeakersFraction
     /// Recorder group rows the user collapsed (all start expanded).
