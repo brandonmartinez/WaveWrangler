@@ -303,6 +303,36 @@ final class EpisodeSetupUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
     }
 
+    // MARK: #89 — Speakers table height
+
+    /// Speakers shows several rows at the default (unzoomed) size, grows with the window and stays usable
+    /// at 200% text size; the resize handle is present and adjustable.
+    func testSpeakersTableIsUsableAndGrowsWithTheWindow() {
+        let speakers = app.outlines["ww.setup.speakers"]
+        XCTAssertTrue(speakers.waitForExistence(timeout: 5))
+        let rowsAt100 = 28.0 + 4 * 22.0  // column header + four rows
+        let zoomed = speakers.frame.height
+        XCTAssertGreaterThanOrEqual(zoomed, rowsAt100, "zoomed window: \(zoomed) pt")
+
+        menu("Window", "Zoom")  // back to the default window size
+        let unzoomedExpectation = expectation(for: NSPredicate { _, _ in speakers.frame.height < zoomed }, evaluatedWith: nil)
+        wait(for: [unzoomedExpectation], timeout: 3)
+        let small = speakers.frame.height
+        XCTAssertGreaterThanOrEqual(small, rowsAt100, "default window: \(small) pt")
+        XCTAssertGreaterThan(zoomed, small, "grows with the window")
+
+        let split = element("ww.setup.split")
+        XCTAssertTrue(split.exists)
+        XCTAssertEqual(split.value as? String, "40 percent")
+
+        menu("Window", "Zoom")
+        for _ in 0..<4 { menu("View", "Text Size", "Bigger") }
+        let large = expectation(for: NSPredicate { _, _ in speakers.frame.height >= 2 * rowsAt100 }, evaluatedWith: nil)
+        wait(for: [large], timeout: 5)
+        XCTAssertGreaterThanOrEqual(speakers.frame.height, 2 * rowsAt100, "200% text: \(speakers.frame.height) pt")
+        for _ in 0..<4 { menu("View", "Text Size", "Smaller") }
+    }
+
     // MARK: T18/T29 — cancel and retry downloads (simulated provider state)
 
     func testT18CancelDownloadConfirmsAndT29Retry() {

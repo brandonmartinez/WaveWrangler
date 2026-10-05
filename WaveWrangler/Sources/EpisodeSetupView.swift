@@ -92,6 +92,8 @@ private struct WindowReader: NSViewRepresentable {
 struct EpisodeSetupView: View {
     @Bindable var model: EpisodeSetupModel
     var showsInspector: Bool
+    @Environment(\.setupTextScale) private var textScale
+    private var scale: Double { Double(textScale) }
     @FocusState private var focusedTable: EpisodeSetupModel.FocusedTable?
 
     var body: some View {
@@ -108,7 +110,7 @@ struct EpisodeSetupView: View {
                     Divider()
                     SetupInspectorView(model: model)
                         .frame(width: wide ? 300 : nil)
-                        .frame(maxHeight: wide ? .infinity : max(160, geometry.size.height * 0.4))
+                        .frame(maxHeight: wide ? .infinity : max(140, geometry.size.height * 0.3))
                         .focusSection()
                 }
             }
@@ -135,17 +137,22 @@ struct EpisodeSetupView: View {
         }
     }
 
+    /// Sources above Speakers. Speakers keeps a usable default share (about four rows minimum, scaled
+    /// with text size) and grows with the window (#89); the handle resizes it (drag or VoiceOver adjust).
     private var tables: some View {
-        VStack(spacing: 0) {
-            SourcesSection(model: model, focusedTable: $focusedTable)
-                .frame(minHeight: 120, maxHeight: .infinity)
-                .layoutPriority(2)
-                .focusSection()
-            Divider()
-            SpeakersSection(model: model, focusedTable: $focusedTable)
-                .frame(minHeight: 100, maxHeight: .infinity)
-                .layoutPriority(1)
-                .focusSection()
+        GeometryReader { geometry in
+            let handle = 9.0 * scale
+            let split = SetupSplitLayout.heights(total: geometry.size.height - handle, scale: scale, speakersFraction: model.speakersFraction)
+            VStack(spacing: 0) {
+                SourcesSection(model: model, focusedTable: $focusedTable)
+                    .frame(height: split.sources)
+                    .focusSection()
+                SplitHandle(fraction: $model.speakersFraction, total: geometry.size.height, height: handle)
+                SpeakersSection(model: model, focusedTable: $focusedTable)
+                    .frame(height: split.speakers)
+                    .focusSection()
+            }
+            .coordinateSpace(name: SplitHandle.space)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -640,5 +647,47 @@ enum SetupSettingsLink {
     @MainActor
     static func open() {
         SettingsWindowController.show(pane: .sources)
+    }
+}
+
+/// Resize handle between the Sources and Speakers tables. Default sizes are usable without it (CMD §5);
+/// VoiceOver users adjust it with increment/decrement.
+private struct SplitHandle: View {
+    static let space = "ww.setup.tables"
+    @Binding var fraction: Double
+    let total: Double
+    let height: Double
+    @State private var hovering = false
+
+    var body: some View {
+        ZStack {
+            Color.clear
+            Divider()
+        }
+        .frame(height: height)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            guard inside != hovering else { return }
+            hovering = inside
+            if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .named(Self.space))
+                .onChanged { value in
+                    fraction = SetupSplitLayout.fraction(forHandleAt: value.location.y, total: total)
+                }
+        )
+        .accessibilityElement()
+        .accessibilityLabel("Speakers table height")
+        .accessibilityValue("\(Int((fraction * 100).rounded())) percent")
+        .accessibilityAdjustableAction { direction in
+            let step = 0.05
+            switch direction {
+            case .increment: fraction = min(fraction + step, SetupSplitLayout.fractionRange.upperBound)
+            case .decrement: fraction = max(fraction - step, SetupSplitLayout.fractionRange.lowerBound)
+            @unknown default: break
+            }
+        }
+        .accessibilityIdentifier("ww.setup.split")
     }
 }
