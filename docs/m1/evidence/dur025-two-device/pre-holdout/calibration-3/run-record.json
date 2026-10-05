@@ -1,0 +1,58 @@
+{
+  "cells": {
+    "library": "library-conflict",
+    "recovery": "recovery",
+    "relink": "cross-machine-relink",
+    "show": "show-conflict"
+  },
+  "cleanup": {
+    "at": "2026-10-05T18:50:38Z",
+    "deleted": "<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025/calibration",
+    "existedBefore": true,
+    "existsAfterLocally": false
+  },
+  "clockOffsetEnd": {
+    "offsetMs": 23,
+    "rttMs": 49.5
+  },
+  "clockOffsetStart": {
+    "offsetMs": 23,
+    "rttMs": 50.9
+  },
+  "commit": "8fc1a8c65629e4a1fa689d98a444129c1cf1c6b4",
+  "counts": {
+    "library": 3,
+    "recovery": 2,
+    "relink": 2,
+    "show": 3
+  },
+  "finishedAt": "2026-10-05T18:50:38Z",
+  "fixture": "M1-DUR-025",
+  "freeze": "m1-freeze-2",
+  "hosts": {
+    "A": {
+      "cores": "18",
+      "cpu": "Apple M5 Max",
+      "hostname": "Macatron.local",
+      "macOS": "27.0.1 (26A434)"
+    },
+    "B": {
+      "cores": "12",
+      "cpu": "Apple M2 Pro",
+      "hostname": "Macsimus",
+      "macOS": "27.0.1 (26A434)"
+    }
+  },
+  "interpretation": "ww-003-fixture-protocol.md \u00a74.2.1",
+  "label": "two-host evidence: Mac (host A) + Mac mini 'Macsimus' (host B), same Apple account, iCloud Drive",
+  "probeSha256": "4450c9fea3907b58ba86edfce778b83b093ea61d0067acbf26dcffe2720fe797",
+  "requiredCommits": "",
+  "split": "calibration",
+  "startedAt": "2026-10-05T18:46:01Z",
+  "trees": {
+    "Packages/WaveWranglerKit/Sources/WWPersistence": "dea497dea6eb1510a706c43ba933fd4a375885bc",
+    "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "92dc8ab055386d81b99feda8ecc6b1f8d7622add",
+    "scripts/dur025": "e3d5cb8794bf1a378caaaf893c6220cb7a3f0bad"
+  },
+  "trialRoot": "<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025"
+}
