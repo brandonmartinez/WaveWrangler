@@ -10,7 +10,7 @@ Companion documents: [information architecture](information-architecture.md) · 
 > 3. Temporarily turning on Increase Contrast, Reduce Motion and larger text, each **restored to its previous value afterwards**.
 > 4. A **synthetic-only iCloud Drive trial folder** (generated content only).
 >
-> **Not covered:** user recordings or sample folders, other cloud providers, disconnecting the network, colour filters and the Full Keyboard Access system toggle. Those conditions use the alternatives stated in §3, or are Blocked until separately granted. **Every result below stays Not run until it is actually executed and recorded.** The pure-logic checks in §4.1 need no GUI.
+> **Not covered:** user recordings or sample folders, other cloud providers, disconnecting the network, colour filters and the Full Keyboard Access system toggle. The coordinator confirmed on 2026-10-04 that these are excluded. Agents verify keyboard tasks through XCUITest key events plus AX focus checks, use saturation-0 screenshots for colour, and simulate offline. A manual Full Keyboard Access run is a **user-manual exit item** that agents don't perform (§6). **Every result below stays Not run until it is actually executed and recorded.** The pure-logic checks in §4.1 need no GUI.
 
 ## 1. Rules for recording results
 
@@ -41,7 +41,7 @@ All fixtures are generated in temporary directories by the test target. **No use
 
 | ID | Condition | How applied | Applies to | Pass criteria |
 | --- | --- | --- | --- | --- |
-| C01 | **Keyboard only** | No pointer events: XCUITest key events, and manual keyboard runs. The Full Keyboard Access system toggle is not in the grant; manual FKA runs are Blocked unless the coordinator confirms coverage | T01–T30 | Task completes using only [K-flows](commands-keyboard.md#8-keyboard-only-flows-for-core-tasks); every focused element shows a system focus ring or row highlight [A9]; no keyboard trap; Esc/⌘. cancel every sheet |
+| C01 | **Keyboard only** | No pointer events. **Agents:** XCUITest key events (`typeKey`/`typeText`) plus AX focus assertions (`hasKeyboardFocus`, focused-element identifier) after every step. **User (manual exit item):** the same K-flows with the Full Keyboard Access system setting on. That setting is not in the agent grant (coordinator, 2026-10-04) | T01–T30 | Task completes using only [K-flows](commands-keyboard.md#8-keyboard-only-flows-for-core-tasks); every focused element shows a system focus ring or row highlight [A9]; no keyboard trap; Esc/⌘. cancel every sheet |
 | C02 | **VoiceOver** (temporary, under the grant) | VO navigation and VO commands only | T01–T30 | Every element in the task has the role, label and value listed below; reading order sidebar → content (message bar first) → inspector; announcements per [states §7](states-and-recovery.md#7-announcements); no unsolicited focus change [A2, A9] |
 | C03 | **200% text** (in-app Text Size 200%, CMD-20) | Settings › General › Text size = 200%. Where macOS offers a larger-text setting, also run once with it temporarily raised and then restored (grant item 3) | T01, T03, T05, T07, T08, T10, T11, T15–T17, T19, T25, T26 | No essential text (names, states, units, numbers, button titles) clipped or overlapping. Truncated text exposes its full value in the help tag, VO label and inspector. Meaningful symbols scale. The task still completes with C01 |
 | C04 | **Increase Contrast** | System setting turned on temporarily and restored afterwards (grant item 3). Automated runs may also use the debug override `-WWForceIncreaseContrast YES`, labelled "override, not system setting" | T07, T10, T11, T15–T17, T19, T22, T25, T26, T29 | Text meets the A1 ratios (4.5:1 ≤ 17 pt; 3:1 ≥ 18 pt or bold) in light and dark mode; state symbols remain distinguishable; `contrast` audit passes |
@@ -117,5 +117,6 @@ Notation: **Role** uses the XCUITest element type (AppKit AX role in brackets; e
 
 1. A-01 through A-08 pass in CI.
 2. Under the GUI grant and lock: T01–T30 pass under C01 and C02 (60/60 cells). C03–C07 pass on their listed subsets. The XCUITest audits report no unwaived issues, and each waiver has a written rationale.
-3. Any Fail in an essential task (T01–T30) is a P0 M1 blocker. It is never transferred to make M1 complete. Broader participant studies and reference-device runs remain WW-052.
-4. Results are recorded with the §1 metadata. Simulated provider states are labelled as simulated.
+3. **User-manual exit item (not performed by agents):** the user runs T01–T30's K-flows with the macOS Full Keyboard Access setting on and records Pass/Fail. Until then the FKA cell is **Not run**, and it is never inferred from the XCUITest key-event results.
+4. Any Fail in an essential task (T01–T30) is a P0 M1 blocker. It is never transferred to make M1 complete. Broader participant studies and reference-device runs remain WW-052.
+5. Results are recorded with the §1 metadata. Simulated provider states are labelled as simulated.
