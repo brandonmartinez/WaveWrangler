@@ -274,6 +274,12 @@ final class LibraryWorkspaceUITests: XCTestCase {
         waitFor(element("ww.library.sidebar"))
         let bar = element("ww.library.messageBar.inMemory")
         waitFor(bar)
+        // 100%: the bar sits directly under the toolbar (no doubled safe-area inset) and row 1 is clickable.
+        let toolbarBottom = window.frame.minY + 52
+        XCTAssertLessThanOrEqual(abs(bar.frame.minY - toolbarBottom), 12, "bar \(bar.frame) right under the toolbar of \(window.frame)")
+        let firstCell = app.outlines["ww.library.entries"].cells.firstMatch
+        waitFor(firstCell)
+        XCTAssertTrue(firstCell.isHittable, "row 1 hittable below the bar: \(firstCell.frame), bar \(bar.frame)")
         for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
         let shows = element("ww.library.sidebar.shows")
         let entries = app.outlines["ww.library.entries"]
