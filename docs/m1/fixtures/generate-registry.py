@@ -23,6 +23,9 @@ GRANT = {
  "C": "Grant C (user, 2026-10-04): one iCloud Drive folder 'WaveWrangler-M1-Synthetic-Trial' with generated synthetic documents only, on this Mac: save, autosave, two-window/two-process conflict, brctl evict/download and recovery; delete the folder afterwards.",
  "D": "Grant D (user, 2026-10-04): temporary Increase Contrast, Reduce Motion and larger text; record original values and restore them.",
 }
+GRANT_20261005 = {
+ "E": "Grant E (user, directly, 2026-10-05 13:35-13:37): synthetic iCloud Drive testing may run on this Mac and on the user's Mac mini ('Macsimus', Apple M2 Pro, macOS 27.0.1), which use the same Apple account, including deliberate multi-device testing ('yes, you can do multi-device icloud testing. ui stays on the mac mini'). Scope applied here: the 'WaveWrangler-M1-Synthetic-Trial' folder only, generated synthetic files only, each run's subfolder deleted afterwards and the deletion recorded; no user recordings; any GUI work only on the Mac mini.",
+}
 def granted(*keys, extra=""):
     return {"class": "authorized-user-grant", "status": "authorized (grants " + "+".join(keys) + ", relayed by M1 coordinator 2026-10-04)",
             "scope": " ".join(GRANT[k] for k in keys) + (" " + extra if extra else "")}
@@ -164,10 +167,30 @@ F.append(syn("M1-DUR-024","iCloud Drive canonical trial (show + library) on this
   10,290,"trial operations (min holdout: 100 save/autosave publications, 100 conflict attempts, 50 evict/download cycles, 20 recovery cases, 20 library-at-iCloud publications/moves)",
   "iCloud Drive on this single Mac only; no OneDrive/Dropbox, second-device or two-machine sync claim; interruption counts at uncontrollable sync boundaries are reported, not claimed as >=100 unless achieved.",
   permission=granted("C", "A", extra="GUI portions (if any) under grant A's single GUI lock."), automated=True))
-F.append(blocked("M1-DUR-025","Two-device conflict and relink","conflict/two-device","durability",["WW-049","WW-006"],
-  "Requires a named second device; not granted 2026-10-04.",
-  "Cross-device conflicts preserved; device-local access records regranted explicitly.",
-  "No cross-device claim until executed."))
+DUR025_CELLS = [
+ {"cell": "show-conflict", "calibration": 3, "holdout": 30,
+  "recipe": "Both hosts open the same synthetic show (one revision r, synced and verified on both). Each host makes a different seeded edit and publishes it through the C3 order, with both publications started at a shared trigger time so they race. Then wait until both hosts observe a stable file (bounded wait, reported; timeout = case failure)."},
+ {"cell": "library-conflict", "calibration": 3, "holdout": 30,
+  "recipe": "Both hosts use the same synthetic library in the trial folder (configured location, same libraryID, synced and verified). Each host makes a different seeded organizing edit (collection, alias, order or recents) and publishes at a shared trigger time; settle as for show-conflict."},
+ {"cell": "cross-machine-relink", "calibration": 2, "holdout": 20,
+  "recipe": "Host A creates a synthetic show whose sources are generated random-byte files in the trial folder, with device-local access records on A only. After sync, host B opens the show with no device-local access record for it; then the harness supplies the source location to B as an explicit user choice (regrant), and B compares identity metadata. Seeded variants: same files; one source moved within the trial folder before B opens; one source replaced by a same-name different file."},
+ {"cell": "recovery", "calibration": 2, "holdout": 20,
+  "recipe": "Host A publishes revision r+1 while host B holds unpublished edits on revision r (edit-checkpoint record present on B). Seeded variants: B then saves (base check), B quits and relaunches before saving, and A is killed at a publisher boundary (P4 or P5) mid-publication while B is idle. Reopen on both hosts after sync settles."},
+]
+F.append(syn("M1-DUR-025","Two-device iCloud conflict, cross-machine relink and recovery","conflict/two-device","durability",["WW-049","WW-006","WW-005","WW-012"],
+  "Two Macs on the same Apple account: host A = this Mac (main), host B = the Mac mini. Both run the headless harness only (package tests / wwpersist-probe); no app GUI on host A, and none is needed on host B. All files are generated synthetic data in a per-run subfolder of 'WaveWrangler-M1-Synthetic-Trial', deleted afterwards with the deletion recorded. Four cells (see 'cells'): two-host publish race on a show; two-host publish race on the library; cross-machine relink; recovery across hosts. Each case records both hosts' outcomes, the settled on-disk revision on each host, preserved candidates/journals, NSFileVersion current/unresolved-conflict/other versions on each host, and source digests.",
+  "(1) Conflict detected: in every race, at most one host's publication is acknowledged as the current revision for a given base, and any other host reports conflict or acknowledgement-uncertain (C3/C4); the library raises L4 or a verified three-way merge, never a silent overwrite. "
+  "(2) Both versions preserved: each host's edit is present after settle in the canonical file, the losing host's preserved candidate or queued-edit journal, or an NSFileVersion conflict version; zero silently lost edits. "
+  "(3) No mixed revision: every reopen on either host yields one whole valid revision (checksum and payload valid) or an honest refusal; never a mixture. "
+  "(4) NSFileVersion observed and reported: unresolved conflict versions and other versions are counted per case per host and reported, whatever the count; never assumed. "
+  "(5) Relink needs an explicit regrant: host B never resolves a source by path or name alone; it shows a needs-relink/regrant state until the explicit choice; a moved or replaced file is reported as different, never silently substituted; zero source writes on both hosts (harness digests). "
+  "(6) Recovery: work unpublished on a host stays recoverable on that host (device-local); no cross-device recovery is claimed; the app never reports Saved for content not read back on that host. "
+  "(7) No provider-atomicity claim follows from any result.",
+  10,100,"cases (cells: show-conflict 3/30, library-conflict 3/30, cross-machine-relink 2/20, recovery 2/20)",
+  "iCloud Drive with two Macs on one Apple account (host labels recorded per run), synthetic files only. Sync timing is not controlled and is reported as observed. The headless harness is unsandboxed, so the regrant is an explicit harness-supplied choice, not the powerbox panel (sandboxed grant is M1-REF-020). No OneDrive/Dropbox, network-offline, power-loss or provider-atomicity claim. Neither host is the macOS 26 / 16 GB reference.",
+  extra={"cells": DUR025_CELLS},
+  permission={"class": "authorized-user-grant", "status": "authorized (grant E, given by the user directly 2026-10-05; relayed to the M1 coordinator)",
+              "scope": GRANT_20261005["E"]}))
 F.append(syn("M1-DUR-026","Native GUI lifecycle: Close/Quit dirty decisions, AS01/AS05 replay, panel Save As cancel, Revert, edit-checkpoint recovery presentation","autosave/native-gui","durability",["WW-005","WW-049","WW-007"],
   "Launch the ad-hoc-signed app with synthetic documents in temp/trial folders; drive via XCUITest/computer-use: OFF dirty Close/Quit (all routes: Close, Cmd-Q, app menu, Dock), queued ON->OFF race (AS01), dirty Quit (AS05), Save As panel cancel, Revert, relaunch with a pending edit-checkpoint record.",
   "Dirty OFF or failed-autosave documents always present Save/Don't Save/Cancel on Close and every Quit route; no silent loss; edit-checkpoint offered as 'Restore unsaved changes' (dirty, not saved); AS01 and AS05 evidenced or remain open.",
@@ -350,10 +373,25 @@ FREEZE = {
   "host": "macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, 18-core Apple silicon, 128 GiB -- claimed internal host, not the macOS 26/16 GB reference",
 }
 FROZEN_STATUS = "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
+FROZEN2_IDS = ("M1-DUR-025",)
+FROZEN2_STATUS = "frozen m1-freeze-2 (2026-10-05); post-freeze holdout not yet reported in this registry"
+FREEZE2 = {
+  "freezeID": "m1-freeze-2",
+  "date": "2026-10-05",
+  "recordedBy": "Lead (WW-003 protocol author), authorized by the M1 coordinator after the user's grant E",
+  "baseCommit": "251d1225c0c5c51b6a0c4abc8aeaab8d6f02f1b0",
+  "baseCommitNote": "main when this revision was authored. It takes effect at the merge commit of the PR that adds it. It is made BEFORE any execution of M1-DUR-025 (no pre-freeze M1-DUR-025 run exists).",
+  "scope": "M1-DUR-025 only: recipe, cells, expected truth, split (10 calibration / 100 holdout by cell), gate and supported-claim limits exactly as written in its registry entry. Every m1-freeze-1 entry is unchanged.",
+  "trigger": "User grant E (2026-10-05): multi-device iCloud testing on this Mac and the Mac mini; UI stays on the Mac mini.",
+  "postFreezeRule": "Same as m1-freeze-1: a holdout run counts only on a clean commit containing this revision's merge, runs once, reports every case (including failures, timeouts and exclusions) with both hosts' labels (sw_vers, hardware, Xcode), the commit SHA and the git tree IDs of the harness trees it ran on each host. Calibration may run before or after the merge and is reported separately; it never tunes truth, counts or gates. Changing the recipe, truth, counts or gate needs a new dated freeze revision.",
+  "generatorSourceTrees": "Not yet written at freeze time (the persistence lane builds the two-host headless harness against this definition); each run record reports its tree IDs.",
+}
 
 def build():
     for f in F:
-        if f["permission"]["class"] in FROZEN_CLASSES and f["evidenceStatus"] == "not-yet-executed":
+        if f["id"] in FROZEN2_IDS and f["evidenceStatus"] == "not-yet-executed":
+            f["evidenceStatus"] = FROZEN2_STATUS
+        elif f["permission"]["class"] in FROZEN_CLASSES and f["evidenceStatus"] == "not-yet-executed":
             f["evidenceStatus"] = FROZEN_STATUS
         elif f["id"] == "M1-USER-001":
             f["evidenceStatus"] = "manual; not frozen (non-statistical); not yet reported in this registry"
@@ -375,9 +413,12 @@ def build():
       "ww006LifecycleHoldout": sum(f["split"]["holdout"] for f in F if f.get("countsToward")),
       "showPublicationBoundaries": len(P), "libraryPublicationBoundaries": len(L),
       "perBoundaryHoldoutMinimum": 100,
-      "frozenEntries": sum(1 for f in F if f["evidenceStatus"] == FROZEN_STATUS),
+      "frozenEntries": sum(1 for f in F if f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS)),
+      "frozenEntriesByRevision": {"m1-freeze-1": sum(1 for f in F if f["evidenceStatus"] == FROZEN_STATUS), "m1-freeze-2": sum(1 for f in F if f["evidenceStatus"] == FROZEN2_STATUS)},
     }
-    assert all(f["evidenceStatus"] == FROZEN_STATUS for f in F if f["permission"]["class"] in FROZEN_CLASSES), "unfrozen authorized entry"
+    assert all(f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS) for f in F if f["permission"]["class"] in FROZEN_CLASSES), "unfrozen authorized entry"
+    d25 = next(f for f in F if f["id"] == "M1-DUR-025")
+    assert sum(c["holdout"] for c in d25["cells"]) == d25["split"]["holdout"] and sum(c["calibration"] for c in d25["cells"]) == d25["split"]["calibration"], "DUR-025 cells"
     assert counts["ww006LifecycleHoldout"] >= 1000, counts
     for f in F:
         if "perBoundary" in f:
@@ -385,19 +426,21 @@ def build():
     d6 = next(f for f in F if f["id"] == "M1-DUR-006")
     assert d6["split"]["holdout"] == 100 * sum(len(b["paths"]) for b in P), "DUR-006 cells"
     return {
-     "registryVersion": "m1-fixtures-v3-frozen",
+     "registryVersion": "m1-fixtures-v4-frozen2",
      "date": "2026-10-05",
      "generatedBy": "docs/m1/fixtures/generate-registry.py (do not hand-edit; regenerate)",
      "owner": "Lead (protocol); WW-003 informational owner Pipeline",
      "issue": "https://github.com/brandonmartinez/WaveWrangler/issues/5",
      "protocol": "docs/m1/ww-003-fixture-protocol.md",
-     "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT PENDING",
+     "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; m1-freeze-2 for M1-DUR-025, before execution) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
      "freezeRule": "Each family is frozen (generator source hash, recipe, truth, counts, gate) in a dated freeze record before its first holdout case runs. Counts may increase before freeze; never decrease below a frozen gate minimum without explicit Lead/Brandon approval.",
      "freeze": FREEZE,
+     "freezeRevisions": [FREEZE2],
      "seedDerivation": SEED,
      "claimedHost": "macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), 18-core Apple silicon, 128 GiB -- not the macOS 26/16 GB reference",
      "userGrants20261004": GRANT,
-     "stillBlocked": ["second device", "OneDrive", "Dropbox", "disk-image (real full-volume) tests"],
+     "userGrants20261005": GRANT_20261005,
+     "stillBlocked": ["OneDrive", "Dropbox", "disk-image (real full-volume) tests", "network disconnection"],
      "permissionClasses": {
        "authorized-synthetic": "Generated deterministic data in temp dirs; authorized by the pasted M1 kickoff.",
        "authorized-user-grant": "Synthetic data exercised through a user grant of 2026-10-04 (A-D) relayed by the M1 coordinator, within its exact scope.",
