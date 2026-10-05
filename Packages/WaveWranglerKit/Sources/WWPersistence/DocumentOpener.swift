@@ -49,19 +49,24 @@ public struct DocumentOpener<Coder: CanonicalDocumentCoding>: Sendable {
     public let recovery: RecoveryStore?
     /// Schemas older than the coder's minimum that a registered migration can upgrade.
     public let migratableSchemas: Set<Int>
+    /// Logical identity of a decoded payload. When set and the caller passes the expected `key`, a valid
+    /// document of a *different* identity at that location is refused as damaged (`identityMismatch`).
+    public let identityOf: (@Sendable (Coder.Payload) -> DocumentKey)?
 
     public init(
         coder: Coder,
         ops: any FileOperations = LocalFileOperations(),
         coordination: any FileCoordinating = NSFileCoordination(),
         recovery: RecoveryStore?,
-        migratableSchemas: Set<Int> = []
+        migratableSchemas: Set<Int> = [],
+        identityOf: (@Sendable (Coder.Payload) -> DocumentKey)? = nil
     ) {
         self.coder = coder
         self.ops = ops
         self.coordination = coordination
         self.recovery = recovery
         self.migratableSchemas = migratableSchemas
+        self.identityOf = identityOf
     }
 
     /// Opens `url`. `key` (when known, e.g. from the library) locates recovery checkpoints; otherwise the
@@ -80,7 +85,12 @@ public struct DocumentOpener<Coder: CanonicalDocumentCoding>: Sendable {
     public func outcome(for data: Data, url: URL?, key: DocumentKey? = nil) -> OpenOutcome<Coder.Payload> {
         let fingerprint = RevisionFingerprint(of: data)
         do {
-            return .editable(try coder.decode(data), fingerprint: fingerprint)
+            let decoded = try coder.decode(data)
+            if let key, let identityOf, identityOf(decoded.payload) != key {
+                return .damaged(.identityMismatch(expected: key.rawValue, found: identityOf(decoded.payload).rawValue),
+                                recoveryCandidates: candidates(url: nil, key: key))
+            }
+            return .editable(decoded, fingerprint: fingerprint)
         } catch let .unknownNewerSchema(found, supported) {
             return .refusedNewerFormat(found: found, supported: supported, fingerprint: fingerprint)
         } catch let .unsupportedOlderSchema(found, _) where migratableSchemas.contains(found) {
