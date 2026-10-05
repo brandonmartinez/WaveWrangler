@@ -1,0 +1,49 @@
+{
+  "cleanup": {
+    "at": "2026-10-05T18:12:24Z",
+    "deleted": "/Users/brandonmartinez/Library/Mobile Documents/com~apple~CloudDocs/WaveWrangler-M1-Synthetic-Trial/dur025/calibration",
+    "existedBefore": true,
+    "existsAfterLocally": false
+  },
+  "clockOffsetEnd": {
+    "offsetMs": 22,
+    "rttMs": 51.1
+  },
+  "clockOffsetStart": {
+    "offsetMs": 22,
+    "rttMs": 49.2
+  },
+  "commit": "44078ec2a8bc803f1a792ff98e3196c35c95b9a0",
+  "counts": {
+    "library": 3,
+    "recovery": 2,
+    "relink": 2,
+    "show": 3
+  },
+  "finishedAt": "2026-10-05T18:12:24Z",
+  "fixture": "M1-DUR-025",
+  "hosts": {
+    "A": {
+      "cores": "18",
+      "cpu": "Apple M5 Max",
+      "hostname": "Macatron.local",
+      "macOS": "27.0.1 (26A434)"
+    },
+    "B": {
+      "cores": "12",
+      "cpu": "Apple M2 Pro",
+      "hostname": "Macsimus.local",
+      "macOS": "27.0.1 (26A434)"
+    }
+  },
+  "label": "development calibration (pre-freeze-2 cells; host A probe rebuilt mid-run) \u2014 not calibration evidence",
+  "probeSha256": "400bee337cfa22eb3111f9916e4e73c6b66b3e0db08c5894a6531a79258aa2c3",
+  "split": "calibration",
+  "startedAt": "2026-10-05T18:04:45Z",
+  "trees": {
+    "Packages/WaveWranglerKit/Sources/WWPersistence": "86c532db22286ba4afd19998854e3a830c5c8db6",
+    "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "c07d4b6ffbb4e6fa05096a6b2268e2898dddc99a",
+    "scripts/dur025": "24c5cac433307f922616663d1aa99e0f82a7fbf1"
+  },
+  "trialRoot": "/Users/brandonmartinez/Library/Mobile Documents/com~apple~CloudDocs/WaveWrangler-M1-Synthetic-Trial/dur025"
+}

@@ -65,7 +65,7 @@ def main():
     for cell in ["relink", "recovery"]:
         cases = by_cell.get(cell, [])
         if cases:
-            variants = collections.Counter((r.get("variant"), r["verdict"]) for r in cases)
+            variants = collections.Counter((r.get("variant") or "(not reached)", r["verdict"]) for r in cases)
             print(f"### {cell}: " + "; ".join(f"{v} {verdict} ×{n}" for (v, verdict), n in sorted(variants.items())))
     failures = [r for r in rows if r["verdict"] != "pass"]
     print()
