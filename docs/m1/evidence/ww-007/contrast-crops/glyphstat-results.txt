@@ -1,0 +1,14 @@
+241396a-dark-inspector-notes glyph px 678 p50 14.85 p75 15.91 p90 15.91 max 15.91
+241396a-dark-inspector-number glyph px 890 p50 15.33 p75 15.73 p90 15.73 max 15.73
+241396a-dark-inspector-recording-date glyph px 1679 p50 15.45 p75 15.72 p90 15.72 max 15.72
+241396a-dark-inspector-title glyph px 500 p50 13.84 p75 15.91 p90 15.91 max 15.91
+241396a-dark-row1-fixed glyph px 2086 p50 12.39 p75 12.39 p90 12.39 max 12.39
+241396a-dark-sidebar-recent glyph px 1164 p50 6.16 p75 15.72 p90 15.72 max 15.72
+241396a-dark-sidebar-unavailable glyph px 1986 p50 10.71 p75 15.72 p90 15.72 max 15.72
+241396a-light-row1-fixed glyph px 1725 p50 15.52 p75 15.91 p90 15.91 max 15.91
+241396a-light-sidebar-recent glyph px 1047 p50 4.66 p75 18.10 p90 18.10 max 18.10
+241396a-light-sidebar-unavailable glyph px 1737 p50 14.37 p75 18.10 p90 18.10 max 18.10
+c2edf8c-dark-row1-blurred glyph px 4 p50 5.73 p75 6.70 p90 6.70 max 6.70
+c2edf8c-dark-row2 glyph px 2132 p50 10.92 p75 11.02 p90 11.02 max 11.02
+c2edf8c-light-row1-blurred glyph px 4 p50 5.96 p75 7.07 p90 7.07 max 7.07
+c2edf8c-light-row2 glyph px 1771 p50 14.39 p75 14.92 p90 14.92 max 14.92

@@ -114,7 +114,7 @@ Every scenario checks SHA-256 and mtime of every source.
 | Execution | Scenarios | Result |
 | --- | --- | --- |
 | **First execution, `08f62ee`** | 16 executed, 4 not executed | Cycles 1–4: grant 4/4, relaunch 4/4, regrant 2/4, relink 2/4, so **12 Pass, 4 Fail**. All 4 failures were **harness row-selection defects**: the row click didn't select, so Grant Access and Relink stayed disabled. Cycle 5 **aborted** on a harness defect (an unguarded Import Review read after the panel didn't confirm), so its 4 scenarios weren't executed. |
-| Post-harness-correction re-execution, `241396a` (fixes `cc41261`, `74c13d9`) | 7 recorded | Cycle 1: grant, relaunch and relink pass; regrant failed because the identity sheet didn't appear (panel timing). Cycle 2: the Import Review didn't appear (panel timing), then the run aborted. **Disclosed; it doesn't replace the first execution.** |
+| Post-harness-correction re-execution, `241396a` (fixes `cc41261`, `74c13d9`) | 6 recorded: 3 Pass, 3 Fail | Cycle 1: grant, relaunch and relink pass; regrant failed because the identity sheet didn't appear (panel timing). Cycle 2: the Import Review didn't appear (panel timing), then the run aborted. **Disclosed; it doesn't replace the first execution.** |
 | Full-suite cycle, `241396a` | 4 | 4/4 Pass |
 
 **Raw records:** [`ww-007/raw-dur026-ref020-executions.jsonl`](ww-007/raw-dur026-ref020-executions.jsonl) has every `[evidence]` line, test-case result and XCTest error, from both the first execution and the re-execution.
@@ -165,7 +165,7 @@ Every scenario checks SHA-256 and mtime of every source.
 
 | ID | Keyboard result (XCUITest key events + AX focus/value) | Notes |
 | --- | --- | --- |
-| T01 Create a show | **Pass** | ⌘N → save panel → name → ⇧⌘G folder → Create. File created; title equals the name; "0 episodes"; Saved only after the verified create. |
+| T01 Create a show | **Pass under superseded waiver policy; not re-run** | ⌘N → save panel → name → ⇧⌘G folder → Create. File created; title equals the name; "0 episodes"; Saved only after the verified create. |
 | T02 Add an episode | **Pass** | ⇧⌘N puts focus in the inline rename field (`hasKeyboardFocus`). ⌘Z removes the episode. |
 | T03 Metadata | **Pass** (functional); audit **Fail** [#104](https://github.com/brandonmartinez/WaveWrangler/issues/104) | ⌘I focuses Title and Tab reaches Number. Values persist after ⌘S and reopen. |
 | T04 Collections | **Pass** (menu path); "+" button **Fail** [#110](https://github.com/brandonmartinez/WaveWrangler/issues/110) | Lane suite plus WW-013 (§4.1) |
@@ -175,10 +175,10 @@ Every scenario checks SHA-256 and mtime of every source.
 | T14 Toggle autosave | **Pass** | DUR-026, `DocumentLifecycleUITests.testDynamicToggle` |
 | T15 Explicit Save | **Pass** | Never "Saved" before ⌘S; after ⌘S, "Saved" with disk verified |
 | T16 Conflict | **Fail vs spec**; data invariant **Pass** | AppKit's "changed by another application… Save anyway?" sheet; choosing **Save** is refused by the base check: "could not be saved… a copy is kept on this Mac". The status AX value is "Not saved. Couldn't save: …" (honest). The other writer's bytes are unchanged. No D6 Conflict state or "Save Mine as a Copy…": [#66](https://github.com/brandonmartinez/WaveWrangler/issues/66) (M2). |
-| T17 Recover prior work | **Pass** (spec deviation: alert, not message bar) | "A complete earlier revision (2) is kept on this Mac…" with "Open Recovered Copy" opened the complete version as an unsaved copy; the damaged file was left unchanged. |
+| T17 Recover prior work | **Pass under superseded waiver policy; not re-run** (spec deviation: alert, not message bar) | "A complete earlier revision (2) is kept on this Mac…" with "Open Recovered Copy" opened the complete version as an unsaved copy; the damaged file was left unchanged. |
 | T18 Cancel/retry download | **Pass** | `EpisodeSetupUITests` (simulated) |
 | T19 Downloads Off | **Pass** (Settings wording) + A-08 | |
-| T20 Unknown newer | **Pass** (spec deviation: refused at open) | "Open it with the newer version of WaveWrangler. This version will not edit or save it". No editable window; bytes unchanged ([#67](https://github.com/brandonmartinez/WaveWrangler/issues/67) catalog sync). |
+| T20 Unknown newer | **Pass under superseded waiver policy; not re-run** (spec deviation: refused at open) | "Open it with the newer version of WaveWrangler. This version will not edit or save it". No editable window; bytes unchanged ([#67](https://github.com/brandonmartinez/WaveWrangler/issues/67) catalog sync). |
 | T21 Migration | **Not run** | No older or forced-failure format fixture in the app hooks |
 | T22 Unavailable entries | **Pass** | `LibraryWorkspaceUITests` |
 | T23 Close/quit unsaved | **Pass** for D3 (DUR-026); **Not run** for D4/D7 (no seam to delay or fail publication in the app) | |
@@ -251,12 +251,12 @@ Every scenario checks SHA-256 and mtime of every source.
 
 | Condition | Result |
 | --- | --- |
-| C03 200%, Setup (zoomed window) | **Pass.** Names, statuses, units and button titles are readable. Long statuses wrap mid-word and truncate ("Downloadin g 42% +1…"). Whether the full value reaches help and VO wasn't checked here; it's covered by the lane's T13/T18 AX assertions. Screenshot: [`screens/setup-light-200-zoomed.png`](ww-007/screens/setup-light-200-zoomed.png). Audit findings on that surface are rows cut off at the scroll-view edge (pixel 1.2–1.8:1 because they're partly hidden), not colour. |
+| C03 200%, Setup (zoomed window) | **Pass under superseded waiver policy; not re-run.** Names, statuses, units and button titles are readable. Long statuses wrap mid-word and truncate ("Downloadin g 42% +1…"). Whether the full value reaches help and VO wasn't checked here; it's covered by the lane's T13/T18 AX assertions. Screenshot: [`screens/setup-light-200-zoomed.png`](ww-007/screens/setup-light-200-zoomed.png). Audit findings on that surface are rows cut off at the scroll-view edge (pixel 1.2–1.8:1 because they're partly hidden), not colour. |
 | C03 200%, Library window | **Fail** [#109](https://github.com/brandonmartinez/WaveWrangler/issues/109). Content overflows above the window: sidebar rows and the message-bar heading end up under the title bar ([`screens/library-dark-200-overflow.png`](ww-007/screens/library-dark-200-overflow.png)). This already happened before this PR (Shows row 10 pt above the window top). It's worse with the #59 fix (84 pt), because the message bar wraps in the narrower column. |
 | C04 Increase Contrast | **Not run** (OS level). The AppKit `accessibilityHighContrast*` appearance override produced pixel-identical captures, so it doesn't emulate the setting. |
 | C05 Reduce Motion | **Not evaluated.** The flows ran with `-WWForceReduceMotion YES` and completed, but static screenshots can't show motion. Needs a human check (or OS-level Reduce Motion) as part of item 2 in §9. |
 | C06 colour independence | **Pass for the captured surfaces.** At saturation 0 every state is carried by text plus symbol shape: "5 need attention", "Downloading 2 sources — progress unknown", "Needs permission…", "Not found", "Ready", "—" / "?" placeholders ([`screens/setup-default-size-saturation0.png`](ww-007/screens/setup-default-size-saturation0.png)). |
-| C07 light/dark | **Pass** after the #59 fix (§7) |
+| C07 light/dark | **Pass under superseded waiver policy; not re-run** (ratios in §7 were measured directly and are unaffected) |
 
 ## 7. #59 resolution (contrast)
 
@@ -277,7 +277,12 @@ Pixel WCAG ratios (`ContrastMeter`: element screenshot at 2×; background = the 
 - **Known cost:** 200% overflow in the Library window ([#109](https://github.com/brandonmartinez/WaveWrangler/issues/109)).
 - **Contrast waiver policy (`AcceptanceAudit`, revised after #111 review).** The first version waived any `.contrast` finding whose single brightest pixel measured ≥ 4.5:1. That would have hidden the real #59 blur: row 1 measured 7.07 / 6.7:1 by that test. The policy is now:
   - **Scoped.** Only the surfaces measured as artefacts here can be waived: `ww.library.sidebar.recent` and `ww.library.sidebar.unavailable`, and the Episode inspector labels (Episode / Title / Number / Recording date / Notes) inside `ww.inspector`.
-  - **Measured.** The waiver also needs ≥ 100 glyph pixels with a 75th-percentile ratio ≥ 4.5:1. On the evidence screenshots:
+  - **Measured.** The waiver also needs ≥ 100 glyph pixels with a 75th-percentile ratio ≥ 4.5:1. Measurements are reproducible from committed data: [`ww-007/glyphstat.swift`](ww-007/glyphstat.swift) run over the source element crops in [`ww-007/contrast-crops/`](ww-007/contrast-crops/), with output in [`contrast-crops/glyphstat-results.txt`](ww-007/contrast-crops/glyphstat-results.txt). Results:
+    - blurred row 1: **4** glyph pixels (fails);
+    - fixed row 1: 1,725 / 2,086, p75 15.91 / 12.39;
+    - sidebar Recent: 1,047 / 1,164, p75 18.10 / 15.72;
+    - sidebar Unavailable: 1,737 / 1,986, p75 18.10 / 15.72;
+    - inspector Title / Number / Recording date / Notes (dark): 500 / 890 / 1,679 / 678, p75 15.72–15.91.
     - blurred row 1: **4** glyph pixels (fails);
     - fixed row 1: 1,725 / 2,086 glyph pixels, p75 15.91 / 12.39;
     - sidebar Recent: 1,047 / 1,164, p75 18.10 / 15.72;
@@ -285,7 +290,7 @@ Pixel WCAG ratios (`ContrastMeter`: element screenshot at 2×; background = the 
   - **Recorded.** Findings on content dimmed behind a modal sheet are waived, but each one is measured and listed.
   - Every waiver (structural or contrast) is recorded with its element and rationale, plus glyph statistics for contrast, in an `audit-<surface>` evidence record.
   - The setup source-name top row (`ww.inspector.source.name`) from the coordinator note wasn't measured in this lane, so it isn't waived here. Its lane keeps its own identifier-scoped waiver.
-  - Results from runs before this change used the old policy. The affected audits get re-run under the GUI lock (see the PR).
+  - **Status of results produced under the superseded policy (max-pixel waiver, waivers not recorded per finding):** the T01, T17 and T20 audits (CoreTasks), the full-suite audits on `241396a`, and the ContrastEvidence-based C03 Setup and C07 results. They're marked "Pass under superseded waiver policy; not re-run" above. A re-run under the scoped policy is queued for the Mac mini GUI lane and will replace these marks with its results.
 
 ## 8. Findings and issues
 

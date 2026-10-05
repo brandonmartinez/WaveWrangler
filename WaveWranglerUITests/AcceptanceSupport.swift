@@ -117,7 +117,8 @@ enum Acceptance {
 /// types and the lane suites' structural waivers (system chrome, non-interactive SwiftUI containers, pop-up
 /// AXShowMenu, system overlays, AppKit alert icons). For `.contrast`, a finding is waived only when **both**:
 /// 1. the element is one of the surfaces whose audit-artefact status was measured and evidenced in #59
-///    (`measuredArtefact`), and
+///    (`measuredArtefact`: the Library sidebar Recent/Unavailable rows and the Episode inspector's Title,
+///    Number, Recording date and Notes labels while the Episode inspector is shown), and
 /// 2. its screenshot, measured now, shows real text with A1 contrast: at least 100 glyph pixels (pixels
 ///    ≥ 1.5:1 against the background) whose 75th-percentile ratio is ≥ 4.5:1. A blurred or clipped label has
 ///    only a handful of glyph pixels (the #59 blur measured 4), so a single bright pixel can't pass.
@@ -127,18 +128,19 @@ enum Acceptance {
 enum AcceptanceAudit {
     static let types: XCUIAccessibilityAuditType = [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]
 
-    /// Episode inspector field labels measured at 15.7–15.9:1 (#59 "first row under the toolbar").
-    static let inspectorLabels: Set<String> = ["Episode", "Title", "Number", "Recording date", "Notes"]
+    /// Episode inspector field labels measured at 15.7–15.9:1 (#59 "first row under the toolbar"). Only these
+    /// four were measured; the "Episode" heading and the Show Info inspector's labels were not.
+    static let inspectorLabels: Set<String> = ["Title", "Number", "Recording date", "Notes"]
 
     /// Surfaces measured as audit artefacts in #59: Library sidebar unselected rows (18.1 / 15.7:1) and the
     /// Episode inspector's labels inside `ww.inspector` (15.7–15.9:1).
     @MainActor
-    static func measuredArtefact(_ element: XCUIElement, inspectorFrame: CGRect?) -> String? {
+    static func measuredArtefact(_ element: XCUIElement, inspectorFrame: CGRect?, episodeInspectorShown: Bool) -> String? {
         if ["ww.library.sidebar.recent", "ww.library.sidebar.unavailable"].contains(element.identifier) {
             return "Library sidebar unselected row (#59: measured 18.1:1 light / 15.7:1 dark)"
         }
         let text = (element.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? element.label
-        if element.elementType == .staticText, inspectorLabels.contains(text), let inspectorFrame,
+        if episodeInspectorShown, element.elementType == .staticText, inspectorLabels.contains(text), let inspectorFrame,
            inspectorFrame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) {
             return "Episode inspector label (#59: measured 15.7–15.9:1)"
         }
@@ -158,6 +160,8 @@ enum AcceptanceAudit {
         let sheetFrame: CGRect? = app.sheets.firstMatch.exists ? app.sheets.firstMatch.frame : nil
         let inspector = app.descendants(matching: .any).matching(identifier: "ww.inspector").firstMatch
         let inspectorFrame: CGRect? = inspector.exists ? inspector.frame : nil
+        // The Episode inspector (not Show Info) is showing when its Title field exists.
+        let episodeInspectorShown = app.descendants(matching: .any).matching(identifier: "ww.inspector.episode.title").firstMatch.exists
         var contrast: [(XCUIElement, String)] = []
         func describe(_ issue: XCUIAccessibilityAuditIssue) -> String {
             "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(200) ?? "no element")"
@@ -194,7 +198,7 @@ enum AcceptanceAudit {
                 print("AUDIT WAIVED \(description) — dimmed behind a modal sheet; measured \(stats)")
                 continue
             }
-            if let artefact = measuredArtefact(element, inspectorFrame: inspectorFrame), passesGlyphContrast(measured) {
+            if let artefact = measuredArtefact(element, inspectorFrame: inspectorFrame, episodeInspectorShown: episodeInspectorShown), passesGlyphContrast(measured) {
                 waived.append(["finding": description, "kind": "measured-artefact", "measured": stats, "rationale": artefact])
                 print("AUDIT WAIVED \(description) — \(artefact); measured now \(stats)")
             } else {
