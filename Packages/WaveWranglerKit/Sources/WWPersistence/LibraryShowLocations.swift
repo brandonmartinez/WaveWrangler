@@ -59,6 +59,11 @@ public struct ShowAccessGrant: Sendable, Equatable {
     public let followedMove: Bool
 }
 
+public enum ShowOpenError: Error, Sendable, Equatable {
+    /// A different show is at the recorded location; nothing was opened.
+    case differentShow(folderDisplayName: String)
+}
+
 public enum ShowAccessError: Error, Sendable, Equatable {
     case noRecord
     case needsPermission(String)
@@ -202,6 +207,31 @@ public final class LibraryShowLocations: Sendable {
         if grant.started { stopAccessing(grant.url) }
     }
 
+    /// Opens a show through its recorded location with exactly one scope release on every failure path:
+    /// begins access, verifies the ShowID at the resolved file (a different show there is refused), then
+    /// hands the grant to `adopt` (e.g. open the NSDocument). If any step fails, access is ended once and the
+    /// error rethrown; if `adopt` succeeds, the caller owns the grant and must `endAccess` it later.
+    public func openVerified(
+        _ showID: ShowID,
+        opener: DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>,
+        adopt: @MainActor (ShowAccessGrant) async throws -> Void
+    ) async throws -> ShowAccessGrant {
+        let grant: ShowAccessGrant
+        do {
+            grant = try beginAccess(showID)
+        } catch {
+            throw error
+        }
+        var owned = true
+        defer { if owned { endAccess(grant) } }
+        if case .damaged(.identityMismatch, _) = opener.open(grant.url, key: .show(showID)) {
+            throw ShowOpenError.differentShow(folderDisplayName: grant.url.deletingLastPathComponent().lastPathComponent)
+        }
+        try await adopt(grant)
+        owned = false
+        return grant
+    }
+
     // MARK: - Internals
 
     /// A bookmark to a file that no longer exists fails to resolve with "no such file", which is a missing
@@ -230,12 +260,18 @@ public final class LibraryShowLocations: Sendable {
         balance.withLock { $0.stopped += 1 }
     }
 
+    /// Transform and write happen under one lock, so a slower writer can never replace a newer file with an
+    /// older snapshot (the file always equals the in-memory state after each update).
     private func updateSummary(_ showID: ShowID, _ transform: (ShowLastOpenSummary?) -> ShowLastOpenSummary) {
-        let snapshot = summaries.withLock { all -> [ShowID: ShowLastOpenSummary] in
+        summaries.withLock { all in
             all[showID] = transform(all[showID])
-            return all
+            try? Self.saveSummaries(all, to: summariesURL)
         }
-        try? Self.saveSummaries(snapshot, to: summariesURL)
+    }
+
+    /// Re-reads the persisted summaries (tests; a fresh launch does this in `init`).
+    public func persistedSummaries() -> [ShowID: ShowLastOpenSummary] {
+        Self.loadSummaries(from: summariesURL)
     }
 
     private struct SummaryFile: Codable {

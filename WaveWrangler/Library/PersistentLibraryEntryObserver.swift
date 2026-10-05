@@ -18,6 +18,11 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
     @ObservationIgnored private var pathHints: [ShowID: String] = [:]
     @ObservationIgnored private var grants: [ShowID: ShowAccessGrant] = [:]
     @ObservationIgnored private var closeObserver: NSObjectProtocol?
+    /// Bumped whenever an entry changes outside a check (window open, collision), so a check that started
+    /// earlier can't overwrite newer state.
+    @ObservationIgnored private var generations: [ShowID: Int] = [:]
+    /// Store writes run one after another, in call order.
+    @ObservationIgnored private var writeChain: Task<Void, Never>?
 
     /// The app's store: device-local, inside the sandbox container (isolated for UI-test runs).
     static func makeDefault() -> PersistentLibraryEntryObserver {
@@ -38,30 +43,39 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
     // MARK: - Checking
 
     func refresh(_ ids: [ShowID]) async {
-        let toCheck = ids.filter { !Self.isCollision(details[$0]?.state) }
-        guard !toCheck.isEmpty else { return }
-        for id in toCheck { details[id, default: LibraryEntryDetails()].state = .checking }
+        guard !ids.isEmpty else { return }
+        for id in ids where !Self.isCollision(details[id]?.state) {
+            details[id, default: LibraryEntryDetails()].state = .checking
+        }
+        let started = Dictionary(uniqueKeysWithValues: ids.map { ($0, generations[$0, default: 0]) })
         let store = self.store
-        let results = await Task.detached(priority: .userInitiated) {
-            toCheck.map { id in (id, store.check(id), store.pathHint(for: id)) }
+        let checked = await Task.detached(priority: .userInitiated) {
+            ids.map { id in (id, store.check(id), store.pathHint(for: id)) }
         }.value
-        for (id, check, hint) in results {
+        var results: [LibraryEntryCheckResult] = []
+        for (id, check, hint) in checked {
             if let hint { pathHints[id] = hint }
-            var entry = details[id] ?? LibraryEntryDetails()
-            switch check {
-            case .unknown:
-                entry.state = .locationUnknown
-            case .reachable(let folder):
-                entry.state = .available
-                entry.locationDisplayName = folder
-            case .notFound(let folder):
-                entry.state = .notFound(folderDisplayName: folder)
-            case .needsPermission:
-                entry.state = .needsPermission
-            case .unavailable:
-                entry.state = .locationUnavailable
-            }
-            details[id] = entry
+            results.append(LibraryEntryCheckResult(showID: id, generation: started[id] ?? 0, observation: Self.observation(check)))
+        }
+        details = LibraryEntryRefresh.apply(results, to: details, currentGenerations: generations)
+    }
+
+    static func observation(_ check: ShowLocationCheck) -> LibraryEntryCheckResult.Observation {
+        switch check {
+        case .unknown: .unknown
+        case .reachable(let folder): .reachable(folderDisplayName: folder)
+        case .notFound(let folder): .notFound(folderDisplayName: folder)
+        case .needsPermission: .needsPermission
+        case .unavailable: .unavailable
+        }
+    }
+
+    /// Runs store writes serially in call order (no older write lands after a newer one).
+    private func enqueueWrite(_ work: @escaping @Sendable () -> Void) {
+        let previous = writeChain
+        writeChain = Task.detached(priority: .utility) {
+            await previous?.value
+            work()
         }
     }
 
@@ -72,6 +86,7 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
         let others = NSDocumentController.shared.documents.compactMap { $0 as? ShowDocument }.filter {
             $0.store.model.show.id == id && $0.fileURL != nil && $0.fileURL?.standardizedFileURL != fileURL?.standardizedFileURL
         }
+        generations[id, default: 0] += 1
         if let other = others.first, fileURL != nil {
             var entry = details[id] ?? LibraryEntryDetails()
             entry.state = .identityCollision(otherLocationDisplayName: other.fileURL?.deletingLastPathComponent().lastPathComponent)
@@ -90,17 +105,15 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
         guard let fileURL else { return }
         pathHints[id] = fileURL.standardizedFileURL.resolvingSymlinksInPath().path
         let store = self.store
-        // Bookmark creation and the record write are file I/O: keep them off the main thread.
-        Task.detached(priority: .utility) {
-            try? store.record(id, at: fileURL, summary: summary)
-        }
+        // Bookmark creation and the record write are file I/O: off the main thread, in order.
+        enqueueWrite { try? store.record(id, at: fileURL, summary: summary) }
     }
 
     func noteOpened(id: ShowID) {
         let now = Date()
         details[id, default: LibraryEntryDetails(state: .available)].lastOpened = now
         let store = self.store
-        Task.detached(priority: .utility) { store.noteOpened(id, at: now) }
+        enqueueWrite { store.noteOpened(id, at: now) }
     }
 
     // MARK: - Opening
@@ -111,42 +124,27 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
             return
         }
         let store = self.store
-        let access: Result<ShowAccessGrant, ShowAccessError> = await Task.detached(priority: .userInitiated) {
-            do throws(ShowAccessError) {
-                return .success(try store.beginAccess(id))
-            } catch {
-                return .failure(error)
-            }
-        }.value
-        let grant: ShowAccessGrant
-        switch access {
-        case .success(let value):
-            grant = value
-        case .failure(let error):
-            details[id, default: LibraryEntryDetails()].state = Self.state(for: error)
-            throw Self.backendError(for: error)
-        }
-        // Verify the ShowID before trusting the resolved file (a different show may be at that path).
-        let identity = await Task.detached(priority: .userInitiated) {
-            DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: nil).open(grant.url, key: .show(id))
-        }.value
-        if case .damaged(.identityMismatch, _) = identity {
-            store.endAccess(grant)
-            details[id, default: LibraryEntryDetails()].state = .notFound(folderDisplayName: grant.url.deletingLastPathComponent().lastPathComponent)
-            throw LibraryBackendError.differentShow
-        }
+        let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: nil)
         do {
-            let (document, alreadyOpen) = try await NSDocumentController.shared.openDocument(withContentsOf: grant.url, display: true)
-            guard let show = document as? ShowDocument, show.store.model.show.id == id else {
-                if !alreadyOpen { document.close() }
-                store.endAccess(grant)
-                throw LibraryBackendError.differentShow
+            // Resolve, start the scope and verify the ShowID; the store ends access exactly once on any
+            // failure, including a failed NSDocument open below.
+            let grant = try await store.openVerified(id, opener: opener) { grant in
+                let (document, alreadyOpen) = try await NSDocumentController.shared.openDocument(withContentsOf: grant.url, display: true)
+                guard let show = document as? ShowDocument, show.store.model.show.id == id else {
+                    if !alreadyOpen { document.close() }
+                    throw LibraryBackendError.differentShow
+                }
             }
             if let previous = grants[id] { store.endAccess(previous) }
             grants[id] = grant
-        } catch {
-            if grants[id] != grant { store.endAccess(grant) }
-            throw error
+        } catch let error as ShowAccessError {
+            details[id, default: LibraryEntryDetails()].state = Self.state(for: error)
+            throw Self.backendError(for: error)
+        } catch let error as ShowOpenError {
+            if case .differentShow(let folder) = error {
+                details[id, default: LibraryEntryDetails()].state = .notFound(folderDisplayName: folder)
+            }
+            throw LibraryBackendError.differentShow
         }
     }
 

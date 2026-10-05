@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 import WWCore
 @testable import WWPersistence
@@ -117,4 +118,71 @@ struct LibraryShowLocationsTests {
         #expect(restored.episodes?.count == model.episodes.count)
         #expect(restored.lastOpened == later)
     }
+
+    // MARK: - #97 review
+
+    private struct AdoptFailed: Error {}
+
+    @Test func openVerifiedReleasesTheScopeExactlyOnceOnEveryPath() async throws {
+        let dir = TempDirectory("show-locations-open")
+        let folder = dir.sub("Shows")
+        let bookmarks = CountingBookmarks()
+        let store = LibraryShowLocations(root: dir.sub("Device"), bookmarks: bookmarks)
+        let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: nil)
+
+        // Mismatched ShowID: a different show is at the recorded path.
+        let (model, url) = try makeShow(in: folder, seed: 93, title: "Mismatch")
+        try store.record(model.show.id, at: url)
+        try coder.encode(Fixtures.show(seed: 94, title: "Mismatch"), revision: 1).write(to: url)
+        await #expect(throws: ShowOpenError.self) {
+            _ = try await store.openVerified(model.show.id, opener: opener) { _ in Issue.record("must not adopt a different show") }
+        }
+        #expect(store.scopeBalance.started == 1 && store.scopeBalance.stopped == 1, "mismatch: one start, one stop")
+
+        // adopt fails (e.g. NSDocument refused): released once.
+        let (good, goodURL) = try makeShow(in: folder, seed: 95, title: "Good")
+        try store.record(good.show.id, at: goodURL)
+        await #expect(throws: AdoptFailed.self) {
+            _ = try await store.openVerified(good.show.id, opener: opener) { _ in throw AdoptFailed() }
+        }
+        #expect(store.scopeBalance.started == 2 && store.scopeBalance.stopped == 2, "adopt failure: one stop")
+
+        // Success: the caller owns the grant until it ends access.
+        let grant = try await store.openVerified(good.show.id, opener: opener) { _ in }
+        #expect(store.scopeBalance.started == 3 && store.scopeBalance.stopped == 2)
+        store.endAccess(grant)
+        #expect(store.scopeBalance.started == store.scopeBalance.stopped)
+        #expect(bookmarks.started == bookmarks.stopped, "real start/stop calls balance too")
+    }
+
+    @Test func concurrentSummaryUpdatesNeverLoseNewerData() async throws {
+        let dir = TempDirectory("show-locations-concurrent")
+        let store = LibraryShowLocations(root: dir.sub("Device"))
+        let ids = (0..<200).map { _ in ShowID() }
+        await withTaskGroup(of: Void.self) { group in
+            for (index, id) in ids.enumerated() {
+                group.addTask { store.noteOpened(id, at: Date(timeIntervalSince1970: 1_790_000_000 + Double(index))) }
+            }
+        }
+        let persisted = store.persistedSummaries()
+        #expect(persisted.count == ids.count, "every concurrent update is in the file")
+        #expect(persisted == store.allSummaries(), "file equals in-memory state")
+        #expect(LibraryShowLocations(root: dir.sub("Device")).allSummaries().count == ids.count, "relaunch sees all")
+    }
+}
+
+/// Real security-scoped bookmarks that also count start/stop calls.
+private final class CountingBookmarks: DocumentBookmarking {
+    private let base = SecurityScopedDocumentBookmarks()
+    private let counts = Mutex((started: 0, stopped: 0))
+    var started: Int { counts.withLock { $0.started } }
+    var stopped: Int { counts.withLock { $0.stopped } }
+
+    func bookmark(for file: URL) throws -> Data { try base.bookmark(for: file) }
+    func resolve(_ bookmark: Data) throws -> (url: URL, isStale: Bool) { try base.resolve(bookmark) }
+    func startAccessing(_ url: URL) -> Bool {
+        counts.withLock { $0.started += 1 }
+        return true
+    }
+    func stopAccessing(_ url: URL) { counts.withLock { $0.stopped += 1 } }
 }
