@@ -410,7 +410,15 @@ final class EpisodeSetupUITests: XCTestCase {
             XCTAssertEqual(focused.identifier, "ww.inspector.source.group", "first editable field (Recorder group)")
         } else {
             XCTAssertFalse(focused.waitForExistence(timeout: 1), "no focusable field: focus stays in the table")
-            XCTAssertTrue(app.outlines.matching(NSPredicate(format: "identifier == 'ww.setup.sources' AND hasKeyboardFocus == true")).firstMatch.exists, "focus stays in ww.setup.sources")
+            // Behavioural check (AX focus flags on outlines are unreliable): ↓ still moves the Sources
+            // selection, so the details follow the next row.
+            let name = element("ww.inspector.source.name")
+            func shown() -> String { "\(name.label)|\(name.value as? String ?? "")" }
+            let before = shown()
+            app.typeKey(XCUIKeyboardKey.downArrow.rawValue, modifierFlags: [])
+            let moved = expectation(for: NSPredicate { _, _ in name.exists && shown() != before }, evaluatedWith: nil)
+            wait(for: [moved], timeout: 3)
+            XCTAssertTrue(waitForOutline("1 selected"), "focus stays in ww.setup.sources")
         }
         XCTAssertTrue(element("ww.inspector.source.speaker").exists, "speaker editable in the details")
         XCTAssertTrue(element("ww.inspector.source.role").exists, "role shown in the details")
