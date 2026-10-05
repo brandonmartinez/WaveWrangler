@@ -140,6 +140,13 @@ final class HarnessIO: SourceIO, @unchecked Sendable {
 
     func simulated(_ url: URL) -> SimulatedCloudItem? { lock.withLock { cloud[Self.key(url)] } }
 
+    /// Mutates a simulated item under the harness lock (the observer reads it under the same lock).
+    func mutateSimulated(_ url: URL, _ body: (SimulatedCloudItem) -> Void) {
+        lock.withLock {
+            if let item = cloud[Self.key(url)] { body(item) }
+        }
+    }
+
     /// Releases a `.hold` step so the simulated provider continues its script.
     func releaseHold(_ url: URL) {
         lock.withLock { cloud[Self.key(url)]?.holdReleased = true }
@@ -317,6 +324,22 @@ final class StateLog: @unchecked Sendable {
     private var _states: [TransferState] = []
     func append(_ state: TransferState) { lock.withLock { _states.append(state) } }
     var states: [TransferState] { lock.withLock { _states } }
+}
+
+/// `waitUntilSettled` with a liveness limit: returns nil (instead of hanging the suite) if the transfer
+/// does not settle within `limit`; the caller records that as a failure.
+func settled(_ controller: SourceTransferController, _ key: DeviceAccessKey, limit: Duration = .seconds(30)) async -> TransferState? {
+    await withTaskGroup(of: TransferState?.self) { group in
+        group.addTask { await controller.waitUntilSettled(key) }
+        group.addTask {
+            try? await Task.sleep(for: limit)
+            return nil
+        }
+        let first = await group.next() ?? nil
+        if first == nil { await controller.cancelAll() }
+        group.cancelAll()
+        return first
+    }
 }
 
 // MARK: - Synthetic trees and immutability snapshots

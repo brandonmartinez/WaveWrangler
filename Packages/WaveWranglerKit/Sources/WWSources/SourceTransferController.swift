@@ -86,6 +86,8 @@ public actor SourceTransferController {
     private var states: [DeviceAccessKey: TransferState] = [:]
     private var active: [DeviceAccessKey: Active] = [:]
     private var cancelledByUser: Set<DeviceAccessKey> = []
+    /// Per active transfer: the observer's latest poll showed the provider idle (see `providerIsIdle`).
+    private var providerIdle: [DeviceAccessKey: Bool] = [:]
     /// Observers that were replaced (explicit retry of a stalled transfer) and may still be finishing
     /// their last poll; `waitUntilSettled` drains them so no scope or poll outlives the call.
     private var draining: [DeviceAccessKey: [Task<Void, Never>]] = [:]
@@ -158,8 +160,10 @@ public actor SourceTransferController {
         userRequested: Bool = false
     ) -> TransferState {
         if let running = active[key] {
-            if userRequested, case .offlineOrUnknown = state(of: key) {
-                // Explicit retry of a stalled transfer: stop the backoff observer and request again.
+            if userRequested, providerIsIdle(key) {
+                // Explicit retry while the provider is not working on the item (stalled, or it dropped the
+                // request: still a placeholder and not downloading): stop the old observer and request
+                // again. Otherwise the user's Retry would be silently swallowed (#85).
                 running.task.cancel()
                 draining[key, default: []].append(running.task)
                 active[key] = nil
@@ -218,12 +222,21 @@ public actor SourceTransferController {
             let initial: TransferState = if case .request = decision { .requested } else { .inProgress(fractionCompleted: .unknown) }
             publish(key, initial)
             let owner = WeakOwner(self)
+            providerIdle[key] = nil
             let task = Task.detached { [context, policy, sleep] in
                 await Self.observe(owner: owner, context: context, policy: policy, sleep: sleep, key: key, url: url, generation: current)
             }
             active[key] = Active(generation: current, task: task, userRequested: userRequested)
             return initial
         }
+    }
+
+    /// True when an active transfer has stalled, or its observer's latest poll reported the item as a
+    /// placeholder the provider is neither downloading nor has a request for (it dropped the request).
+    /// Uses only evidence the observer already read; a provider reporting `downloading` is left alone.
+    private func providerIsIdle(_ key: DeviceAccessKey) -> Bool {
+        if case .offlineOrUnknown = state(of: key) { return true }
+        return providerIdle[key] == true
     }
 
     /// The user stopped the transfer. The original is never evicted or modified. Returns once the
@@ -361,6 +374,8 @@ public actor SourceTransferController {
                     finished = true
                 } else {
                     next = .inProgress(fractionCompleted: fraction)
+                    let idle = value.residency.0 == .cloudPlaceholder && value.ubiquitous.downloadRequested.value != true
+                    guard await controller.noteProviderIdle(key, generation, idle) else { return }
                     let signature = "\(String(describing: fraction.value))|\(String(describing: value.ubiquitous.isDownloading.value))|\(String(describing: value.ubiquitous.downloadingStatus.value))"
                     if signature != lastSignature {
                         // Any reported change (including after a stall) resumes normal observation.
@@ -387,6 +402,13 @@ public actor SourceTransferController {
             }
             guard await controller.publishIfCurrent(key, generation, next) else { return }
         }
+    }
+
+    /// Records the observer's latest provider-idle evidence; false when the generation is no longer current.
+    private func noteProviderIdle(_ key: DeviceAccessKey, _ generation: Int, _ idle: Bool) -> Bool {
+        guard isCurrent(key, generation) else { return false }
+        providerIdle[key] = idle
+        return true
     }
 
     /// Publishes `state` if `generation` is still the active one (and the state changed). Returns false
