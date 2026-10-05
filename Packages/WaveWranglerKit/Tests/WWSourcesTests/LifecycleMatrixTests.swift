@@ -50,6 +50,39 @@ struct FamilyTally: Sendable, Codable {
     var simulatedCases = 0
     var observedCases = 0
     var failures: [String] = []
+    /// Every case, including failures (post-freeze reporting: every case, actual counts).
+    var cases: [CaseRecord] = []
+}
+
+/// One executed case. `seed` is the registry derivation for (fixtureID, split, index).
+struct CaseRecord: Sendable, Codable {
+    var family: String
+    var split: String
+    var index: Int
+    var seed: String
+    var passed: Bool
+    var failures: [String]
+    var leakedScopes: Int
+    var sourceWrites: Int
+    var substitutions: Int
+    var downloadRequests: Int
+    var progressQueries: Int
+    var scopeStarts: Int
+    var provenance: String
+}
+
+/// Frozen holdout/calibration counts from the WW-003 registry freeze `m1-freeze-1` (2026-10-05). The
+/// harness may run more, never fewer.
+enum FrozenCounts {
+    static let freezeID = "m1-freeze-1"
+    static let holdout: [String: Int] = [
+        "M1-REF-001": 60, "M1-REF-002": 60, "M1-REF-003": 60, "M1-REF-004": 60, "M1-REF-005": 60,
+        "M1-REF-006": 60, "M1-REF-007": 60, "M1-REF-008": 60, "M1-REF-009": 60, "M1-REF-010": 60,
+        "M1-REF-011": 60, "M1-REF-012": 60, "M1-REF-013": 60, "M1-REF-014": 60, "M1-REF-015": 60,
+        "M1-REF-016": 150, "M1-REF-017": 60,
+        "M1-SRC-OFF-001": 200, "M1-SRC-ON-001": 200, "M1-SRC-ON-002": 100, "M1-SRC-ON-002-REVIEW": 100,
+    ]
+    static let calibration = 10
 }
 
 final class CaseEnv: @unchecked Sendable {
@@ -936,6 +969,21 @@ struct LifecycleMatrixTests {
                 if leaked != 0 { env.failures.append("\(env.label): leaked scopes \(leaked)") }
                 if env.writes != 0 { env.failures.append("\(env.label): source writes \(env.writes)") }
                 if split == "calibration" { tally.calibrationCases += 1 } else { tally.holdoutCases += 1 }
+                tally.cases.append(CaseRecord(
+                    family: family.rawValue,
+                    split: split,
+                    index: index,
+                    seed: String(format: "%016llx", FixtureSeed.derive(fixtureID: family.rawValue, split: split, caseIndex: index)),
+                    passed: env.failures.isEmpty,
+                    failures: env.failures,
+                    leakedScopes: leaked,
+                    sourceWrites: env.writes,
+                    substitutions: env.substitutions,
+                    downloadRequests: env.io.count(.downloadRequest),
+                    progressQueries: env.io.count(.downloadFraction),
+                    scopeStarts: ledger.starts,
+                    provenance: env.io.provenance.rawValue
+                ))
                 tally.failedAssertions += env.failures.count
                 tally.failures += env.failures.prefix(3)
                 tally.leakedScopes += leaked
@@ -991,9 +1039,23 @@ struct LifecycleMatrixTests {
         try? FileManager.default.createDirectory(at: report.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? encoder.encode(tallies).write(to: report)
+        var summaries = tallies
+        for index in summaries.indices { summaries[index].cases = [] }
+        try? encoder.encode(summaries).write(to: report)
+        // One line per case (every case, including failures) for the evidence record.
+        let lineEncoder = JSONEncoder()
+        lineEncoder.outputFormatting = [.sortedKeys]
+        let lines = tallies.flatMap(\.cases).compactMap { try? String(decoding: lineEncoder.encode($0), as: UTF8.self) }
+        try? (lines.joined(separator: "\n") + "\n").write(
+            to: report.deletingLastPathComponent().appendingPathComponent("ww-006-lifecycle-matrix-cases.jsonl"),
+            atomically: true, encoding: .utf8)
 
         #expect(holdout == MatrixFamily.allCases.reduce(0) { $0 + $1.holdout })
+        for tally in tallies {
+            #expect(tally.holdoutCases >= FrozenCounts.holdout[tally.family, default: .max], "\(tally.family) below frozen holdout")
+            #expect(tally.cases.count == tally.holdoutCases + tally.calibrationCases)
+        }
+        #expect(Set(tallies.map(\.family)) == Set(FrozenCounts.holdout.keys))
         #expect(referenceHoldout >= 1_000)
         #expect(failures == 0)
         #expect(leaked == 0)
