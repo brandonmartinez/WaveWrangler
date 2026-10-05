@@ -286,6 +286,16 @@ enum AcceptanceAudit {
             stats["crop"] = crop
             let mid = CGPoint(x: element.frame.midX, y: element.frame.midY)
             let inSheet = sheetFrame?.contains(mid) ?? false
+            // Occluded by another app window in front (AX lists windows front to back): the screenshot shows the
+            // front window's pixels, so nothing about this element can be measured on this surface. Recorded;
+            // the occluded window must be audited while frontmost (as the C03 test does).
+            if let own = windowFrames.firstIndex(where: { $0.contains(element.frame) }),
+               windowFrames[..<own].contains(where: { $0.contains(mid) }), sheetFrame == nil {
+                waived.append(["finding": description, "kind": "occluded-by-front-window", "measured": stats,
+                               "rationale": "behind another window of the app; audited separately while frontmost"])
+                print("AUDIT WAIVED \(description) — occluded by a window in front; measured (front pixels) \(stats)")
+                continue
+            }
             if let sheetFrame, element.exists, !sheetFrame.contains(mid) {
                 waived.append(["finding": description, "kind": "behind-modal-sheet", "measured": stats,
                                "rationale": "window content dimmed behind a modal sheet; that surface is audited without the sheet"])

@@ -101,6 +101,14 @@ final class ContrastEvidenceUITests: XCTestCase {
         window.typeKey("i", modifierFlags: .command)
         Thread.sleep(forTimeInterval: 1)
         Acceptance.attach(self, png: window.screenshot().pngRepresentation, name: "text200-episode-inspector.png")
+        // Audit the show window while it is frontmost: once the Library window is in front, the show window's
+        // elements are occluded and their screenshots show Library pixels (mini 479eb9e: an episode row
+        // "measured" 63 px at p75 1.69 that way).
+        _ = try AcceptanceAudit.run(app, surface: "200% text (show window)", test: self)
+        if let row = Optional(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.show.sidebar.episode.'")).firstMatch),
+           row.exists, let m = ContrastMeter.measure(row.screenshot().image) {
+            Acceptance.record(self, "C03 show sidebar episode row at 200% (frontmost): glyphPixels \(m["glyphPixels"] ?? 0), p75 \(m["glyphP75"] ?? 0), \(m["text"] ?? "") on \(m["background"] ?? "")")
+        }
         app.typeKey("l", modifierFlags: [.command, .shift])
         Thread.sleep(forTimeInterval: 1.5)
         Acceptance.attach(self, png: app.windows.firstMatch.screenshot().pngRepresentation, name: "text200-library.png")
