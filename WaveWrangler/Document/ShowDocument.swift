@@ -34,6 +34,14 @@ final class ShowDocument: NSDocument {
     private var pendingCandidate: EncodedDocument?
     private var lastReceipt: PublicationReceipt?
     private var scheduler: QuiescenceScheduler?
+    /// Offered C2b records whose Restore is currently in effect (Undo of the Restore removes the record again).
+    /// They stay on disk until a verified publication that contains the restore, or an explicit Don't Save,
+    /// resolves them, so a crash right after Restore loses nothing.
+    private var restoredOfferURLs: Set<URL> = []
+    /// Offered records opened as a separate copy (kept until that copy is saved) or hidden by the user.
+    private var setAsideOfferURLs: Set<URL> = []
+    /// Set on a separate copy opened from another show's offer: its first verified save resolves those records.
+    private var resolvesOffer: OfferResolution?
 
     var revision: Int { publication?.revision ?? 0 }
 
@@ -107,11 +115,10 @@ final class ShowDocument: NSDocument {
             onDiskBase = fingerprint
             status.set(.clean(revision: document.revision))
             if let url { status.setProviderConflicts(ProviderConflictReport.inspect(url)) }
-            if let record = recovery.latestEditCheckpoint(for: .show(document.payload.show.id)) {
-                status.setPendingEditCheckpoint((record, record.relation(to: fingerprint)))
-            } else {
-                status.setPendingEditCheckpoint(nil)
-            }
+            // C2b: set this show's edit checkpoints aside as an offer, so later saves and new checkpoints
+            // can't remove them before the user decides (Restore, Open as Separate Copy or Discard).
+            try? recovery.setAsideEditCheckpoints(for: .show(document.payload.show.id))
+            refreshEditCheckpointOffer()
         case let .refusedNewerFormat(found, supported, _):
             // Refuse with reason; nothing is ever written to a newer document.
             throw PersistenceError.unknownNewerSchema(found: found, supported: supported)
@@ -155,9 +162,11 @@ final class ShowDocument: NSDocument {
         if adopts { status.set(.saving) }
         let candidateBytes = pendingCandidate?.data
         let candidateModel = store.model
+        let restoredAtSaveStart = restoredOfferURLs
         super.save(to: url, ofType: typeName, for: saveOperation) { [weak self] error in
             guard let self else { return completionHandler(error) }
-            self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error, url: url, candidateBytes: candidateBytes, candidateModel: candidateModel)
+            self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error, url: url, candidateBytes: candidateBytes,
+                            candidateModel: candidateModel, restoredAtSaveStart: restoredAtSaveStart)
             completionHandler(error)
         }
     }
@@ -173,7 +182,8 @@ final class ShowDocument: NSDocument {
     }
 
     private func finishSave(
-        saveOperation: NSDocument.SaveOperationType, adopts: Bool, error: Error?, url: URL, candidateBytes: Data?, candidateModel: ShowDocumentModel
+        saveOperation: NSDocument.SaveOperationType, adopts: Bool, error: Error?, url: URL, candidateBytes: Data?, candidateModel: ShowDocumentModel,
+        restoredAtSaveStart: Set<URL>
     ) {
         let receipt = lastReceipt
         lastReceipt = nil
@@ -192,6 +202,9 @@ final class ShowDocument: NSDocument {
                 scheduler?.cancelPending()
                 try? recovery.discardEditCheckpoints(for: documentKey)
             }
+            resolveOfferRecordsAfterVerifiedSave(
+                restoredAtSaveStart: restoredAtSaveStart, publishedEqualsCurrent: store.model == candidateModel
+            )
             if isAutosaveInPlace, isDocumentEdited {
                 status.set(.edited(autosaveEnabled: gate.isEnabled))
             } else {
@@ -287,6 +300,13 @@ final class ShowDocument: NSDocument {
         }
     }
 
+    /// A coalesced edit changed the model without a new undo step (and so without `updateChangeCount`): restart
+    /// quiescence so the next edit checkpoint or autosave contains the whole burst.
+    func coalescedEditDidChangeModel() {
+        guard isDocumentEdited else { return }
+        scheduleAutosaving()
+    }
+
     private func performQuiescentWork(_ work: QuiescentWork) {
         switch work {
         case .publish:
@@ -313,29 +333,130 @@ final class ShowDocument: NSDocument {
         status.set(.recoveryCheckpoint(at: record.createdAt))
     }
 
-    /// "Restore unsaved changes": applies the checkpoint as an ordinary undoable edit (dirty, not saved).
-    func restorePendingEditCheckpoint() {
-        guard let (record, relation) = status.pendingEditCheckpoint, relation == .basedOnCurrent,
-              let decoded = try? coder.decode(record.snapshot) else { return }
-        store.apply("Restore Unsaved Changes") { _ in decoded.payload }
-        status.setPendingEditCheckpoint(nil)
+    // MARK: - C2b recovery offer (#84)
+
+    /// Re-reads the offered records and re-checks each against the publication on disk now.
+    func refreshEditCheckpointOffer() {
+        let showID = store.model.show.id
+        let offer = EditCheckpointOffer.assess(
+            recovery.offeredEditCheckpoints(for: documentKey),
+            documentID: documentKey.rawValue, onDisk: onDiskBase, coder: coder,
+            belongsToDocument: { $0.show.id == showID }
+        ).excluding(restoredOfferURLs.union(setAsideOfferURLs))
+        status.setEditCheckpointOffer(offer.isEmpty ? nil : offer)
     }
 
-    /// Opens the checkpoint as a separate untitled document (never merged, never auto-published).
-    func openPendingEditCheckpointAsCopy() {
-        guard let (record, _) = status.pendingEditCheckpoint, let decoded = try? coder.decode(record.snapshot) else { return }
-        ShowDocument.openUntitledCopy(of: decoded.payload)
-        status.setPendingEditCheckpoint(nil)
+    /// "Restore Unsaved Changes": only while the record is based on exactly the publication on disk. Applies the
+    /// whole snapshot as one undoable edit; the document is dirty and is never marked saved by a restore.
+    func restoreOfferedEditCheckpoint() {
+        refreshEditCheckpointOffer()
+        guard let offer = status.editCheckpointOffer, let candidate = offer.candidate,
+              offer.candidateMode(restoreInEffect: isEditCheckpointRestoreInEffect) == .restore else { return }
+        // One undo step: the model change (which marks the document dirty) and the "restored" mark, so Undo of the
+        // restore also un-marks the record and offers it again; Redo marks it again.
+        let undo = undoManager
+        undo?.beginUndoGrouping()
+        store.apply("Restore Unsaved Changes") { _ in candidate.payload }
+        markRestored(candidate.url)
+        undo?.setActionName("Restore Unsaved Changes")
+        undo?.endUndoGrouping()
     }
 
-    func discardPendingEditCheckpoint() {
-        try? recovery.discardEditCheckpoints(for: documentKey)
-        status.setPendingEditCheckpoint(nil)
+    private func markRestored(_ url: URL) {
+        restoredOfferURLs.insert(url)
+        undoManager?.registerUndo(withTarget: self) { document in
+            MainActor.assumeIsolated { document.unmarkRestored(url) }
+        }
+        refreshEditCheckpointOffer()
+    }
+
+    private func unmarkRestored(_ url: URL) {
+        restoredOfferURLs.remove(url)
+        undoManager?.registerUndo(withTarget: self) { document in
+            MainActor.assumeIsolated { document.markRestored(url) }
+        }
+        refreshEditCheckpointOffer()
+    }
+
+    /// "Open as Separate Copy": a new untitled show (new show ID, so it can't be mistaken for this one), dirty
+    /// and unsaved. Never merged into this show and never published by itself. The records stay until the copy
+    /// is saved; if the copy is closed without saving, the offer returns here.
+    func openOfferedEditCheckpointAsCopy() {
+        guard let offer = status.editCheckpointOffer, let candidate = offer.candidate else { return }
+        let urls: Set<URL> = [candidate.url]
+        let copy = ShowDocument.openUntitledCopy(of: candidate.payload.duplicatedAsNewShow())
+        copy.resolvesOffer = OfferResolution(key: documentKey, urls: Array(urls), source: self)
+        setAsideOfferURLs.formUnion(urls)
+        refreshEditCheckpointOffer()
+    }
+
+    /// Discard (after the user confirmed): deletes exactly the record shown. Other records (for example from
+    /// another crashed session) and problem reports stay and are offered next.
+    func discardOfferedEditCheckpoint() {
+        guard let candidate = status.editCheckpointOffer?.candidate else { return }
+        try? recovery.discardOfferedEditCheckpoints([candidate.url], for: documentKey)
+        refreshEditCheckpointOffer()
+    }
+
+    /// Hides the "couldn't be restored" report in this window (after confirmation). Nothing is deleted.
+    func hideEditCheckpointProblems() {
+        guard let offer = status.editCheckpointOffer else { return }
+        setAsideOfferURLs.formUnion(offer.problems.map(\.url))
+        refreshEditCheckpointOffer()
+    }
+
+    /// A restored record is in effect (until it's saved, undone or discarded with Don't Save).
+    var isEditCheckpointRestoreInEffect: Bool { !restoredOfferURLs.isEmpty }
+
+    var editCheckpointProblemURLs: [URL] { status.editCheckpointOffer?.problems.map(\.url) ?? [] }
+
+    /// After a verified publication of this document. A restored record is deleted only when the publication
+    /// contains its restore: the restore was in effect when the save started and still is, and the published
+    /// candidate equals the current model (no undo or edits in between). Otherwise it stays for a later save.
+    private func resolveOfferRecordsAfterVerifiedSave(restoredAtSaveStart: Set<URL>, publishedEqualsCurrent: Bool) {
+        let contained = RestoredEditCheckpoints.resolved(byPublicationStartedWith: restoredAtSaveStart, restoredNow: restoredOfferURLs,
+                                                         publishedEqualsCurrent: publishedEqualsCurrent)
+        if !contained.isEmpty {
+            try? recovery.discardOfferedEditCheckpoints(Array(contained), for: documentKey)
+            restoredOfferURLs.subtract(contained)
+        }
+        if let resolution = resolvesOffer {
+            resolvesOffer = nil
+            try? recovery.discardOfferedEditCheckpoints(resolution.urls, for: resolution.key)
+            resolution.source?.offerCopyWasSaved(Set(resolution.urls))
+        }
+        // A restore offer becomes "based on an older revision" once a newer version is saved.
+        refreshEditCheckpointOffer()
+    }
+
+    fileprivate func offerCopyWasSaved(_ urls: Set<URL>) {
+        setAsideOfferURLs.subtract(urls)
+        refreshEditCheckpointOffer()
+    }
+
+    fileprivate func offerCopyClosedUnsaved(_ urls: Set<URL>) {
+        setAsideOfferURLs.subtract(urls)
+        refreshEditCheckpointOffer()
+    }
+
+    struct OfferResolution {
+        let key: DocumentKey
+        let urls: [URL]
+        weak var source: ShowDocument?
     }
 
     override func close() {
         // Closing while still edited means the user chose Don't Save: drop this document's edit checkpoints.
-        if isDocumentEdited { try? recovery.discardEditCheckpoints(for: documentKey) }
+        if isDocumentEdited {
+            try? recovery.discardEditCheckpoints(for: documentKey)
+            // Don't Save after a restore discards the restored changes too (C2b retention (b)).
+            if !restoredOfferURLs.isEmpty { try? recovery.discardOfferedEditCheckpoints(Array(restoredOfferURLs), for: documentKey) }
+        }
+        if let resolution = resolvesOffer {
+            // A copy closed without saving: the records stay, and the original show offers them again.
+            resolvesOffer = nil
+            resolution.source?.offerCopyClosedUnsaved(Set(resolution.urls))
+        }
         scheduler?.cancelPending()
         super.close()
     }

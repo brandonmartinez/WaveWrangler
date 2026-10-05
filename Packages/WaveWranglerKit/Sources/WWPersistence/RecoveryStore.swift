@@ -223,6 +223,42 @@ public struct RecoveryStore: Sendable {
         ((try? records(in: folder("edit-checkpoints", key), extension: "wwedit")) ?? [])
     }
 
+    // MARK: Offered edit checkpoints (C2b recovery presentation)
+
+    /// Moves this document's edit-checkpoint records (valid or not) aside when the document is opened, so that
+    /// an unresolved "Restore unsaved changes" offer survives later saves, new checkpoints and Don't Save.
+    /// Each move is a same-volume rename; an existing name is never overwritten.
+    public func setAsideEditCheckpoints(for key: DocumentKey) throws {
+        let files = editCheckpointFiles(for: key)
+        guard !files.isEmpty else { return }
+        let held = folder("edit-checkpoints-offered", key)
+        try ops.createDirectory(held)
+        for url in files {
+            let name = "\(Int64((Date().timeIntervalSince1970 * 1000).rounded()))-\(url.deletingPathExtension().lastPathComponent)-\(UUID().uuidString.prefix(8)).wwedit"
+            try ops.moveNew(url, to: held.appending(path: name))
+        }
+    }
+
+    /// Records set aside by `setAsideEditCheckpoints(for:)`, each with its location. Unreadable or damaged
+    /// records are reported, never deleted here.
+    public func offeredEditCheckpoints(for key: DocumentKey) -> [StoredEditCheckpoint] {
+        ((try? records(in: folder("edit-checkpoints-offered", key), extension: "wwedit")) ?? []).map { url in
+            guard let data = try? ops.read(url) else { return StoredEditCheckpoint(url: url, record: .failure(.unreadable(url))) }
+            do { return StoredEditCheckpoint(url: url, record: .success(try EditCheckpointRecord.decode(data))) } catch {
+                return StoredEditCheckpoint(url: url, record: .failure(.damaged(url)))
+            }
+        }
+    }
+
+    /// Deletes the given offered records only (after an explicit, confirmed Discard, a verified publication
+    /// that contains a restored record, or Don't Save after a restore). Never deletes records it wasn't given.
+    public func discardOfferedEditCheckpoints(_ urls: [URL], for key: DocumentKey) throws {
+        let held = folder("edit-checkpoints-offered", key).standardizedFileURL.path
+        for url in urls where url.standardizedFileURL.deletingLastPathComponent().path == held && ops.exists(url) {
+            try ops.remove(url)
+        }
+    }
+
     private static func sequence(of url: URL) -> Int? {
         Int(url.deletingPathExtension().lastPathComponent)
     }

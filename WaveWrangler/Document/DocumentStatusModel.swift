@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import WWCore
 import WWPersistence
 
 /// Observable per-document persistence status for the UI lane (show window status line, VoiceOver).
@@ -10,8 +11,9 @@ import WWPersistence
 @Observable
 final class DocumentStatusModel {
     private(set) var saveStatus = DocumentSaveStatus(state: .clean(revision: nil))
-    /// A C2b edit checkpoint found when opening, with how it relates to the on-disk publication.
-    private(set) var pendingEditCheckpoint: (record: EditCheckpointRecord, relation: EditCheckpointRecord.Relation)?
+    /// C2b edit checkpoints offered since this show was opened ("Restore unsaved changes", "based on an older
+    /// revision", or records that can't be used). `nil` when there is nothing to offer or report.
+    private(set) var editCheckpointOffer: EditCheckpointOffer<ShowDocumentModel>?
     /// Non-nil when the document is read-only (e.g. recovered copy); edits and saves are refused.
     private(set) var readOnlyReason: String?
 
@@ -25,8 +27,8 @@ final class DocumentStatusModel {
         saveStatus.providerConflicts = report
     }
 
-    func setPendingEditCheckpoint(_ value: (record: EditCheckpointRecord, relation: EditCheckpointRecord.Relation)?) {
-        pendingEditCheckpoint = value
+    func setEditCheckpointOffer(_ value: EditCheckpointOffer<ShowDocumentModel>?) {
+        editCheckpointOffer = value
     }
 
     func setReadOnly(_ reason: String?) {
