@@ -60,8 +60,12 @@ final class EpisodeSetupModel {
     @ObservationIgnored var window: () -> NSWindow? = { nil }
 
     var statuses: [SourceID: SourceStatusSnapshot] = [:]
-    var selection: Set<SetupRowID> = []
-    var speakerSelection: Set<SpeakerID> = []
+    var selection: Set<SetupRowID> = [] {
+        didSet { if selection != oldValue { pendingInspectorFocus = false } }
+    }
+    var speakerSelection: Set<SpeakerID> = [] {
+        didSet { if speakerSelection != oldValue { pendingInspectorFocus = false } }
+    }
     var onlyNeedingAttention = false
     enum FocusedTable: Hashable { case sources, speakers }
     /// Which Setup table has keyboard focus (nil = neither).
@@ -92,7 +96,9 @@ final class EpisodeSetupModel {
 
     /// Return in a table: move focus to the details' first editable field, opening them if collapsed.
     func requestInspectorFocus() {
-        pendingInspectorFocus = true
+        // Only when the details show something editable (not for a multi-row selection), so a stale
+        // request can never pull focus out of the table later.
+        pendingInspectorFocus = inspectorSubject != .none
         inspectorFocusRequest += 1
     }
 

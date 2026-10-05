@@ -403,6 +403,18 @@ final class EpisodeSetupUITests: XCTestCase {
         XCTAssertTrue(element("ww.setup.inspector").waitForExistence(timeout: 2), "menu opens the details")
         menu("View", "Hide Setup Details")
 
+        // Return on a multi-row selection must not leave a focus request behind: a later ↓ to one row keeps
+        // keyboard focus in the Sources table.
+        select("tr1.wav")
+        app.typeKey(XCUIKeyboardKey.downArrow.rawValue, modifierFlags: .shift)
+        XCTAssertTrue(waitForOutline("2 selected"))
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.downArrow.rawValue, modifierFlags: [])
+        XCTAssertTrue(waitForOutline("1 selected"))
+        let stolen = app.descendants(matching: .any).matching(NSPredicate(format: "hasKeyboardFocus == true AND identifier BEGINSWITH 'ww.inspector.'")).firstMatch
+        XCTAssertFalse(stolen.waitForExistence(timeout: 1.5), "focus stays in ww.setup.sources")
+        if element("ww.setup.inspector").exists { menu("View", "Hide Setup Details") }
+
         for _ in 0..<4 { menu("View", "Text Size", "Bigger") }
         let grown = expectation(for: NSPredicate { _, _ in self.visibleSourceRows(outline).allSatisfy { $0.frame.height >= 30 } }, evaluatedWith: nil)
         wait(for: [grown], timeout: 5)
