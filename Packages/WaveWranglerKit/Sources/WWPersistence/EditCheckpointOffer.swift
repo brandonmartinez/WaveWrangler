@@ -43,14 +43,9 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
     public let usable: [Candidate]
     public let problems: [Problem]
 
-    /// The newest usable record: what the message bar offers.
+    /// The newest usable record: what the message bar offers. Every action applies to this record only; other
+    /// records (each from a different session, with different edits) are offered one after another.
     public var candidate: Candidate? { usable.first }
-    /// The records an action on the offer resolves: every usable record with the candidate's relation (the
-    /// retained previous record is a safety copy of the newest). Records with another relation stay offered.
-    public var candidateGroup: [URL] {
-        guard let candidate else { return [] }
-        return usable.filter { $0.relation == candidate.relation }.map(\.url)
-    }
 
     public var isEmpty: Bool { candidate == nil && problems.isEmpty }
 
@@ -110,5 +105,15 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
     /// The offer without the given records (restored, discarded, copied or hidden); everything else remains.
     public func excluding(_ urls: Set<URL>) -> EditCheckpointOffer {
         EditCheckpointOffer(usable: usable.filter { !urls.contains($0.url) }, problems: problems.filter { !urls.contains($0.url) })
+    }
+}
+
+/// Which restored offer records a verified publication resolves (#84 review). A record is deleted only when the
+/// publication contains its restore: the restore was in effect when the save started **and** still is (an Undo
+/// of the restore removes it from `restoredNow`), and the published candidate equals the current model (no
+/// undo or edits during the save). Anything else stays for a later save, or for the next launch.
+public enum RestoredEditCheckpoints {
+    public static func resolved(byPublicationStartedWith atStart: Set<URL>, restoredNow: Set<URL>, publishedEqualsCurrent: Bool) -> Set<URL> {
+        publishedEqualsCurrent ? atStart.intersection(restoredNow) : []
     }
 }

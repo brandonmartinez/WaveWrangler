@@ -31,7 +31,7 @@ struct EditCheckpointOfferTests {
         let candidate = try #require(offer.candidate)
         #expect(candidate.relation == .basedOnCurrent)
         #expect(candidate.payload == unsaved)
-        #expect(offer.problems.isEmpty && offer.candidateGroup == [candidate.url])
+        #expect(offer.problems.isEmpty && offer.usable.count == 1)
         // Restoring is an in-memory edit; nothing on disk changed.
         guard case let .editable(onDisk, _) = rig.opener.open(url) else { Issue.record("not editable"); return }
         #expect(onDisk.payload == current)
@@ -48,7 +48,7 @@ struct EditCheckpointOfferTests {
         #expect(assess(rig, key, model, onDisk: r3.fingerprint).candidate?.relation == .basedOnOtherRevision)
 
         // Explicit resolution removes exactly the offered record.
-        try rig.recovery.discardOfferedEditCheckpoints(offer.candidateGroup, for: key)
+        try rig.recovery.discardOfferedEditCheckpoints([candidate.url], for: key)
         #expect(rig.recovery.offeredEditCheckpoints(for: key).isEmpty)
         #expect(assess(rig, key, model, onDisk: r3.fingerprint).isEmpty)
     }
@@ -93,13 +93,13 @@ struct EditCheckpointOfferTests {
         #expect(offer.problems.contains { if case .newerFormat(_, 99, _) = $0 { true } else { false } })
 
         // Discarding the offer removes the valid record only; every problem record is kept.
-        try rig.recovery.discardOfferedEditCheckpoints(offer.candidateGroup, for: key)
+        try rig.recovery.discardOfferedEditCheckpoints([try #require(offer.candidate).url], for: key)
         let after = assess(rig, key, model, onDisk: base)
         #expect(after.candidate == nil && after.problems.count == 5)
         for problem in after.problems { #expect(FileManager.default.fileExists(atPath: problem.url.path)) }
     }
 
-    @Test func newestFirstAndActionsResolveOnlyTheCandidateGroup() throws {
+    @Test func newestFirstAndActionsResolveOnlyTheShownRecord() throws {
         let rig = Rig()
         let model = Fixtures.show(seed: 843)
         let url = rig.url()
@@ -118,10 +118,53 @@ struct EditCheckpointOfferTests {
         let offer = assess(rig, key, model, onDisk: r3.fingerprint)
         let candidate = try #require(offer.candidate)
         #expect(candidate.payload == newer && candidate.relation == .basedOnCurrent)
-        #expect(offer.candidateGroup == [candidate.url])
         // After the newest is restored (or discarded), the older record is still offered, honestly labelled.
-        let next = offer.excluding(Set(offer.candidateGroup))
+        let next = offer.excluding([candidate.url])
         #expect(next.candidate?.payload == older && next.candidate?.relation == .basedOnOtherRevision)
+    }
+
+    /// Two crashed sessions on the same base leave two records with different edits. Every action applies to the
+    /// shown record only; the other is offered next and is never deleted along with it.
+    @Test func twoSessionsOnTheSameBaseAreOfferedOneAfterAnother() throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 845)
+        let (current, base) = try rig.seedTwoRevisions(model, at: rig.url())
+        let key = DocumentKey.show(model.show.id)
+        let sessionA = try current.renamingShow(to: "Session A edits")
+        let sessionB = try current.renamingShow(to: "Session B edits")
+        // Session A: checkpoint, crash, reopen (set aside). Session B: the same.
+        try rig.recovery.writeEditCheckpoint(snapshot: coder.encode(sessionA, revision: 3), base: base, schemaVersion: 1, for: key,
+                                             at: Date(timeIntervalSince1970: 1_000))
+        try rig.recovery.setAsideEditCheckpoints(for: key)
+        try rig.recovery.writeEditCheckpoint(snapshot: coder.encode(sessionB, revision: 3), base: base, schemaVersion: 1, for: key,
+                                             at: Date(timeIntervalSince1970: 2_000))
+        try rig.recovery.setAsideEditCheckpoints(for: key)
+
+        let offer = assess(rig, key, model, onDisk: base)
+        #expect(offer.usable.map(\.payload) == [sessionB, sessionA])
+        #expect(offer.usable.allSatisfy { $0.relation == .basedOnCurrent })
+        let shown = try #require(offer.candidate)
+        // Restore (or Open as Separate Copy) of B: A is still offered.
+        #expect(offer.excluding([shown.url]).candidate?.payload == sessionA)
+        // Discard of B deletes B only.
+        try rig.recovery.discardOfferedEditCheckpoints([shown.url], for: key)
+        let after = assess(rig, key, model, onDisk: base)
+        #expect(after.usable.map(\.payload) == [sessionA])
+    }
+
+    /// A verified save resolves a restored record only if it contains the restore (#84 review).
+    @Test func restoredRecordsResolveOnlyWhenThePublicationContainsTheRestore() {
+        let a = URL(fileURLWithPath: "/offered/a.wwedit"), b = URL(fileURLWithPath: "/offered/b.wwedit")
+        // Restored before the save started, still restored, nothing changed during the save: resolved.
+        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a], restoredNow: [a], publishedEqualsCurrent: true) == [a])
+        // The restore was undone during or before completion: kept.
+        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a], restoredNow: [], publishedEqualsCurrent: true).isEmpty)
+        // The publication was captured before the restore and finished after it: kept.
+        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [], restoredNow: [a], publishedEqualsCurrent: true).isEmpty)
+        // Edits (or an undo) happened during the save, so the published candidate isn't the current model: kept.
+        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a], restoredNow: [a], publishedEqualsCurrent: false).isEmpty)
+        // Only the records restored at both ends.
+        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a, b], restoredNow: [b], publishedEqualsCurrent: true) == [b])
     }
 
     @Test func discardNeverDeletesOutsideTheOfferedRecords() throws {

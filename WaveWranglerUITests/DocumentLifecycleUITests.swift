@@ -64,12 +64,46 @@ final class DocumentLifecycleUITests: XCTestCase {
         let status = window.descendants(matching: .any).matching(identifier: "ww.show.saveStatus").firstMatch
         if status.exists { XCTAssertFalse((status.value as? String ?? "").hasPrefix("Saved"), "restored changes are unsaved") }
 
+        // Undo of the restore offers the record again; Redo restores it again (one undo step).
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(messageBar(window).waitForExistence(timeout: 5), "Undo of Restore offers the unsaved changes again")
+        XCTAssertTrue(messageBar(window).label.hasPrefix("Restore unsaved changes from "))
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(waitFor(timeout: 5) { !self.messageBar(window).exists }, "Redo restores again")
+        XCTAssertEqual(showTitleField(window).value as? String, "Unsaved before the crash")
+
         app.typeKey("s", modifierFlags: .command)
         XCTAssertTrue(waitFor(timeout: 5) { self.diskTitle(document) == "Unsaved before the crash" }, "⌘S publishes the restored changes")
         forceQuit()
         window = try launchAndOpen(document, autosave: true, extraArguments: Self.slowAutosave)
         Thread.sleep(forTimeInterval: 1.5)
         XCTAssertFalse(messageBar(window).exists, "a verified save resolved the offer")
+    }
+
+    /// Two crashed sessions leave two records with different edits: each is offered on its own, newest first, and
+    /// acting on one never removes the other.
+    func testTwoCrashedSessionsAreOfferedOneAfterAnother() throws {
+        let document = try makeDocument("Relaunch Two Sessions")
+        try crashWithUnpublishedEdit(document, title: "Session A edits")
+        // Session B: reopen, leave A's offer undecided, edit and crash again.
+        var window = try launchAndOpen(document, autosave: true, extraArguments: Self.slowAutosave)
+        XCTAssertTrue(messageBar(window).waitForExistence(timeout: 10))
+        try edit(window, title: "Session B edits")
+        assertDiskTitle(document, stays: "Synthetic Trial Show 1", for: 3)
+        forceQuit()
+
+        window = try launchAndOpen(document, autosave: true, extraArguments: Self.slowAutosave)
+        let bar = messageBar(window)
+        XCTAssertTrue(bar.waitForExistence(timeout: 10))
+        let first = bar.label
+        bar.buttons["Restore Unsaved Changes"].click()
+        XCTAssertEqual(showTitleField(window).value as? String, "Session B edits", "the newest record is offered first")
+        // The other session's record is still offered (never deleted with B).
+        XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).exists && self.messageBar(window).label.hasPrefix("Restore unsaved changes from ") })
+        record("two sessions: first \(first) | then \(messageBar(window).label)")
+        messageBar(window).buttons["Restore Unsaved Changes"].click()
+        XCTAssertEqual(showTitleField(window).value as? String, "Session A edits")
+        XCTAssertEqual(diskTitle(document), "Synthetic Trial Show 1", "restores never save")
     }
 
     /// C2b: if the show was saved since the checkpoint's base, the offer is "Unsaved changes based on an older
