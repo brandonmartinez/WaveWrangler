@@ -114,33 +114,58 @@ enum Acceptance {
 }
 
 /// Accessibility audit policy for the acceptance suites (accessibility-acceptance §4.2): the macOS audit
-/// types, the lane suites' structural waivers (system chrome, non-interactive SwiftUI containers, pop-up
-/// AXShowMenu, system overlays, AppKit alert icons), and — for `.contrast` only — a **pixel-verified**
-/// waiver: each flagged element is screenshotted after the audit and its WCAG ratio measured
-/// (`ContrastMeter`); the finding is waived only when the measured ratio is ≥ 4.5:1 (A1, text ≤ 17 pt), as
-/// evidence that the audit mis-sampled (#59). Every waiver is printed with its rationale.
+/// types and the lane suites' structural waivers (system chrome, non-interactive SwiftUI containers, pop-up
+/// AXShowMenu, system overlays, AppKit alert icons). For `.contrast`, a finding is waived only when **both**:
+/// 1. the element is one of the surfaces whose audit-artefact status was measured and evidenced in #59
+///    (`measuredArtefact`), and
+/// 2. its screenshot, measured now, shows real text with A1 contrast: at least 100 glyph pixels (pixels
+///    ≥ 1.5:1 against the background) whose 75th-percentile ratio is ≥ 4.5:1. A blurred or clipped label has
+///    only a handful of glyph pixels (the #59 blur measured 4), so a single bright pixel can't pass.
+/// Findings on window content behind a modal sheet (dimmed by AppKit) are waived but measured and listed.
+/// Every waiver — structural or contrast — is recorded with its element and rationale (and, for contrast,
+/// the glyph statistics) in an `audit-<surface>` evidence record.
 enum AcceptanceAudit {
     static let types: XCUIAccessibilityAuditType = [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]
+
+    /// Episode inspector field labels measured at 15.7–15.9:1 (#59 "first row under the toolbar").
+    static let inspectorLabels: Set<String> = ["Episode", "Title", "Number", "Recording date", "Notes"]
+
+    /// Surfaces measured as audit artefacts in #59: Library sidebar unselected rows (18.1 / 15.7:1) and the
+    /// Episode inspector's labels inside `ww.inspector` (15.7–15.9:1).
+    @MainActor
+    static func measuredArtefact(_ element: XCUIElement, inspectorFrame: CGRect?) -> String? {
+        if ["ww.library.sidebar.recent", "ww.library.sidebar.unavailable"].contains(element.identifier) {
+            return "Library sidebar unselected row (#59: measured 18.1:1 light / 15.7:1 dark)"
+        }
+        let text = (element.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? element.label
+        if element.elementType == .staticText, inspectorLabels.contains(text), let inspectorFrame,
+           inspectorFrame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) {
+            return "Episode inspector label (#59: measured 15.7–15.9:1)"
+        }
+        return nil
+    }
+
+    /// Glyph-statistic test for an element screenshot (see type comment).
+    static func passesGlyphContrast(_ measured: [String: Any]?) -> Bool {
+        guard let measured, let count = measured["glyphPixels"] as? Int, let p75 = measured["glyphP75"] as? Double else { return false }
+        return count >= 100 && p75 >= 4.5
+    }
 
     @MainActor
     static func run(_ app: XCUIApplication, surface: String, test: XCTestCase) throws -> [String] {
         var unwaived: [String] = []
-        // With a modal sheet up, AppKit dims the window content behind it; that content is audited separately
-        // without the sheet (lane suites' policy), so contrast findings outside the sheet are waived.
+        var waived: [[String: Any]] = []
         let sheetFrame: CGRect? = app.sheets.firstMatch.exists ? app.sheets.firstMatch.frame : nil
+        let inspector = app.descendants(matching: .any).matching(identifier: "ww.inspector").firstMatch
+        let inspectorFrame: CGRect? = inspector.exists ? inspector.frame : nil
         var contrast: [(XCUIElement, String)] = []
-        // Audits of large trees can time out (XCTest error -56); run contrast separately and retry once.
-        func audit(_ kinds: XCUIAccessibilityAuditType, _ handler: @escaping (XCUIAccessibilityAuditIssue) -> Bool) throws {
-            do {
-                try app.performAccessibilityAudit(for: kinds, handler)
-            } catch let error as NSError where error.code == -56 {
-                print("AUDIT \(surface): timed out once for \(kinds); retrying")
-                try app.performAccessibilityAudit(for: kinds, handler)
-            }
+        func describe(_ issue: XCUIAccessibilityAuditIssue) -> String {
+            "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(200) ?? "no element")"
         }
-        try audit(types.subtracting(.contrast)) { issue in
-            let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(200) ?? "no element")"
+        func handle(_ issue: XCUIAccessibilityAuditIssue) -> Bool {
+            let description = describe(issue)
             if let rationale = structuralWaiver(for: issue) {
+                waived.append(["finding": description, "rationale": rationale, "kind": "structural"])
                 print("AUDIT WAIVED \(description) — \(rationale)")
             } else if issue.auditType == .contrast, let element = issue.element {
                 contrast.append((element, description))
@@ -149,31 +174,37 @@ enum AcceptanceAudit {
             }
             return true
         }
-        try audit(.contrast) { issue in
-            let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(200) ?? "no element")"
-            if let rationale = structuralWaiver(for: issue) {
-                print("AUDIT WAIVED \(description) — \(rationale)")
-            } else if let element = issue.element {
-                contrast.append((element, description))
-            } else {
-                unwaived.append(description)
+        // Audits of large trees can time out (XCTest error -56); run contrast separately and retry once.
+        func audit(_ kinds: XCUIAccessibilityAuditType) throws {
+            do {
+                try app.performAccessibilityAudit(for: kinds, handle)
+            } catch let error as NSError where error.code == -56 {
+                print("AUDIT \(surface): timed out once for \(kinds); retrying")
+                try app.performAccessibilityAudit(for: kinds, handle)
             }
-            return true
         }
+        try audit(types.subtracting(.contrast))
+        try audit(.contrast)
         for (element, description) in contrast {
+            let measured = element.exists ? ContrastMeter.measure(element.screenshot().image) : nil
+            let stats = measured.map { m in ["glyphPixels": m["glyphPixels"] ?? 0, "glyphP75": m["glyphP75"] ?? 0, "max": m["ratio"] ?? 0] } ?? [:]
             if let sheetFrame, element.exists, !sheetFrame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) {
-                print("AUDIT WAIVED \(description) — window content dimmed behind a modal sheet; audited separately without the sheet")
+                waived.append(["finding": description, "kind": "behind-modal-sheet", "measured": stats,
+                               "rationale": "window content dimmed behind a modal sheet; that surface is audited without the sheet"])
+                print("AUDIT WAIVED \(description) — dimmed behind a modal sheet; measured \(stats)")
                 continue
             }
-            let measured = element.exists ? ContrastMeter.measure(element.screenshot().image) : nil
-            let ratio = measured?["ratio"] as? Double ?? 0
-            if ratio >= 4.5 {
-                print("AUDIT WAIVED \(description) — pixel-measured contrast \(ratio):1 ≥ 4.5:1 (text \(measured?["text"] ?? "?") on \(measured?["background"] ?? "?")); audit mis-sampling, #59")
+            if let artefact = measuredArtefact(element, inspectorFrame: inspectorFrame), passesGlyphContrast(measured) {
+                waived.append(["finding": description, "kind": "measured-artefact", "measured": stats, "rationale": artefact])
+                print("AUDIT WAIVED \(description) — \(artefact); measured now \(stats)")
             } else {
-                unwaived.append("\(description) — pixel-measured \(ratio):1")
+                unwaived.append("\(description) — measured \(stats)")
             }
         }
-        print("AUDIT \(surface): \(unwaived.isEmpty ? "no unwaived issues" : "\(unwaived.count) unwaived issue(s)")")
+        Acceptance.writeEvidence("audit-\(surface.replacingOccurrences(of: " ", with: "_"))", [
+            "surface": surface, "unwaived": unwaived, "waived": waived,
+        ], test: test)
+        print("AUDIT \(surface): \(unwaived.isEmpty ? "no unwaived issues" : "\(unwaived.count) unwaived issue(s)"); \(waived.count) waived (recorded)")
         return unwaived
     }
 

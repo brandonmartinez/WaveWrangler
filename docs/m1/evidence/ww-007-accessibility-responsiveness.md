@@ -8,13 +8,13 @@ Results use only **Pass**, **Fail** (with issue), **Blocked** (with reason) and 
 
 | Area | Result |
 | --- | --- |
-| **SCALE-001 native** (WW-007 timing) | **Holdout (`cb42138`):** first open p95 **1.048 s ❌** ([#105](https://github.com/brandonmartinez/WaveWrangler/issues/105)) and sidebar selection p95 **165 ms ❌** ([#106](https://github.com/brandonmartinez/WaveWrangler/issues/106)); everything else passed. **Post-fix re-execution (`10eb4b8` = main `251d122` with #107 and #108 + this branch): every gate passes.** First open p95 461 ms, sidebar p95 52 ms. Episode switch p95 95 ms, with 4 of 100 samples over 100 ms. |
-| DUR-026 native lifecycle ×20 | First attempt (`08f62ee`) **aborted by a harness defect** at scenario 1. Execution on `241396a`: **18 Pass, 0 Fail, 2 Not run** (Dock › Quit, tool limit). |
-| REF-020 sandboxed grant ×20 | First execution (`08f62ee`): **16 executed / 4 not executed**. 12 pass; 4 failed on a harness row-selection defect; cycle 5 aborted on a harness defect. Post-correction re-execution (`241396a`): aborted in cycle 2 on panel timing. Full-suite cycle: 4/4 pass. **No product failure observed.** |
-| A11Y-001 keyboard full suite | **Executed 1/1** (`241396a`): 45 tests — 36 pass, 6 fail, 3 skipped (VO). Two of the failures were caused by my first #86 fix; the corrected fix was re-verified on `10eb4b8` (§4). |
-| A11Y-002 VoiceOver | **Blocked**. Background computer-use can't toggle or drive VoiceOver. Manual checklist in §5.1 (user-only item). |
-| A11Y-003 visual | **Executed with in-app overrides only** (light/dark, `-WWForceReduceMotion`, in-app 200%). OS-level Increase Contrast, Reduce Motion and larger text weren't exercised (user-only item). |
-| A11Y-004 static audit | **Executed 1/1**: 0 flags (heuristic). |
+| **SCALE-001 native** (WW-007 timing) | **Holdout `cb42138`: Fail.** First open p95 1.048 s ([#105](https://github.com/brandonmartinez/WaveWrangler/issues/105)) and sidebar selection p95 165 ms ([#106](https://github.com/brandonmartinez/WaveWrangler/issues/106)); every other stratum passed. **Post-fix re-execution `10eb4b8` (main `251d122` with #107/#108 + this branch): Pass.** Every gate passes: first open p95 461 ms, sidebar p95 52 ms; episode switch p95 95 ms with 4 of 100 samples over 100 ms. |
+| DUR-026 native lifecycle ×20 | **Pass** (18 Pass, 0 Fail, 2 Not run: the Dock › Quit route, a tool limit; user-manual item). Executed on `241396a`. A first attempt on `08f62ee` was **aborted by a harness defect** at scenario 1 (raw record committed). |
+| REF-020 sandboxed grant ×20 | **Fail** (holdout `08f62ee`: 16 executed, 4 not executed; 12 Pass, 4 Fail). All 4 failures and the 4 not-executed scenarios trace to harness defects: row selection, then an aborted cycle 5. **No product failure observed.** A post-correction re-execution on `241396a` aborted in cycle 2 on panel timing; the full-suite cycle passed 4/4. Raw records committed. |
+| A11Y-001 keyboard full suite | **Fail** (1/1 executed on `241396a`: 45 tests, 36 Pass, 6 Fail, 3 skipped for VO). Open issues behind the failures: [#104](https://github.com/brandonmartinez/WaveWrangler/issues/104) (clipped Role cell), [#66](https://github.com/brandonmartinez/WaveWrangler/issues/66) (T16 D6), [#110](https://github.com/brandonmartinez/WaveWrangler/issues/110) (sidebar "+"), [#109](https://github.com/brandonmartinez/WaveWrangler/issues/109) (200% overflow). The 2 DocumentLifecycle failures came from my first #86 fix; the corrected fix passes 10/10 on `10eb4b8`. |
+| A11Y-002 VoiceOver | **Blocked** (0/1). Background computer-use can't toggle or drive VoiceOver. A manual checklist is in §5.1 (user-only item). |
+| A11Y-003 visual | **Fail** (1/1 executed, in-app overrides only). C03 200% Library **Fail** ([#109](https://github.com/brandonmartinez/WaveWrangler/issues/109)); C03 Setup Pass; C06 Pass (captured surfaces); C07 Pass; **C04 Not run** (OS-level Increase Contrast not exercised; the override doesn't emulate it); **C05 Not run** (static captures). OS-level toggles are a user-only item. |
+| A11Y-004 static audit | **Pass** (1/1 executed: 0 flags across 132 controls). It's heuristic: it missed the merged sidebar "+" button the GUI run found ([#110](https://github.com/brandonmartinez/WaveWrangler/issues/110)). |
 | #59 | Sidebar and inspector findings are **audit artefacts** (15.7–18.1:1). The entry-table blur under a Library message bar was a **real failure**; it's **fixed in this PR and verified**: row 1 went from 7.07 / 6.7:1 (blurred) to 15.91 / 12.39:1. The fix makes the existing in-app 200% overflow worse ([#109](https://github.com/brandonmartinez/WaveWrangler/issues/109)). |
 | P0s | **None found.** |
 
@@ -45,11 +45,11 @@ From about 08:37 to 09:45 EDT every `--ui` run failed with "Timed out while enab
 | --- | ---: | ---: | --- |
 | M1-SCALE-001 native (first-open / warm / interactions) | 100 / 100 / 400 | Holdout: 100 executed (99 timed; one app log line wasn't persisted) / 100 / 403. Post-fix: 100 / 100 / 402. | §2.1 |
 | M1-DUR-026 native lifecycle | 20 | 20 executed (`241396a`): 18 Pass, 2 Not run. The first attempt (`08f62ee`) aborted by a harness defect. | §2.2 |
-| M1-REF-020 sandboxed grant | 20 | 16 executed, 4 not executed (`08f62ee`) | §2.3 |
-| M1-A11Y-001 keyboard full suite | 1 | 1 | §4 |
+| M1-REF-020 sandboxed grant | 20 | 16 executed, 4 not executed (`08f62ee`) | **Fail**: 12 Pass, 4 Fail, all harness defects (§2.3) |
+| M1-A11Y-001 keyboard full suite | 1 | 1 | **Fail** (§4) |
 | M1-A11Y-002 VoiceOver full suite | 1 | **0** | **Blocked** (§5) |
-| M1-A11Y-003 visual full suite | 1 | 1 (in-app overrides only) | §6 |
-| M1-A11Y-004 static audit | 1 | 1 | §3 |
+| M1-A11Y-003 visual full suite | 1 | 1 (in-app overrides only) | **Fail** (C03 Library), C04/C05 Not run (§6) |
+| M1-A11Y-004 static audit | 1 | 1 | **Pass** (§3) |
 
 No count was lowered and nothing was relabelled.
 
@@ -83,6 +83,7 @@ Raw samples: [`scale001-native-raw.jsonl`](ww-007/scale001-native-raw.jsonl) (ho
 
 ### 2.2 DUR-026 native lifecycle
 
+- Raw per-scenario lines and XCTest errors for every DUR-026 and REF-020 execution, including the aborted ones, are in [`ww-007/raw-dur026-ref020-executions.jsonl`](ww-007/raw-dur026-ref020-executions.jsonl). Aborted runs never reached their end-of-test JSON record.
 - **First attempt (`08f62ee`): aborted by a harness defect at scenario 1.** The window was looked up by the document's name, but the show-window title now changes during edits. Corrected to look it up by identifier in `cc41261`.
 - **Execution on `241396a`:** 20 scenarios cycling through 9 routes ([`runs-evidence.jsonl`](ww-007/runs-evidence.jsonl), `dur026-native-lifecycle`).
 
@@ -115,6 +116,8 @@ Every scenario checks SHA-256 and mtime of every source.
 | **First execution, `08f62ee`** | 16 executed, 4 not executed | Cycles 1–4: grant 4/4, relaunch 4/4, regrant 2/4, relink 2/4, so **12 Pass, 4 Fail**. All 4 failures were **harness row-selection defects**: the row click didn't select, so Grant Access and Relink stayed disabled. Cycle 5 **aborted** on a harness defect (an unguarded Import Review read after the panel didn't confirm), so its 4 scenarios weren't executed. |
 | Post-harness-correction re-execution, `241396a` (fixes `cc41261`, `74c13d9`) | 7 recorded | Cycle 1: grant, relaunch and relink pass; regrant failed because the identity sheet didn't appear (panel timing). Cycle 2: the Import Review didn't appear (panel timing), then the run aborted. **Disclosed; it doesn't replace the first execution.** |
 | Full-suite cycle, `241396a` | 4 | 4/4 Pass |
+
+**Raw records:** [`ww-007/raw-dur026-ref020-executions.jsonl`](ww-007/raw-dur026-ref020-executions.jsonl) has every `[evidence]` line, test-case result and XCTest error, from both the first execution and the re-execution.
 
 **Product state in every executed scenario:**
 - Sources stayed byte- and mtime-unchanged.
@@ -257,7 +260,7 @@ Every scenario checks SHA-256 and mtime of every source.
 
 ## 7. #59 resolution (contrast)
 
-Pixel WCAG ratios (`ContrastMeter`: element screenshot at 2×; background = the most common colour; text = the highest-contrast pixel):
+Pixel WCAG ratios (`ContrastMeter`: element screenshot at 2×; background = the most common colour). The ratios below are the highest-contrast pixel. The robust glyph statistics (pixels ≥ 1.5:1 against the background) are in the policy note at the end of this section.
 
 | Surface | Light | Dark | Verdict |
 | --- | ---: | ---: | --- |
@@ -272,7 +275,17 @@ Pixel WCAG ratios (`ContrastMeter`: element screenshot at 2×; background = the 
   - `.scrollEdgeEffectHidden` on the list had no effect;
   - an inset across the whole split view put the bar under the traffic lights.
 - **Known cost:** 200% overflow in the Library window ([#109](https://github.com/brandonmartinez/WaveWrangler/issues/109)).
-- The acceptance suites use a **pixel-verified** contrast policy (`AcceptanceAudit`): a `.contrast` finding is waived only when the flagged element measures ≥ 4.5:1 or is dimmed behind a modal sheet, and every waiver prints its ratio. The lane suites keep their identifier-scoped waivers.
+- **Contrast waiver policy (`AcceptanceAudit`, revised after #111 review).** The first version waived any `.contrast` finding whose single brightest pixel measured ≥ 4.5:1. That would have hidden the real #59 blur: row 1 measured 7.07 / 6.7:1 by that test. The policy is now:
+  - **Scoped.** Only the surfaces measured as artefacts here can be waived: `ww.library.sidebar.recent` and `ww.library.sidebar.unavailable`, and the Episode inspector labels (Episode / Title / Number / Recording date / Notes) inside `ww.inspector`.
+  - **Measured.** The waiver also needs ≥ 100 glyph pixels with a 75th-percentile ratio ≥ 4.5:1. On the evidence screenshots:
+    - blurred row 1: **4** glyph pixels (fails);
+    - fixed row 1: 1,725 / 2,086 glyph pixels, p75 15.91 / 12.39;
+    - sidebar Recent: 1,047 / 1,164, p75 18.10 / 15.72;
+    - inspector Title: 500, p75 15.91.
+  - **Recorded.** Findings on content dimmed behind a modal sheet are waived, but each one is measured and listed.
+  - Every waiver (structural or contrast) is recorded with its element and rationale, plus glyph statistics for contrast, in an `audit-<surface>` evidence record.
+  - The setup source-name top row (`ww.inspector.source.name`) from the coordinator note wasn't measured in this lane, so it isn't waived here. Its lane keeps its own identifier-scoped waiver.
+  - Results from runs before this change used the old policy. The affected audits get re-run under the GUI lock (see the PR).
 
 ## 8. Findings and issues
 

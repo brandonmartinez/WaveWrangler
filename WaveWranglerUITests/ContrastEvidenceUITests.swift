@@ -224,8 +224,9 @@ final class ContrastEvidenceUITests: XCTestCase {
     }
 }
 
-/// WCAG 2 contrast ratio from rendered pixels: background = the most common colour; text = the pixel with
-/// the highest contrast against it (the fully covered core of a glyph stem at 2× scale).
+/// WCAG 2 contrast from rendered pixels: background = the most common colour. Reports the highest-contrast
+/// pixel ("ratio", an upper bound) and glyph statistics over pixels ≥ 1.5:1 against the background
+/// (count, median, 75th percentile), which separate legible text from blurred or clipped text.
 enum ContrastMeter {
     static func measure(_ image: NSImage) -> [String: Any]? {
         guard let pixels = rgba(image) else { return nil }
@@ -235,14 +236,22 @@ enum ContrastMeter {
         let bg = Pixel(key: background)
         let bgLum = bg.luminance
         var best = (ratio: 1.0, pixel: bg)
+        var glyph: [Double] = []
         for pixel in pixels {
             let ratio = contrast(pixel.luminance, bgLum)
             if ratio > best.ratio { best = (ratio, pixel) }
+            if ratio >= 1.5 { glyph.append(ratio) }
         }
+        glyph.sort()
+        func percentile(_ p: Double) -> Double {
+            glyph.isEmpty ? 0 : (glyph[min(glyph.count - 1, Int(Double(glyph.count) * p))] * 100).rounded() / 100
+        }
+        // "ratio" is the single highest-contrast pixel (an upper bound); the glyph statistics are what waivers
+        // use: a blurred or clipped label has very few glyph pixels.
         return [
             "ratio": (best.ratio * 100).rounded() / 100,
-            "background": bg.hex, "text": best.pixel.hex,
-            "meetsAA4.5": best.ratio >= 4.5, "pixels": pixels.count,
+            "background": bg.hex, "text": best.pixel.hex, "pixels": pixels.count,
+            "glyphPixels": glyph.count, "glyphP50": percentile(0.5), "glyphP75": percentile(0.75),
         ]
     }
 
