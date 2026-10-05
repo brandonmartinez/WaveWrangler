@@ -293,11 +293,14 @@ final class CoreTasksKeyboardUITests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func launch(_ arguments: [String]) {
+    private func launch(_ arguments: [String], opening document: URL? = nil) {
         app = XCUIApplication()
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
                                "-WWUITestCenterWindows", "YES"] + arguments
-        app.launch()
+        // One launch only. `launch()` followed by `open(_:)` starts a second process for the URL, and XCTest can
+        // stay bound to the first, windowless one (diagnosed on the Mac mini from launchd/unified logs, REF-020).
+        // `open(_:)` applies the launch arguments (the URL instance used the isolated UI-test storage).
+        if let document { app.open(document) } else { app.launch() }
         app.activate()
     }
 
@@ -305,8 +308,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
     /// `freshStorage` deletes the isolated UI-test storage (library, recovery, edit checkpoints) left by earlier
     /// suites, e.g. the DUR-026 checkpoint scenario, whose restore offer would otherwise cover the window.
     private func openOptionally(_ document: URL, autosave: Bool, expectWindow: Bool = false, freshStorage: Bool = false) throws -> XCUIElement? {
-        launch(["-WWUITestAutosave", autosave ? "ON" : "OFF"] + (freshStorage ? ["-WWUITestResetStorage", "YES"] : []))
-        app.open(document)
+        launch(["-WWUITestAutosave", autosave ? "ON" : "OFF"] + (freshStorage ? ["-WWUITestResetStorage", "YES"] : []), opening: document)
         let name = document.deletingPathExtension().lastPathComponent
         let window = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", name)).firstMatch
         guard window.waitForExistence(timeout: 10) else {

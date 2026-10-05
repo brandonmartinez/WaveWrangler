@@ -156,7 +156,8 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         app = XCUIApplication()
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestAutosave", "ON",
                                "-WWUITestCenterWindows", "YES"] + extra
-        app.launch()
+        // One launch only: `launch()` + `open(_:)` started two processes, and XCTest stayed bound to the windowless
+        // first one (mini, 9e994b1: pids 92503/92506). `open(_:)` applies the launch arguments.
         let start = Date()
         app.open(document)
         let window = app.windows.matching(identifier: "ww.show.window").firstMatch

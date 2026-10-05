@@ -247,14 +247,14 @@ final class LifecycleHoldoutUITests: XCTestCase {
         app.launchArguments = [
             "-WWUITestHooks", "YES", "-WWUITestAutosave", autosave ? "ON" : "OFF", "-ApplePersistenceIgnoreState", "YES",
         ] + extra
-        app.launch()
+        // One launch only (see SourceGrantHoldoutUITests.launchAndOpen): `open(_:)` applies the launch arguments.
+        app.open(document)
         let untitled = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
-        if untitled.waitForExistence(timeout: 2) {
+        if untitled.waitForExistence(timeout: 1) {
             untitled.click()
             app.typeKey("w", modifierFlags: .command)
             _ = Acceptance.waitFor(timeout: 3) { !untitled.exists }
         }
-        app.open(document)
         let name = document.deletingPathExtension().lastPathComponent
         let window = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", name)).firstMatch
         guard window.waitForExistence(timeout: 10) else {
