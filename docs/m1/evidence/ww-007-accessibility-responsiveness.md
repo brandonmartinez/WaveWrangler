@@ -17,12 +17,12 @@ Results use only **Pass**, **Fail** (with issue), **Blocked** (with reason) and 
 - **Fail:** T17/T20 on [#126](https://github.com/brandonmartinez/WaveWrangler/issues/126) (alert contrast 2.85–2.95).
 
 Since fixed on main: #104 (#112), #109/#110 (#113). |
-| A11Y-002 VoiceOver | **Blocked** (0/1). Background computer-use can't toggle or drive VoiceOver. A manual checklist is in §5.1 (user-only item). |
+| A11Y-002 VoiceOver | **Blocked** (0/1). Background computer-use can't toggle or drive VoiceOver. A Mac mini run with caption-panel capture is queued for the follow-up evidence PR (§9). The manual checklist in §5.1 is the fallback. |
 | A11Y-003 visual | **Fail** (1/1 executed, in-app overrides only).
 - C03 200% Library: Fail on `241396a` ([#109](https://github.com/brandonmartinez/WaveWrangler/issues/109), since fixed by #113; `testLibraryAt200PercentTextStaysInsideTheWindow` passes on the mini with main's placement).
-- C03 Setup: Pass.
+- **C03 Setup: Fail (unresolved).** Mini `479eb9e` under the scoped policy left unclassified low-p75 findings, including Setup darkAqua 200% "Access denied" status at p75 1.77 (§7.2). Re-measurement on the current head is queued.
 - C06: Pass (captured surfaces).
-- C07: Pass. The accent change is verified in light and dark on the mini, §7.1.
+- **C07 light/dark: Fail (unresolved).** The accent fix is verified (§7.2). Unclassified candidates from `479eb9e` remain: Library darkAqua bottom-row cells at p75 1.93–2.16, aqua date cells at 4.23–4.42, and 200% "Recent" at 2.38 / 2.66 (§7.2). Re-measurement on the current head is queued.
 - **C04 Not run.** OS-level Increase Contrast was not exercised, and the override doesn't emulate it.
 - **C05 Not run** (static captures only).
 
@@ -272,106 +272,113 @@ Every scenario checks SHA-256 and mtime of every source.
 
 | Condition | Result |
 | --- | --- |
-| C03 200%, Setup (zoomed window) | **Pass under superseded waiver policy; not re-run.** Names, statuses, units and button titles are readable. Long statuses wrap mid-word and truncate ("Downloadin g 42% +1…"). Whether the full value reaches help and VO wasn't checked here; it's covered by the lane's T13/T18 AX assertions. Screenshot: [`screens/setup-light-200-zoomed.png`](ww-007/screens/setup-light-200-zoomed.png). Audit findings on that surface are rows cut off at the scroll-view edge (pixel 1.2–1.8:1 because they're partly hidden), not colour. |
+| C03 200%, Setup (zoomed window) | **Fail (unresolved).** Under the scoped policy, mini `479eb9e` left the darkAqua "Access denied" status cell unwaived at p75 1.77 with 5,305 px. That run predates #112's Setup layout and attached no crop (§7.2). It is re-measured in the C04/C05 slot. Earlier observations: Names, statuses, units and button titles are readable. Long statuses wrap mid-word and truncate ("Downloadin g 42% +1…"). Whether the full value reaches help and VO wasn't checked here; it's covered by the lane's T13/T18 AX assertions. Screenshot: [`screens/setup-light-200-zoomed.png`](ww-007/screens/setup-light-200-zoomed.png). Audit findings on that surface are rows cut off at the scroll-view edge (pixel 1.2–1.8:1 because they're partly hidden), not colour. |
 | C03 200%, Library window | **Fail** [#109](https://github.com/brandonmartinez/WaveWrangler/issues/109). Content overflows above the window: sidebar rows and the message-bar heading end up under the title bar ([`screens/library-dark-200-overflow.png`](ww-007/screens/library-dark-200-overflow.png)). This already happened before this PR (Shows row 10 pt above the window top). It's worse with the #59 fix (84 pt), because the message bar wraps in the narrower column. |
 | C04 Increase Contrast | **Not run** (OS level). The AppKit `accessibilityHighContrast*` appearance override produced pixel-identical captures, so it doesn't emulate the setting. |
 | C05 Reduce Motion | **Not evaluated.** The flows ran with `-WWForceReduceMotion YES` and completed, but static screenshots can't show motion. Needs a human check (or OS-level Reduce Motion) as part of item 2 in §9. |
 | C06 colour independence | **Pass for the captured surfaces.** At saturation 0 every state is carried by text plus symbol shape: "5 need attention", "Downloading 2 sources — progress unknown", "Needs permission…", "Not found", "Ready", "—" / "?" placeholders ([`screens/setup-default-size-saturation0.png`](ww-007/screens/setup-default-size-saturation0.png)). |
-| C07 light/dark | **Pass under superseded waiver policy; not re-run** (ratios in §7 were measured directly and are unaffected) |
+| C07 light/dark | **Fail (unresolved).** The ratios in §7.1 were measured directly and pass, and the accent fix is verified. The candidates in §7.2 from `479eb9e` aren't classified yet: Library bottom-row cells, date cells, and 200% "Recent" before #113. Re-measurement is queued in the C04/C05 slot. |
 
-## 7. #59 resolution (contrast)
+## 7. Contrast: #59 resolution and the audit contrast policy
 
-Pixel WCAG ratios (`ContrastMeter`: element screenshot at 2×; background = the most common colour). The ratios below are the highest-contrast pixel. The robust glyph statistics (pixels ≥ 1.5:1 against the background) are in the policy note at the end of this section.
+### 7.0 Audit contrast policy (as implemented)
 
-| Surface | Light | Dark | Verdict |
-| --- | ---: | ---: | --- |
-| Sidebar unselected rows "Recent", "Unavailable" | 18.1:1 | 15.7–15.9:1 | **Audit artefact.** Keep the identifier-scoped waiver. |
-| Episode inspector "Title" / "Number" / "Recording date" / "Notes" (first row under the toolbar) | n/a | 15.7–15.9:1 (#FFFFFF on #222222) | **Audit artefact.** Identifier-scoped waiver. |
-| Entry list rows 2 and 5 | 14.9 / 15.9:1 | 11.0 / 12.4:1 | Pass |
-| **Entry list headers + row 1 while a Library message bar is shown** | 7.07:1 before (blurred) → **15.91:1** with my fix → **7.57:1, 4 glyph pixels with main's #113 placement** | 6.7:1 before → **12.39:1** with my fix → **7.7:1, 4 glyph pixels with #113** | **Real failure. Fixed by my placement, regressed on main by #113; decision pending (below).** |
+Pixel measurements use `ContrastMeter`: an element screenshot at 2×, with the background taken as the most common colour. The results are:
+- `max`: the single highest-contrast pixel, an upper bound only;
+- glyph statistics over pixels ≥ 1.5:1 against the background: the count, the median and **p75**.
 
-- **Regression after #113 (Mac mini, `9e994b1`, main `6e35da2`, `testLibraryTextContrastAcrossAppearances`).** #113 put the bar back above the split view (`MessageBarStack`, needed for #109). Row 1 has **4 glyph pixels** (max 7.57 light / 7.7 dark) in aqua, darkAqua and both high-contrast overrides; row 2 has 1,771–2,132. That is the original #59 signature. Raw records: [`raw-mini-6e35da2-runs.jsonl`](ww-007/raw-mini-6e35da2-runs.jsonl) (`runD`).
-- **My placement with #113 merged** (`MessageBarStack` inside the content column, `1aef328`/`4a109aa`, mini `runA`). Every Library XCUITest passed except the audit in `testLibraryAt200PercentTextStaysInsideTheWindow`, which passed: LibraryManagement, both LibraryProviderConflict tests, `testLibraryReopensShowAfterRelaunchAndSaves`, and all 200% layout assertions. The audit had one unwaived `.contrast` finding: a bottom-row cell "5" at y 839–871, partly below the window's bottom edge (855). The library lane's `OffscreenAuditWaiver` only covers cells with no intersection.
-- **Resolution (coordinator decision (a), 2026-10-05).** The content-column placement is restored (`972acad`). Partly clipped edge cells are measured on their visible part only (`PartialClipContrast`).
-- **Cross-lane edit, coordinator-authorized:** `LibraryWorkspaceUITests.audit` now measures each Library sidebar/table contrast finding instead of blanket-waiving it as "#59 tracked". The `notOnScreen` budget is unchanged.
-- **Mac mini (macOS 27.0.1, M2 Pro) `550506d` results:**
-  - LibraryWorkspaceUITests 7/7 Pass, including 200%. `testLibraryWindowAtScale` passes on the `3b2a878` re-run under the 40-px rule; in the `550506d` run it failed only on the 65-px "unknown" cell.
-  - LibraryProviderConflictUITests 2/2 Pass; SheetKeyboardUITests Pass.
-  - ContrastEvidence row-1 assertion Pass.
-  - Waived with records: 4 partly clipped bottom-row cells on their visible part, and 11 sidebar/table findings by measurement. No real product contrast failure surfaced.
-- The two bullets below record the state before that decision.
-- Per the coordinator's rule (keep my placement only if every Library test passes), **I reverted to main's placement (`019b305`)**. #59 now fails on main and on this branch. Options for the coordinator:
-  - (a) restore the content-column placement and have the audit measure partly clipped edge cells (glyph statistics on the visible part);
-  - (b) another fix for the toolbar pocket.
-- The "Cause", "Fix" and "Known cost" notes below describe my original fix.
-- **Cause:** with the message bar above the `NavigationSplitView`, the content column still reserved the toolbar's scroll-edge pocket *below* the bar. That blurred the column headers and the first row (before: [`screens/library-light-header-blur.png`](ww-007/screens/library-light-header-blur.png), [`screens/library-dark-header-blur.png`](ww-007/screens/library-dark-header-blur.png)).
-- **Fix:** `LibraryMessageBar` moved to the top of the content column (`.safeAreaInset(edge: .top)`), which also matches IA reading order (after: [`screens/library-dark-after-59-fix.png`](ww-007/screens/library-dark-after-59-fix.png)).
+A blurred or clipped label has few glyph pixels or a low p75; legible text has many glyph pixels and a high p75.
+
+**`AcceptanceAudit.run`** (`WaveWranglerUITests/AcceptanceSupport.swift`) handles each `.contrast` finding in this order. The first matching rule applies, and every waiver is recorded per instance in an `audit-<surface>` evidence record, with its glyph statistics and a crop attachment.
+
+1. **Behind a modal sheet.** A sheet is up and the element's midpoint is outside it. The finding is recorded with its measurement as window content dimmed by AppKit.
+2. **Offscreen.** The element isn't hittable and has fewer than 20 glyph pixels (scrolled out of view). Recorded.
+3. **Occluded.** The element's owning window, resolved through the AX hierarchy (`owningWindowIndex`, matching element type, identifier or label/value, and frame), lies behind another app window that overlaps the element. The screenshot would show the front window's pixels, so the finding is recorded and not measured; that window is audited separately while frontmost. An element of the front window itself is never treated as occluded.
+4. **Partly clipped at its window's edge** (`PartialClipContrast`). Only the visible intersection is measured, from the window's own screenshot. The finding is waived only if that part has ≥ 40 glyph pixels at p75 ≥ 4.5; otherwise it stays unwaived.
+5. **Measured-artefact surface plus a run-time glyph test.** The element must be in `measuredArtefact`'s scope **and** its screenshot taken now must have ≥ 40 glyph pixels at p75 ≥ 4.5. Otherwise the finding is unwaived. `measuredArtefact`'s scope, each surface measured legible in the cited runs:
+   - Library sidebar `ww.library.sidebar.recent` and `.unavailable`;
+   - show sidebar `ww.show.sidebar.showInfo` and `ww.show.sidebar.episode.*`;
+   - the Episode inspector labels Title, Number, Recording date and Notes, only while the Episode inspector is shown;
+   - inspector "Not set";
+   - Library entry-table cells, matched by the table's left edge and vertical extent;
+   - Setup `ww.setup.source.*` and `ww.setup.group.*` cells;
+   - window title-band text (top 52 pt) and `AX_EDITING_STATE`;
+   - the "No episodes yet" empty state;
+   - `_NS:` text inside a sheet.
+
+Structural waivers (`structuralWaiver`, recorded):
+- system window chrome;
+- disabled layout groups for `sufficientElementDescription`;
+- the pop-up button's AXShowMenu;
+- the system emoji item and Siri overlay;
+- the AppKit NSAlert icon;
+- Setup Name cells labelled with a synthetic fixture file name (`synthetic-N.wav`, `trN.wav`).
+
+**`LibraryWorkspaceUITests.audit`** (Library lane; cross-lane edit authorized by the coordinator in #111) keeps its structural waivers and `OffscreenAuditWaiver` (budget ≤ 5, unchanged). Each contrast finding then goes to `PartialClipContrast`, or, for Library sidebar and entry-table text, to the same per-instance glyph test. Anything else fails. The blanket "#59 tracked" waivers are gone.
+
+**Threshold history (disclosed):**
+1. A waiver if the single brightest pixel was ≥ 4.5:1. Superseded: it would have hidden the #59 blur (7.07 / 6.7:1 by that test).
+2. ≥ 100 glyph pixels at p75 ≥ 4.5 (#111 review round 1).
+3. **2026-10-05, coordinator decision: ≥ 40 glyph pixels (`AcceptanceAudit.minimumGlyphPixels`), p75 ≥ 4.5 unchanged.** This was decided after the mini run at `550506d` observed a legible short word under 100: the "unknown" Location cell, 65 px at p75 12.39.
+   - Separation data: blurred #59 row 4 px; clipped or offscreen cells 0 px; shortest legible word 65 px.
+   - Every committed and session record was re-evaluated. One classification changed: the same "unknown" cell in mini `479eb9e` "Library darkAqua 100%" is now a measured artefact. A show-sidebar episode row (63 px, p75 1.69) stays unwaived; it is classified in §7.2 as an occlusion artefact.
+
+**Reproducible measurements:** [`ww-007/glyphstat.swift`](ww-007/glyphstat.swift) over [`ww-007/contrast-crops/`](ww-007/contrast-crops/), with output in [`glyphstat-results.txt`](ww-007/contrast-crops/glyphstat-results.txt):
+- blurred row 1: 4 glyph pixels;
+- fixed row 1: 1,725 / 2,086 at p75 15.91 / 12.39;
+- sidebar Recent: 1,047 / 1,164 at p75 18.10 / 15.72;
+- sidebar Unavailable: 1,737 / 1,986 at p75 18.10 / 15.72;
+- inspector Title / Number / Recording date / Notes (dark): 500 / 890 / 1,679 / 678 at p75 15.72–15.91.
+
+### 7.1 #59: entry list blurred under a Library message bar
+
+| Entry row 1 with a Library message bar shown | Light (aqua, high-contrast aqua) | Dark (darkAqua, high-contrast dark) |
+| --- | --- | --- |
+| Bar above the split view (original #59, and main after #113) | 4 glyph px (max 7.07–7.57) | 4 glyph px (max 6.7–7.7) |
+| **Bar in the content column (this PR)** | **1,725 px, p75 15.91** | **2,086 px, p75 12.39** |
+
+- **Cause.** With the bar above the `NavigationSplitView`, the content column still reserved the toolbar's scroll-edge pocket below the bar. That blurred the column headers and row 1.
+  - Before: [`screens/library-light-header-blur.png`](ww-007/screens/library-light-header-blur.png), [`screens/library-dark-header-blur.png`](ww-007/screens/library-dark-header-blur.png).
+  - After: [`screens/library-dark-after-59-fix.png`](ww-007/screens/library-dark-after-59-fix.png).
 - **Rejected alternatives:**
-  - `.scrollEdgeEffectHidden` on the list had no effect;
+  - `.scrollEdgeEffectHidden` had no effect;
   - an inset across the whole split view put the bar under the traffic lights.
-- **Known cost:** 200% overflow in the Library window ([#109](https://github.com/brandonmartinez/WaveWrangler/issues/109)).
-- **Contrast waiver policy (`AcceptanceAudit`, revised after #111 review).** The first version waived any `.contrast` finding whose single brightest pixel measured ≥ 4.5:1. That would have hidden the real #59 blur: row 1 measured 7.07 / 6.7:1 by that test. The policy is now:
-  - **Scoped.** Only the surfaces measured as artefacts here can be waived: `ww.library.sidebar.recent` and `ww.library.sidebar.unavailable`, and the Episode inspector labels (Episode / Title / Number / Recording date / Notes) inside `ww.inspector`.
-  - **Measured.** The waiver also needs ≥ 100 glyph pixels with a 75th-percentile ratio ≥ 4.5:1. Measurements are reproducible from committed data: [`ww-007/glyphstat.swift`](ww-007/glyphstat.swift) run over the source element crops in [`ww-007/contrast-crops/`](ww-007/contrast-crops/), with output in [`contrast-crops/glyphstat-results.txt`](ww-007/contrast-crops/glyphstat-results.txt). Results:
-    - blurred row 1: **4** glyph pixels (fails);
-    - fixed row 1: 1,725 / 2,086, p75 15.91 / 12.39;
-    - sidebar Recent: 1,047 / 1,164, p75 18.10 / 15.72;
-    - sidebar Unavailable: 1,737 / 1,986, p75 18.10 / 15.72;
-    - inspector Title / Number / Recording date / Notes (dark): 500 / 890 / 1,679 / 678, p75 15.72–15.91.
-    - blurred row 1: **4** glyph pixels (fails);
-    - fixed row 1: 1,725 / 2,086 glyph pixels, p75 15.91 / 12.39;
-    - sidebar Recent: 1,047 / 1,164, p75 18.10 / 15.72;
-    - inspector Title: 500, p75 15.91.
-  - **Recorded.** Findings on content dimmed behind a modal sheet are waived, but each one is measured and listed.
-  - Every waiver (structural or contrast) is recorded with its element and rationale, plus glyph statistics for contrast, in an `audit-<surface>` evidence record.
-  - The setup source-name top row (`ww.inspector.source.name`) from the coordinator note wasn't measured in this lane, so it isn't waived here. Its lane keeps its own identifier-scoped waiver.
-  - **Status of results produced under the superseded policy (max-pixel waiver, waivers not recorded per finding):** the T01, T17 and T20 audits (CoreTasks), the full-suite audits on `241396a`, and the ContrastEvidence-based C03 Setup and C07 results. They're marked "Pass under superseded waiver policy; not re-run" above. A re-run under the scoped policy is queued for the Mac mini GUI lane and will replace these marks with its results.
+- **History.**
+  1. My first fix put the bar in the content column.
+  2. #113 (needed for #109) moved it back above the split view, which brought the blur back on main: mini `9e994b1`, row 1 4 px in all four appearances (`raw-mini-6e35da2-runs.jsonl`, `runD`).
+  3. I briefly reverted to main's placement (`019b305`) under the coordinator's rule.
+  4. Coordinator decision (a): restore the content-column placement, wrapped in #113's `MessageBarStack` (40 % cap) for #109 (`972acad`).
+- **Verification**, Mac mini (macOS 27.0.1, M2 Pro), products `550506d` with main `6e35da2` ([`raw-mini-550506d-runs.jsonl`](ww-007/raw-mini-550506d-runs.jsonl), `runG`):
+  - The `ContrastEvidenceUITests` row-1 **assertion** (≥ 40 px, p75 ≥ 4.5) passes in all four appearances.
+  - LibraryWorkspaceUITests 7/7 Pass, including 200%. `testLibraryWindowAtScale` passed on the `3b2a878` re-run; in `550506d` it failed only on the 65-px "unknown" cell, under the 100-px rule.
+  - LibraryProviderConflictUITests 2/2 Pass; SheetKeyboardUITests Pass.
+  - Waived, recorded per instance: 4 partly clipped bottom-row cells (including "5" at y 839–871, window bottom 855) on their visible part, and 11 Library sidebar and table findings by measurement.
 
-- **Policy change, 2026-10-05 (disclosed; coordinator decision): minimum glyph pixels 100 → 40, p75 ≥ 4.5 unchanged.**
-  - It was decided **after** the mini run at `550506d` observed one legible short word under 100: the "unknown" Location cell in `testLibraryWindowAtScaleWithUnavailableEntries`, 64×18 pt, 65 glyph pixels at p75 12.39.
-  - Separation data: blurred #59 row 4 px; clipped or offscreen cells 0 px; shortest legible word observed 65 px.
-  - The value is `AcceptanceAudit.minimumGlyphPixels`, used by `AcceptanceAudit`, `PartialClipContrast`, the `LibraryWorkspaceUITests` measured waivers and the ContrastEvidence row-1 assertion.
-  - **Re-evaluation of every committed and session record** (all `audit-records-*`, `raw-mini-*` and mini logs): only two findings fall in 40–99 px.
-    - The "unknown" cell in mini `479eb9e` "Library darkAqua 100% reduce motion" (65 px, p75 12.39) **changes classification**: it was unwaived and is now a measured artefact on the allowlisted entries surface.
-    - A show-sidebar episode row in mini `479eb9e` (63 px, p75 1.69) stays unwaived; it fails on p75.
-  - No other finding changes. The `550506d` "unknown" finding is reported as **Fail under the 100-px policy in that run**; it is waivable from the next run on.
+### 7.2 Classification of contrast findings (Mac mini runs)
 
-### 7.1 Contrast findings under the scoped policy (Mac mini run, `479eb9e`)
+Runs on the Mac mini (macOS 27.0.1, M2 Pro, 12-core/32 GiB); products built on the 18-core host:
+- `479eb9e`: the first scoped-policy run, no crops. Raw records: [`audit-records-mini-479eb9e.jsonl`](ww-007/audit-records-mini-479eb9e.jsonl).
+- `457dbd1` / `de30c99`, with crops: [`audit-records-mini-de30c99.jsonl`](ww-007/audit-records-mini-de30c99.jsonl).
+- `4a109aa` / `550506d` / `3b2a878`: [`raw-mini-6e35da2-runs.jsonl`](ww-007/raw-mini-6e35da2-runs.jsonl), [`raw-mini-550506d-runs.jsonl`](ww-007/raw-mini-550506d-runs.jsonl).
 
-Run: Mac mini (Macsimus), Apple M2 Pro, macOS 27.0.1, 12-core/32 GiB. `xcodebuild test-without-building` of products built on the 18-core host at `479eb9e`. Result bundle `run1.xcresult` is kept by Design.
+Context for the dates: `479eb9e` predates #112 (fixes #104, Setup layout) and #113 (fixes #109, Library 200 % overflow), but already had this PR's #59 placement.
 
-Under the scoped policy, **ContrastEvidence passed 5/5** (#59 verified again: row 1 15.91 / 12.39:1). **CoreTasks failed 6/6, all on the audit:** findings on surfaces that weren't yet in the measured allowlist are now unwaived. Raw per-finding records with glyph statistics: [`audit-records-mini-479eb9e.jsonl`](ww-007/audit-records-mini-479eb9e.jsonl). That run didn't attach per-finding crops; the harness now does (`audit-crop-*`), so the next run produces them. Classification:
-
-| Surface (example finding) | Glyph px · p75 · max | Classification | Action |
+| Surface (example finding) | Glyph px · p75 | Classification | Status |
 | --- | --- | --- | --- |
-| Show sidebar unselected rows ("Show Info", "2 Synthetic Episode…") | 1,435–2,603 · 15.72–15.91 | Legible system text: **artefact** | Added to the scoped allowlist (still gated per instance) |
-| **Selected** sidebar rows ("1 Synthetic Episode…", Library "Shows") | 1,564–9,484 · **4.02** · 4.02 | **Real failure**: white on the default system-blue selection (#007AFF = 4.02:1) | **Fixed and verified** on the mini at `de30c99`. `AccentColor` is #0064E1 in light and #0A6CF0 in dark. Text on accent measures 5.37–7.17 in light and 4.76–8.31 in dark (`testAccentTintedControls`, crops `contrast-crops/mini-de30c99-accent-*`). |
-| Library entry cells (dates, counts, locations) | 133–2,198 · 11.0–16.3 (most) | Legible system text: **artefact** | Allowlisted (entries frame), gated |
-| Library entry cells with p75 2.06–4.23 (bottom row at the window edge in dark mode; some date cells in light mode) | 999–3,973 · 2.06–4.42 | **Unresolved.** These came from `testVisualOverridesLightDarkReduceMotion200` (Library at 100%), which wasn't in the `de30c99` slot, so there are no crops yet. | Stays unwaived. Re-run that test with crops in the C04/C05 slot. **Not run.** |
-| Setup Sources cells ("none" placeholders, names, "Access denied; …") | 114–812 · 7.42–17.22 | Legible: **artefact** | Allowlisted (`ww.setup.source.*` / `ww.setup.group.*`), gated |
-| Setup Sources cells with 0 glyph pixels | 0 · — · 1.05–1.38 | Scrolled out of view (#104 layout) | New **offscreen** rule (not hittable and no glyphs), recorded |
-| Window title / subtitle / "Edited" (`AX_EDITING_STATE`), "Library" | 1,134–4,275 · 7.55–15.72 | AppKit title bar text: **artefact** | Allowlisted (top 52 pt of a window), gated |
-| T01 empty state "No episodes yet" | 4,083 · 6.15 | Legible: **artefact** | Allowlisted by text, gated |
-| Inspector "Not set" | 2,333 · 14.09 | Legible: **artefact** | Allowlisted (inside `ww.inspector`), gated |
-| T16 AppKit sheet message ("This document's file has been changed…") | 12,000 · 9.75 | Legible: **artefact** | Allowlisted (`_NS:` text inside a sheet), gated |
-| T16 "Edit the show's title…" (window content under the sheet's band) | 1,029–2,452 · 3.15–3.85 | **Modal dim (measured)**: the crop shows the window's own text dimmed by AppKit while the document-modal sheet is up. Not interactive, not the sheet's content. Coordinator decision 2026-10-05. | Classified as the modal dim from the crop (`contrast-crops/mini-de30c99-audit-crop-T16_external-change_sheet-10.png`). The T16 audit still records it. T16 is a Fail anyway because of #66. |
-| **T17/T20 alert text** (`_NS:74` message, `_NS:58` informative) | 6,264–10,462 · **2.85–2.95** | **Real rendered failure**: the crops show sharp white bold text on the app-modal NSAlert's translucent material, which shows the light desktop behind it in dark mode. Not a blur or dim artefact. | [#126](https://github.com/brandonmartinez/WaveWrangler/issues/126) (P1, Mac). **T17 and T20 audits = Fail.** Crops `contrast-crops/mini-de30c99-audit-crop-T17_*`, `…T20_*`. |
-| Other accent-tinted controls (default button, switches, checkboxes, toolbar destination fill) | see [design spec](../design/states-and-recovery.md#1-rules-for-every-state-indicator) | **Measured, Pass** on the mini (`de30c99`, then `4a109aa` with main `6e35da2`). Light: switches 5.28, default bezel 5.37, destination text 12.02, checkmark-on-fill (selected row) 4.88, checked fill vs surroundings (unselected row) 5.10. Dark with #0064E1: switches **2.99 (failed)**, fixed with the dark variant #0A6CF0. Dark now: switches 3.37, bezel 3.51, destination text 6.5, checkmark 4.35, checked fill 3.20. | `testAccentTintedControls` **passed** in both appearances at `4a109aa`. The focus ring isn't measured (FKA not granted). |
-| T03 setup "Role" cell `ww.setup.source.<id>.role` ("none") | 0 · — · 1.06 (`de30c99`) | Clipped: the column was 12 pt wide at the default window size | **Resolved by #112** (column tiers hide Role when there's no room). Not present at `94176b5`. |
-| T03 Setup Name cell `ww.setup.source.<id>` labelled "synthetic-0.wav" (`sufficientElementDescription`: "Label not human-readable") | n/a (not contrast) | Heuristic finding that appeared with #112. The label is the source's file name, the visible name per IA; #112 moved the hidden columns into the value. | **Scoped structural waiver:** Setup Name-cell identifier **and** a label matching the synthetic fixture file name `synthetic-N.wav`; recorded per finding. |
-| Library 200% bottom-row cell "5" (y 839–871, window bottom 855), only with my content-column #59 placement | not measured by the library lane's audit | Partly clipped edge cell | See §7. My placement is reverted; no waiver added. |
-| Show sidebar episode row in `testTextSize200Screenshots` (mini `479eb9e`: 63 px, p75 1.69) | 63 · 1.69 · 1.79 | **Occlusion artefact.** The audit ran after ⌘⇧L had put the Library window in front, so the row's screenshot was Library pixels. **Audited while frontmost at 200% (mini, `3b2a878` products): 9,795 px, p75 9.89 (#FFFFFF on #434343).** Not a product failure. | The test now audits the show window while it's frontmost; `AcceptanceAudit` records findings occluded by a front window instead of measuring them. |
-| C03 Name-cell label "tr1.wav" (fixture-states), `sufficientElementDescription` | n/a | Same file-name heuristic as `synthetic-N.wav` | Waiver scope extended to `trN.wav` (harness; record-only C03 surface) |
-| C03 Library date / "—" cells at x 1170 (fixture library), p75 12.4–12.6, 250–2,604 px | legible | The cells extend past the outline's clip frame horizontally, so the allowlist (midpoint in the outline frame) missed them | Allowlist now matches the table's left edge and vertical extent (same rule as the library lane). Still gated by measurement. |
-| 200% Library rows | — | Overflow under the title bar | [#109](https://github.com/brandonmartinez/WaveWrangler/issues/109) |
+| **Selected** rows ("Shows", "1 Synthetic Episode…"), `479eb9e` | 1,564–9,484 · **4.02** | **Real failure**: white on the default system-blue selection (#007AFF) | **Fixed in this PR** (`AccentColor` #0064E1 light / #0A6CF0 dark). Verified at `de30c99`/`4a109aa`: text on accent 5.37–8.31; switches 5.28 / 3.37; checkmark 4.88 / 4.35 (`testAccentTintedControls`, crops `contrast-crops/mini-de30c99-accent-*`) |
+| **T17/T20 NSAlert text** (`_NS:74`, `_NS:58`) | 6,264–10,462 · **2.85–2.95** | **Real failure**: sharp white text on translucent alert material (crops `contrast-crops/mini-de30c99-audit-crop-T17_*`, `…T20_*`) | [#126](https://github.com/brandonmartinez/WaveWrangler/issues/126) (P1, Mac). T17 and T20 audits = **Fail** |
+| T16 "Edit the show's title…" (window content around a document-modal sheet) | 1,029–18,550 · 3.15–3.85 | **Modal dim**, measured from crop `contrast-crops/mini-de30c99-audit-crop-T16_external-change_sheet-10.png` | Rule 1, recorded. T16 = Fail anyway (#66) |
+| Show sidebar episode row in C03 `testTextSize200Screenshots`, `479eb9e` | 63 · 1.69 | **Occlusion artefact**: audited after ⌘⇧L put the Library window in front. Audited while frontmost (`3b2a878`): 9,795 px, p75 9.89 | The test now audits the show window while frontmost; rule 3 |
+| Setup "Role"/"Speaker" cells "none", 12 pt wide (T03, `479eb9e`/`de30c99`) | 0–384 · 1.06–2.07 | **Clipped column** (#104 layout, predates #112) | Gone after #112 (not present at `94176b5`) |
+| Setup cells with 0 glyph pixels (scrolled) | 0 | Offscreen | Rule 2, recorded |
+| Library bottom-row cells at the window edge: "5", "Synthetic Show 017", "iCloud Drive › …", dates (y 833–845, darkAqua 100 % and 200 %, `479eb9e`) | 1,480–4,983 · **1.93–2.16** | **Candidate partly clipped edge cells** (frames extend past the window's bottom edge) | Same position as the "5" cell that `PartialClipContrast` waived on its visible part at `550506d`. These specific findings are **unresolved until re-measured** on the current head |
+| Library date cells x 1170, aqua 100 % / 200 % (`479eb9e`) | 623–1,832 · **4.23–4.42** | **Unresolved candidate.** Just under 4.5; no crop | **Re-measure queued** |
+| Library 200 % sidebar "Recent" (aqua 2.38 / dark 2.66) and entry "Synthetic Show" 3.34 (`479eb9e`) | 7,724–13,986 · **2.38–3.34** | **Candidate:** predates #113. With #109 the content overflowed under the title bar, so these rows sat in the toolbar's blurred band | **Unresolved until re-measured**; #109 is fixed on main |
+| **Setup darkAqua 200 % `ww.setup.source.<id>.status` "Access denied; …"** (`479eb9e`) | **5,305 · 1.77** (max 13.11) | **Unresolved candidate.** The text uses the default label colour (`StatusCell`). The same cell in aqua measured 812 px at p75 17.22, so the low p75 with many glyph pixels points to a background region (selection or band) inside the 88×60 frame rather than the text. No crop, and it predates #112's Setup layout | **Re-measure queued.** If it is genuinely ~1.8:1 it's a product contrast bug: I'll file it and tell the coordinator |
+| Unselected show sidebar rows, Library entry cells, Setup cells, title bars, "No episodes yet", "Not set", sheet message text | 114–12,000 · 6.15–17.22 | Legible system text: **measured artefact** | Rule 5, gated per instance |
+| C03 Name-cell label "tr1.wav"; C03 Library cells past the outline clip frame | — / 250–2,604 · 12.4–12.6 | Harness scope (heuristic label; table-edge match) | Fixed in the harness; re-run in the C04/C05 slot |
 
-Raw records for the `457dbd1`/`de30c99` mini runs: [`audit-records-mini-de30c99.jsonl`](ww-007/audit-records-mini-de30c99.jsonl). It includes the `accent-controls-*` records.
-
-The `457dbd1` run skipped CoreTasks because WW_PROBE wasn't set; it is reported as **not a CoreTasks run**.
-
-CoreTasks at `de30c99`:
-- **Pass:** T01, T24.
-- **Fail:** T02/T03/T15 on the T03 "Role" cell (#104); T16 on #66, plus the status wording in #125; T17 and T20 on #126.
+**Re-measurement on the current head.** `testVisualOverridesLightDarkReduceMotion200`, `testSaturationZeroShowWindow` and `testTextSize200Screenshots` (C03/C07, now with crops and rules 3–5) are added to the C04/C05 Mac mini slot, with the system settings at their originals for these tests. Each unresolved candidate above will be classified there, as a product fix or a measured artefact with a crop, in the follow-up evidence PR.
 
 ## 8. Findings and issues
 
@@ -393,8 +400,13 @@ CoreTasks at `de30c99`:
 
 ## 9. User-only and remaining exit items
 
-1. VoiceOver run of §5.1, or `VoiceOverWalkUITests` with VoiceOver on (A11Y-002).
-2. OS-level visual pass: Increase Contrast, Reduce Motion, larger text, with originals restored (A11Y-003 OS part, C04).
+1. **Not user-only (coordinator, 2026-10-05: consent covers the Mac mini).** These are queued for one Mac mini slot and a follow-up evidence PR, branch `brandonmartinez/m1-ww-007-visual-vo-evidence`:
+   - the OS-level visual pass (Increase Contrast, Reduce Motion, larger text), with originals recorded, restored and diffed (C04/C05);
+   - the C03/C07 re-measurement listed in §7.2;
+   - `VoiceOverWalkUITests` with VoiceOver on (A11Y-002, caption-panel capture).
+
+   VoiceOver *listening* becomes a user-manual item only if caption capture fails.
+2. (merged into item 1)
 3. Manual Full Keyboard Access run of the K-flows (spec §6).
 4. DUR-026 Dock › Quit route by hand.
 5. Main-thread source/provider I/O trace after #55. Attach `xctrace` by PID.

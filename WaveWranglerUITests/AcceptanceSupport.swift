@@ -249,7 +249,8 @@ enum AcceptanceAudit {
         let episodeInspectorShown = app.descendants(matching: .any).matching(identifier: "ww.inspector.episode.title").firstMatch.exists
         let entries = app.outlines["ww.library.entries"]
         let entriesFrame: CGRect? = entries.exists ? entries.frame : nil
-        let windowFrames = app.windows.allElementsBoundByIndex.map(\.frame)
+        let windows = app.windows.allElementsBoundByIndex
+        let windowFrames = windows.map(\.frame)
         var contrast: [(XCUIElement, String)] = []
         var issueFor: [XCUIAccessibilityAuditIssue] = []
         func describe(_ issue: XCUIAccessibilityAuditIssue) -> String {
@@ -288,11 +289,12 @@ enum AcceptanceAudit {
             stats["crop"] = crop
             let mid = CGPoint(x: element.frame.midX, y: element.frame.midY)
             let inSheet = sheetFrame?.contains(mid) ?? false
-            // Occluded by another app window in front (AX lists windows front to back): the screenshot shows the
-            // front window's pixels, so nothing about this element can be measured on this surface. Recorded;
-            // the occluded window must be audited while frontmost (as the C03 test does).
-            if let own = windowFrames.firstIndex(where: { $0.contains(element.frame) }),
-               windowFrames[..<own].contains(where: { $0.contains(mid) }), sheetFrame == nil {
+            // Occluded: the element belongs (by AX hierarchy) to a window behind another app window that overlaps
+            // it (AX lists windows front to back). Its screenshot shows the front window's pixels, so nothing can be
+            // measured here; recorded, and that window is audited while frontmost (as the C03 test does). An
+            // element of the front window itself, even if partly clipped, is measured (PartialClipContrast).
+            if sheetFrame == nil, let own = owningWindowIndex(of: element, in: windows), own > 0,
+               windowFrames[..<own].contains(where: { $0.intersects(element.frame) }) {
                 waived.append(["finding": description, "kind": "occluded-by-front-window", "measured": stats,
                                "rationale": "behind another window of the app; audited separately while frontmost"])
                 print("AUDIT WAIVED \(description) — occluded by a window in front; measured (front pixels) \(stats)")
@@ -335,6 +337,22 @@ enum AcceptanceAudit {
         ], test: test)
         print("AUDIT \(surface): \(unwaived.isEmpty ? "no unwaived issues" : "\(unwaived.count) unwaived issue(s)"); \(waived.count) waived (recorded)")
         return unwaived
+    }
+
+    /// Index (front to back) of the window whose AX subtree contains `element`, matched by element type,
+    /// identifier (or label and value when there is none) and frame. Geometry alone is not enough: a cell partly
+    /// clipped at the front window's edge can lie wholly inside a larger window behind it.
+    @MainActor
+    static func owningWindowIndex(of element: XCUIElement, in windows: [XCUIElement]) -> Int? {
+        let frame = element.frame
+        let predicate: NSPredicate = element.identifier.isEmpty
+            ? NSPredicate(format: "label == %@ AND value == %@", element.label, (element.value as? String) ?? "")
+            : NSPredicate(format: "identifier == %@", element.identifier)
+        for (index, window) in windows.enumerated() {
+            let candidates = window.descendants(matching: element.elementType).matching(predicate).allElementsBoundByIndex
+            if candidates.contains(where: { $0.frame == frame }) { return index }
+        }
+        return nil
     }
 
     static func structuralWaiver(for issue: XCUIAccessibilityAuditIssue) -> String? {
