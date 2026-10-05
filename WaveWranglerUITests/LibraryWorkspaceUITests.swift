@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 /// Core keyboard tasks for the library window, show workspace, menus and settings (Design acceptance
@@ -153,6 +154,19 @@ final class LibraryWorkspaceUITests: XCTestCase {
             let cell = entries.staticTexts.matching(NSPredicate(format: "label == 'Status' AND value == %@", status)).firstMatch
             XCTAssertTrue(cell.exists, "Status text \(status) (text, not colour)")
         }
+        // An unknown episode count shows "—" and reads "unknown" to VoiceOver (not the dash).
+        let newer = entries.outlineRows.containing(NSPredicate(format: "label == 'Status' AND value == 'Needs newer WaveWrangler'")).firstMatch
+        XCTAssertTrue(newer.staticTexts.matching(NSPredicate(format: "value == 'unknown'")).firstMatch.exists,
+                      "Episodes reads unknown: \(newer.staticTexts.allElementsBoundByIndex.map { self.value($0) })")
+        // Status wraps to a second line rather than truncating at 1 line (IA §3.2, CMD-20): its row is taller
+        // than a one-line row when the text doesn't fit the column.
+        let status = newer.staticTexts.matching(NSPredicate(format: "label == 'Status'")).firstMatch
+        let name = newer.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.'")).firstMatch
+        let textWidth = ("Needs newer WaveWrangler" as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]).width
+        if textWidth > status.frame.width {
+            XCTAssertGreaterThan(status.frame.height, name.frame.height * 1.5, "status \(status.frame) vs name \(name.frame)")
+        }
+        XCTAssertLessThanOrEqual(status.frame.height, newer.frame.height, "status text fits its row")
         try audit("Library window (F-LIB100, Unavailable)")
     }
 
@@ -203,6 +217,26 @@ final class LibraryWorkspaceUITests: XCTestCase {
         for _ in 0..<7 { app.typeKey(.downArrow, modifierFlags: []) }
         let collectionSelected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Season Two (1)'"), object: table)
         XCTAssertEqual(XCTWaiter().wait(for: [collectionSelected], timeout: 5), .completed, "Arrowed to the collection: \(table.label)")
+
+        // ⌫ in the entry list removes the show from the collection (no confirmation). Once the list is gone,
+        // ⌫ must no longer target entries (#108 review: focus is cleared when the list resigns or goes away).
+        app.typeKey("\t", modifierFlags: [])
+        app.typeKey(.downArrow, modifierFlags: [])
+        let edit = app.menuBars.menuBarItems["Edit"]
+        edit.click()
+        XCTAssertTrue(edit.menuItems["Remove from Collection"].isEnabled, "⌫ targets the focused entry list")
+        app.typeKey(.escape, modifierFlags: [])
+        app.typeKey(.delete, modifierFlags: [])
+        waitForValue(created, "0 items")
+        XCTAssertFalse(app.sheets.firstMatch.exists, "Remove from Collection doesn't ask")
+        edit.click()
+        XCTAssertFalse(edit.menuItems["Remove from Collection"].exists, "no stale entries focus once the list is gone")
+        XCTAssertTrue(edit.menuItems["Delete Collection…"].isEnabled, "⌫ falls back to the selected collection")
+        app.typeKey(.escape, modifierFlags: [])
+        // Undo the removal so the collection deleted below still has its show; then focus the sidebar row.
+        app.typeKey("z", modifierFlags: .command)
+        waitForValue(created, "1 item")
+        created.click()
         app.typeKey(.delete, modifierFlags: [])
         let sheet = app.sheets.firstMatch
         waitFor(sheet)

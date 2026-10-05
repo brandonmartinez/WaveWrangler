@@ -15,7 +15,10 @@ struct LibraryView: View {
             LibraryMessageBar(state: state)
             splitView
         }
-        .onChange(of: focus) { _, region in state.focusedRegion = region }
+        .onChange(of: focus) { _, region in
+            // The AppKit entry outline reports its own focus; SwiftUI sees it as no focused region.
+            if region != nil || !(state.window?.firstResponder is EntryOutlineView) { state.focusedRegion = region }
+        }
         .onAppear { DispatchQueue.main.async { focus = .sidebar } }
         .task { if !store.isLoaded { await store.load() } }
     }
@@ -120,6 +123,16 @@ private struct SidebarRowView: View {
 private struct LibraryEntryList: View {
     @Bindable var state: LibraryWindowState
     @State private var sortOrder: [KeyPathComparator<LibraryEntryRow>] = []
+    @Environment(\.wwTextSize) private var textSize
+
+    /// Debug only: `-WWEntryListImplementation swiftui` restores the SwiftUI `Table` for A/B timing (#106).
+    private static let usesSwiftUITable: Bool = {
+        #if DEBUG
+        UserDefaults.standard.string(forKey: "WWEntryListImplementation") == "swiftui"
+        #else
+        false
+        #endif
+    }()
 
     var body: some View {
         let item = state.sidebarSelection ?? .shows
@@ -138,6 +151,15 @@ private struct LibraryEntryList: View {
                     }
                 }
                 .wwFont(.body)
+            } else if !Self.usesSwiftUITable {
+                LibraryEntryOutline(
+                    state: state,
+                    list: item,
+                    rows: state.store.rows(for: item),
+                    title: title,
+                    selection: state.entrySelection,
+                    pointSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize))
+                )
             } else {
                 Table(rows, selection: $state.entrySelection, sortOrder: $sortOrder) {
                     TableColumn("Name", value: \.name) { row in
