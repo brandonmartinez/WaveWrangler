@@ -169,9 +169,105 @@ struct LibraryRegrantTests {
 @Suite("Library schema 1 → 2")
 struct LibrarySchemaUpgradeTests {
     /// Writes a genuine schema 1 library envelope (no `libraryID`).
-    static func schema1Bytes(entries: [LibraryShowEntry], revision: Int = 3) throws -> Data {
+    static func schema1Bytes(entries: [LibraryShowEntry], revision: Int = 3, extraCollections: [String] = []) throws -> Data {
         let v1 = JSONEnvelopeCoder<LibraryCoder.LibraryModelV1>(format: LibraryCoder.schema1Format) { _, _ in [] }
-        return try v1.encode(LibraryCoder.LibraryModelV1(schemaVersion: 1, entries: entries, collections: [LibraryCollection(name: "Old", showIDs: entries.map(\.showID))], recentShowIDs: []), revision: revision)
+        let collections = [LibraryCollection(id: CollectionID(UUID(uuidString: "00000000-0000-4000-8000-0000000000AA")!), name: "Old", showIDs: entries.map(\.showID))]
+            + extraCollections.map { LibraryCollection(name: $0) }
+        return try v1.encode(LibraryCoder.LibraryModelV1(schemaVersion: 1, entries: entries, collections: collections, recentShowIDs: []), revision: revision)
+    }
+
+    /// A previous build (schema 1) left a library in a folder plus a pending-edits journal whose snapshot is
+    /// also schema 1 (so its derived ID differs from the file's).
+    struct PreviousBuildRig {
+        let rig = LibraryRig("previous-build")
+        let bookmarks = RevocableBookmarks()
+        let folder: URL
+        let entries: [LibraryShowEntry]
+
+        init() throws {
+            folder = rig.dir.sub("Shared Library")
+            entries = (0..<2).map { LibraryShowEntry(showID: ShowID(), lastKnownTitle: "Synthetic \($0)") }
+            let disk = try schema1Bytes(entries: entries, revision: 3)
+            try disk.write(to: folder.appending(path: LibraryLocationSetting.defaultFileName))
+            try rig.settings.save(LibraryLocationSetting(place: .folder(bookmark: Data(folder.path.utf8), displayPath: folder.path)))
+            let queued = try schema1Bytes(entries: entries, revision: 4, extraCollections: ["Queued offline"])
+            try rig.recovery.writePendingLibraryEdits(PendingLibraryEdits(
+                base: RevisionFingerprint(of: disk), baseSnapshot: disk, editCount: 1,
+                firstQueuedAt: Date(timeIntervalSince1970: 10), lastQueuedAt: Date(timeIntervalSince1970: 10), snapshot: queued
+            ))
+            try rig.recovery.retainCheckpoint(disk, for: .library)
+        }
+
+        func store() -> LibraryStore {
+            LibraryStore(containerFolder: rig.container, settings: rig.settings, bookmarks: bookmarks,
+                         recovery: rig.recovery, indexCache: LibraryIndexCache(url: rig.cacheURL))
+        }
+
+        var libraryFile: URL { folder.appending(path: LibraryLocationSetting.defaultFileName) }
+    }
+
+    /// #60 re-review repro 1a: replaying a previous build's journal publishes the first schema 2 library with a
+    /// real identity (never the snapshot's provisional one), and Grant Access on the same folder still works.
+    @Test func previousBuildJournalReplayThenRegrant() async throws {
+        let pb = try PreviousBuildRig()
+        let store = pb.store()
+        guard case .ready = await store.load(), case .applied? = await store.lastPendingOutcome else {
+            Issue.record("replay: \(String(describing: await store.lastPendingOutcome))"); return
+        }
+        let published = try LibraryCoder.library.decode(Data(contentsOf: pb.libraryFile)).payload
+        #expect(!LibraryCoder.isProvisional(published.libraryID))
+        #expect(published.collections.contains { $0.name == "Queued offline" })
+        #expect(pb.rig.settings.load().libraryID == published.libraryID)
+
+        pb.bookmarks.revoke(pb.folder)
+        let locked = pb.store()
+        _ = await locked.load()
+        #expect(await locked.expectedLibraryID() == published.libraryID)
+        guard case .regranted(.ready, nil) = await locked.regrantAccess(to: pb.folder) else { Issue.record("expected regrant"); return }
+    }
+
+    /// #60 re-review repro 1b: in L3 before the replay, only provisional IDs exist: Grant Access accepts the
+    /// configured folder, then replays.
+    @Test func previousBuildL3RegrantBeforeReplay() async throws {
+        let pb = try PreviousBuildRig()
+        pb.bookmarks.revoke(pb.folder)
+        let store = pb.store()
+        guard case .unavailableShowingPrior = await store.load() else { Issue.record("expected L3"); return }
+        #expect(await store.expectedLibraryID() == nil, "provisional IDs are not identity")
+        guard case .regranted(.ready, .applied?) = await store.regrantAccess(to: pb.folder) else { Issue.record("expected regrant + replay"); return }
+        let published = try LibraryCoder.library.decode(Data(contentsOf: pb.libraryFile)).payload
+        #expect(!LibraryCoder.isProvisional(published.libraryID))
+        #expect(pb.rig.settings.load().libraryID == published.libraryID)
+        // A schema 1 library in a different folder is not accepted by path.
+        let elsewhere = pb.rig.dir.sub("Elsewhere")
+        try Self.schema1Bytes(entries: pb.entries).write(to: elsewhere.appending(path: LibraryLocationSetting.defaultFileName))
+        guard case .differentLibrary = await store.regrantAccess(to: elsewhere) else { Issue.record("expected differentLibrary"); return }
+    }
+
+    /// #60 re-review repro 2: schema 1 recovery records (each with its own provisional ID) are all still
+    /// offered, after this library's own records.
+    @Test func schema1CheckpointsStayRecoverable() async throws {
+        let rig = LibraryRig("schema1-recovery")
+        let wide = RecoveryStore(root: rig.recovery.root, retainCount: 10)
+        let entries = [LibraryShowEntry(showID: ShowID(), lastKnownTitle: "Synthetic")]
+        let v1 = try (1...3).map { try Self.schema1Bytes(entries: entries, revision: $0) }
+        for bytes in v1 { try wide.retainCheckpoint(bytes, for: .library) }
+        try v1[2].write(to: rig.containerFile)
+        let store = rig.store()
+        _ = await store.load()                      // records nothing (provisional)
+        try Data("{damaged".utf8).write(to: rig.containerFile)
+        guard case let .damaged(_, revisions) = await rig.store().load() else { Issue.record("expected damaged"); return }
+        #expect(revisions == [3, 2, 1], "got \(revisions)")
+
+        // With a real identity recorded, this library's records come first and schema 1 records stay listed.
+        let real = LibraryModel(collections: [LibraryCollection(name: "Real")])
+        let realBytes = try LibraryCoder.library.encode(real, revision: 4)
+        try wide.retainCheckpoint(realBytes, for: .library)
+        try rig.settings.save(LibraryLocationSetting(libraryID: real.libraryID))
+        let other = try LibraryCoder.library.encode(LibraryModel(), revision: 9)
+        try wide.retainCheckpoint(other, for: .library)
+        guard case let .damaged(_, ranked) = await rig.store().load() else { Issue.record("expected damaged"); return }
+        #expect(ranked == [4, 3, 2, 1], "own record first, schema 1 records kept, other library's r9 excluded; got \(ranked)")
     }
 
     @Test func schema1IsUpgradedWithStableIdentityAndBackedUp() async throws {
@@ -187,10 +283,19 @@ struct LibrarySchemaUpgradeTests {
         _ = await second.load()
         #expect(await second.library?.libraryID == id, "derived identity is stable across reads")
 
+        #expect(LibraryCoder.isProvisional(id), "a schema 1 library has no identity yet")
+        #expect(await second.expectedLibraryID() == nil)
+        #expect(rig.settings.load().libraryID == nil, "provisional IDs are never recorded")
+
         _ = try await second.update { var l = $0; l.collections.append(LibraryCollection(name: "New")); return l }
         let upgraded = try LibraryCoder.library.decode(Data(contentsOf: rig.containerFile))
         #expect(EnvelopeHeaderInfo.peek(try Data(contentsOf: rig.containerFile))?.schemaVersion == SchemaVersion.library)
-        #expect(upgraded.payload.libraryID == id && upgraded.payload.collections.map(\.name) == ["Old", "New"])
+        #expect(!LibraryCoder.isProvisional(upgraded.payload.libraryID), "the first schema 2 publication gets a real identity")
+        #expect(upgraded.payload.collections.map(\.name) == ["Old", "New"])
+        #expect(rig.settings.load().libraryID == upgraded.payload.libraryID)
+        let third = rig.store()
+        _ = await third.load()
+        #expect(await third.library?.libraryID == upgraded.payload.libraryID, "stable from then on")
         let backups = try rig.recovery.migrationBackups(for: .library)
         #expect(try backups.map { try Data(contentsOf: $0) }.contains(original), "schema 1 bytes kept as a non-overwriting backup")
     }

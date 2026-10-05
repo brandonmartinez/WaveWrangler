@@ -335,9 +335,11 @@ public actor LibraryStore {
             return .stillWaiting(reason: "The library is not loaded.")
         }
         guard let queued = try? publisher.coder.decode(pending.snapshot).payload else { return .journalDamaged }
-        let result: LibraryModel
+        var result: LibraryModel
         if let base = pending.base, base.byteDigest == diskBase.byteDigest {
             result = queued
+            // Identity is the library on disk's, never the journal snapshot's (which may be provisional).
+            result.libraryID = onDisk.libraryID
         } else {
             // Diverged: three-way merge of this Mac's queued changes onto the library on disk.
             let base = pending.baseSnapshot.flatMap { try? publisher.coder.decode($0).payload } ?? LibraryModel()
@@ -426,6 +428,7 @@ public actor LibraryStore {
             summary.queuedChangesNotCarried = QueuedLibraryEdits.missingChanges(base: base, mine: mine, in: combined)
         }
         do {
+            combined = try prepareForPublication(combined, replacing: bytes)
             _ = try publisher.publish(combined, revision: theirs.revision + 1, key: .library, to: url,
                                       target: .inPlace(expectedBase: RevisionFingerprint(of: bytes)))
         } catch let error as PublicationError {
@@ -499,7 +502,12 @@ public actor LibraryStore {
         }
         let name = "Library (Recovered r\(revision) \(UUID().uuidString.prefix(8))).wwlibrary"
         let destination = folder.appending(path: name)
-        let recovered = CanonicalDocumentSession.recovered(candidate, originalURL: current, publisher: publisher)
+        var payload = candidate.document.payload
+        if LibraryCoder.isProvisional(payload.libraryID) { payload.libraryID = LibraryID() }
+        let recovered = CanonicalDocumentSession.recovered(
+            RecoveryCandidate(checkpoint: candidate.checkpoint, document: DecodedDocument(payload: payload, publication: candidate.document.publication)),
+            originalURL: current, publisher: publisher
+        )
         let result = await recovered.duplicate(to: destination)
         if case .success = result {
             var setting = settings.load()
@@ -550,9 +558,10 @@ public actor LibraryStore {
         } catch {
             return .failure(.invalidCandidate(error))
         }
-        let (combined, summary) = LibraryMerge.combineWithSummary(thisMac: mine, into: theirs.payload)
+        var (combined, summary) = LibraryMerge.combineWithSummary(thisMac: mine, into: theirs.payload)
         if combined != theirs.payload {
             do {
+                combined = try prepareForPublication(combined, replacing: bytes)
                 _ = try publisher.publish(
                     combined, revision: theirs.revision + 1, key: .library, to: destination,
                     target: .inPlace(expectedBase: RevisionFingerprint(of: bytes))
@@ -631,7 +640,7 @@ public actor LibraryStore {
         var setting = settings.load()
         do {
             setting.place = try place()
-            setting.libraryID = libraryID
+            setting.libraryID = Self.real(libraryID)
             try settings.save(setting)
         } catch {
             return .failure(.failed(stage: .readBackVerified, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
@@ -690,10 +699,35 @@ public actor LibraryStore {
     /// last verified (load, move/combine, Grant Access), else queued edits, the library shown, or the newest
     /// verified record. `nil` when nothing is known.
     public func expectedLibraryID() -> LibraryID? {
-        if let recorded = settings.load().libraryID { return recorded }
-        if let pendingEdits, let queued = try? publisher.coder.decode(pendingEdits.snapshot) { return queued.payload.libraryID }
-        if let library { return library.libraryID }
-        return libraryCandidates(url: nil).first?.document.payload.libraryID
+        knownIdentity() ?? library.map(\.libraryID).flatMap(Self.real)
+    }
+
+    private static func real(_ id: LibraryID) -> LibraryID? {
+        LibraryCoder.isProvisional(id) ? nil : id
+    }
+
+    /// Before any canonical library write: a provisional (schema 1) ID becomes a fresh real identity, and if
+    /// the bytes being replaced are schema 1 they are kept as a non-overwriting migration backup.
+    private func prepareForPublication(_ model: LibraryModel, replacing bytes: Data?) throws -> LibraryModel {
+        if let bytes, LibraryCoder.isSchema1(bytes) {
+            try recovery.preserveMigrationBackup(bytes, schemaVersion: 1, for: .library)
+        }
+        var prepared = model
+        if LibraryCoder.isProvisional(prepared.libraryID) { prepared.libraryID = LibraryID() }
+        return prepared
+    }
+
+    /// The real (schema 2+) identity known on this Mac, ignoring provisional schema 1 IDs.
+    private func knownIdentity() -> LibraryID? {
+        if let recorded = settings.load().libraryID.flatMap(Self.real) { return recorded }
+        if let pendingEdits, let id = (try? publisher.coder.decode(pendingEdits.snapshot)).flatMap({ Self.real($0.payload.libraryID) }) {
+            return id
+        }
+        if let current = recovery.verifiedCurrent(for: .library),
+           let id = (try? publisher.coder.decode(recovery.bytes(of: current))).flatMap({ Self.real($0.payload.libraryID) }) {
+            return id
+        }
+        return nil
     }
 
     /// Whole validated recovery records of **this** library (by the expected identity), the verified-current
@@ -701,20 +735,24 @@ public actor LibraryStore {
     /// the previous library after "Use That Library") are never offered as this library's.
     private func libraryCandidates(url: URL?) -> [RecoveryCandidate<LibraryModel>] {
         let all = opener.candidates(url: url, key: .library)
-        let identity = settings.load().libraryID
-            ?? pendingEdits.flatMap { try? publisher.coder.decode($0.snapshot).payload.libraryID }
-            ?? recovery.verifiedCurrent(for: .library).flatMap { try? publisher.coder.decode(recovery.bytes(of: $0)).payload.libraryID }
+        let identity = knownIdentity()
         let current = recovery.verifiedCurrent(for: .library)?.fingerprint.byteDigest
+        // Rank: 0 = verified-current record of this library, 1 = this library's priors, 2 = schema 1 records
+        // (unknown identity, kept after). Records of a different real library are excluded.
+        func rank(_ candidate: RecoveryCandidate<LibraryModel>) -> Int? {
+            let id = candidate.document.payload.libraryID
+            if LibraryCoder.isProvisional(id) { return identity == nil && candidate.checkpoint.fingerprint.byteDigest == current ? 0 : 2 }
+            if let identity, id != identity { return nil }
+            return candidate.checkpoint.fingerprint.byteDigest == current ? 0 : 1
+        }
         return all
-            .filter { identity == nil || $0.document.payload.libraryID == identity }
-            .sorted { lhs, rhs in
-                let lhsCurrent = lhs.checkpoint.fingerprint.byteDigest == current, rhsCurrent = rhs.checkpoint.fingerprint.byteDigest == current
-                if lhsCurrent != rhsCurrent { return lhsCurrent }
-                return lhs.document.revision > rhs.document.revision
-            }
+            .compactMap { candidate in rank(candidate).map { (candidate, $0) } }
+            .sorted { lhs, rhs in lhs.1 != rhs.1 ? lhs.1 < rhs.1 : lhs.0.document.revision > rhs.0.document.revision }
+            .map(\.0)
     }
 
     private func recordLocationIdentity(_ id: LibraryID) {
+        guard !LibraryCoder.isProvisional(id) else { return }
         var setting = settings.load()
         guard setting.libraryID != id else { return }
         setting.libraryID = id
@@ -750,9 +788,10 @@ public actor LibraryStore {
         } catch {
             return .cannotVerify(reason: error.errorDescription ?? "The library in that folder is damaged.")
         }
-        if let expected {
+        if let expected, !LibraryCoder.isProvisional(found.payload.libraryID) {
             guard found.payload.libraryID == expected else { return .differentLibrary(url, revision: found.revision) }
         } else {
+            // Unknown identity on either side (no real ID known here, or a schema 1 library there).
             // Nothing on this Mac identifies the library: only the very same configured folder is accepted.
             guard case let .folder(_, displayPath) = setting.place,
                   URL(fileURLWithPath: displayPath).standardizedFileURL.path == folder.standardizedFileURL.path
@@ -762,7 +801,7 @@ public actor LibraryStore {
         updated.place = folder.standardizedFileURL == containerFolder.standardizedFileURL
             ? .appContainer
             : .folder(bookmark: bookmark, displayPath: folder.path)
-        updated.libraryID = found.payload.libraryID
+        updated.libraryID = Self.real(found.payload.libraryID) ?? setting.libraryID
         do {
             try settings.save(updated)
         } catch {
@@ -844,6 +883,12 @@ public actor LibraryStore {
                 }
             }
         }
+        // Schema 1 identities are provisional: the first schema 2 publication gets a real one.
+        if LibraryCoder.isProvisional(await session.payload.libraryID) {
+            let fresh = LibraryID()
+            await session.edit { var model = $0; model.libraryID = fresh; return model }
+            library?.libraryID = fresh
+        }
         let cache = indexCache
         // The exact value being published (the gate guarantees nothing else changes it meanwhile).
         let model: LibraryModel? = await session.payload
@@ -853,6 +898,8 @@ public actor LibraryStore {
         if case let .success(receipt) = result, let model {
             index = LibraryIndex.build(from: model, libraryDigest: receipt.fingerprint.byteDigest)
             retainVerifiedCurrent(at: receipt.url, fingerprint: receipt.fingerprint)
+            // The store's session always publishes at the configured location.
+            recordLocationIdentity(model.libraryID)
         }
         return result
     }

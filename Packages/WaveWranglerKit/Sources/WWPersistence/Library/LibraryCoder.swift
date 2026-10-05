@@ -5,9 +5,11 @@ import WWCore
 /// The canonical library coder. Writes schema 2; reads schema 2 strictly and schema 1 through an explicit,
 /// validated upgrade (schema 1 had no `libraryID`).
 ///
-/// The upgraded ID is **derived** from the schema 1 publication ID (name-based UUID), so every read of the
-/// same schema 1 file yields the same identity until the first schema 2 publication fixes it on disk. The
-/// first publication over schema 1 bytes keeps them as a non-overwriting migration backup (`LibraryStore`).
+/// A schema 1 file has no identity. Reading one yields a **provisional** ID derived from that file's
+/// publication ID (name-based, version-5 UUID): stable for that exact file, but different for every schema 1
+/// publication, so it is never treated as identity (`isProvisional`). The first schema 2 publication assigns
+/// a fresh random ID (version 4) and keeps the schema 1 bytes as a non-overwriting migration backup
+/// (`LibraryStore`); provisional IDs are never written to a canonical library.
 public struct LibraryCoder: CanonicalDocumentCoding {
     public typealias Payload = LibraryModel
 
@@ -28,6 +30,12 @@ public struct LibraryCoder: CanonicalDocumentCoding {
 
     public func encodeDocument(_ payload: LibraryModel, revision: Int, publicationID: UUID) throws(PersistenceError) -> EncodedDocument {
         try current.encodeDocument(payload, revision: revision, publicationID: publicationID)
+    }
+
+    /// Whether `id` is a provisional ID derived from a schema 1 file (unknown identity), as opposed to a real
+    /// library identity created by `LibraryID()` (random, version 4).
+    public static func isProvisional(_ id: LibraryID) -> Bool {
+        (id.rawValue.uuid.6 >> 4) == 5
     }
 
     /// Whether `data` is a schema 1 library (upgraded in memory on read).
