@@ -297,11 +297,8 @@ final class CoreTasksKeyboardUITests: XCTestCase {
         app = XCUIApplication()
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
                                "-WWUITestCenterWindows", "YES"] + arguments
-        // One launch only. `launch()` followed by `open(_:)` starts a second process for the URL, and XCTest can
-        // stay bound to the first, windowless one (diagnosed on the Mac mini from launchd/unified logs, REF-020).
-        // `open(_:)` applies the launch arguments (the URL instance used the isolated UI-test storage).
-        if let document { app.open(document) } else { app.launch() }
-        app.activate()
+        // One launch only: see `XCUIApplication.launchOnce(opening:)`.
+        if let document { app.launchOnce(opening: document) } else { app.launch(); app.activate() }
     }
 
     @discardableResult

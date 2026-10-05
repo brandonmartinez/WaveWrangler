@@ -124,6 +124,58 @@ enum Acceptance {
 /// - **behind a modal sheet**: content dimmed by AppKit, measured and listed.
 /// Every waiver — structural or contrast — is recorded with its element, rationale and (for contrast) the
 /// glyph statistics and crop name in an `audit-<surface>` evidence record. No blanket waivers.
+extension XCUIApplication {
+    /// Launch the app once, opening `document`, with the configured `launchArguments`/`launchEnvironment`.
+    ///
+    /// Don't call `launch()` and then `open(_:)`: on macOS 27 that pair starts **two** app processes (the second
+    /// for the URL), and XCTest can stay bound to the first, which has no document window (and no Library window
+    /// when `-WWUITestHooks` suppresses it). Diagnosed on the Mac mini from launchd/runningboard and unified logs
+    /// (REF-020, pids 92503/92506): the URL instance opened the document in 0.45 s, while the test waited on the
+    /// windowless one, and the orphan's window then "interrupted" later tests. `open(_:)` applies the launch
+    /// arguments (the URL instance used the isolated `WaveWrangler-UITests` storage).
+    @MainActor
+    func launchOnce(opening document: URL) {
+        open(document)
+        activate()
+    }
+}
+
+/// Visible-part contrast for a `.contrast` audit finding on an element that is **partly** clipped by its
+/// window's edge (#59 option (a), coordinator decision 2026-10-05). The audit samples the whole frame,
+/// including pixels never drawn outside the window; this measures only the visible intersection, from the
+/// window's own screenshot. A finding is waived only when that visible part has >= 100 glyph pixels with
+/// p75 >= 4.5:1; otherwise it stays unwaived. Cells wholly outside every window are not handled here (see
+/// `OffscreenAuditWaiver`, whose budget is unchanged). Returns nil when the element isn't partly clipped.
+@MainActor
+enum PartialClipContrast {
+    struct Result { let waived: Bool; let record: [String: Any]; let crop: Data? }
+
+    static func measure(_ issue: XCUIAccessibilityAuditIssue, in app: XCUIApplication) -> Result? {
+        guard issue.auditType == .contrast, let element = issue.element, element.exists else { return nil }
+        let frame = element.frame
+        guard !frame.isEmpty else { return nil }
+        let windows = app.windows.allElementsBoundByIndex.filter { !$0.frame.isEmpty }
+        guard let window = windows.first(where: { $0.frame.intersects(frame) && !$0.frame.contains(frame) }) else { return nil }
+        let visible = window.frame.intersection(frame)
+        guard visible.width >= 2, visible.height >= 2,
+              let cg = window.screenshot().image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let scale = CGFloat(cg.width) / window.frame.width
+        let rect = CGRect(x: (visible.minX - window.frame.minX) * scale, y: (visible.minY - window.frame.minY) * scale,
+                          width: visible.width * scale, height: visible.height * scale).integral
+            .intersection(CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        guard let cropped = cg.cropping(to: rect) else { return nil }
+        let image = NSImage(cgImage: cropped, size: NSSize(width: rect.width, height: rect.height))
+        let m = ContrastMeter.measure(image) ?? [:]
+        let count = m["glyphPixels"] as? Int ?? 0, p75 = m["glyphP75"] as? Double ?? 0
+        let waived = count >= 100 && p75 >= 4.5
+        let record: [String: Any] = ["element": "\(element.identifier) \(element.label) \((element.value as? String) ?? "")",
+                                     "frame": "\(frame)", "window": "\(window.frame)", "visible": "\(visible)",
+                                     "glyphPixels": count, "glyphP75": p75, "max": m["ratio"] ?? 0, "waived": waived,
+                                     "rule": "partly clipped at the window edge: visible part >= 100 glyph px, p75 >= 4.5"]
+        return Result(waived: waived, record: record, crop: NSBitmapImageRep(cgImage: cropped).representation(using: .png, properties: [:]))
+    }
+}
+
 enum AcceptanceAudit {
     static let types: XCUIAccessibilityAuditType = [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]
 
@@ -191,6 +243,7 @@ enum AcceptanceAudit {
         let entriesFrame: CGRect? = entries.exists ? entries.frame : nil
         let windowFrames = app.windows.allElementsBoundByIndex.map(\.frame)
         var contrast: [(XCUIElement, String)] = []
+        var issueFor: [XCUIAccessibilityAuditIssue] = []
         func describe(_ issue: XCUIAccessibilityAuditIssue) -> String {
             "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(200) ?? "no element")"
         }
@@ -201,6 +254,7 @@ enum AcceptanceAudit {
                 print("AUDIT WAIVED \(description) — \(rationale)")
             } else if issue.auditType == .contrast, let element = issue.element {
                 contrast.append((element, description))
+                issueFor.append(issue)
             } else {
                 unwaived.append(description)
             }
@@ -237,6 +291,16 @@ enum AcceptanceAudit {
                 waived.append(["finding": description, "kind": "offscreen", "measured": stats,
                                "rationale": "element not visible (not hittable, no glyph pixels): scrolled out of view, not a colour"])
                 print("AUDIT WAIVED \(description) — offscreen; measured \(stats)")
+                continue
+            }
+            if let partial = PartialClipContrast.measure(issueFor[index], in: app) {
+                if let crop = partial.crop { Acceptance.attach(test, png: crop, name: "visible-\(crop)") }
+                if partial.waived {
+                    waived.append(["finding": description, "kind": "partly-clipped-visible-part", "measured": partial.record])
+                    print("AUDIT WAIVED \(description) — partly clipped; visible part measured \(partial.record)")
+                } else {
+                    unwaived.append("\(description) — partly clipped; visible part measured \(partial.record)")
+                }
                 continue
             }
             if let artefact = measuredArtefact(element, inspectorFrame: inspectorFrame, episodeInspectorShown: episodeInspectorShown,
