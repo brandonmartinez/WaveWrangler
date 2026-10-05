@@ -1,0 +1,50 @@
+# Ordinary M1 build/test CI. Read-only: no deploy, upload, release, signing, secrets, labels or issue automation.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test (macOS 26)
+    # Newest GitHub-hosted macOS image (Apple silicon). It ships Xcode 26.x with the macOS 26 SDK, while
+    # local development uses Xcode 27; the package tools-version (6.2) and project format support both.
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      WW_JOBS: "4"
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select newest stable Xcode
+        run: |
+          set -euo pipefail
+          xcode="$(ls -d /Applications/Xcode_[0-9]*.app | grep -v -i -E 'beta|rc' | sort -V | tail -n 1)"
+          echo "Selecting $xcode"
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          swift --version
+          sdk="$(xcrun --sdk macosx --show-sdk-version)"
+          echo "macOS SDK $sdk"
+          if [ "${sdk%%.*}" -lt 26 ]; then
+            echo "::error::macOS SDK $sdk is older than the macOS 26 deployment target"
+            exit 1
+          fi
+
+      - name: Build app
+        run: scripts/build.sh
+
+      - name: Test (package + unhosted unit tests; UI tests are not run)
+        run: scripts/test.sh
