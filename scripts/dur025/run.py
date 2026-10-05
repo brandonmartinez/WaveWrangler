@@ -254,7 +254,8 @@ def case_library(dev, split, index, rng):
     seen_a = poll_lib(dev, "A", libfile, lambda r: r.get("current", {}).get("publicationID") == pub_b)
     if seen_a.get("result") != "observed":
         return {"verdict": "harnessError", "step": "awaitA", "detail": seen_a, "use": used}
-    prop_ba = b_to_a_ms(dev, t_use_b, seen_a)
+    # "Use That Library" publishes only if B's library added anything; otherwise there is nothing to propagate.
+    prop_ba = b_to_a_ms(dev, t_use_b, seen_a) if pub_b != pub else None
     delta, first, ta, tb = race_times(rng)
     name_a, name_b = f"A collection {index}", f"B collection {index}"
     with cf.ThreadPoolExecutor(2) as pool:
@@ -262,39 +263,58 @@ def case_library(dev, split, index, rng):
         fb = pool.submit(dev.run, "B", lib_args(dev, "B", index, ["--add-collection", name_b, "--at-epoch-ms", str(dev.b_time(tb))]))
         ua, ub = fa.result(), fb.result()
     a, b, waited, _ = settle(dev, ["lib-inspect", "--file", libfile], lib_key)
-    # A Mac in L4 (changed elsewhere) resolves with Combine (Keep Everything), as the user would.
+    # Each Mac opens the library in turn, as a user would; one in L4 (an app-detected conflict at publication,
+    # or a provider conflict version detected on load, #117) resolves it with Combine (Keep Everything).
     ca = dev.run("A", lib_args(dev, "A", index, ["--combine", "1"]))
+    a1, b1, waited1, _ = settle(dev, ["lib-inspect", "--file", libfile], lib_key)
     cb = dev.run("B", lib_args(dev, "B", index, ["--combine", "1"]))
     a2, b2, waited2, settled2 = settle(dev, ["lib-inspect", "--file", libfile], lib_key)
-    preserved = {name_a: [], name_b: []}
+    # A final open on both Macs: anything already included is resolved; nothing may still be in L4.
+    fa = dev.run("A", lib_args(dev, "A", index, []))
+    fb = dev.run("B", lib_args(dev, "B", index, []))
+    a3, b3, waited3, settled3 = settle(dev, ["lib-inspect", "--file", libfile], lib_key)
+    in_current = {name_a: [], name_b: []}
+    elsewhere = {name_a: [], name_b: []}
 
-    def note(names, where):
+    def note(target, names, where):
         for n in names:
-            for want in preserved:
+            for want in target:
                 if n == want or n.startswith(want + " "):
-                    preserved[want].append(where)
-    for device, report in (("A", a2), ("B", b2)):
-        note(report.get("current", {}).get("collections", []), f"{device}:current")
+                    target[want].append(where)
+    for device, report in (("A", a3), ("B", b3)):
+        note(in_current, report.get("current", {}).get("collections", []), device)
         for v in report.get("unresolvedConflictVersions", []):
-            note(v.get("collections", []), f"{device}:providerConflictVersion")
-        for s in report.get("siblings", []):
-            note(s.get("collections", []), f"{device}:siblingCopy")
-    for device, op, name in (("A", ua, name_a), ("B", ub, name_b)):
-        if int(op.get("pendingEdits", 0) or 0) > 0:
-            preserved[name].append(f"{device}:pendingEditsJournal")
-    current = [r.get("current", {}) for r in (a2, b2)]
+            note(elsewhere, v.get("collections", []), f"{device}:providerConflictVersion")
+        for sib in report.get("siblings", []):
+            note(elsewhere, sib.get("collections", []), f"{device}:siblingCopy")
+    provider_seen = any(r.get("unresolvedConflictVersions") for r in (a, b))
+    app_detected = any(str(u.get("update", "")).startswith("failed") for u in (ua, ub))
+    detected = {"A": ca.get("levelAfterLoad") == "changedElsewhere" or str(ua.get("update", "")).startswith("failed"),
+                "B": cb.get("levelAfterLoad") == "changedElsewhere" or str(ub.get("update", "")).startswith("failed")}
+    backups = {"A": ca.get("conflictBackups", 0), "B": cb.get("conflictBackups", 0)}
+    current = [r.get("current", {}) for r in (a3, b3)]
     valid = all(c.get("outcome") == "valid" for c in current)
-    lost = [n for n, where in preserved.items() if not where]
-    both_current = all(any(w.endswith(":current") for w in where) for where in preserved.values())
-    ok = settled2 and valid and not lost
-    return {"verdict": "pass" if ok else "fail", "deltaMs": delta, "first": first, "updateA": ua.get("update"), "updateB": ub.get("update"),
-            "levelAfterUpdate": {"A": ua.get("levelState"), "B": ub.get("levelState")},
-            "combine": {"A": ca.get("combine", "-"), "B": cb.get("combine", "-")},
-            "preserved": preserved, "bothInCurrentAfterResolution": both_current, "settled": settled2, "settledMs": waited + waited2,
-            "propagationAtoBMs": prop, "propagationBtoAMs": prop_ba,
-            "conflictVersions": {"A": len(a.get("unresolvedConflictVersions", [])), "B": len(b.get("unresolvedConflictVersions", []))},
-            "conflictVersionsAfterResolution": {"A": len(a2.get("unresolvedConflictVersions", [])), "B": len(b2.get("unresolvedConflictVersions", []))},
-            "conflictVersionComputers": sorted({v.get("savingComputer", "") for r in (a, b, a2, b2) for v in r.get("unresolvedConflictVersions", [])})}
+    same = current[0].get("publicationID") == current[1].get("publicationID")
+    both_in_current_on_both = all(sorted(set(w)) == ["A", "B"] for w in in_current.values())
+    unresolved_left = sum(len(r.get("unresolvedConflictVersions", [])) for r in (a3, b3))
+    final_levels = {"A": fa.get("levelState"), "B": fb.get("levelState")}
+    conflict_occurred = provider_seen or app_detected
+    ok = (settled3 and valid and same and both_in_current_on_both and unresolved_left == 0
+          and all(level == "ready" for level in final_levels.values())
+          and (not conflict_occurred or any(detected.values()))
+          and (not provider_seen or any(n > 0 for n in backups.values())))
+    mechanism = "appDetected" if app_detected else "providerConflictVersion" if provider_seen else "noConflict"
+    return {"verdict": "pass" if ok else "fail", "deltaMs": delta, "first": first, "mechanism": mechanism,
+            "updateA": ua.get("update"), "updateB": ub.get("update"),
+            "detectedL4": detected, "levelAfterLoadAtCombine": {"A": ca.get("levelAfterLoad"), "B": cb.get("levelAfterLoad")},
+            "combine": {"A": ca.get("combine", "-"), "B": cb.get("combine", "-")}, "conflictBackups": backups,
+            "inCurrent": in_current, "onlyElsewhere": elsewhere, "bothInCurrentOnBothMacs": both_in_current_on_both,
+            "finalLevels": final_levels, "unresolvedConflictVersionsLeft": unresolved_left,
+            "unusableProviderConflicts": {"A": fa.get("unusableProviderConflicts"), "B": fb.get("unusableProviderConflicts")},
+            "conflictVersionsSeen": {"A": len(a.get("unresolvedConflictVersions", [])), "B": len(b.get("unresolvedConflictVersions", []))},
+            "conflictVersionComputers": sorted({v.get("savingComputer", "") for r in (a, b) for v in r.get("unresolvedConflictVersions", [])}),
+            "settled": settled3, "settledMs": waited + waited1 + waited2 + waited3,
+            "propagationAtoBMs": prop, "propagationBtoAMs": prop_ba}
 
 
 def read_show_id(path):
