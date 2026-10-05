@@ -449,7 +449,12 @@ def case_relink(dev, split, index, rng):
     # A (which holds the evidence) reports the moved / replaced source as different, never substituted.
     a_eval = dev.run("A", ["src-eval", "--file", records_a, "--show", show_id, "--source", sid])
     if variant == "same":
-        a_ok = a_eval.get("location") == "present" and a_eval.get("identity") == "matchesRecorded"
+        # Untouched source: present, same file object. iCloud can rewrite its dates after upload (observed in
+        # calibration); a date-only "changed" is allowed and recorded — it is never a substitution.
+        identity = a_eval.get("identity", "")
+        dates_only = identity.startswith("changed(") and all(f in ("creationDate", "contentModificationDate")
+                                                             for f in identity[identity.index("[") + 1:identity.rindex("]")].replace("WWSources.FingerprintField.", "").split(", "))
+        a_ok = a_eval.get("location") == "present" and (identity == "matchesRecorded" or dates_only)
     elif variant == "moved":
         a_ok = a_eval.get("location", "").startswith("moved") or a_eval.get("location", "").startswith("missing")
     else:
@@ -463,6 +468,7 @@ def case_relink(dev, split, index, rng):
             "neverResolvedByPathOrName": never_by_path, "bUnconfirmed": unconfirmed.get("result"), "bUnconfirmedComparison": unconfirmed.get("comparison"),
             "bConfirmed": confirmed.get("result"), "bAfterRegrant": {k: b_after.get(k) for k in ("access", "identity")},
             "aReportsChangedSource": {k: a_eval.get(k) for k in ("location", "identity", "access")}, "aCorrect": a_ok,
+            "aUntouchedSourceDatesChangedBySync": variant == "same" and a_eval.get("identity", "").startswith("changed("),
             "zeroSourceWrites": zero_writes, "sourceFiles": len(expected)}
 
 
