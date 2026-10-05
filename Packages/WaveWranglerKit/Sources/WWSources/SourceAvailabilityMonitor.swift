@@ -53,8 +53,9 @@ public final class SourceAvailabilityMonitor {
     }
 
     /// Stops consuming events and tears down every transfer observer that exists now (not recorded as a
-    /// user cancel). Returns once teardown finished, so a later `start()` / `makeAvailable` is never
-    /// affected. Call when the owning window closes; deinit does the same without awaiting.
+    /// user cancel). Returns once teardown finished. After `stop()` the monitor requests nothing —
+    /// including explicit `makeAvailable` and refreshes that were already in flight — until `start()` is
+    /// called again. Call when the owning window closes; deinit does the same without awaiting.
     public func stop() async {
         isStopped = true
         lifecycleGeneration += 1

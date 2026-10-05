@@ -677,7 +677,8 @@ struct StallLifetimeTests {
         #expect(context.ledger.snapshot.openScopes == 0)
     }
 
-    /// A refresh already evaluating when the monitor stops must not request a download afterwards.
+    /// A refresh already in flight when the monitor stops must not request a download afterwards. The
+    /// refresh is held by an async (non-blocking) store gate, so no cooperative thread is ever parked.
     @Test @MainActor func stoppedMonitorNeverRequestsFromInFlightRefresh() async throws {
         let tree = try SyntheticTree(label: "stop-inflight")
         var rng = SplitMix64(seed: 18)
@@ -686,14 +687,14 @@ struct StallLifetimeTests {
         let context = makeContext(io)
         let record = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
         io.simulate(file, SimulatedCloudItem(script: [.complete]))
-        let store = InMemoryDeviceAccessStore([record])
+        let store = GatedDeviceAccessStore([record])
         let monitor = SourceAvailabilityMonitor(showID: testShow, store: store, context: context, setting: .on, transferPolicy: StallFollowUpTests.policy)
         monitor.start()
-        io.armMetadataGate()
+        await store.arm()
         let refresh = Task { await monitor.refresh([record.sourceID]) }
-        while !io.gateEntered { await Task.yield() }
+        while await !store.entered { await Task.yield() }
         await monitor.stop()
-        io.releaseGate()
+        await store.release()
         await refresh.value
         await monitor.makeAvailable(record.sourceID)
         #expect(monitor.isStopped)

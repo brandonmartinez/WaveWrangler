@@ -422,3 +422,40 @@ func makeContext(_ io: HarnessIO) -> SourceAccessContext {
 extension Knowledge {
     static func reported(_ value: Value?) -> Knowledge { Knowledge(value) }
 }
+
+/// Wraps an in-memory store; an armed gate *suspends* (never blocks a thread) the next `record(for:)`
+/// until released, so tests can hold a refresh in flight without starving the cooperative pool.
+actor GatedDeviceAccessStore: DeviceAccessStore {
+    private let base: InMemoryDeviceAccessStore
+    private var armed = false
+    private var waiting: CheckedContinuation<Void, Never>?
+    private(set) var entered = false
+
+    init(_ records: [DeviceAccessRecord] = []) {
+        base = InMemoryDeviceAccessStore(records)
+    }
+
+    func arm() { armed = true; entered = false }
+
+    func release() {
+        armed = false
+        waiting?.resume()
+        waiting = nil
+    }
+
+    func record(for key: DeviceAccessKey) async throws -> DeviceAccessRecord? {
+        if armed {
+            armed = false
+            entered = true
+            await withCheckedContinuation { waiting = $0 }
+        }
+        return await base.record(for: key)
+    }
+
+    func records(in showID: ShowID) async throws -> [DeviceAccessRecord] { await base.records(in: showID) }
+    func allRecords() async throws -> [DeviceAccessRecord] { await base.allRecords() }
+    func save(_ record: DeviceAccessRecord) async throws { await base.save(record) }
+    func save(_ records: [DeviceAccessRecord]) async throws { await base.save(records) }
+    func removeRecord(for key: DeviceAccessKey) async throws { await base.removeRecord(for: key) }
+    func removeRecords(in showID: ShowID) async throws { await base.removeRecords(in: showID) }
+}

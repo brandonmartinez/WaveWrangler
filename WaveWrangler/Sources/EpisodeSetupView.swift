@@ -46,6 +46,7 @@ struct EpisodeSetupContent: View {
         }
         guard !connecting else { return }
         connecting = true
+        SetupEngineProvider.watchClose(of: window)
         Task { @MainActor in
             let engine = await SetupEngineProvider.engine(for: window, show: store.model.show.id)
             let model = EpisodeSetupModel(store: store, episodeID: episodeID, engine: engine, preference: AppSettingsDownloadPreference.shared)

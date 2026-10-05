@@ -4,30 +4,14 @@ import WWCore
 import WWSources
 @testable import WWEpisodeSetup
 
-/// Delegates to the real `SystemSourceIO` and counts download requests/progress queries. An armed gate
-/// blocks the next metadata call until released (deterministic in-flight work).
+/// Delegates to the real `SystemSourceIO` and counts download requests/progress queries.
 final class CountingIO: SourceIO, @unchecked Sendable {
     let base = SystemSourceIO()
     private let lock = NSLock()
     private var _downloads = 0
-    private var gateArmed = false
-    private var _gateEntered = false
-    private let gate = DispatchSemaphore(value: 0)
     var downloads: Int { lock.withLock { _downloads } }
-    var gateEntered: Bool { lock.withLock { _gateEntered } }
-    func armGate() { lock.withLock { gateArmed = true } }
-    func releaseGate() { gate.signal() }
     var provenance: ObservationProvenance { base.provenance }
-    func metadata(at url: URL) -> MetadataResult {
-        let block = lock.withLock { () -> Bool in
-            guard gateArmed else { return false }
-            gateArmed = false
-            _gateEntered = true
-            return true
-        }
-        if block { gate.wait() }
-        return base.metadata(at: url)
-    }
+    func metadata(at url: URL) -> MetadataResult { base.metadata(at: url) }
     func listItems(under directory: URL) -> DirectoryListing { base.listItems(under: directory) }
     func makeReadOnlyBookmark(for url: URL) throws -> Data { try base.makeReadOnlyBookmark(for: url) }
     func resolveBookmark(_ data: Data) -> BookmarkResolution { base.resolveBookmark(data) }
@@ -201,17 +185,18 @@ struct WWSourcesSetupEngineTests {
         let root = try makeTree()
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
         let io = CountingIO()
-        let engine = WWSourcesSetupEngine(showID: ShowID(), store: InMemoryDeviceAccessStore(), context: SourceAccessContext(io: io), preference: FixedPreference(true))
+        let store = GatedDeviceAccessStore()
+        let engine = WWSourcesSetupEngine(showID: ShowID(), store: store, context: SourceAccessContext(io: io), preference: FixedPreference(true))
         let scan = try await engine.scanForImport([root], episodeSourceIDs: [])
         let items = ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: []).importItems()
         try await engine.commitImport(Dictionary(uniqueKeysWithValues: items.map { ($0.candidateID, $0.item.source.id) }), fromScan: scan.token)
-        io.armGate()
+        await store.arm()
         let refresh = Task { await engine.refresh(items.map(\.item.source.id)) }
-        while !io.gateEntered { await Task.yield() }
+        while await !store.entered { await Task.yield() }
         let shutdown = Task { await engine.shutdown() }
         for _ in 0..<50 { await Task.yield() }
         #expect(!engine.monitor.isStopped, "shutdown waits for the in-flight refresh")
-        io.releaseGate()
+        await store.release()
         await refresh.value
         await shutdown.value
         #expect(engine.monitor.isStopped)
@@ -324,4 +309,41 @@ final class Counter: @unchecked Sendable {
     private var count = 0
     func increment() { lock.withLock { count += 1 } }
     var value: Int { lock.withLock { count } }
+}
+
+/// Wraps an in-memory store; an armed gate *suspends* (never blocks a thread) the next `record(for:)`
+/// until released, so tests can hold a refresh in flight without starving the cooperative pool.
+actor GatedDeviceAccessStore: DeviceAccessStore {
+    private let base: InMemoryDeviceAccessStore
+    private var armed = false
+    private var waiting: CheckedContinuation<Void, Never>?
+    private(set) var entered = false
+
+    init(_ records: [DeviceAccessRecord] = []) {
+        base = InMemoryDeviceAccessStore(records)
+    }
+
+    func arm() { armed = true; entered = false }
+
+    func release() {
+        armed = false
+        waiting?.resume()
+        waiting = nil
+    }
+
+    func record(for key: DeviceAccessKey) async throws -> DeviceAccessRecord? {
+        if armed {
+            armed = false
+            entered = true
+            await withCheckedContinuation { waiting = $0 }
+        }
+        return await base.record(for: key)
+    }
+
+    func records(in showID: ShowID) async throws -> [DeviceAccessRecord] { await base.records(in: showID) }
+    func allRecords() async throws -> [DeviceAccessRecord] { await base.allRecords() }
+    func save(_ record: DeviceAccessRecord) async throws { await base.save(record) }
+    func save(_ records: [DeviceAccessRecord]) async throws { await base.save(records) }
+    func removeRecord(for key: DeviceAccessKey) async throws { await base.removeRecord(for: key) }
+    func removeRecords(in showID: ShowID) async throws { await base.removeRecords(in: showID) }
 }
