@@ -25,27 +25,6 @@ struct SplitMix64: RandomNumberGenerator {
     }
 }
 
-// MARK: - TEMPORARY CI diagnostic (#85): report the crashing thread's backtrace on fatal signals.
-
-private func wwCrashSignalHandler(_ sig: Int32) {
-    var frames = [UnsafeMutableRawPointer?](repeating: nil, count: 128)
-    let count = backtrace(&frames, 128)
-    let header = "\n=== WW TEST CRASH: signal \(sig) ===\n"
-    for fd: Int32 in [1, 2] {
-        _ = header.withCString { write(fd, $0, strlen($0)) }
-        backtrace_symbols_fd(&frames, count, fd)
-    }
-    signal(sig, SIG_DFL)
-    raise(sig)
-}
-
-let wwCrashReporterInstalled: Bool = {
-    for sig in [SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGTRAP] {
-        signal(sig, wwCrashSignalHandler)
-    }
-    return true
-}()
-
 // MARK: - Recording / fault-injecting / simulated-provider gateway
 
 /// Simulated iCloud item. Each metadata poll after a download request advances one script step.
@@ -113,8 +92,6 @@ final class SimulatedCloudItem: @unchecked Sendable {
 }
 
 final class HarnessIO: SourceIO, @unchecked Sendable {
-    private static let crashReporter = wwCrashReporterInstalled
-    init() { _ = Self.crashReporter }
     enum Op: String, CaseIterable, Sendable {
         case metadata, list, bookmarkCreate, bookmarkResolve, scopeStart, scopeStop, downloadRequest, downloadFraction
     }
