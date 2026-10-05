@@ -15,7 +15,9 @@ final class ShowWindowState {
         case showInfo
     }
 
-    var sidebarSelection: SidebarSelection?
+    var sidebarSelection: SidebarSelection? {
+        didSet { if oldValue != sidebarSelection { Responsiveness.interaction("show.sidebarSelection") } }
+    }
     var destination: ShowDestination = .setup
     var inspectorPresented = true
     var sidebarVisibility: NavigationSplitViewVisibility = .all
@@ -225,6 +227,7 @@ final class ShowWindowState {
             window.toolbarStyle = .unified
             LaunchFixtures.placeForTesting(window)
             window.setAccessibilityIdentifier("ww.show.window")
+            Responsiveness.showWindowAttached()
             self.updateSubtitle()
             let model = self.store.model
             LibraryUIStore.shared.showDidOpen(

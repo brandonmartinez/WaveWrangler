@@ -15,7 +15,12 @@ final class LibraryWindowState {
     }
 
     var sidebarSelection: LibrarySidebarItem? = .shows {
-        didSet { if oldValue != sidebarSelection { entrySelection = [] } }
+        didSet {
+            if oldValue != sidebarSelection {
+                entrySelection = []
+                Responsiveness.interaction("library.sidebarSelection")
+            }
+        }
     }
 
     var entrySelection: Set<ShowID> = []
@@ -222,6 +227,7 @@ final class LibraryWindowState {
     }
 
     func open(_ id: ShowID, readOnly: Bool = false) {
+        Responsiveness.beginShowOpen()
         Task {
             do {
                 actionMessage = nil

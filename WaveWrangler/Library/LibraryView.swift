@@ -17,7 +17,10 @@ struct LibraryView: View {
         }
         .onChange(of: focus) { _, region in state.focusedRegion = region }
         .onAppear { DispatchQueue.main.async { focus = .sidebar } }
-        .task { if !store.isLoaded { await store.load() } }
+        .task {
+            if !store.isLoaded { await store.load() }
+            Responsiveness.libraryReady(entryCount: store.library.entries.count)
+        }
     }
 
     private var splitView: some View {

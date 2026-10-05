@@ -144,6 +144,7 @@ final class LibraryUIStore {
             lastError = nil
             persist { change.apply(to: $0) }
             registerUndo(change, actionName: actionName, isUndo: true)
+            Responsiveness.interaction("library.edit")
             return true
         } catch {
             lastError = Self.message(for: error)

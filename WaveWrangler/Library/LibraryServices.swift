@@ -138,9 +138,10 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
 
     var isDurable: Bool { false }
 
-    init(seed: LibraryModel = LibraryModel(), details: [ShowID: LibraryEntryDetails] = [:]) {
+    init(seed: LibraryModel = LibraryModel(), details: [ShowID: LibraryEntryDetails] = [:], locations: [ShowID: URL] = [:]) {
         stored = seed
         self.details = details
+        self.locations = locations
     }
 
     var currentLibrary: LibraryModel? { stored }
