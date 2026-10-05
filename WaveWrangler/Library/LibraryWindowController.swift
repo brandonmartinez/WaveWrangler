@@ -52,17 +52,15 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate, NSWin
         state.store.undoManager
     }
 
-    nonisolated static func restoreWindow(
+    static func restoreWindow(
         withIdentifier identifier: NSUserInterfaceItemIdentifier,
         state: NSCoder,
         completionHandler: @escaping (NSWindow?, (any Error)?) -> Void
     ) {
-        MainActor.assumeIsolated {
-            guard identifier == restorationIdentifier else {
-                completionHandler(nil, nil)
-                return
-            }
-            completionHandler(shared.window, nil)
+        guard identifier == restorationIdentifier else {
+            completionHandler(nil, nil)
+            return
         }
+        completionHandler(shared.window, nil)
     }
 }

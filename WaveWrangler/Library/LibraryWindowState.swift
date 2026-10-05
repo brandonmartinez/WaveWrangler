@@ -20,6 +20,7 @@ final class LibraryWindowState {
 
     var entrySelection: Set<ShowID> = []
     var focusedRegion: Region?
+    var columnVisibility: NavigationSplitViewVisibility = .all
     /// Inline outcome of the last open/locate attempt, shown in the detail column.
     var actionMessage: String?
 
@@ -35,6 +36,12 @@ final class LibraryWindowState {
     var selectedRows: [LibraryEntryRow] {
         guard let item = sidebarSelection else { return [] }
         return store.rows(for: item).filter { entrySelection.contains($0.showID) }
+    }
+
+    var isSidebarShown: Bool { columnVisibility != .doubleColumn && columnVisibility != .detailOnly }
+
+    func toggleSidebar() {
+        columnVisibility = isSidebarShown ? .doubleColumn : .all
     }
 
     // MARK: - Collections
@@ -242,6 +249,10 @@ final class LibraryWindowState {
             Task { await store.services.entries.refresh([id]) }
         case .revertTo:
             open(id, readOnly: true)
+        case .showInFinder:
+            if !store.services.entries.revealShowInFinder(id) {
+                actionMessage = LibraryBackendError.showLocationUnknown.localizedDescription
+            }
         }
     }
 
@@ -249,6 +260,14 @@ final class LibraryWindowState {
         for row in selectedRows where !store.services.entries.revealShowInFinder(row.showID) {
             actionMessage = LibraryBackendError.showLocationUnknown.localizedDescription
         }
+    }
+
+    func perform(_ action: LibraryLevelAction) {
+        if action == .librarySettings {
+            SettingsWindowController.show(pane: .general)
+            return
+        }
+        Task { await store.services.location.perform(action) }
     }
 
     func rebuildIndex() {

@@ -41,42 +41,21 @@ extension UTType {
     static var wwShow: UTType { UTType(DocumentTypes.show) ?? .json }
 }
 
-/// Settings › General › Library location (persistence lane's `LibraryLocationController`).
-enum LibraryLocationStatus: Equatable, Sendable {
-    case notChosen
-    case checking
-    case available
-    case unavailable(reason: String)
-    /// The location UI is present but not yet connected to durable library storage in this build.
-    case notConnected
-
-    var text: String {
-        switch self {
-        case .notChosen: "No location chosen"
-        case .checking: "Checking…"
-        case .available: "Available"
-        case .unavailable(let reason): "Unavailable: \(reason)"
-        case .notConnected: "Not connected in this build: the library is kept only while WaveWrangler is open."
-        }
-    }
-
-    var symbolName: String? {
-        switch self {
-        case .notChosen: "questionmark.folder"
-        case .checking: nil
-        case .available: "checkmark.circle"
-        case .unavailable: "exclamationmark.triangle"
-        case .notConnected: "questionmark.circle"
-        }
-    }
-}
-
+/// Settings › General › Library location and library-level states (states-and-recovery §5.1; the
+/// persistence lane's `LibraryLocationController`). Observable.
 @MainActor
 protocol LibraryLocationControlling: AnyObject {
-    /// Provider and folder display name, never a full path.
-    var locationDisplayName: String? { get }
-    var status: LibraryLocationStatus { get }
-    func chooseLocation(_ url: URL) async throws
+    var location: LibraryLocationChoice { get }
+    var libraryState: LibraryLevelState { get }
+    /// Non-nil while a copy → verify → retire move is in progress.
+    var movePhase: LibraryMovePhase? { get }
+    /// `false` while library storage isn't connected in this build; Settings says so.
+    var isConnected: Bool { get }
+    /// Moves the library to `folder` (`nil` = back into WaveWrangler). Switches only after verification;
+    /// on failure the old location stays in use and unchanged.
+    func moveLibrary(to folder: URL?) async throws
+    func cancelMove()
+    func perform(_ action: LibraryLevelAction) async
 }
 
 /// Errors the in-memory stand-in reports in plain language.
@@ -84,12 +63,14 @@ enum LibraryBackendError: LocalizedError {
     case showLocationUnknown
     case notAShowFile
     case differentShow
+    case libraryStorageNotConnected
 
     var errorDescription: String? {
         switch self {
         case .showLocationUnknown: "WaveWrangler doesn't know where this show is saved on this Mac. Use Locate… to choose it."
         case .notAShowFile: "That file isn't a WaveWrangler show."
         case .differentShow: "That file is a different show, so it wasn't linked."
+        case .libraryStorageNotConnected: "moving the library isn't available in this version yet"
         }
     }
 }
@@ -115,8 +96,10 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
     private var stored = LibraryModel()
     private(set) var details: [ShowID: LibraryEntryDetails] = [:]
     @ObservationIgnored private var locations: [ShowID: URL] = [:]
-    private(set) var locationDisplayName: String?
-    private(set) var status: LibraryLocationStatus = .notConnected
+    let location = LibraryLocationChoice.inWaveWrangler
+    let libraryState = LibraryLevelState.ready
+    let movePhase: LibraryMovePhase? = nil
+    let isConnected = false
 
     var isDurable: Bool { false }
 
@@ -137,6 +120,20 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
 
     /// Records what an open show window knows ("as of last open").
     func noteOpenShow(id: ShowID, model: ShowDocumentModel, fileURL: URL?) {
+        // Two open files with the same show identity (e.g. a Finder copy): surface it, never merge.
+        let others = NSDocumentController.shared.documents.compactMap { $0 as? ShowDocument }.filter {
+            $0.store.model.show.id == id && $0.fileURL != nil && $0.fileURL?.standardizedFileURL != fileURL?.standardizedFileURL
+        }
+        if let other = others.first, fileURL != nil {
+            details[id] = LibraryEntryDetails(
+                state: .identityCollision(otherLocationDisplayName: other.fileURL?.deletingLastPathComponent().lastPathComponent),
+                locationDisplayName: fileURL.map { $0.deletingLastPathComponent().lastPathComponent },
+                lastOpened: details[id]?.lastOpened ?? Date(),
+                episodes: details[id]?.episodes,
+                sourceReferenceCount: details[id]?.sourceReferenceCount
+            )
+            return
+        }
         if let fileURL { locations[id] = fileURL }
         let episodes = model.episodes.map { EpisodeSummary(id: $0.id, number: $0.number, title: $0.title) }
         let refs = model.episodes.reduce(0) { $0 + $1.sources.count }
@@ -177,8 +174,11 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
         guard show.store.model.show.id == id else { throw LibraryBackendError.differentShow }
     }
 
-    func chooseLocation(_ url: URL) async throws {
-        locationDisplayName = url.lastPathComponent
-        status = .notConnected
+    func moveLibrary(to folder: URL?) async throws {
+        throw LibraryBackendError.libraryStorageNotConnected
     }
+
+    func cancelMove() {}
+
+    func perform(_ action: LibraryLevelAction) async {}
 }

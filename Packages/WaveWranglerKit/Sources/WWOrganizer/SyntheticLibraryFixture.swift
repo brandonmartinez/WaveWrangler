@@ -28,7 +28,7 @@ public enum SyntheticLibraryFixture {
         for index in 0..<shows {
             let showID = ShowID(UUID(uuid: uuidBytes(&generator)))
             let title = String(format: "Synthetic Show %03d", index + 1)
-            entries.append(LibraryShowEntry(showID: showID, lastKnownTitle: title, lastKnownRevision: 1))
+            entries.append(LibraryShowEntry(showID: showID, lastKnownTitle: title))
             let showsLeft = shows - index
             let refs = remainingRefs / showsLeft
             remainingRefs -= refs

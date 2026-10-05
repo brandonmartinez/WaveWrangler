@@ -1,120 +1,332 @@
+import AppKit
 import SwiftUI
 import WWCore
+import WWOrganizer
 
-/// Placeholder episode workspace: editable show title and an episode list with add/remove.
-/// The library/workspace UI owner replaces this with the real sidebar/workspace.
+/// Show window content (IA §4): two-level sidebar (Episodes, Show Info) → destination content →
+/// selection-driven inspector. `ShowDocument` hosts this view; each window gets its own `ShowWindowState`
+/// while the document, its undo history and save state are shared (IA-02).
 struct ShowWorkspaceView: View {
     let store: ShowDocumentStore
 
-    @State private var titleDraft = ""
-    @State private var selection: EpisodeID?
-    @FocusState private var titleFocused: Bool
+    @State private var state: ShowWindowState
+
+    init(store: ShowDocumentStore) {
+        self.store = store
+        _state = State(initialValue: ShowWindowState(store: store))
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            LabeledContent("Show title") {
-                TextField("Show title", text: $titleDraft)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($titleFocused)
-                    .onSubmit(finishTitleEditing)
-            }
+        ShowWindowContent(state: state)
+            .wwAppEnvironment()
+    }
+}
 
-            Text("Episodes")
-                .font(.headline)
-                .accessibilityAddTraits(.isHeader)
+private struct ShowWindowContent: View {
+    @Bindable var state: ShowWindowState
 
-            List(store.model.episodes, selection: $selection) { episode in
-                EpisodeRow(episode: episode)
+    private var store: ShowDocumentStore { state.store }
+
+    var body: some View {
+        NavigationSplitView(columnVisibility: $state.sidebarVisibility) {
+            ShowSidebar(state: state)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 230, max: 380)
+        } detail: {
+            VStack(spacing: 0) {
+                ShowMessageBar(state: state)
+                ShowDetailContent(state: state)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .accessibilityLabel("Episodes")
-            .overlay {
-                if store.model.episodes.isEmpty {
-                    ContentUnavailableView("No Episodes", systemImage: "list.bullet", description: Text("Add an episode to get started."))
+        }
+        .inspector(isPresented: $state.inspectorPresented) {
+            InspectorContainer(state: state)
+                .inspectorColumnWidth(min: 240, ideal: 300, max: 460)
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                DestinationControl(state: state)
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                SaveStatusItem(state: state)
+                Button {
+                    state.toggleInspector()
+                } label: {
+                    Label(state.inspectorPresented ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
+                }
+                .help(state.inspectorPresented ? "Hide Inspector (⌃⌘I)" : "Show Inspector (⌃⌘I)")
+            }
+        }
+        .frame(minWidth: 760, minHeight: 440)
+        .background(WindowBinder(state: state))
+        .onChange(of: store.model.episodes.map(\.id)) { old, _ in
+            state.reconcileSelection(previousOrder: old)
+        }
+        .onChange(of: store.model) { _, model in
+            state.updateSubtitle()
+            LibraryStore.shared.showDidChange(id: model.show.id, model: model, fileURL: store.document?.fileURL)
+        }
+        .onChange(of: state.sidebarSelection) { _, _ in state.updateSubtitle() }
+    }
+}
+
+// MARK: - Sidebar
+
+private struct ShowSidebar: View {
+    @Bindable var state: ShowWindowState
+
+    var body: some View {
+        let episodes = state.store.model.episodes
+        List(selection: $state.sidebarSelection) {
+            Section {
+                ForEach(episodes) { episode in
+                    EpisodeSidebarRow(state: state, episode: episode)
+                        .tag(ShowWindowState.SidebarSelection.episode(episode.id))
+                        .contextMenu { episodeMenu(episode) }
+                }
+                .onMove { source, destination in state.moveEpisodes(fromOffsets: source, toOffset: destination) }
+            } header: {
+                HStack {
+                    Text("Episodes")
+                    Spacer()
+                    Button {
+                        state.newEpisode()
+                    } label: {
+                        Image(systemName: "plus").accessibilityLabel("New Episode")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("New Episode (⇧⌘N)")
+                    .disabled(!state.canEdit)
+                    .accessibilityIdentifier("ww.show.sidebar.newEpisode")
                 }
             }
-
-            HStack {
-                Button("Add Episode", systemImage: "plus", action: addEpisode)
-                Button("Remove Episode", systemImage: "minus", action: removeSelectedEpisode)
-                    .disabled(selection == nil)
-                Spacer()
-            }
-
-            if let error = store.lastError {
-                Text(Self.message(for: error))
-                    .foregroundStyle(.red)
-                    .accessibilityLabel("Change not applied: \(Self.message(for: error))")
+            Section("Show") {
+                Label("Show Info", systemImage: "info.circle")
+                    .wwFont(.body)
+                    .tag(ShowWindowState.SidebarSelection.showInfo)
+                    .accessibilityIdentifier("ww.show.sidebar.showInfo")
             }
         }
-        .padding()
-        .frame(minWidth: 520, minHeight: 360)
-        .onAppear { titleDraft = store.model.show.title }
-        .onChange(of: titleDraft) { _, newValue in applyTitleLive(newValue) }
-        .onChange(of: store.model.show.title) { _, newValue in
-            // Undo/redo or a reload changed the title; don't fight in-progress whitespace while typing.
-            if Self.trimmed(titleDraft) != newValue { titleDraft = newValue }
+        .listStyle(.sidebar)
+        .accessibilityLabel("Episodes")
+        .accessibilityValue(ShowSidebarPresentation.episodesValue(episodes.count))
+        .accessibilityIdentifier("ww.show.sidebar.episodes")
+    }
+
+    @ViewBuilder
+    private func episodeMenu(_ episode: Episode) -> some View {
+        Button("Rename") {
+            state.sidebarSelection = .episode(episode.id)
+            state.renameSelectedEpisode()
         }
-        .onChange(of: titleFocused) { _, focused in
-            if !focused { finishTitleEditing() }
+        .disabled(!state.canEdit)
+        Button("Episode Info") {
+            state.sidebarSelection = .episode(episode.id)
+            state.showEpisodeInfo()
+        }
+        Divider()
+        if state.store.model.canMoveEpisode(episode.id, by: -1) {
+            Button("Move Up") {
+                state.sidebarSelection = .episode(episode.id)
+                state.moveSelectedEpisode(by: -1)
+            }
+        }
+        if state.store.model.canMoveEpisode(episode.id, by: 1) {
+            Button("Move Down") {
+                state.sidebarSelection = .episode(episode.id)
+                state.moveSelectedEpisode(by: 1)
+            }
+        }
+        Divider()
+        Button("Delete Episode…") {
+            state.sidebarSelection = .episode(episode.id)
+            state.deleteSelectedEpisode()
+        }
+        .disabled(!state.canEdit)
+    }
+}
+
+private struct EpisodeSidebarRow: View {
+    @Bindable var state: ShowWindowState
+    let episode: Episode
+    @State private var draft = ""
+    @FocusState private var fieldFocused: Bool
+
+    var body: some View {
+        if state.renamingEpisodeID == episode.id {
+            TextField("Episode title", text: $draft)
+                .focused($fieldFocused)
+                .accessibilityLabel("Episode title")
+                .accessibilityIdentifier("ww.show.sidebar.rename")
+                .onAppear {
+                    draft = episode.title
+                    fieldFocused = true
+                }
+                .onSubmit { commit() }
+                .onExitCommand { state.renamingEpisodeID = nil }
+                .onChange(of: fieldFocused) { _, focused in
+                    if !focused, state.renamingEpisodeID == episode.id { commit() }
+                }
+        } else {
+            Label {
+                Text(ShowSidebarPresentation.episodeRowTitle(episode))
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .help(ShowSidebarPresentation.episodeRowTitle(episode))
+            } icon: {
+                Image(systemName: "music.mic").accessibilityHidden(true)
+            }
+            .wwFont(.body)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(ShowSidebarPresentation.episodeRowTitle(episode))
+            .accessibilityIdentifier(ShowSidebarPresentation.episodeIdentifier(episode.id))
         }
     }
 
-    /// Applies every keystroke to the model (one coalesced "Rename Show" undo step per editing burst), so
-    /// Save/autosave/Close/Quit never miss a typed title. An empty draft is not applied; the last
-    /// non-empty title stays in the model and is restored when editing ends.
-    private func applyTitleLive(_ draft: String) {
-        let title = Self.trimmed(draft)
-        guard !title.isEmpty, title != store.model.show.title else { return }
-        store.apply("Rename Show", coalescing: "show-title") { model throws(DomainError) in try model.renamingShow(to: title) }
-    }
-
-    private func finishTitleEditing() {
-        store.endCoalescing()
-        titleDraft = store.model.show.title
-    }
-
-    private static func trimmed(_ string: String) -> String {
-        string.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func addEpisode() {
-        let number = (store.model.episodes.compactMap(\.number).max() ?? 0) + 1
-        let episode = Episode(title: "Episode \(number)", number: number)
-        if store.apply("Add Episode", { model throws(DomainError) in try model.addingEpisode(episode) }) {
-            selection = episode.id
-        }
-    }
-
-    private func removeSelectedEpisode() {
-        guard let id = selection else { return }
-        if store.apply("Remove Episode", { model throws(DomainError) in try model.removingEpisode(id) }) {
-            selection = nil
-        }
-    }
-
-    private static func message(for error: DomainError) -> String {
-        switch error {
-        case .emptyTitle: "A title can’t be empty."
-        default: "The change could not be applied (\(error))."
+    private func commit() {
+        if !state.commitRename(episode.id, to: draft) {
+            // Refused (e.g. empty title): keep editing; the reason is announced.
+            state.announce("A title can't be empty.")
+            fieldFocused = true
         }
     }
 }
 
-private struct EpisodeRow: View {
-    let episode: Episode
+// MARK: - Content
+
+private struct ShowDetailContent: View {
+    @Bindable var state: ShowWindowState
 
     var body: some View {
-        HStack {
-            if let number = episode.number {
-                Text("\(number)")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
+        let model = state.store.model
+        if state.sidebarSelection == .showInfo {
+            ShowInfoSummary(state: state)
+        } else if model.episodes.isEmpty {
+            ContentUnavailableView {
+                Label("No episodes yet", systemImage: "music.mic")
+            } description: {
+                Text("Add an episode to start organizing its sources and speakers.")
+            } actions: {
+                Button("New Episode") { state.newEpisode() }
+                    .disabled(!state.canEdit)
+                    .accessibilityIdentifier("ww.show.empty.newEpisode")
             }
-            Text(episode.title)
-            Spacer()
-            Text(episode.status.rawValue.capitalized)
-                .foregroundStyle(.secondary)
+            .wwFont(.body)
+        } else if let panel = state.destination.blockedPanel {
+            BlockedDestinationView(destination: state.destination, panel: panel) { state.select(.setup) }
+        } else if let episode = state.selectedEpisode {
+            SetupContainerView(state: state, episode: episode)
+        } else {
+            ContentUnavailableView("No Episode Selected", systemImage: "music.mic", description: Text("Select an episode in the sidebar."))
+                .wwFont(.body)
         }
-        .accessibilityElement(children: .combine)
+    }
+}
+
+/// IA-12: blocked, not hidden, not dead. Heading role; the text is the full accessible content.
+struct BlockedDestinationView: View {
+    let destination: ShowDestination
+    let panel: BlockedPanel
+    let goToSetup: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                Image(systemName: "lock.fill")
+                    .wwFont(.largeTitle)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                Text(panel.heading)
+                    .wwFont(.title2)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("ww.show.blocked.heading")
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(panel.body)
+                    .wwFont(.body)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 520)
+                Button(panel.buttonTitle, action: goToSetup)
+                    .accessibilityIdentifier("ww.show.blocked.goToSetup")
+                    .help("Go to Setup (⌘1)")
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(panel.heading)
+        .accessibilityIdentifier("ww.show.blocked.\(destination.rawValue)")
+    }
+}
+
+private struct ShowInfoSummary: View {
+    @Bindable var state: ShowWindowState
+
+    var body: some View {
+        let model = state.store.model
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(model.show.title)
+                    .wwFont(.title)
+                    .accessibilityAddTraits(.isHeader)
+                    .fixedSize(horizontal: false, vertical: true)
+                LabeledContent("Episodes") { Text("\(model.episodes.count)") }
+                LabeledContent("Speakers") { Text("\(model.speakers.count)") }
+                LabeledContent("Location") { Text(ShowInfoInspector.locationText(state.store.document?.fileURL)) }
+                LabeledContent("Save status") { Text(state.presentation.itemText) }
+                Text("Edit the show's title and notes in the inspector (View › Show Inspector, ⌃⌘I).")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .wwFont(.body)
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct ShowMessageBar: View {
+    @Bindable var state: ShowWindowState
+
+    var body: some View {
+        let presentation = state.presentation
+        if let bar = presentation.messageBar, state.dismissedMessageBar != bar.heading {
+            MessageBar(
+                heading: bar.heading,
+                message: bar.body,
+                symbolName: presentation.symbolName ?? "info.circle",
+                actions: bar.actions.map { action in (action.rawValue, { state.perform(action) }) }
+            )
+        }
+    }
+}
+
+// MARK: - Window binding
+
+/// Connects the SwiftUI content to its NSWindow: registers per-window state for menu routing, enables
+/// toolbar bridging, keeps the subtitle current and tells the library the show is open.
+private struct WindowBinder: NSViewRepresentable {
+    let state: ShowWindowState
+
+    func makeNSView(context: Context) -> BinderView {
+        let view = BinderView()
+        view.state = state
+        return view
+    }
+
+    func updateNSView(_ nsView: BinderView, context: Context) {
+        nsView.state = state
+    }
+
+    final class BinderView: NSView {
+        var state: ShowWindowState?
+        private weak var attachedWindow: NSWindow?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window, let state, window !== attachedWindow else { return }
+            attachedWindow = window
+            state.attach(to: window)
+        }
     }
 }

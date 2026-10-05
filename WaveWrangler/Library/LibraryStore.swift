@@ -43,6 +43,10 @@ final class LibraryStore {
 
     @discardableResult
     func apply(_ actionName: String, _ operation: (LibraryModel) throws(LibraryError) -> LibraryModel) -> Bool {
+        guard services.location.libraryState.allowsEdits else {
+            lastError = "The library can't be changed right now. The reason is shown at the top of the Library window."
+            return false
+        }
         do {
             let updated = try operation(library)
             lastError = nil

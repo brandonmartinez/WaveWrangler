@@ -27,10 +27,13 @@ public enum SymbolCatalog {
         }
         let entryStates: [LibraryEntryState] = [
             .checking, .available, .notFound(folderDisplayName: nil), .needsPermission, .locationUnavailable,
-            .newerFormat, .damaged, .outOfDate, .recordedUnavailable(note: "x"),
+            .newerFormat, .damaged, .outOfDate, .recordedUnavailable(note: "x"), .identityCollision(otherLocationDisplayName: nil),
         ]
         for state in entryStates {
             if let symbol = LibraryEntryStatePresentation(state, showName: "x").symbolName { names.insert(symbol) }
+        }
+        for state in [LibraryLevelState.unreachable(folderDisplayName: "x", pendingChanges: 1), .needsPermission(pendingChanges: 0), .conflict, .newerFormat(folderDisplayName: "x")] {
+            if let presentation = LibraryLevelPresentation(state) { names.insert(presentation.symbolName) }
         }
         return names
     }

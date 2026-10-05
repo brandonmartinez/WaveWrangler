@@ -37,14 +37,15 @@ enum Dialogs {
         message: String,
         informative: String,
         confirmTitle: String,
+        destructive: Bool = true,
         destructiveIsDefault: Bool = true
     ) async -> Bool {
         let alert = NSAlert()
         alert.messageText = message
         alert.informativeText = informative
-        alert.alertStyle = .warning
+        alert.alertStyle = destructive ? .warning : .informational
         let confirm = alert.addButton(withTitle: confirmTitle)
-        confirm.hasDestructiveAction = true
+        confirm.hasDestructiveAction = destructive
         let cancel = alert.addButton(withTitle: "Cancel")
         cancel.keyEquivalent = "\u{1b}"
         if !destructiveIsDefault {

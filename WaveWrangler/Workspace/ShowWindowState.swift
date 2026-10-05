@@ -191,6 +191,26 @@ final class ShowWindowState {
     func announce(_ text: String) {
         AccessibilityNotification.Announcement(text).post()
     }
+
+    // MARK: - Window
+
+    func attach(to window: NSWindow) {
+        self.window = window
+        ShowWindowRegistry.register(self, for: window)
+        if let hosting = window.contentViewController as? NSHostingController<ShowWorkspaceView> {
+            hosting.sceneBridgingOptions = [.toolbars]
+        }
+        window.toolbarStyle = .unified
+        window.setAccessibilityIdentifier("ww.show.window")
+        updateSubtitle()
+        let model = store.model
+        LibraryStore.shared.showDidOpen(id: model.show.id, model: model, fileURL: store.document?.fileURL)
+    }
+
+    /// IA-06: subtitle = selected episode's title.
+    func updateSubtitle() {
+        window?.subtitle = ShowSidebarPresentation.windowSubtitle(model: store.model, selectedEpisode: selectedEpisodeID)
+    }
 }
 
 /// Finds the per-window state for the key/main show window (menu routing).

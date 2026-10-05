@@ -14,6 +14,9 @@ public enum LibraryEntryState: Sendable, Equatable {
     case outOfDate
     /// Only the canonical `UnavailableRecord` note is known; no fresh observation yet.
     case recordedUnavailable(note: String)
+    /// Two different files carry the same show identity (e.g. a Finder copy). Both are kept; nothing is
+    /// merged or dropped.
+    case identityCollision(otherLocationDisplayName: String?)
 }
 
 public enum LibraryRemedy: String, Sendable, Equatable, CaseIterable {
@@ -24,6 +27,7 @@ public enum LibraryRemedy: String, Sendable, Equatable, CaseIterable {
     case tryAgain = "Try Again"
     case openReadOnly = "Open Read-Only"
     case revertTo = "Revert To…"
+    case showInFinder = "Show in Finder"
 }
 
 public struct LibraryEntryStatePresentation: Sendable, Equatable {
@@ -76,6 +80,13 @@ public struct LibraryEntryStatePresentation: Sendable, Equatable {
             self.init(
                 "Details out of date", "arrow.clockwise", .none,
                 "The library's details for this show will update the next time it's opened.", [.openShow], false
+            )
+        case .identityCollision(let other):
+            let place = other.map { " in “\($0)”" } ?? " somewhere else"
+            self.init(
+                "Same show in two files", "doc.on.doc", .attention,
+                "Another file\(place) has the same show identity as “\(showName)”, for example a copy made in Finder. WaveWrangler keeps both files and hasn't merged or removed either. To keep both as separate shows, open one and choose File › Duplicate.",
+                [.showInFinder, .removeFromLibrary], true
             )
         case .recordedUnavailable(let note):
             self.init(
