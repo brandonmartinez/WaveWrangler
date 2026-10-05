@@ -1,0 +1,556 @@
+import AppKit
+import Observation
+import SwiftUI
+import WWCore
+import WWEpisodeSetup
+
+/// Main-actor view model for one episode's Setup content in one window.
+///
+/// Canonical edits go through `ShowDocumentStore.apply` with the exact undo names from commands §3, so
+/// they share the document's undo history and honest dirty state. Device-local engine work (scan, access
+/// records, relink, downloads) goes through `SourceSetupEngine` and never runs provider I/O on the main
+/// actor. Nothing here writes, moves, renames or substitutes a referenced original.
+@MainActor
+@Observable
+final class EpisodeSetupModel {
+    enum InspectorSubject: Equatable {
+        case none
+        case group(RecorderGroupID?)
+        case source(SourceID)
+        case speaker(SpeakerID)
+    }
+
+    enum Sheet: Identifiable {
+        case importReview(ImportReview)
+        case relink(RelinkContext)
+        case number(NumberSheetContext)
+        case name(NameSheetContext)
+
+        var id: String {
+            switch self {
+            case .importReview: "import"
+            case .relink: "relink"
+            case let .number(context): "number-\(context.kind)"
+            case let .name(context): "name-\(context.kind)"
+            }
+        }
+    }
+
+    enum Confirmation: Identifiable {
+        case removeSources([SourceID])
+        case deleteSpeaker(SpeakerID)
+        case deleteGroup(RecorderGroupID)
+        case cancelDownload(SourceID)
+
+        var id: String {
+            switch self {
+            case let .removeSources(ids): "remove-\(ids.map(\.description).joined())"
+            case let .deleteSpeaker(id): "speaker-\(id)"
+            case let .deleteGroup(id): "group-\(id)"
+            case let .cancelDownload(id): "cancel-\(id)"
+            }
+        }
+    }
+
+    let store: ShowDocumentStore
+    let episodeID: EpisodeID
+    @ObservationIgnored let engine: any SourceSetupEngine
+    @ObservationIgnored let preference: any SourceDownloadPreference
+    /// Window used to present native open panels as sheets.
+    @ObservationIgnored var window: () -> NSWindow? = { nil }
+
+    var statuses: [SourceID: SourceStatusSnapshot] = [:]
+    var selection: Set<SetupRowID> = []
+    var speakerSelection: Set<SpeakerID> = []
+    var onlyNeedingAttention = false
+    var sortOrder: SourceSortOrder = .manual
+    var sheet: Sheet?
+    var confirmation: Confirmation?
+    /// Inline, persistent explanation of the last refused or failed action (not time-boxed).
+    var message: String?
+    /// Which table the user last selected in; drives the inspector (IA §4.4).
+    var inspectorFollowsSpeakers = false
+    /// Incremented to ask the inspector to focus its first editable field (Return in the tables).
+    var inspectorFocusRequest = 0
+    var isScanning = false
+
+    @ObservationIgnored private var observation: Task<Void, Never>?
+    @ObservationIgnored private var observedIDs: Set<SourceID> = []
+
+    init(store: ShowDocumentStore, episodeID: EpisodeID, engine: any SourceSetupEngine, preference: any SourceDownloadPreference) {
+        self.store = store
+        self.episodeID = episodeID
+        self.engine = engine
+        self.preference = preference
+    }
+
+    // MARK: Derived state
+
+    var episode: Episode? { store.model.episode(episodeID) }
+
+    var presentation: SetupPresentation {
+        SetupPresentation(model: store.model, episodeID: episodeID, statuses: statuses, onlyNeedingAttention: onlyNeedingAttention, sortOrder: sortOrder)
+    }
+
+    var downloadsAutomatically: Bool { preference.downloadsAutomatically }
+
+    var episodeProgress: EpisodeDownloadProgress? {
+        EpisodeDownloadProgress(statuses: (episode?.sources ?? []).map { status(of: $0.id) })
+    }
+
+    var offExplanation: String? {
+        guard !downloadsAutomatically else { return nil }
+        let count = (episode?.sources ?? []).filter { status(of: $0.id).residency == .cloudOnly }.count
+        return EpisodeDownloadProgress.offExplanation(notDownloadedCount: count)
+    }
+
+    func status(of id: SourceID) -> SourceStatusSnapshot { statuses[id] ?? .checking }
+
+    var selectedSourceIDs: [SourceID] {
+        let selected = Set(selection.compactMap(\.sourceID))
+        return (episode?.sources ?? []).map(\.id).filter(selected.contains)
+    }
+
+    var selectedGroupID: RecorderGroupID?? {
+        for case let .group(id) in selection { return .some(id) }
+        return nil
+    }
+
+    var singleSelectedSource: SourceRecord? {
+        let ids = selectedSourceIDs
+        guard ids.count == 1 else { return nil }
+        return episode?.source(ids[0])
+    }
+
+    /// The single speaker reference of a selected source row (or a channel row).
+    var selectedReference: SpeakerChannelReference? {
+        guard selection.count == 1, let row = selection.first, let episode else { return nil }
+        switch row {
+        case let .channel(sourceID, speakerID):
+            return episode.references(to: sourceID).first { $0.speakerID == speakerID }
+        case let .source(sourceID):
+            let refs = episode.references(to: sourceID)
+            return refs.count == 1 ? refs[0] : nil
+        case .group:
+            return nil
+        }
+    }
+
+    var inspectorSubject: InspectorSubject {
+        if inspectorFollowsSpeakers, speakerSelection.count == 1, let id = speakerSelection.first { return .speaker(id) }
+        guard selection.count == 1, let row = selection.first else { return .none }
+        switch row {
+        case let .group(id): return .group(id)
+        case let .source(id), let .channel(id, _): return .source(id)
+        }
+    }
+
+    func speakerName(_ id: SpeakerID) -> String { store.model.speaker(id)?.name ?? "Unknown speaker" }
+
+    func groupName(_ id: RecorderGroupID?) -> String {
+        guard let id else { return "Ungrouped" }
+        return episode?.recorderGroup(id)?.name ?? "Recorder group"
+    }
+
+    var episodeSpeakers: [(id: SpeakerID, name: String)] {
+        (episode?.speakerAssignments ?? []).map { ($0.speakerID, speakerName($0.speakerID)) }
+    }
+
+    // MARK: Observation
+
+    func startObserving() {
+        let ids = Set(episode?.sources.map(\.id) ?? [])
+        guard ids != observedIDs || observation == nil else { return }
+        observedIDs = ids
+        observation?.cancel()
+        let stream = engine.observe(ids)
+        observation = Task { [weak self] in
+            for await update in stream {
+                guard let self, !Task.isCancelled else { return }
+                self.receive(update, for: ids)
+            }
+        }
+    }
+
+    func stopObserving() {
+        observation?.cancel()
+        observation = nil
+        observedIDs = []
+    }
+
+    private func receive(_ update: [SourceID: SourceStatusSnapshot], for ids: Set<SourceID>) {
+        let before = presentation.needingAttentionCount
+        let focused = singleSelectedSource?.id
+        let previousFocused = focused.flatMap { statuses[$0] }
+        for id in ids { statuses[id] = update[id] ?? statuses[id] }
+        let after = presentation.needingAttentionCount
+        if after != before {
+            let text = switch after {
+            case 0: "No sources need attention"
+            case 1: "1 source needs attention"
+            default: "\(after) sources need attention"
+            }
+            announce(text)
+        }
+        if let focused, let now = statuses[focused], let name = episode?.source(focused)?.displayNameHint {
+            announceTransferChange(from: previousFocused?.transfer, to: now.transfer, name: name)
+        }
+    }
+
+    @ObservationIgnored private var lastProgressAnnouncement: (bucket: Int, at: Date)?
+
+    private func announceTransferChange(from old: TransferStatus?, to new: TransferStatus, name: String) {
+        guard old != new else { return }
+        switch new {
+        case let .downloading(fraction?):
+            let bucket = Int(fraction * 4)
+            if let last = lastProgressAnnouncement, last.bucket == bucket || Date().timeIntervalSince(last.at) < 10 { return }
+            if bucket >= 1 && bucket <= 3 || old == nil || !(old?.isActive ?? false) {
+                lastProgressAnnouncement = (bucket, Date())
+                announce(bucket == 0 ? "Downloading \(name)" : "\(bucket * 25) percent downloaded, \(name)")
+            }
+        case .downloading(nil) where !(old?.isActive ?? false):
+            announce("Downloading \(name)")
+        case let .failed(reason):
+            announce("Download failed for \(name): \(reason)")
+        case .noConnection:
+            if case .noConnection? = old { return }
+            announce("Download failed for \(name): no network connection")
+        case .idle where old?.isActive == true:
+            announce("Downloaded \(name)")
+        default:
+            break
+        }
+    }
+
+    func announce(_ text: String) {
+        AccessibilityNotification.Announcement(text).post()
+    }
+
+    // MARK: Canonical edits (named undo, via SetupEditCommands)
+
+    var commands: SetupEditCommands { SetupEditCommands(editor: store, episodeID: episodeID) }
+
+    /// Runs one named edit; a refusal shows a persistent inline reason instead of a silent no-op.
+    @discardableResult
+    private func edit(_ body: (SetupEditCommands) -> Bool) -> Bool {
+        let applied = body(commands)
+        message = applied ? nil : store.lastError.map(Self.describe)
+        if applied { startObserving() }
+        return applied
+    }
+
+    func assign(_ sourceIDs: [SourceID], toGroup groupID: RecorderGroupID?) {
+        edit { $0.assign(sourceIDs, toGroup: groupID) }
+    }
+
+    func createGroup(named name: String, assigning sourceIDs: [SourceID]) {
+        let group = RecorderGroup(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
+        if edit({ $0.createGroup(group, assigning: sourceIDs) }), sourceIDs.isEmpty {
+            selection = [.group(group.id)]
+        }
+    }
+
+    func renameGroup(_ groupID: RecorderGroupID, to name: String) {
+        edit { $0.renameGroup(groupID, to: name) }
+    }
+
+    func deleteGroup(_ groupID: RecorderGroupID) {
+        if edit({ $0.deleteGroup(groupID) }) { selection = [.group(nil)] }
+    }
+
+    func setEpoch(_ number: Int, for sourceIDs: [SourceID]) {
+        edit { $0.setEpoch(number, for: sourceIDs) }
+    }
+
+    func startNewEpoch() {
+        var ids = selectedSourceIDs
+        if ids.isEmpty, case let .some(.some(groupID)) = selectedGroupID {
+            ids = episode?.sources(inRecorderGroup: groupID).map(\.id) ?? []
+        }
+        edit { $0.startNewEpoch(for: ids) }
+    }
+
+    /// `channel` is 1-based as typed by the user; nil = Unknown.
+    func setChannel(_ channel: Int?, for sourceIDs: [SourceID]) {
+        edit { $0.setChannel(channel, for: sourceIDs) }
+    }
+
+    func assignSpeaker(_ speakerID: SpeakerID?, to sourceIDs: [SourceID]) {
+        edit { $0.assignSpeaker(speakerID, to: sourceIDs) }
+    }
+
+    func createSpeaker(named name: String, assigning sourceIDs: [SourceID]) {
+        let speaker = Speaker(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
+        if edit({ $0.createSpeaker(speaker, assigning: sourceIDs) }), sourceIDs.isEmpty {
+            speakerSelection = [speaker.id]
+            inspectorFollowsSpeakers = true
+        }
+    }
+
+    func renameSpeaker(_ id: SpeakerID, to name: String) {
+        edit { $0.renameSpeaker(id, to: name) }
+    }
+
+    func deleteSpeaker(_ id: SpeakerID) {
+        let rows = presentation.speakerRows.map(\.id)
+        if edit({ $0.deleteSpeaker(id) }) {
+            speakerSelection = Self.neighbour(of: id, in: rows).map { [$0] } ?? []
+            announce(speakerSelection.first.map { "Selected \(speakerName($0))" } ?? "No speakers")
+        }
+    }
+
+    func useAsPrimary(_ ref: SpeakerChannelReference) {
+        edit { $0.useAsPrimary(ref) }
+    }
+
+    func useAsBackup(_ ref: SpeakerChannelReference) {
+        edit { $0.useAsBackup(ref) }
+    }
+
+    func setPrimary(_ channel: ChannelReference?, for speakerID: SpeakerID) {
+        edit { $0.setPrimary(channel, for: speakerID) }
+    }
+
+    func removeSources(_ ids: [SourceID]) {
+        let order = presentation.orderedSourceIDs
+        if edit({ $0.removeSources(ids) }) {
+            let remaining = order.filter { !ids.contains($0) }
+            let next = ids.last.flatMap { last in Self.neighbour(of: last, in: order).flatMap { remaining.contains($0) ? $0 : nil } } ?? remaining.last
+            selection = next.map { [.source($0)] } ?? []
+            if let next, let name = episode?.source(next)?.displayNameHint { announce("Selected \(name)") }
+        }
+    }
+
+    func moveSelected(_ direction: MoveDirection) {
+        if inspectorFollowsSpeakers, let id = speakerSelection.first, speakerSelection.count == 1 {
+            edit { $0.moveSpeaker(id, direction) }
+        } else if let source = singleSelectedSource {
+            edit { $0.moveSource(source.id, direction) }
+        }
+    }
+
+    // MARK: Import (IA §5)
+
+    func beginImport() {
+        guard let window = window(), episode != nil else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Choose"
+        panel.message = "Choose recordings or folders to add to “\(episode?.title ?? "")”"
+        let accessory = NSTextField(wrappingLabelWithString: "WaveWrangler adds references to these files. It never moves, renames or changes them.")
+        accessory.frame.size.width = 420
+        panel.accessoryView = accessory
+        panel.isAccessoryViewDisclosed = true
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let self else { return }
+            self.scan(panel.urls)
+        }
+    }
+
+    func scan(_ urls: [URL]) {
+        guard let episode else { return }
+        isScanning = true
+        let ids = episode.sources.map(\.id)
+        let speakers = store.model.speakers.map(\.name)
+        let title = episode.title
+        Task { [engine] in
+            do {
+                let result = try await engine.scanForImport(urls, episodeSourceIDs: ids)
+                self.isScanning = false
+                self.sheet = .importReview(ImportReview(scan: result, episodeTitle: title, knownSpeakerNames: speakers))
+            } catch {
+                self.isScanning = false
+                self.message = "Couldn't look at the chosen files: \(Self.reason(error)). Nothing was imported."
+            }
+        }
+    }
+
+    /// Confirms an Import Review: one undoable "Import N Sources" action, then device-local records.
+    func commitImport(_ review: ImportReview) {
+        let pairs = review.importItems()
+        guard !pairs.isEmpty else { sheet = nil; return }
+        let items = pairs.map(\.item)
+        sheet = nil
+        guard edit({ $0.importSources(items) }) else { return }
+        selection = Set(items.map { .source($0.source.id) })
+        inspectorFollowsSpeakers = false
+        announce("Imported \(items.count == 1 ? "1 source" : "\(items.count) sources")")
+        let accepted = Dictionary(uniqueKeysWithValues: pairs.map { ($0.candidateID, $0.item.source.id) })
+        Task { [engine] in
+            do {
+                try await engine.commitImport(accepted)
+            } catch {
+                self.message = "The sources were added, but WaveWrangler couldn't save permission to reach them on this Mac: \(Self.reason(error))."
+            }
+            self.startObserving()
+        }
+    }
+
+    // MARK: Relink / regrant (states §4)
+
+    func beginRelink(_ sourceID: SourceID, mode: RelinkContext.Mode = .relink) {
+        guard let window = window(), let source = episode?.source(sourceID) else { return }
+        let name = source.displayNameHint
+        Task { [engine] in
+            let recorded = await engine.recordedDetails(for: sourceID)
+            let folder = await engine.lastKnownFolder(for: sourceID)
+            let url: URL?
+            if let override = SetupFixtures.relinkCandidateOverride {
+                url = override
+            } else {
+                let panel = NSOpenPanel()
+                panel.canChooseFiles = true
+                panel.canChooseDirectories = false
+                panel.allowsMultipleSelection = false
+                panel.message = "\(RelinkComparison.panelPrompt(for: name)). \(RelinkComparison.panelMessage(for: recorded))"
+                panel.prompt = mode == .grantAccess ? "Grant Access" : "Choose"
+                if let folder { panel.directoryURL = folder }
+                let response = await panel.beginSheetModal(for: window)
+                url = response == .OK ? panel.url : nil
+            }
+            guard let url else { return }
+            let comparison = await engine.compare(candidate: url, for: sourceID)
+            self.sheet = .relink(RelinkContext(sourceID: sourceID, displayName: name, candidate: url, comparison: comparison, mode: mode))
+        }
+    }
+
+    /// One undoable "Relink “file”" action. The device-local record changes; no file is touched.
+    func confirmRelink(_ context: RelinkContext) {
+        sheet = nil
+        let undoName = SetupUndoName.relink(context.displayName)
+        Task { [engine] in
+            do {
+                let receipt = try await engine.commitRelink(context.sourceID, to: context.candidate, identity: context.comparison.acceptedIdentity)
+                self.registerRelinkUndo(receipt, context: context, name: undoName)
+                self.selection = [.source(context.sourceID)]
+            } catch {
+                self.message = "Couldn't relink “\(context.displayName)”: \(Self.reason(error)). Nothing was changed."
+            }
+        }
+    }
+
+    private func registerRelinkUndo(_ receipt: RelinkReceipt, context: RelinkContext, name: String) {
+        guard let undoManager = store.document?.undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { model in
+            _ = MainActor.assumeIsolated {
+                Task { [engine = model.engine] in
+                    try? await engine.revertRelink(receipt)
+                    model.registerRelinkRedo(context: context, name: name)
+                }
+            }
+        }
+        undoManager.setActionName(name)
+    }
+
+    private func registerRelinkRedo(context: RelinkContext, name: String) {
+        guard let undoManager = store.document?.undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { model in
+            MainActor.assumeIsolated { model.confirmRelink(context) }
+        }
+        undoManager.setActionName(name)
+    }
+
+    // MARK: Downloads
+
+    func perform(_ action: TransferAction, on sourceID: SourceID) {
+        if action == .cancel, TransferAction.cancelNeedsConfirmation(status(of: sourceID).transfer) {
+            confirmation = .cancelDownload(sourceID)
+            return
+        }
+        performConfirmed(action, on: sourceID)
+    }
+
+    func performConfirmed(_ action: TransferAction, on sourceID: SourceID) {
+        Task { [engine] in await engine.perform(action, on: sourceID) }
+    }
+
+    func availableActions(for sourceID: SourceID) -> [TransferAction] {
+        let s = status(of: sourceID)
+        return TransferAction.available(transfer: s.transfer, residency: s.residency, pauseSupported: engine.pauseSupported)
+    }
+
+    // MARK: Helpers
+
+    static func neighbour<T: Equatable>(of item: T, in list: [T]) -> T? {
+        guard let index = list.firstIndex(of: item) else { return nil }
+        if index + 1 < list.count { return list[index + 1] }
+        return index > 0 ? list[index - 1] : nil
+    }
+
+    static func reason(_ error: any Error) -> String {
+        (error as? SourceEngineError)?.reason ?? error.localizedDescription
+    }
+
+    static func describe(_ error: DomainError) -> String {
+        switch error {
+        case .emptyTitle: "A name can't be empty."
+        case let .invalidEpochNumber(n): "Epoch \(n) isn't valid. Enter a whole number of 1 or more."
+        case .sourceNotInRecorderGroup: "Choose a recorder group first. Epochs belong to a recorder group."
+        case .channelIsPrimaryOfAnotherSpeaker: "That channel is already another speaker's primary. Set a different channel first."
+        case .channelNotAssignedToSpeaker: "Assign the speaker to this source first."
+        case .invalidChannel: "Enter a whole number of 1 or more, or choose Unknown."
+        case .channelOutOfRange(_, let count): "This source has \(count) channels."
+        case .sourceIsDesignatedBackup: "This source is a backup. Choose Use as Primary to change it."
+        default: "The change wasn't applied."
+        }
+    }
+}
+
+struct RelinkContext {
+    enum Mode: Equatable {
+        case relink
+        case grantAccess
+        case review
+    }
+
+    var sourceID: SourceID
+    var displayName: String
+    var candidate: URL
+    var comparison: RelinkComparison
+    var mode: Mode
+}
+
+struct NumberSheetContext {
+    enum Kind: String {
+        case epoch
+        case channel
+    }
+
+    var kind: Kind
+    var sourceIDs: [SourceID]
+    var initial: Int?
+}
+
+struct NameSheetContext {
+    enum Kind: String {
+        case newGroup
+        case newSpeaker
+        case renameGroup
+        case renameSpeaker
+    }
+
+    var kind: Kind
+    var initial: String
+    var assigning: [SourceID] = []
+    var groupID: RecorderGroupID?
+    var speakerID: SpeakerID?
+
+    var title: String {
+        switch kind {
+        case .newGroup: "New Recorder Group"
+        case .newSpeaker: "New Speaker"
+        case .renameGroup: "Rename Recorder Group"
+        case .renameSpeaker: "Rename Speaker"
+        }
+    }
+
+    var confirmTitle: String {
+        switch kind {
+        case .newGroup, .newSpeaker: "Create"
+        case .renameGroup, .renameSpeaker: "Rename"
+        }
+    }
+}

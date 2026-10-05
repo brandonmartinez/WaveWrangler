@@ -271,6 +271,10 @@ public struct SetupPresentation: Sendable {
         self.needingAttentionCount = needingAttentionCount
     }
 
+    public static func recordedFacts(for source: SourceRecord) -> RecordedFacts {
+        RecordedFacts(source.observations)
+    }
+
     public static func channelText(_ statedChannel: Int?) -> CellText {
         guard let statedChannel else { return .unknown }
         return CellText("\(statedChannel + 1)", accessibilityValue: "\(statedChannel + 1), not checked against the file")

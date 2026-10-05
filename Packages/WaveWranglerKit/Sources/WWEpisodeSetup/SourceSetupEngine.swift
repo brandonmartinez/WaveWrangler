@@ -112,6 +112,8 @@ public final class InMemorySourceSetupEngine: SourceSetupEngine, @unchecked Send
     public var candidateDetails: [URL: FileDetails]
     public var compareUnknownReason: String?
     public var importedStatus: SourceStatusSnapshot
+    /// Simulated per-file states applied on import, keyed by candidate display name (fixtures only).
+    public var importedStatusByName: [String: SourceStatusSnapshot] = [:]
     /// Status a transfer action leads to (simulated provider state).
     public var transferOutcome: @Sendable (TransferAction, SourceStatusSnapshot) -> SourceStatusSnapshot
 
@@ -164,6 +166,7 @@ public final class InMemorySourceSetupEngine: SourceSetupEngine, @unchecked Send
                 if let candidate = scanResult.candidates.first(where: { $0.id == candidateID }) {
                     _recorded[sourceID] = candidate.details
                     if candidate.residency == .cloudOnly { _statuses[sourceID]?.residency = .cloudOnly }
+                    if let scripted = importedStatusByName[candidate.displayName] { _statuses[sourceID] = scripted }
                 }
             }
         }
