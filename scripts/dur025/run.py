@@ -1048,6 +1048,11 @@ def run_case(dev, case):
         result = CASES[case.cell](dev, case)
     except Exception as error:  # a harness defect is recorded, never hidden
         result = {"verdict": "harnessError", "exception": repr(error)}
+    if result["verdict"] == "harnessError":
+        # Lead's ruling under the frozen text: an SSH or harness error is not an exclusion. After the in-case SSH
+        # retries it is a case FAILURE (no refill), with its cause recorded.
+        result.update({"verdict": "fail", "harnessError": True,
+                       "reason": "harness error: " + str(result.get("reason") or result.get("exception") or "")})
     result.setdefault("variant", case.variant)
     result.update({"stratum": case.cell, "split": case.split, "caseIndex": case.index, "slot": case.slot,
                    "reserveIndex": case.reserve_index, "seed": seed_for(case.split, case.index), "durationMs": now_ms() - started,

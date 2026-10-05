@@ -34,14 +34,15 @@ def main():
     for row in rows:
         by_cell[row["stratum"]].append(row)
     incomplete = record.get("cellsIncomplete", {})
-    print("| Cell | Evaluated | Pass | Fail | setupNotEstablished | Harness error | Cell |")
+    print("| Cell | Evaluated | Pass | Fail | setupNotEstablished | Of the fails: harness error | Cell |")
     print("|---|---:|---:|---:|---:|---:|---|")
     for cell in CELLS:
         cases = by_cell.get(cell, [])
         v = collections.Counter(r["verdict"] for r in cases)
         evaluated = v["pass"] + v["fail"]
-        status = f"INCOMPLETE ({incomplete[cell]})" if cell in incomplete else ("pass" if cases and v["fail"] == 0 and v["harnessError"] == 0 else "FAIL" if cases else "-")
-        print(f"| {cell} | {evaluated} | {v['pass']} | {v['fail']} | {v['setupNotEstablished']} | {v['harnessError']} | {status} |")
+        status = f"INCOMPLETE ({incomplete[cell]})" if cell in incomplete else ("pass" if cases and v["fail"] == 0 else "FAIL" if cases else "-")
+        harness = sum(1 for r in cases if r.get("harnessError"))
+        print(f"| {cell} | {evaluated} | {v['pass']} | {v['fail']} | {v['setupNotEstablished']} | {harness} (counted as fail) | {status} |")
     print()
     for cell in CELLS:
         cases = by_cell.get(cell, [])
