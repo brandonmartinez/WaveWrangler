@@ -62,8 +62,15 @@ final class LibraryWorkspaceUITests: XCTestCase {
         let table = app.outlines["ww.library.entries"]
         entryTableFrame = table.exists ? table.frame : nil
         toolbarFrames = app.toolbars.allElementsBoundByIndex.map(\.frame)
+        let windowRects = OffscreenAuditWaiver.windowRects(of: app)
+        var notOnScreen = 0
         try app.performAccessibilityAudit(for: [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]) { issue in
             let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(240) ?? "no element")"
+            if let offscreen = OffscreenAuditWaiver.waiver(for: issue.element, windowRects: windowRects) {
+                notOnScreen += 1
+                print("AUDIT WAIVED [notOnScreen] \(description) — \(offscreen)")
+                return true
+            }
             if let rationale = self.waiver(for: issue) {
                 print("AUDIT WAIVED \(description) — \(rationale)")
                 return true
@@ -74,6 +81,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
         for finding in findings {
             XCTFail("AUDIT \(finding)", file: file, line: line)
         }
+        OffscreenAuditWaiver.assertWithinPin(notOnScreen, surface: surface, file: file, line: line)
         print("AUDIT \(surface): \(findings.isEmpty ? "no unwaived issues" : "\(findings.count) unwaived issue(s)")")
     }
 

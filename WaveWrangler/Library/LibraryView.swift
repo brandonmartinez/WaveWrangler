@@ -6,19 +6,21 @@ import WWOrganizer
 struct LibraryView: View {
     @Bindable var state: LibraryWindowState
     @FocusState private var focus: LibraryWindowState.Region?
-    @State private var contentHeight: CGFloat = 600
 
     private var store: LibraryUIStore { state.store }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Opaque bar above the split view (not an inset over translucent sidebar material) for contrast.
-            // #109: at large text sizes it scrolls within at most 40% of the window instead of pushing the split
-            // view out of the window.
-            ScrollingIfTaller(maxHeight: max(120, contentHeight * 0.4)) { LibraryMessageBar(state: state) }
+        // Opaque bar above the split view (not an inset over translucent sidebar material) for contrast.
+        // #109: at large text sizes it scrolls within at most 40% of the window instead of pushing the split
+        // view out of the window. Sized by a stateless layout (no geometry → state → layout feedback).
+        MessageBarStack(maxBarFraction: 0.4, minBarCap: 120) {
+            ViewThatFits(in: .vertical) {
+                LibraryMessageBar(state: state)
+                ScrollView { LibraryMessageBar(state: state) }
+                    .scrollBounceBehavior(.basedOnSize)
+            }
             splitView
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         .onChange(of: focus) { _, region in
             // The AppKit entry outline reports its own focus; SwiftUI sees it as no focused region.
             if region != nil || !(state.window?.firstResponder is EntryOutlineView) { state.focusedRegion = region }
@@ -486,34 +488,32 @@ struct CenteredScrollView<Content: View>: View {
     }
 }
 
-/// #109: content at its natural height up to `maxHeight` (0 pt when empty); taller content scrolls within
-/// `maxHeight`. Never taller than its content: a plain `.frame(maxHeight:)` would fill to the cap.
-struct ScrollingIfTaller<Content: View>: View {
-    let maxHeight: CGFloat
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        HeightCapLayout(maxHeight: maxHeight) {
-            ViewThatFits(in: .vertical) {
-                content
-                ScrollView { content }
-                    .scrollBounceBehavior(.basedOnSize)
-            }
-        }
-    }
-}
-
-/// Sizes its single subview to min(natural height at the proposed width, `maxHeight`).
-struct HeightCapLayout: Layout {
-    let maxHeight: CGFloat
+/// #109: a message bar above the main content. The bar gets its natural height (0 pt when it shows nothing), at
+/// most `maxBarFraction` of the height (but at least `minBarCap`); the content gets the rest. The bar subview is
+/// proposed its capped height, so a `ViewThatFits` bar switches to scrolling when it doesn't fit.
+struct MessageBarStack: Layout {
+    let maxBarFraction: CGFloat
+    let minBarCap: CGFloat
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        guard let subview = subviews.first else { return .zero }
-        let natural = subview.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
-        return CGSize(width: proposal.width ?? natural.width, height: min(natural.height, max(0, maxHeight)))
+        proposal.replacingUnspecifiedDimensions()
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(bounds.size))
+        guard subviews.count == 2 else { return }
+        let barHeight = Self.barHeight(
+            natural: subviews[0].sizeThatFits(ProposedViewSize(width: bounds.width, height: nil)).height,
+            available: bounds.height, maxBarFraction: maxBarFraction, minBarCap: minBarCap
+        )
+        subviews[0].place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: barHeight))
+        subviews[1].place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY + barHeight), anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height - barHeight)
+        )
+    }
+
+    static func barHeight(natural: CGFloat, available: CGFloat, maxBarFraction: CGFloat, minBarCap: CGFloat) -> CGFloat {
+        let cap = min(available, max(minBarCap, available * maxBarFraction))
+        return max(0, min(natural, cap))
     }
 }
