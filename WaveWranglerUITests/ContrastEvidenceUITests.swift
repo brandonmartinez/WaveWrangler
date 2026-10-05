@@ -101,6 +101,28 @@ final class ContrastEvidenceUITests: XCTestCase {
         _ = try AcceptanceAudit.run(app, surface: "200% text (Library)", test: self)
     }
 
+    /// C03 quick check: the Library window with its message bar at in-app 200% text (light), screenshot only.
+    func testLibraryMessageBarAt200() throws {
+        app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
+                               "-WWUITestCenterWindows", "YES", "-WWUITestLibraryFixture", "lib100", "-WWUITestAppearance", "aqua"]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.outlines["ww.library.entries"].waitForExistence(timeout: 15))
+        Thread.sleep(forTimeInterval: 1)
+        capture("library-messagebar-100")
+        let first = app.outlines["ww.library.entries"].staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.'")).element(boundBy: 0)
+        let ratio = first.exists ? ContrastMeter.measure(first.screenshot().image)?["ratio"] ?? "n/a" : "missing"
+        let header = app.outlines["ww.library.entries"].frame
+        Acceptance.record(self, "C03 library 100%: first row ratio \(ratio), entries frame \(header), first row \(first.exists ? "\(first.frame)" : "missing")")
+        for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
+        Thread.sleep(forTimeInterval: 1.5)
+        capture("library-messagebar-200")
+        let shows = app.descendants(matching: .any)["ww.library.sidebar.shows"]
+        let window = app.windows.firstMatch
+        Acceptance.record(self, "C03 library 200%: window \(window.frame), Shows row \(shows.exists ? "\(shows.frame)" : "missing"), new-collection element \(app.descendants(matching: .any)["ww.library.sidebar.newCollection"].elementType.rawValue) button \(app.buttons["ww.library.sidebar.newCollection"].exists)")
+    }
+
     /// A11Y-003 with in-app overrides only (OS-level Increase Contrast / Reduce Motion / larger text are
     /// user-only items): light and dark appearance, `-WWForceReduceMotion YES`, in-app text size 200%.
     /// Library (with its message bar, #59) and Setup with the F-STATES fixture; audits plus normal and
