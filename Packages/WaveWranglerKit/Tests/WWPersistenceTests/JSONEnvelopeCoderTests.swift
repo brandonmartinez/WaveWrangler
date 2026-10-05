@@ -217,3 +217,36 @@ struct CanonicalDateTests {
         #expect(CanonicalDate.date(from: string) == nil)
     }
 }
+
+@Suite("Strict JSON structure")
+struct StrictJSONTests {
+    @Test(arguments: [
+        #"{"a":1,"a":2}"#, #"{"a":1,"\u0061":2}"#, #"{"x":{"b":[{"c":1,"c":1}]}}"#, #"{"revision":1,"payload":{},"revision":2}"#,
+    ])
+    func refusesDuplicateKeys(_ text: String) {
+        #expect { try StrictJSON.validate(Data(text.utf8)) } throws: { error in
+            if case .duplicateKey = error as? StrictJSON.Problem { return true }
+            return false
+        }
+    }
+
+    @Test(arguments: [#"{"a":1,"b":[1,2,{"a":2}],"c":{"a":"\u00e9\ud83d\ude00"}}"#, "[]", #""s""#, "-1.5e3", "true", "null"])
+    func acceptsWellFormedJSON(_ text: String) throws {
+        try StrictJSON.validate(Data(text.utf8))
+    }
+
+    @Test(arguments: ["", "{", #"{"a":}"#, "[1,]", "01x", #"{"a":1}x"#, "\"\u{01}\""])
+    func refusesMalformedJSON(_ text: String) {
+        #expect(throws: StrictJSON.Problem.self) { try StrictJSON.validate(Data(text.utf8)) }
+    }
+
+    @Test func envelopeWithDuplicateRevisionIsRefused() throws {
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        var text = String(decoding: try coder.encode(.untitled(), revision: 3), as: UTF8.self)
+        text.insert(contentsOf: "\"revision\":9,", at: text.index(after: text.startIndex))
+        #expect { try coder.decode(Data(text.utf8)) } throws: { error in
+            if case let .malformed(detail) = error as? PersistenceError { return detail.contains("Duplicate key") }
+            return false
+        }
+    }
+}
