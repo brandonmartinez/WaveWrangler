@@ -8,35 +8,35 @@ import AppKit
 /// forwards to `NSApp.presentError(_:)`, as do direct callers. Those errors (e.g. the T17 recovery offer and
 /// the T20 unknown-newer refusal, shown when a show could not be opened and so has no window) use the opaque
 /// `OpaqueErrorPanel` instead of a translucent `NSAlert`. Wording, buttons and recovery are unchanged.
-/// Presentation as a sheet on a visible window is left to AppKit.
+/// The routing decision is `OpaqueErrorPresenter.route(for:window:)` (unit-tested); only a sheet on an
+/// on-screen window is left to AppKit.
 @objc(WaveWranglerApplication)
 final class WaveWranglerApplication: NSApplication {
     override func presentError(_ error: Error) -> Bool {
-        let error = willPresent(error)
-        guard !Self.isUserCancelled(error) else { return false }
-        return MainActor.assumeIsolated { OpaqueErrorPresenter.presentModally(error) }
+        let error = MainActor.assumeIsolated { OpaqueErrorPresenter.prepare(error, delegate: delegate, application: self) }
+        return presentWindowless(error)
     }
 
-    /// With no visible window there is nothing to attach a sheet to; present app-modally on the opaque panel
-    /// and report to the delegate as AppKit would.
     override func presentError(_ error: Error, modalFor window: NSWindow?, delegate: Any?,
                                didPresent didPresentSelector: Selector?, contextInfo: UnsafeMutableRawPointer?) {
-        if let window, window.isVisible {
+        let onScreen = MainActor.assumeIsolated { OpaqueErrorPresenter.route(for: error, window: window.map(OpaqueErrorPresenter.WindowState.init)) == .sheet }
+        if let window, onScreen {
             super.presentError(error, modalFor: window, delegate: delegate, didPresent: didPresentSelector, contextInfo: contextInfo)
             return
         }
-        let error = willPresent(error)
-        let recovered = Self.isUserCancelled(error) ? false : MainActor.assumeIsolated { OpaqueErrorPresenter.presentModally(error) }
-        OpaqueErrorPresenter.notify(delegate, didPresent: didPresentSelector, didRecover: recovered, contextInfo: contextInfo)
+        let prepared = MainActor.assumeIsolated { OpaqueErrorPresenter.prepare(error, delegate: self.delegate, application: self) }
+        let recovered = presentWindowless(prepared)
+        MainActor.assumeIsolated {
+            OpaqueErrorPresenter.notify(delegate, didPresent: didPresentSelector, didRecover: recovered, contextInfo: contextInfo)
+        }
     }
 
-    private func willPresent(_ error: Error) -> Error {
-        guard let delegate, delegate.responds(to: #selector(NSApplicationDelegate.application(_:willPresentError:))) else { return error }
-        return delegate.application?(self, willPresentError: error) ?? error
-    }
-
-    private static func isUserCancelled(_ error: Error) -> Bool {
-        let error = error as NSError
-        return error.domain == NSCocoaErrorDomain && error.code == NSUserCancelledError
+    private func presentWindowless(_ error: Error) -> Bool {
+        MainActor.assumeIsolated {
+            switch OpaqueErrorPresenter.route(for: error, window: nil) {
+            case .opaquePanel: OpaqueErrorPresenter.presentModally(error)
+            case .suppressed, .sheet: false
+            }
+        }
     }
 }

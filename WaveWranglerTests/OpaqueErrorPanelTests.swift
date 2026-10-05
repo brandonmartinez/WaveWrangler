@@ -128,6 +128,67 @@ struct OpaqueErrorPanelTests {
         #expect(delegate.calls.map(\.1) == [context, nil])
     }
 
+    // MARK: - Routing (WaveWranglerApplication)
+
+    private static let cancelled = NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)
+
+    @Test func onScreenWindowPassesThroughToAppKitsSheet() {
+        let visible = OpaqueErrorPresenter.WindowState(isVisible: true, isMiniaturized: false)
+        #expect(OpaqueErrorPresenter.route(for: Self.refusal, window: visible) == .sheet)
+        // AppKit's sheet path applies its own cancellation handling.
+        #expect(OpaqueErrorPresenter.route(for: Self.cancelled, window: visible) == .sheet)
+    }
+
+    @Test func noHiddenOrMiniaturizedWindowGetsTheOpaquePanel() {
+        let states: [OpaqueErrorPresenter.WindowState?] = [
+            nil,
+            .init(isVisible: false, isMiniaturized: false),
+            .init(isVisible: false, isMiniaturized: true),
+            .init(isVisible: true, isMiniaturized: true),
+        ]
+        for state in states {
+            #expect(OpaqueErrorPresenter.route(for: Self.refusal, window: state) == .opaquePanel, "\(String(describing: state))")
+            #expect(OpaqueErrorPresenter.route(for: Self.recoveryOffer(attempter: Attempter()), window: state) == .opaquePanel)
+        }
+    }
+
+    @Test func userCancelledIsNeverPresentedWithoutAWindow() {
+        #expect(OpaqueErrorPresenter.route(for: Self.cancelled, window: nil) == .suppressed)
+        #expect(OpaqueErrorPresenter.route(for: Self.cancelled, window: .init(isVisible: false, isMiniaturized: true)) == .suppressed)
+        #expect(OpaqueErrorPresenter.route(for: NSError(domain: "other", code: NSUserCancelledError), window: nil) == .opaquePanel)
+    }
+
+    @Test func windowStateReadsTheWindow() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        #expect(OpaqueErrorPresenter.WindowState(window) == .init(isVisible: false, isMiniaturized: false))
+        #expect(OpaqueErrorPresenter.route(for: Self.refusal, window: .init(window)) == .opaquePanel)
+    }
+
+    final class ReplacingDelegate: NSObject, NSApplicationDelegate {
+        var seen: [NSError] = []
+        func application(_ application: NSApplication, willPresentError error: Error) -> Error {
+            seen.append(error as NSError)
+            return NSError(domain: "replaced", code: 7, userInfo: [NSLocalizedDescriptionKey: "Replaced"])
+        }
+    }
+
+    final class PlainDelegate: NSObject, NSApplicationDelegate {}
+
+    @Test func willPresentHookCanReplaceTheError() {
+        let delegate = ReplacingDelegate()
+        let prepared = OpaqueErrorPresenter.prepare(Self.refusal, delegate: delegate, application: NSApplication.shared) as NSError
+        #expect(prepared.domain == "replaced" && prepared.code == 7)
+        #expect(delegate.seen.count == 1)
+        #expect(OpaqueErrorContent(error: prepared).message == "Replaced", "the panel shows the delegate's error")
+    }
+
+    @Test func withoutTheHookTheErrorIsUnchanged() {
+        let error = Self.recoveryOffer(attempter: Attempter())
+        #expect(OpaqueErrorPresenter.prepare(error, delegate: PlainDelegate(), application: NSApplication.shared) as NSError === error)
+        #expect(OpaqueErrorPresenter.prepare(error, delegate: nil, application: NSApplication.shared) as NSError === error)
+    }
+
     // MARK: - Opaque surface and contrast
 
     @Test func panelIsAnOpaqueDialog() {

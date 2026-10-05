@@ -162,6 +162,45 @@ final class OpaqueBackgroundView: NSView {
 
 @MainActor
 enum OpaqueErrorPresenter {
+    /// Where `WaveWranglerApplication` sends an error presentation.
+    enum Route: Equatable {
+        /// AppKit's own sheet on the window (it applies `willPresentError` and cancellation itself).
+        case sheet
+        /// App-modal on the opaque panel.
+        case opaquePanel
+        /// Not shown: the user cancelled (AppKit never presents `NSUserCancelledError`).
+        case suppressed
+    }
+
+    /// The parts of the target window the route depends on.
+    struct WindowState: Equatable {
+        var isVisible: Bool
+        var isMiniaturized: Bool
+
+        init(isVisible: Bool, isMiniaturized: Bool) {
+            self.isVisible = isVisible
+            self.isMiniaturized = isMiniaturized
+        }
+
+        init(_ window: NSWindow) {
+            self.init(isVisible: window.isVisible, isMiniaturized: window.isMiniaturized)
+        }
+    }
+
+    /// Only an on-screen window gets AppKit's sheet. A hidden or miniaturized window, or none, gets the opaque
+    /// panel, deliberately: a sheet on a window in the Dock would be out of sight until the window is restored,
+    /// while the panel is shown at once. `error` is the one after `prepare` (cancellation is checked on it).
+    static func route(for error: Error, window: WindowState?) -> Route {
+        if let window, window.isVisible, !window.isMiniaturized { return .sheet }
+        let error = error as NSError
+        return error.domain == NSCocoaErrorDomain && error.code == NSUserCancelledError ? .suppressed : .opaquePanel
+    }
+
+    /// AppKit's `willPresentError` step for app-level presentation: the app delegate may replace the error.
+    static func prepare(_ error: Error, delegate: NSApplicationDelegate?, application: NSApplication) -> Error {
+        delegate?.application?(application, willPresentError: error) ?? error
+    }
+
     /// App-modal presentation, like `NSApplication.presentError(_:)`. Returns whether recovery succeeded.
     @discardableResult
     static func presentModally(_ error: Error) -> Bool {
