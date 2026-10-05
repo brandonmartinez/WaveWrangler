@@ -93,6 +93,8 @@ public enum LibraryReconciler {
 public struct LibraryMergeSummary: Sendable, Equatable {
     /// This Mac's collections kept as separate, suffixed copies.
     public var collectionsKeptAsCopies = 0
+    /// Changes queued on this Mac that the combine could not carry (they remain in the backup copy).
+    public var queuedChangesNotCarried: [String] = []
     /// Collections only this Mac had, added unchanged.
     public var collectionsAdded = 0
     public var showsAdded = 0
@@ -167,124 +169,196 @@ public enum LibraryMerge {
 
 /// Replays edits queued while the library was unreachable (Design L2/L3) onto the library found on disk.
 ///
-/// A field-level three-way merge: `base` is the library the queued edits were made on, `mine` the queued
-/// result and `theirs` what is on disk now. Every change this Mac made (base → mine) is applied and wins over
-/// a concurrent change to the same field; changes made elsewhere to other fields, entries, collections or
-/// recents are kept. Anything that cannot be carried (for example a removal here of something changed
-/// elsewhere) is reported instead of being silently dropped; the caller then keeps the journal and raises L4.
+/// A three-way merge against `base` (the library the queued edits were made on): `mine` is the queued result,
+/// `theirs` is what is on disk now. Both sides' changes since `base` are kept:
+/// - collection membership, collections and recents merge as add/remove sets;
+/// - order: the side that reordered wins; if both reordered differently, it is a conflict;
+/// - user fields (alias, collection name) changed differently on both sides are a conflict;
+/// - automatic observations (last-known publication/title, unavailable status) take the newest observation;
+/// - a removal on one side of something the other side changed is a conflict.
+/// Conflicts are reported (`uncarried`) instead of guessed; the caller keeps the journal and raises L4.
 public enum QueuedLibraryEdits {
     public static func apply(base: LibraryModel, mine: LibraryModel, onto theirs: LibraryModel) -> (library: LibraryModel, uncarried: [String]) {
         var result = theirs
-        var uncarried: [String] = []
-        let baseEntries = Dictionary(base.entries.map { ($0.showID, $0) }, uniquingKeysWith: { first, _ in first })
-        let mineEntries = Dictionary(mine.entries.map { ($0.showID, $0) }, uniquingKeysWith: { first, _ in first })
+        var conflicts: [String] = []
 
+        // Entries.
+        let baseEntries = index(base.entries, by: \.showID)
+        let theirEntries = index(theirs.entries, by: \.showID)
         for entry in mine.entries {
             let original = baseEntries[entry.showID]
-            guard let index = result.entries.firstIndex(where: { $0.showID == entry.showID }) else {
-                // Added here, or removed elsewhere while kept here: keep it (nothing dropped).
-                if original == nil || entry != original { result.entries.append(entry) }
+            guard let resultIndex = result.entries.firstIndex(where: { $0.showID == entry.showID }) else {
+                if original == nil { result.entries.append(entry) }        // added here
+                else if entry != original {                               // removed there, changed here
+                    conflicts.append("“\(entry.alias ?? entry.lastKnownTitle)” was removed on another Mac but changed here")
+                }
                 continue
             }
-            if let original {
-                if entry.alias != original.alias { result.entries[index].alias = entry.alias }
-                if entry.lastKnownTitle != original.lastKnownTitle { result.entries[index].lastKnownTitle = entry.lastKnownTitle }
-                if entry.lastKnownPublication != original.lastKnownPublication { result.entries[index].lastKnownPublication = entry.lastKnownPublication }
-                if entry.unavailable != original.unavailable { result.entries[index].unavailable = entry.unavailable }
-            } else if let alias = entry.alias, result.entries[index].alias != alias {
-                result.entries[index].alias = alias
+            let other = result.entries[resultIndex]
+            var merged = other
+            merged.alias = mergeUserField(base: original?.alias, mine: entry.alias, theirs: other.alias,
+                                          label: "the name of “\(entry.lastKnownTitle)”", conflicts: &conflicts)
+            let mineObserved = original == nil || entry.lastKnownPublication != original?.lastKnownPublication
+            let theirsObserved = original == nil || other.lastKnownPublication != original?.lastKnownPublication
+            if mineObserved, !theirsObserved || (entry.lastKnownPublication?.revision ?? -1) > (other.lastKnownPublication?.revision ?? -1) {
+                merged.lastKnownPublication = entry.lastKnownPublication
+                merged.lastKnownTitle = entry.lastKnownTitle
+            } else if original != nil, entry.lastKnownTitle != original?.lastKnownTitle, other.lastKnownTitle == original?.lastKnownTitle {
+                merged.lastKnownTitle = entry.lastKnownTitle
             }
+            if entry.unavailable != original?.unavailable {
+                if other.unavailable == original?.unavailable || (entry.unavailable?.recordedAt ?? .distantPast) > (other.unavailable?.recordedAt ?? .distantPast) {
+                    merged.unavailable = entry.unavailable
+                }
+            }
+            result.entries[resultIndex] = merged
         }
-        for (id, original) in baseEntries where mineEntries[id] == nil {
-            guard let index = result.entries.firstIndex(where: { $0.showID == id }) else { continue }
-            if result.entries[index] == original {
-                result.entries.remove(at: index)
-            } else {
-                uncarried.append("“\(original.alias ?? original.lastKnownTitle)” was removed on this Mac but changed elsewhere")
-            }
+        for (id, original) in baseEntries where !mine.entries.contains(where: { $0.showID == id }) {
+            guard let resultIndex = result.entries.firstIndex(where: { $0.showID == id }) else { continue }
+            if theirEntries[id] == original { result.entries.remove(at: resultIndex) }
+            else { conflicts.append("“\(original.alias ?? original.lastKnownTitle)” was removed here but changed on another Mac") }
         }
 
-        let baseCollections = Dictionary(base.collections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let mineCollections = Dictionary(mine.collections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // Collections: membership as add/remove sets, name as a user field, collection order.
+        let baseCollections = index(base.collections, by: \.id)
+        let theirCollections = index(theirs.collections, by: \.id)
         for collection in mine.collections {
             let original = baseCollections[collection.id]
-            if let index = result.collections.firstIndex(where: { $0.id == collection.id }) {
-                if collection.name != original?.name { result.collections[index].name = collection.name }
-                if collection.showIDs != original?.showIDs { result.collections[index].showIDs = collection.showIDs }
-            } else if let original {
-                // Removed elsewhere: keep it only if this Mac changed it.
-                if collection != original { result.collections.append(collection) }
-            } else {
-                if result.collections.contains(where: { $0.name == collection.name && $0.showIDs == collection.showIDs }) { continue }
-                var kept = collection
-                if result.collections.contains(where: { $0.name == collection.name }) {
-                    kept.name = LibraryMerge.uniqueName(for: collection.name, existing: Set(result.collections.map(\.name)))
+            guard let resultIndex = result.collections.firstIndex(where: { $0.id == collection.id }) else {
+                if let original {
+                    if collection != original { conflicts.append("Collection “\(collection.name)” was removed on another Mac but changed here") }
+                } else if !result.collections.contains(where: { $0.name == collection.name && $0.showIDs == collection.showIDs }) {
+                    var kept = collection
+                    if result.collections.contains(where: { $0.name == collection.name }) {
+                        kept.name = LibraryMerge.uniqueName(for: collection.name, existing: Set(result.collections.map(\.name)))
+                    }
+                    result.collections.append(kept)
                 }
-                result.collections.append(kept)
+                continue
+            }
+            let other = result.collections[resultIndex]
+            result.collections[resultIndex].name = mergeUserField(base: original?.name, mine: collection.name, theirs: other.name,
+                                                                  label: "the name of collection “\(collection.name)”", conflicts: &conflicts)
+            switch mergeSequence(base: original?.showIDs ?? [], mine: collection.showIDs, theirs: other.showIDs) {
+            case let .merged(ids): result.collections[resultIndex].showIDs = ids
+            case .conflict: conflicts.append("Collection “\(collection.name)” was reordered differently here and on another Mac")
             }
         }
-        for (id, original) in baseCollections where mineCollections[id] == nil {
-            guard let index = result.collections.firstIndex(where: { $0.id == id }) else { continue }
-            if result.collections[index] == original {
-                result.collections.remove(at: index)
-            } else {
-                uncarried.append("Collection “\(original.name)” was removed on this Mac but changed elsewhere")
-            }
+        for (id, original) in baseCollections where !mine.collections.contains(where: { $0.id == id }) {
+            guard let resultIndex = result.collections.firstIndex(where: { $0.id == id }) else { continue }
+            if theirCollections[id] == original { result.collections.remove(at: resultIndex) }
+            else { conflicts.append("Collection “\(original.name)” was removed here but changed on another Mac") }
         }
-        // This Mac reordered collections: its order wins for the collections it has.
-        if mine.collections.map(\.id) != base.collections.map(\.id) {
-            let order = Dictionary(mine.collections.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
-            let indexed = result.collections.enumerated().map { ($0, $1) }
-            result.collections = indexed.sorted { lhs, rhs in
-                (order[lhs.1.id] ?? Int.max, lhs.0) < (order[rhs.1.id] ?? Int.max, rhs.0)
-            }.map(\.1)
+        switch mergeSequence(base: base.collections.map(\.id), mine: mine.collections.map(\.id), theirs: theirs.collections.map(\.id)) {
+        case let .merged(order):
+            let position = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+            result.collections = result.collections.enumerated()
+                .sorted { (position[$0.1.id] ?? Int.max, $0.0) < (position[$1.1.id] ?? Int.max, $1.0) }
+                .map(\.1)
+        case .conflict:
+            conflicts.append("Collections were reordered differently here and on another Mac")
         }
 
-        if mine.recentShowIDs != base.recentShowIDs {
-            let addedElsewhere = theirs.recentShowIDs.filter { !base.recentShowIDs.contains($0) && !mine.recentShowIDs.contains($0) }
-            result.recentShowIDs = mine.recentShowIDs + addedElsewhere
-        }
-        return (result, uncarried)
+        // Recents (a convenience list): this Mac's additions first, then theirs; removals on either side apply.
+        let removedHere = Set(base.recentShowIDs).subtracting(mine.recentShowIDs)
+        let addedHere = mine.recentShowIDs.filter { !base.recentShowIDs.contains($0) }
+        result.recentShowIDs = addedHere + theirs.recentShowIDs.filter { !removedHere.contains($0) && !addedHere.contains($0) }
+
+        return (result, conflicts)
     }
 
-    /// Queued changes (base → mine) that are not present in `result`. Empty means every queued edit is carried.
-    public static func missingChanges(base: LibraryModel, mine: LibraryModel, in result: LibraryModel) -> [String] {
+    /// Changes `side` made since `base` that are not present in `result` (empty = every change carried).
+    /// Used for both sides: this Mac's queued edits and the other Mac's publication.
+    public static func missingChanges(base: LibraryModel, mine side: LibraryModel, in result: LibraryModel) -> [String] {
         var missing: [String] = []
-        let baseEntries = Dictionary(base.entries.map { ($0.showID, $0) }, uniquingKeysWith: { first, _ in first })
-        let resultEntries = Dictionary(result.entries.map { ($0.showID, $0) }, uniquingKeysWith: { first, _ in first })
-        for entry in mine.entries {
-            guard let carried = resultEntries[entry.showID] else { missing.append("entry \(entry.showID)"); continue }
+        let baseEntries = index(base.entries, by: \.showID)
+        let resultEntries = index(result.entries, by: \.showID)
+        for entry in side.entries {
             let original = baseEntries[entry.showID]
-            if entry.alias != original?.alias, carried.alias != entry.alias { missing.append("alias of \(entry.showID)") }
-            if let original {
-                if entry.lastKnownTitle != original.lastKnownTitle, carried.lastKnownTitle != entry.lastKnownTitle { missing.append("title of \(entry.showID)") }
-                if entry.lastKnownPublication != original.lastKnownPublication, carried.lastKnownPublication != entry.lastKnownPublication {
-                    missing.append("publication of \(entry.showID)")
-                }
-                if entry.unavailable != original.unavailable, carried.unavailable != entry.unavailable { missing.append("status of \(entry.showID)") }
-            }
+            guard original == nil || entry != original else { continue }
+            guard let carried = resultEntries[entry.showID] else { missing.append("entry “\(entry.lastKnownTitle)”"); continue }
+            if entry.alias != original?.alias, carried.alias != entry.alias { missing.append("the name of “\(entry.lastKnownTitle)”") }
         }
-        for id in baseEntries.keys where !mine.entries.contains(where: { $0.showID == id }) && resultEntries[id] != nil {
-            missing.append("removal of entry \(id)")
+        for (id, original) in baseEntries where !side.entries.contains(where: { $0.showID == id }) && resultEntries[id] != nil {
+            missing.append("removal of “\(original.lastKnownTitle)”")
         }
-        let baseCollections = Dictionary(base.collections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        for collection in mine.collections where collection != baseCollections[collection.id] {
+        let baseCollections = index(base.collections, by: \.id)
+        for collection in side.collections {
+            let original = baseCollections[collection.id]
+            guard original == nil || collection != original else { continue }
             let carried = result.collections.first { $0.id == collection.id }
-                ?? result.collections.first { $0.showIDs == collection.showIDs && $0.name.hasPrefix(collection.name) }
-            guard let carried, carried.showIDs == collection.showIDs else { missing.append("collection “\(collection.name)”"); continue }
-            if baseCollections[collection.id] != nil, collection.name != baseCollections[collection.id]?.name, carried.name != collection.name {
-                missing.append("name of collection “\(collection.name)”")
+                ?? result.collections.first { $0.name.hasPrefix(collection.name) && Set($0.showIDs) == Set(collection.showIDs) }
+            guard let carried else { missing.append("collection “\(collection.name)”"); continue }
+            let before = Set(original?.showIDs ?? [])
+            let after = Set(collection.showIDs)
+            if !after.subtracting(before).isSubset(of: Set(carried.showIDs)) { missing.append("members added to “\(collection.name)”") }
+            if !before.subtracting(after).isDisjoint(with: Set(carried.showIDs)) { missing.append("members removed from “\(collection.name)”") }
+            if let original, collection.name != original.name, carried.name != collection.name { missing.append("the name of collection “\(collection.name)”") }
+            // Order: only if this side reordered members that are still present in the result.
+            let kept = after.intersection(before).intersection(Set(carried.showIDs))
+            if let original, relativeOrder(original.showIDs, of: kept) != relativeOrder(collection.showIDs, of: kept),
+               relativeOrder(carried.showIDs, of: kept) != relativeOrder(collection.showIDs, of: kept) {
+                missing.append("the order of “\(collection.name)”")
             }
         }
-        for (id, original) in baseCollections where !mine.collections.contains(where: { $0.id == id }) && result.collections.contains(where: { $0.id == id }) {
+        for (id, original) in baseCollections where !side.collections.contains(where: { $0.id == id }) && result.collections.contains(where: { $0.id == id }) {
             missing.append("removal of collection “\(original.name)”")
         }
-        if mine.recentShowIDs != base.recentShowIDs {
-            for id in mine.recentShowIDs where !result.recentShowIDs.contains(id) { missing.append("recent \(id)") }
-            for id in base.recentShowIDs where !mine.recentShowIDs.contains(id) && result.recentShowIDs.contains(id) {
-                missing.append("removal of recent \(id)")
-            }
-        }
+        let addedRecents = side.recentShowIDs.filter { !base.recentShowIDs.contains($0) }
+        let removedRecents = base.recentShowIDs.filter { !side.recentShowIDs.contains($0) }
+        if addedRecents.contains(where: { !result.recentShowIDs.contains($0) }) { missing.append("recent items added") }
+        if removedRecents.contains(where: { result.recentShowIDs.contains($0) }) { missing.append("recent items removed") }
         return missing
+    }
+
+    // MARK: - Helpers
+
+    enum SequenceMerge<Element: Hashable> { case merged([Element]), conflict }
+
+    /// Three-way merge of an ordered list of unique elements: adds/removes from both sides apply; if exactly
+    /// one side reordered the shared elements its order wins; if both reordered differently it's a conflict.
+    static func mergeSequence<Element: Hashable>(base: [Element], mine: [Element], theirs: [Element]) -> SequenceMerge<Element> {
+        let baseSet = Set(base), mineSet = Set(mine), theirSet = Set(theirs)
+        let removed = baseSet.subtracting(mineSet).union(baseSet.subtracting(theirSet))
+        let shared = baseSet.subtracting(removed)
+        let baseOrder = relativeOrder(base, of: shared)
+        let mineOrder = relativeOrder(mine, of: shared)
+        let theirOrder = relativeOrder(theirs, of: shared)
+        let mineMoved = mineOrder != baseOrder, theirsMoved = theirOrder != baseOrder
+        if mineMoved, theirsMoved, mineOrder != theirOrder { return .conflict }
+        // Start from the reordering side (theirs by default), then insert the other side's additions.
+        let primary = mineMoved ? mine : theirs
+        let secondary = mineMoved ? theirs : mine
+        var result = primary.filter { !removed.contains($0) }
+        for (offset, element) in secondary.enumerated() where !baseSet.contains(element) && !result.contains(element) {
+            // Insert after the nearest preceding element that is already placed.
+            let anchor = secondary[..<offset].last { result.contains($0) }
+            if let anchor, let position = result.firstIndex(of: anchor) { result.insert(element, at: position + 1) }
+            else { result.insert(element, at: 0) }
+        }
+        return .merged(result)
+    }
+
+    static func relativeOrder<Element: Hashable>(_ list: [Element], of subset: Set<Element>) -> [Element] {
+        list.filter { subset.contains($0) }
+    }
+
+    static func mergeUserField<Value: Equatable>(base: Value?, mine: Value?, theirs: Value?, label: String, conflicts: inout [String]) -> Value? {
+        if mine == base { return theirs }
+        if theirs == base || theirs == mine { return mine }
+        conflicts.append("\(label) was changed differently here and on another Mac")
+        return theirs
+    }
+
+    static func mergeUserField(base: String?, mine: String, theirs: String, label: String, conflicts: inout [String]) -> String {
+        guard let base else { return theirs }
+        if mine == base { return theirs }
+        if theirs == base || theirs == mine { return mine }
+        conflicts.append("\(label) was changed differently here and on another Mac")
+        return theirs
+    }
+
+    static func index<Element, Key: Hashable>(_ elements: [Element], by key: KeyPath<Element, Key>) -> [Key: Element] {
+        Dictionary(elements.map { ($0[keyPath: key], $0) }, uniquingKeysWith: { first, _ in first })
     }
 }

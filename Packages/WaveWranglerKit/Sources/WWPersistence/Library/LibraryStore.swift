@@ -325,7 +325,10 @@ public actor LibraryStore {
             // Diverged: three-way merge of this Mac's queued changes onto the library on disk.
             let base = pending.baseSnapshot.flatMap { try? publisher.coder.decode($0).payload } ?? LibraryModel()
             let merged = QueuedLibraryEdits.apply(base: base, mine: queued, onto: onDisk)
-            var problems = merged.uncarried + QueuedLibraryEdits.missingChanges(base: base, mine: queued, in: merged.library)
+            // Both sides' changes since the base must survive: this Mac's queued edits and the other Mac's.
+            var problems = merged.uncarried
+                + QueuedLibraryEdits.missingChanges(base: base, mine: queued, in: merged.library)
+                + QueuedLibraryEdits.missingChanges(base: base, mine: onDisk, in: merged.library).map { "another Mac's change: \($0)" }
             if case let .invalidPayload(issues)? = Self.validationError(of: merged.library, coder: publisher.coder) {
                 problems += issues.map(\.description)
             }
@@ -398,7 +401,13 @@ public actor LibraryStore {
         } catch {
             return .failure(.readOnly(error.errorDescription ?? "\(error)"))
         }
-        let (combined, summary) = LibraryMerge.combineWithSummary(thisMac: mine, into: theirs.payload)
+        var (combined, summary) = LibraryMerge.combineWithSummary(thisMac: mine, into: theirs.payload)
+        // ST-36 keeps every entry, collection and recent item, but it is not a field merge: queued changes it
+        // can't carry (for example an alias edited on both sides) are reported and kept in a backup copy.
+        if let pendingEdits {
+            let base = pendingEdits.baseSnapshot.flatMap { try? publisher.coder.decode($0).payload } ?? LibraryModel()
+            summary.queuedChangesNotCarried = QueuedLibraryEdits.missingChanges(base: base, mine: mine, in: combined)
+        }
         do {
             _ = try publisher.publish(combined, revision: theirs.revision + 1, key: .library, to: url,
                                       target: .inPlace(expectedBase: RevisionFingerprint(of: bytes)))
@@ -408,10 +417,15 @@ public actor LibraryStore {
             return .failure(.acknowledgementUncertain("\(error)"))
         }
         hasConflict = false
-        // Every queued edit is in the combined library (ST-36 keeps everything).
-        if pendingEdits != nil {
-            try? recovery.clearPendingLibraryEdits()
-            pendingEdits = nil
+        // Keep the queued edits as a backup copy before retiring the journal; never delete them unbacked.
+        if let pendingEdits {
+            do {
+                _ = try recovery.preserveConflictCandidate(pendingEdits.snapshot, for: .library)
+                try recovery.clearPendingLibraryEdits()
+                self.pendingEdits = nil
+            } catch {
+                // The journal stays; the combined library is published either way.
+            }
         }
         await loadUnlocked()
         return .success(summary)

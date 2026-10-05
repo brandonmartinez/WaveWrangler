@@ -165,6 +165,61 @@ struct PendingLibraryEditsTests {
         #expect(await store.pendingEditCount == 0)
     }
 
+    /// Re-review repro: both Macs add members to the same collection while this one is offline.
+    @Test func bothSidesAddMembersAcrossReplay() async throws {
+        let offline = try await OfflineRig()
+        try offline.goOffline()
+        let store = offline.rig.store()
+        _ = await store.load()
+        let active = try #require(await store.library?.collections.first { $0.name == "Active" })
+        _ = try await store.update { var l = $0; l.collections[l.collections.firstIndex { $0.id == active.id }!].showIDs.append(offline.shows[3].show.id); return l }
+        let file = offline.away.appending(path: LibraryLocationSetting.defaultFileName)
+        let bytes = try Data(contentsOf: file)
+        let theirs = try LibraryCoder.library.decode(bytes)
+        var other = theirs.payload
+        other.collections[other.collections.firstIndex { $0.id == active.id }!].showIDs.append(offline.shows[2].show.id)
+        _ = try DocumentPublisher(coder: LibraryCoder.library, recovery: nil)
+            .publish(other, revision: theirs.revision + 1, key: .library, to: file, target: .inPlace(expectedBase: RevisionFingerprint(of: bytes)))
+        try offline.comeBack()
+        guard case .merged = await store.retryPendingEdits() else { Issue.record("expected merge"); return }
+        let onDisk = try LibraryCoder.library.decode(Data(contentsOf: offline.libraryFile)).payload
+        let members = Set(try #require(onDisk.collections.first { $0.id == active.id }).showIDs)
+        #expect(members.isSuperset(of: [offline.shows[2].show.id, offline.shows[3].show.id]), "both Macs' additions are kept")
+        #expect(await store.pendingEditCount == 0)
+    }
+
+    /// Re-review finding 2: L4 "Combine (Keep Everything)" after a replay conflict keeps the queued edits in a
+    /// backup copy and reports what the combine couldn't carry.
+    @Test func combineAfterConflictBacksUpQueuedEdits() async throws {
+        let offline = try await OfflineRig()
+        let show = offline.shows[1].show.id
+        let setup = offline.rig.store()
+        _ = await setup.load()
+        _ = try await setup.update { var l = $0; l.entries[l.entries.firstIndex { $0.showID == show }!].alias = "Old"; return l }
+        try offline.goOffline()
+        let store = offline.rig.store()
+        _ = await store.load()
+        _ = try await store.update { var l = $0; l.entries[l.entries.firstIndex { $0.showID == show }!].alias = "Mine"; return l }
+        let file = offline.away.appending(path: LibraryLocationSetting.defaultFileName)
+        let bytes = try Data(contentsOf: file)
+        let theirs = try LibraryCoder.library.decode(bytes)
+        var other = theirs.payload
+        other.entries[other.entries.firstIndex { $0.showID == show }!].alias = "Theirs"
+        _ = try DocumentPublisher(coder: LibraryCoder.library, recovery: nil)
+            .publish(other, revision: theirs.revision + 1, key: .library, to: file, target: .inPlace(expectedBase: RevisionFingerprint(of: bytes)))
+        try offline.comeBack()
+
+        guard case .needsDecision = await store.retryPendingEdits() else { Issue.record("expected L4"); return }
+        #expect(await store.pendingEditCount == 1)
+        guard case let .success(summary) = await store.resolveConflictByCombining() else { Issue.record("combine failed"); return }
+        #expect(summary.queuedChangesNotCarried.contains { $0.contains("name") }, "the uncarried alias edit is reported")
+        #expect(await store.pendingEditCount == 0)
+        let backups = try offline.rig.recovery.conflictCandidates(for: .library)
+        #expect(backups.contains { url in
+            (try? LibraryCoder.library.decode(Data(contentsOf: url)))?.payload.entries.first { $0.showID == show }?.alias == "Mine"
+        }, "queued edits kept as a backup copy")
+    }
+
     @Test func queuedRecentRemovalIsCarried() async throws {
         let offline = try await OfflineRig()
         try offline.goOffline()
