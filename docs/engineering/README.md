@@ -24,7 +24,8 @@ WaveWranglerTests/                Unhosted unit tests (Swift Testing); never lau
 WaveWranglerUITests/              Placeholder; UI tests are not run (GUI launch not yet permitted)
 Packages/WaveWranglerKit/         Local Swift package linked by the app
   Sources/WWCore/                 Domain model, logical IDs, schema versions, pure validated operations
-  Sources/WWPersistence/          Canonical document formats, envelope coder (publication/recovery later)
+  Sources/WWPersistence/          Formats/coder, publication protocol, recovery store, migration, autosave policy, library store
+  Sources/WWPersistenceProbe/     `wwpersist-probe` headless CLI for multi-process/provider trials (synthetic files only)
   Sources/WWSources/              Source references: read-only gateway, access records, availability, import, relink
   Tests/WW*Tests/                 Swift Testing suites per module
 scripts/build.sh, scripts/test.sh Established build/test commands (CI runs the same scripts)
@@ -62,8 +63,14 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; nothing depends
 - **Canonical library document** (`.wwlibrary`, UTI `com.brandonmartinez.wavewrangler.library`):
   `LibraryModel` — entries (logical show refs, aliases, last-known publication, unavailable records),
   collections/order and recents. It is user work, so it is a canonical document that may live in a
-  user-chosen (including cloud) folder, *not* only in Application Support. The UTI is exported now;
-  no NSDocument class or location UI exists yet (library UI/persistence owners).
+  user-chosen (including cloud) folder, *not* only in Application Support. `WWPersistence.LibraryStore`
+  (app adapters `LibraryDocumentStore` / `LibraryLocationController`) publishes it with the same protocol
+  as shows, keeps its own prior checkpoints, defaults to the app container and can move to a chosen
+  folder (copy → verify → switch; the old copy is kept). "Use That Library" combines both libraries with
+  nothing dropped; same-named collections that differ get "(from this Mac)", "(from this Mac 2)", …
+  While the folder is unreachable or needs permission (L2/L3), organizing edits go to a device-local
+  pending-edits journal ("Edits waiting") and are applied through the base check (ST-36 combine on
+  divergence) when it is reachable again; the journal is cleared only after verified publication.
 - **Device-local access records** (`WWSources.DeviceAccessRecord`, keyed by `DeviceAccessKey`
   = (ShowID, SourceID), so a duplicated show never shares or overwrites the original's grants): read-only
   security-scoped bookmark, last-known path/volume hints, a metadata-only identity baseline
@@ -83,7 +90,7 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; nothing depends
   anything but an exact match), `SourceTransferController` (download/progress/cancel/retry/offline) and
   the `@MainActor @Observable` `SourceAvailabilityMonitor` for the Sources UI. The availability setting
   is injected as `SourceAvailabilitySetting(downloadSourcesAutomatically:)` from the app preference.
-- **Derived index/cache:** rebuildable and outside canonical data (not implemented yet).
+- **Derived index/cache:** `LibraryIndex` in Caches, rebuilt whenever missing/stale/damaged; never authoritative.
 - **Envelope** (`WWPersistence.JSONEnvelopeCoder`, behind `CanonicalDocumentCoding`):
   `{checksum, format, payload, publicationID, revision, schemaVersion}` with sorted keys. Only
   `{format, schemaVersion}` is frozen across versions and is decoded first. Reads refuse, in order:
@@ -104,9 +111,29 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; nothing depends
   encoding — integrity bookkeeping, not authenticity. Timestamps are ISO-8601 UTC with exactly three
   fractional digits (integer-millisecond rounding keeps decode → encode byte-stable).
 
-The current `ShowDocument` uses stock NSDocument save/autosave-in-place. That is a foundation
-placeholder, **not** the hardened publication/recovery/autosave-policy contract (WW-005/006/009);
-the persistence owner replaces it.
+### Persistence (WW-009 C2–C6)
+
+- **Publication** (`DocumentPublisher`): P1 candidate validated → P2 validated prior retained in the
+  device-local `RecoveryStore` → P3 coordinated base check (exact bytes; mismatch = conflict, nothing
+  overwritten, candidate preserved) → stage + flush + verify → P4 replace → P5/P6 independent read-back →
+  P7 library acknowledgement → derived index. Failures keep the prior revision and dirty state; a
+  post-publication doubt is `acknowledgementUncertain`, never "saved". `ShowDocument` runs the same order
+  inside its `writeSafely` override around stock `super.writeSafely` (`AlreadyCoordinated`; P4 is inside
+  AppKit). Only Save, Save As and autosave-in-place adopt the new publication.
+- **Recovery store** (Application Support, device-local, keyed by logical ID so it survives moves): last
+  three validated priors, C2b unpublished edit checkpoints, conflict candidates, migration backups.
+  It gives no cross-device recovery.
+- **Open:** unknown-newer refuses (never written); damaged files offer a whole validated checkpoint as
+  a new untitled copy; migrations preserve the original plus a non-overwriting backup and publish only
+  after independent expectations pass.
+- **Autosave** (`WWAutosaveEnabled`, `WWAutosaveDelaySeconds` ∈ {1, 2, 5, 10, 30}): the gate is checked
+  at `autosavesInPlace`, `scheduleAutosaving()` and every `autosave(withImplicitCancellability:)`.
+  OFF schedules nothing, cancels queued automatic work (never a success-shaped `nil`), stays dirty and
+  uses AppKit's Save / Don't Save / Cancel review. ON publishes after the quiet delay; if that cannot be
+  verified within 1.5 s of the last edit, a C2b edit checkpoint is written at quiescence (0.5 s).
+- **Evidence harness** (`Tests/WWPersistenceTests`): ≥100 injected interruptions per boundary
+  (P1–P7, L1–L6, M1–M3) plus real `_exit` process kills and two-process conflicts via `wwpersist-probe`.
+  Results are appended to `Packages/WaveWranglerKit/.build/persistence-evidence.log`.
 
 ## Build and test
 
@@ -117,7 +144,7 @@ without checking the CI image.
 ```sh
 scripts/build.sh            # xcodebuild build, Debug, ad-hoc signed, -jobs 4, DerivedData in .build/
 scripts/build.sh Release
-scripts/test.sh             # swift test (package, --jobs 4) then xcodebuild test -only-testing:WaveWranglerTests
+scripts/test.sh             # swift test (package, --jobs 4), serialized timing pass, then xcodebuild test -only-testing:WaveWranglerTests
 scripts/test.sh --package-only
 scripts/test.sh --ui        # reserved: exits 2 until GUI launch/UI tests are permitted
 ```
