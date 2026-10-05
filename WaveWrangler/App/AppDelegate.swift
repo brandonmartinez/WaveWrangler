@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.register(defaults: AppPreferences.registrationDefaults)
         LaunchFixtures.applyBeforeLaunch()
         NSApp.mainMenu = MainMenu.make()
+        EpisodeSetupIntegration.install()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
