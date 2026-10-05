@@ -19,6 +19,9 @@ public final class SourceAvailabilityMonitor {
     @ObservationIgnored private var resolvedURLs: [SourceID: URL] = [:]
     /// Sources whose transfer the user cancelled; not automatically re-requested until Retry.
     @ObservationIgnored private var userCancelled: Set<SourceID> = []
+    /// Bumped on every setting change; refreshes evaluated under an older setting are discarded (the
+    /// change triggers its own refresh).
+    @ObservationIgnored private var settingGeneration = 0
     @ObservationIgnored private var eventTask: Task<Void, Never>?
 
     public init(
@@ -32,7 +35,7 @@ public final class SourceAvailabilityMonitor {
         self.store = store
         self.context = context
         self.setting = setting
-        self.transfers = SourceTransferController(context: context, policy: transferPolicy)
+        self.transfers = SourceTransferController(context: context, policy: transferPolicy, setting: setting)
     }
 
     /// Starts consuming transfer events. Call once (e.g. when the window appears).
@@ -72,10 +75,10 @@ public final class SourceAvailabilityMonitor {
         guard let url = resolvedURLs[sourceID] else {
             await refreshOne(sourceID)
             guard let url = resolvedURLs[sourceID] else { return }
-            await transfers.makeAvailable(key(sourceID), at: url, setting: setting, userRequested: true)
+            await transfers.makeAvailable(key(sourceID), at: url, userRequested: true)
             return
         }
-        await transfers.makeAvailable(key(sourceID), at: url, setting: setting, userRequested: true)
+        await transfers.makeAvailable(key(sourceID), at: url, userRequested: true)
     }
 
     public func cancelTransfer(_ sourceID: SourceID) async {
@@ -90,6 +93,7 @@ public final class SourceAvailabilityMonitor {
     public func setAvailabilitySetting(_ newSetting: SourceAvailabilitySetting) async {
         guard newSetting != setting else { return }
         setting = newSetting
+        settingGeneration += 1
         await transfers.availabilitySettingChanged(to: newSetting)
         await refreshAll()
     }
@@ -108,24 +112,33 @@ public final class SourceAvailabilityMonitor {
     private func refreshOne(_ sourceID: SourceID) async {
         let key = key(sourceID)
         let record = try? await store.record(for: key)
-        let transferState = await transfers.state(of: key)
+        let transferState = await transfers.reportableState(of: key)
         let evaluator = SourceAvailabilityEvaluator(context: context)
-        let setting = setting
+        let evaluatedSetting = setting
+        let evaluatedGeneration = settingGeneration
         let evaluation = await Task.detached {
-            evaluator.evaluate(key: key, record: record, setting: setting, transfer: transferState == .unknown ? nil : transferState)
+            evaluator.evaluate(key: key, record: record, setting: evaluatedSetting, transfer: transferState)
         }.value
         if let refreshed = evaluation.refreshedRecord {
             try? await store.save(refreshed)
         }
+        // Re-read after every await: a setting change while this ran supersedes the result.
+        guard settingGeneration == evaluatedGeneration else { return }
         resolvedURLs[sourceID] = evaluation.resolvedURL
         observations[sourceID] = evaluation.observation
 
-        if setting == .on, !userCancelled.contains(sourceID), evaluation.supportsDownloadRequest,
-           evaluation.observation.residency == .cloudPlaceholder,
-           let url = evaluation.resolvedURL,
-           await !transfers.isActive(key) {
-            await transfers.makeAvailable(key, at: url, setting: setting)
+        let needsUserRetry: Bool = switch evaluation.observation.transfer {
+        case .failed, .offlineOrUnknown, .cancelled: true
+        default: false
         }
+        guard setting == .on, !userCancelled.contains(sourceID), !needsUserRetry,
+              evaluation.supportsDownloadRequest,
+              evaluation.observation.residency == .cloudPlaceholder,
+              let url = evaluation.resolvedURL
+        else { return }
+        guard await !transfers.isActive(key), setting == .on else { return }
+        // The controller re-checks its own setting atomically and refuses if it is OFF.
+        await transfers.makeAvailable(key, at: url)
     }
 
     private func apply(_ event: TransferEvent) {

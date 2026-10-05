@@ -140,7 +140,7 @@ struct ProviderTrialTests {
         let afterEvict = Dictionary(uniqueKeysWithValues: urls.map { ($0, Self.lstatSignature($0)) })
 
         // 5. OFF / metadata-only phase: evaluate, controller and monitor; zero download requests.
-        let offController = SourceTransferController(context: context, policy: TransferPolicy(pollInterval: .milliseconds(200), stallTimeout: .seconds(60)))
+        let offController = SourceTransferController(context: context, policy: TransferPolicy(pollInterval: .milliseconds(200), stallTimeout: .seconds(60)), setting: .off)
         for url in urls {
             guard let record = records[url.lastPathComponent] else { continue }
             let evaluation = SourceAvailabilityEvaluator(context: context).evaluate(key: record.key, record: record, setting: .off)
@@ -148,7 +148,7 @@ struct ProviderTrialTests {
             log.add("off", url.lastPathComponent, "location=\(o.location) access=\(o.access.rawValue) residency=\(o.residency.rawValue)/\(o.residencyEvidence.rawValue) transfer=\(o.transfer) identity=\(o.identity) provenance=\(o.provenance.rawValue)")
             #expect(o.residency == .cloudPlaceholder)
             #expect(o.transfer == .notRequested(.availabilityOff))
-            let state = await offController.makeAvailable(record.key, at: url, setting: .off)
+            let state = await offController.makeAvailable(record.key, at: url)
             #expect(state == .notRequested(.availabilityOff))
         }
         try await Self.runOffMonitor(show: show, records: Array(records.values), context: context)
@@ -164,7 +164,7 @@ struct ProviderTrialTests {
         #expect(io.count(.downloadFraction) == 0)
 
         // 6. ON: download file 3 (largest) and record the observed progress timeline.
-        let onController = SourceTransferController(context: context, policy: TransferPolicy(pollInterval: .milliseconds(100), stallTimeout: .seconds(90)))
+        let onController = SourceTransferController(context: context, policy: TransferPolicy(pollInterval: .milliseconds(100), stallTimeout: .seconds(90)), setting: .on)
         let stream = await onController.events()
         let collector = Task {
             for await event in stream {
@@ -173,7 +173,7 @@ struct ProviderTrialTests {
         }
         let big = urls[2]
         let bigRecord = try #require(records[big.lastPathComponent])
-        let requested = await onController.makeAvailable(bigRecord.key, at: big, setting: .on)
+        let requested = await onController.makeAvailable(bigRecord.key, at: big)
         log.add("on", big.lastPathComponent, "makeAvailable -> \(requested)")
         let bigFinal = await onController.waitUntilSettled(bigRecord.key)
         log.add("on", big.lastPathComponent, "final \(bigFinal); \(describe(system.metadata(at: big)))")
@@ -182,7 +182,7 @@ struct ProviderTrialTests {
         // 7. Cancel: request file 2 then cancel quickly; observe whether the provider continues.
         let mid = urls[1]
         let midRecord = try #require(records[mid.lastPathComponent])
-        let midRequested = await onController.makeAvailable(midRecord.key, at: mid, setting: .on)
+        let midRequested = await onController.makeAvailable(midRecord.key, at: mid)
         log.add("cancel", mid.lastPathComponent, "makeAvailable -> \(midRequested)")
         try await Task.sleep(for: .milliseconds(50))
         await onController.cancel(midRecord.key)
@@ -198,7 +198,7 @@ struct ProviderTrialTests {
             let evicted = await Self.waitFor(120) { Self.status(system, mid) == .notDownloaded }
             log.add("retry", mid.lastPathComponent, "re-evict brctl exit=\(code) \(output) -> \(evicted ? "evicted" : "NOT evicted")")
         }
-        let retried = await onController.retry(midRecord.key, at: mid, setting: .on)
+        let retried = await onController.retry(midRecord.key, at: mid)
         log.add("retry", mid.lastPathComponent, "retry -> \(retried)")
         let midFinal = await onController.waitUntilSettled(midRecord.key)
         log.add("retry", mid.lastPathComponent, "final \(midFinal)")
@@ -207,7 +207,8 @@ struct ProviderTrialTests {
         // 9. Explicit per-item Make Available while OFF (user request) for file 1.
         let small = urls[0]
         let smallRecord = try #require(records[small.lastPathComponent])
-        let explicit = await onController.makeAvailable(smallRecord.key, at: small, setting: .off, userRequested: true)
+        await onController.availabilitySettingChanged(to: .off)
+        let explicit = await onController.makeAvailable(smallRecord.key, at: small, userRequested: true)
         let smallFinal = await onController.waitUntilSettled(smallRecord.key)
         log.add("explicit-off", small.lastPathComponent, "\(explicit) -> \(smallFinal)")
         collector.cancel()

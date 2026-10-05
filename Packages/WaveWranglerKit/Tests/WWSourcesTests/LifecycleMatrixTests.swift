@@ -18,13 +18,16 @@ enum MatrixFamily: String, CaseIterable, Sendable {
     case ref013 = "M1-REF-013", ref014 = "M1-REF-014", ref015 = "M1-REF-015", ref016 = "M1-REF-016"
     case ref017 = "M1-REF-017"
     case srcOff001 = "M1-SRC-OFF-001", srcOn001 = "M1-SRC-ON-001", srcOn002 = "M1-SRC-ON-002"
+    /// Added after review (not in the frozen registry): OFF toggled during an off-main refresh, explicit
+    /// requests during automatic transfers, and stale terminal transfer states vs fresh evidence.
+    case srcToggleRefresh = "M1-SRC-ON-002-REVIEW"
 
     /// Frozen registry splits.
     var holdout: Int {
         switch self {
         case .ref016: 150
         case .srcOff001, .srcOn001: 200
-        case .srcOn002: 100
+        case .srcOn002, .srcToggleRefresh: 100
         default: 60
         }
     }
@@ -137,8 +140,8 @@ final class CaseEnv: @unchecked Sendable {
         }
     }
 
-    func transferController() -> SourceTransferController {
-        SourceTransferController(context: context, policy: transferPolicy)
+    func transferController(setting: SourceAvailabilitySetting = .on) -> SourceTransferController {
+        SourceTransferController(context: context, policy: transferPolicy, setting: setting)
     }
 
     func key(_ record: DeviceAccessRecord) -> DeviceAccessKey { record.key }
@@ -196,6 +199,7 @@ enum MatrixScenarios {
         case .srcOff001: try await offWorkflow(env, useMonitor: index % 3 == 0)
         case .srcOn001: try await onWorkflow(env, useMonitor: index % 4 == 0)
         case .srcOn002: try await toggle(env, keepUserRequested: index % 3 == 0)
+        case .srcToggleRefresh: try await toggleDuringRefresh(env, variant: index % 4)
         }
     }
 
@@ -434,8 +438,8 @@ enum MatrixScenarios {
         case .unreported:
             env.check(observation.residency == .unknown, "residency \(observation.residency)")
         }
-        let controller = env.transferController()
-        let state = await env.app { await controller.makeAvailable(record.key, at: url, setting: setting) }
+        let controller = env.transferController(setting: setting)
+        let state = await env.app { await controller.makeAvailable(record.key, at: url) }
         let expectedRequests = kind == .iCloud && setting == .on ? 1 : 0
         env.check(env.io.count(.downloadRequest) == expectedRequests, "requests \(env.io.count(.downloadRequest))")
         if expectedRequests == 1 {
@@ -478,7 +482,7 @@ enum MatrixScenarios {
         env.io.simulate(url, SimulatedCloudItem(script: script))
         let controller = env.transferController()
         let collector = await collectEvents(controller, key: record.key)
-        _ = await env.app { await controller.makeAvailable(record.key, at: url, setting: .on) }
+        _ = await env.app { await controller.makeAvailable(record.key, at: url) }
         let final = await controller.waitUntilSettled(record.key)
         let states = await collector.value
         env.check(final == .idle, "final \(final)")
@@ -500,7 +504,7 @@ enum MatrixScenarios {
         let item = SimulatedCloudItem(script: (1...40).map { .progress(Double($0) / 50) } + [.complete])
         env.io.simulate(url, item)
         let controller = env.transferController()
-        _ = await env.app { await controller.makeAvailable(record.key, at: url, setting: .on) }
+        _ = await env.app { await controller.makeAvailable(record.key, at: url) }
         try await Task.sleep(for: .milliseconds(env.int(0...6)))
         await controller.cancel(record.key)
         let settled = await controller.waitUntilSettled(record.key)
@@ -523,25 +527,28 @@ enum MatrixScenarios {
         let failure = SourceErrorDescriptor(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError)
         let item: SimulatedCloudItem
         switch variant {
-        case 0: item = SimulatedCloudItem(script: [.progress(0.2), .error(offline)])
-        case 1: item = SimulatedCloudItem(script: [.error(failure)])
+        // A few leading polls keep the first attempt active so the duplicate request below lands while it
+        // is in flight. If the stall timeout fires first the result is offlineOrUnknown, which is accepted.
+        case 0: item = SimulatedCloudItem(script: Array(repeating: .progress(nil), count: 8) + [.progress(0.2), .error(offline)])
+        case 1: item = SimulatedCloudItem(script: Array(repeating: .progress(nil), count: 8) + [.error(failure)])
         default: item = SimulatedCloudItem(script: [], requestError: offline)
         }
         env.io.simulate(url, item)
         let controller = env.transferController()
-        _ = await env.app { await controller.makeAvailable(record.key, at: url, setting: .on) }
+        _ = await env.app { await controller.makeAvailable(record.key, at: url) }
         // A second request while active is a no-op.
-        _ = await controller.retry(record.key, at: url, setting: .on)
+        let activeBeforeDuplicate = await controller.isActive(record.key)
+        _ = await controller.retry(record.key, at: url)
         env.check(await controller.activeCount <= 1, "more than one active request")
         let first = await controller.waitUntilSettled(record.key)
         env.check(first.isOfflineOrUnknown || first.isFailed, "first attempt \(first)")
         let firstRequests = env.io.count(.downloadRequest)
-        env.check(firstRequests == 1 || variant == 2, "requests while active \(firstRequests)")
-        item.script = [.progress(0.6), .complete]
-        item.stepIndex = 0
-        item.error = nil
+        env.check(firstRequests == 1 || !activeBeforeDuplicate, "requests while active \(firstRequests)")
+        env.check(activeBeforeDuplicate || variant == 2, "first attempt finished before the duplicate request")
+        // Harness: the provider is idle and still not downloaded, so a retry must issue a new request.
+        item.evictAgain(script: [.progress(0.6), .complete])
         item.requestError = nil
-        _ = await env.app { await controller.retry(record.key, at: url, setting: .on) }
+        _ = await env.app { await controller.retry(record.key, at: url) }
         env.check(await controller.activeCount <= 1, "more than one active request")
         let second = await controller.waitUntilSettled(record.key)
         env.check(second == .idle, "after retry \(second)")
@@ -557,7 +564,7 @@ enum MatrixScenarios {
         default: env.io.simulate(url, SimulatedCloudItem(script: Array(repeating: .stall, count: 10_000)))
         }
         let controller = env.transferController()
-        _ = await env.app { await controller.makeAvailable(record.key, at: url, setting: .on) }
+        _ = await env.app { await controller.makeAvailable(record.key, at: url) }
         let final = await controller.waitUntilSettled(record.key)
         env.check(final.isOfflineOrUnknown, "final \(final)")
         let evaluation = await env.evaluate(record, transfer: final)
@@ -598,7 +605,7 @@ enum MatrixScenarios {
         case 4:
             if injection != 3 { env.io.simulate(url, SimulatedCloudItem(script: (1...20).map { .progress(Double($0) / 25) } + [.complete])) }
             let controller = env.transferController()
-            _ = await controller.makeAvailable(record.key, at: url, setting: .on)
+            _ = await controller.makeAvailable(record.key, at: url)
             if cancelEarly { await controller.cancel(record.key) }
             _ = await controller.waitUntilSettled(record.key)
         default:
@@ -684,14 +691,14 @@ enum MatrixScenarios {
         try await FileDeviceAccessStore(fileURL: storeURL).save(sources.map(\.record))
         let reloaded = try await FileDeviceAccessStore(fileURL: storeURL).allRecords()
         env.check(reloaded.count == sources.count, "store rebuild lost records")
-        let controller = env.transferController()
+        let controller = env.transferController(setting: .off)
         for source in sources {
             let evaluation = await env.evaluate(source.record, setting: .off)
             if source.kind == .iCloud {
                 env.check(evaluation.observation.transfer == .notRequested(.availabilityOff), "OFF transfer \(evaluation.observation.transfer)")
                 env.check(evaluation.observation.remedies.contains(.makeAvailable), "OFF must offer explicit Make Available")
             }
-            _ = await env.app { await controller.makeAvailable(source.record.key, at: source.url, setting: .off) }
+            _ = await env.app { await controller.makeAvailable(source.record.key, at: source.url) }
         }
         if let first = sources.first {
             let proposal = await env.app { env.relink.evaluate(candidate: first.url, for: first.record.key, record: first.record) }
@@ -729,7 +736,7 @@ enum MatrixScenarios {
         for source in sources {
             let evaluation = await env.evaluate(source.record, setting: .on)
             if evaluation.observation.residency == .cloudPlaceholder, evaluation.supportsDownloadRequest {
-                _ = await env.app { await controller.makeAvailable(source.record.key, at: source.url, setting: .on) }
+                _ = await env.app { await controller.makeAvailable(source.record.key, at: source.url) }
             } else if source.kind == .datalessUnknownProvider {
                 env.check(evaluation.observation.transfer == .notRequested(.unsupportedLocation), "unsupported \(evaluation.observation.transfer)")
             }
@@ -753,7 +760,7 @@ enum MatrixScenarios {
         }
         let controller = env.transferController()
         for (offset, (url, record)) in placeholders.enumerated() {
-            _ = await env.app { await controller.makeAvailable(record.key, at: url, setting: .on, userRequested: keepUserRequested && offset == 0) }
+            _ = await env.app { await controller.makeAvailable(record.key, at: url, userRequested: keepUserRequested && offset == 0) }
         }
         let initialRequests = env.io.count(.downloadRequest)
         env.check(initialRequests == placeholders.count, "initial requests")
@@ -769,19 +776,94 @@ enum MatrixScenarios {
         }
         // OFF: re-evaluation and automatic requests issue nothing.
         for (url, record) in placeholders.dropFirst(keepUserRequested ? 1 : 0) {
-            _ = await env.app { await controller.makeAvailable(record.key, at: url, setting: .off) }
+            _ = await env.app { await controller.makeAvailable(record.key, at: url) }
         }
         env.check(env.io.count(.downloadRequest) == initialRequests, "OFF issued requests")
         // ON again: resume only items that are still not local (observe-only when the provider is still busy).
         await controller.availabilitySettingChanged(to: .on)
         for (url, record) in placeholders {
-            _ = await env.app { await controller.makeAvailable(record.key, at: url, setting: .on) }
+            _ = await env.app { await controller.makeAvailable(record.key, at: url) }
         }
         for (_, record) in placeholders {
             let final = await controller.waitUntilSettled(record.key)
             env.check(final == .idle, "after ON \(final)")
         }
         env.check(env.io.count(.downloadRequest) <= initialRequests * 2, "duplicate requests")
+    }
+}
+
+extension MatrixScenarios {
+    static let longScript: [SimulatedCloudItem.Step] = (1...60).map { .progress(Double($0) / 70) } + [.complete]
+
+    /// M1-SRC-ON-002-REVIEW. Variants:
+    /// 0 OFF while a refresh's evaluation is in flight ⇒ zero requests.
+    /// 1 explicit Make Available during an automatic transfer, then OFF ⇒ the transfer survives.
+    /// 2 ON download completes, OFF, provider evicts ⇒ fresh `notRequested(.availabilityOff)`, not stale idle.
+    /// 3 stale `notRequested(.awaitingAccess)` ⇒ replaced by fresh evidence once access works.
+    @MainActor
+    static func toggleDuringRefresh(_ env: CaseEnv, variant: Int) async throws {
+        let (url, record, _) = try await env.importOne()
+        let item = SimulatedCloudItem(script: variant == 2 ? [.progress(0.5), .complete] : longScript)
+        env.io.simulate(url, item)
+        let store = InMemoryDeviceAccessStore([record])
+        let monitor = SourceAvailabilityMonitor(showID: env.showID, store: store, context: env.context, setting: .on, transferPolicy: env.transferPolicy)
+        monitor.start()
+        defer { monitor.stop() }
+        let id = record.sourceID
+        let before = TreeSnapshot.take(env.tree.sources)
+        defer { env.writes += TreeSnapshot.take(env.tree.sources).differences(from: before) }
+
+        switch variant {
+        case 0:
+            env.io.armMetadataGate()
+            let refresh = Task { await monitor.refresh([id]) }
+            var waited = 0
+            while !env.io.gateEntered && waited < 5_000 {
+                try await Task.sleep(for: .milliseconds(1))
+                waited += 1
+            }
+            env.check(env.io.gateEntered, "refresh never reached evaluation")
+            await monitor.setAvailabilitySetting(.off)
+            env.io.releaseGate()
+            await refresh.value
+            try await Task.sleep(for: .milliseconds(env.int(1...5)))
+            env.check(env.io.count(.downloadRequest) == 0, "requests after OFF \(env.io.count(.downloadRequest))")
+            env.check(await monitor.transfers.activeCount == 0, "active transfer after OFF")
+            env.check(monitor.observations[id]?.transfer == .notRequested(.availabilityOff), "observation \(String(describing: monitor.observations[id]?.transfer))")
+        case 1:
+            await monitor.refresh([id])
+            env.check(env.io.count(.downloadRequest) == 1, "automatic request")
+            await monitor.makeAvailable(id)
+            env.check(await monitor.transfers.isUserRequested(record.key), "explicit request did not upgrade the transfer")
+            await monitor.setAvailabilitySetting(.off)
+            let final = await monitor.transfers.waitUntilSettled(record.key)
+            env.check(final == .idle, "user-requested transfer after OFF \(final)")
+            env.check(env.io.count(.downloadRequest) == 1, "requests \(env.io.count(.downloadRequest))")
+        case 2:
+            await monitor.refresh([id])
+            let downloaded = await monitor.transfers.waitUntilSettled(record.key)
+            env.check(downloaded == .idle, "download \(downloaded)")
+            await monitor.setAvailabilitySetting(.off)
+            item.evictAgain(script: [.complete])
+            await monitor.refresh([id])
+            let observation = monitor.observations[id]
+            env.check(observation?.residency == .cloudPlaceholder, "residency \(String(describing: observation?.residency))")
+            env.check(observation?.transfer == .notRequested(.availabilityOff), "stale transfer \(String(describing: observation?.transfer))")
+            env.check(observation?.remedies.contains(.makeAvailable) == true, "missing Make Available remedy")
+            env.check(env.io.count(.downloadRequest) == 1, "requests \(env.io.count(.downloadRequest))")
+        default:
+            env.io.faults.metadataFailures[HarnessIO.key(url)] = .permissionDenied
+            let held = await monitor.transfers.makeAvailable(record.key, at: url)
+            env.check(held == .notRequested(.awaitingAccess), "held \(held)")
+            env.io.faults.metadataFailures = [:]
+            await monitor.setAvailabilitySetting(.off)
+            await monitor.refresh([id])
+            env.check(monitor.observations[id]?.transfer == .notRequested(.availabilityOff), "stale awaitingAccess \(String(describing: monitor.observations[id]?.transfer))")
+            await monitor.setAvailabilitySetting(.on)
+            let final = await monitor.transfers.waitUntilSettled(record.key)
+            env.check(final == .idle, "after access restored \(final)")
+            env.check(env.io.count(.downloadRequest) == 1, "requests \(env.io.count(.downloadRequest))")
+        }
     }
 }
 
@@ -846,6 +928,7 @@ struct LifecycleMatrixTests {
         let holdout = tallies.reduce(0) { $0 + $1.holdoutCases }
         let calibration = tallies.reduce(0) { $0 + $1.calibrationCases }
         let referenceHoldout = tallies.filter { $0.family.hasPrefix("M1-REF") }.reduce(0) { $0 + $1.holdoutCases }
+        let registryHoldout = tallies.filter { $0.family != MatrixFamily.srcToggleRefresh.rawValue }.reduce(0) { $0 + $1.holdoutCases }
         let failures = tallies.reduce(0) { $0 + $1.failedAssertions }
         let leaked = tallies.reduce(0) { $0 + $1.leakedScopes }
         let writes = tallies.reduce(0) { $0 + $1.sourceWrites }
@@ -856,7 +939,7 @@ struct LifecycleMatrixTests {
             print("WW-006-MATRIX \(tally.family) calibration=\(tally.calibrationCases) holdout=\(tally.holdoutCases) failed=\(tally.failedAssertions) leakedScopes=\(tally.leakedScopes) sourceWrites=\(tally.sourceWrites) substitutions=\(tally.substitutions) downloadRequests=\(tally.downloadRequests) offPathRequests=\(tally.offPathDownloadRequests) scopeStarts=\(tally.scopeStarts) simulated=\(tally.simulatedCases) observed=\(tally.observedCases)")
             for failure in tally.failures.prefix(5) { print("WW-006-MATRIX-FAILURE \(failure)") }
         }
-        print("WW-006-MATRIX TOTAL holdout=\(holdout) (reference=\(referenceHoldout)) calibration=\(calibration) failedAssertions=\(failures) leakedScopes=\(leaked) sourceWrites=\(writes) substitutions=\(substitutions) offPathDownloadRequests=\(offRequests) contentHashHeaderPreviewDecodeRequests=0(structural) elapsed=\(elapsed)")
+        print("WW-006-MATRIX TOTAL holdout=\(holdout) (registry=\(registryHoldout), reference=\(referenceHoldout)) calibration=\(calibration) failedAssertions=\(failures) leakedScopes=\(leaked) sourceWrites=\(writes) substitutions=\(substitutions) offPathDownloadRequests=\(offRequests) contentHashHeaderPreviewDecodeRequests=0(structural) elapsed=\(elapsed)")
 
         let report = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

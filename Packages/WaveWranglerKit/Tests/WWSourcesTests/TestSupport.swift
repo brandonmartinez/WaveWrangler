@@ -55,6 +55,17 @@ final class SimulatedCloudItem: @unchecked Sendable {
         self.requestError = requestError
     }
 
+    /// Simulates the provider evicting the item again (harness action, not app action).
+    func evictAgain(script newScript: [Step]) {
+        status = .notDownloaded
+        isDownloading = false
+        requested = false
+        fraction = .unknown
+        error = nil
+        stepIndex = 0
+        script = newScript
+    }
+
     func advance() {
         guard requested, isDownloading, stepIndex < script.count else { return }
         let step = script[stepIndex]
@@ -94,6 +105,15 @@ final class HarnessIO: SourceIO, @unchecked Sendable {
     private var _faults = Faults()
     private var cloud: [String: SimulatedCloudItem] = [:]
     private var _provenance: ObservationProvenance = .observed
+    private var gateArmed = false
+    private var _gateEntered = false
+    private let gateRelease = DispatchSemaphore(value: 0)
+
+    /// Blocks the *next* metadata call (on whatever thread runs it) until `releaseGate()`, so tests can
+    /// change state deterministically while an off-main evaluation is in flight.
+    func armMetadataGate() { lock.withLock { gateArmed = true; _gateEntered = false } }
+    var gateEntered: Bool { lock.withLock { _gateEntered } }
+    func releaseGate() { gateRelease.signal() }
 
     var provenance: ObservationProvenance { lock.withLock { _provenance } }
 
@@ -123,6 +143,13 @@ final class HarnessIO: SourceIO, @unchecked Sendable {
 
     func metadata(at url: URL) -> MetadataResult {
         bump(.metadata)
+        let shouldBlock = lock.withLock { () -> Bool in
+            guard gateArmed else { return false }
+            gateArmed = false
+            _gateEntered = true
+            return true
+        }
+        if shouldBlock { gateRelease.wait() }
         if let failure = lock.withLock({ _faults.metadataFailures[Self.key(url)] }) { return .failure(failure) }
         let result = base.metadata(at: url)
         guard case var .success(metadata) = result, let item = simulated(url) else { return result }

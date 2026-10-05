@@ -21,8 +21,9 @@ public struct TransferEvent: Sendable, Equatable {
 
 /// Requests and observes provider downloads for placeholder sources.
 ///
-/// - Requests only for placeholder items with an evidenced request API (iCloud), only when source
-///   availability is ON or the user explicitly asked for the item.
+/// - Requests only for placeholder items with an evidenced request API (iCloud), only when the
+///   controller's *current* availability setting is ON or the user explicitly asked for the item. The
+///   setting lives here, so the check and the request are atomic inside the actor.
 /// - Exactly one active request per source; a second call while active just reports the current state.
 /// - Cancel stops the app's request/observation; it never evicts, deletes or modifies the original.
 /// - Switching availability OFF cancels automatic transfers (user-requested ones continue).
@@ -38,14 +39,18 @@ public actor SourceTransferController {
 
     private var states: [DeviceAccessKey: TransferState] = [:]
     private var active: [DeviceAccessKey: Active] = [:]
+    private var cancelledByUser: Set<DeviceAccessKey> = []
+    /// The authoritative availability setting for automatic requests.
+    public private(set) var setting: SourceAvailabilitySetting
     private var generation = 0
     private var continuations: [UUID: AsyncStream<TransferEvent>.Continuation] = [:]
     /// Total download requests issued to the gateway (for audits/tests).
     public private(set) var downloadRequestCount = 0
 
-    public init(context: SourceAccessContext, policy: TransferPolicy = TransferPolicy()) {
+    public init(context: SourceAccessContext, policy: TransferPolicy = TransferPolicy(), setting: SourceAvailabilitySetting = .default) {
         self.context = context
         self.policy = policy
+        self.setting = setting
     }
 
     public func state(of key: DeviceAccessKey) -> TransferState {
@@ -54,6 +59,23 @@ public actor SourceTransferController {
 
     public func isActive(_ key: DeviceAccessKey) -> Bool {
         active[key] != nil
+    }
+
+    public func isUserRequested(_ key: DeviceAccessKey) -> Bool {
+        active[key]?.userRequested ?? false
+    }
+
+    /// The transfer state that should still override fresh metadata evidence: an active transfer, a
+    /// deliberate user cancel, or a failure/offline result. Terminal `idle`, `notRequested` or
+    /// OFF-toggle cancellations are history, so callers derive transfer from fresh evidence instead.
+    public func reportableState(of key: DeviceAccessKey) -> TransferState? {
+        if active[key] != nil { return state(of: key) }
+        switch state(of: key) {
+        case .cancelled where cancelledByUser.contains(key): return .cancelled
+        case let .failed(error): return .failed(error)
+        case let .offlineOrUnknown(error): return .offlineOrUnknown(error)
+        default: return nil
+        }
     }
 
     public var activeCount: Int { active.count }
@@ -68,14 +90,20 @@ public actor SourceTransferController {
         return stream
     }
 
+    /// Requests local availability. Automatic requests (`userRequested == false`) are refused unless the
+    /// controller's current setting is ON; explicit user requests are honored in either setting.
     @discardableResult
     public func makeAvailable(
         _ key: DeviceAccessKey,
         at url: URL,
-        setting: SourceAvailabilitySetting,
         userRequested: Bool = false
     ) -> TransferState {
-        if active[key] != nil { return state(of: key) }
+        if active[key] != nil {
+            // An explicit request upgrades an in-flight automatic transfer so OFF will not cancel it.
+            if userRequested { active[key]?.userRequested = true }
+            return state(of: key)
+        }
+        let setting = setting
 
         enum Decision {
             case set(TransferState)
@@ -119,6 +147,7 @@ public actor SourceTransferController {
             publish(key, state)
             return state
         case .request, .observeOnly:
+            cancelledByUser.remove(key)
             generation += 1
             let current = generation
             let initial: TransferState = if case .request = decision { .requested } else { .inProgress(fractionCompleted: .unknown) }
@@ -129,22 +158,25 @@ public actor SourceTransferController {
         }
     }
 
-    /// Stops requesting/observing. The original is never evicted or modified.
+    /// The user stopped the transfer. The original is never evicted or modified.
     public func cancel(_ key: DeviceAccessKey) {
         guard let running = active.removeValue(forKey: key) else { return }
         running.task.cancel()
+        cancelledByUser.insert(key)
         publish(key, .cancelled)
     }
 
-    /// Re-requests after cancel/failure/offline. A no-op while a request is active.
+    /// Re-requests after cancel/failure/offline. A no-op while a request is active (except that an
+    /// explicit retry marks it user-requested).
     @discardableResult
-    public func retry(_ key: DeviceAccessKey, at url: URL, setting: SourceAvailabilitySetting, userRequested: Bool = true) -> TransferState {
-        makeAvailable(key, at: url, setting: setting, userRequested: userRequested)
+    public func retry(_ key: DeviceAccessKey, at url: URL, userRequested: Bool = true) -> TransferState {
+        makeAvailable(key, at: url, userRequested: userRequested)
     }
 
-    /// ON→OFF cancels automatic transfers honestly (state `.cancelled`); OFF→ON issues nothing by itself —
-    /// callers re-evaluate sources and request only placeholders.
+    /// Stores the setting. ON→OFF cancels automatic transfers honestly (state `.cancelled`); OFF→ON
+    /// issues nothing by itself — callers re-evaluate sources and request only placeholders.
     public func availabilitySettingChanged(to setting: SourceAvailabilitySetting) {
+        self.setting = setting
         guard setting == .off else { return }
         for (key, running) in active where !running.userRequested {
             active[key] = nil

@@ -247,11 +247,11 @@ struct TransferControllerTests {
         let file = try tree.file("a.wav", bytes: 16, rng: &rng)
         let io = HarnessIO()
         io.simulate(file, SimulatedCloudItem(script: [.progress(0.5), .complete]))
-        let controller = SourceTransferController(context: makeContext(io), policy: TransferPolicy(pollInterval: .milliseconds(1), stallTimeout: .seconds(5)))
+        let controller = SourceTransferController(context: makeContext(io), policy: TransferPolicy(pollInterval: .milliseconds(1), stallTimeout: .seconds(5)), setting: .off)
         let id = DeviceAccessKey(showID: testShow, sourceID: SourceID())
-        #expect(await controller.makeAvailable(id, at: file, setting: .off) == .notRequested(.availabilityOff))
+        #expect(await controller.makeAvailable(id, at: file) == .notRequested(.availabilityOff))
         #expect(io.count(.downloadRequest) == 0)
-        #expect(await controller.makeAvailable(id, at: file, setting: .off, userRequested: true) == .requested)
+        #expect(await controller.makeAvailable(id, at: file, userRequested: true) == .requested)
         #expect(await controller.waitUntilSettled(id) == .idle)
         #expect(io.count(.downloadRequest) == 1)
         #expect(io.leakedScopes == 0)
@@ -469,5 +469,51 @@ struct HarnessSelfTests {
     @Test func seedsFollowTheRegistryDerivation() {
         #expect(FixtureSeed.derive(fixtureID: "M1-REF-001", split: "holdout", caseIndex: 0) == FixtureSeed.derive(fixtureID: "M1-REF-001", split: "holdout", caseIndex: 0))
         #expect(FixtureSeed.derive(fixtureID: "M1-REF-001", split: "holdout", caseIndex: 0) != FixtureSeed.derive(fixtureID: "M1-REF-001", split: "calibration", caseIndex: 0))
+    }
+}
+
+
+@Suite("Review regressions: setting races and stale transfer state")
+struct ReviewRegressionTests {
+    /// 0: OFF during an in-flight refresh ⇒ zero requests. 1: explicit request upgrades an automatic
+    /// transfer so OFF does not cancel it. 2: stale idle after OFF+evict. 3: stale awaitingAccess.
+    @Test(arguments: 0..<4)
+    func scenario(variant: Int) async throws {
+        let env = try CaseEnv(family: .srcToggleRefresh, split: "unit", index: variant)
+        try await MatrixScenarios.toggleDuringRefresh(env, variant: variant)
+        #expect(env.failures.isEmpty, "\(env.failures)")
+        #expect(env.writes == 0)
+        #expect(env.context.ledger.snapshot.openScopes == 0)
+    }
+
+    @Test func controllerRefusesAutomaticRequestsWhenItsSettingIsOff() async throws {
+        let tree = try SyntheticTree(label: "controller-setting")
+        var rng = SplitMix64(seed: 14)
+        let file = try tree.file("a.wav", bytes: 16, rng: &rng)
+        let io = HarnessIO()
+        io.simulate(file, SimulatedCloudItem(script: MatrixScenarios.longScript))
+        let controller = SourceTransferController(context: makeContext(io), policy: TransferPolicy(pollInterval: .milliseconds(1), stallTimeout: .seconds(5)), setting: .on)
+        let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
+        await controller.availabilitySettingChanged(to: .off)
+        #expect(await controller.makeAvailable(key, at: file) == .notRequested(.availabilityOff))
+        #expect(io.count(.downloadRequest) == 0)
+        await controller.availabilitySettingChanged(to: .on)
+        #expect(await controller.makeAvailable(key, at: file) == .requested)
+        _ = await controller.makeAvailable(key, at: file, userRequested: true)
+        #expect(await controller.isUserRequested(key))
+        await controller.availabilitySettingChanged(to: .off)
+        #expect(await controller.isActive(key))
+        #expect(await controller.waitUntilSettled(key) == .idle)
+        #expect(await controller.reportableState(of: key) == nil)
+    }
+
+    @Test func evaluatorIgnoresTerminalHistoryButKeepsActiveAndFailedStates() {
+        let error = SourceErrorDescriptor(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)
+        #expect(!SourceAvailabilityEvaluator.transferStillApplies(.idle, residency: .cloudPlaceholder))
+        #expect(!SourceAvailabilityEvaluator.transferStillApplies(.notRequested(.awaitingAccess), residency: .cloudPlaceholder))
+        #expect(SourceAvailabilityEvaluator.transferStillApplies(.inProgress(fractionCompleted: .unknown), residency: .cloudPlaceholder))
+        #expect(SourceAvailabilityEvaluator.transferStillApplies(.offlineOrUnknown(error), residency: .cloudPlaceholder))
+        #expect(!SourceAvailabilityEvaluator.transferStillApplies(.offlineOrUnknown(error), residency: .local))
+        #expect(!SourceAvailabilityEvaluator.transferStillApplies(.cancelled, residency: .local))
     }
 }

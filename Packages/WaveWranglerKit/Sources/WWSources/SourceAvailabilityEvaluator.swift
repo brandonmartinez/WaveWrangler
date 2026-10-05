@@ -179,7 +179,7 @@ public struct SourceAvailabilityEvaluator: Sendable {
         let (residency, residencyEvidence) = metadata.residency
         observation.residency = residency
         observation.residencyEvidence = residencyEvidence
-        if let transfer, transfer != .unknown {
+        if let transfer, Self.transferStillApplies(transfer, residency: residency) {
             observation.transfer = transfer
             observation.transferEvidence = .transferController
         } else {
@@ -201,7 +201,7 @@ public struct SourceAvailabilityEvaluator: Sendable {
                 observation.transferEvidence = .notObserved
             }
         }
-        if let error = metadata.ubiquitous.downloadingError, transfer == nil || transfer == .unknown {
+        if let error = metadata.ubiquitous.downloadingError, observation.transferEvidence != .transferController {
             observation.transfer = TransferErrorClassifier.state(for: error)
             observation.transferEvidence = .ubiquitousResourceValues
         }
@@ -217,6 +217,20 @@ public struct SourceAvailabilityEvaluator: Sendable {
             resolvedURL: url,
             supportsDownloadRequest: metadata.supportsDownloadRequest
         )
+    }
+
+    /// A controller transfer state overrides fresh evidence only while it is still meaningful: active
+    /// transfers always; cancel/failure/offline only while the item is still not local. Terminal `idle`,
+    /// `notRequested` and `unknown` states are history and never mask fresh residency/setting evidence.
+    static func transferStillApplies(_ transfer: TransferState, residency: ResidencyState) -> Bool {
+        switch transfer {
+        case .requested, .inProgress:
+            true
+        case .cancelled, .failed, .offlineOrUnknown:
+            residency == .cloudPlaceholder || residency == .downloading
+        case .idle, .notRequested, .unknown:
+            false
+        }
     }
 
     /// Lexical comparison only. Stored paths come from bookmark resolution, which already reports the
