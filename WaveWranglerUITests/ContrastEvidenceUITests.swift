@@ -71,6 +71,34 @@ final class ContrastEvidenceUITests: XCTestCase {
         Acceptance.writeEvidence("contrast-\(label)", ["revision": Acceptance.revision(), "label": label, "results": results], test: self)
     }
 
+    /// C03: in-app Text Size 200% (⌘+ to the maximum) screenshots of the Library, the show window's Setup with
+    /// the F-STATES fixture and the episode inspector, for clipping review.
+    func testTextSize200Screenshots() throws {
+        app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
+                               "-WWUITestCenterWindows", "YES", "-WWUITestOpenShow", "Synthetic Show", "-WWUITestShowEpisodes", "3"]
+        app.launchEnvironment["WW_SETUP_ENGINE"] = "fixture-states"
+        app.launch()
+        app.activate()
+        let window = app.windows.matching(identifier: "ww.show.window").firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 15))
+        for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
+        window.typeKey("1", modifierFlags: .command)
+        app.typeKey("i", modifierFlags: [.command, .shift])
+        Thread.sleep(forTimeInterval: 1.5)
+        Acceptance.attach(self, png: app.windows.firstMatch.screenshot().pngRepresentation, name: "text200-import-review.png")
+        app.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 1.5)
+        Acceptance.attach(self, png: window.screenshot().pngRepresentation, name: "text200-setup.png")
+        window.typeKey("i", modifierFlags: .command)
+        Thread.sleep(forTimeInterval: 1)
+        Acceptance.attach(self, png: window.screenshot().pngRepresentation, name: "text200-episode-inspector.png")
+        app.typeKey("l", modifierFlags: [.command, .shift])
+        Thread.sleep(forTimeInterval: 1.5)
+        Acceptance.attach(self, png: app.windows.firstMatch.screenshot().pngRepresentation, name: "text200-library.png")
+        _ = try AcceptanceAudit.run(app, surface: "200% text (Library)", test: self)
+    }
+
     /// C06 saturation-0 captures of the show window (Setup and a blocked destination).
     func testSaturationZeroShowWindow() throws {
         app = XCUIApplication()
@@ -82,6 +110,11 @@ final class ContrastEvidenceUITests: XCTestCase {
         let window = app.windows.matching(identifier: "ww.show.window").firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 15))
         Thread.sleep(forTimeInterval: 1)
+        window.typeKey("1", modifierFlags: .command)
+        app.typeKey("i", modifierFlags: [.command, .shift])
+        Thread.sleep(forTimeInterval: 1.5)
+        app.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 1.5)
         for (key, name) in [("1", "setup"), ("2", "alignment-blocked")] {
             window.typeKey(key, modifierFlags: .command)
             Thread.sleep(forTimeInterval: 1)

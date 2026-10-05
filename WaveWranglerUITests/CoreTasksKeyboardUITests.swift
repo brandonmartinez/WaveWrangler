@@ -137,15 +137,29 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             }
             check(diskTitle(document) == "Other Writer", "the other version is not overwritten (even after Save anyway)")
             let status = element("ww.show.saveStatus")
-            Acceptance.record(self, "T16 save status: \(value(status))")
+            Acceptance.record(self, "T16 save status after Save anyway: label \(status.label) value \(value(status)) window title \(window.title)")
             check(Acceptance.waitFor(timeout: 5) { self.value(status).hasPrefix("Conflict") }, "status Conflict: \(value(status))")
             app.typeKey("w", modifierFlags: .command)
             if app.sheets.firstMatch.waitForExistence(timeout: 5) {
                 let sheet = app.sheets.firstMatch
-                Acceptance.record(self, "T16 close sheet buttons: \(sheet.buttons.allElementsBoundByIndex.map(\.title))")
-                check(!sheet.buttons["Save"].exists, "no plain Save while conflicted")
-                app.typeKey(.escape, modifierFlags: [])
-                check(window.waitForExistence(timeout: 2), "Esc keeps the window open")
+                Acceptance.record(self, "T16 close sheet: \(sheet.staticTexts.allElementsBoundByIndex.map { $0.value ?? $0.label }) buttons \(sheet.buttons.allElementsBoundByIndex.map(\.title))")
+                check(!sheet.buttons["Save"].exists, "no plain Save while conflicted (Design D6)")
+                if sheet.buttons["Save"].exists {
+                    // Exercise it: a plain Save from the close sheet must still never overwrite the other version.
+                    sheet.buttons["Save"].click()
+                    Thread.sleep(forTimeInterval: 2)
+                    for _ in 0..<3 where app.sheets.firstMatch.exists {
+                        let next = app.sheets.firstMatch
+                        Acceptance.record(self, "T16 after close-sheet Save: \(next.staticTexts.allElementsBoundByIndex.map { $0.value ?? $0.label }) buttons \(next.buttons.allElementsBoundByIndex.map(\.title))")
+                        if next.buttons["Save"].exists { next.buttons["Save"].click() } else { app.typeKey(.escape, modifierFlags: []) }
+                        Thread.sleep(forTimeInterval: 2)
+                    }
+                    Acceptance.record(self, "T16 after close-sheet Save: window exists \(window.exists), status \(window.exists ? value(status) : "closed"), disk \(diskTitle(document) ?? "nil")")
+                    check(window.exists, "the conflicted window isn't closed by a refused save (work kept)")
+                } else {
+                    app.typeKey(.escape, modifierFlags: [])
+                    check(window.waitForExistence(timeout: 2), "Esc keeps the window open")
+                }
             } else {
                 check(false, "Close while conflicted asks how to keep the changes")
             }

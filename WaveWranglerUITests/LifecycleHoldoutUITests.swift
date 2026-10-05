@@ -190,8 +190,8 @@ final class LifecycleHoldoutUITests: XCTestCase {
                 Acceptance.record(self, "Revert: no confirmation sheet")
             }
             Thread.sleep(forTimeInterval: 1)
-            let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
-            if showInfo.exists { showInfo.click() }
+            // The title field still has keyboard focus here: it must show the reverted value, not the stale draft.
+            Acceptance.record(self, "Revert: field \(window.textFields["Show title"].value ?? "nil"), window title \(window.title), disk \(diskTitle(document) ?? "nil")")
             check(Acceptance.waitFor(timeout: 5) { window.textFields["Show title"].value as? String == Self.original },
                   "reverted to the disk title: \(window.textFields["Show title"].value ?? "nil")")
             check(diskTitle(document) == Self.original, "disk unchanged")
