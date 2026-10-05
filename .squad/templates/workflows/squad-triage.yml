@@ -1,0 +1,43 @@
+name: Squad Issue Report (Manual)
+
+'on':
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number to inspect; this report does not assign work
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const issueNumber = Number(context.payload.inputs.issue);
+            if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) {
+              throw new Error('A positive issue number is required.');
+            }
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber
+            });
+            if (issue.pull_request) {
+              throw new Error('This report accepts issues, not pull requests.');
+            }
+            await core.summary
+              .addHeading(`Manual issue report: #${issue.number}`)
+              .addLink('Open issue', issue.html_url)
+              .addCodeBlock(JSON.stringify({
+                state: issue.state,
+                milestone: issue.milestone?.title ?? null,
+                labels: issue.labels.map(label => label.name)
+              }, null, 2), 'json')
+              .addRaw('Lead triages actual acceptance and dependencies within the authorized milestone. No mutation or automatic agent dispatch occurred.')
+              .write();

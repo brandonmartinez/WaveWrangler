@@ -1,0 +1,41 @@
+{
+  "universe_usage_history": [
+    {
+      "universe": "descriptive",
+      "assignment_id": "wavewrangler-initial-20261004",
+      "used_at": "2026-10-04T00:32:38.878-04:00"
+    }
+  ],
+  "assignment_cast_snapshots": {
+    "wavewrangler-initial-20261004": {
+      "universe": "descriptive",
+      "agents": {
+        "lead": "Lead",
+        "mac": "Mac",
+        "alignment": "Alignment",
+        "pipeline": "Pipeline",
+        "scribe": "Scribe",
+        "ralph": "Ralph",
+        "rai": "Rai",
+        "fact-checker": "Fact Checker"
+      },
+      "created_at": "2026-10-04T00:32:38.878-04:00"
+    },
+    "wavewrangler-design-addition-20261004": {
+      "universe": "descriptive",
+      "agents": {
+        "lead": "Lead",
+        "mac": "Mac",
+        "design": "Design",
+        "alignment": "Alignment",
+        "pipeline": "Pipeline",
+        "scribe": "Scribe",
+        "ralph": "Ralph",
+        "rai": "Rai",
+        "fact-checker": "Fact Checker"
+      },
+      "created_at": "2026-10-04T00:46:35.867-04:00",
+      "reason": "User-authorized dedicated native macOS product-design and accessibility role"
+    }
+  }
+}

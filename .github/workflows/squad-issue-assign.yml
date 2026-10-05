@@ -1,0 +1,49 @@
+name: Squad Owner Label (Manual)
+
+'on':
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number whose informational owner should change
+        required: true
+        type: string
+      owner:
+        description: Accountable specialist; this does not start an agent
+        required: true
+        type: choice
+        options:
+          - lead
+          - mac
+          - design
+          - alignment
+          - pipeline
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  owner-label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const issueNumber = Number(context.payload.inputs.issue);
+            const owner = context.payload.inputs.owner;
+            const allowed = new Set(['lead', 'mac', 'design', 'alignment', 'pipeline']);
+            if (!Number.isSafeInteger(issueNumber) || issueNumber < 1 || !allowed.has(owner)) {
+              throw new Error('A positive issue number and supported owner are required.');
+            }
+            const target = { owner: context.repo.owner, repo: context.repo.repo, issue_number: issueNumber };
+            const { data: issue } = await github.rest.issues.get(target);
+            if (issue.pull_request) {
+              throw new Error('Owner routing applies to issues, not pull requests.');
+            }
+            const labels = issue.labels.map(label => label.name).filter(name => !name.startsWith('owner:'));
+            labels.push(`owner:${owner}`);
+            await github.rest.issues.setLabels({ ...target, labels });
+            await core.summary
+              .addHeading(`Informational owner updated for #${issueNumber}`)
+              .addRaw(`owner:${owner}; no GitHub assignee, squad dispatch label or coding agent was added.`)
+              .write();

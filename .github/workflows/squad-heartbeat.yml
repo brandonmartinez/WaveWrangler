@@ -1,0 +1,44 @@
+name: Squad Milestone Report (Manual)
+
+'on':
+  workflow_dispatch:
+    inputs:
+      milestone:
+        description: GitHub milestone number to inspect
+        required: true
+        default: '1'
+        type: string
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const milestone = Number(context.payload.inputs.milestone);
+            if (!Number.isSafeInteger(milestone) || milestone < 1) {
+              throw new Error('A positive milestone number is required.');
+            }
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              milestone,
+              state: 'open',
+              per_page: 100
+            });
+            const work = issues.filter(issue => !issue.pull_request);
+            const rows = work.map(issue => [
+              `#${issue.number}`,
+              issue.labels.map(label => label.name).filter(name => name.startsWith('owner:')).join(', ') || 'Unassigned',
+              issue.labels.map(label => label.name).filter(name => name.startsWith('priority:')).join(', ')
+            ]);
+            await core.summary
+              .addHeading(`Milestone ${milestone}: ${work.length} open issues`)
+              .addTable([['Issue', 'Informational owner', 'Priority'], ...rows])
+              .addRaw('Advisory only: no labels, assignments, comments or agents were changed. Start work through the named milestone kickoff.')
+              .write();

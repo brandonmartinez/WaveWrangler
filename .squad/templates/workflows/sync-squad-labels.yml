@@ -1,0 +1,54 @@
+name: Sync Informational Squad Labels (Manual)
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  labels:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const labels = [
+              ['priority:P0', 'B60205', 'Blocking safety, prerequisite, milestone authorization or acceptance work'],
+              ['priority:P1', 'D93F0B', 'Required baseline feature delivery'],
+              ['priority:P2', 'FBCA04', 'Deferred optional improvement; not an MVP blocker'],
+              ['type:research', '7057FF', 'Bounded uncertainty-retirement experiment with evidence and a decision'],
+              ['type:design', 'D876E3', 'Product/design specification, milestone gate or acceptance'],
+              ['type:implementation', '0075CA', 'Production implementation with tests and review'],
+              ['gate:milestone', 'B60205', 'Must satisfy the applicable internal milestone before progressing'],
+              ['gate:release', '5319E7', 'Public-release qualification; not a safe-internal-use blocker'],
+              ['gate:future', 'C5DEF5', 'Explicitly deferred beyond the MVP/release baseline'],
+              ['status:partial', 'FEF2C0', 'Existing bounded evidence; acceptance is not complete'],
+              ['needs:consent', 'F9D0C4', 'A specific operation needs user input']
+            ];
+            for (const owner of ['lead', 'mac', 'design', 'alignment', 'pipeline']) {
+              labels.push([`owner:${owner}`, '1D76DB', `Accountable Squad ${owner}; informational, not auto-dispatch`]);
+            }
+            for (const [name, color, description] of labels) {
+              const target = { owner: context.repo.owner, repo: context.repo.repo, name };
+              let exists;
+              try {
+                await github.rest.issues.getLabel(target);
+                exists = true;
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+                exists = false;
+              }
+              if (exists) {
+                await github.rest.issues.updateLabel({ ...target, color, description });
+              } else {
+                await github.rest.issues.createLabel({ ...target, color, description });
+              }
+            }
+            await core.summary
+              .addHeading(`Synced ${labels.length} informational labels`)
+              .addRaw('No squad dispatch labels, assignees or agents were created.')
+              .write();
