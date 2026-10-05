@@ -67,8 +67,8 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
 
     var location: LibraryLocationChoice {
         switch store.locationStatus {
-        case .folder(let url, _): .folder(displayName: url.lastPathComponent)
-        case .unavailable(let path, _): .folder(displayName: (path as NSString).lastPathComponent)
+        case .folder(let url, _): .folder(displayName: LibraryFolderURL.displayName(for: url))
+        case .unavailable(let path, _): .folder(displayName: LibraryFolderURL.displayName(for: URL(filePath: path)))
         case .appContainer, nil: .inWaveWrangler
         @unknown default: .inWaveWrangler
         }
@@ -128,19 +128,20 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
     private func result(previous: String) -> LibraryMoveResult {
         switch controller.lastOutcome {
         case .success(.moved(let url, let kept)):
-            let message = LibraryMoveWording.moved(to: url.lastPathComponent, previous: kept.deletingLastPathComponent().lastPathComponent)
+            // Persistence reports library *file* URLs; name folders.
+            let message = LibraryMoveWording.moved(to: LibraryFolderURL.displayName(for: url), previous: LibraryFolderURL.displayName(for: kept))
             resultMessage = message
             return .moved(message: message)
         case .success(.adoptedIdentical(let url)):
-            let message = "Your library is now stored in “\(url.lastPathComponent)”. That folder already had an identical copy, so nothing needed to be copied."
+            let message = "Your library is now stored in “\(LibraryFolderURL.displayName(for: url))”. That folder already had an identical copy, so nothing needed to be copied."
             resultMessage = message
             return .moved(message: message)
         case .success(.destinationHasLibrary(let url, _)):
-            return .destinationHasLibrary(folder: url, blockedReason: nil)
+            return .destinationHasLibrary(folder: LibraryFolderURL.folder(for: url), blockedReason: nil)
         case .success(.destinationUnusable(let url, let reason)):
             // The folder has a library this version can't use (unreachable, needs permission, newer format,
             // damaged): offer the sheet with Use That Library disabled and the reason (ST-33 step 6).
-            return .destinationHasLibrary(folder: url, blockedReason: LibraryUIStore.sentence(reason) + " Nothing was written to the folder, and your current library is still in use.")
+            return .destinationHasLibrary(folder: LibraryFolderURL.folder(for: url), blockedReason: LibraryUIStore.sentence(reason) + " Nothing was written to the folder, and your current library is still in use.")
         case .success(.combined(_, _, let summary)):
             let message = Self.combineMessage(summary)
             resultMessage = message
@@ -190,15 +191,16 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
             panel.message = LibraryRegrantWording.panelMessage
             panel.prompt = "Grant Access"
             switch store.locationStatus {
-            case .folder(let url, _): panel.directoryURL = url
-            case .unavailable(let path, _): panel.directoryURL = URL(filePath: path)
+            case .folder(let url, _): panel.directoryURL = LibraryFolderURL.folder(for: url)
+            case .unavailable(let path, _): panel.directoryURL = LibraryFolderURL.folder(for: URL(filePath: path))
             default: break
             }
             guard await panel.begin() == .OK, let url = panel.url else { return .none }
             await controller.regrantAccess(to: url)
             guard let outcome = controller.lastRegrantOutcome else { return .none }
             let result = Self.map(outcome)
-            if case .differentLibrary(let folder, _) = outcome { offeredFolder = folder }
+            // Outcomes carry the library file URL; Use That Library needs the folder the user chose.
+            if case .differentLibrary = outcome { offeredFolder = url }
             resultMessage = LibraryRegrantWording.message(for: result)
             return LibraryRegrantWording.followUp(for: result)
         case .recoverEarlierVersion:
@@ -229,9 +231,9 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
             }
             return .regranted(pendingEditsSaved: saved)
         case .differentLibrary(let url, _):
-            return .differentLibrary(folderDisplayName: url.lastPathComponent)
+            return .differentLibrary(folderDisplayName: LibraryFolderURL.displayName(for: url))
         case .noLibraryThere(let url):
-            return .noLibraryThere(folderDisplayName: url.lastPathComponent)
+            return .noLibraryThere(folderDisplayName: LibraryFolderURL.displayName(for: url))
         case .cannotVerify(let reason):
             return .cannotVerify(reason: reason)
         @unknown default:

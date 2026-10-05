@@ -215,3 +215,19 @@ public enum LibraryRegrantWording {
         return trimmed + "."
     }
 }
+
+/// Persistence reports library *file* URLs (`<folder>/Library.wwlibrary`) in move and regrant outcomes.
+/// The UI names folders and passes folders back to `useLibrary(in:)`, so it always reduces to the folder.
+public enum LibraryFolderURL {
+    public static let libraryFileExtension = "wwlibrary"
+
+    /// The folder holding the library: strips a trailing `*.wwlibrary` file component; folders pass through.
+    public static func folder(for url: URL) -> URL {
+        url.pathExtension.lowercased() == libraryFileExtension ? url.deletingLastPathComponent() : url
+    }
+
+    /// Folder display name for UI text (never a path).
+    public static func displayName(for url: URL) -> String {
+        folder(for: url).lastPathComponent
+    }
+}
