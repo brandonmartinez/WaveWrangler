@@ -2,14 +2,15 @@ import XCTest
 
 /// #117: the Library window tells the user about cloud-provider conflict versions of the library that
 /// WaveWrangler can't use; the notice is a labelled, identified message bar and the library stays usable.
+@MainActor
 final class LibraryProviderConflictUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUpWithError() throws {
+    override func setUp() async throws {
         continueAfterFailure = false
     }
 
-    override func tearDownWithError() throws {
+    override func tearDown() async throws {
         app?.terminate()
     }
 
