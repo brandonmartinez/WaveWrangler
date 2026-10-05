@@ -762,7 +762,7 @@ enum MatrixScenarios {
         for (offset, (_, record)) in placeholders.enumerated() {
             let state = await controller.state(of: record.key)
             if keepUserRequested && offset == 0 {
-                env.check(state != .cancelled || state.isTerminal, "user-requested transfer cancelled by OFF")
+                env.check(state != .cancelled, "user-requested transfer cancelled by OFF")
             } else {
                 env.check(state == .cancelled || state == .idle, "after OFF \(state)")
             }
