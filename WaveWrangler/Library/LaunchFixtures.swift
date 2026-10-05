@@ -12,6 +12,7 @@ import WWPersistence
 ///   synthetic `.wwshow` files (5 episodes, 10 metadata-only source references each; 1,000 references in
 ///   the library) generated once in the container's temporary directory and reused by later launches, so
 ///   shows open from the library (WW-007 / M1-SCALE-001 native timing).
+/// - `-WWUITestProviderConflicts n` (with `lib100`): n unusable provider conflict versions of the library (#117).
 /// - `-WWUITestResetStorage YES` (with `-WWUITestHooks YES`): delete the isolated UI-test storage (library,
 ///   show locations, recovery) so a test starts clean; later launches without it keep the data (relaunch).
 /// - `-WWUITestOpenWithoutShowWindows <folder/name.wwshow>`: see `UITestHooks` (restoration-equivalent open).
@@ -88,6 +89,9 @@ enum LaunchFixtures {
         case "lib100":
             let fixture = SyntheticLibraryFixture.make()
             let backend = InMemoryLibraryBackend(seed: fixture.library, details: fixture.details)
+            // #117: simulate unusable provider conflict versions for the message bar.
+            let conflicts = defaults.integer(forKey: "WWUITestProviderConflicts")
+            if conflicts > 0 { backend.providerConflictNotice = LibraryDocumentStore.providerConflictNotice(unusableCount: conflicts) }
             LibraryServices.current = LibraryServices(persistence: backend, entries: backend, location: backend)
         case "lib100files":
             let fixture = SyntheticLibraryFixture.make()

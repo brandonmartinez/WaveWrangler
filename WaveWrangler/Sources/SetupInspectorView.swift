@@ -159,7 +159,20 @@ private struct SourceInspector: View {
         .onAppear(perform: resetDrafts)
         .onChange(of: source) { resetDrafts() }
         .onChange(of: model.store.model.episode(model.episodeID)?.epochNumber(of: source.id)) { resetDrafts() }
-        .onChange(of: model.inspectorFocusRequest) { focus = .group }
+        .onChange(of: model.inspectorFocusRequest, initial: true) {
+            // Also on first appearance: Return may have just opened the collapsed details.
+            if model.consumeInspectorFocus(), let field = firstFocusableField { Task { @MainActor in focus = field } }
+        }
+    }
+
+    /// The first editable field that can take keyboard focus. Pop-up menus take focus only with Full
+    /// Keyboard Access (AppKit's rule); otherwise the first enabled number field. Nil leaves focus in the
+    /// table, where the Source menu still edits everything.
+    private var firstFocusableField: InspectorField? {
+        if NSApp.isFullKeyboardAccessEnabled { return .group }
+        if source.placement.recorderGroupID != nil { return .epoch }
+        if statedChannel != nil { return .channel }
+        return nil
     }
 
     private var roleRow: some View {
@@ -443,7 +456,9 @@ private struct GroupInspector: View {
         EmptyView()
             .onAppear { nameDraft = model.groupName(groupID) }
             .onChange(of: groupID) { nameDraft = model.groupName(groupID) }
-            .onChange(of: model.inspectorFocusRequest) { nameFocused = true }
+            .onChange(of: model.inspectorFocusRequest, initial: true) {
+                if model.consumeInspectorFocus() { Task { @MainActor in nameFocused = true } }
+            }
     }
 
     private func commit(_ id: RecorderGroupID) {
@@ -516,7 +531,9 @@ private struct SpeakerInspector: View {
             .onAppear { nameDraft = model.speakerName(speakerID) }
             .onChange(of: speakerID) { nameDraft = model.speakerName(speakerID) }
             .onChange(of: model.store.model.speaker(speakerID)?.name) { nameDraft = model.speakerName(speakerID) }
-            .onChange(of: model.inspectorFocusRequest) { nameFocused = true }
+            .onChange(of: model.inspectorFocusRequest, initial: true) {
+                if model.consumeInspectorFocus() { Task { @MainActor in nameFocused = true } }
+            }
     }
 
     private static func tag(_ channel: ChannelReference) -> String { "\(channel.sourceID)#\(channel.channel)" }

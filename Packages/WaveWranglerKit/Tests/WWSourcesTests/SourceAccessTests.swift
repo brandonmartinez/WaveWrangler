@@ -225,3 +225,51 @@ struct IdentityTimestampToleranceTests {
         }
     }
 }
+
+@Suite("Device access store keeps identity-baseline precision (#121)")
+struct AccessStoreDatePrecisionTests {
+    /// A record persisted by `FileDeviceAccessStore` and read back by a fresh store keeps sub-millisecond
+    /// dates, so evaluating the untouched source right away reports it as matching — never `changed`.
+    @Test func persistedBaselineMatchesImmediately() async throws {
+        let tree = try SyntheticTree(label: "store-precision")
+        var rng = SplitMix64(seed: 1_210)
+        let file = try tree.file("take.wav", bytes: 512, rng: &rng)
+        let context = makeContext(HarnessIO())
+        var record = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
+        record = RelinkEvaluator(context: context).confirmIdentity(of: record)
+        let recordedModified = try #require(record.recordedIdentity?.fingerprint.contentModificationDate.value)
+        // The generated file has sub-second timestamps (otherwise this test would prove nothing).
+        #expect(recordedModified.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1) != 0)
+
+        let storeURL = tree.root.appendingPathComponent("device-access/records.json")
+        try await FileDeviceAccessStore(fileURL: storeURL).save(record)
+        let reloaded = try #require(try await FileDeviceAccessStore(fileURL: storeURL).record(for: record.key))
+        #expect(reloaded.recordedIdentity == record.recordedIdentity)
+
+        let observation = SourceAvailabilityEvaluator(context: context).evaluate(key: reloaded.key, record: reloaded, setting: .on).observation
+        #expect(observation.identity == .matchesRecorded)
+        #expect(observation.location == .present)
+        #expect(observation.access == .granted)
+    }
+
+    /// The failure mode behind #121 (a harness that stored baselines with `.iso8601`, whole seconds):
+    /// a baseline truncated to whole seconds is honestly reported `changed`, which is why the store must
+    /// keep full precision.
+    @Test func wholeSecondBaselineIsReportedChanged() async throws {
+        let tree = try SyntheticTree(label: "store-precision-lossy")
+        var rng = SplitMix64(seed: 1_211)
+        let file = try tree.file("take.wav", bytes: 512, rng: &rng)
+        let context = makeContext(HarnessIO())
+        var record = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
+        let fingerprint = try #require(record.recordedIdentity?.fingerprint)
+        let created = try #require(fingerprint.creationDate.value)
+        let modified = try #require(fingerprint.contentModificationDate.value)
+        try #require(abs(modified.timeIntervalSinceReferenceDate.rounded(.down) - modified.timeIntervalSinceReferenceDate) > 0.001)
+        var truncated = fingerprint
+        truncated.creationDate = .known(Date(timeIntervalSinceReferenceDate: created.timeIntervalSinceReferenceDate.rounded(.down)))
+        truncated.contentModificationDate = .known(Date(timeIntervalSinceReferenceDate: modified.timeIntervalSinceReferenceDate.rounded(.down)))
+        record.recordedIdentity?.fingerprint = truncated
+        let observation = SourceAvailabilityEvaluator(context: context).evaluate(key: record.key, record: record, setting: .on).observation
+        if case .changed = observation.identity {} else { Issue.record("expected changed for a lossy baseline: \(observation.identity)") }
+    }
+}

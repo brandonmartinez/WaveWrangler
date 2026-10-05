@@ -4,7 +4,7 @@ import Foundation
 /// be usable without dragging). Minimums keep the section header, column header and several rows
 /// visible in each table, and scale with the in-app text size.
 public enum SetupSplitLayout {
-    public static let defaultSpeakersFraction = 0.4
+    public static let defaultSpeakersFraction = 0.35
     public static let fractionRange = 0.15...0.85
     /// Base heights at 100% text: section header row with its padding, table column header, one row.
     static let sectionHeader = 48.0
@@ -12,11 +12,16 @@ public enum SetupSplitLayout {
     static let row = 24.0
 
     public static func minimumSpeakersHeight(scale: Double) -> Double {
-        (sectionHeader + columnHeader + 6 * row) * scale
+        (sectionHeader + columnHeader + 4 * row) * scale
+    }
+
+    /// Speakers' floor when space is short: header, column header and two rows (#104: Sources first).
+    public static func compactSpeakersHeight(scale: Double) -> Double {
+        (sectionHeader + columnHeader + 2 * row) * scale
     }
 
     public static func minimumSourcesHeight(scale: Double) -> Double {
-        (sectionHeader + columnHeader + 4 * row) * scale
+        (sectionHeader + columnHeader + 6 * row) * scale
     }
 
     /// Splits `total` (excluding the handle). The Speakers share follows `speakersFraction` but never goes
@@ -27,8 +32,10 @@ public enum SetupSplitLayout {
         let minSpeakers = minimumSpeakersHeight(scale: scale)
         let minSources = minimumSourcesHeight(scale: scale)
         guard total >= minSpeakers + minSources else {
-            let speakers = (total * minSpeakers / (minSpeakers + minSources)).rounded(.down)
-            return (total - speakers, speakers)
+            // Sources has priority (#104): Speakers keeps a compact two-row floor, Sources gets the rest.
+            let compact = compactSpeakersHeight(scale: scale)
+            let speakers = min(max(total - minSources, compact), total / 2).rounded(.down)
+            return (total - max(speakers, 0), max(speakers, 0))
         }
         let fraction = min(max(speakersFraction, fractionRange.lowerBound), fractionRange.upperBound)
         let speakers = min(max((total * fraction).rounded(.down), minSpeakers), total - minSources)
@@ -39,5 +46,78 @@ public enum SetupSplitLayout {
     public static func fraction(forHandleAt y: Double, total: Double) -> Double {
         guard total > 0 else { return defaultSpeakersFraction }
         return min(max(1 - y / total, fractionRange.lowerBound), fractionRange.upperBound)
+    }
+}
+
+/// Where Setup's selection details go (#104). Beside the tables when the content is wide; otherwise below
+/// them — expanded only when there is room for the tables' minimums, else collapsed to a one-line bar
+/// the user can open (keyboard: the bar's button, or Return in a table).
+public enum SetupDetailsPlacement: Equatable, Sendable {
+    case beside(width: Double)
+    case below(height: Double)
+    case collapsed(barHeight: Double)
+
+    public static let wideThreshold = 860.0
+
+    public static func plan(width: Double, height: Double, scale: Double, userExpanded: Bool?) -> SetupDetailsPlacement {
+        if width >= wideThreshold { return .beside(width: 300) }
+        let bar = 32.0 * scale
+        let tables = SetupSplitLayout.minimumSourcesHeight(scale: scale) + SetupSplitLayout.minimumSpeakersHeight(scale: scale) + 9 * scale
+        let details = max(160 * scale, height * 0.3)
+        let fits = height - tables >= details
+        switch userExpanded {
+        case true?: return .below(height: min(details, max(height - bar - SetupSplitLayout.minimumSourcesHeight(scale: scale), bar)))
+        case false?: return .collapsed(barHeight: bar)
+        case nil: return fits ? .below(height: details) : .collapsed(barHeight: bar)
+        }
+    }
+}
+
+/// Which Sources columns fit (#104). Status always shows; Name truncates (middle) first; less essential
+/// columns are hidden — their values stay in the details panel and the row's VoiceOver value.
+public enum SetupSourceColumn: String, CaseIterable, Sendable {
+    case name, epoch, channel, speaker, role, status
+
+    /// Ideal widths at 100% text; minimum Name width is `nameMinimum`.
+    public func width(scale: Double) -> Double {
+        switch self {
+        case .name: 150 * scale
+        case .epoch: 46 * scale
+        case .channel: 34 * scale
+        case .speaker: 84 * scale
+        case .role: 84 * scale
+        case .status: 130 * scale
+        }
+    }
+
+    public static func nameMinimum(scale: Double) -> Double { 80 * scale }
+}
+
+public enum SetupColumnPlan {
+    /// Disclosure indent, row insets and the vertical scroller.
+    static let fixedOverhead = 40.0
+    static let perColumnSpacing = 10.0
+
+    public static let tiers: [[SetupSourceColumn]] = [
+        [.name, .epoch, .channel, .speaker, .role, .status],
+        [.name, .speaker, .role, .status],
+        [.name, .speaker, .status],
+        [.name, .status],
+    ]
+
+    public static func requiredWidth(_ columns: [SetupSourceColumn], scale: Double) -> Double {
+        let others = columns.filter { $0 != .name }.reduce(0) { $0 + $1.width(scale: scale) }
+        return SetupSourceColumn.nameMinimum(scale: scale) + others + fixedOverhead + perColumnSpacing * Double(columns.count)
+    }
+
+    /// The richest column set whose minimum width fits `width`.
+    public static func columns(forWidth width: Double, scale: Double) -> [SetupSourceColumn] {
+        tiers.first { requiredWidth($0, scale: scale) <= width } ?? tiers.last!
+    }
+
+    /// The Name column's width for a given set: whatever the others leave, at least its minimum.
+    public static func nameWidth(_ columns: [SetupSourceColumn], tableWidth: Double, scale: Double) -> Double {
+        let others = columns.filter { $0 != .name }.reduce(0) { $0 + $1.width(scale: scale) }
+        return max(SetupSourceColumn.nameMinimum(scale: scale), tableWidth - others - fixedOverhead - perColumnSpacing * Double(columns.count))
     }
 }

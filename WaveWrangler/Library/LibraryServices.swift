@@ -72,6 +72,9 @@ protocol LibraryLocationControlling: AnyObject {
     var quitWarning: String? { get }
     /// Outcome text for the message bar (moves, combine summaries incl. edits not carried).
     var resultMessage: String? { get }
+    /// #117: cloud-provider conflict versions of the library that WaveWrangler can't use (unreadable, or another
+    /// library). Kept, never applied; the Library window says so until they're gone.
+    var providerConflictNotice: String? { get }
     func dismissResultMessage()
     /// Moves the library to `folder` (`nil` = back into WaveWrangler). Switches only after verification;
     /// on failure the old location stays in use and unchanged; the old copy is never deleted.
@@ -138,6 +141,8 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
     let pendingEditsStatus: String? = nil
     let quitWarning: String? = nil
     let resultMessage: String? = nil
+    /// UI tests set this through `-WWUITestProviderConflicts n`.
+    var providerConflictNotice: String?
 
     func dismissResultMessage() {}
 

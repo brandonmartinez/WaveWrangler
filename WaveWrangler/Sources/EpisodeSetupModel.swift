@@ -60,14 +60,25 @@ final class EpisodeSetupModel {
     @ObservationIgnored var window: () -> NSWindow? = { nil }
 
     var statuses: [SourceID: SourceStatusSnapshot] = [:]
-    var selection: Set<SetupRowID> = []
-    var speakerSelection: Set<SpeakerID> = []
+    var selection: Set<SetupRowID> = [] {
+        didSet { if selection != oldValue { pendingInspectorFocus = false } }
+    }
+    var speakerSelection: Set<SpeakerID> = [] {
+        didSet { if speakerSelection != oldValue { pendingInspectorFocus = false } }
+    }
     var onlyNeedingAttention = false
     enum FocusedTable: Hashable { case sources, speakers }
     /// Which Setup table has keyboard focus (nil = neither).
     var focusedTable: FocusedTable?
     /// Whether the Setup content is currently shown in a window.
     var isOnScreen = false
+    /// Narrow windows: the user's choice to show (true) or hide (false) the details; nil = automatic (#104).
+    var detailsExpanded: Bool?
+    /// Set by the layout: whether the details are on screen, and whether the current layout can collapse
+    /// them (narrow windows only).
+    /// (Read by menu validation only; not observed, so layout publishing never re-renders views.)
+    @ObservationIgnored var detailsShown = true
+    @ObservationIgnored var detailsCanCollapse = false
     /// Share of the tables' height given to Speakers (#89).
     var speakersFraction = SetupSplitLayout.defaultSpeakersFraction
     /// Recorder group rows the user collapsed (all start expanded).
@@ -81,6 +92,23 @@ final class EpisodeSetupModel {
     var inspectorFollowsSpeakers = false
     /// Incremented to ask the inspector to focus its first editable field (Return in the tables).
     var inspectorFocusRequest = 0
+    /// A focus request not yet honoured (the details may still be appearing). Consumed once.
+    @ObservationIgnored private var pendingInspectorFocus = false
+
+    /// Return in a table: move focus to the details' first editable field, opening them if collapsed.
+    func requestInspectorFocus() {
+        // Only when the details show something editable (not for a multi-row selection), so a stale
+        // request can never pull focus out of the table later.
+        pendingInspectorFocus = inspectorSubject != .none
+        if !detailsShown { detailsExpanded = true }
+        inspectorFocusRequest += 1
+    }
+
+    /// True once per request, for whichever details view is on screen to take focus.
+    func consumeInspectorFocus() -> Bool {
+        defer { pendingInspectorFocus = false }
+        return pendingInspectorFocus
+    }
     var isScanning = false
 
     @ObservationIgnored private var observation: Task<Void, Never>?

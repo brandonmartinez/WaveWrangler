@@ -211,6 +211,8 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
     }
 
     private func persist(_ records: [DeviceAccessKey: DeviceAccessRecord]) throws {
+        // Keep the default (full-precision) date encoding: identity baselines compare dates within 1 ms, so a
+        // lossy strategy such as `.iso8601` (whole seconds) would turn every source "changed" (#121).
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let envelope = Envelope(
