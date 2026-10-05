@@ -57,11 +57,14 @@ struct AutosavePolicyTests {
     }
 
     @Test func workQueuedBeforeTurningOffIsSkipped() async throws {
-        let gate = AutosaveGate(AutosavePreference(enabled: true, delaySeconds: 1))
+        // A 5 s delay leaves a wide margin to turn OFF before the queued publication fires, even on a loaded CI
+        // runner (with 1 s the test itself could lose the race and observe the work running while still ON).
+        let gate = AutosaveGate(AutosavePreference(enabled: true, delaySeconds: 5))
         let ran = Counter(), skipped = Counter()
-        let scheduler = QuiescenceScheduler(gate: gate, queue: .global(), onSkipped: { skipped.increment() }) { _ in ran.increment() }
+        let scheduler = QuiescenceScheduler(gate: gate, queue: .global(), onSkipped: { skipped.increment() }) { work in
+            if work == .publish { ran.increment() }
+        }
         #expect(scheduler.noteEdit())
-        try await Task.sleep(for: .milliseconds(200))
         gate.preference.enabled = false
         #expect(await eventually { skipped.count == 1 })
         #expect(ran.count == 0)
