@@ -379,7 +379,7 @@ FREEZE2 = {
   "freezeID": "m1-freeze-2",
   "date": "2026-10-05",
   "recordedBy": "Lead (WW-003 protocol author), authorized by the M1 coordinator after the user's grant E",
-  "baseCommit": "251d1225c0c5c51b6a0c4abc8aeaab8d6f02f1b0",
+  "baseCommit": "251d122dc8db378de92a4c15bc12069410864132",
   "baseCommitNote": "main when this revision was authored. It takes effect at the merge commit of the PR that adds it. It is made BEFORE any execution of M1-DUR-025 (no pre-freeze M1-DUR-025 run exists).",
   "scope": "M1-DUR-025 only: recipe, cells, expected truth, split (10 calibration / 100 holdout by cell), gate and supported-claim limits exactly as written in its registry entry. Every m1-freeze-1 entry is unchanged.",
   "trigger": "User grant E (2026-10-05): multi-device iCloud testing on this Mac and the Mac mini; UI stays on the Mac mini.",
