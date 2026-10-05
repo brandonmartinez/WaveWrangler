@@ -120,7 +120,7 @@ final class ContrastEvidenceUITests: XCTestCase {
         capture("library-messagebar-200")
         let shows = app.descendants(matching: .any)["ww.library.sidebar.shows"]
         let window = app.windows.firstMatch
-        Acceptance.record(self, "C03 library 200%: window \(window.frame), Shows row \(shows.exists ? "\(shows.frame)" : "missing"), new-collection element \(app.descendants(matching: .any)["ww.library.sidebar.newCollection"].elementType.rawValue) button \(app.buttons["ww.library.sidebar.newCollection"].exists)")
+        Acceptance.record(self, "C03 library 200%: window \(window.frame), Shows row \(shows.exists ? "\(shows.frame)" : "missing"), new-collection element \(app.descendants(matching: .any)["ww.library.collections.add"].elementType.rawValue) button \(app.buttons["ww.library.collections.add"].exists)")
     }
 
     /// A11Y-003 with in-app overrides only (OS-level Increase Contrast / Reduce Motion / larger text are

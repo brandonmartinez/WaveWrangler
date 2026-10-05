@@ -131,8 +131,11 @@ final class CoreTasksKeyboardUITests: XCTestCase {
                 if sheet.buttons["Save"].exists { sheet.buttons["Save"].click() } else { app.typeKey(.escape, modifierFlags: []) }
                 Thread.sleep(forTimeInterval: 2)
                 if app.sheets.firstMatch.exists {
-                    Acceptance.record(self, "T16 after Save anyway: \(app.sheets.firstMatch.staticTexts.allElementsBoundByIndex.map { $0.value ?? $0.label })")
-                    app.typeKey(.escape, modifierFlags: [])
+                    let refusal = app.sheets.firstMatch
+                    Acceptance.record(self, "T16 after Save anyway: \(refusal.staticTexts.allElementsBoundByIndex.map { $0.value ?? $0.label }) buttons \(refusal.buttons.allElementsBoundByIndex.map(\.title))")
+                    // An OK-only NSAlert has no Cancel button, so Esc doesn't dismiss it; Return (its default) does.
+                    app.typeKey(.return, modifierFlags: [])
+                    check(Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists }, "refusal alert dismissed with Return")
                 }
             }
             check(diskTitle(document) == "Other Writer", "the other version is not overwritten (even after Save anyway)")
@@ -151,14 +154,14 @@ final class CoreTasksKeyboardUITests: XCTestCase {
                     for _ in 0..<3 where app.sheets.firstMatch.exists {
                         let next = app.sheets.firstMatch
                         Acceptance.record(self, "T16 after close-sheet Save: \(next.staticTexts.allElementsBoundByIndex.map { $0.value ?? $0.label }) buttons \(next.buttons.allElementsBoundByIndex.map(\.title))")
-                        if next.buttons["Save"].exists { next.buttons["Save"].click() } else { app.typeKey(.escape, modifierFlags: []) }
+                        if next.buttons["Save"].exists { next.buttons["Save"].click() } else if next.buttons["OK"].exists { app.typeKey(.return, modifierFlags: []) } else { app.typeKey(.escape, modifierFlags: []) }
                         Thread.sleep(forTimeInterval: 2)
                     }
                     Acceptance.record(self, "T16 after close-sheet Save: window exists \(window.exists), status \(window.exists ? value(status) : "closed"), disk \(diskTitle(document) ?? "nil")")
                     check(window.exists, "the conflicted window isn't closed by a refused save (work kept)")
                 } else {
                     app.typeKey(.escape, modifierFlags: [])
-                    check(window.waitForExistence(timeout: 2), "Esc keeps the window open")
+                    check(Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists } && window.exists, "Esc (Cancel) dismisses the close sheet and keeps the window open")
                 }
             } else {
                 check(false, "Close while conflicted asks how to keep the changes")
@@ -167,7 +170,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             if window.exists {
                 let copy = workDirectory.appending(path: "Conflict Mine.wwshow")
                 window.typeKey("s", modifierFlags: [.command, .shift, .option])
-                let panelShown = app.sheets.buttons["Save"].waitForExistence(timeout: 5) || app.buttons["Save"].waitForExistence(timeout: 2)
+                let panelShown = app.sheets.firstMatch.waitForExistence(timeout: 5)
                 check(panelShown, "Save As… panel shown from the conflicted window (⌥⇧⌘S)")
                 if panelShown {
                     app.typeKey("a", modifierFlags: .command)
