@@ -128,7 +128,9 @@ public enum TransferState: Sendable, Codable, Equatable {
     case cancelled
     case failed(SourceErrorDescriptor)
     /// The provider reported a connectivity/unavailable error, or no progress was reported before the
-    /// stall timeout. The app cannot tell offline from a silent provider, so it says so.
+    /// stall heuristic fired. The app cannot tell offline from a silent provider, so it says so. After a
+    /// stall (`nil` error) the app keeps observing with backoff and moves to `idle` if the item becomes
+    /// local; Retry issues a fresh request.
     case offlineOrUnknown(SourceErrorDescriptor?)
 
     public var isActive: Bool {

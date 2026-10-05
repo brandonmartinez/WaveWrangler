@@ -12,16 +12,42 @@ public struct TransferPolicy: Sendable, Equatable {
 
     /// How often progress is sampled (metadata only).
     public var pollInterval: Duration
+    /// The default 60 s is a heuristic, not an observed provider property: the iCloud trial never saw a
+    /// progress signal at all, so "no change for 60 s" says nothing certain about connectivity.
     public var stallDetection: StallDetection
+    /// After a stall the transfer stays observed (the provider may still be downloading) at a slower,
+    /// doubling interval starting here …
+    public var stalledPollInterval: Duration
+    /// … and capped here.
+    public var maxStalledPollInterval: Duration
 
-    public init(pollInterval: Duration = .milliseconds(500), stallTimeout: Duration = .seconds(60)) {
+    public init(
+        pollInterval: Duration = .milliseconds(500),
+        stallTimeout: Duration = .seconds(60),
+        stalledPollInterval: Duration = .seconds(5),
+        maxStalledPollInterval: Duration = .seconds(30)
+    ) {
         self.pollInterval = pollInterval
         self.stallDetection = .elapsed(stallTimeout)
+        self.stalledPollInterval = stalledPollInterval
+        self.maxStalledPollInterval = max(stalledPollInterval, maxStalledPollInterval)
     }
 
-    public init(pollInterval: Duration, stallAfterUnchangedPolls polls: Int) {
+    public init(
+        pollInterval: Duration,
+        stallAfterUnchangedPolls polls: Int,
+        stalledPollInterval: Duration = .seconds(5),
+        maxStalledPollInterval: Duration = .seconds(30)
+    ) {
         self.pollInterval = pollInterval
         self.stallDetection = .unchangedPolls(max(1, polls))
+        self.stalledPollInterval = stalledPollInterval
+        self.maxStalledPollInterval = max(stalledPollInterval, maxStalledPollInterval)
+    }
+
+    /// Backoff while stalled: double, capped at `maxStalledPollInterval`.
+    public func nextStalledInterval(after current: Duration) -> Duration {
+        min(current * 2, maxStalledPollInterval)
     }
 }
 
@@ -38,6 +64,8 @@ public struct TransferEvent: Sendable, Equatable {
 ///   setting lives here, so the check and the request are atomic inside the actor.
 /// - Exactly one active request per source; a second call while active just reports the current state.
 /// - Cancel stops the app's request/observation; it never evicts, deletes or modifies the original.
+/// - A stall publishes `offlineOrUnknown` but keeps observing with backoff, so a provider that keeps
+///   downloading still flips the source to available; an explicit retry issues a fresh request.
 /// - Switching availability OFF cancels automatic transfers (user-requested ones continue).
 public actor SourceTransferController {
     public let context: SourceAccessContext
@@ -110,10 +138,16 @@ public actor SourceTransferController {
         at url: URL,
         userRequested: Bool = false
     ) -> TransferState {
-        if active[key] != nil {
-            // An explicit request upgrades an in-flight automatic transfer so OFF will not cancel it.
-            if userRequested { active[key]?.userRequested = true }
-            return state(of: key)
+        if let running = active[key] {
+            if userRequested, case .offlineOrUnknown = state(of: key) {
+                // Explicit retry of a stalled transfer: stop the backoff observer and request again.
+                running.task.cancel()
+                active[key] = nil
+            } else {
+                // An explicit request upgrades an in-flight automatic transfer so OFF will not cancel it.
+                if userRequested { active[key]?.userRequested = true }
+                return state(of: key)
+            }
         }
         let setting = setting
 
@@ -197,7 +231,8 @@ public actor SourceTransferController {
         }
     }
 
-    /// Waits for the current request (if any) to finish and returns the final state.
+    /// Waits for the current request (if any) to finish and returns the final state. A stalled transfer
+    /// keeps observing, so this returns only once it completes, fails or is cancelled.
     public func waitUntilSettled(_ key: DeviceAccessKey) async -> TransferState {
         if let running = active[key] {
             await running.task.value
@@ -216,9 +251,11 @@ public actor SourceTransferController {
         var lastChange = clock.now
         var unchangedPolls = 0
         var lastSignature: String?
+        var stalled = false
+        var interval = policy.pollInterval
         while !Task.isCancelled {
             do {
-                try await Task.sleep(for: policy.pollInterval)
+                try await Task.sleep(for: interval)
             } catch {
                 return
             }
@@ -247,12 +284,21 @@ public actor SourceTransferController {
                     next = .inProgress(fractionCompleted: fraction)
                     let signature = "\(String(describing: fraction.value))|\(String(describing: value.ubiquitous.isDownloading.value))|\(String(describing: value.ubiquitous.downloadingStatus.value))"
                     if signature != lastSignature {
+                        // Any reported change (including after a stall) resumes normal observation.
                         lastSignature = signature
                         lastChange = clock.now
                         unchangedPolls = 0
+                        stalled = false
+                        interval = policy.pollInterval
+                    } else if stalled {
+                        interval = policy.nextStalledInterval(after: interval)
+                        continue
                     } else if Self.isStalled(policy.stallDetection, unchangedPolls: &unchangedPolls, since: lastChange, now: clock.now) {
-                        finish(key, generation, .offlineOrUnknown(nil))
-                        return
+                        // Say so honestly, but keep watching: the provider may still finish.
+                        stalled = true
+                        interval = policy.stalledPollInterval
+                        publish(key, .offlineOrUnknown(nil))
+                        continue
                     }
                 }
             }
