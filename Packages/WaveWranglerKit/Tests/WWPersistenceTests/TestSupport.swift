@@ -185,6 +185,12 @@ enum Fault: Sendable, Equatable {
     case staleReadBack
     /// A write in the step after `after` fails with an errno (disk full, permission, offline); no crash.
     case failWrite(after: PublicationBoundary, errno: Int32)
+    /// Like `failWrite`, but only the first matching write fails (a transient failure, then retry).
+    case failOnce(after: PublicationBoundary, errno: Int32)
+    /// The independent read-back (after P5) fails with an errno; no crash.
+    case failReadBack(errno: Int32)
+    /// Every write fails with an errno, regardless of boundary (e.g. edit-checkpoint writes).
+    case failAllWrites(errno: Int32)
 }
 
 /// Shared fault state for `FaultInjectingFileOperations` + `FaultHooks`, plus a write audit log.
@@ -249,6 +255,10 @@ struct FaultInjectingFileOperations: FileOperations {
             faults.state.withLock { $0.fired = true }
             return data.dropLast(7) + Data("STALE!}".utf8)
         }
+        if case let .failReadBack(code) = fault, boundary == .published, !fired {
+            faults.state.withLock { $0.fired = true }
+            throw POSIXError(POSIXErrorCode(rawValue: code)!)
+        }
         return data
     }
 
@@ -268,6 +278,12 @@ struct FaultInjectingFileOperations: FileOperations {
             try base.writeNew(data.prefix(Int(Double(data.count) * fraction)), to: url)
             throw faults.crash(boundary, "partial write \(fraction)")
         case let .failWrite(after, code) where after == boundary:
+            faults.state.withLock { $0.fired = true }
+            throw POSIXError(POSIXErrorCode(rawValue: code)!)
+        case let .failOnce(after, code) where after == boundary && !faults.fired:
+            faults.state.withLock { $0.fired = true }
+            throw POSIXError(POSIXErrorCode(rawValue: code)!)
+        case let .failAllWrites(code):
             faults.state.withLock { $0.fired = true }
             throw POSIXError(POSIXErrorCode(rawValue: code)!)
         default:
@@ -292,6 +308,12 @@ struct FaultInjectingFileOperations: FileOperations {
             }
             throw faults.crash(boundary, "torn publish \(fraction)")
         case let .failWrite(after, code) where after == boundary:
+            faults.state.withLock { $0.fired = true }
+            throw POSIXError(POSIXErrorCode(rawValue: code)!)
+        case let .failOnce(after, code) where after == boundary && !faults.fired:
+            faults.state.withLock { $0.fired = true }
+            throw POSIXError(POSIXErrorCode(rawValue: code)!)
+        case let .failAllWrites(code):
             faults.state.withLock { $0.fired = true }
             throw POSIXError(POSIXErrorCode(rawValue: code)!)
         default:

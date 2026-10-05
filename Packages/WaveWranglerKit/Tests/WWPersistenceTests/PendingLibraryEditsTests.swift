@@ -33,11 +33,22 @@ struct PendingLibraryEditsTests {
         { var library = $0; library.collections.append(LibraryCollection(name: name, showIDs: library.entries.prefix(2).map(\.showID))); return library }
     }
 
+    @Test func loadOutcomeReadOnlyMatchesQueueing() {
+        #expect(!LibraryLoadOutcome.unavailableShowingPrior(reason: "offline", revision: 3).isReadOnly)
+        #expect(!LibraryLoadOutcome.ready(revision: 1).isReadOnly)
+        #expect(LibraryLoadOutcome.refusedNewerFormat(found: 9, supported: 2).isReadOnly)
+        #expect(LibraryLoadOutcome.needsMigration(fromSchema: 0).isReadOnly)
+        #expect(LibraryLoadOutcome.damaged(reason: "x", recoveryRevisions: []).isReadOnly)
+        #expect(LibraryLoadOutcome.unavailable(reason: "x").isReadOnly)
+    }
+
     @Test func queuedWhileUnreachableThenAppliedWhenBack() async throws {
         let offline = try await OfflineRig()
         try offline.goOffline()
         let store = offline.rig.store()
-        guard case .unavailableShowingPrior = await store.load() else { Issue.record("expected L2"); return }
+        let outcome = await store.load()
+        #expect(outcome.isReadOnly == false)
+        guard case .unavailableShowingPrior = outcome else { Issue.record("expected L2"); return }
         guard case .unreachable = await store.levelState else { Issue.record("expected unreachable"); return }
         #expect(try await store.update(Self.addCollection("Queued 1")) == .queued(pendingEdits: 1))
         #expect(try await store.update(Self.addCollection("Queued 2")) == .queued(pendingEdits: 2))

@@ -14,6 +14,8 @@ public enum PersistenceError: Error, Sendable, Equatable {
     case unrecognizedContent
     case invalidPayload([ValidationIssue])
     case encodingFailed(String)
+    /// A valid document, but not the one expected at this location (different logical identity).
+    case identityMismatch(expected: String, found: String)
 }
 
 extension PersistenceError: LocalizedError {
@@ -35,6 +37,8 @@ extension PersistenceError: LocalizedError {
             "The document contains information this version of WaveWrangler does not understand."
         case .encodingFailed:
             "The document could not be prepared for saving."
+        case .identityMismatch:
+            "A different document is at this document's location."
         }
     }
 
@@ -44,7 +48,7 @@ extension PersistenceError: LocalizedError {
             "Open it with the newer version of WaveWrangler. This version will not edit or save it, so no newer work is lost."
         case .unrecognizedContent:
             "It was not opened so that information is not lost. Try a newer version of WaveWrangler."
-        case .malformed, .formatMismatch, .invalidRevision, .checksumMismatch, .invalidPayload:
+        case .malformed, .formatMismatch, .invalidRevision, .checksumMismatch, .invalidPayload, .identityMismatch:
             "The file was left unchanged. Try a previous version or a backup copy of the document."
         case .unsupportedOlderSchema:
             "The file was left unchanged."
@@ -61,6 +65,7 @@ extension PersistenceError: LocalizedError {
         case .checksumMismatch: "Checksum mismatch."
         case let .invalidPayload(issues): issues.map(\.description).joined(separator: "\n")
         case let .encodingFailed(detail): detail
+        case let .identityMismatch(expected, found): "Expected \(expected), found \(found)."
         case .unknownNewerSchema, .unsupportedOlderSchema, .unrecognizedContent: nil
         }
     }

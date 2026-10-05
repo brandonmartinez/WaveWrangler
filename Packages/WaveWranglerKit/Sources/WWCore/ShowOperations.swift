@@ -21,6 +21,12 @@ public enum DomainError: Error, Sendable, Equatable {
     case backupNotFound(ChannelReference)
     /// The user confirmed the source as a recording-level `backup`; change its role before making it a primary.
     case sourceIsDesignatedBackup(SourceID)
+    /// Epoch numbers are whole numbers starting at 1.
+    case invalidEpochNumber(Int)
+    /// Epochs belong to a recorder group; an ungrouped source has no epoch.
+    case sourceNotInRecorderGroup(SourceID)
+    /// The channel is not assigned to that speaker in this episode.
+    case channelNotAssignedToSpeaker(ChannelReference, SpeakerID)
 }
 
 /// Pure, validated operations. Each returns a new value or throws without partial mutation.
