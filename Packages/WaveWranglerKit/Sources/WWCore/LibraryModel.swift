@@ -6,6 +6,9 @@ import Foundation
 /// document that may live in a user-chosen cloud folder. Device-local access records and the rebuildable
 /// derived index are separate and never authoritative for anything stored here.
 public struct LibraryModel: Sendable, Equatable, Codable {
+    /// Logical identity of this library document. Used to confirm that a re-granted or relocated folder holds
+    /// the same library; paths and bookmarks are only location hints.
+    public var libraryID: LibraryID
     public var schemaVersion: Int
     public var entries: [LibraryShowEntry]
     public var collections: [LibraryCollection]
@@ -13,11 +16,13 @@ public struct LibraryModel: Sendable, Equatable, Codable {
     public var recentShowIDs: [ShowID]
 
     public init(
+        libraryID: LibraryID = LibraryID(),
         schemaVersion: Int = SchemaVersion.library,
         entries: [LibraryShowEntry] = [],
         collections: [LibraryCollection] = [],
         recentShowIDs: [ShowID] = []
     ) {
+        self.libraryID = libraryID
         self.schemaVersion = schemaVersion
         self.entries = entries
         self.collections = collections

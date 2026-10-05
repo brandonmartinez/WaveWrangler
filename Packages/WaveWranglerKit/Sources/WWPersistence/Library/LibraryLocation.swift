@@ -1,4 +1,5 @@
 import Foundation
+import WWCore
 
 /// Persisted choice of where the canonical library document lives.
 public struct LibraryLocationSetting: Sendable, Equatable, Codable {
@@ -15,10 +16,14 @@ public struct LibraryLocationSetting: Sendable, Equatable, Codable {
 
     public var place: Place
     public var fileName: String
+    /// Identity of the library this location was last verified to hold (`nil` until first verified). Used to
+    /// confirm Grant Access and to pick this library's own recovery records.
+    public var libraryID: LibraryID?
 
-    public init(place: Place = .appContainer, fileName: String = LibraryLocationSetting.defaultFileName) {
+    public init(place: Place = .appContainer, fileName: String = LibraryLocationSetting.defaultFileName, libraryID: LibraryID? = nil) {
         self.place = place
         self.fileName = fileName
+        self.libraryID = libraryID
     }
 }
 

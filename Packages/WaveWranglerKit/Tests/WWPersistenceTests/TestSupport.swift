@@ -395,3 +395,13 @@ func eventually(timeout: Double = 30, _ condition: @Sendable () async -> Bool) a
 enum TimingGate {
     static let enabled = ProcessInfo.processInfo.environment["WW_TIMING_TESTS"] == "1"
 }
+
+extension LibraryModel {
+    /// The library's content without its identity, for comparing against fixtures built with their own ID
+    /// (the store never lets an edit change the identity).
+    var content: LibraryModel {
+        var copy = self
+        copy.libraryID = LibraryID(UUID(uuidString: "00000000-0000-4000-8000-000000000000")!)
+        return copy
+    }
+}

@@ -38,6 +38,7 @@ public enum RecordingEpochTag {}
 public enum SourceTag {}
 public enum SpeakerTag {}
 public enum CollectionTag {}
+public enum LibraryTag {}
 public enum EditTag {}
 
 public typealias ShowID = LogicalID<ShowTag>
@@ -47,4 +48,6 @@ public typealias RecordingEpochID = LogicalID<RecordingEpochTag>
 public typealias SourceID = LogicalID<SourceTag>
 public typealias SpeakerID = LogicalID<SpeakerTag>
 public typealias CollectionID = LogicalID<CollectionTag>
+/// Logical identity of one canonical library document (stable across moves, renames and devices).
+public typealias LibraryID = LogicalID<LibraryTag>
 public typealias EditID = LogicalID<EditTag>

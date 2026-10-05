@@ -6,6 +6,10 @@ import Foundation
 ///
 /// - `-WWUITestAutosave ON|OFF` sets the policy at launch.
 /// - Distributed notifications `com.brandonmartinez.wavewrangler.uitest.autosave.on` / `.off` toggle it later.
+///
+/// Debug builds only: in Release the whole type is compiled out, so `-WWUITestHooks YES` and the
+/// distributed notifications have no effect (`PersistenceEnvironment.isUITestRun` is always `false`).
+#if DEBUG
 @MainActor
 enum UITestHooks {
     nonisolated static let enabledKey = "WWUITestHooks"
@@ -28,3 +32,4 @@ enum UITestHooks {
         }
     }
 }
+#endif
