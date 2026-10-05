@@ -252,6 +252,11 @@ F.append(syn("M1-SRC-ON-001","Default-ON source availability (synthetic provider
 F.append(syn("M1-SRC-ON-002","Toggle source availability mid-transfer","source/toggle","source-availability",["WW-006","WW-012"],
   "Switch ON->OFF and OFF->ON while transfers are pending/in progress (double).",
   "ON->OFF stops issuing new requests and cancels or reports in-flight ones honestly; OFF->ON resumes only for placeholders.",10,100,"interleavings","Test double only.",extra={"trialLabel": "default-ON synthetic double"}))
+F.append(syn("M1-SRC-ON-002-REVIEW","Setting races and stale transfer states (added after PR #54 review)","source/toggle","source-availability",["WW-006","WW-012"],
+  "Four seeded interleavings (double): OFF toggled while a refresh's off-main evaluation is held by a deterministic gate; explicit Make Available during an automatic transfer, then OFF; ON download, then OFF, then eviction; a stale notRequested(.awaitingAccess) state followed by fresh evidence.",
+  "OFF during a held refresh issues 0 requests; an explicit request survives OFF; after OFF + eviction the state is a fresh notRequested(.availabilityOff) with the Make Available remedy; stale states never mask fresh evidence. Zero leaked scopes, source writes and substitutions.",10,100,"interleavings",
+  "Test double only. Added to the matrix during PR #54 review (2026-10-05) and to the registry at the 2026-10-05 freeze; it does not count toward the WW-006 >=1,000 reference total.",
+  extra={"trialLabel": "default-ON synthetic double"}))
 F.append(syn("M1-SRC-ON-PROV-001","Real provider source availability: iCloud Drive trial folder","source/default-ON/icloud-trial","source-availability",["WW-006","WW-012"],
   "Generated synthetic source files (random bytes, never decoded) inside 'WaveWrangler-M1-Synthetic-Trial'; brctl evict to create placeholders; then OFF (metadata-only) and ON runs: observe residency/progress/offline/cancel/retry; brctl download where needed. Delete the folder afterwards.",
   "OFF: zero app content/download requests while placeholders stay placeholders as observed. ON: observed residency/progress (or 'Progress unknown')/cancel/retry; zero source writes; provider work observed separately.",
@@ -305,7 +310,53 @@ LATER = [
   {"milestone": "M4", "strata": "neutral stems/record/restoration and listening", "issues": ["WW-036 (#34)","WW-038 (#33)","WW-040 (#37)"]},
 ]
 
+FROZEN_CLASSES = ("authorized-synthetic", "authorized-user-grant")
+FREEZE_BASE = "7087aa33b07b805defa024bdc3af1aa8e975b7ed"
+FREEZE = {
+  "freezeID": "m1-freeze-1",
+  "date": "2026-10-05",
+  "recordedBy": "Lead (WW-003 protocol author), at the M1 coordinator's direction",
+  "baseCommit": FREEZE_BASE,
+  "baseCommitNote": "main at the time this freeze was authored (merge of PR #60). The freeze takes effect at the merge commit of the PR that adds this record.",
+  "scope": "Every entry whose permission class is authorized-synthetic or authorized-user-grant: ID, generator recipe, expected truth, split (calibration/holdout counts and unit), gate values and supported-claim limits exactly as written in this registry. Not-authorized entries are frozen only after exact consent is relayed. M1-USER-001 is a manual, non-statistical validation and is not frozen.",
+  "gateChanges": "None. Gate values, truth definitions and per-entry counts are unchanged from the protocol merged in PR #51 (m1-fixtures-v2-draft). The only registry change is the addition of M1-SRC-ON-002-REVIEW, which already ran on main.",
+  "deviation": "RETROACTIVE FREEZE. The protocol was defined at the PR #51 merge but was not frozen before execution. Runs reported in PRs #54, #56, #57, #58 and #60 were made from the seeded registry derivation without a dated freeze record, so they are labelled PRE-FREEZE and are retained unchanged, never relabelled as holdout.",
+  "preFreezeExecutions": [
+    {"pr": "https://github.com/brandonmartinez/WaveWrangler/pull/54", "families": "M1-REF-001..017, M1-SRC-OFF-001, M1-SRC-ON-001/002, M1-SRC-ON-002-REVIEW (lifecycle matrix); M1-SRC-ON-PROV-001 (iCloud trial, grant C)"},
+    {"pr": "https://github.com/brandonmartinez/WaveWrangler/pull/58", "families": "lifecycle matrix re-runs incl. M1-REF-015 stall variants"},
+    {"pr": "https://github.com/brandonmartinez/WaveWrangler/pull/56", "families": "M1-DUR-* (fault-injection harness, process kills, two-process conflicts, timings), M1-DUR-024 (iCloud trial, grant C), M1-DUR-026 native autosave XCUITests (grant A)"},
+    {"pr": "https://github.com/brandonmartinez/WaveWrangler/pull/57", "families": "M1-SCALE-001 model-level timings; M1-A11Y-001 partial XCUITest keyboard flows and audits (grant A)"},
+    {"pr": "https://github.com/brandonmartinez/WaveWrangler/pull/60", "families": "library regrant/schema 2 tests within M1-DUR-019/022/023/029 strata"},
+  ],
+  "postFreezeRule": "A run counts as post-freeze holdout only when it executes on a commit that contains this freeze record's merge commit, and is reported with commit SHA, host, every case (including failures and exclusions) and actual counts. Harness counts may exceed the frozen holdout minimums; they never fall below them. The frozen definition is the registry recipe, expected truth, split and gate; harness code that implements that definition at the frozen counts (for example new loops or parameterized tests) does not change it, and each post-freeze run reports the git tree IDs of the test trees it ran. A change to a frozen recipe, truth, count or gate requires a new dated freeze revision with fresh holdout; the earlier run is retained. Pre-freeze runs serve as the calibration record; post-freeze runs report holdout only (any extra calibration is reported separately and never tunes gates or truth).",
+  "generatorSourceTreesAtBase": {
+    "note": "git tree object IDs at baseCommit (verify with: git rev-parse <baseCommit>:<path>): the pre-freeze harness. Post-freeze runs report the tree IDs they actually ran.",
+    "Packages/WaveWranglerKit/Tests/WWSourcesTests": "b8698a4f4889dd83c9c4e20a7852a18093765e29",
+    "Packages/WaveWranglerKit/Tests/WWPersistenceTests": "11be08b1ed2bed02eff235375c5693255739e284",
+    "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "fd55f678056943dd946b7f9440c0a6653c9cd6f5",
+    "Packages/WaveWranglerKit/Tests/WWOrganizerTests": "ba48e1362e460df541df75459ca0b44b224a9997",
+    "Packages/WaveWranglerKit/Tests/WWCoreTests": "20280f521d55436e41b5f7906ad280c042ff03f3",
+    "WaveWranglerTests": "7e1d35b09de7b68ec61289a4c75ba7e50837c301",
+    "WaveWranglerUITests": "d24d20620b51b9e9b112c318c827f4c61107d011",
+  },
+  "familyGenerators": {
+    "durability": ["Packages/WaveWranglerKit/Tests/WWPersistenceTests", "Packages/WaveWranglerKit/Sources/WWPersistenceProbe", "WaveWranglerUITests (M1-DUR-026)"],
+    "reference": ["Packages/WaveWranglerKit/Tests/WWSourcesTests", "WaveWranglerUITests (M1-REF-020)"],
+    "organization": ["Packages/WaveWranglerKit/Tests/WWSourcesTests", "Packages/WaveWranglerKit/Tests/WWCoreTests"],
+    "source-availability": ["Packages/WaveWranglerKit/Tests/WWSourcesTests"],
+    "scale": ["Packages/WaveWranglerKit/Tests/WWOrganizerTests", "Packages/WaveWranglerKit/Tests/WWPersistenceTests"],
+    "accessibility": ["WaveWranglerUITests", "Packages/WaveWranglerKit/Tests/WWOrganizerTests"],
+  },
+  "host": "macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, 18-core Apple silicon, 128 GiB -- claimed internal host, not the macOS 26/16 GB reference",
+}
+FROZEN_STATUS = "frozen m1-freeze-1 (2026-10-05); post-freeze holdout not yet reported in this registry"
+
 def build():
+    for f in F:
+        if f["permission"]["class"] in FROZEN_CLASSES and f["evidenceStatus"] == "not-yet-executed":
+            f["evidenceStatus"] = FROZEN_STATUS
+        elif f["id"] == "M1-USER-001":
+            f["evidenceStatus"] = "manual; not frozen (non-statistical); not yet reported in this registry"
     ids = [f["id"] for f in F]
     assert len(ids) == len(set(ids)), "duplicate ids"
     for f in F:
@@ -324,7 +375,9 @@ def build():
       "ww006LifecycleHoldout": sum(f["split"]["holdout"] for f in F if f.get("countsToward")),
       "showPublicationBoundaries": len(P), "libraryPublicationBoundaries": len(L),
       "perBoundaryHoldoutMinimum": 100,
+      "frozenEntries": sum(1 for f in F if f["evidenceStatus"] == FROZEN_STATUS),
     }
+    assert all(f["evidenceStatus"] == FROZEN_STATUS for f in F if f["permission"]["class"] in FROZEN_CLASSES), "unfrozen authorized entry"
     assert counts["ww006LifecycleHoldout"] >= 1000, counts
     for f in F:
         if "perBoundary" in f:
@@ -332,14 +385,15 @@ def build():
     d6 = next(f for f in F if f["id"] == "M1-DUR-006")
     assert d6["split"]["holdout"] == 100 * sum(len(b["paths"]) for b in P), "DUR-006 cells"
     return {
-     "registryVersion": "m1-fixtures-v2-draft",
-     "date": "2026-10-04",
+     "registryVersion": "m1-fixtures-v3-frozen",
+     "date": "2026-10-05",
      "generatedBy": "docs/m1/fixtures/generate-registry.py (do not hand-edit; regenerate)",
      "owner": "Lead (protocol); WW-003 informational owner Pipeline",
      "issue": "https://github.com/brandonmartinez/WaveWrangler/issues/5",
      "protocol": "docs/m1/ww-003-fixture-protocol.md",
-     "status": "PROTOCOL-DEFINED / NOT FROZEN / NOT EXECUTED",
+     "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT PENDING",
      "freezeRule": "Each family is frozen (generator source hash, recipe, truth, counts, gate) in a dated freeze record before its first holdout case runs. Counts may increase before freeze; never decrease below a frozen gate minimum without explicit Lead/Brandon approval.",
+     "freeze": FREEZE,
      "seedDerivation": SEED,
      "claimedHost": "macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), 18-core Apple silicon, 128 GiB -- not the macOS 26/16 GB reference",
      "userGrants20261004": GRANT,

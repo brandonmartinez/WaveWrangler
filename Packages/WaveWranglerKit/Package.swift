@@ -26,7 +26,7 @@ let package = Package(
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
         .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore", "WWPersistenceProbe"]),
         .testTarget(name: "WWSourcesTests", dependencies: ["WWSources", "WWCore"]),
-        .testTarget(name: "WWOrganizerTests", dependencies: ["WWOrganizer", "WWCore"]),
+        .testTarget(name: "WWOrganizerTests", dependencies: ["WWOrganizer", "WWCore", "WWPersistence"]),
     ],
     swiftLanguageModes: [.v6]
 )
