@@ -99,8 +99,12 @@ public struct LibraryMergeSummary: Sendable, Equatable {
     public var collectionsAdded = 0
     public var showsAdded = 0
     public var recentItemsAdded = 0
+    /// Same-entry changes from the combined-in library that Combine can't carry (for example a show renamed
+    /// differently on each Mac). They are listed for the user and stay in the backup copy (#117).
+    public var entryChangesNotCarried: [String] = []
 
     mutating func add(_ other: LibraryMergeSummary) {
+        entryChangesNotCarried += other.entryChangesNotCarried
         collectionsKeptAsCopies += other.collectionsKeptAsCopies
         collectionsAdded += other.collectionsAdded
         showsAdded += other.showsAdded
@@ -109,7 +113,11 @@ public struct LibraryMergeSummary: Sendable, Equatable {
     }
 
     public var message: String {
-        "Combined libraries: \(collectionsKeptAsCopies) collections kept as separate copies, \(showsAdded) shows and \(recentItemsAdded) recent items added."
+        let combined = "Combined libraries: \(collectionsKeptAsCopies) collections kept as separate copies, \(showsAdded) shows and \(recentItemsAdded) recent items added."
+        guard !entryChangesNotCarried.isEmpty else { return combined }
+        let count = entryChangesNotCarried.count
+        return combined + " \(count) change\(count == 1 ? "" : "s") from the other copy couldn't be combined and \(count == 1 ? "was" : "were") kept in a backup copy: "
+            + entryChangesNotCarried.joined(separator: "; ") + "."
     }
 }
 
@@ -138,7 +146,23 @@ public enum LibraryMerge {
                 if let mine = entry.unavailable?.recordedAt, let theirs = kept.unavailable?.recordedAt, mine > theirs {
                     result.entries[index].unavailable = entry.unavailable
                 }
-                if kept.alias == nil { result.entries[index].alias = entry.alias }
+                if kept.alias == nil {
+                    result.entries[index].alias = entry.alias
+                } else if let alias = entry.alias, alias != kept.alias {
+                    // Renamed differently on each side: the kept name stays; the other is reported, never dropped silently.
+                    summary.entryChangesNotCarried.append("“\(kept.alias ?? kept.lastKnownTitle)” is named “\(alias)” in the other copy")
+                }
+                // A newer verified show publication recorded in the other copy is carried (with its title).
+                if let theirs = entry.lastKnownPublication, theirs != kept.lastKnownPublication {
+                    if let mine = kept.lastKnownPublication, mine.revision >= theirs.revision {
+                        if mine.revision == theirs.revision {
+                            summary.entryChangesNotCarried.append("“\(kept.alias ?? kept.lastKnownTitle)” has a different save of revision \(theirs.revision) recorded in the other copy")
+                        }
+                    } else {
+                        result.entries[index].lastKnownPublication = theirs
+                        result.entries[index].lastKnownTitle = entry.lastKnownTitle
+                    }
+                }
             } else {
                 result.entries.append(entry)
                 summary.showsAdded += 1
@@ -162,6 +186,71 @@ public enum LibraryMerge {
             summary.recentItemsAdded += 1
         }
         return (result, summary)
+    }
+
+    /// Whether a provider conflict version may be resolved without asking (after a backup) (#117): only when it
+    /// is identical to the current library, or when every change it made since its fork base — additions,
+    /// renames, recorded saves, **removals** and **reorders** of entries, collections, members and recents — is
+    /// already in the current library. `forkBases` are this Mac's retained library checkpoints the version can
+    /// have been made from; with none retained, inclusion can't be shown, so it is not included (L4).
+    public static func isIncluded(_ version: LibraryModel, forkBases: [LibraryModel], in current: LibraryModel) -> Bool {
+        if version == current { return true }
+        guard !forkBases.isEmpty else { return false }
+        return forkBases.allSatisfy { providerChangesMissing(base: $0, version: version, in: current).isEmpty }
+    }
+
+    /// User edits (`QueuedLibraryEdits.missingChanges`) plus the recorded observations a version may carry: a
+    /// newer recorded show save, or an unavailable note, that `result` doesn't have.
+    static func providerChangesMissing(base: LibraryModel, version: LibraryModel, in result: LibraryModel) -> [String] {
+        var missing = QueuedLibraryEdits.missingChanges(base: base, mine: version, in: result)
+        let baseEntries = Dictionary(base.entries.map { ($0.showID, $0) }, uniquingKeysWith: { first, _ in first })
+        let resultEntries = Dictionary(result.entries.map { ($0.showID, $0) }, uniquingKeysWith: { first, _ in first })
+        for entry in version.entries {
+            guard let kept = resultEntries[entry.showID] else { continue }
+            let original = baseEntries[entry.showID]
+            if let theirs = entry.lastKnownPublication, theirs != original?.lastKnownPublication, theirs != kept.lastKnownPublication,
+               (kept.lastKnownPublication?.revision ?? Int.min) <= theirs.revision {
+                missing.append("the recorded save of “\(entry.lastKnownTitle)” (revision \(theirs.revision))")
+            }
+            if let note = entry.unavailable, note != original?.unavailable, note != kept.unavailable,
+               (kept.unavailable?.recordedAt ?? .distantPast) < note.recordedAt {
+                missing.append("the unavailable note for “\(entry.lastKnownTitle)”")
+            }
+        }
+        return missing
+    }
+
+    /// What a provider conflict version changed that `combined` doesn't have, in words for the summary. With a
+    /// fork base, every change since it; without one, what the other copy lacks or orders differently.
+    public static func uncarriedProviderChanges(_ version: LibraryModel, forkBase: LibraryModel?, in combined: LibraryModel) -> [String] {
+        if let forkBase {
+            let combinedEntries = Dictionary(combined.entries.map { ($0.showID, $0) }, uniquingKeysWith: { first, _ in first })
+            let baseEntries = Dictionary(forkBase.entries.map { ($0.showID, $0) }, uniquingKeysWith: { first, _ in first })
+            // Renames are named in full ("“Kept” is named “Theirs” in the other copy") rather than generically.
+            let renames = version.entries.compactMap { entry -> String? in
+                guard let alias = entry.alias, alias != baseEntries[entry.showID]?.alias,
+                      let kept = combinedEntries[entry.showID], kept.alias != alias else { return nil }
+                return "“\(kept.alias ?? kept.lastKnownTitle)” is named “\(alias)” in the other copy"
+            }
+            let others = providerChangesMissing(base: forkBase, version: version, in: combined)
+                .filter { !$0.hasPrefix("the name of “") }
+                .map { "the other copy's \($0)" }
+            return renames + others
+        }
+        var differences: [String] = []
+        let versionEntries = Set(version.entries.map(\.showID))
+        for entry in combined.entries where !versionEntries.contains(entry.showID) {
+            differences.append("“\(entry.alias ?? entry.lastKnownTitle)” isn't in the other copy and was kept here")
+        }
+        for collection in combined.collections where !version.collections.contains(where: { $0.id == collection.id || $0.name == collection.name }) {
+            differences.append("collection “\(collection.name)” isn't in the other copy and was kept here")
+        }
+        let shared = Set(version.collections.map(\.id)).intersection(combined.collections.map(\.id))
+        if QueuedLibraryEdits.relativeOrder(version.collections.map(\.id), of: shared) != QueuedLibraryEdits.relativeOrder(combined.collections.map(\.id), of: shared) {
+            differences.append("the other copy orders collections differently")
+        }
+        if version.recentShowIDs.count < combined.recentShowIDs.count { differences.append("the other copy has fewer recent items") }
+        return differences
     }
 
     static func uniqueName(for name: String, existing: Set<String>) -> String {
@@ -311,6 +400,14 @@ public enum QueuedLibraryEdits {
         }
         for (id, original) in baseCollections where !side.collections.contains(where: { $0.id == id }) && result.collections.contains(where: { $0.id == id }) {
             missing.append("removal of collection “\(original.name)”")
+        }
+        // The order of the collections themselves (sidebar order): only if this side moved collections that are
+        // still present in the result and the result doesn't have that order.
+        let sharedCollections = Set(base.collections.map(\.id)).intersection(side.collections.map(\.id)).intersection(result.collections.map(\.id))
+        let sideOrder = relativeOrder(side.collections.map(\.id), of: sharedCollections)
+        if relativeOrder(base.collections.map(\.id), of: sharedCollections) != sideOrder,
+           relativeOrder(result.collections.map(\.id), of: sharedCollections) != sideOrder {
+            missing.append("the order of collections")
         }
         let addedRecents = side.recentShowIDs.filter { !base.recentShowIDs.contains($0) }
         let removedRecents = base.recentShowIDs.filter { !side.recentShowIDs.contains($0) }

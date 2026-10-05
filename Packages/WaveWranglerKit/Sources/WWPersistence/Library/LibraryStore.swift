@@ -106,9 +106,14 @@ public actor LibraryStore {
     /// the current library doesn't contain: L4 until combined or set aside (#117).
     public private(set) var providerConflicts: [ProviderConflictVersion] = []
     private var providerConflictPayloads: [String: LibraryModel] = [:]
-    /// Provider conflict versions that can't be read or decoded, or hold a different library: reported, kept
-    /// unresolved and never applied.
+    /// The retained checkpoint each provider version forked from (when this Mac kept one).
+    private var providerConflictBases: [String: LibraryModel] = [:]
+    /// Provider conflict versions that can't be read or decoded, hold a different library, or couldn't be backed
+    /// up: reported (the Library window's notice), kept unresolved and never applied.
     public private(set) var unusableProviderConflicts: [ProviderConflictVersion] = []
+    /// Provider conflict versions this store backed up and marked resolved (cumulative): their contents were
+    /// already in the library, or were combined into it. Each one's backup is in the recovery store.
+    public private(set) var resolvedProviderConflicts: [ProviderConflictVersion] = []
     /// Queued edits (L2/L3), mirrored from the device-local journal.
     public private(set) var pendingEdits: PendingLibraryEdits?
     /// True when the journal exists but cannot be read; it is reported and never overwritten.
@@ -163,7 +168,8 @@ public actor LibraryStore {
     private func loadUnlocked() async -> LibraryLoadOutcome {
         lastLoad = await performLoad()
         if pendingEdits != nil, lastLoad == .created || { if case .ready = lastLoad { true } else { false } }() {
-            lastPendingOutcome = await applyPendingEdits()
+            // Queued edits are never published over a concurrent copy the user hasn't seen (#117).
+            lastPendingOutcome = hasConflict ? holdPendingEditsForDecision() : await applyPendingEdits()
         }
         return lastLoad!
     }
@@ -178,7 +184,7 @@ public actor LibraryStore {
         let outcome: PendingEditsOutcome
         switch lastLoad! {
         case .ready, .created:
-            outcome = await applyPendingEdits()
+            outcome = hasConflict ? holdPendingEditsForDecision() : await applyPendingEdits()
         case let .unavailable(reason), let .unavailableShowingPrior(reason, _):
             outcome = pendingJournalDamaged ? .journalDamaged : .stillWaiting(reason: reason)
         case let .refusedNewerFormat(found, supported):
@@ -219,6 +225,7 @@ public actor LibraryStore {
         hasConflict = false
         providerConflicts = []
         providerConflictPayloads = [:]
+        providerConflictBases = [:]
         unusableProviderConflicts = []
         displayedBase = nil
         displayedBaseBytes = nil
@@ -356,11 +363,21 @@ public actor LibraryStore {
     }
 
     /// Applies the journal over the library now loaded from a reachable location.
+    /// L4 with queued edits: the journal is kept and the queued library is what Combine combines (as when a
+    /// replay can't carry every queued change).
+    private func holdPendingEditsForDecision() -> PendingEditsOutcome {
+        if let pendingEdits, let queued = try? publisher.coder.decode(pendingEdits.snapshot).payload { library = queued }
+        return .needsDecision(["The library was changed on another Mac at the same time."])
+    }
+
     private func applyPendingEdits() async -> PendingEditsOutcome {
         guard let pending = pendingEdits else { return pendingJournalDamaged ? .journalDamaged : .nothingPending }
         guard let session, let onDisk = library, let diskBase = await session.base else {
             return .stillWaiting(reason: "The library is not loaded.")
         }
+        // A concurrent copy may have arrived since the load: re-check right before publishing (#117).
+        detectProviderConflicts(at: await session.url, current: onDisk)
+        guard !hasConflict else { return holdPendingEditsForDecision() }
         guard let queued = try? publisher.coder.decode(pending.snapshot).payload else { return .journalDamaged }
         var result: LibraryModel
         if let base = pending.base, base.byteDigest == diskBase.byteDigest {
@@ -431,11 +448,13 @@ public actor LibraryStore {
                 unusable.append(version)
                 continue
             }
-            if LibraryMerge.combine(thisMac: decoded.payload, into: current) == current {
+            let bases = forkBases(forRevision: decoded.revision)
+            if LibraryMerge.isIncluded(decoded.payload, forkBases: bases, in: current) {
                 included.append(version)
             } else {
                 usable.append(version)
                 payloads[version.id] = decoded.payload
+                providerConflictBases[version.id] = bases.first
             }
         }
         providerConflicts = usable
@@ -443,6 +462,11 @@ public actor LibraryStore {
         unusableProviderConflicts = unusable
         if !included.isEmpty { resolveProviderVersions(included, at: url) }
         if !usable.isEmpty { hasConflict = true }
+    }
+    /// This Mac's retained checkpoints of this library one revision before `revision`: where a concurrent copy of
+    /// that revision can have forked from.
+    private func forkBases(forRevision revision: Int) -> [LibraryModel] {
+        libraryCandidates(url: nil).filter { $0.document.revision == revision - 1 }.map(\.document.payload)
     }
 
     /// Two IDs are the same library unless both are real (schema 2+) and differ.
@@ -452,16 +476,25 @@ public actor LibraryStore {
     }
 
     /// Backs each version up in the device-local recovery store, then marks only the backed-up ones resolved.
-    /// A version that can't be backed up stays unresolved (and in L4 if it was a conflict).
+    /// Every version ends up somewhere the user can see: resolved (`resolvedProviderConflicts`, backup kept) or,
+    /// if it couldn't be backed up or marked resolved, unresolved in `unusableProviderConflicts` (the notice).
     private func resolveProviderVersions(_ versions: [ProviderConflictVersion], at url: URL) {
         var backedUp: Set<String> = []
         for version in versions {
             guard let bytes = version.bytes, (try? recovery.preserveConflictCandidate(bytes, for: .library)) != nil else { continue }
             backedUp.insert(version.id)
         }
-        guard !backedUp.isEmpty, (try? providerVersions.markResolved(backedUp, of: url)) != nil else { return }
-        providerConflicts.removeAll { backedUp.contains($0.id) }
-        for id in backedUp { providerConflictPayloads[id] = nil }
+        let resolved = !backedUp.isEmpty && (try? providerVersions.markResolved(backedUp, of: url)) != nil ? backedUp : []
+        for version in versions {
+            providerConflicts.removeAll { $0.id == version.id }
+            providerConflictPayloads[version.id] = nil
+            providerConflictBases[version.id] = nil
+            if resolved.contains(version.id) {
+                resolvedProviderConflicts.append(version)
+            } else if !unusableProviderConflicts.contains(where: { $0.id == version.id }) {
+                unusableProviderConflicts.append(version)
+            }
+        }
     }
 
     // MARK: - Library-level state and L4 resolution
@@ -501,9 +534,17 @@ public actor LibraryStore {
         // Provider conflict versions (#117): every other Mac's concurrent copy is combined the same way.
         let combinedVersions = providerConflicts.filter { providerConflictPayloads[$0.id] != nil }
         for version in combinedVersions {
-            let (next, part) = LibraryMerge.combineWithSummary(thisMac: providerConflictPayloads[version.id]!, into: combined)
+            var (next, part) = LibraryMerge.combineWithSummary(thisMac: providerConflictPayloads[version.id]!, into: combined)
             combined = next
+            // With a fork base, every uncarried change (renames, removals, reorders…) is listed below instead.
+            if providerConflictBases[version.id] != nil { part.entryChangesNotCarried = [] }
             summary.add(part)
+        }
+        // Surfacing, not merging: whatever the other copies changed that Combine (ST-36) doesn't apply — removals,
+        // reorders, renames — is listed for the user; the copies themselves are backed up before resolution.
+        for version in combinedVersions {
+            summary.entryChangesNotCarried += LibraryMerge.uncarriedProviderChanges(
+                providerConflictPayloads[version.id]!, forkBase: providerConflictBases[version.id], in: combined)
         }
         // ST-36 keeps every entry, collection and recent item, but it is not a field merge: queued changes it
         // can't carry (for example an alias edited on both sides) are reported and kept in a backup copy.
