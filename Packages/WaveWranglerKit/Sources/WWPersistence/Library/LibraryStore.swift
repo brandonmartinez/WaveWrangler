@@ -550,7 +550,7 @@ public actor LibraryStore {
         // can't carry (for example an alias edited on both sides) are reported and kept in a backup copy.
         if let pendingEdits {
             let base = pendingEdits.baseSnapshot.flatMap { try? publisher.coder.decode($0).payload } ?? LibraryModel()
-            summary.queuedChangesNotCarried = QueuedLibraryEdits.missingChanges(base: base, mine: mine, in: combined)
+            summary.queuedChangesNotCarried = QueuedLibraryEdits.missingChanges(base: base, mine: mine, in: combined, countingCopies: true)
         }
         do {
             combined = try prepareForPublication(combined, replacing: bytes)
