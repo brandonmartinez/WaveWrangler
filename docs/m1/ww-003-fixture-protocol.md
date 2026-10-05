@@ -80,12 +80,12 @@ The machine-readable record is the registry's `freezeRevisions[0]`.
   - recovery 2 / 20: B holds unpublished edits while A publishes, B relaunches, or A is killed at P4/P5.
 - **Truth:**
   1. **Conflict detection:** at most one host is acknowledged per base, and detection follows a stated mechanism.
-     - **Shows:** an unresolved provider NSFileVersion conflict version is surfaced as evidence, with its count visible in the show status (C4).
-     - **Library:** an unresolved provider conflict version is detected on load, on reload and before each update, and drives L4 (`changedElsewhere`).
-     - A provider conflict version that is never surfaced is a failure.
+     - **Shows:** whenever the provider produces an unresolved NSFileVersion conflict version, it is surfaced as evidence (C4, no automatic merge) and never silently resolved. The count, including zero, is visible in the show status. Any show race loses no edit, either through the app's base-check stop with the losing candidate preserved, or through a surfaced provider version.
+     - **Library:** whenever an unresolved provider conflict version exists, it is detected on load, on reload and before each update, and drives L4 (`changedElsewhere`). An app-detected divergence also drives L4.
+     - A provider conflict version that is never surfaced is a failure. Whether provider versions exist is reported, never assumed.
   2. **Preservation:**
      - **Shows:** both edits are preserved in the canonical file, the losing host's candidate, or a surfaced conflict version.
-     - **Library:** after L4 → Combine (ST-36), both Macs' changes are in the current library on **both** hosts. Each conflict version is backed up to the device-local recovery store before it is marked resolved. Concurrent Combines converge.
+     - **Library:** in every race, whatever triggered L4 (a provider version or app detection), after L4 → Combine (ST-36) both Macs' changes are in the current library on **both** hosts. When provider conflict versions exist, each is backed up to the device-local recovery store before it is marked resolved. Concurrent Combines converge.
   3. **No mixed revisions:** every reopen on either host is whole and valid, or an honest refusal.
   4. **NSFileVersion:** current, unresolved-conflict and other version counts are observed and reported per case per host.
   5. **Relink:** needs an explicit regrant. Never resolved by path or name, and never a silent substitution. Zero source writes on both hosts.
