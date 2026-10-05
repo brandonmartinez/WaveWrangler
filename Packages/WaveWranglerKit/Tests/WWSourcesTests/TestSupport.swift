@@ -222,10 +222,56 @@ final class HarnessIO: SourceIO, @unchecked Sendable {
         }
     }
 
+    /// Suspends the next observation poll (after its metadata sample) until released.
+    let fractionGate = AsyncGate()
+
     func downloadFraction(of url: URL) async -> Knowledge<Double> {
         bump(.downloadFraction)
+        await fractionGate.pass()
         guard let item = simulated(url) else { return .unknown }
         return lock.withLock { item.fraction }
+    }
+}
+
+/// One-shot async gate: the first `pass()` after `arm()` suspends (without blocking a thread or an
+/// actor) until `release()`. Lets tests hold a transfer in flight deterministically.
+actor AsyncGate {
+    private var armed = false
+    private var entered = false
+    private var opened = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func arm() {
+        armed = true
+        entered = false
+        opened = false
+    }
+
+    func pass() async {
+        guard armed else { return }
+        armed = false
+        entered = true
+        guard !opened else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        opened = true
+        armed = false
+        for waiter in waiters { waiter.resume() }
+        waiters = []
+    }
+
+    var isEntered: Bool { entered }
+
+    /// Liveness wait (not a correctness timeout): returns once the gate was entered, or after `limit`.
+    func waitUntilEntered(limit: Duration = .seconds(60)) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + limit
+        while !entered && clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return entered
     }
 }
 

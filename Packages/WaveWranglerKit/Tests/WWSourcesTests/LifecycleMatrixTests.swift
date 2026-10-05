@@ -63,7 +63,11 @@ final class CaseEnv: @unchecked Sendable {
     var writes = 0
     var substitutions = 0
     var failures: [String] = []
-    let transferPolicy = TransferPolicy(pollInterval: .milliseconds(1), stallTimeout: .milliseconds(40))
+    /// Stall detection by unchanged polls, never wall-clock time, so results do not depend on host load.
+    /// No non-stall script has more than 10 consecutive unchanged polls.
+    let transferPolicy = TransferPolicy(pollInterval: .milliseconds(1), stallAfterUnchangedPolls: 500)
+    /// Only for the dedicated REF-015 stall cases.
+    let stallPolicy = TransferPolicy(pollInterval: .milliseconds(1), stallAfterUnchangedPolls: 5)
 
     init(family: MatrixFamily, split: String, index: Int) throws {
         self.family = family
@@ -527,24 +531,34 @@ enum MatrixScenarios {
         let failure = SourceErrorDescriptor(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError)
         let item: SimulatedCloudItem
         switch variant {
-        // A few leading polls keep the first attempt active so the duplicate request below lands while it
-        // is in flight. If the stall timeout fires first the result is offlineOrUnknown, which is accepted.
-        case 0: item = SimulatedCloudItem(script: Array(repeating: .progress(nil), count: 8) + [.progress(0.2), .error(offline)])
-        case 1: item = SimulatedCloudItem(script: Array(repeating: .progress(nil), count: 8) + [.error(failure)])
+        case 0: item = SimulatedCloudItem(script: [.progress(0.2), .error(offline)])
+        case 1: item = SimulatedCloudItem(script: [.error(failure)])
         default: item = SimulatedCloudItem(script: [], requestError: offline)
         }
         env.io.simulate(url, item)
         let controller = env.transferController()
+        // Hold the first attempt's first observation poll so the duplicate request deterministically
+        // lands while it is in flight (variant 2 fails at request time and never starts a transfer).
+        await env.io.fractionGate.arm()
         _ = await env.app { await controller.makeAvailable(record.key, at: url) }
-        // A second request while active is a no-op.
-        let activeBeforeDuplicate = await controller.isActive(record.key)
+        if variant != 2 {
+            env.check(await env.io.fractionGate.waitUntilEntered(), "first attempt never polled")
+            env.check(await controller.isActive(record.key), "first attempt not active while held")
+        }
         _ = await controller.retry(record.key, at: url)
         env.check(await controller.activeCount <= 1, "more than one active request")
+        // Variants 0/1: the duplicate is a no-op while active. Variant 2: there was nothing active, so the
+        // call is a genuine retry after the request-time failure.
+        env.check(env.io.count(.downloadRequest) == (variant == 2 ? 2 : 1), "requests after duplicate call (\(env.io.count(.downloadRequest)))")
+        await env.io.fractionGate.release()
         let first = await controller.waitUntilSettled(record.key)
-        env.check(first.isOfflineOrUnknown || first.isFailed, "first attempt \(first)")
+        if variant == 2 {
+            // The duplicate call was itself a retry after the immediate request failure.
+            env.check(first.isOfflineOrUnknown, "request-time failure \(first)")
+        } else {
+            env.check(first.isOfflineOrUnknown || first.isFailed, "first attempt \(first)")
+        }
         let firstRequests = env.io.count(.downloadRequest)
-        env.check(firstRequests == 1 || !activeBeforeDuplicate, "requests while active \(firstRequests)")
-        env.check(activeBeforeDuplicate || variant == 2, "first attempt finished before the duplicate request")
         // Harness: the provider is idle and still not downloaded, so a retry must issue a new request.
         item.evictAgain(script: [.progress(0.6), .complete])
         item.requestError = nil
@@ -563,7 +577,7 @@ enum MatrixScenarios {
         case 1: env.io.simulate(url, SimulatedCloudItem(script: [.progress(nil), .error(SourceErrorDescriptor(domain: NSCocoaErrorDomain, code: NSUbiquitousFileUnavailableError))]))
         default: env.io.simulate(url, SimulatedCloudItem(script: Array(repeating: .stall, count: 10_000)))
         }
-        let controller = env.transferController()
+        let controller = SourceTransferController(context: env.context, policy: variant == 2 ? env.stallPolicy : env.transferPolicy, setting: .on)
         _ = await env.app { await controller.makeAvailable(record.key, at: url) }
         let final = await controller.waitUntilSettled(record.key)
         env.check(final.isOfflineOrUnknown, "final \(final)")
@@ -817,10 +831,10 @@ extension MatrixScenarios {
         case 0:
             env.io.armMetadataGate()
             let refresh = Task { await monitor.refresh([id]) }
-            var waited = 0
-            while !env.io.gateEntered && waited < 5_000 {
+            let clock = ContinuousClock()
+            let deadline = clock.now + .seconds(60)
+            while !env.io.gateEntered && clock.now < deadline {
                 try await Task.sleep(for: .milliseconds(1))
-                waited += 1
             }
             env.check(env.io.gateEntered, "refresh never reached evaluation")
             await monitor.setAvailabilitySetting(.off)
@@ -831,11 +845,15 @@ extension MatrixScenarios {
             env.check(await monitor.transfers.activeCount == 0, "active transfer after OFF")
             env.check(monitor.observations[id]?.transfer == .notRequested(.availabilityOff), "observation \(String(describing: monitor.observations[id]?.transfer))")
         case 1:
+            // Hold the automatic transfer's first poll so the explicit request lands while it is in flight.
+            await env.io.fractionGate.arm()
             await monitor.refresh([id])
             env.check(env.io.count(.downloadRequest) == 1, "automatic request")
+            env.check(await env.io.fractionGate.waitUntilEntered(), "automatic transfer never polled")
             await monitor.makeAvailable(id)
             env.check(await monitor.transfers.isUserRequested(record.key), "explicit request did not upgrade the transfer")
             await monitor.setAvailabilitySetting(.off)
+            await env.io.fractionGate.release()
             let final = await monitor.transfers.waitUntilSettled(record.key)
             env.check(final == .idle, "user-requested transfer after OFF \(final)")
             env.check(env.io.count(.downloadRequest) == 1, "requests \(env.io.count(.downloadRequest))")

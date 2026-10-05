@@ -1,13 +1,17 @@
 import Foundation
 
-// Plain-language status text for labels, VoiceOver and blocked-reason explanations. Each dimension is
-// described on its own so the UI never collapses distinct states (denied vs missing, unknown vs failed).
+// Diagnostic descriptions for logs, test output and debugging. NEVER shown to users and not localized:
+// Design's catalog (docs/m1/design/states-and-recovery.md §3) is the single source of user-facing wording,
+// and the Sources UI maps engine states to it. Each dimension is described on its own so diagnostics
+// never collapse distinct states (denied vs missing, unknown vs failed). Note that `offlineOrUnknown`
+// means "no progress / provider reported unavailable" — loss of connection was not observed, so UI must
+// not present it as "No connection".
 
 extension LocationState {
-    public var statusText: String {
+    public var diagnosticText: String {
         switch self {
         case .unknown: "Location unknown"
-        case .present: "At its last known location"
+        case .present: "present at last-known path"
         case .moved: "Moved — confirm the new location"
         case .missing(lastKnownPathOccupied: .known(true)): "Missing — a different file is at the old location"
         case .missing: "Missing — relink to find it"
@@ -16,10 +20,10 @@ extension LocationState {
 }
 
 extension AccessState {
-    public var statusText: String {
+    public var diagnosticText: String {
         switch self {
         case .unknown: "Access unknown"
-        case .granted: "Access granted (read-only)"
+        case .granted: "read-only access granted"
         case .staleBookmark: "Saved access is out of date — relink to restore it"
         case .needsRegrant: "Access needed on this Mac — choose the file again"
         case .denied: "Access denied by macOS permissions — this is not a missing file"
@@ -28,7 +32,7 @@ extension AccessState {
 }
 
 extension ResidencyState {
-    public var statusText: String {
+    public var diagnosticText: String {
         switch self {
         case .unknown: "Download status unknown"
         case .local: "Stored on this Mac"
@@ -39,7 +43,7 @@ extension ResidencyState {
 }
 
 extension TransferState {
-    public var statusText: String {
+    public var diagnosticText: String {
         switch self {
         case .unknown: "Transfer status unknown"
         case .idle: "No transfer needed"
@@ -55,7 +59,7 @@ extension TransferState {
             }
         case .cancelled: "Download stopped — the original was not changed"
         case .failed: "Download failed — try again"
-        case .offlineOrUnknown: "Download not progressing — you may be offline. Try again later"
+        case .offlineOrUnknown: "no progress reported or provider unavailable; connection loss not observed"
         }
     }
 
@@ -67,7 +71,7 @@ extension TransferState {
 }
 
 extension IdentityState {
-    public var statusText: String {
+    public var diagnosticText: String {
         switch self {
         case .unknown: "Identity not checked"
         case .unverified(.noRecordedEvidence): "Not verified on this Mac — relink to confirm"
@@ -81,7 +85,7 @@ extension IdentityState {
 }
 
 extension FingerprintField {
-    public var displayName: String {
+    public var diagnosticName: String {
         switch self {
         case .fileSize: "Size"
         case .creationDate: "Created"

@@ -2,14 +2,26 @@ import Foundation
 import WWCore
 
 public struct TransferPolicy: Sendable, Equatable {
+    /// When a transfer with no reported change counts as stalled (`offlineOrUnknown`, retry offered).
+    public enum StallDetection: Sendable, Equatable {
+        /// Wall-clock time without a reported change (production default).
+        case elapsed(Duration)
+        /// Number of consecutive polls without a reported change (deterministic; independent of load).
+        case unchangedPolls(Int)
+    }
+
     /// How often progress is sampled (metadata only).
     public var pollInterval: Duration
-    /// No reported change for this long ⇒ `offlineOrUnknown`, with retry offered.
-    public var stallTimeout: Duration
+    public var stallDetection: StallDetection
 
     public init(pollInterval: Duration = .milliseconds(500), stallTimeout: Duration = .seconds(60)) {
         self.pollInterval = pollInterval
-        self.stallTimeout = stallTimeout
+        self.stallDetection = .elapsed(stallTimeout)
+    }
+
+    public init(pollInterval: Duration, stallAfterUnchangedPolls polls: Int) {
+        self.pollInterval = pollInterval
+        self.stallDetection = .unchangedPolls(max(1, polls))
     }
 }
 
@@ -202,6 +214,7 @@ public actor SourceTransferController {
     private func observe(_ key: DeviceAccessKey, url: URL, generation: Int) async {
         let clock = ContinuousClock()
         var lastChange = clock.now
+        var unchangedPolls = 0
         var lastSignature: String?
         while !Task.isCancelled {
             do {
@@ -236,7 +249,8 @@ public actor SourceTransferController {
                     if signature != lastSignature {
                         lastSignature = signature
                         lastChange = clock.now
-                    } else if clock.now - lastChange >= policy.stallTimeout {
+                        unchangedPolls = 0
+                    } else if Self.isStalled(policy.stallDetection, unchangedPolls: &unchangedPolls, since: lastChange, now: clock.now) {
                         finish(key, generation, .offlineOrUnknown(nil))
                         return
                     }
@@ -247,6 +261,14 @@ public actor SourceTransferController {
                 return
             }
             if state(of: key) != next { publish(key, next) }
+        }
+    }
+
+    private static func isStalled(_ detection: TransferPolicy.StallDetection, unchangedPolls: inout Int, since lastChange: ContinuousClock.Instant, now: ContinuousClock.Instant) -> Bool {
+        unchangedPolls += 1
+        switch detection {
+        case let .elapsed(timeout): return now - lastChange >= timeout
+        case let .unchangedPolls(limit): return unchangedPolls >= limit
         }
     }
 

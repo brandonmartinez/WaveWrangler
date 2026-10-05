@@ -61,21 +61,21 @@ struct SourceAccessTests {
         let missing = AvailabilityObservation(observedAt: .now, location: .missing(lastKnownPathOccupied: .known(false)))
         #expect(denied.remedies == [.checkPermissions])
         #expect(missing.remedies == [.relink])
-        #expect(AccessState.denied.statusText != LocationState.missing(lastKnownPathOccupied: .known(false)).statusText)
-        #expect(AccessState.denied.statusText.contains("not a missing file"))
+        #expect(AccessState.denied.diagnosticText != LocationState.missing(lastKnownPathOccupied: .known(false)).diagnosticText)
+        #expect(AccessState.denied.diagnosticText.contains("not a missing file"))
     }
 
     @Test func everyStateHasDistinctStatusText() {
-        let access = AccessState.allCases.map(\.statusText)
+        let access = AccessState.allCases.map(\.diagnosticText)
         #expect(Set(access).count == access.count)
-        let residency = ResidencyState.allCases.map(\.statusText)
+        let residency = ResidencyState.allCases.map(\.diagnosticText)
         #expect(Set(residency).count == residency.count)
         let transfers: [TransferState] = [
             .unknown, .idle, .notRequested(.availabilityOff), .notRequested(.unsupportedLocation), .notRequested(.awaitingAccess),
             .requested, .inProgress(fractionCompleted: .unknown), .inProgress(fractionCompleted: .known(0.5)), .cancelled,
             .failed(SourceErrorDescriptor(domain: "d", code: 1)), .offlineOrUnknown(nil),
         ]
-        let texts = transfers.map(\.statusText)
+        let texts = transfers.map(\.diagnosticText)
         #expect(Set(texts).count == texts.count)
         #expect(TransferState.inProgress(fractionCompleted: .known(0.5)).reportedFraction == 0.5)
         #expect(TransferState.inProgress(fractionCompleted: .unknown).reportedFraction == nil)
@@ -83,14 +83,14 @@ struct SourceAccessTests {
             .unknown, .unverified(.noRecordedEvidence), .unverified(.baselineNotUserConfirmed),
             .unverified(.insufficientEvidence([.fileIdentifier])), .matchesRecorded, .changed([.fileSize]), .mismatch([.fileIdentifier]),
         ]
-        let identityTexts = identities.map(\.statusText)
+        let identityTexts = identities.map(\.diagnosticText)
         #expect(Set(identityTexts).count == identityTexts.count)
     }
 
     @Test func offRemedyOffersExplicitMakeAvailable() {
         let observation = AvailabilityObservation(observedAt: .now, residency: .cloudPlaceholder, transfer: .notRequested(.availabilityOff))
         #expect(observation.remedies == [.makeAvailable])
-        #expect(TransferState.notRequested(.availabilityOff).statusText.contains("downloads are off"))
+        #expect(TransferState.notRequested(.availabilityOff).diagnosticText.contains("downloads are off"))
     }
 
     @Test func transferErrorsAreClassifiedHonestly() {
