@@ -28,9 +28,13 @@ enum LaunchFixtures {
         #endif
     }
 
+    /// UI tests that open documents themselves (persistence's lifecycle tests, `-WWUITestOpenShow`) don't
+    /// get the Library window at launch, so it can't cover the document window.
     static var suppressesLibraryAtLaunch: Bool {
         #if DEBUG
-        return !(UserDefaults.standard.string(forKey: "WWUITestOpenShow") ?? "").isEmpty
+        let defaults = UserDefaults.standard
+        if !(defaults.string(forKey: "WWUITestOpenShow") ?? "").isEmpty { return true }
+        return defaults.bool(forKey: "WWUITestHooks") && defaults.string(forKey: "WWUITestLibraryFixture") == nil
         #else
         return false
         #endif
@@ -67,6 +71,10 @@ enum LaunchFixtures {
     static func applyAfterLaunch() {
         #if DEBUG
         let defaults = UserDefaults.standard
+        // Autosave delay for UI tests, set through the policy controller (its preferences are an isolated
+        // suite in UI-test runs, so a plain argument doesn't reach them). Allowed values: 1/2/5/10/30 s.
+        let delay = defaults.double(forKey: "WWUITestAutosaveDelaySeconds")
+        if delay > 0 { AutosavePolicyController.shared.delaySeconds = delay }
         guard let name = defaults.string(forKey: "WWUITestOpenShow"), !name.isEmpty else { return }
         let count = max(0, defaults.integer(forKey: "WWUITestShowEpisodes"))
         let folder = URL(filePath: NSTemporaryDirectory()).appending(path: "WWUITests-\(UUID().uuidString)", directoryHint: .isDirectory)

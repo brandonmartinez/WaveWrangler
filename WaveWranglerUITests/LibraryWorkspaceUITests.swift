@@ -209,7 +209,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
     func testShowWindowEpisodesMetadataDestinationsAndHonestSaveStatus() throws {
         // Autosave ON with a long delay so "Edited" is observable before the automatic save.
         launch(["-WWUITestLibraryFixture", "empty", "-WWUITestOpenShow", "Synthetic Show", "-WWUITestShowEpisodes", "0",
-                "-WWUITestAutosave", "ON", "-WWAutosaveDelaySeconds", "30"])
+                "-WWUITestAutosave", "ON", "-WWUITestAutosaveDelaySeconds", "30"])
         let window = app.windows.matching(identifier: "ww.show.window").firstMatch
         waitFor(window, timeout: 15)
         XCTAssertTrue(window.title.hasPrefix("Synthetic Show"))

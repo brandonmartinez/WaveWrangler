@@ -203,4 +203,36 @@ struct LibrarySessionTests {
         #expect(result.collection(two.id)?.name == "Two (theirs)", "rename only when the name still matches")
         #expect(result.collections.map(\.id) == [two.id, one.id, three.id], "move applied among shared; theirs kept")
     }
+
+    @Test func moveAppliesOnlyWhatTheEditMovedOverAConcurrentReorder() throws {
+        let a = LibraryCollection(name: "A"), b = LibraryCollection(name: "B"), c = LibraryCollection(name: "C")
+        var session = LibrarySession()
+        _ = session.didLoad(LibraryModel(collections: [a, b, c]), allowsEdits: true)
+        // Local: Move Collection Up on C (A,B,C → A,C,B).
+        let applied = try session.apply(allowsEdits: true, moving: .init(collections: [c.id])) { library throws(LibraryError) in
+            try library.movingCollection(c.id, by: -1)
+        }
+        let change = try #require(applied)
+        // The other Mac reordered to B,A,C meanwhile.
+        let other = LibraryModel(collections: [b, a, c])
+        #expect(change.apply(to: other).collections.map(\.name) == ["B", "C", "A"])
+        // Undo on top of the other side's order moves only C back down.
+        #expect(change.revert(on: change.apply(to: other)).collections.map(\.name) == ["B", "A", "C"])
+    }
+
+    @Test func showPublicationAcknowledgementDoesNotBreakCollectionUndo() throws {
+        var session = LibrarySession()
+        _ = session.didLoad(stored, allowsEdits: true)
+        let collection = try #require(stored.collections.first)
+        let applied = try session.apply(allowsEdits: true) { library throws(LibraryError) in try library.deletingCollection(collection.id) }
+        let change = try #require(applied)
+        // Persistence acknowledges a verified show save: title refresh + recordRecent on the canonical value.
+        let saved = stored.entries[3].showID
+        let acknowledged = session.library.upsertingEntry(showID: saved, title: "Saved title").recordingOpened(saved)
+        session.adoptCanonical(acknowledged)
+        session.undo(change)
+        #expect(session.library.collection(collection.id) == collection, "Undo Delete Collection still works")
+        #expect(session.library.entry(saved)?.lastKnownTitle == "Saved title")
+        #expect(session.library.recentShowIDs.first == saved)
+    }
 }

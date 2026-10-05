@@ -176,9 +176,11 @@ final class LibraryWindowState {
         guard canMove(by: offset) else { return }
         switch moveTarget {
         case .collection(let id):
-            store.apply(UndoActionName.moveCollection) { library throws(LibraryError) in try library.movingCollection(id, by: offset) }
+            store.apply(UndoActionName.moveCollection, moving: .init(collections: [id])) { library throws(LibraryError) in
+                try library.movingCollection(id, by: offset)
+            }
         case .showInCollection(let show, let collection):
-            store.apply(UndoActionName.moveCollection) { library throws(LibraryError) in
+            store.apply(UndoActionName.moveCollection, moving: .init(shows: [collection: [show]])) { library throws(LibraryError) in
                 try library.movingShow(show, inCollection: collection, by: offset)
             }
         case nil:
@@ -187,7 +189,8 @@ final class LibraryWindowState {
     }
 
     func moveCollections(fromOffsets source: IndexSet, toOffset destination: Int) {
-        store.apply(UndoActionName.moveCollection) { library throws(LibraryError) in
+        let movedIDs = Set(source.compactMap { store.library.collections[safe: $0]?.id })
+        store.apply(UndoActionName.moveCollection, moving: .init(collections: movedIDs)) { library throws(LibraryError) in
             library.movingCollections(fromOffsets: source, toOffset: destination)
         }
     }

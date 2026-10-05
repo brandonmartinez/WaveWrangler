@@ -167,11 +167,7 @@ final class DocumentLifecycleUITests: XCTestCase {
     }
 
     private func edit(_ window: XCUIElement, title: String) throws {
-        // The show title lives in the Show Info inspector of the library/workspace UI. The Library window
-        // shown at launch can overlap the document window, so close it first.
-        let library = app.windows.matching(identifier: "ww.library.window").firstMatch
-        if library.exists { library.buttons["_XCUI:CloseWindow"].click() }
-        window.click()
+        // The show title lives in the Show Info inspector of the library/workspace UI.
         let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
         if showInfo.waitForExistence(timeout: 5) { showInfo.click() }
         let field = window.textFields["Show title"]

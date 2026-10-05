@@ -54,8 +54,8 @@ final class LibraryUIStore {
 
     /// A canonical value arrived that this store didn't just produce: adopt it. If the library wasn't
     /// loaded (failed load, damaged/L5, needs permission) this is how it becomes available after Recover,
-    /// Grant Access or Use Other Mac's Version. Library undo is cleared, because its recorded differences
-    /// were made against a different library.
+    /// Grant Access or Use Other Mac's Version, and library undo is cleared then. Library replacement
+    /// (move, Use That Library, combine, recover) clears undo in `libraryWasReplaced()`.
     func canonicalLibraryDidChange() {
         guard pendingSaves == 0, let canonical = services.persistence.currentLibrary else { return }
         if !session.isLoaded {
@@ -63,8 +63,9 @@ final class LibraryUIStore {
             if session.didLoad(canonical, allowsEdits: allowsEdits) { persistFlushed() }
             undoManager.removeAllActions(withTarget: self)
         } else if canonical != session.library {
+            // Routine changes (verified show saves acknowledged, recents) arrive constantly with autosave ON;
+            // undo stays valid because each step applies only its own per-ID difference.
             session.adoptCanonical(canonical)
-            undoManager.removeAllActions(withTarget: self)
         }
     }
 
@@ -130,14 +131,18 @@ final class LibraryUIStore {
     // MARK: - Undoable edits
 
     @discardableResult
-    func apply(_ actionName: String, _ operation: (LibraryModel) throws(LibraryError) -> LibraryModel) -> Bool {
+    func apply(
+        _ actionName: String,
+        moving: LibrarySession.MoveIntent = .none,
+        _ operation: (LibraryModel) throws(LibraryError) -> LibraryModel
+    ) -> Bool {
         do {
-            guard let change = try session.apply(allowsEdits: allowsEdits, operation) else {
+            guard let change = try session.apply(allowsEdits: allowsEdits, moving: moving, operation) else {
                 lastError = nil
                 return true
             }
             lastError = nil
-            persist { $0.applyingDifference(from: change.before, to: change.after) }
+            persist { change.apply(to: $0) }
             registerUndo(change, actionName: actionName, isUndo: true)
             return true
         } catch {
@@ -158,10 +163,10 @@ final class LibraryUIStore {
                 }
                 if isUndo {
                     store.session.undo(change)
-                    store.persist { $0.applyingDifference(from: change.after, to: change.before) }
+                    store.persist { change.revert(on: $0) }
                 } else {
                     store.session.redo(change)
-                    store.persist { $0.applyingDifference(from: change.before, to: change.after) }
+                    store.persist { change.apply(to: $0) }
                 }
                 store.registerUndo(change, actionName: actionName, isUndo: !isUndo)
             }
