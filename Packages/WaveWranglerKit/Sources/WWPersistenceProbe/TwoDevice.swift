@@ -85,6 +85,9 @@ extension Probe {
             return entry
         }
         object["otherVersions"] = (NSFileVersion.otherVersionsOfItem(at: file) ?? []).count
+        // What the show's status shows (C4): the product's own report, including zero.
+        object["statusProviderConflicts"] = ProviderConflictReport.inspect(file).unresolvedVersionCount
+        object["sha256"] = (try? Data(contentsOf: file)).map(sha256Hex) ?? ""
         let stem = file.deletingPathExtension().lastPathComponent
         let siblings = ((try? FileManager.default.contentsOfDirectory(at: file.deletingLastPathComponent(), includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == file.pathExtension && $0.lastPathComponent != file.lastPathComponent
@@ -124,17 +127,52 @@ extension Probe {
         var object: [String: Any] = ["host": hostLabel(), "load": "\(await store.load())"]
         object["levelAfterLoad"] = "\(await store.levelState)"
         object["providerConflictsAfterLoad"] = await store.providerConflicts.count
+        if args["seed-fixture"] == "1" {
+            // DUR-025 library fixture: 4 shows, collections Alpha [0,1,2] and Beta [1,2,3], recents [0]; no aliases.
+            let result = try? await store.update { library in
+                var library = library
+                let ids = (0..<4).map { _ in ShowID() }
+                for (index, id) in ids.enumerated() {
+                    library = LibraryReconciler.registering(id, title: "Synthetic Show \(index)", publication: nil, in: library)
+                }
+                library.collections.append(LibraryCollection(name: "Alpha", showIDs: Array(ids[0...2])))
+                library.collections.append(LibraryCollection(name: "Beta", showIDs: Array(ids[1...3])))
+                library.recentShowIDs = [ids[0]]
+                return library
+            }
+            object["seeded"] = result.map { "\($0)" } ?? "threw"
+        }
         if let folder = args.url("move-to") { object["move"] = "\(await store.moveLibrary(to: folder))" }
         if let folder = args.url("use") { object["use"] = "\(await store.useLibrary(in: folder))" }
         if args["reload"] == "1" { object["reload"] = "\(await store.reload())" }
-        if let name = args["add-collection"] {
+        if let kind = args["edit"] ?? args["add-collection"].map({ _ in "collection" }) {
+            let value = args["edit-arg"] ?? args["add-collection"] ?? ""
             let at = args["at-epoch-ms"].flatMap(Int64.init)
             sleepUntil(epochMs: at)
             object["startedEpochMs"] = epochMs()
             do {
+                // Seeded organizing edits (m1-freeze-2 library-conflict cell): collection, alias, order or recents.
                 let result = try await store.update { library in
                     var library = library
-                    library.collections.append(LibraryCollection(name: name))
+                    switch kind {
+                    case "collection":
+                        library.collections.append(LibraryCollection(name: value))
+                    case "alias":
+                        let parts = value.split(separator: ":", maxSplits: 1).map(String.init)
+                        if let index = Int(parts[0]), library.entries.indices.contains(index) {
+                            library.entries[index].alias = parts.count > 1 ? parts[1] : "Alias"
+                        }
+                    case "order":
+                        if let index = library.collections.firstIndex(where: { $0.name == value }) {
+                            library.collections[index].showIDs.reverse()
+                        }
+                    case "recent":
+                        if let index = Int(value), library.entries.indices.contains(index) {
+                            library = LibraryReconciler.recordingRecent(library.entries[index].showID, in: library)
+                        }
+                    default:
+                        break
+                    }
                     return library
                 }
                 object["update"] = switch result {
@@ -172,8 +210,13 @@ extension Probe {
             guard let data = try? Data(contentsOf: url) else { return ["outcome": "unreadable"] }
             switch Result(catching: { () throws(PersistenceError) -> DecodedDocument<LibraryModel> in try LibraryCoder.library.decode(data) }) {
             case let .success(document):
-                return ["outcome": "valid", "revision": document.revision, "collections": document.payload.collections.map(\.name),
-                        "publicationID": document.publication.publicationID.uuidString, "libraryID": "\(document.payload.libraryID)"]
+                let model = document.payload
+                return ["outcome": "valid", "revision": document.revision, "collections": model.collections.map(\.name),
+                        "publicationID": document.publication.publicationID.uuidString, "libraryID": "\(model.libraryID)",
+                        "sha256": sha256Hex(data),
+                        "model": ["entries": model.entries.map { ["showID": $0.showID.rawValue.uuidString, "alias": $0.alias ?? ""] },
+                                  "collections": model.collections.map { ["name": $0.name, "showIDs": $0.showIDs.map(\.rawValue.uuidString)] },
+                                  "recents": model.recentShowIDs.map(\.rawValue.uuidString)]]
             case let .failure(error):
                 return ["outcome": "invalid", "detail": "\(error)"]
             }
@@ -190,6 +233,7 @@ extension Probe {
             .filter { $0.pathExtension == file.pathExtension && $0.lastPathComponent != file.lastPathComponent
                 && $0.deletingPathExtension().lastPathComponent.hasPrefix(stem) }
         object["siblings"] = siblings.map { ["name": $0.lastPathComponent].merging(decode($0)) { $1 } }
+        object["otherVersions"] = (NSFileVersion.otherVersionsOfItem(at: file) ?? []).count
         emit(object)
         return 0
     }

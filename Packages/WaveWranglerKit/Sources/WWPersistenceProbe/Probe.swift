@@ -146,6 +146,14 @@ struct Probe {
         case "lib": return await libraryOp()
         case "lib-inspect": return libraryInspect()
         case "corrupt": return corrupt()
+        case "src-make": return sourceMake()
+        case "src-record": return sourceRecord()
+        case "src-eval": return sourceEvaluate()
+        case "src-relink": return sourceRelink()
+        case "digest": return digest()
+        case "hold-save": return await holdSave()
+        case "checkpoint": return await checkpoint()
+        case "offer": return offer()
         default:
             emit(["error": "unknown command \(args.command)"])
             return 2
