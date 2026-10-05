@@ -85,8 +85,11 @@ enum Acceptance {
             process.waitUntilExit()
             return (String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines), process.terminationStatus)
         }
+        let commit = git(["rev-parse", "HEAD"]).0
+        // The UI-test runner is sandboxed and usually can't run git; the harness records the revision instead.
+        guard !commit.isEmpty else { return ["note": "not readable in the sandboxed runner; recorded by the harness"] }
         return [
-            "commit": git(["rev-parse", "HEAD"]).0,
+            "commit": commit,
             "tree": git(["rev-parse", "HEAD^{tree}"]).0,
             "worktree": git(["status", "--porcelain", "--untracked-files=no"]).0.isEmpty ? "clean" : "dirty",
             "containsFreeze2fcf4d7": git(["merge-base", "--is-ancestor", "2fcf4d7", "HEAD"]).1 == 0 ? "yes" : "no",

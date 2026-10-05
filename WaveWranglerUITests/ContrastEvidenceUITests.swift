@@ -101,6 +101,66 @@ final class ContrastEvidenceUITests: XCTestCase {
         _ = try AcceptanceAudit.run(app, surface: "200% text (Library)", test: self)
     }
 
+    /// A11Y-003 with in-app overrides only (OS-level Increase Contrast / Reduce Motion / larger text are
+    /// user-only items): light and dark appearance, `-WWForceReduceMotion YES`, in-app text size 200%.
+    /// Library (with its message bar, #59) and Setup with the F-STATES fixture; audits plus normal and
+    /// saturation-0 screenshots of each surface.
+    func testVisualOverridesLightDarkReduceMotion200() throws {
+        for appearance in ["aqua", "darkAqua"] {
+            app = XCUIApplication()
+            app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
+                                   "-WWUITestCenterWindows", "YES", "-WWUITestLibraryFixture", "lib100", "-WWUITestAppearance", appearance,
+                                   "-WWForceReduceMotion", "YES"]
+            app.launch()
+            app.activate()
+            XCTAssertTrue(app.outlines["ww.library.entries"].waitForExistence(timeout: 15))
+            Thread.sleep(forTimeInterval: 1)
+            capture("visual-\(appearance)-library-100")
+            let first = app.outlines["ww.library.entries"].staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.'")).element(boundBy: 0)
+            if first.exists, let ratio = ContrastMeter.measure(first.screenshot().image) {
+                Acceptance.record(self, "#59 after fix \(appearance): first entry row ratio \(ratio["ratio"] ?? "?") (\(ratio["text"] ?? "") on \(ratio["background"] ?? ""))")
+            }
+            let unwaived = try AcceptanceAudit.run(app, surface: "Library \(appearance) 100% reduce motion", test: self)
+            Acceptance.record(self, "A11Y-003 Library \(appearance) 100%: \(unwaived.isEmpty ? "no unwaived audit issues" : "\(unwaived)")")
+            for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
+            Thread.sleep(forTimeInterval: 1)
+            capture("visual-\(appearance)-library-200")
+            let unwaived200 = try AcceptanceAudit.run(app, surface: "Library \(appearance) 200%", test: self)
+            Acceptance.record(self, "A11Y-003 Library \(appearance) 200%: \(unwaived200.isEmpty ? "no unwaived audit issues" : "\(unwaived200)")")
+            app.terminate()
+
+            app = XCUIApplication()
+            app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
+                                   "-WWUITestCenterWindows", "YES", "-WWUITestOpenShow", "Synthetic Show", "-WWUITestShowEpisodes", "2",
+                                   "-WWUITestAppearance", appearance, "-WWForceReduceMotion", "YES"]
+            app.launchEnvironment["WW_SETUP_ENGINE"] = "fixture-states"
+            app.launch()
+            app.activate()
+            let window = app.windows.matching(identifier: "ww.show.window").firstMatch
+            XCTAssertTrue(window.waitForExistence(timeout: 15))
+            for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
+            window.typeKey("1", modifierFlags: .command)
+            app.typeKey("i", modifierFlags: [.command, .shift])
+            Thread.sleep(forTimeInterval: 1.5)
+            capture("visual-\(appearance)-import-review-200")
+            app.typeKey(.return, modifierFlags: [])
+            Thread.sleep(forTimeInterval: 2)
+            app.menuBars.menuBarItems["Window"].click()
+            app.menuBars.menuItems["Zoom"].click()
+            Thread.sleep(forTimeInterval: 1)
+            capture("visual-\(appearance)-setup-200-zoomed")
+            let unwaivedSetup = try AcceptanceAudit.run(app, surface: "Setup \(appearance) 200% reduce motion", test: self)
+            Acceptance.record(self, "A11Y-003 Setup \(appearance) 200%: \(unwaivedSetup.isEmpty ? "no unwaived audit issues" : "\(unwaivedSetup)")")
+            app.terminate()
+        }
+    }
+
+    private func capture(_ name: String) {
+        let shot = app.windows.firstMatch.screenshot()
+        Acceptance.attach(self, png: shot.pngRepresentation, name: "\(name).png")
+        if let gray = ContrastMeter.desaturated(shot.image) { Acceptance.attach(self, png: gray, name: "saturation0-\(name).png") }
+    }
+
     /// C06 saturation-0 captures of the show window (Setup and a blocked destination).
     func testSaturationZeroShowWindow() throws {
         app = XCUIApplication()

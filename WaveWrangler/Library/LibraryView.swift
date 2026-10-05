@@ -10,17 +10,13 @@ struct LibraryView: View {
     private var store: LibraryUIStore { state.store }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Opaque bar above the split view (not an inset over translucent sidebar material) for contrast.
-            LibraryMessageBar(state: state)
-            splitView
-        }
-        .onChange(of: focus) { _, region in state.focusedRegion = region }
-        .onAppear { DispatchQueue.main.async { focus = .sidebar } }
-        .task {
-            if !store.isLoaded { await store.load() }
-            Responsiveness.libraryReady(entryCount: store.library.entries.count)
-        }
+        splitView
+            .onChange(of: focus) { _, region in state.focusedRegion = region }
+            .onAppear { DispatchQueue.main.async { focus = .sidebar } }
+            .task {
+                if !store.isLoaded { await store.load() }
+                Responsiveness.libraryReady(entryCount: store.library.entries.count)
+            }
     }
 
     private var splitView: some View {
@@ -29,6 +25,10 @@ struct LibraryView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 360)
         } content: {
             LibraryEntryList(state: state)
+                // #59: the message bar sits at the top of the content column (IA reading order: message bar
+                // first in the content). Above the whole split view, the column still reserved the toolbar's
+                // scroll-edge pocket below the bar, which blurred the column headers and the first row.
+                .safeAreaInset(edge: .top, spacing: 0) { LibraryMessageBar(state: state) }
                 .focused($focus, equals: .entries)
                 .navigationSplitViewColumnWidth(min: 320, ideal: 520)
         } detail: {
