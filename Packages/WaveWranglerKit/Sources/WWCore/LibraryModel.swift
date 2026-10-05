@@ -30,24 +30,27 @@ public struct LibraryShowEntry: Sendable, Equatable, Codable, Identifiable {
     public var showID: ShowID
     public var alias: String?
     public var lastKnownTitle: String
-    /// Last coherent revision the library has reconciled with; `nil` until first reconciliation.
-    public var lastKnownRevision: Int?
+    /// Last coherent publication the library has reconciled with; `nil` until first reconciliation.
+    public var lastKnownPublication: PublicationStamp?
     /// A user-visible record that the show could not be reached; retained rather than silently dropped.
     public var unavailable: UnavailableRecord?
 
     public var id: ShowID { showID }
 
+    /// Ordering hint only; use `lastKnownPublication` to identify what was reconciled.
+    public var lastKnownRevision: Int? { lastKnownPublication?.revision }
+
     public init(
         showID: ShowID,
         alias: String? = nil,
         lastKnownTitle: String,
-        lastKnownRevision: Int? = nil,
+        lastKnownPublication: PublicationStamp? = nil,
         unavailable: UnavailableRecord? = nil
     ) {
         self.showID = showID
         self.alias = alias
         self.lastKnownTitle = lastKnownTitle
-        self.lastKnownRevision = lastKnownRevision
+        self.lastKnownPublication = lastKnownPublication
         self.unavailable = unavailable
     }
 }

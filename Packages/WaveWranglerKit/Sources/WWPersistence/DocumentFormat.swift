@@ -38,11 +38,25 @@ public struct DocumentFormat: Sendable, Equatable {
 /// A successfully decoded, checksum-verified and semantically validated canonical value.
 public struct DecodedDocument<Payload: Sendable>: Sendable {
     public let payload: Payload
-    public let revision: Int
+    public let publication: PublicationStamp
 
-    public init(payload: Payload, revision: Int) {
+    /// Ordering hint only; identify the publication with `publication`.
+    public var revision: Int { publication.revision }
+
+    public init(payload: Payload, publication: PublicationStamp) {
         self.payload = payload
-        self.revision = revision
+        self.publication = publication
+    }
+}
+
+/// Encoded bytes plus the identity of the publication they represent.
+public struct EncodedDocument: Sendable {
+    public let data: Data
+    public let publication: PublicationStamp
+
+    public init(data: Data, publication: PublicationStamp) {
+        self.data = data
+        self.publication = publication
     }
 }
 
@@ -53,5 +67,12 @@ public protocol CanonicalDocumentCoding: Sendable {
 
     var format: DocumentFormat { get }
     func decode(_ data: Data) throws(PersistenceError) -> DecodedDocument<Payload>
-    func encode(_ payload: Payload, revision: Int) throws(PersistenceError) -> Data
+    /// Encodes one publication. Callers pass a fresh `publicationID` for every write.
+    func encodeDocument(_ payload: Payload, revision: Int, publicationID: UUID) throws(PersistenceError) -> EncodedDocument
+}
+
+extension CanonicalDocumentCoding {
+    public func encode(_ payload: Payload, revision: Int, publicationID: UUID = UUID()) throws(PersistenceError) -> Data {
+        try encodeDocument(payload, revision: revision, publicationID: publicationID).data
+    }
 }
