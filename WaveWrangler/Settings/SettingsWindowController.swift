@@ -79,11 +79,17 @@ struct GeneralSettingsView: View {
         @Bindable var settings = settings
         Form {
             Section {
-                Toggle(SettingsWording.autosaveTitle, isOn: $settings.autosaveEnabled)
+                let connected = AutosavePolicyConnection.isConnected
+                let effective = AutosavePolicyConnection.effectiveAutosaveEnabled
+                Toggle(SettingsWording.autosaveTitle, isOn: connected ? $settings.autosaveEnabled : .constant(true))
                     .toggleStyle(.switch)
-                    .help(SettingsWording.autosaveCaption(enabled: settings.autosaveEnabled))
+                    .disabled(!connected)
+                    .help(SettingsWording.autosaveCaption(enabled: effective))
                     .accessibilityIdentifier("ww.settings.autosave")
-                caption(SettingsWording.autosaveCaption(enabled: settings.autosaveEnabled))
+                caption(SettingsWording.autosaveCaption(enabled: effective))
+                if !connected {
+                    caption(AutosavePolicyConnection.notConnectedNote)
+                }
             }
             Section {
                 Picker(SettingsWording.textSizeTitle, selection: $settings.textSize) {

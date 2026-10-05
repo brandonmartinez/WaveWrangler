@@ -24,6 +24,8 @@ final class ShowWindowState {
     var titleFocusRequest = 0
     var saveStatusPopoverShown = false
     var dismissedMessageBar: String?
+    /// Whether the Episodes list has keyboard focus (Edit › Delete / Move act on the focused list only).
+    var episodeListFocused = false
     /// Set by File › Save so the following "Saved" is announced (states §7).
     @ObservationIgnored var explicitSavePending = false
 
@@ -196,6 +198,11 @@ final class ShowWindowState {
             announce(text)
         }
         if new.isCoherentlySaved || new.announcementIsTerminalFailure { explicitSavePending = false }
+        // P6 ordering: the library learns a show's new title only after coherent disk truth (D1).
+        if new.isCoherentlySaved, !old.isCoherentlySaved {
+            let model = store.model
+            LibraryStore.shared.showDidSaveCoherently(id: model.show.id, model: model, fileURL: store.document?.fileURL)
+        }
     }
 
     func announce(_ text: String) {

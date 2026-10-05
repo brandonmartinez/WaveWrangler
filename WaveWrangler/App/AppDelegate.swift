@@ -23,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Load the canonical library before any show window can record bookkeeping into it.
+        Task { await LibraryStore.shared.load() }
         LaunchFixtures.applyAfterLaunch()
         // IA-05: restore windows open at quit; otherwise show the Library window. Never alert at launch.
         DispatchQueue.main.async {

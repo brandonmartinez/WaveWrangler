@@ -253,10 +253,15 @@ final class WaveWranglerUITests: XCTestCase {
         waitForValue(app.popUpButtons["ww.settings.libraryLocation"], "In WaveWrangler")
         XCTAssertTrue(app.staticTexts["WaveWrangler saves your changes as you work. You can also choose File › Save at any time."].exists)
         try audit("Settings › General")
-        autosave.click()
-        waitForValue(autosave, "0")
-        waitFor(app.staticTexts["Changes are saved only when you choose File › Save (⌘S). WaveWrangler will ask before closing a show with unsaved changes."])
-        autosave.click()
+        // Until the persistence autosave policy is connected, Off isn't offered (no false OFF claims).
+        if !autosave.isEnabled {
+            waitFor(app.staticTexts["Turning autosave off isn't available in this version yet. WaveWrangler saves your changes automatically."])
+        } else {
+            autosave.click()
+            waitForValue(autosave, "0")
+            waitFor(app.staticTexts["Changes are saved only when you choose File › Save (⌘S). WaveWrangler will ask before closing a show with unsaved changes."])
+            autosave.click()
+        }
 
         app.toolbars.buttons["Sources"].click()
         let downloads = app.switches["ww.settings.downloadSources"]

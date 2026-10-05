@@ -36,7 +36,7 @@ struct MessageBar: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.bar)
+        .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) { Divider() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(heading)

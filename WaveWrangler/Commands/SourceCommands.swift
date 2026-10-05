@@ -11,6 +11,23 @@ protocol SourceCommandHandling: AnyObject {
     func relinkSource(store: ShowDocumentStore, episode: EpisodeID, window: NSWindow?)
     /// Extra items for the Source menu (rebuilt when the menu opens).
     func sourceMenuItems(store: ShowDocumentStore?, episode: EpisodeID?) -> [NSMenuItem]
+    // Optional (default implementations below): Delete / Move for the Sources and Speakers tables.
+    func deleteSelectionTitle(store: ShowDocumentStore, episode: EpisodeID, window: NSWindow?) -> String?
+    func deleteSelection(store: ShowDocumentStore, episode: EpisodeID, window: NSWindow?)
+    func moveSelectionTitle(by offset: Int, store: ShowDocumentStore, episode: EpisodeID, window: NSWindow?) -> String?
+    func canMoveSelection(by offset: Int, store: ShowDocumentStore, episode: EpisodeID, window: NSWindow?) -> Bool
+    func moveSelection(by offset: Int, store: ShowDocumentStore, episode: EpisodeID, window: NSWindow?)
+}
+
+/// Edit › Delete and Move Up/Down for the Sources/Speakers tables. The source lane returns a menu title
+/// (e.g. "Remove Source from Episode…", "Move Source Up") only while its own table has keyboard focus and
+/// a selection; `nil` means "not mine". Defaults: not handled.
+extension SourceCommandHandling {
+    func deleteSelectionTitle(store: ShowDocumentStore, episode: EpisodeID, window: NSWindow?) -> String? { nil }
+    func deleteSelection(store: ShowDocumentStore, episode: EpisodeID, window: NSWindow?) {}
+    func moveSelectionTitle(by offset: Int, store: ShowDocumentStore, episode: EpisodeID, window: NSWindow?) -> String? { nil }
+    func canMoveSelection(by offset: Int, store: ShowDocumentStore, episode: EpisodeID, window: NSWindow?) -> Bool { false }
+    func moveSelection(by offset: Int, store: ShowDocumentStore, episode: EpisodeID, window: NSWindow?) {}
 }
 
 enum SourceCommands {

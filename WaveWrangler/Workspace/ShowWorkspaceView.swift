@@ -68,10 +68,7 @@ private struct ShowWindowContent: View {
         .onChange(of: store.model.episodes.map(\.id)) { old, _ in
             state.reconcileSelection(previousOrder: old)
         }
-        .onChange(of: store.model) { _, model in
-            state.updateSubtitle()
-            LibraryStore.shared.showDidChange(id: model.show.id, model: model, fileURL: store.document?.fileURL)
-        }
+        .onChange(of: store.model) { _, _ in state.updateSubtitle() }
         .onChange(of: state.sidebarSelection) { _, _ in state.updateSubtitle() }
         .onChange(of: state.saveStatus.state) { old, new in state.saveStateDidChange(from: old, to: new) }
     }
@@ -81,6 +78,7 @@ private struct ShowWindowContent: View {
 
 private struct ShowSidebar: View {
     @Bindable var state: ShowWindowState
+    @FocusState private var listFocused: Bool
 
     var body: some View {
         let episodes = state.store.model.episodes
@@ -115,6 +113,8 @@ private struct ShowSidebar: View {
             }
         }
         .listStyle(.sidebar)
+        .focused($listFocused)
+        .onChange(of: listFocused, initial: true) { _, focused in state.episodeListFocused = focused }
         .accessibilityLabel("Episodes")
         .accessibilityValue(ShowSidebarPresentation.episodesValue(episodes.count))
         .accessibilityIdentifier("ww.show.sidebar.episodes")
@@ -186,6 +186,7 @@ private struct EpisodeSidebarRow: View {
             .wwFont(.body)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(ShowSidebarPresentation.episodeRowTitle(episode))
+            .accessibilityAddTraits(.isStaticText)
             .accessibilityIdentifier(ShowSidebarPresentation.episodeIdentifier(episode.id))
         }
     }

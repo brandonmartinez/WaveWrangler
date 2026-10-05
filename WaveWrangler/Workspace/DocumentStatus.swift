@@ -33,7 +33,7 @@ final class NativeDocumentStatusObserver: DocumentStatusProviding {
     init(document: NSDocument?, settings: AppSettings = .shared) {
         self.document = document
         self.settings = settings
-        saveStatus = DocumentSaveStatus(state: .checking, autosaveEnabled: settings.autosaveEnabled)
+        saveStatus = DocumentSaveStatus(state: .checking, autosaveEnabled: AutosavePolicyConnection.effectiveAutosaveEnabled)
         refresh()
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
@@ -51,11 +51,11 @@ final class NativeDocumentStatusObserver: DocumentStatusProviding {
         let edited = document.isDocumentEdited
         let next: DocumentSaveStatus
         if edited {
-            next = DocumentSaveStatus(state: .edited, autosaveEnabled: settings.autosaveEnabled, hasUnsavedChanges: true)
+            next = DocumentSaveStatus(state: .edited, autosaveEnabled: AutosavePolicyConnection.effectiveAutosaveEnabled, hasUnsavedChanges: true)
         } else {
             next = DocumentSaveStatus(
                 state: .unknown(reason: Self.unconfirmedReason),
-                autosaveEnabled: settings.autosaveEnabled,
+                autosaveEnabled: AutosavePolicyConnection.effectiveAutosaveEnabled,
                 hasUnsavedChanges: false
             )
         }

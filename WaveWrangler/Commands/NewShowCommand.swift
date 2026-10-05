@@ -17,7 +17,7 @@ enum NewShowCommand {
         panel.canCreateDirectories = true
         panel.isExtensionHidden = true
         panel.message = "Choose a name and where to save the show. It can be a folder that syncs, like iCloud Drive."
-        let accessory = NSTextField(wrappingLabelWithString: SettingsWording.newShowAccessory(autosaveEnabled: AppSettings.shared.autosaveEnabled))
+        let accessory = NSTextField(wrappingLabelWithString: SettingsWording.newShowAccessory(autosaveEnabled: AutosavePolicyConnection.effectiveAutosaveEnabled))
         accessory.frame = NSRect(x: 0, y: 0, width: 420, height: 34)
         panel.accessoryView = accessory
         panel.begin { response in

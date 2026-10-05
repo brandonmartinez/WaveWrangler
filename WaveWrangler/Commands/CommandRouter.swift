@@ -26,8 +26,21 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
         LibraryWindowController.isOpen ? LibraryWindowController.shared.state : nil
     }
 
+    /// Text-like responders keep ⌫ and arrows for themselves (CMD-06), including date pickers.
     private var isEditingText: Bool {
-        NSApp.keyWindow?.firstResponder is NSText
+        Self.isTextLike(NSApp.keyWindow?.firstResponder)
+    }
+
+    static func isTextLike(_ responder: NSResponder?) -> Bool {
+        guard let responder else { return false }
+        return responder is NSText || responder is NSTextField || responder is NSDatePicker
+            || responder is NSComboBox || responder is NSTokenField || responder is NSStepper
+    }
+
+    /// The show window's episode list is the focused list (and no text-like control has focus).
+    private func episodeListActive(_ show: ShowWindowState?) -> Bool {
+        guard let show, show.episodeListFocused, show.selectedEpisodeID != nil else { return false }
+        return !isEditingText
     }
 
     private var libraryEditable: Bool {
@@ -167,10 +180,15 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     // MARK: - Edit
 
     @objc func deleteSelection(_ sender: Any?) {
+        guard !isEditingText else { return }
         if let state = keyLibraryState {
             state.deleteFocused()
-        } else {
-            activeShowState?.deleteSelectedEpisode()
+        } else if let show = activeShowState {
+            if episodeListActive(show) {
+                show.deleteSelectedEpisode()
+            } else if let episode = show.selectedEpisodeID {
+                SourceCommands.handler.deleteSelection(store: show.store, episode: episode, window: show.window)
+            }
         }
     }
 
@@ -178,10 +196,15 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     @objc func moveDown(_ sender: Any?) { move(by: 1) }
 
     private func move(by offset: Int) {
+        guard !isEditingText else { return }
         if let state = keyLibraryState {
             state.move(by: offset)
-        } else {
-            activeShowState?.moveSelectedEpisode(by: offset)
+        } else if let show = activeShowState {
+            if episodeListActive(show) {
+                show.moveSelectedEpisode(by: offset)
+            } else if let episode = show.selectedEpisodeID {
+                SourceCommands.handler.moveSelection(by: offset, store: show.store, episode: episode, window: show.window)
+            }
         }
     }
 
@@ -280,19 +303,40 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
                 item.title = keyLibrary.deleteTitle ?? "Delete"
                 return libraryEditable && keyLibrary.deleteTitle != nil
             }
-            item.title = show?.selectedEpisodeID != nil ? "Delete Episode…" : "Delete"
-            return show?.canEdit == true && show?.selectedEpisodeID != nil
+            guard let show, show.canEdit, let episode = show.selectedEpisodeID else {
+                item.title = "Delete"
+                return false
+            }
+            if episodeListActive(show) {
+                item.title = "Delete Episode…"
+                return true
+            }
+            if let title = SourceCommands.handler.deleteSelectionTitle(store: show.store, episode: episode, window: show.window) {
+                item.title = title
+                return true
+            }
+            item.title = "Delete"
+            return false
         case #selector(moveUp(_:)), #selector(moveDown(_:)):
             let offset = item.action == #selector(moveUp(_:)) ? -1 : 1
             let direction = offset < 0 ? "Up" : "Down"
+            if isEditingText {
+                item.title = "Move \(direction)"
+                return false
+            }
             if let keyLibrary {
                 let noun = keyLibrary.moveNoun
                 item.title = noun.isEmpty ? "Move \(direction)" : "Move \(noun) \(direction)"
                 return libraryEditable && keyLibrary.canMove(by: offset)
             }
-            if let show, show.selectedEpisodeID != nil {
+            if let show, episodeListActive(show) {
                 item.title = "Move Episode \(direction)"
                 return show.canMoveSelectedEpisode(by: offset)
+            }
+            if let show, show.canEdit, let episode = show.selectedEpisodeID,
+               let title = SourceCommands.handler.moveSelectionTitle(by: offset, store: show.store, episode: episode, window: show.window) {
+                item.title = title
+                return SourceCommands.handler.canMoveSelection(by: offset, store: show.store, episode: episode, window: show.window)
             }
             item.title = "Move \(direction)"
             return false

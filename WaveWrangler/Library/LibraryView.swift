@@ -107,6 +107,7 @@ private struct SidebarRowView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(row.accessibilityLabel)
         .accessibilityValue(row.accessibilityValue)
+        .accessibilityAddTraits(.isStaticText)
         .accessibilityIdentifier(row.item.accessibilityIdentifier)
     }
 }
