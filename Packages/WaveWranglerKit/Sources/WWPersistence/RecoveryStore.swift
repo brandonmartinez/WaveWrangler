@@ -63,7 +63,7 @@ public struct RecoveryStore: Sendable {
         let url = directory.appending(path: name)
         try writeRecord(bytes, to: url)
         let all = try checkpoints(for: key)
-        for stale in all.dropFirst(retainCount) where stale.url != url {
+        for stale in all.dropFirst(retainCount) where stale.url.lastPathComponent != url.lastPathComponent {
             try ops.remove(stale.url)
         }
         return RecoveryCheckpoint(key: key, url: url, fingerprint: fingerprint)
@@ -148,7 +148,7 @@ public struct RecoveryStore: Sendable {
         let name = "base-\(base?.shortDigest ?? "none")-\(RevisionFingerprint(of: bytes).shortDigest).wwdraft"
         let url = folder("drafts", key).appending(path: name)
         try writeRecord(bytes, to: url)
-        for other in try records(in: folder("drafts", key), extension: "wwdraft") where other != url {
+        for other in try records(in: folder("drafts", key), extension: "wwdraft") where other.lastPathComponent != url.lastPathComponent {
             try ops.remove(other)
         }
     }
