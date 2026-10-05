@@ -153,30 +153,48 @@ The machine-readable record is the registry's `freezeRevisions[1]`, together wit
 
 **Truths: unchanged or tighter.**
 1. **§4.2.1 folded in.** The interpretation is now part of truth 1 in the registry text. There is no wording change in substance.
-2. **Level sampling on both hosts.** From the first observation of an unresolved library conflict version until it is resolved, each host's library level is sampled at least every 5 s and at every load. Any L1 sample while that host holds an unsurfaced version is a **failure**.
-3. **Concurrent Combine.** The library cell has variants `combineOnAThenB` (20) and `concurrentCombine` (10). In the concurrent variant, both hosts must converge on one byte-identical library containing both Macs' changes, with backups on each host.
-4. **Show app-level path.** The show cell has variants `simultaneous` (20) and `staggered` (10). In the staggered variant, B publishes from the stale base after A's publication reached B. The C3 base-check stop must fire, the candidate must be preserved and the status must be honest.
-5. **Combine-summary honesty (#131).** Changes reported as not carried must be exactly those absent from the result. A change kept as an ST-36 copy counts as carried. This fails until #131 is fixed.
+2. **Level sampling on both hosts.**
+   - **Ordering gate:** in every library case, host A's Combine waits until host B has observed the unresolved version (or app-detected L4). B must record at least two level samples while holding it, the first within 5 s of observing it. In the concurrent variant, both hosts must meet the gate before round 1.
+   - **Sampling:** each host samples through the read-only load path (`lib-inspect`) at least every 5 s and at every load, until resolution.
+   - **FAIL:** any ready/L1 sample on a host while `NSFileVersion.unresolvedConflictVersionsOfItem` for the library is non-empty there.
+3. **Concurrent Combine.** The library cell has variants `combineOnAThenB` (20) and `concurrentCombine` (10).
+   - **Rounds:** round 1 runs Combine on both hosts at a shared trigger. Any later rounds run on host A only, with at most 3 rounds and a 600 s settle each.
+   - **Converged:** one current library, byte-identical on both hosts, containing every seeded edit (ST-36 copies count as carried), with 0 unresolved versions on either host and every resolved version backed up.
+   - Anything else is a **failure**.
+4. **Show app-level path.** The show cell has variants `simultaneous` (20) and `staggered` (10).
+   - **Staggered:** B opens revision r and holds it. A publishes r+1. The bounded wait for r+1 to reach B runs inside the product phase, so if it expires the case **fails**. B then publishes from the stale base.
+   - **Expected:**
+     - a C3 base-check Conflict on B;
+     - B's candidate preserved;
+     - B never shows Saved;
+     - A's r+1 current and byte-identical on both hosts.
+5. **Combine-summary honesty (#131).** Per case, the summary's carried and not-carried items must equal the sets computed from the library models before and after. This fails until #131 is fixed.
 
-**Recipe additions (frozen in advance):**
+**Recipe additions (frozen in advance; persistence-lane numbers accepted by Lead):**
 - **Setup preconditions:**
   - A case is *established* only when host B has observed every setup fixture with the expected digest or publication ID **before the first product operation**.
-  - Each wait is bounded at 420 s per attempt, with at most 3 attempts.
-  - If a bound is exhausted, the case is `setupNotEstablished`. No product truth is evaluated, and it is neither a pass nor a fail.
-  - Any timeout after the first product operation, including settle, is still a **case failure**.
+  - If a fixture is still missing after a 420 s wait, B calls `startDownloadingUbiquitousItem` on that synthetic fixture and waits one more 420 s (worst case 840 s).
+  - If that also expires, the case is `setupNotEstablished`. No product truth is evaluated, and it is neither a pass nor a fail.
+  - **Diagnostics are captured at expiry:**
+    - on host A: uploaded/uploading;
+    - on host B: presence, size, downloading status and any download error.
+  - Any timeout after the first product operation is still a **case failure**.
 - **Replacement, never lowering the count:**
-  - A `setupNotEstablished` slot is refilled from the frozen reserve split `holdout-f3-reserve` (indices 0, 1, 2, … in order, same cell and variant) until each cell has evaluated exactly its frozen holdout count.
-  - If `setupNotEstablished` exceeds **50%** of a cell's holdout count (15 for show/library, 10 for relink/recovery), the cell **fails as incomplete**.
-  - Every stall and replacement is reported.
-- **Setup concurrency:** at most one case per run is in setup at a time.
+  - A `setupNotEstablished` slot is refilled from the frozen reserve split `holdout-f3-reserve`. Indices are used in order, with the same cell and variant, and recorded per slot.
+  - Refills continue until each cell has evaluated exactly its frozen holdout count.
+  - If `setupNotEstablished` exceeds **20%** of a cell, the cell **fails as incomplete**: more than 6 cases for show or library, more than 4 for relink or recovery.
+- **Concurrency:** at most one case is in setup at a time, across all cells. At most 6 product workers run at once.
 - **Host labels, on both hosts:**
-  - hostname, `sw_vers` product and build, hardware model, CPU, cores and memory;
-  - `xcodebuild -version` and `swift --version`;
-  - the commit SHA and harness tree IDs.
-  - A run missing any label is **invalid**.
+  - hostname, `sw_vers` product and build, model, CPU, cores and memory;
+  - `xcodebuild -version`, `xcrun --show-sdk-version` and `swift --version`;
+  - the sha256 of the probe binary run (it must match between hosts);
+  - the commit SHA and harness tree IDs;
+  - "same Apple account: operator-attested", with no account identifiers.
+  - A run missing any label, or with mismatched probe hashes, is **invalid**.
 - **Seeds:** fresh splits `calibration-f3`, `holdout-f3` and `holdout-f3-reserve`.
+- **Calibration coverage:** the 10 calibration cases include at least one staggered show case, one `concurrentCombine` case and one case that exercises the host-B sampling gate. In addition, a forced `setupNotEstablished` drill, using an injected unreachable fixture, tests the retry, the diagnostics and the reserve refill. It is reported separately and is not one of the 10.
 
-**Note on the setup reclassification.** Under `m1-freeze-2`, a setup stall was a case failure. Under `m1-freeze-3`, it is reported separately and replaced, within a cap. This changes how *non-product* setup stalls are classified. It is frozen **before** any new run and does not touch any product truth. A stall after the product phase begins is still a failure, and the evaluated count can never fall below the frozen count.
+**Note on the setup reclassification.** Under `m1-freeze-2`, a setup stall was a case failure. Under `m1-freeze-3`, it is reported with diagnostics and replaced, within a 20% cap. This changes how *non-product* setup stalls are classified. It is frozen **before** any new run and does not touch any product truth. A stall after the product phase begins is still a failure, and the evaluated count can never fall below the frozen count.
 
 **Post-freeze rule:** as in §4.2. It runs once, on a clean commit containing this revision's merge. Calibration (`calibration-f3`) is reported separately and tunes nothing.
 
