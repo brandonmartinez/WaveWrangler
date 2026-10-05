@@ -216,6 +216,20 @@ final class LifecycleHoldoutUITests: XCTestCase {
             let reopened = try launchAndOpen(document, autosave: true, extra: ["-WWUITestAutosaveDelaySeconds", "30"])
             let offer = reopened.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] 'Restore' OR value CONTAINS[c] 'Restore' OR title CONTAINS[c] 'Restore'")).firstMatch
             check(offer.waitForExistence(timeout: 5), "'Restore unsaved changes' offered on reopen (issue #84)")
+            let restore = reopened.buttons["Restore Unsaved Changes"]
+            if restore.waitForExistence(timeout: 3) {
+                restore.click()
+                let showInfo = reopened.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
+                if showInfo.exists { showInfo.click() }
+                check(Acceptance.waitFor(timeout: 5) { reopened.textFields["Show title"].value as? String == "Checkpointed \(index)" },
+                      "restored the unsaved title: \(reopened.textFields["Show title"].value ?? "nil")")
+                let status = reopened.descendants(matching: .any).matching(identifier: "ww.show.saveStatus").firstMatch
+                Acceptance.record(self, "after restore: status \(status.value ?? "nil"), disk \(diskTitle(document) ?? "nil")")
+                check(!((status.value as? String) ?? "").hasPrefix("Saved") || diskTitle(document) == "Checkpointed \(index)",
+                      "restore never claims Saved before a verified save")
+            } else {
+                check(false, "Restore Unsaved Changes button")
+            }
         }
     }
 
