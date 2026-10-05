@@ -133,6 +133,7 @@ struct Probe {
         case "create": return create()
         case "save": return await save()
         case "open": return open()
+        case "profile-open": return profileOpen()
         case "versions": return versions()
         case "autosave": return await autosave()
         case "kill-at": return await killAt()
@@ -182,6 +183,59 @@ struct Probe {
         case let .failure(error):
             emit(describe(error).merging(["title": title]) { $1 })
         }
+        return 0
+    }
+
+    /// Cold-process timing of the non-UI stages of opening a show (SCALE-001 investigation): file read,
+    /// decode + checksum, NSFileVersion conflict inspection, edit-checkpoint set-aside + offer scan.
+    func profileOpen() -> Int32 {
+        func ms(_ start: ContinuousClock.Instant) -> Double { seconds(.now - start) * 1000 }
+        var out: [String: Any] = [:]
+        var t = ContinuousClock.now
+        guard let data = try? Data(contentsOf: file) else { emit(["error": "read"]); return 1 }
+        out["readMs"] = ms(t)
+        t = .now
+        let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery)
+        let outcome = opener.outcome(for: data, url: file)
+        out["decodeMs"] = ms(t)
+        guard case let .editable(document, fingerprint) = outcome else { emit(["error": "not editable"]); return 1 }
+        t = .now
+        _ = ProviderConflictReport.inspect(file)
+        out["fileVersionMs"] = ms(t)
+        if let recovery {
+            let key = DocumentKey.show(document.payload.show.id)
+            t = .now
+            try? recovery.setAsideEditCheckpoints(for: key)
+            out["setAsideMs"] = ms(t)
+            t = .now
+            let showID = document.payload.show.id
+            _ = EditCheckpointOffer.assess(recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue, onDisk: fingerprint,
+                                           coder: coder, belongsToDocument: { $0.show.id == showID })
+            out["offerScanMs"] = ms(t)
+        }
+        // The persistent library path (PersistentLibraryEntryObserver.openShow): resolve the read-write
+        // bookmark and start its scope, then verify the show identity with a coordinated open, before NSDocument
+        // reads the file again. The first run records the bookmark (same executable, as the app does).
+        if let root = args.url("locations") {
+            let showID = document.payload.show.id
+            t = .now
+            let locations = LibraryShowLocations(root: root)
+            out["locationsInitMs"] = ms(t)
+            if args["record"] != nil {
+                try? locations.record(showID, at: file)
+                out["recorded"] = true
+            } else {
+                t = .now
+                guard let grant = try? locations.beginAccess(showID) else { emit(["error": "beginAccess"]); return 1 }
+                out["beginAccessMs"] = ms(t)
+                t = .now
+                _ = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: nil).open(grant.url, key: .show(showID))
+                out["verifyOpenMs"] = ms(t)
+                locations.endAccess(grant)
+            }
+        }
+        out["bytes"] = data.count
+        emit(out)
         return 0
     }
 

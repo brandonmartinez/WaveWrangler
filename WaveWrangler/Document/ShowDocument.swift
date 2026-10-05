@@ -56,6 +56,8 @@ final class ShowDocument: NSDocument {
     private var recovery: RecoveryStore { PersistenceEnvironment.recovery }
 
     override init() {
+        let interval = OpenSignposts.begin("document.init")
+        defer { OpenSignposts.end(interval) }
         store = ShowDocumentStore(model: .untitled())
         super.init()
         store.document = self
@@ -78,6 +80,8 @@ final class ShowDocument: NSDocument {
     override class var autosavesInPlace: Bool { PersistenceEnvironment.autosaveGate.isEnabled }
 
     override func makeWindowControllers() {
+        let interval = OpenSignposts.begin("document.makeWindowControllers")
+        defer { OpenSignposts.end(interval) }
         let hosting = NSHostingController(rootView: ShowWorkspaceView(store: store))
         let window = NSWindow(contentViewController: hosting)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
@@ -98,6 +102,8 @@ final class ShowDocument: NSDocument {
     // MARK: - Reading
 
     override func read(from url: URL, ofType typeName: String) throws {
+        let interval = OpenSignposts.begin("document.read")
+        defer { OpenSignposts.end(interval) }
         let data = try Data(contentsOf: url)
         try MainActor.assumeIsolated { try load(data, url: url) }
     }
@@ -108,17 +114,20 @@ final class ShowDocument: NSDocument {
 
     private func load(_ data: Data, url: URL?) throws {
         let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery)
-        switch opener.outcome(for: data, url: url) {
+        let outcome = OpenSignposts.measure("document.decode") { opener.outcome(for: data, url: url) }
+        switch outcome {
         case let .editable(document, fingerprint):
             store.replaceLoadedModel(document.payload)
             publication = document.publication
             onDiskBase = fingerprint
             status.set(.clean(revision: document.revision))
-            if let url { status.setProviderConflicts(ProviderConflictReport.inspect(url)) }
-            // C2b: set this show's edit checkpoints aside as an offer, so later saves and new checkpoints
-            // can't remove them before the user decides (Restore, Open as Separate Copy or Discard).
+            // C2b: set this show's edit checkpoints aside as an offer now (synchronously, before any save or new
+            // checkpoint could remove them) so nothing can be lost before the user decides.
             try? recovery.setAsideEditCheckpoints(for: .show(document.payload.show.id))
-            refreshEditCheckpointOffer()
+            // Evidence-only and presentation work runs after the window's first frame (SCALE-001 cold open):
+            // the provider-version inspection and the C2b offer scan. Nothing is decided from them before that:
+            // the offer's actions re-check against disk, and a save never depends on either.
+            scheduleAfterFirstFrame()
         case let .refusedNewerFormat(found, supported, _):
             // Refuse with reason; nothing is ever written to a newer document.
             throw PersistenceError.unknownNewerSchema(found: found, supported: supported)
@@ -471,6 +480,37 @@ final class ShowDocument: NSDocument {
     override func presentedItemDidResolveConflict(_ version: NSFileVersion) {
         super.presentedItemDidResolveConflict(version)
         refreshProviderConflictsSoon()
+    }
+
+    private var afterFirstFrameScheduled = false
+
+    /// Runs the deferred open work after the window's first frame (`showWindows`); on a revert, when a window
+    /// is already visible, on the next main-queue turn. A document that is never displayed presents neither the
+    /// offer nor provider versions, so it has nothing to defer to; it runs if its windows are shown later.
+    private func scheduleAfterFirstFrame() {
+        afterFirstFrameScheduled = true
+        if windowControllers.contains(where: { $0.window?.isVisible == true }) {
+            DispatchQueue.main.async { [weak self] in self?.runAfterFirstFrame() }
+        }
+    }
+
+    override func showWindows() {
+        let firstShow = !windowControllers.contains { $0.window?.isVisible == true }
+        let interval = firstShow ? OpenSignposts.begin("window.firstCommit") : nil
+        super.showWindows()
+        guard firstShow else { return }
+        OpenSignposts.endAfterCommit(interval)
+        guard afterFirstFrameScheduled else { return }
+        OpenSignposts.afterFirstFrame { [weak self] in self?.runAfterFirstFrame() }
+    }
+
+    private func runAfterFirstFrame() {
+        guard afterFirstFrameScheduled else { return }
+        afterFirstFrameScheduled = false
+        OpenSignposts.measure("document.deferred") {
+            if let url = fileURL { status.setProviderConflicts(ProviderConflictReport.inspect(url)) }
+            refreshEditCheckpointOffer()
+        }
     }
 
     private nonisolated func refreshProviderConflictsSoon() {
