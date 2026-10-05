@@ -137,11 +137,20 @@ on that commit only.
 (package + native) had 0 failures.
 
 **After the holdout (not part of the evidence).** These changes were made in the same PR, after cd1c0f1:
-- #82: the `MultiProcessTests` process-kill check counts a kill only when the helper exits on signal 9 **and** its fsynced boundary marker matches. An external kill is retried with a fresh fixture.
-  - The probe's `--marker` flag is optional and off by default, so the holdout's probe invocations behave as they did.
+- #82: the `MultiProcessTests` process-kill check (not a holdout family) was made strict, after review:
+  - **Classification:** old = the seeded revision 2; new = the probe's edit at revision 3; anything else readable is mixed and must stay 0.
+  - **Probe:** an edit failure in `kill-at` / `library-kill-at` is fatal (exit 3), so an unedited model is never republished.
+  - **Kill accounting:** a kill counts only when the probe exits on SIGKILL **and** its fsynced boundary marker matches.
+  - **Retries:** only the exact #82 signature (SIGKILL with no marker, i.e. killed from outside before the boundary) is retried with a fresh fixture. Any other termination fails immediately. Retries appear in the evidence line and are bounded at ≤ 3 per boundary.
+  - **Root cause:** at the failing commit, the probe's only boundary exit was `_exit(73)`, so the two "status 9" results were SIGKILLs from outside the process.
+    - No code in the repo, test runners or scripts sends signals to other processes.
+    - The kernel logged no code-signing kill in that window. launchd names SIGKILL senders only for its own jobs.
+    - The host runs Microsoft Defender for Endpoint with an Endpoint Security extension, real-time protection and behavior monitoring; its logs are root-only and `mdatp threat list` reports none.
+    - It was not reproduced in 600 concurrent first executions of 15 freshly re-signed probe binaries.
+    - The sender is **not identified**; it is external to WaveWrangler. Data-safety invariants held in the failing run.
 - `LibraryLoadOutcome.unavailableShowingPrior` documentation and `isReadOnly` now match L2/L3 queueing.
 - DUR-004 test: the two timestamps are now shared through a Sendable `LockedBox` instead of a captured `Mutex`, because CI's macOS 26 toolchain rejects the capture. The semantics are unchanged, and the test tree ID now differs from the holdout record above.
 
-The full `scripts/test.sh` suite ran 20 times consecutively on 7bc4a7d (before the DUR-004 `LockedBox` change, which then passed CI):
-- 19 runs passed. Every run passed `processKillAtBoundary` (#82), with 0 external-kill retries.
-- 1 run failed in the source lane's `WW-006 lifecycle matrix` (M1-REF-015 holdout case 3, residency/transfer timing). That test is from main and is not touched here; it was reported to the coordinator.
+The full `scripts/test.sh` suite ran 20 times consecutively on c8a9228 (strict #82 check): **20/20 green**. In every run, `processKillAtBoundary` reported 600 kills, mixed 0, zero-valid 0 and external-kill retries 0.
+
+An earlier 20-run loop on 7bc4a7d had 19 green. Its one red run was the source lane's `WW-006 lifecycle matrix` (M1-REF-015), which is from main and was reported to the coordinator.
