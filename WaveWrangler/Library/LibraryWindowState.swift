@@ -267,7 +267,15 @@ final class LibraryWindowState {
             SettingsWindowController.show(pane: .general)
             return
         }
-        Task { await store.services.location.perform(action) }
+        Task {
+            await store.services.location.perform(action)
+            switch action {
+            case .combine, .useOtherMacsVersion, .recoverEarlierVersion, .grantAccess, .tryAgain:
+                await store.libraryWasReplaced()
+            case .librarySettings:
+                break
+            }
+        }
     }
 
     func rebuildIndex() {

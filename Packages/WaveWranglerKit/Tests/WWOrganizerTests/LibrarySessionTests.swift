@@ -155,4 +155,52 @@ struct LibrarySessionTests {
         #expect(r9)
         #expect(session.library.entry(id)?.lastKnownTitle == "Renamed and saved")
     }
+
+    @Test func undoAndRedoKeepCollectionsAddedOnTheOtherSide() throws {
+        var session = LibrarySession()
+        _ = session.didLoad(stored, allowsEdits: true)
+        let first = try #require(stored.collections.first)
+        // Edits: delete, rename, reorder, membership.
+        let deleteChange = try #require(try session.apply(allowsEdits: true) { library throws(LibraryError) in try library.deletingCollection(first.id) })
+        // Meanwhile another Mac / Use That Library adds a collection and a show to the canonical library.
+        var canonical = session.library
+        let otherShow = ShowID()
+        canonical = canonical.upsertingEntry(showID: otherShow, title: "From the other Mac")
+        let theirs = LibraryCollection(name: "Theirs", showIDs: [otherShow])
+        canonical.collections.append(theirs)
+        session.adoptCanonical(canonical)
+
+        session.undo(deleteChange)
+        #expect(session.library.collection(first.id)?.showIDs == first.showIDs, "deleted collection restored")
+        #expect(session.library.collection(theirs.id) == theirs, "other side's collection kept on undo")
+        #expect(session.library.collections.first?.id == first.id, "restored at its old position")
+        session.redo(deleteChange)
+        #expect(session.library.collection(first.id) == nil)
+        #expect(session.library.collection(theirs.id) == theirs, "other side's collection kept on redo")
+    }
+
+    @Test func renameMoveAndMembershipApplyPerCollection() throws {
+        let a = ShowID(), b = ShowID(), c = ShowID(), x = ShowID()
+        let entries = [a, b, c, x].map { LibraryShowEntry(showID: $0, lastKnownTitle: "\($0)") }
+        let one = LibraryCollection(name: "One", showIDs: [a, b])
+        let two = LibraryCollection(name: "Two", showIDs: [c])
+        let before = LibraryModel(entries: entries, collections: [one, two])
+        var after = before
+        after.collections[0].name = "One renamed"
+        after.collections[0].showIDs = [b, a, c]
+        after.collections.swapAt(0, 1)
+        // Canonical diverged: someone renamed Two, added x to One and added a third collection.
+        var canonical = before
+        canonical.collections[1].name = "Two (theirs)"
+        canonical.collections[0].showIDs.append(x)
+        let three = LibraryCollection(name: "Three")
+        canonical.collections.append(three)
+        let result = canonical.applyingDifference(from: before, to: after)
+        let resultOne = try #require(result.collection(one.id))
+        #expect(resultOne.name == "One renamed")
+        #expect(Set(resultOne.showIDs) == [a, b, c, x], "membership is set add/remove; x kept")
+        #expect(resultOne.showIDs.firstIndex(of: b)! < resultOne.showIDs.firstIndex(of: a)!, "relative reorder applied")
+        #expect(result.collection(two.id)?.name == "Two (theirs)", "rename only when the name still matches")
+        #expect(result.collections.map(\.id) == [two.id, one.id, three.id], "move applied among shared; theirs kept")
+    }
 }

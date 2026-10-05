@@ -42,13 +42,14 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
     }
 
     func applyEdit(_ transform: @escaping @Sendable (LibraryModel) -> LibraryModel) async throws -> LibraryModel {
-        let base = store.library
+        let base = store.library ?? LibraryModel()
         guard await store.update({ transform($0) }) else {
             throw AdapterError.unavailable(store.lastError?.localizedDescription ?? "the library couldn't be updated")
         }
-        // While edits are queued (L2/L3) the canonical value hasn't changed yet; show the queued result.
-        if store.pendingEditCount > 0, let base { return transform(store.library ?? base) }
-        return store.library ?? transform(base ?? LibraryModel())
+        // Published: the store's library already contains the edit. Queued (L2/L3): the store still shows
+        // the last published value, so show the edit applied once to the value it was made against.
+        if store.pendingEditCount > 0, store.library == base || store.library == nil { return transform(base) }
+        return store.library ?? transform(base)
     }
 
     private static func describe(_ outcome: LibraryLoadOutcome) -> String {
@@ -84,7 +85,10 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
         case .unreachable: .unreachable(folderDisplayName: folderDisplayName, pendingChanges: store.pendingEditCount)
         case .needsPermission: .needsPermission(pendingChanges: store.pendingEditCount)
         case .changedElsewhere: .conflict
-        case .newerFormat: .newerFormat(folderDisplayName: folderDisplayName)
+        case .newerFormat:
+            store.library == nil
+                ? .newerFormatNotViewable(folderDisplayName: folderDisplayName)
+                : .newerFormat(folderDisplayName: folderDisplayName)
         case .damaged: .damaged
         @unknown default: .damaged
         }
@@ -93,7 +97,15 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
     var movePhase: LibraryMovePhase? { controller.isWorking ? .copying : nil }
     var isConnected: Bool { true }
     var pendingEditsStatus: String? { store.pendingEditsStatus }
-    var quitWarning: String? { store.quitWarning }
+    /// ST-34. Queued edits are kept on this Mac. With L3 they need Grant Access, not just the folder coming back.
+    var quitWarning: String? {
+        guard let warning = store.quitWarning else { return nil }
+        if case .needsPermission = store.levelState {
+            let count = store.pendingEditCount
+            return "WaveWrangler couldn't save \(count) library change\(count == 1 ? "" : "s") yet. They're kept on this Mac and will be saved after you choose Grant Access… in the Library window to let WaveWrangler use your library folder again."
+        }
+        return warning
+    }
 
     func dismissResultMessage() { resultMessage = nil }
 
@@ -120,19 +132,21 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
             resultMessage = message
             return .moved(message: message)
         case .success(.adoptedIdentical(let url)):
-            let message = "Your library is now stored in “\(url.lastPathComponent)”. It already had the same library."
+            let message = "Your library is now stored in “\(url.lastPathComponent)”. That folder already had an identical copy, so nothing needed to be copied."
             resultMessage = message
             return .moved(message: message)
         case .success(.destinationHasLibrary(let url, _)):
             return .destinationHasLibrary(folder: url, blockedReason: nil)
-        case .success(.destinationUnusable(_, let reason)):
-            return .failed(reason: "\(reason). WaveWrangler is still using your library in \(previous); nothing was changed.")
+        case .success(.destinationUnusable(let url, let reason)):
+            // The folder has a library this version can't use (unreachable, needs permission, newer format,
+            // damaged): offer the sheet with Use That Library disabled and the reason (ST-33 step 6).
+            return .destinationHasLibrary(folder: url, blockedReason: LibraryUIStore.sentence(reason) + " Nothing was written to the folder, and your current library is still in use.")
         case .success(.combined(_, _, let summary)):
             let message = Self.combineMessage(summary)
             resultMessage = message
             return .moved(message: message)
         case .failure(let error):
-            return .failed(reason: "\(error.localizedDescription). WaveWrangler is still using your library in \(previous); nothing was changed.")
+            return .failed(reason: "\(LibraryUIStore.sentence(error.localizedDescription)) WaveWrangler is still using your library in \(previous); nothing was changed.")
         case .none:
             return .failed(reason: "the move didn't complete. WaveWrangler is still using your library in \(previous); nothing was changed.")
         @unknown default:
@@ -173,6 +187,14 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
             guard await panel.begin() == .OK, let url = panel.url else { return }
             await controller.choose(url)
             await store.refresh()
+            // Surface failures; re-granting an unloaded library needs a persistence re-grant-and-reload API.
+            if case .failure(let error) = controller.lastOutcome {
+                resultMessage = "Couldn't use that folder: \(LibraryUIStore.sentence(error.localizedDescription)) Your library wasn't changed."
+            } else if case .success(.destinationUnusable(_, let reason)) = controller.lastOutcome {
+                resultMessage = "Couldn't use that folder: \(LibraryUIStore.sentence(reason)) Your library wasn't changed."
+            } else if store.library == nil {
+                resultMessage = "WaveWrangler still can't read your library from that folder. Your library wasn't changed."
+            }
         case .recoverEarlierVersion:
             if case .damaged(let revisions) = store.levelState, let newest = revisions.max() {
                 _ = await store.recover(revision: newest)

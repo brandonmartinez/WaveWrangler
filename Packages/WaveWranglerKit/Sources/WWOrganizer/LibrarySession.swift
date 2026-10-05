@@ -150,9 +150,15 @@ public struct LibrarySession: Sendable, Equatable {
 }
 
 extension LibraryModel {
-    /// Applies the difference `from → to` to `self`, leaving everything else (e.g. entries and recents
-    /// added by bookkeeping since) untouched. Collections are only changed by undoable user actions, so
-    /// they take `to`'s value, keeping only members that are still library entries.
+    /// Applies the difference `from → to` to `self`, touching only what that edit changed. Everything else —
+    /// entries, recents and collections added or changed elsewhere since (another Mac, a combine, a
+    /// recovery, persistence acknowledging a verified show save) — is left as it is:
+    ///
+    /// - entries and recents: added/removed by identity;
+    /// - collections: per collection ID — added/removed only if the edit added/removed them; renamed only if
+    ///   the current name still equals the edit's before-value; membership applied as set add/remove with
+    ///   new members placed after their predecessor; order changes applied relative to the members/collections
+    ///   both versions share, leaving others in place.
     public func applyingDifference(from: LibraryModel, to: LibraryModel) -> LibraryModel {
         var result = self
         let fromIDs = Set(from.entries.map(\.showID))
@@ -172,11 +178,70 @@ extension LibraryModel {
             result.recentShowIDs.insert(id, at: min(index, result.recentShowIDs.count))
         }
 
+        result.collections = Self.diffCollections(current: result.collections, from: from.collections, to: to.collections)
         let entryIDs = Set(result.entries.map(\.showID))
-        result.collections = to.collections.map { collection in
-            var copy = collection
-            copy.showIDs = collection.showIDs.filter { entryIDs.contains($0) }
-            return copy
+        for index in result.collections.indices {
+            result.collections[index].showIDs.removeAll { !entryIDs.contains($0) }
+        }
+        return result
+    }
+
+    static func diffCollections(current: [LibraryCollection], from: [LibraryCollection], to: [LibraryCollection]) -> [LibraryCollection] {
+        let fromByID = Dictionary(from.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let toByID = Dictionary(to.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var result = current.filter { !(fromByID[$0.id] != nil && toByID[$0.id] == nil) }
+
+        // Changes to collections both versions have.
+        for index in result.indices {
+            let id = result[index].id
+            guard let before = fromByID[id], let after = toByID[id] else { continue }
+            if before.name != after.name, result[index].name == before.name {
+                result[index].name = after.name
+            }
+            result[index].showIDs = diffOrdered(current: result[index].showIDs, from: before.showIDs, to: after.showIDs)
+        }
+
+        // Collections the edit added (e.g. undoing a delete): insert after their predecessor in `to`.
+        for (position, collection) in to.enumerated() where fromByID[collection.id] == nil && !result.contains(where: { $0.id == collection.id }) {
+            let predecessor = to[..<position].last { candidate in result.contains { $0.id == candidate.id } }
+            let insertAt = predecessor.flatMap { p in result.firstIndex { $0.id == p.id } }.map { $0 + 1 } ?? 0
+            result.insert(collection, at: insertAt)
+        }
+
+        // Collection order changes among collections all three share.
+        let sharedOrder = from.map(\.id).filter { toByID[$0] != nil }
+        let targetOrder = to.map(\.id).filter { fromByID[$0] != nil }
+        if sharedOrder != targetOrder {
+            let movable = Set(targetOrder)
+            let slots = result.indices.filter { movable.contains(result[$0].id) }
+            let byID = Dictionary(result.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let ordered = targetOrder.compactMap { byID[$0] }
+            if ordered.count == slots.count {
+                for (slot, collection) in zip(slots, ordered) { result[slot] = collection }
+            }
+        }
+        return result
+    }
+
+    /// Set add/remove plus relative reordering for an ordered list of IDs.
+    static func diffOrdered<ID: Hashable>(current: [ID], from: [ID], to: [ID]) -> [ID] {
+        let fromSet = Set(from)
+        let toSet = Set(to)
+        var result = current.filter { !(fromSet.contains($0) && !toSet.contains($0)) }
+        for (position, id) in to.enumerated() where !fromSet.contains(id) && !result.contains(id) {
+            let predecessor = to[..<position].last { result.contains($0) }
+            let insertAt = predecessor.flatMap { result.firstIndex(of: $0) }.map { $0 + 1 } ?? 0
+            result.insert(id, at: insertAt)
+        }
+        let sharedBefore = from.filter { toSet.contains($0) }
+        let sharedAfter = to.filter { fromSet.contains($0) }
+        if sharedBefore != sharedAfter {
+            let movable = Set(sharedAfter)
+            let slots = result.indices.filter { movable.contains(result[$0]) }
+            let ordered = sharedAfter.filter { result.contains($0) }
+            if ordered.count == slots.count {
+                for (slot, id) in zip(slots, ordered) { result[slot] = id }
+            }
         }
         return result
     }

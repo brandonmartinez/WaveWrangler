@@ -207,7 +207,9 @@ final class LibraryWorkspaceUITests: XCTestCase {
     // MARK: - Show window (T01–T03, T06, T24; K02, K03, K24)
 
     func testShowWindowEpisodesMetadataDestinationsAndHonestSaveStatus() throws {
-        launch(["-WWUITestLibraryFixture", "empty", "-WWUITestOpenShow", "Synthetic Show", "-WWUITestShowEpisodes", "0"])
+        // Autosave ON with a long delay so "Edited" is observable before the automatic save.
+        launch(["-WWUITestLibraryFixture", "empty", "-WWUITestOpenShow", "Synthetic Show", "-WWUITestShowEpisodes", "0",
+                "-WWUITestAutosave", "ON", "-WWAutosaveDelaySeconds", "60"])
         let window = app.windows.matching(identifier: "ww.show.window").firstMatch
         waitFor(window, timeout: 15)
         XCTAssertTrue(window.title.hasPrefix("Synthetic Show"))
@@ -216,10 +218,11 @@ final class LibraryWorkspaceUITests: XCTestCase {
         XCTAssertEqual(value(episodes), "0 episodes")
         waitFor(element("ww.show.empty.newEpisode"))
 
-        // Honest status: the fallback never claims "Saved".
+        // Honest status: the create was published and read back by persistence, so it says "Saved" (D1).
         let status = element("ww.show.saveStatus")
         waitFor(status)
-        XCTAssertFalse(value(status).hasPrefix("Saved"), "Save status must not say Saved without coherent publication: \(value(status))")
+        let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Saved'"), object: status)
+        XCTAssertEqual(XCTWaiter().wait(for: [saved], timeout: 10), .completed, "verified create shows Saved: \(value(status))")
 
         // K02: ⇧⌘N → inline rename → type → Return.
         window.typeKey("n", modifierFlags: [.command, .shift])
@@ -232,8 +235,8 @@ final class LibraryWorkspaceUITests: XCTestCase {
         app.menuBars.menuBarItems["Edit"].click()
         XCTAssertTrue(menuItem("Undo Rename Episode").exists, "Named undo for rename")
         app.typeKey(.escape, modifierFlags: [])
-        XCTAssertTrue(window.title.contains("Edited") || value(status).hasPrefix("Edited") || value(status).hasPrefix("Not saved"),
-                      "Edits are shown as unsaved: title \(window.title), status \(value(status))")
+        let edited = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Edited'"), object: status)
+        XCTAssertEqual(XCTWaiter().wait(for: [edited], timeout: 5), .completed, "edits show Edited (D2), never Saved: \(value(status))")
 
         // K03: ⌘I focuses Title; invalid Number shows inline text error.
         window.typeKey("i", modifierFlags: .command)

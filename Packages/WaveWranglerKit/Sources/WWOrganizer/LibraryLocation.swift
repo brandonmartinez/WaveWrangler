@@ -62,6 +62,8 @@ public enum LibraryLevelState: Sendable, Equatable {
     case needsPermission(pendingChanges: Int)
     case conflict
     case newerFormat(folderDisplayName: String)
+    /// L5 when no readable copy can be shown at all (honest variant of the L5 wording).
+    case newerFormatNotViewable(folderDisplayName: String)
     /// The canonical library is damaged or missing; whole earlier versions can be recovered as a new copy.
     /// (Not in Design's L1–L5 table; wording proposed to Design.)
     case damaged
@@ -69,7 +71,7 @@ public enum LibraryLevelState: Sendable, Equatable {
     public var allowsEdits: Bool {
         switch self {
         case .ready, .unreachable, .needsPermission: true
-        case .conflict, .newerFormat, .damaged: false
+        case .conflict, .newerFormat, .newerFormatNotViewable, .damaged: false
         }
     }
 
@@ -119,6 +121,12 @@ public struct LibraryLevelPresentation: Sendable, Equatable {
             body = "Another Mac saved changes to your library while this Mac also had changes. WaveWrangler hasn't overwritten either."
             symbolName = "arrow.triangle.branch"
             actions = [.combine, .useOtherMacsVersion]
+            pendingText = nil
+        case .newerFormatNotViewable(let folder):
+            heading = "Your library needs a newer WaveWrangler"
+            body = "The library in “\(folder)” was saved by a newer version of WaveWrangler. This version can't show or change it, so its newer information isn't lost. Your shows aren't affected, and you can still open them with File › Open."
+            symbolName = "lock.fill"
+            actions = [.librarySettings]
             pendingText = nil
         case .damaged:
             heading = "Your library can't be read"

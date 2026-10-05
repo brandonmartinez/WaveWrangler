@@ -38,6 +38,11 @@ enum LaunchFixtures {
         let defaults = UserDefaults.standard
         if defaults.bool(forKey: "WWUITestResetPreferences") {
             defaults.removeObject(forKey: "NSWindow Frame WaveWranglerLibraryWindow")
+            // Persistence's isolated UI-test preferences (autosave policy) also start from the defaults, so
+            // results don't depend on test order.
+            if let suite = UserDefaults(suiteName: "com.brandonmartinez.wavewrangler.uitest-preferences") {
+                for key in [PreferenceKey.autosaveEnabled, "WWAutosaveDelaySeconds"] { suite.removeObject(forKey: key) }
+            }
             for key in [PreferenceKey.autosaveEnabled, PreferenceKey.downloadSourcesAutomatically, PreferenceKey.textSizePercent, PreferenceKey.settingsLastPane] {
                 defaults.removeObject(forKey: key)
             }

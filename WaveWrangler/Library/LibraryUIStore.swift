@@ -46,10 +46,37 @@ final class LibraryUIStore {
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if pendingSaves == 0, let canonical = services.persistence.currentLibrary { session.adoptCanonical(canonical) }
+                canonicalLibraryDidChange()
                 observeCanonicalLibrary()
             }
         }
+    }
+
+    /// A canonical value arrived that this store didn't just produce: adopt it. If the library wasn't
+    /// loaded (failed load, damaged/L5, needs permission) this is how it becomes available after Recover,
+    /// Grant Access or Use Other Mac's Version. Library undo is cleared, because its recorded differences
+    /// were made against a different library.
+    func canonicalLibraryDidChange() {
+        guard pendingSaves == 0, let canonical = services.persistence.currentLibrary else { return }
+        if !session.isLoaded {
+            persistenceFailure = nil
+            if session.didLoad(canonical, allowsEdits: allowsEdits) { persistFlushed() }
+            undoManager.removeAllActions(withTarget: self)
+        } else if canonical != session.library {
+            session.adoptCanonical(canonical)
+            undoManager.removeAllActions(withTarget: self)
+        }
+    }
+
+    /// After a move, Use That Library, combine, recovery or regrant: drop library undo and pick up the
+    /// library storage now reports (reloading if it had failed).
+    func libraryWasReplaced() async {
+        undoManager.removeAllActions(withTarget: self)
+        if !session.isLoaded {
+            loadTask = nil
+            await load()
+        }
+        canonicalLibraryDidChange()
     }
 
     /// When the library becomes read-only (L4/L5) its undo history is cleared so no undo step is silently
@@ -91,11 +118,13 @@ final class LibraryUIStore {
                 await services.entries.refresh(session.library.entries.map(\.showID))
             } catch {
                 session.didFailLoad(reason: error.localizedDescription)
-                persistenceFailure = "Couldn't read the library: \(error.localizedDescription). Your shows aren't affected, and the library won't be changed until it can be read."
+                persistenceFailure = "Couldn't read the library: \(Self.sentence(error.localizedDescription)) Your shows aren't affected, and the library won't be changed until it can be read."
             }
         }
         loadTask = task
         await task.value
+        // A failed load isn't permanent: allow a later load (Recover, Grant Access, Try Again).
+        if !session.isLoaded { loadTask = nil }
     }
 
     // MARK: - Undoable edits
@@ -181,10 +210,17 @@ final class LibraryUIStore {
                 if self?.pendingSaves == 0 { self?.session.adoptCanonical(canonical) }
             } catch {
                 self?.pendingSaves -= 1
-                self?.persistenceFailure = "Couldn't update the library: \(error.localizedDescription). Your shows aren't affected."
+                self?.persistenceFailure = "Couldn't update the library: \(Self.sentence(error.localizedDescription)) Your shows aren't affected."
                 if self?.pendingSaves == 0, let canonical = persistence.currentLibrary { self?.session.adoptCanonical(canonical) }
             }
         }
+    }
+
+    /// Ends `text` with exactly one period.
+    static func sentence(_ text: String) -> String {
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix(".") { trimmed.removeLast() }
+        return trimmed + "."
     }
 
     static func message(for refusal: LibrarySession.EditRefusal) -> String {

@@ -122,7 +122,7 @@ public enum LibraryMoveWording {
         case .damaged: "The library in this folder can't be read, so this version can't add to it."
         case .unreachable: "WaveWrangler can't reach the library in this folder right now."
         case .needsPermission: "WaveWrangler needs permission to use the library in this folder."
-        case .newerFormat: "The library in this folder was saved by a newer version of WaveWrangler, so this version can't add to it."
+        case .newerFormat, .newerFormatNotViewable: "The library in this folder was saved by a newer version of WaveWrangler, so this version can't add to it."
         }
     }
 }

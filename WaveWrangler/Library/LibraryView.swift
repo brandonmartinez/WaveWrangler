@@ -384,7 +384,7 @@ private struct LibraryMessageBar: View {
             }
             if let result = location.resultMessage {
                 MessageBar(
-                    heading: "Library updated",
+                    heading: "Library",
                     message: result,
                     symbolName: "info.circle",
                     actions: [("Dismiss", { location.dismissResultMessage() })],
