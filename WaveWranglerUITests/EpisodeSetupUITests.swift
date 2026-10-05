@@ -81,12 +81,11 @@ final class EpisodeSetupUITests: XCTestCase {
         var findings: [String] = []
         let tables = ["ww.setup.sources", "ww.setup.speakers", "ww.show.sidebar.episodes"].map { app.outlines[$0] }.filter(\.exists).map(\.frame)
             + app.sheets.tables.allElementsBoundByIndex.map(\.frame)
-        let workspaceInspector = app.scrollViews["ww.inspector"].exists ? app.scrollViews["ww.inspector"].frame : nil
         let titlebarBottom = app.windows["ww.show.window"].frame.minY + 56
         let sheet = app.sheets.firstMatch.exists ? app.sheets.firstMatch.frame : nil
         try app.performAccessibilityAudit(for: [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]) { issue in
             let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(240) ?? "no element")"
-            if let rationale = Self.waiver(for: issue, tables: tables, workspaceInspector: workspaceInspector, titlebarBottom: titlebarBottom, sheet: sheet) {
+            if let rationale = Self.waiver(for: issue, tables: tables, titlebarBottom: titlebarBottom, sheet: sheet) {
                 print("AUDIT WAIVED \(description) — \(rationale)")
             } else {
                 findings.append(description)
@@ -97,7 +96,7 @@ final class EpisodeSetupUITests: XCTestCase {
         print("AUDIT \(surface): \(findings.isEmpty ? "no unwaived issues" : "\(findings.count) unwaived issue(s)")")
     }
 
-    private static func waiver(for issue: XCUIAccessibilityAuditIssue, tables: [CGRect], workspaceInspector: CGRect?, titlebarBottom: CGFloat, sheet: CGRect?) -> String? {
+    private static func waiver(for issue: XCUIAccessibilityAuditIssue, tables: [CGRect], titlebarBottom: CGFloat, sheet: CGRect?) -> String? {
         guard let element = issue.element else { return nil }
         if [.window, .toolbar, .splitter, .menuBar, .menuBarItem, .touchBar].contains(element.elementType) { return "system window chrome" }
         if issue.auditType == .sufficientElementDescription, element.elementType == .group, !element.isEnabled { return "non-interactive layout container" }
@@ -110,9 +109,6 @@ final class EpisodeSetupUITests: XCTestCase {
             }
             if tables.contains(where: { $0.intersects(frame) && frame.minY >= $0.minY - 1 && frame.maxY <= $0.maxY + 1 }) {
                 return "issue #59: system table/sidebar text contrast (tracked)"
-            }
-            if let workspaceInspector, workspaceInspector.contains(CGPoint(x: frame.midX, y: frame.midY)) {
-                return "workspace Episode inspector (library lane, #59 class), not Setup UI"
             }
             if frame.maxY <= titlebarBottom, element.elementType == .staticText { return "window title/subtitle drawn by AppKit" }
         }
