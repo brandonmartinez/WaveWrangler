@@ -293,7 +293,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             DistributedNotificationCenter.default().postNotificationName(Self.autosaveOff, object: nil, userInfo: nil, deliverImmediately: true)
             Thread.sleep(forTimeInterval: 0.3)
         }
-        return window
+        return app.windows.matching(identifier: "ww.show.window").firstMatch
     }
 
     private func launchAndOpen(_ document: URL, autosave: Bool) throws -> XCUIElement {

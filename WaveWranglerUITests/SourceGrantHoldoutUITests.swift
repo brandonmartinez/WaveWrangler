@@ -233,8 +233,8 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         let row = app.outlines["ww.setup.sources"].outlineRows.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", name, name)).firstMatch
         guard row.waitForExistence(timeout: 5) else { failures.append("row \(name)"); return }
         let outline = app.outlines["ww.setup.sources"]
-        for _ in 0..<3 {
-            row.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).click()
+        for offset in [0.03, 0.15, 0.3, 0.03] {
+            row.coordinate(withNormalizedOffset: CGVector(dx: offset, dy: 0.5)).click()
             if Acceptance.waitFor(timeout: 2, { (outline.value as? String) == "1 selected" }) { return }
         }
         failures.append("selected \(name): \(outline.value ?? "nil")")

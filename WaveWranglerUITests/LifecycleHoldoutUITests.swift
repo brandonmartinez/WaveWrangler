@@ -154,6 +154,7 @@ final class LifecycleHoldoutUITests: XCTestCase {
             let window = try launchAndOpen(document, autosave: false)
             try edit(window, title: "Save As cancelled \(index)")
             let before = Set((try? FileManager.default.contentsOfDirectory(atPath: workDirectory.path)) ?? [])
+            let titleBefore = window.title
             app.menuBars.menuBarItems["File"].click()
             app.menuBars.menuItems["Save As…"].click()
             let panel = app.sheets.firstMatch
@@ -161,7 +162,7 @@ final class LifecycleHoldoutUITests: XCTestCase {
             app.typeKey(.escape, modifierFlags: [])
             check(Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists }, "panel dismissed")
             check(diskTitle(document) == Self.original, "nothing written")
-            check(window.title.hasPrefix(document.deletingPathExtension().lastPathComponent), "still the same document: \(window.title)")
+            check(window.title == titleBefore, "still the same document: \(titleBefore) → \(window.title)")
             check(window.textFields["Show title"].value as? String == "Save As cancelled \(index)", "edit kept")
             let after = Set((try? FileManager.default.contentsOfDirectory(atPath: workDirectory.path)) ?? [])
             check(after == before, "no copy created: \(after.subtracting(before))")
@@ -261,7 +262,8 @@ final class LifecycleHoldoutUITests: XCTestCase {
         }
         post(autosave ? Self.autosaveOn : Self.autosaveOff)
         Thread.sleep(forTimeInterval: 0.3)
-        return window
+        // Address the window by identifier from here on: its title follows the show title and edit state.
+        return app.windows.matching(identifier: "ww.show.window").firstMatch
     }
 
     private func edit(_ window: XCUIElement, title: String) throws {
