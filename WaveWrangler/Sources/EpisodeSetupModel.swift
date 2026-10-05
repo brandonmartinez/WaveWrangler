@@ -63,6 +63,11 @@ final class EpisodeSetupModel {
     var selection: Set<SetupRowID> = []
     var speakerSelection: Set<SpeakerID> = []
     var onlyNeedingAttention = false
+    enum FocusedTable: Hashable { case sources, speakers }
+    /// Which Setup table has keyboard focus (nil = neither).
+    var focusedTable: FocusedTable?
+    /// Whether the Setup content is currently shown in a window.
+    var isOnScreen = false
     /// Recorder group rows the user collapsed (all start expanded).
     var collapsedRows: Set<SetupRowID> = []
     var sortOrder: SourceSortOrder = .manual
@@ -325,7 +330,7 @@ final class EpisodeSetupModel {
     }
 
     func moveSelected(_ direction: MoveDirection) {
-        if inspectorFollowsSpeakers, let id = speakerSelection.first, speakerSelection.count == 1 {
+        if focusedTable == .speakers || (focusedTable == nil && inspectorFollowsSpeakers), let id = speakerSelection.first, speakerSelection.count == 1 {
             edit { $0.moveSpeaker(id, direction) }
         } else if let source = singleSelectedSource {
             edit { $0.moveSource(source.id, direction) }
@@ -382,8 +387,13 @@ final class EpisodeSetupModel {
         let items = pairs.map(\.item)
         sheet = nil
         guard edit({ $0.importSources(items) }) else { return }
-        selection = Set(items.map { .source($0.source.id) })
         inspectorFollowsSpeakers = false
+        let imported = Set(items.map { SetupRowID.source($0.source.id) })
+        // Select after the table has the new rows (selecting unknown rows is dropped by the table).
+        Task { @MainActor in
+            await Task.yield()
+            self.selection = imported
+        }
         announce("Imported \(items.count == 1 ? "1 source" : "\(items.count) sources")")
         let accepted = Dictionary(uniqueKeysWithValues: pairs.map { ($0.candidateID, $0.item.source.id) })
         Task { [engine] in
@@ -393,6 +403,8 @@ final class EpisodeSetupModel {
                 self.message = "The sources were added, but WaveWrangler couldn't save permission to reach them on this Mac: \(Self.reason(error))."
             }
             self.startObserving()
+            try? await Task.sleep(for: .milliseconds(200))
+            if self.selection.isEmpty { self.selection = imported }
         }
     }
 

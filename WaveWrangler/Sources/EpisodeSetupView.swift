@@ -4,29 +4,35 @@ import WWCore
 import WWEpisodeSetup
 
 /// Setup destination content for one episode: Sources (grouped) and Speakers, plus the selection-driven
-/// inspector. This is the view the episode workspace hosts for the Setup destination (IA §4.3).
-///
-/// The content is hosted in `EpisodeSetupViewController` so that Source/Episode menu commands reach it
-/// through the AppKit responder chain (CMD-01: every command is in the menu bar).
-struct EpisodeSetupContent: NSViewControllerRepresentable {
+/// details panel. This is the view the episode workspace hosts for the Setup destination (IA §4.3). Its
+/// command target (`EpisodeSetupViewController`) is registered for the window so menu commands reach it.
+struct EpisodeSetupContent: View {
     let store: ShowDocumentStore
     let episodeID: EpisodeID
     var showsInspector = true
     var textScale: CGFloat = 1
+    @State private var controller: EpisodeSetupViewController
 
-    func makeNSViewController(context: Context) -> EpisodeSetupViewController {
-        EpisodeSetupViewController(model: Self.makeModel(store: store, episodeID: episodeID), showsInspector: showsInspector, textScale: textScale)
+    init(store: ShowDocumentStore, episodeID: EpisodeID, showsInspector: Bool = true, textScale: CGFloat = 1) {
+        self.store = store
+        self.episodeID = episodeID
+        self.showsInspector = showsInspector
+        self.textScale = textScale
+        _controller = State(initialValue: EpisodeSetupViewController(model: Self.makeModel(store: store, episodeID: episodeID)))
     }
 
-    func updateNSViewController(_ controller: EpisodeSetupViewController, context: Context) {
-        if controller.model.episodeID != episodeID || controller.model.store !== store {
-            controller.replaceModel(Self.makeModel(store: store, episodeID: episodeID))
-        }
-        controller.update(showsInspector: showsInspector, textScale: textScale)
-    }
-
-    static func dismantleNSViewController(_ controller: EpisodeSetupViewController, coordinator: ()) {
-        controller.model.stopObserving()
+    var body: some View {
+        EpisodeSetupView(model: controller.model, showsInspector: showsInspector)
+            .environment(\.setupTextScale, textScale)
+            .background(WindowReader { controller.attach(to: $0) })
+            .onAppear {
+                controller.model.isOnScreen = true
+                controller.model.startObserving()
+            }
+            .onDisappear {
+                controller.model.isOnScreen = false
+                controller.model.stopObserving()
+            }
     }
 
     @MainActor
@@ -42,28 +48,57 @@ struct EpisodeSetupContent: NSViewControllerRepresentable {
     }
 }
 
+/// Reports the hosting window (and later window changes) without adding a view hierarchy of its own.
+private struct WindowReader: NSViewRepresentable {
+    let onWindow: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> ReaderView {
+        let view = ReaderView()
+        view.onWindow = onWindow
+        return view
+    }
+
+    func updateNSView(_ view: ReaderView, context: Context) {
+        view.onWindow = onWindow
+        if let window = view.window { onWindow(window) }
+    }
+
+    final class ReaderView: NSView {
+        var onWindow: ((NSWindow?) -> Void)?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onWindow?(window)
+        }
+    }
+}
+
 struct EpisodeSetupView: View {
     @Bindable var model: EpisodeSetupModel
     var showsInspector: Bool
+    @FocusState private var focusedTable: EpisodeSetupModel.FocusedTable?
 
     var body: some View {
-        HSplitView {
-            VSplitView {
-                SourcesSection(model: model)
-                    .frame(minHeight: 180)
-                    .focusSection()
-                SpeakersSection(model: model)
-                    .frame(minHeight: 140)
-                    .focusSection()
+        // Plain stacks, not HSplitView/VSplitView: split views nested in an embedded hosting view
+        // re-enter AppKit's constraint update pass (crash on macOS 27). Default sizes are usable (CMD §5).
+        // The details panel sits beside the tables when there is room, otherwise below them, so the
+        // content always fits its column (no clipped, unreachable rows).
+        GeometryReader { geometry in
+            let wide = geometry.size.width >= 860
+            let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
+            layout {
+                tables
+                if showsInspector {
+                    Divider()
+                    SetupInspectorView(model: model)
+                        .frame(width: wide ? 300 : nil)
+                        .frame(maxHeight: wide ? .infinity : max(160, geometry.size.height * 0.4))
+                        .focusSection()
+                }
             }
-            .frame(minWidth: 520)
-            if showsInspector {
-                SetupInspectorView(model: model)
-                    .frame(minWidth: 260, idealWidth: 320, maxWidth: 480)
-                    .focusSection()
-            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .transaction { $0.animation = nil }
+        .onChange(of: focusedTable) { model.focusedTable = focusedTable }
         .onAppear { model.startObserving() }
         .onChange(of: model.episode?.sources.map(\.id)) { model.startObserving() }
         .sheet(item: $model.sheet) { sheet in
@@ -81,6 +116,21 @@ struct EpisodeSetupView: View {
         .alert(confirmationTitle, isPresented: confirmationBinding, presenting: model.confirmation) { confirmation in
             confirmationButtons(confirmation)
         }
+    }
+
+    private var tables: some View {
+        VStack(spacing: 0) {
+            SourcesSection(model: model, focusedTable: $focusedTable)
+                .frame(minHeight: 120, maxHeight: .infinity)
+                .layoutPriority(2)
+                .focusSection()
+            Divider()
+            SpeakersSection(model: model, focusedTable: $focusedTable)
+                .frame(minHeight: 100, maxHeight: .infinity)
+                .layoutPriority(1)
+                .focusSection()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var confirmationBinding: Binding<Bool> {
@@ -128,6 +178,7 @@ struct EpisodeSetupView: View {
 
 private struct SourcesSection: View {
     @Bindable var model: EpisodeSetupModel
+    var focusedTable: FocusState<EpisodeSetupModel.FocusedTable?>.Binding
 
     var body: some View {
         let presentation = model.presentation
@@ -150,15 +201,22 @@ private struct SourcesSection: View {
                 EpisodeProgressView(progress: progress)
             }
             SourcesTable(model: model, rows: presentation.sourceRows)
+                .focused(focusedTable, equals: .sources)
                 .overlay {
                     if model.episode?.sources.isEmpty ?? true {
-                        ContentUnavailableView {
+                        VStack(spacing: 8) {
                             Label("No sources yet", systemImage: "waveform.path").setupFont(.title3)
-                        } description: {
-                            Text("Import recordings to reference them in this episode. WaveWrangler never moves, renames or changes them.").setupFont(.body)
-                        } actions: {
+                            Text("Import recordings to reference them in this episode. WaveWrangler never moves, renames or changes them.")
+                                .setupFont(.body)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
                             Button("Import Sources…") { model.beginImport() }
                         }
+                        .padding()
+                        .frame(maxWidth: 420)
+                        .background(.background, in: RoundedRectangle(cornerRadius: 8))
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("ww.setup.empty")
                     }
                 }
         }
@@ -172,7 +230,7 @@ private struct SourcesSection: View {
                 .accessibilityAddTraits(.isHeader)
             Text("\(presentation.sourceCount)")
                 .setupFont(.headline)
-                .foregroundStyle(.secondary)
+                
                 .accessibilityLabel("\(presentation.sourceCount) sources")
             if presentation.needingAttentionCount > 0 || model.onlyNeedingAttention {
                 Button {
@@ -189,7 +247,7 @@ private struct SourcesSection: View {
             }
             if model.isScanning {
                 ProgressView().controlSize(.small)
-                Text("Looking at the chosen files…").setupFont(.callout).foregroundStyle(.secondary)
+                Text("Looking at the chosen files…").setupFont(.callout)
             }
             Spacer()
             Button("Import Sources…") { model.beginImport() }
@@ -214,11 +272,10 @@ private struct EpisodeProgressView: View {
             .frame(maxWidth: 200)
             .accessibilityHidden(true)
             Text(progress.text).setupFont(.callout)
+                .accessibilityLabel("Episode downloads")
+                .accessibilityValue(progress.text)
+                .accessibilityIdentifier("ww.setup.episodeProgress")
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Episode downloads")
-        .accessibilityValue(progress.text)
-        .accessibilityIdentifier("ww.setup.episodeProgress")
     }
 }
 
@@ -262,6 +319,7 @@ private struct SourcesTable: View {
             }
         }
         .accessibilityLabel("Sources")
+        .accessibilityValue(model.selection.isEmpty ? "No selection" : "\(model.selection.count) selected")
         .accessibilityIdentifier("ww.setup.sources")
         .contextMenu(forSelectionType: SetupRowID.self) { ids in
             SourceContextMenu(model: model, ids: ids)
@@ -287,14 +345,13 @@ private struct NameCell: View {
             case .group:
                 Text(row.name).setupFont(.body, weight: .semibold)
             case .channel:
-                Label(row.name, systemImage: "arrow.turn.down.right").setupFont(.callout).foregroundStyle(.secondary)
+                Label(row.name, systemImage: "arrow.turn.down.right").setupFont(.callout)
             case .source:
                 Text(row.name).setupFont(.body)
             }
         }
         .lineLimit(2)
         .truncationMode(.middle)
-        .help(row.name)
         .accessibilityLabel(row.accessibilityLabel)
         .accessibilityIdentifier(row.id.accessibilityIdentifier)
     }
@@ -323,12 +380,10 @@ struct StatusCell: View {
             Text(summary.displayText)
                 .setupFont(.body)
                 .lineLimit(2)
+                .accessibilityLabel("Status")
+                .accessibilityValue(summary.accessibilityValue)
+                .accessibilityIdentifier(identifier)
         }
-        .help(summary.accessibilityValue)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Status")
-        .accessibilityValue(summary.accessibilityValue)
-        .accessibilityIdentifier(identifier)
     }
 }
 
@@ -388,6 +443,7 @@ struct InlineMessage: View {
 
 private struct SpeakersSection: View {
     @Bindable var model: EpisodeSetupModel
+    var focusedTable: FocusState<EpisodeSetupModel.FocusedTable?>.Binding
     @Environment(\.setupTextScale) private var scale
 
     var body: some View {
@@ -395,7 +451,7 @@ private struct SpeakersSection: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Speakers").setupFont(.headline).accessibilityAddTraits(.isHeader)
-                Text("\(rows.count)").setupFont(.headline).foregroundStyle(.secondary)
+                Text("\(rows.count)").setupFont(.headline)
                     .accessibilityLabel(rows.count == 1 ? "1 speaker" : "\(rows.count) speakers")
                 Spacer()
                 Button("New Speaker…") { model.sheet = .name(NameSheetContext(kind: .newSpeaker, initial: "")) }
@@ -411,7 +467,6 @@ private struct SpeakersSection: View {
                 TableColumn("Primary") { row in CellView(cell: row.primary, label: "Primary") }
                 TableColumn("Backups") { row in
                     Text("\(row.backupCount)").setupFont(.body).monospacedDigit()
-                        .help(row.backups.joined(separator: ", "))
                         .accessibilityLabel("Backups")
                         .accessibilityValue("\(row.backupCount)")
                 }
@@ -422,12 +477,12 @@ private struct SpeakersSection: View {
                             .foregroundStyle(row.status == .primaryChosen ? Color.secondary : Color.orange)
                             .accessibilityHidden(true)
                         Text(row.status.text).setupFont(.body).lineLimit(2)
+                            .accessibilityLabel("Status")
+                            .accessibilityValue(row.status.text)
                     }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Status")
-                    .accessibilityValue(row.status.text)
                 }
             }
+            .focused(focusedTable, equals: .speakers)
             .accessibilityLabel("Speakers")
             .accessibilityIdentifier("ww.setup.speakers")
             .contextMenu(forSelectionType: SpeakerID.self) { ids in

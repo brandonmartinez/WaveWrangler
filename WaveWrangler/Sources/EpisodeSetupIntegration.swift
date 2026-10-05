@@ -30,6 +30,7 @@ private struct SetupHostView: View {
 
     var body: some View {
         EpisodeSetupContent(store: store, episodeID: episodeID, textScale: CGFloat(textSize.scale))
+            .id(episodeID)
     }
 }
 

@@ -24,16 +24,17 @@ struct SetupInspectorView: View {
                     Text("Episode").setupFont(.headline).accessibilityAddTraits(.isHeader)
                     Text("Select a source, recorder group or speaker to see its details.")
                         .setupFont(.callout)
-                        .foregroundStyle(.secondary)
+                        
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background(Color(nsColor: .textBackgroundColor))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Inspector")
-        .accessibilityIdentifier("ww.inspector")
+        .accessibilityLabel("Selection details")
+        .accessibilityIdentifier("ww.setup.inspector")
     }
 }
 
@@ -120,7 +121,7 @@ private struct SourceInspector: View {
             .setupFont(.body)
             .accessibilityLabel("Channel unknown")
             .accessibilityIdentifier("ww.inspector.source.channelUnknown")
-            Text("Not checked against the file").setupFont(.caption1).foregroundStyle(.secondary)
+            Text("Not checked against the file").setupFont(.callout)
         }
 
         Picker("Speaker", selection: speakerBinding) {
@@ -154,32 +155,31 @@ private struct SourceInspector: View {
 
     private var roleRow: some View {
         let speakerless = reference == nil
-        return Picker("Role", selection: Binding<String>(
-            get: {
-                guard let reference else { return "none" }
-                return reference.isPrimary ? "primary" : "backup"
-            },
-            set: { value in
-                guard let reference else { return }
-                if value == "primary", !reference.isPrimary { model.useAsPrimary(reference) }
-                if value == "backup" { model.useAsBackup(reference) }
+        return VStack(alignment: .leading, spacing: 2) {
+            Picker("Role", selection: Binding<String>(
+                get: {
+                    guard let reference else { return "none" }
+                    return reference.isPrimary ? "primary" : "backup"
+                },
+                set: { value in
+                    guard let reference else { return }
+                    if value == "primary", !reference.isPrimary { model.useAsPrimary(reference) }
+                    if value == "backup" { model.useAsBackup(reference) }
+                }
+            )) {
+                Text("Primary").tag("primary")
+                Text("Backup").tag("backup")
             }
-        )) {
-            Text("Primary").tag("primary")
-            Text("Backup").tag("backup")
-        }
-        .pickerStyle(.radioGroup)
-        .setupFont(.body)
-        .disabled(speakerless)
-        .help(speakerless ? "Choose a speaker first" : "")
-        .accessibilityHint(speakerless ? "Choose a speaker first" : "Primary is the source used for this speaker; backups stay referenced.")
-        .accessibilityIdentifier("ww.inspector.source.role")
-        .overlay(alignment: .bottomLeading) {
+            .pickerStyle(.radioGroup)
+            .setupFont(.body)
+            .disabled(speakerless)
+            .accessibilityHint(speakerless ? "Choose a speaker first" : "Primary is the source used for this speaker; backups stay referenced.")
+            .accessibilityIdentifier("ww.inspector.source.role")
             if speakerless {
-                Text("Choose a speaker first").setupFont(.caption1).foregroundStyle(.secondary).offset(y: 16)
+                Text("Choose a speaker first").setupFont(.callout)
+                    .accessibilityHidden(true)
             }
         }
-        .padding(.bottom, speakerless ? 14 : 0)
     }
 
     private func numericRow(
@@ -210,10 +210,10 @@ private struct SourceInspector: View {
             }
             .disabled(disabledReason != nil)
             if let disabledReason {
-                Text(disabledReason).setupFont(.caption1).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(disabledReason).setupFont(.callout).fixedSize(horizontal: false, vertical: true)
             }
             if let error {
-                Text(error).setupFont(.caption1).foregroundStyle(.red)
+                Text(error).setupFont(.callout).foregroundStyle(.red)
                     .accessibilityLabel("\(title): \(error)")
             }
         }
@@ -295,8 +295,8 @@ private struct RecordedFactsView: View {
             LabeledContent("Channels") { Text(facts.channelCount.text) }
             LabeledContent("Sample rate") { Text(facts.sampleRate.text) }
             Text("WaveWrangler doesn't read audio in this version, so these stay Unknown.")
-                .setupFont(.caption1)
-                .foregroundStyle(.secondary)
+                .setupFont(.callout)
+                
                 .fixedSize(horizontal: false, vertical: true)
         }
         .setupFont(.body)
@@ -315,7 +315,7 @@ private struct AvailabilitySection: View {
                 DimensionRow(model: model, source: source, presentation: dimension, checkedAt: status.checkedAt[dimension.dimension])
             }
             if SetupFixtures.isActive {
-                Text("Simulated provider state").setupFont(.caption1).foregroundStyle(.secondary)
+                Text("Simulated provider state").setupFont(.callout)
             }
         }
     }
@@ -336,17 +336,17 @@ private struct DimensionRow: View {
                     Text("\(presentation.dimension.title): \(presentation.inspectorText)")
                         .setupFont(.body)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(presentation.dimension.title)
+                        .accessibilityValue(presentation.inspectorText + (checkedAt.map { ". Checked \($0.formatted(date: .omitted, time: .shortened))" } ?? ""))
+                        .accessibilityIdentifier("ww.inspector.\(presentation.dimension.rawValue)")
                     if let checkedAt {
                         Text("Checked \(checkedAt.formatted(date: .omitted, time: .shortened))")
-                            .setupFont(.caption1)
-                            .foregroundStyle(.secondary)
+                            .setupFont(.callout)
+                            
+                            .accessibilityHidden(true)
                     }
                 }
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(presentation.dimension.title)
-            .accessibilityValue(presentation.inspectorText + (checkedAt.map { ". Checked \($0.formatted(date: .omitted, time: .shortened))" } ?? ""))
-            .accessibilityIdentifier("ww.inspector.\(presentation.dimension.rawValue)")
             remedies
         }
     }
@@ -418,17 +418,17 @@ private struct GroupInspector: View {
                 .onChange(of: nameFocused) { _, focused in if !focused { commit(groupID) } }
                 .accessibilityLabel("Recorder group name")
                 .accessibilityIdentifier("ww.inspector.group.name")
-            Text(count == 1 ? "1 source" : "\(count) sources").setupFont(.body).foregroundStyle(.secondary)
+            Text(count == 1 ? "1 source" : "\(count) sources").setupFont(.body)
             Button("New Epoch for Selected Sources") { model.startNewEpoch() }
                 .disabled(count == 0)
                 .help("Start a new epoch when the recorder was stopped and started again, so its clock restarted.")
             Button("Delete Recorder Group…") { model.confirmation = .deleteGroup(groupID) }
             Text("Deleting a recorder group never removes its sources; they become Ungrouped.")
-                .setupFont(.caption1).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .setupFont(.callout).fixedSize(horizontal: false, vertical: true)
         } else {
             Text("Ungrouped").setupFont(.body)
             Text(count == 1 ? "1 source isn't in a recorder group." : "\(count) sources aren't in a recorder group.")
-                .setupFont(.body).foregroundStyle(.secondary)
+                .setupFont(.body)
             Button("New Recorder Group…") { model.sheet = .name(NameSheetContext(kind: .newGroup, initial: "")) }
         }
         EmptyView()
@@ -483,13 +483,13 @@ private struct SpeakerInspector: View {
         .accessibilityIdentifier("ww.inspector.speaker.primary")
         if choices.isEmpty {
             Text("Assign this speaker to a source first (Source › Assign Speaker).")
-                .setupFont(.caption1).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .setupFont(.callout).fixedSize(horizontal: false, vertical: true)
         }
 
         Text("Backups").setupFont(.subheadline, weight: .semibold).accessibilityAddTraits(.isHeader)
         let backups = choices.filter { $0.channel != assignment?.primary }
         if backups.isEmpty {
-            Text("None").setupFont(.body).foregroundStyle(.secondary)
+            Text("None").setupFont(.body)
         }
         ForEach(backups, id: \.channel) { choice in
             HStack {
@@ -500,7 +500,7 @@ private struct SpeakerInspector: View {
             }
         }
         Text("Backups stay referenced. Later steps use only the primary.")
-            .setupFont(.caption1).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            .setupFont(.callout).fixedSize(horizontal: false, vertical: true)
         Button("Delete Speaker…") { model.confirmation = .deleteSpeaker(speakerID) }
             .setupFont(.body)
         EmptyView()

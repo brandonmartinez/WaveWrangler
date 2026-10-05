@@ -37,34 +37,24 @@ import WWEpisodeSetup
     func moveItemDown(_ sender: Any?)
 }
 
-/// Hosts the Setup SwiftUI content and sits in the responder chain to receive menu commands.
-final class EpisodeSetupViewController: NSViewController, SetupCommandActions, NSMenuItemValidation {
-    private(set) var model: EpisodeSetupModel
-    private var showsInspector: Bool
-    private var textScale: CGFloat
-    private var hostingView: NSHostingView<AnyView>?
+/// Command target for one window's Setup content. Menu items (via `SetupCommandProxy`) and the Commands
+/// lane's `SourceCommandHandling` reach the Setup model through it. It holds no views: the Setup SwiftUI
+/// is hosted directly in the workspace (no nested hosting view, so table clicks and keys work normally).
+final class EpisodeSetupViewController: NSObject, SetupCommandActions, NSMenuItemValidation {
+    let model: EpisodeSetupModel
+    private(set) weak var window: NSWindow?
 
-    init(model: EpisodeSetupModel, showsInspector: Bool, textScale: CGFloat) {
+    init(model: EpisodeSetupModel) {
         self.model = model
-        self.showsInspector = showsInspector
-        self.textScale = textScale
-        super.init(nibName: nil, bundle: nil)
+        super.init()
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-    override func loadView() {
-        let hosting = NSHostingView(rootView: rootView())
-        hostingView = hosting
-        view = hosting
-    }
-
-    override func viewDidAppear() {
-        super.viewDidAppear()
-        model.window = { [weak self] in self?.view.window }
-        if let window = view.window { Self.register(self, for: window) }
-        model.startObserving()
+    /// Called when the Setup content appears in (or moves to) a window.
+    func attach(to window: NSWindow?) {
+        guard let window else { return }
+        self.window = window
+        model.window = { [weak window] in window }
+        Self.register(self, for: window)
     }
 
     // MARK: Registry (one Setup controller per show window)
@@ -79,21 +69,19 @@ final class EpisodeSetupViewController: NSViewController, SetupCommandActions, N
 
     /// The Setup controller hosted in `window`, if its Setup content is on screen.
     static func controller(for window: NSWindow?) -> EpisodeSetupViewController? {
-        guard let window, let controller = registry[ObjectIdentifier(window)]?.controller, controller.view.window === window else { return nil }
+        guard let window, let controller = registry[ObjectIdentifier(window)]?.controller,
+              controller.window === window, controller.model.isOnScreen else { return nil }
         return controller
     }
 
-    /// Whether keyboard focus is inside this Setup content (Edit › Delete / Move act on the focused list).
-    var hasKeyboardFocus: Bool {
-        guard let responder = view.window?.firstResponder as? NSView else { return false }
-        return responder.isDescendant(of: view)
-    }
+    /// Whether the Sources or Speakers table has keyboard focus (Edit › Delete / Move act on the focused list).
+    var hasKeyboardFocus: Bool { model.focusedTable != nil }
 
     // MARK: Edit › Delete / Move (SourceCommandHandling hooks)
 
     var deleteTitle: String? {
         guard hasKeyboardFocus else { return nil }
-        if model.inspectorFollowsSpeakers { return singleSpeaker == nil ? nil : "Delete Speaker…" }
+        if model.focusedTable == .speakers { return singleSpeaker == nil ? nil : "Delete Speaker…" }
         if !sources.isEmpty { return sources.count == 1 ? "Remove Source from Episode…" : "Remove \(sources.count) Sources from Episode…" }
         if groupID != nil { return "Delete Recorder Group…" }
         return nil
@@ -102,13 +90,13 @@ final class EpisodeSetupViewController: NSViewController, SetupCommandActions, N
     func moveTitle(by offset: Int) -> String? {
         guard hasKeyboardFocus else { return nil }
         let direction = offset < 0 ? "Up" : "Down"
-        if model.inspectorFollowsSpeakers { return singleSpeaker == nil ? nil : "Move Speaker \(direction)" }
+        if model.focusedTable == .speakers { return singleSpeaker == nil ? nil : "Move Speaker \(direction)" }
         return singleSource == nil ? nil : "Move Source \(direction)"
     }
 
     func canMove(by offset: Int) -> Bool {
         guard let episode = model.episode else { return false }
-        if model.inspectorFollowsSpeakers {
+        if model.focusedTable == .speakers {
             guard let id = singleSpeaker, let index = episode.speakerAssignments.firstIndex(where: { $0.speakerID == id }) else { return false }
             return episode.speakerAssignments.indices.contains(index + offset)
         }
@@ -120,25 +108,6 @@ final class EpisodeSetupViewController: NSViewController, SetupCommandActions, N
 
     func move(by offset: Int) {
         model.moveSelected(offset < 0 ? .up : .down)
-    }
-
-    func replaceModel(_ newModel: EpisodeSetupModel) {
-        model.stopObserving()
-        model = newModel
-        model.window = { [weak self] in self?.view.window }
-        hostingView?.rootView = rootView()
-        model.startObserving()
-    }
-
-    func update(showsInspector: Bool, textScale: CGFloat) {
-        guard showsInspector != self.showsInspector || textScale != self.textScale else { return }
-        self.showsInspector = showsInspector
-        self.textScale = textScale
-        hostingView?.rootView = rootView()
-    }
-
-    private func rootView() -> AnyView {
-        AnyView(EpisodeSetupView(model: model, showsInspector: showsInspector).environment(\.setupTextScale, textScale))
     }
 
     // MARK: Command targets
@@ -228,7 +197,7 @@ final class EpisodeSetupViewController: NSViewController, SetupCommandActions, N
     }
 
     @objc func delete(_ sender: Any?) {
-        if model.inspectorFollowsSpeakers {
+        if model.focusedTable == .speakers || (model.focusedTable == nil && model.inspectorFollowsSpeakers) {
             deleteSpeaker(sender)
         } else {
             model.requestDeleteFromSources()

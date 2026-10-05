@@ -29,7 +29,7 @@ struct ImportReviewSheet: View {
                 .setupFont(.title3, weight: .semibold)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("ww.import.title")
-            Text(review.fromLine).setupFont(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(review.fromLine).setupFont(.callout).fixedSize(horizontal: false, vertical: true)
             Text(ImportReview.suggestionsCaption).setupFont(.callout).fixedSize(horizontal: false, vertical: true)
 
             Table(review.rows, selection: $selection) {
@@ -37,7 +37,6 @@ struct ImportReviewSheet: View {
                     Toggle("Include \(row.candidate.displayName)", isOn: includeBinding(row.id))
                         .toggleStyle(.checkbox)
                         .labelsHidden()
-                        .accessibilityLabel("Include \(row.candidate.displayName)")
                         .accessibilityIdentifier("ww.import.row.\(index(of: row.id)).include")
                 }
                 .width(min: 50 * scale, ideal: 56 * scale)
@@ -45,7 +44,7 @@ struct ImportReviewSheet: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(row.candidate.displayName).setupFont(.body).lineLimit(2).truncationMode(.middle)
                         if let caption = row.caption {
-                            Text(caption).setupFont(.caption1).foregroundStyle(.secondary)
+                            Text(caption).setupFont(.caption1)
                         }
                     }
                     .accessibilityElement(children: .combine)
@@ -93,7 +92,7 @@ struct ImportReviewSheet: View {
                 DisclosureGroup("Skipped (\(review.skipped.count))") {
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(review.skipped) { candidate in
-                            Text("\(candidate.displayName) — \(review.skipReason(candidate))").setupFont(.callout).foregroundStyle(.secondary)
+                            Text("\(candidate.displayName) — \(review.skipReason(candidate))").setupFont(.callout)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -189,7 +188,6 @@ struct ImportReviewSheet: View {
             .labelsHidden()
             .setupFont(.body)
             .help(suggestion?.reason ?? "")
-            .accessibilityLabel(label)
             .accessibilityValue(choice.accessibilityValue(none: noneTitle))
             .accessibilityHint(suggestion?.reason ?? "")
         }
@@ -245,7 +243,7 @@ struct RelinkSheet: View {
             .accessibilityIdentifier("ww.relink.compare")
 
             Text("WaveWrangler never moves, renames, copies over or changes either file.")
-                .setupFont(.caption1).foregroundStyle(.secondary)
+                .setupFont(.caption1)
 
             if comparison.requiresAcknowledgement && comparison.canConfirm {
                 Toggle(RelinkComparison.acknowledgementTitle, isOn: $acknowledged)
@@ -322,11 +320,12 @@ struct NumberSheet: View {
                 .accessibilityIdentifier("ww.setup.numberField")
             if context.kind == .channel {
                 Toggle("Unknown", isOn: $unknown).toggleStyle(.checkbox).setupFont(.body)
+                    .accessibilityIdentifier("ww.setup.numberUnknown")
                 Text("WaveWrangler doesn't check this against the file in this version.")
-                    .setupFont(.caption1).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .setupFont(.caption1).fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("Start a new epoch when the recorder was stopped and started again, so its clock restarted.")
-                    .setupFont(.caption1).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .setupFont(.caption1).fixedSize(horizontal: false, vertical: true)
             }
             if let error {
                 Text(error).setupFont(.caption1).foregroundStyle(.red)
