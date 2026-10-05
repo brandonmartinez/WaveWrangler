@@ -10,6 +10,7 @@
 		04F43DC20792EA19B0110E87 /* WWCore in Frameworks */ = {isa = PBXBuildFile; productRef = EFD0098BA1885BA053D2704C /* WWCore */; };
 		E3BE203ACEE5C982CD1A0BC4 /* WWPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 69CABF447993DF3333764DC0 /* WWPersistence */; };
 		BA2A343FF9A10294D64B4715 /* WWSources in Frameworks */ = {isa = PBXBuildFile; productRef = 8503CC32FED0C1A6A832807D /* WWSources */; };
+		7C3A1E5D9B2F4A6C8E0D1B3F /* WWOrganizer in Frameworks */ = {isa = PBXBuildFile; productRef = A1D4C7F02B5E8A3D6C9F1E4B /* WWOrganizer */; };
 		6B1E5CB5C9CA81007F6A81B8 /* WWCore in Frameworks */ = {isa = PBXBuildFile; productRef = 16B37CD1081A7D1F8BD805E3 /* WWCore */; };
 		4D283E5538B35FC08990F6D5 /* WWPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 9E46055AA9A5DEF6E328B117 /* WWPersistence */; };
 /* End PBXBuildFile section */
@@ -69,6 +70,7 @@
 				04F43DC20792EA19B0110E87 /* WWCore in Frameworks */,
 				E3BE203ACEE5C982CD1A0BC4 /* WWPersistence in Frameworks */,
 				BA2A343FF9A10294D64B4715 /* WWSources in Frameworks */,
+				7C3A1E5D9B2F4A6C8E0D1B3F /* WWOrganizer in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -134,6 +136,7 @@
 				EFD0098BA1885BA053D2704C /* WWCore */,
 				69CABF447993DF3333764DC0 /* WWPersistence */,
 				8503CC32FED0C1A6A832807D /* WWSources */,
+				A1D4C7F02B5E8A3D6C9F1E4B /* WWOrganizer */,
 			);
 			productName = WaveWrangler;
 			productReference = 2793E8D2F64EF711A331B014 /* WaveWrangler.app */;
@@ -514,6 +517,10 @@
 		9E46055AA9A5DEF6E328B117 /* WWPersistence */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = WWPersistence;
+		};
+		A1D4C7F02B5E8A3D6C9F1E4B /* WWOrganizer */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WWOrganizer;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
