@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 
 /// Native sheets for names and destructive confirmations. NSAlert gives standard keyboard behaviour:
 /// Return = default, Esc = Cancel, focus returns to the invoking window afterwards.
@@ -65,10 +66,20 @@ enum Dialogs {
 
     private static func run(_ alert: NSAlert, in window: NSWindow?) async -> NSApplication.ModalResponse {
         guard let window, window.isVisible else { return alert.runModal() }
+        #if DEBUG
+        diagnostics.debug("sheet begin “\(alert.messageText, privacy: .public)” key=\(window.isKeyWindow) attached=\(window.attachedSheet != nil) modal=\(NSApp.modalWindow?.title ?? "none", privacy: .public)")
+        #endif
         return await withCheckedContinuation { continuation in
             alert.beginSheetModal(for: window) { response in
+                #if DEBUG
+                diagnostics.debug("sheet end “\(alert.messageText, privacy: .public)” response=\(response.rawValue)")
+                #endif
                 continuation.resume(returning: response)
             }
         }
     }
+
+    #if DEBUG
+    private static let diagnostics = Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "Dialogs")
+    #endif
 }
