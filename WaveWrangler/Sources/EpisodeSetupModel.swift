@@ -50,6 +50,18 @@ final class EpisodeSetupModel {
             case let .cancelDownload(id): "cancel-\(id)"
             }
         }
+
+        var kind: SetupConfirmationKind {
+            switch self {
+            case .removeSources: .removeSources
+            case .deleteSpeaker: .deleteSpeaker
+            case .deleteGroup: .deleteGroup
+            case .cancelDownload: .cancelDownload
+            }
+        }
+
+        /// Return confirms (default button, no destructive role) when the user chose this destruction.
+        var isChosenDestruction: Bool { kind.isChosenDestruction }
     }
 
     let store: ShowDocumentStore

@@ -208,22 +208,28 @@ struct EpisodeSetupView: View {
     @ViewBuilder
     private func confirmationButtons(_ confirmation: EpisodeSetupModel.Confirmation) -> some View {
         switch confirmation {
-        // The user chose these (⌫ or a menu command), so Return confirms (K05) and Esc cancels. No
-        // destructive role: on macOS it clears the Return key equivalent (#114); destructive styling is
-        // only for destruction the user didn't choose (sources A13).
         case let .removeSources(ids):
-            Button("Remove") { model.removeSources(ids) }.keyboardShortcut(.defaultAction)
+            confirmButton("Remove", for: confirmation) { model.removeSources(ids) }
             Button("Cancel", role: .cancel) {}
         case let .deleteSpeaker(id):
-            Button("Delete") { model.deleteSpeaker(id) }.keyboardShortcut(.defaultAction)
+            confirmButton("Delete", for: confirmation) { model.deleteSpeaker(id) }
             Button("Cancel", role: .cancel) {}
         case let .deleteGroup(id):
-            Button("Delete") { model.deleteGroup(id) }.keyboardShortcut(.defaultAction)
+            confirmButton("Delete", for: confirmation) { model.deleteGroup(id) }
             Button("Cancel", role: .cancel) {}
         case let .cancelDownload(id):
-            Button("Cancel Download", role: .destructive) { model.performConfirmed(.cancel, on: id) }
+            confirmButton("Cancel Download", for: confirmation) { model.performConfirmed(.cancel, on: id) }
             Button("Keep Downloading", role: .cancel) {}
         }
+    }
+
+    /// Role and Return key both follow `isChosenDestruction`: chosen destruction (⌫ or a menu command) is
+    /// the default button without the destructive role, which on macOS clears Return (K05, A13, #114);
+    /// unchosen destruction keeps the destructive style and no default. Esc always cancels.
+    private func confirmButton(_ title: String, for confirmation: EpisodeSetupModel.Confirmation, action: @escaping () -> Void) -> some View {
+        let chosen = confirmation.isChosenDestruction
+        return Button(title, role: chosen ? nil : .destructive, action: action)
+            .keyboardShortcut(chosen ? .defaultAction : nil)
     }
 }
 
