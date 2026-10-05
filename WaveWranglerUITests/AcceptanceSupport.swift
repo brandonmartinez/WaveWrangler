@@ -109,3 +109,54 @@ enum Acceptance {
         return condition()
     }
 }
+
+/// Accessibility audit policy for the acceptance suites (accessibility-acceptance §4.2): the macOS audit
+/// types, the lane suites' structural waivers (system chrome, non-interactive SwiftUI containers, pop-up
+/// AXShowMenu, system overlays, AppKit alert icons), and — for `.contrast` only — a **pixel-verified**
+/// waiver: each flagged element is screenshotted after the audit and its WCAG ratio measured
+/// (`ContrastMeter`); the finding is waived only when the measured ratio is ≥ 4.5:1 (A1, text ≤ 17 pt), as
+/// evidence that the audit mis-sampled (#59). Every waiver is printed with its rationale.
+enum AcceptanceAudit {
+    static let types: XCUIAccessibilityAuditType = [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]
+
+    @MainActor
+    static func run(_ app: XCUIApplication, surface: String, test: XCTestCase) throws -> [String] {
+        var unwaived: [String] = []
+        var contrast: [(XCUIElement, String)] = []
+        try app.performAccessibilityAudit(for: types) { issue in
+            let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(200) ?? "no element")"
+            if let rationale = structuralWaiver(for: issue) {
+                print("AUDIT WAIVED \(description) — \(rationale)")
+            } else if issue.auditType == .contrast, let element = issue.element {
+                contrast.append((element, description))
+            } else {
+                unwaived.append(description)
+            }
+            return true
+        }
+        for (element, description) in contrast {
+            let measured = element.exists ? ContrastMeter.measure(element.screenshot().image) : nil
+            let ratio = measured?["ratio"] as? Double ?? 0
+            if ratio >= 4.5 {
+                print("AUDIT WAIVED \(description) — pixel-measured contrast \(ratio):1 ≥ 4.5:1 (text \(measured?["text"] ?? "?") on \(measured?["background"] ?? "?")); audit mis-sampling, #59")
+            } else {
+                unwaived.append("\(description) — pixel-measured \(ratio):1")
+            }
+        }
+        print("AUDIT \(surface): \(unwaived.isEmpty ? "no unwaived issues" : "\(unwaived.count) unwaived issue(s)")")
+        return unwaived
+    }
+
+    static func structuralWaiver(for issue: XCUIAccessibilityAuditIssue) -> String? {
+        guard let element = issue.element else { return nil }
+        if [.window, .toolbar, .splitter, .menuBar, .menuBarItem, .touchBar].contains(element.elementType) { return "system window chrome" }
+        if issue.auditType == .sufficientElementDescription, element.elementType == .group, !element.isEnabled { return "non-interactive layout container" }
+        if issue.auditType == .action, element.elementType == .popUpButton { return "system pop-up button exposes AXShowMenu" }
+        if element.elementType == .popUpButton, element.label == "emoji & symbols" { return "system input item, not app UI" }
+        if element.elementType == .dialog, element.title.isEmpty, element.buttons["siri"].exists { return "system Siri overlay, not app UI" }
+        if element.elementType == .image, element.label.hasSuffix("alert"), element.identifier.hasPrefix("_NS:") {
+            return "AppKit NSAlert icon (decorative; the alert's text carries the message)"
+        }
+        return nil
+    }
+}

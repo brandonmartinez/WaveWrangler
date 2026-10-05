@@ -122,10 +122,10 @@ final class LifecycleHoldoutUITests: XCTestCase {
             let window = try launchAndOpen(document, autosave: false)
             try edit(window, title: "Dock \(index)")
             let dock = XCUIApplication(bundleIdentifier: "com.apple.dock")
-            let icon = dock.icons["WaveWrangler"]
+            let icon = dock.descendants(matching: .any).matching(NSPredicate(format: "label == 'WaveWrangler'")).firstMatch
             guard icon.waitForExistence(timeout: 5) else { failures.append("Dock icon not found"); return }
             icon.rightClick()
-            let quit = dock.menuItems["Quit"]
+            let quit = dock.descendants(matching: .menuItem).matching(NSPredicate(format: "title == 'Quit' OR label == 'Quit'")).firstMatch
             guard quit.waitForExistence(timeout: 5) else { failures.append("Dock › Quit not found"); return }
             quit.click()
             guard let sheet = closeSheet() else { return }
@@ -158,6 +158,7 @@ final class LifecycleHoldoutUITests: XCTestCase {
         case .saveAsCancel:
             let window = try launchAndOpen(document, autosave: false)
             try edit(window, title: "Save As cancelled \(index)")
+            let before = Set((try? FileManager.default.contentsOfDirectory(atPath: workDirectory.path)) ?? [])
             app.menuBars.menuBarItems["File"].click()
             app.menuBars.menuItems["Save As…"].click()
             let panel = app.sheets.firstMatch
@@ -167,8 +168,8 @@ final class LifecycleHoldoutUITests: XCTestCase {
             check(diskTitle(document) == Self.original, "nothing written")
             check(window.title.hasPrefix(document.deletingPathExtension().lastPathComponent), "still the same document: \(window.title)")
             check(window.textFields["Show title"].value as? String == "Save As cancelled \(index)", "edit kept")
-            let others = (try? FileManager.default.contentsOfDirectory(atPath: workDirectory.path)) ?? []
-            check(others.count == 1, "no copy created: \(others)")
+            let after = Set((try? FileManager.default.contentsOfDirectory(atPath: workDirectory.path)) ?? [])
+            check(after == before, "no copy created: \(after.subtracting(before))")
             app.typeKey("w", modifierFlags: .command)
             check(closeSheet() != nil, "still dirty after cancelled Save As")
 
@@ -181,7 +182,16 @@ final class LifecycleHoldoutUITests: XCTestCase {
             guard item.waitForExistence(timeout: 3) else { failures.append("Revert To › Last Saved Version missing"); return }
             item.click()
             let alert = app.sheets.firstMatch
-            if alert.waitForExistence(timeout: 3), alert.buttons["Revert"].exists { alert.buttons["Revert"].click() }
+            if alert.waitForExistence(timeout: 3) {
+                Acceptance.record(self, "Revert sheet: \(alert.staticTexts.allElementsBoundByIndex.map { $0.value ?? $0.label }) buttons \(alert.buttons.allElementsBoundByIndex.map(\.title))")
+                let revert = alert.buttons.matching(NSPredicate(format: "title BEGINSWITH 'Revert'")).firstMatch
+                if revert.exists { revert.click() } else { failures.append("Revert confirmation button") }
+            } else {
+                Acceptance.record(self, "Revert: no confirmation sheet")
+            }
+            Thread.sleep(forTimeInterval: 1)
+            let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
+            if showInfo.exists { showInfo.click() }
             check(Acceptance.waitFor(timeout: 5) { window.textFields["Show title"].value as? String == Self.original },
                   "reverted to the disk title: \(window.textFields["Show title"].value ?? "nil")")
             check(diskTitle(document) == Self.original, "disk unchanged")

@@ -39,7 +39,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
         try task("T01") {
             launch([])
             app.typeKey("n", modifierFlags: .command)
-            check(Acceptance.waitFor(timeout: 5) { self.app.dialogs.firstMatch.exists || self.app.sheets.firstMatch.exists }, "save panel shown")
+            check(app.buttons["Create"].waitForExistence(timeout: 5), "save panel shown (Create button)")
             app.typeKey("a", modifierFlags: .command)
             app.typeText("Keyboard Show")
             app.typeKey("g", modifierFlags: [.command, .shift])
@@ -56,7 +56,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             check(episodes.waitForExistence(timeout: 5) && value(episodes) == "0 episodes", "Episodes — 0 episodes: \(value(episodes))")
             let status = element("ww.show.saveStatus")
             check(Acceptance.waitFor(timeout: 10) { self.value(status).hasPrefix("Saved") }, "Saved only after verified create: \(value(status))")
-            check(focusedIdentifier() != nil, "keyboard focus is inside the new window: \(focusedIdentifier() ?? "none")")
+            check(isFocused("ww.show.sidebar.episodes") || isFocused("ww.show.empty.newEpisode"), "keyboard focus starts in the episode list")
             try audit("T01 new show window")
         }
     }
@@ -72,22 +72,25 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             window.typeKey("n", modifierFlags: [.command, .shift])
             let rename = element("ww.show.sidebar.rename")
             check(rename.waitForExistence(timeout: 5), "inline rename focused after New Episode")
-            check(focusedIdentifier() == "ww.show.sidebar.rename", "focus in the rename field: \(focusedIdentifier() ?? "none")")
+            check(isFocused("ww.show.sidebar.rename"), "focus in the rename field")
             app.typeKey(.escape, modifierFlags: [])
             check(value(episodes) != before, "episode added: \(value(episodes))")
             app.typeKey("z", modifierFlags: .command)
             check(Acceptance.waitFor(timeout: 3) { self.value(episodes) == before }, "⌘Z removes the new episode: \(value(episodes))")
         }
+        app.terminate()
+        let metadata = try makeDocument("Metadata T03")
         try task("T03 + T15") {
-            let window = app.windows.matching(identifier: "ww.show.window").firstMatch
+            let window = try launchAndOpen(metadata, autosave: false)
+            let document = metadata
             window.typeKey("i", modifierFlags: .command)
             let title = element("ww.inspector.episode.title")
             check(title.waitForExistence(timeout: 5), "⌘I shows the episode inspector")
-            check(focusedIdentifier() == "ww.inspector.episode.title", "⌘I focuses Title: \(focusedIdentifier() ?? "none")")
+            check(isFocused("ww.inspector.episode.title"), "⌘I focuses Title")
             app.typeKey("a", modifierFlags: .command)
             app.typeText("Keyboard Title")
             app.typeKey("\t", modifierFlags: [])
-            check(focusedIdentifier() == "ww.inspector.episode.number", "Tab reaches Number: \(focusedIdentifier() ?? "none")")
+            check(isFocused("ww.inspector.episode.number"), "Tab reaches Number")
             app.typeKey("a", modifierFlags: .command)
             app.typeText("7\t")
             let status = element("ww.show.saveStatus")
@@ -118,14 +121,21 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             try editShowTitle(window, "Mine")
             app.typeKey("s", modifierFlags: .command)
             Thread.sleep(forTimeInterval: 1)
-            // AppKit may first ask about the external change; never choose to overwrite.
+            // AppKit asks about the external change ("Save anyway?"). Choose its Save: the base check must
+            // still refuse to overwrite the other writer's version (WW-009 C3/C4).
             if app.sheets.firstMatch.waitForExistence(timeout: 3) {
                 let sheet = app.sheets.firstMatch
                 Acceptance.record(self, "T16 sheet: \(sheet.staticTexts.allElementsBoundByIndex.map(\.value)) buttons \(sheet.buttons.allElementsBoundByIndex.map(\.title))")
-                try audit("T16 conflict sheet")
-                app.typeKey(.escape, modifierFlags: [])
+                try audit("T16 external-change sheet")
+                check(sheet.buttons["Save Mine as a Copy…"].exists, "conflict sheet offers Save Mine as a Copy… (Design D6; deferred in #66)")
+                if sheet.buttons["Save"].exists { sheet.buttons["Save"].click() } else { app.typeKey(.escape, modifierFlags: []) }
+                Thread.sleep(forTimeInterval: 2)
+                if app.sheets.firstMatch.exists {
+                    Acceptance.record(self, "T16 after Save anyway: \(app.sheets.firstMatch.staticTexts.allElementsBoundByIndex.map { $0.value ?? $0.label })")
+                    app.typeKey(.escape, modifierFlags: [])
+                }
             }
-            check(diskTitle(document) == "Other Writer", "the other version is not overwritten")
+            check(diskTitle(document) == "Other Writer", "the other version is not overwritten (even after Save anyway)")
             let status = element("ww.show.saveStatus")
             Acceptance.record(self, "T16 save status: \(value(status))")
             check(Acceptance.waitFor(timeout: 5) { self.value(status).hasPrefix("Conflict") }, "status Conflict: \(value(status))")
@@ -164,11 +174,24 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             let texts = app.descendants(matching: .staticText).allElementsBoundByIndex.prefix(40).map { "\($0.value ?? $0.label)" }
             Acceptance.record(self, "T17 after reopen: windows \(app.windows.allElementsBoundByIndex.map(\.title)) texts \(texts)")
             let bar = element("ww.show.messageBar")
-            check(bar.waitForExistence(timeout: 5) || reopened != nil, "a show window or recovery offer appears")
-            if app.dialogs.firstMatch.exists || app.sheets.firstMatch.exists {
+            _ = reopened
+            let offer = app.dialogs.firstMatch.exists ? app.dialogs.firstMatch : app.sheets.firstMatch
+            check(offer.exists || bar.exists, "a recovery offer or message bar appears")
+            if offer.exists {
+                Acceptance.record(self, "T17 offer buttons: \(offer.buttons.allElementsBoundByIndex.map(\.title))")
                 try audit("T17 recovery offer")
+                let open = offer.buttons.matching(NSPredicate(format: "title CONTAINS[c] 'Open' OR title CONTAINS[c] 'Copy' OR title CONTAINS[c] 'Earlier'")).firstMatch
+                check(open.exists, "an action opens the kept complete version")
+                if open.exists { open.click() }
+                let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
+                check(copy.waitForExistence(timeout: 10), "the complete version opens")
+                let title = copy.textFields["Show title"]
+                let info = copy.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
+                if info.exists { info.click() }
+                check(title.waitForExistence(timeout: 5) && title.value as? String == "Complete Version", "opened the last complete version: \(title.value ?? "nil")")
+                Acceptance.record(self, "T17 opened window title: \(copy.title)")
             }
-            check(bar.exists, "message bar 'Opened the last complete version'")
+            check(data.prefix(data.count / 2) == (try? Data(contentsOf: document)), "the damaged file is left unchanged")
         }
     }
 
@@ -184,8 +207,9 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             Thread.sleep(forTimeInterval: 2)
             let texts = app.descendants(matching: .staticText).allElementsBoundByIndex.prefix(40).map { "\($0.value ?? $0.label)" }
             Acceptance.record(self, "T20 after open: windows \(app.windows.allElementsBoundByIndex.map(\.title)) texts \(texts)")
-            let reason = app.descendants(matching: .any).matching(NSPredicate(format: "value CONTAINS[c] 'newer WaveWrangler' OR label CONTAINS[c] 'newer WaveWrangler'")).firstMatch
-            check(reason.waitForExistence(timeout: 5), "reason 'needs a newer WaveWrangler' shown")
+            let reason = app.descendants(matching: .any).matching(NSPredicate(format: "value CONTAINS[c] 'newer' OR label CONTAINS[c] 'newer'")).firstMatch
+            check(reason.waitForExistence(timeout: 5), "refusal names the newer-version reason")
+            check(app.windows.matching(identifier: "ww.show.window").count == 0, "no editable window opens")
             if app.dialogs.firstMatch.exists || app.sheets.firstMatch.exists { try audit("T20 refusal") }
             app.typeKey(.escape, modifierFlags: [])
             check((try? Data(contentsOf: document)) == bytes, "file bytes unchanged")
@@ -198,7 +222,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
         try task("T24") {
             let window = try launchAndOpen(document, autosave: false)
             app.menuBars.menuBarItems["File"].click()
-            app.menuBars.menuItems["New Window"].click()
+            app.menuBars.menuItems.matching(NSPredicate(format: "title BEGINSWITH 'New Window'")).firstMatch.click()
             let windows = app.windows.matching(identifier: "ww.show.window")
             check(windows.element(boundBy: 1).waitForExistence(timeout: 5), "second window")
             try editShowTitle(windows.element(boundBy: 0), "Shared Edit")
@@ -271,9 +295,9 @@ final class CoreTasksKeyboardUITests: XCTestCase {
 
     private func value(_ element: XCUIElement) -> String { element.value as? String ?? "\(element.value ?? "")" }
 
-    private func focusedIdentifier() -> String? {
-        let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasKeyboardFocus == true")).firstMatch
-        return focused.exists ? focused.identifier : nil
+    private func isFocused(_ identifier: String) -> Bool {
+        let target = element(identifier)
+        return target.exists && (target.value(forKey: "hasKeyboardFocus") as? Bool ?? false)
     }
 
     private func editShowTitle(_ window: XCUIElement, _ title: String) throws {
@@ -288,18 +312,8 @@ final class CoreTasksKeyboardUITests: XCTestCase {
     }
 
     private func audit(_ surface: String) throws {
-        var unwaived: [String] = []
-        try app.performAccessibilityAudit(for: [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]) { issue in
-            let description = "\(surface): \(issue.auditType) — \(issue.compactDescription) — \(issue.element?.debugDescription.prefix(200) ?? "no element")"
-            if let rationale = AcceptanceAudit.waiver(for: issue) {
-                print("AUDIT WAIVED \(description) — \(rationale)")
-            } else {
-                unwaived.append(description)
-            }
-            return true
-        }
+        let unwaived = try AcceptanceAudit.run(app, surface: surface, test: self)
         for finding in unwaived { findings.append("AUDIT \(finding)") }
-        print("AUDIT \(surface): \(unwaived.isEmpty ? "no unwaived issues" : "\(unwaived.count) unwaived issue(s)")")
     }
 
     @discardableResult
@@ -337,15 +351,3 @@ final class CoreTasksKeyboardUITests: XCTestCase {
     }
 }
 
-/// Audit waivers shared by the acceptance suites (same policy as the lane suites; see the evidence doc).
-enum AcceptanceAudit {
-    static func waiver(for issue: XCUIAccessibilityAuditIssue) -> String? {
-        guard let element = issue.element else { return nil }
-        if [.window, .toolbar, .splitter, .menuBar, .menuBarItem, .touchBar].contains(element.elementType) { return "system window chrome" }
-        if issue.auditType == .sufficientElementDescription, element.elementType == .group, !element.isEnabled { return "non-interactive layout container" }
-        if issue.auditType == .action, element.elementType == .popUpButton { return "system pop-up button exposes AXShowMenu" }
-        if element.elementType == .popUpButton, element.label == "emoji & symbols" { return "system input item, not app UI" }
-        if element.elementType == .dialog, element.title.isEmpty, element.buttons["siri"].exists { return "system Siri overlay, not app UI" }
-        return nil
-    }
-}
