@@ -13,6 +13,7 @@ struct LibraryProviderConflictTests {
     final class FakeProviderVersions: ProviderVersionInspecting, @unchecked Sendable {
         private let state = Mutex<(versions: [String: [ProviderConflictVersion]], resolved: [String], backedUpAtResolve: [Bool])>(([:], [], []))
         let recovery: RecoveryStore
+        var failResolve = false
 
         init(recovery: RecoveryStore) { self.recovery = recovery }
 
@@ -28,6 +29,7 @@ struct LibraryProviderConflictTests {
         }
 
         func markResolved(_ ids: Set<String>, of url: URL) throws {
+            if failResolve { throw CocoaError(.fileWriteNoPermission) }
             // The library must have backed every one of these up before resolving it.
             let backups = (try? recovery.conflictCandidates(for: .library)) ?? []
             let backed = backups.compactMap { try? Data(contentsOf: $0) }
@@ -173,6 +175,111 @@ struct LibraryProviderConflictTests {
         #expect(try rig.rig.recovery.conflictCandidates(for: .library).map { try Data(contentsOf: $0) }.contains(theirs))
     }
 
+    // MARK: Review findings (#118)
+
+    /// The other Mac renamed the same show differently. That is not "already included": L4, and Combine reports
+    /// the rename it can't carry instead of dropping it.
+    @Test func sameEntryRenamedDifferentlyGoesToL4AndCombineReportsIt() async throws {
+        let rig = Rig()
+        let store = rig.store()
+        _ = await store.load()
+        let show = ShowID()
+        _ = try await store.update { LibraryReconciler.registering(show, title: "Episode Show", publication: nil, in: $0) }
+        _ = try await store.update { var l = $0; l.entries[0].alias = "Old"; return l }
+        let base = try rig.disk()
+        var theirs = base.payload
+        theirs.entries[0].alias = "Renamed on the other Mac"
+        _ = try await store.update { var l = $0; l.entries[0].alias = "Renamed here"; return l }
+        let id = rig.provider.add(try LibraryCoder.library.encode(theirs, revision: base.revision + 1), to: rig.rig.containerFile)
+        _ = await store.reload()
+        #expect(await store.levelState == .changedElsewhere, "not silently resolved as included")
+        #expect(rig.provider.resolved.isEmpty)
+        guard case let .success(summary) = await store.resolveConflictByCombining() else { Issue.record("combine failed"); return }
+        #expect(summary.entryChangesNotCarried.contains { $0.contains("Renamed on the other Mac") })
+        #expect(summary.message.contains("Renamed on the other Mac"), "surfaced in the message bar text")
+        #expect(rig.provider.resolved == [id] && rig.provider.everyResolutionWasBackedUpFirst)
+        #expect(try rig.disk().payload.entries[0].alias == "Renamed here")
+    }
+
+    /// The other Mac recorded a newer verified save of a show: L4, and Combine carries it (with its title).
+    @Test func newerShowPublicationInTheOtherCopyIsCarried() async throws {
+        let rig = Rig()
+        let store = rig.store()
+        _ = await store.load()
+        let show = ShowID()
+        let r1 = PublicationStamp(revision: 1, publicationID: UUID(), checksum: "sha256:1")
+        _ = try await store.update { LibraryReconciler.registering(show, title: "Show r1", publication: r1, in: $0) }
+        let base = try rig.disk()
+        var theirs = base.payload
+        let r2 = PublicationStamp(revision: 2, publicationID: UUID(), checksum: "sha256:2")
+        theirs = LibraryReconciler.acknowledging(show, title: "Show r2", publication: r2, in: theirs)
+        _ = try await store.update { var l = $0; l.collections.append(LibraryCollection(name: "Here")); return l }
+        rig.provider.add(try LibraryCoder.library.encode(theirs, revision: base.revision + 1), to: rig.rig.containerFile)
+        _ = await store.reload()
+        #expect(await store.levelState == .changedElsewhere)
+        guard case .success = await store.resolveConflictByCombining() else { Issue.record("combine failed"); return }
+        let entry = try #require(try rig.disk().payload.entries.first { $0.showID == show })
+        #expect(entry.lastKnownPublication == r2 && entry.lastKnownTitle == "Show r2")
+    }
+
+    /// A version that can't be marked resolved (or backed up) is never left unreported.
+    @Test func versionThatCannotBeResolvedIsReportedAsUnusable() async throws {
+        let rig = Rig()
+        let (_, _, id) = try await rig.concurrentCopies()
+        rig.provider.failResolve = true
+        let store = rig.store()
+        _ = await store.load()
+        guard case .success = await store.resolveConflictByCombining() else { Issue.record("combine failed"); return }
+        #expect(Set(try rig.disk().payload.collections.map(\.name)) == ["Shared", "Mine", "Theirs"])
+        #expect(await store.unusableProviderConflicts.map(\.id) == [id], "reported after Combine and its reload")
+        #expect(await store.levelState == .ready)
+    }
+
+    @Test func includedVersionIsReportedAsResolved() async throws {
+        let rig = Rig()
+        let store = rig.store()
+        _ = await store.load()
+        _ = try await store.update { var l = $0; l.collections.append(LibraryCollection(name: "Shared")); return l }
+        let older = try rig.disk()
+        _ = try await store.update { var l = $0; l.collections.append(LibraryCollection(name: "Later")); return l }
+        let id = rig.provider.add(try LibraryCoder.library.encode(older.payload, revision: older.revision), to: rig.rig.containerFile)
+        _ = await store.reload()
+        #expect(await store.resolvedProviderConflicts.map(\.id) == [id])
+    }
+
+    /// Edits queued while the location was unreachable are never published over a concurrent copy the user
+    /// hasn't seen: L4 with the journal kept; Combine then carries both.
+    @Test func queuedEditsAndAConflictVersionWaitForCombine() async throws {
+        let rig = Rig()
+        let store = rig.store()
+        _ = await store.load()
+        _ = try await store.update { var l = $0; l.collections.append(LibraryCollection(name: "Shared")); return l }
+        let disk = try rig.disk()
+        let diskBytes = try Data(contentsOf: rig.rig.containerFile)
+        var queued = disk.payload
+        queued.collections.append(LibraryCollection(name: "Queued offline"))
+        try rig.rig.recovery.writePendingLibraryEdits(PendingLibraryEdits(
+            base: RevisionFingerprint(of: diskBytes), baseSnapshot: diskBytes, editCount: 1, firstQueuedAt: Date(), lastQueuedAt: Date(),
+            snapshot: try LibraryCoder.library.encode(queued, revision: disk.revision + 1)))
+        var theirs = disk.payload
+        theirs.collections.append(LibraryCollection(name: "Theirs"))
+        rig.provider.add(try LibraryCoder.library.encode(theirs, revision: disk.revision + 1), to: rig.rig.containerFile)
+
+        let relaunched = rig.store()
+        _ = await relaunched.load()
+        guard case .needsDecision? = await relaunched.lastPendingOutcome else { Issue.record("expected L4 decision"); return }
+        #expect(await relaunched.levelState == .changedElsewhere)
+        #expect(await relaunched.pendingEditCount == 1, "journal kept")
+        #expect(try rig.disk().publication == disk.publication, "nothing published")
+        // The 30 s retry doesn't publish either.
+        guard case .needsDecision = await relaunched.retryPendingEdits() else { Issue.record("retry published"); return }
+        #expect(try rig.disk().publication == disk.publication)
+
+        guard case .success = await relaunched.resolveConflictByCombining() else { Issue.record("combine failed"); return }
+        #expect(Set(try rig.disk().payload.collections.map(\.name)) == ["Shared", "Queued offline", "Theirs"])
+        #expect(await relaunched.pendingEditCount == 0)
+    }
+
     /// Both Macs see the conflict and combine; the second combine finds everything already present (or loses
     /// the publication race and combines again). Either way both converge on a library with both changes.
     @Test func concurrentCombinesOnTwoMacsConverge() async throws {
@@ -200,5 +307,39 @@ struct LibraryProviderConflictTests {
         #expect(finalA == .ready && finalB == .ready)
         let libraryA = await macA.library, libraryB = await macB.library
         #expect(libraryA == libraryB)
+    }
+}
+
+@Suite("Library containment (#117 review)")
+struct LibraryContainmentTests {
+    func base() -> LibraryModel {
+        var library = LibraryModel()
+        let ids = [ShowID(), ShowID()]
+        library = LibraryReconciler.registering(ids[0], title: "A", publication: PublicationStamp(revision: 2, publicationID: UUID(), checksum: "sha256:a"), in: library)
+        library = LibraryReconciler.registering(ids[1], title: "B", publication: nil, in: library)
+        library.collections = [LibraryCollection(name: "C", showIDs: ids)]
+        library.recentShowIDs = [ids[0]]
+        return library
+    }
+
+    @Test func fieldForField() {
+        let current = base()
+        #expect(LibraryMerge.isContained(current, in: current))
+        var renamed = current; renamed.entries[0].alias = "Other"
+        #expect(!LibraryMerge.isContained(renamed, in: current), "alias")
+        var reordered = current; reordered.collections[0].showIDs.reverse()
+        #expect(!LibraryMerge.isContained(reordered, in: current), "member order")
+        var recent = current; recent.recentShowIDs.append(current.entries[1].showID)
+        #expect(!LibraryMerge.isContained(recent, in: current), "recents")
+        var newer = current; newer.entries[0].lastKnownPublication = PublicationStamp(revision: 3, publicationID: UUID(), checksum: "sha256:n")
+        #expect(!LibraryMerge.isContained(newer, in: current), "newer publication")
+        var sameRevisionOther = current; sameRevisionOther.entries[0].lastKnownPublication = PublicationStamp(revision: 2, publicationID: UUID(), checksum: "sha256:o")
+        #expect(!LibraryMerge.isContained(sameRevisionOther, in: current), "different save of the same revision")
+        var older = current; older.entries[0].lastKnownPublication = PublicationStamp(revision: 1, publicationID: UUID(), checksum: "sha256:o")
+        #expect(LibraryMerge.isContained(older, in: current), "an older recorded publication is contained")
+        var unavailable = current; unavailable.entries[1].unavailable = UnavailableRecord(note: "missing", recordedAt: Date())
+        #expect(!LibraryMerge.isContained(unavailable, in: current), "unavailable record")
+        var fewer = current; fewer.collections = []
+        #expect(LibraryMerge.isContained(fewer, in: current), "a subset is contained (ST-36 keeps everything)")
     }
 }

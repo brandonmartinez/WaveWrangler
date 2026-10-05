@@ -99,8 +99,12 @@ public struct LibraryMergeSummary: Sendable, Equatable {
     public var collectionsAdded = 0
     public var showsAdded = 0
     public var recentItemsAdded = 0
+    /// Same-entry changes from the combined-in library that Combine can't carry (for example a show renamed
+    /// differently on each Mac). They are listed for the user and stay in the backup copy (#117).
+    public var entryChangesNotCarried: [String] = []
 
     mutating func add(_ other: LibraryMergeSummary) {
+        entryChangesNotCarried += other.entryChangesNotCarried
         collectionsKeptAsCopies += other.collectionsKeptAsCopies
         collectionsAdded += other.collectionsAdded
         showsAdded += other.showsAdded
@@ -109,7 +113,11 @@ public struct LibraryMergeSummary: Sendable, Equatable {
     }
 
     public var message: String {
-        "Combined libraries: \(collectionsKeptAsCopies) collections kept as separate copies, \(showsAdded) shows and \(recentItemsAdded) recent items added."
+        let combined = "Combined libraries: \(collectionsKeptAsCopies) collections kept as separate copies, \(showsAdded) shows and \(recentItemsAdded) recent items added."
+        guard !entryChangesNotCarried.isEmpty else { return combined }
+        let count = entryChangesNotCarried.count
+        return combined + " \(count) change\(count == 1 ? "" : "s") from the other copy couldn't be combined and \(count == 1 ? "was" : "were") kept in a backup copy: "
+            + entryChangesNotCarried.joined(separator: "; ") + "."
     }
 }
 
@@ -138,7 +146,23 @@ public enum LibraryMerge {
                 if let mine = entry.unavailable?.recordedAt, let theirs = kept.unavailable?.recordedAt, mine > theirs {
                     result.entries[index].unavailable = entry.unavailable
                 }
-                if kept.alias == nil { result.entries[index].alias = entry.alias }
+                if kept.alias == nil {
+                    result.entries[index].alias = entry.alias
+                } else if let alias = entry.alias, alias != kept.alias {
+                    // Renamed differently on each side: the kept name stays; the other is reported, never dropped silently.
+                    summary.entryChangesNotCarried.append("“\(kept.alias ?? kept.lastKnownTitle)” is named “\(alias)” in the other copy")
+                }
+                // A newer verified show publication recorded in the other copy is carried (with its title).
+                if let theirs = entry.lastKnownPublication, theirs != kept.lastKnownPublication {
+                    if let mine = kept.lastKnownPublication, mine.revision >= theirs.revision {
+                        if mine.revision == theirs.revision {
+                            summary.entryChangesNotCarried.append("“\(kept.alias ?? kept.lastKnownTitle)” has a different save of revision \(theirs.revision) recorded in the other copy")
+                        }
+                    } else {
+                        result.entries[index].lastKnownPublication = theirs
+                        result.entries[index].lastKnownTitle = entry.lastKnownTitle
+                    }
+                }
             } else {
                 result.entries.append(entry)
                 summary.showsAdded += 1
@@ -162,6 +186,30 @@ public enum LibraryMerge {
             summary.recentItemsAdded += 1
         }
         return (result, summary)
+    }
+
+    /// Whether everything in `version` is already in `current`, field for field (#117): every entry (alias,
+    /// recorded title and publication, unavailable record), every collection (name and exact member order) and
+    /// every recent item. Only then may a provider conflict version be resolved without asking (after a backup).
+    /// Anything else, including a version that is merely *older* in some field, goes to L4.
+    public static func isContained(_ version: LibraryModel, in current: LibraryModel) -> Bool {
+        for entry in version.entries {
+            guard let kept = current.entries.first(where: { $0.showID == entry.showID }) else { return false }
+            if let alias = entry.alias, alias != kept.alias { return false }
+            if entry.lastKnownPublication != kept.lastKnownPublication {
+                guard let theirs = entry.lastKnownPublication else { continue }   // never reconciled there
+                guard let mine = kept.lastKnownPublication, mine.revision > theirs.revision else { return false }
+            } else if entry.lastKnownTitle != kept.lastKnownTitle {
+                return false
+            }
+            if let unavailable = entry.unavailable, unavailable != kept.unavailable {
+                guard let recorded = kept.unavailable?.recordedAt, recorded >= unavailable.recordedAt else { return false }
+            }
+        }
+        for collection in version.collections where !current.collections.contains(where: { $0.name == collection.name && $0.showIDs == collection.showIDs }) {
+            return false
+        }
+        return version.recentShowIDs.allSatisfy(current.recentShowIDs.contains)
     }
 
     static func uniqueName(for name: String, existing: Set<String>) -> String {
