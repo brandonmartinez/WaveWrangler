@@ -34,7 +34,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate, NSWin
         window.makeKeyAndOrderFront(nil)
     }
 
-    private init(store: LibraryStore) {
+    private init(store: LibraryUIStore) {
         state = LibraryWindowState(store: store)
         let hosting = NSHostingController(rootView: LibraryView(state: state).wwAppEnvironment())
         hosting.sceneBridgingOptions = [.toolbars]

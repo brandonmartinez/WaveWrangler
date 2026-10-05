@@ -25,9 +25,9 @@ final class LibraryWindowState {
     var actionMessage: String?
 
     @ObservationIgnored weak var window: NSWindow?
-    let store: LibraryStore
+    let store: LibraryUIStore
 
-    init(store: LibraryStore) {
+    init(store: LibraryUIStore) {
         self.store = store
     }
 

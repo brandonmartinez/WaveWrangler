@@ -225,7 +225,7 @@ final class CollectionMenuDelegate: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        for collection in LibraryStore.shared.library.collections {
+        for collection in LibraryUIStore.shared.library.collections {
             let item = NSMenuItem(title: collection.name, action: #selector(CommandRouter.addToCollection(_:)), keyEquivalent: "")
             item.target = CommandRouter.shared
             item.representedObject = collection.id.rawValue

@@ -24,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Load the canonical library before any show window can record bookkeeping into it.
-        Task { await LibraryStore.shared.load() }
+        Task { await LibraryUIStore.shared.load() }
         LaunchFixtures.applyAfterLaunch()
         // IA-05: restore windows open at quit; otherwise show the Library window. Never alert at launch.
         DispatchQueue.main.async {
@@ -46,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// ST-34: quitting with queued library changes asks first (no default button).
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let pending = LibraryStore.shared.services.location.libraryState.pendingChanges
+        let pending = LibraryUIStore.shared.services.location.libraryState.pendingChanges
         guard let warning = LibraryLevelPresentation.quitWarning(pendingChanges: pending) else { return .terminateNow }
         let alert = NSAlert()
         alert.messageText = warning.message

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run WaveWranglerKit package tests, then the unhosted WaveWranglerTests unit tests.
-# UI tests launch the app and are NOT run by default. `--ui` runs ONLY the XCUITests (WaveWranglerUITests
-# scheme); it drives the screen, so run it only with GUI permission and the coordinator's GUI lock.
+# UI tests launch the app and are NOT run by default. `--ui` runs ONLY the XCUITests (GUI); use it only
+# when GUI launch is permitted and the GUI lock is held.
 # Usage: scripts/test.sh [--package-only] [--ui [-only-testing:WaveWranglerUITests/Class/test]]
 set -euo pipefail
 
@@ -25,10 +25,17 @@ for arg in "$@"; do
 done
 
 if [[ "$UI" == 1 ]]; then
+  echo "==> swift build wwpersist-probe (synthetic fixtures for UI tests)"
+  swift build \
+    --package-path "$ROOT/Packages/WaveWranglerKit" \
+    --scratch-path "$ROOT/.build/swiftpm" \
+    --jobs "$JOBS" \
+    --product wwpersist-probe
+  PROBE="$(swift build --package-path "$ROOT/Packages/WaveWranglerKit" --scratch-path "$ROOT/.build/swiftpm" --show-bin-path)/wwpersist-probe"
   echo "==> xcodebuild test (WaveWranglerUITests; launches the app)"
   cd "$ROOT"
   if [[ ${#UI_ARGS[@]} -eq 0 ]]; then UI_ARGS=(-only-testing:WaveWranglerUITests); fi
-  xcodebuild \
+  TEST_RUNNER_WW_PROBE="$PROBE" xcodebuild \
     -project WaveWrangler.xcodeproj \
     -scheme WaveWranglerUITests \
     -configuration Debug \
@@ -42,7 +49,7 @@ if [[ "$UI" == 1 ]]; then
     CODE_SIGN_STYLE=Manual \
     DEVELOPMENT_TEAM= \
     test
-  exit $?
+  exit 0
 fi
 
 echo "==> swift test (Packages/WaveWranglerKit)"
@@ -50,6 +57,17 @@ swift test \
   --package-path "$ROOT/Packages/WaveWranglerKit" \
   --scratch-path "$ROOT/.build/swiftpm" \
   --jobs "$JOBS"
+
+# Timing gates (WW-005 ≤2 s edit-to-quiescent checkpoint, publication cost, library scale p95) run one at a
+# time after the parallel suite, so the fault harness's own I/O does not distort the measurements.
+for timing_test in editToQuiescentCheckpointLatency publicationPipelineCost hundredShowsThousandSourceRefs; do
+  echo "==> swift test timing pass: $timing_test"
+  WW_TIMING_TESTS=1 swift test \
+    --package-path "$ROOT/Packages/WaveWranglerKit" \
+    --scratch-path "$ROOT/.build/swiftpm" \
+    --jobs "$JOBS" \
+    --filter "$timing_test"
+done
 
 if [[ "$PACKAGE_ONLY" == 1 ]]; then
   exit 0

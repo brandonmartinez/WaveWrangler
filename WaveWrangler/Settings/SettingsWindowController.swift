@@ -152,7 +152,7 @@ private struct LibraryLocationControl: View {
         case chooseFolder
     }
 
-    private var controller: LibraryLocationControlling { LibraryStore.shared.services.location }
+    private var controller: LibraryLocationControlling { LibraryUIStore.shared.services.location }
 
     var body: some View {
         let location = controller.location

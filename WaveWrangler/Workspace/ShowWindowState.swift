@@ -201,7 +201,7 @@ final class ShowWindowState {
         // P6 ordering: the library learns a show's new title only after coherent disk truth (D1).
         if new.isCoherentlySaved {
             let model = store.model
-            LibraryStore.shared.showDidSaveCoherently(id: model.show.id, model: model, fileURL: store.document?.fileURL)
+            LibraryUIStore.shared.showDidSaveCoherently(id: model.show.id, model: model, fileURL: store.document?.fileURL)
         }
     }
 
@@ -227,7 +227,7 @@ final class ShowWindowState {
             window.setAccessibilityIdentifier("ww.show.window")
             self.updateSubtitle()
             let model = self.store.model
-            LibraryStore.shared.showDidOpen(
+            LibraryUIStore.shared.showDidOpen(
                 id: model.show.id, model: model, fileURL: self.store.document?.fileURL,
                 hasUnsavedChanges: self.saveStatus.hasUnsavedChanges || self.store.document?.isDocumentEdited == true
             )

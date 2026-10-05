@@ -7,7 +7,7 @@ import XCTest
 /// `scripts/test.sh --ui`. Fixtures are synthetic: an in-memory library (`-WWUITestLibraryFixture`) and a
 /// generated show in the app container's temporary directory (`-WWUITestOpenShow`). No user files.
 @MainActor
-final class WaveWranglerUITests: XCTestCase {
+final class LibraryWorkspaceUITests: XCTestCase {
     private var app: XCUIApplication!
     /// Frame of the Library entry table, captured before an audit (queries inside the audit handler are unreliable).
     private var entryTableFrame: CGRect?

@@ -12,8 +12,8 @@ import WWOrganizer
 /// bookkeeping that arrives earlier is queued; undo reverts only what the action changed.
 @MainActor
 @Observable
-final class LibraryStore {
-    static let shared = LibraryStore(services: LibraryServices.current)
+final class LibraryUIStore {
+    static let shared = LibraryUIStore(services: LibraryServices.current)
 
     private(set) var session = LibrarySession()
     /// ST-32: a library read/write failure; shown in the Library window's message bar until dismissed.

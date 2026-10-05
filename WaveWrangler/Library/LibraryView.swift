@@ -7,7 +7,7 @@ struct LibraryView: View {
     @Bindable var state: LibraryWindowState
     @FocusState private var focus: LibraryWindowState.Region?
 
-    private var store: LibraryStore { state.store }
+    private var store: LibraryUIStore { state.store }
 
     var body: some View {
         VStack(spacing: 0) {

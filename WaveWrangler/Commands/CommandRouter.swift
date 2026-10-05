@@ -44,7 +44,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     }
 
     private var libraryEditable: Bool {
-        LibraryStore.shared.services.location.libraryState.allowsEdits
+        LibraryUIStore.shared.services.location.libraryState.allowsEdits
     }
 
     // MARK: - App and window
