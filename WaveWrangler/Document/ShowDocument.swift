@@ -484,9 +484,11 @@ final class ShowDocument: NSDocument {
 
     private var afterFirstFrameScheduled = false
 
-    /// Runs the deferred open work after the window's first frame (`showWindows`); on a revert, when a window
-    /// is already visible, on the next main-queue turn. A document that is never displayed presents neither the
-    /// offer nor provider versions, so it has nothing to defer to; it runs if its windows are shown later.
+    /// Runs the deferred open work after a window of this document first appears, on every display path:
+    /// `showWindows()`, a window attached by state restoration (which never calls `showWindows()`;
+    /// `windowDidAttach()` from the show window), or, on a revert while a window is visible, the next turn.
+    /// A document that is never displayed presents neither the offer nor provider versions; its deferred work
+    /// runs as soon as one of its windows appears.
     private func scheduleAfterFirstFrame() {
         afterFirstFrameScheduled = true
         if windowControllers.contains(where: { $0.window?.isVisible == true }) {
@@ -498,8 +500,16 @@ final class ShowDocument: NSDocument {
         let firstShow = !windowControllers.contains { $0.window?.isVisible == true }
         let interval = firstShow ? OpenSignposts.begin("window.firstCommit") : nil
         super.showWindows()
-        guard firstShow else { return }
-        OpenSignposts.endAfterCommit(interval)
+        if firstShow { OpenSignposts.endAfterCommit(interval) }
+        scheduleDeferredWorkAfterFrame()
+    }
+
+    /// Called by the show window when it is attached, on every display path (including state restoration).
+    func windowDidAttach() {
+        scheduleDeferredWorkAfterFrame()
+    }
+
+    private func scheduleDeferredWorkAfterFrame() {
         guard afterFirstFrameScheduled else { return }
         OpenSignposts.afterFirstFrame { [weak self] in self?.runAfterFirstFrame() }
     }

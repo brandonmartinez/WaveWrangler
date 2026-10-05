@@ -82,6 +82,29 @@ final class DocumentLifecycleUITests: XCTestCase {
         XCTAssertFalse(messageBar(window).exists, "a verified save resolved the offer")
     }
 
+    /// C2b with **state restoration** (#107 review): the restored window never goes through showWindows(); the
+    /// offer must still appear. Both launches keep saved state (no -ApplePersistenceIgnoreState) and the relaunch
+    /// doesn't open the document itself.
+    func testRelaunchWithStateRestorationOffersRestore() throws {
+        let document = try makeDocument("Relaunch Restored")
+        let restoring = ["-NSQuitAlwaysKeepsWindows", "YES"] + Self.slowAutosave
+        let window = try launchAndOpen(document, autosave: true, extraArguments: restoring, keepsSavedState: true)
+        try edit(window, title: "Unsaved before the crash")
+        assertDiskTitle(document, stays: "Synthetic Trial Show 1", for: 3)
+        forceQuit()
+
+        app = XCUIApplication()
+        app.launchArguments = ["-WWUITestHooks", "YES", "-WWUITestAutosave", "ON"] + restoring
+        app.launch()
+        let restored = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Relaunch Restored'")).firstMatch
+        XCTAssertTrue(restored.waitForExistence(timeout: 15), "the show window is restored at launch")
+        let bar = messageBar(restored)
+        XCTAssertTrue(bar.waitForExistence(timeout: 10), "the unsaved-changes offer appears in a restored window")
+        record("restored offer: \(bar.label)")
+        XCTAssertTrue(bar.label.hasPrefix("Restore unsaved changes from "), bar.label)
+        XCTAssertEqual(diskTitle(document), "Synthetic Trial Show 1")
+    }
+
     /// Two crashed sessions leave two records with different edits: each is offered on its own, newest first, and
     /// acting on one never removes the other.
     func testTwoCrashedSessionsAreOfferedOneAfterAnother() throws {
@@ -258,13 +281,12 @@ final class DocumentLifecycleUITests: XCTestCase {
         return url
     }
 
-    private func launchAndOpen(_ document: URL, autosave: Bool, extraArguments: [String] = []) throws -> XCUIElement {
+    private func launchAndOpen(_ document: URL, autosave: Bool, extraArguments: [String] = [], keepsSavedState: Bool = false) throws -> XCUIElement {
         app = XCUIApplication()
         app.launchArguments = [
             "-WWUITestHooks", "YES",
             "-WWUITestAutosave", autosave ? "ON" : "OFF",
-            "-ApplePersistenceIgnoreState", "YES",
-        ] + extraArguments
+        ] + (keepsSavedState ? [] : ["-ApplePersistenceIgnoreState", "YES"]) + extraArguments
         app.launch()
         // A clean launch-time Untitled show would host the document as a tab; close it first (clean ⇒ no prompt).
         let untitled = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch

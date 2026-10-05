@@ -256,6 +256,9 @@ final class ShowWindowState {
             // The attach pass through its commit (the acceptance lane's show.open endpoint).
             OpenSignposts.endAfterCommit(OpenSignposts.begin("window.attachCommit"))
             self.isWindowAttached = true
+            // Deferred open work (C2b offer scan, provider versions) on every display path, including windows
+            // restored at launch, which never go through showWindows().
+            self.store.document?.windowDidAttach()
             if let hosting = window.contentViewController as? NSHostingController<ShowWorkspaceView> {
                 hosting.sceneBridgingOptions = [.toolbars]
             }
