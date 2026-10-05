@@ -98,6 +98,36 @@ The machine-readable record is the registry's `freezeRevisions[0]`.
   - Each run records both hosts and the harness tree IDs.
   - Calibration is reported separately and tunes nothing.
 
+#### 4.2.1 Interpretation note for `M1-DUR-025` truth 1 (Lead, 2026-10-05; recorded before any holdout case)
+
+**Question.** In a provider-level race, both Macs can publish, read back and show C3's local acknowledgement "Saved on this Mac — revision r+1" before iCloud picks a winner. Truth 7 says nothing is atomic at the provider. Read literally, truth 1's "at most one host's publication is acknowledged as the current revision" would fail every provider race by construction.
+
+**Ruling: an interpretation, not a truth change.**
+- C3 separates **local** acknowledgement ("Saved on this Mac", local coherent disk truth) from provider state ("Provider sync: unknown", which a local save never implies).
+- "Acknowledged as the current revision" in truth 1 therefore means a **cross-device** claim that a publication is the current revision. A local "Saved on this Mac" during the race is not one.
+- Truth 1 is judged at the **settle point** the recipe already defines ("wait until both hosts observe a stable file", bounded; timeout = case failure).
+- The registry entry, counts and gates are unchanged. No `M1-DUR-025` holdout case has run.
+
+**Per case, all of these must hold (show and library cells):**
+1. **One current publication.** After settle, exactly one publication is current, and both hosts read the same whole valid revision (byte-identical canonical file, checksum valid).
+2. **Every other acknowledged publication is accounted for.** After settle, each other host's locally acknowledged publication is either:
+   - **app-detected:** the base check stopped it as Conflict, with the losing candidate preserved; or
+   - **provider-surfaced:** it exists as an unresolved provider conflict version that the app surfaces. For shows, that means a nonzero conflict count in the show's status (C4). For the library, it means L4, then Combine as in truth 2.
+   - A losing publication that is neither app-detected nor provider-surfaced (silent last-writer-wins) is a **failure**. That is the #117 class.
+3. **No false claim.**
+   - No host ever shows a cross-device, "synced" or "current everywhere" claim for a losing publication.
+   - After settle, a losing host never keeps showing an unqualified "Saved" for it without a conflict indication: Conflict, a show conflict count, or library L4.
+   - "Saved on this Mac" during the race is permitted, because it is local truth.
+4. **Library.** After settle, the library is never in L1 ("ready") on a host that holds an unsurfaced conflict version, and truth 2 (Combine, then both Macs' changes current on both hosts, with a backup before resolve) holds.
+5. **Reported per case**, as evidence, not as gates:
+   - the number of hosts that showed a local acknowledgement;
+   - time from the trigger to settle;
+   - time to surfacing (app-detected or provider-surfaced) on each host;
+   - provider conflict and other version counts on each host;
+   - which detection path fired.
+
+**Why this doesn't loosen truth 1.** Truth 1 still bans unsurfaced loss, cross-device false claims and mixed revisions. The note adds stricter after-settle requirements (3–4), adds no exclusions and changes no counts. Had a requirement been relaxed, it would have needed a new freeze revision (`m1-freeze-3`) before holdout.
+
 ## 5. M1 strata and planned counts
 
 Full fields are in the registry. Counts are **calibration / holdout**.
