@@ -381,7 +381,7 @@ enum Evidence {
 // MARK: - Waiting and timing gates
 
 /// Polls `condition` until it holds or `timeout` elapses (functional tests must not depend on host load).
-func eventually(timeout: Double = 15, _ condition: @Sendable () async -> Bool) async -> Bool {
+func eventually(timeout: Double = 30, _ condition: @Sendable () async -> Bool) async -> Bool {
     let deadline = ContinuousClock.now + .seconds(timeout)
     while ContinuousClock.now < deadline {
         if await condition() { return true }

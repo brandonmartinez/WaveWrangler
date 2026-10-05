@@ -39,7 +39,7 @@ struct AutosavePolicyTests {
         let (session, url) = try makeSession(rig, seed: 40, gate: gate)
         let before = try Data(contentsOf: url)
         let ran = Counter()
-        let scheduler = QuiescenceScheduler(gate: gate, queue: .global()) { _ in ran.increment() }
+        let scheduler = QuiescenceScheduler(gate: gate, queue: DispatchQueue(label: "ww.test.scheduler")) { _ in ran.increment() }
         try await session.edit { try $0.renamingShow(to: "Off edit") }
         #expect(scheduler.noteEdit() == false)
         try await Task.sleep(for: .milliseconds(1400))
@@ -61,7 +61,7 @@ struct AutosavePolicyTests {
         // runner (with 1 s the test itself could lose the race and observe the work running while still ON).
         let gate = AutosaveGate(AutosavePreference(enabled: true, delaySeconds: 5))
         let ran = Counter(), skipped = Counter()
-        let scheduler = QuiescenceScheduler(gate: gate, queue: .global(), onSkipped: { skipped.increment() }) { work in
+        let scheduler = QuiescenceScheduler(gate: gate, queue: DispatchQueue(label: "ww.test.scheduler"), onSkipped: { skipped.increment() }) { work in
             if work == .publish { ran.increment() }
         }
         #expect(scheduler.noteEdit())
@@ -75,7 +75,7 @@ struct AutosavePolicyTests {
         let gate = AutosaveGate(AutosavePreference(enabled: false))
         let (session, url) = try makeSession(rig, seed: 41, gate: gate)
         let published = Counter()
-        let scheduler = QuiescenceScheduler(gate: gate, queue: .global()) { kind in
+        let scheduler = QuiescenceScheduler(gate: gate, queue: DispatchQueue(label: "ww.test.scheduler")) { kind in
             guard kind == .publish else { return }
             Task {
                 if case .success = await session.save(automatic: true) { published.increment() }
@@ -96,7 +96,7 @@ struct AutosavePolicyTests {
         let gate = AutosaveGate(AutosavePreference(enabled: true, delaySeconds: 5))
         let (session, url) = try makeSession(rig, seed: 42, gate: gate)
         let drafts = Counter()
-        let scheduler = QuiescenceScheduler(gate: gate, queue: .global()) { kind in
+        let scheduler = QuiescenceScheduler(gate: gate, queue: DispatchQueue(label: "ww.test.scheduler")) { kind in
             guard kind == .editCheckpoint else { return }
             Task { if await session.writeEditCheckpoint() { drafts.increment() } }
         }
@@ -126,7 +126,7 @@ struct AutosavePolicyTests {
         let gate = AutosaveGate(AutosavePreference(enabled: true, delaySeconds: 1))
         let (session, url) = try makeSession(rig, seed: 43, gate: gate)
         let (stream, continuation) = AsyncStream<ContinuousClock.Instant>.makeStream()
-        let scheduler = QuiescenceScheduler(gate: gate, queue: .global()) { kind in
+        let scheduler = QuiescenceScheduler(gate: gate, queue: DispatchQueue(label: "ww.test.scheduler")) { kind in
             guard kind == .publish else { return }
             Task {
                 if case .success = await session.save(automatic: true) { continuation.yield(.now) }
@@ -156,7 +156,7 @@ struct AutosavePolicyTests {
         // Longer configured delay (5 s): the C2b edit checkpoint lands first, at quiescence.
         gate.preference = AutosavePreference(enabled: true, delaySeconds: 5)
         let (draftStream, draftContinuation) = AsyncStream<ContinuousClock.Instant>.makeStream()
-        let draftScheduler = QuiescenceScheduler(gate: gate, queue: .global()) { kind in
+        let draftScheduler = QuiescenceScheduler(gate: gate, queue: DispatchQueue(label: "ww.test.scheduler")) { kind in
             guard kind == .editCheckpoint else { return }
             Task { if await session.writeEditCheckpoint() { draftContinuation.yield(.now) } }
         }
