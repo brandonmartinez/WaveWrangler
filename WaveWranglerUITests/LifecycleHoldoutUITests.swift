@@ -50,6 +50,9 @@ final class LifecycleHoldoutUITests: XCTestCase {
         var records: [[String: Any]] = []
         for index in 0..<count {
             let route = Route.allCases[index % Route.allCases.count]
+            // `WW_ROUTES` (comma-separated route numbers, 1-based) limits a calibration run to some routes.
+            if let only = Acceptance.environment["WW_ROUTES"]?.split(separator: ",").compactMap({ Int($0) }),
+               !only.contains(index % Route.allCases.count + 1) { continue }
             failures = []
             let started = Date()
             do {
