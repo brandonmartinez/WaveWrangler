@@ -8,7 +8,7 @@
 
 **Issue labels are informational:** owner/type/priority/gate and appropriate status:partial. No squad/squad:* auto-dispatch or fictional GitHub assignees. Dependencies gate acceptance, not safe preparatory coding. Native GitHub issue dependencies cover the 180 open-to-open edges; completed-history predecessors remain linked evidence, not reopened tickets.
 
-**Metadata setup at snapshot:** issue numbers/titles fixed; parent is still attaching bodies/milestones/native edges (not yet verified complete).
+**Metadata setup at snapshot:** verified complete by the parent metadata coordinator at 2026-10-05T02:26:53.534622+00:00: full issue criteria/milestones and 180 native edges. This publication records that verification, not independent reproduction of all API writes.
 
 ## Milestones
 
