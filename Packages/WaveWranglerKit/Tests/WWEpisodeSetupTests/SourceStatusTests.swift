@@ -79,7 +79,7 @@ struct SourceStatusTests {
     /// (never "Offline"), a VoiceOver value, five inspector rows, and distinct inspector text per state.
     @Test func everyCombinationMapsToDistinctNonGenericText() {
         let all = SourceStatusCatalog.allSnapshots
-        #expect(all.count == 7 * 6 * 4 * 11 * 6)
+        #expect(all.count == 7 * 7 * 4 * 11 * 6)
         let forbidden = ["offline", "unavailable", "error"]
         var inspectorTuples = Set<[String]>()
         for snapshot in all {

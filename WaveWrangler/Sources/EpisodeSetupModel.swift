@@ -68,6 +68,8 @@ final class EpisodeSetupModel {
     var focusedTable: FocusedTable?
     /// Whether the Setup content is currently shown in a window.
     var isOnScreen = false
+    /// Share of the tables' height given to Speakers (#89).
+    var speakersFraction = SetupSplitLayout.defaultSpeakersFraction
     /// Recorder group rows the user collapsed (all start expanded).
     var collapsedRows: Set<SetupRowID> = []
     var sortOrder: SourceSortOrder = .manual
