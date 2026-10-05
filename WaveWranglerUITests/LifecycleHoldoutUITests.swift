@@ -124,14 +124,13 @@ final class LifecycleHoldoutUITests: XCTestCase {
         case .dockQuitOffDontSave:
             let window = try launchAndOpen(document, autosave: false)
             try edit(window, title: "Dock \(index)")
-            // The Dock's AX tree isn't readable from the sandboxed runner, so the Dock's Quit is reproduced by
-            // sending the same kAEQuitApplication Apple event the Dock sends (NSRunningApplication.terminate()).
-            let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.brandonmartinez.wavewrangler")
-            guard let target = running.first(where: { $0.bundleURL?.path.contains("DerivedData") == true }) ?? running.first else {
-                failures.append("app process not found")
+            // The sandboxed runner can neither read the Dock's AX tree nor send Apple events, so the operator
+            // chooses Dock › Quit with computer-use when this marker appears (the test waits for the review sheet).
+            print("[dock] quit-now \(Date().timeIntervalSince1970)")
+            guard app.sheets.firstMatch.waitForExistence(timeout: 120) else {
+                failures.append("no review sheet after Dock › Quit (operator step)")
                 return
             }
-            check(target.terminate(), "quit Apple event delivered")
             guard let sheet = closeSheet() else { return }
             check(hasDecisionButtons(sheet), "Save / Don't Save / Cancel")
             dontSave(in: sheet).click()

@@ -37,9 +37,18 @@ final class LibraryManagementUITests: XCTestCase {
         step("collections") {
             for (index, name) in ["WW013 A \(suffix)", "WW013 B \(suffix)"].enumerated() {
                 // First through the menu bar, then through the sidebar's New Collection button.
-                if index == 0 { menu("File", "Library", "New Collection…") } else { element("ww.library.sidebar.newCollection").click() }
-                let field = element("ww.dialog.name")
-                guard field.waitForExistence(timeout: 5) else { check(false, "name dialog (\(index == 0 ? "menu" : "button"))"); continue }
+                var field = element("ww.dialog.name")
+                if index == 1 {
+                    element("ww.library.sidebar.newCollection").click()
+                    if !field.waitForExistence(timeout: 3) {
+                        check(false, "sidebar New Collection button opens the name dialog")
+                        menu("File", "Library", "New Collection…")
+                    }
+                } else {
+                    menu("File", "Library", "New Collection…")
+                }
+                field = element("ww.dialog.name")
+                guard field.waitForExistence(timeout: 5) else { check(false, "name dialog"); continue }
                 field.typeText(name + "\r")
                 check(collection(name).waitForExistence(timeout: 5), "created \(name)")
             }
