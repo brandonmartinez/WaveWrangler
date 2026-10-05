@@ -38,13 +38,16 @@ struct HoldoutTimingTests {
                 }
             }
             let states = HoldoutGen.edits(1...20, on: model, &rng)
+            // The clock starts at the last edit itself, not after the trailing 0–30 ms jitter sleep (the m1-freeze-1
+            // holdout run started it after that sleep, understating latency by up to 30 ms; disclosed in the evidence).
+            var lastMutation = ContinuousClock.now
             for state in states {
                 await session.edit { _ in state }
+                lastMutation = .now
                 scheduler.noteEdit()
                 try await Task.sleep(for: .milliseconds(HoldoutGen.int(0...30, &rng)))
             }
             let expected = try #require(states.last)
-            let lastMutation = ContinuousClock.now
             let deadline = lastMutation + .seconds(5)
             while ContinuousClock.now < deadline {
                 if let onDisk = decodeShow(url), onDisk.payload == expected {

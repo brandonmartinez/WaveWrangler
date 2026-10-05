@@ -248,7 +248,13 @@ struct Probe {
     func killAt() async -> Int32 {
         guard let raw = args["boundary"], let boundary = PublicationBoundary(rawValue: raw) else { emit(["error": "boundary"]); return 2 }
         guard let session = openSession(hooks: ExitAtBoundary(boundary: boundary, marker: args.url("marker"))) else { return 1 }
-        _ = try? await session.edit { try $0.renamingShow(to: "Killed at \(raw)") }
+        do {
+            try await session.edit { try $0.renamingShow(to: "Killed at \(raw)") }
+        } catch {
+            // Fatal: saving an unedited model would republish the old payload as revision 3.
+            emit(["error": "edit failed: \(error)"])
+            return 3
+        }
         var followUp = PublicationFollowUp.none
         if let libraryURL = args.url("library") {
             let showID = await session.payload.show.id
@@ -286,7 +292,12 @@ struct Probe {
                                  recovery: recovery, indexCache: LibraryIndexCache(url: cache), hooks: ExitAtBoundary(boundary: boundary, marker: args.url("marker")))
         _ = await store.load()
         let name = args["collection"] ?? "Killed at \(raw)"
-        _ = try? await store.update { var library = $0; library.collections.append(LibraryCollection(name: name)); return library }
+        do {
+            _ = try await store.update { var library = $0; library.collections.append(LibraryCollection(name: name)); return library }
+        } catch {
+            emit(["error": "update failed: \(error)"])
+            return 3
+        }
         emit(["result": "boundaryNotReached"])
         return 1
     }

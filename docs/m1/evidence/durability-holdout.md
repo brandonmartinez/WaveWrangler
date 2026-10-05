@@ -19,7 +19,7 @@ Owner: persistence lane (Mac). The raw per-case results are committed next to th
 | Split | `holdout`, run once on this frozen revision; every case is reported |
 | Passes (2026-10-05 UTC) | package 07:41:22Z; timing (serialized, `WW_TIMING_TESTS=1`) 07:43:37Z; iCloud 07:45:49Z; native 07:50:36Z |
 | Host | Apple M5 Max, 18 cores, 128 GiB; macOS 27.0.1 (26A434); Xcode 27.0 (27A266a); Swift 6.4 |
-| Runner | `scripts/holdout.sh --split holdout --package --timing --native --icloud` (refuses a dirty tree or a commit without `2fcf4d7`) |
+| Runner | Four separate invocations, one run record each (each refuses a dirty tree or a commit without `2fcf4d7`): `scripts/holdout.sh --split holdout --package` (07:41:22Z); `scripts/holdout.sh --split holdout --timing` (07:43:37Z); `scripts/holdout.sh --split holdout --icloud` (07:45:49Z); `scripts/holdout.sh --split holdout --native` (07:50:36Z) |
 | Seeds | `sha256("ww-m1-fixture|v1|" + fixtureId + "|holdout|" + caseIndex)`, first 8 bytes big-endian, per cell (for example `M1-DUR-006/publisher/P3`) |
 
 Test tree IDs (identical in all four run records):
@@ -47,12 +47,12 @@ Unless a row says otherwise, the label is **simulated/local, not provider-observ
 | Family | Frozen | Achieved | Pass | Outcome mix (holdout) | p95 / max |
 |---|---:|---:|---:|---|---|
 | DUR-001 explicit Save | 100 | 100 | 100 | saved 100 | — |
-| DUR-002 ON checkpoint timing | 100 | 100 | 100 | published revision 100 (serialized pass) | **p95 1.025 / max 1.053** (p50 1.005); provisional gate p95 ≤ 2 s met |
+| DUR-002 ON checkpoint timing | 100 | 100 | 100 | published revision 100 (serialized pass) | **p95 1.025 / max 1.053** (p50 1.005), each **understated by up to 0.030** (see note); provisional gate p95 ≤ 2 s met even with +0.030 |
 | DUR-003 OFF no auto-publish | 100 | 100 | 100 | not published 100 | — |
 | DUR-004 toggle interleavings | 100 | 100 | 100 | published before OFF 18, skipped after OFF 32, published after ON 50 | OFF→ON publish p95 1.084 / max 1.102 (n = 50) |
 | DUR-005 Save while OFF | 100 | 100 | 100 | saved 100 | — |
-| DUR-006 publisher P1–P7 | 700 | 700 | 700 | Save/autosave/Save As spread per cell. P1–P3 old (Save As: absent); P4 old or recovered-old (Save As: absent or destination refused); P5–P6 new; P7 new | — |
-| DUR-006 NSDocument P1–P3, P5–P7 | 600 | 600 | 600 | P1–P3 old, failure retained; P5–P6 new, **acknowledgement uncertain**; P7 new, acknowledged, index rebuilt | — |
+| DUR-006 publisher P1–P7 | 700 | 700 | 700 | In-place publication (cases labelled `save` and `autosave`, see note) and Save As, spread per cell. P1–P3 old (Save As: absent); P4 old or recovered-old (Save As: absent or destination refused); P5–P6 new; P7 new | — |
+| DUR-006 NSDocument P1–P3, P5–P7 | 600 | 600 | 600 | `.saveOperation` / `.autosaveInPlaceOperation` / `.saveAsOperation`. P1–P3 old, failure retained; P5–P6 new, **acknowledgement uncertain**; P7 new and verified, library acknowledgement requested once, library never claims an unverified publication (see note: persisted acknowledgement and index rebuild not asserted) | — |
 | DUR-007 external-writer conflict | 100 | 100 | 100 | other revision 50, other document 50; conflict raised, both preserved | — |
 | DUR-008 concurrent windows (native) | 100 | 100 | 100 | two NSDocument windows on one show, 1–9 interleaved saves per case; no lost or mixed revision | — |
 | DUR-009 two-process | 100 | 100 | 100 | one saved + one conflict, 100 | — |
@@ -79,6 +79,11 @@ Unless a row says otherwise, the label is **simulated/local, not provider-observ
 DUR-006 total = 700 publisher + 600 NSDocument = **1,300**.
 
 What each case asserts:
+- **Label notes (narrowed after review; the run stands as executed):**
+  - DUR-006 publisher `autosave` cases run the same `.inPlace` publication as `save`; they do not exercise an autosave path. The autosave path is evidenced only by the native cells (`.autosaveInPlaceOperation`).
+  - DUR-006 NSDocument P7 (`save:new:ackedIndexRebuilt`) asserts: the save is verified (`new` at revision 3, status verified on disk); the library acknowledgement closure ran exactly once; on reload, the library's claim for the show is either absent or the on-disk publication; and, if a library loaded, its index equals a rebuild. It does **not** assert that the acknowledgement persisted (a `nil` claim passes) or that an index was rebuilt in every case. Read the outcome code as "saved, acknowledgement requested, no false claim".
+  - DUR-024 two-process conflicts: see the DUR-024 table; "both preserved" applies only to the 40 two-instance cases.
+  - DUR-002: the clock started after the trailing 0–30 ms jitter sleep that follows the last edit, so each latency is understated by up to 30 ms. Worst case p95 ≤ 1.055 s and max ≤ 1.083 s; the ≤ 2 s gate is met. The timestamp was moved to the last edit for future runs (after this holdout; the seeded sequence is unchanged).
 - **Boundary and kill families** (DUR-006, 021, 027, 028): after recovery in a fresh process or store, the document is either the old valid revision or the complete new revision. It is never mixed and never zero valid. The recovery store holds a validated prior, the library never acknowledges a publication that is not on disk, and the derived index equals a rebuild from the library.
 - **DUR-006 publisher**: additionally records every write target and asserts zero writes under the synthetic sources folder and unchanged source digests. The other families do not repeat this per case; the structural zero-source-writes audit is `FaultInjectionHarnessTests` (outside this holdout).
 
@@ -90,7 +95,7 @@ Labelled **provider-observed on this Mac only (iCloud Drive, single device)**. R
 | Cell | Count | Result |
 |---|---:|---|
 | save / autosave | 100 | explicit Save 50, autosave published 50; p95 1.026 s, max 1.044 s |
-| conflict | 100 | 60 two-process + 40 two-instance; all detected, both preserved; provider conflict versions 0 |
+| conflict | 100 | 60 two-process: conflict detected (one `saved` + one `conflict` result, canonical file a whole valid revision); preserved candidate and on-disk winner **not checked**. 40 two-instance: conflict detected, winner on disk and loser's candidate preserved. Provider conflict versions 0 |
 | evict / download | 50 | upload confirmed within 3 s (28), 4 s (19), 5 s (2), 7 s (1), evicted (`notDownloaded`), reopen p95 0.584 s / max 0.834 s, status current afterwards |
 | recovery | 20 | interrupted at P3/P4 → old, P5/P6 → new (5 each) |
 | library moves | 20 | move in 1, publications 18, move out 1 |

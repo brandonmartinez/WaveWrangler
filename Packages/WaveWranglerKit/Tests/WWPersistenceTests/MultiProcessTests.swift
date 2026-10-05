@@ -85,9 +85,11 @@ struct MultiProcessTests {
         let runs = 100
         var killed = 0, old = 0, new = 0, mixed = 0, zeroValid = 0
         var externalKillsRetried = 0
+        let newTitle = "Killed at \(boundary.rawValue)"
         for index in 0..<runs {
-            // A kill counts only when the probe wrote the boundary marker right before SIGKILLing itself. Any
-            // other termination (e.g. an external SIGKILL under load, #82) is retried with a fresh fixture.
+            // The probe writes and fsyncs the boundary name to `marker` immediately before SIGKILLing itself. Only
+            // the exact external-kill signature seen in #82 (SIGKILL with no marker, i.e. killed from outside before
+            // the boundary) is retried with a fresh fixture; any other termination fails the case immediately.
             var attempt = 0
             while true {
                 let model = Fixtures.show(seed: 9_000 + UInt64(index) + UInt64(attempt) * 100_000)
@@ -98,32 +100,39 @@ struct MultiProcessTests {
                                                        "--recovery", rig.recovery.root.path, "--marker", marker.path])
                 let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
                 process.waitUntilExit()
-                // Invariants hold whatever ended the process.
+                // Strict classification on every attempt: old = revision 2 exactly as seeded; new = the probe's
+                // edit at revision 3; anything else readable is mixed. Invariants hold whatever ended the process.
+                var outcome: String?
                 switch rig.opener.open(url, key: .show(model.show.id)) {
                 case let .editable(document, _):
-                    if document.payload != old2, document.payload.show.title != "Killed at \(boundary.rawValue)" { mixed += 1 }
+                    if document.payload == old2, document.revision == 2 { outcome = "old" }
+                    else if document.payload.show.title == newTitle, document.revision == 3 { outcome = "new" }
+                    else { mixed += 1 }
                 case .damaged, .unreadable, .refusedNewerFormat, .needsMigration:
                     zeroValid += 1
                 }
-                let atBoundary = process.terminationReason == .uncaughtSignal && process.terminationStatus == SIGKILL
-                    && (try? String(contentsOf: marker, encoding: .utf8)) == boundary.rawValue
-                if atBoundary {
+                let sigkilled = process.terminationReason == .uncaughtSignal && process.terminationStatus == SIGKILL
+                let markerText = try? String(contentsOf: marker, encoding: .utf8)
+                if sigkilled, markerText == boundary.rawValue {
                     killed += 1
-                    if case let .editable(document, _) = rig.opener.open(url, key: .show(model.show.id)) {
-                        if document.payload == old2, document.revision == 2 { old += 1 }
-                        else if document.revision == 3 { new += 1 }
-                    }
+                    if outcome == "old" { old += 1 } else if outcome == "new" { new += 1 }
                     break
                 }
-                attempt += 1
+                guard sigkilled, markerText == nil else {
+                    Issue.record("probe ended without reaching \(boundary.rawValue): reason \(process.terminationReason.rawValue) status \(process.terminationStatus) marker \(markerText ?? "none") \(output)")
+                    break
+                }
                 externalKillsRetried += 1
+                attempt += 1
                 if attempt >= 3 {
-                    Issue.record("probe did not die at \(boundary.rawValue) after \(attempt) attempts: status \(process.terminationStatus) \(output)")
+                    Issue.record("probe SIGKILLed from outside before \(boundary.rawValue) on \(attempt) consecutive attempts")
                     break
                 }
             }
         }
         Evidence.record("process kill (SIGKILL) boundary=\(boundary.rawValue) runs=\(runs) killed=\(killed) old=\(old) new=\(new) mixed=\(mixed) zeroValid=\(zeroValid) externalKillsRetried=\(externalKillsRetried) [simulated/local, not provider-observed]")
+        // Retries are surfaced and bounded: more than a handful per 100 means the host, not the code, needs a look.
+        #expect(externalKillsRetried <= 3, "external SIGKILLs before the boundary: \(externalKillsRetried)")
         #expect(killed == runs && mixed == 0 && zeroValid == 0 && old + new == runs)
     }
 
