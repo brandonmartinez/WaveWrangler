@@ -255,6 +255,9 @@ struct FormatUpdatePromptTests {
         let needed = SaveStatusPresentation(DocumentSaveStatus(state: .updateNeeded, autosaveEnabled: true), showName: "Show")
         #expect(DocumentSaveState.updateNeeded.isReadOnly && DocumentSaveState.updateFailed.isReadOnly)
         #expect(needed.itemText == "Read-only" && needed.popoverText.hasPrefix(FormatUpdatePrompt.body))
+        // The D14 sheet stays reachable from the status item if its first presentation didn't happen or was dismissed.
+        #expect(needed.actions == [.updateFormat] && SaveStatusAction.updateFormat.rawValue == "Update…")
+        #expect(needed.messageBar == nil)
         let failed = SaveStatusPresentation(DocumentSaveStatus(state: .updateFailed, autosaveEnabled: true), showName: "Show")
         #expect(failed.itemText == "Read-only")
         #expect(failed.messageBar?.heading == "Couldn't update this show")

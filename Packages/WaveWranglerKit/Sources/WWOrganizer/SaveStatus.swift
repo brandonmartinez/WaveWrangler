@@ -130,6 +130,8 @@ public enum SaveStatusAction: String, Sendable, Equatable, CaseIterable {
     case revertToEarlierVersion = "Revert To an Earlier Version…"
     case showDetails = "Show Details"
     case duplicate = "Duplicate…"
+    /// D14 fallback: asks "Update to the current format?" again (the sheet can't appear until a window is visible).
+    case updateFormat = "Update…"
 }
 
 /// Persistent message bar content (IA §6, ST-05: never time-boxed).
@@ -267,7 +269,8 @@ public struct SaveStatusPresentation: Sendable, Equatable {
             text = "Read-only"
             symbol = "lock.fill"
             popover = FormatUpdatePrompt.body
-            actions = []
+            // A keyboard-reachable way back to the D14 sheet, whatever happened to its first presentation.
+            actions = [.updateFormat]
             suffix = false
         case .updateFailed:
             text = "Read-only"

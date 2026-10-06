@@ -96,4 +96,27 @@ struct FormatUpdateTests {
         #expect(prompt.title == "Update “Episode 12” to the current format?")
         #expect(prompt.buttons == [.update, .openReadOnly, .cancel])
     }
+
+    @Test func promptWaitsForAWindowTheUserCanSee() {
+        let front = FormatUpdatePromptWindow(isVisible: true, isMiniaturized: false, isSelectedTab: true)
+        #expect(FormatUpdatePolicy.shouldPresentPrompt(pending: true, state: .needed, window: front))
+        // Not shown (and so not consumed) for a background tab, a minimized window, a hidden window or no window:
+        // the document keeps it pending and asks again when one of its windows becomes key or is shown.
+        var backgroundTab = front
+        backgroundTab.isSelectedTab = false
+        var minimized = front
+        minimized.isMiniaturized = true
+        var hidden = front
+        hidden.isVisible = false
+        for window in [backgroundTab, minimized, hidden] {
+            #expect(!window.canShowPrompt)
+            #expect(!FormatUpdatePolicy.shouldPresentPrompt(pending: true, state: .needed, window: window))
+        }
+        #expect(!FormatUpdatePolicy.shouldPresentPrompt(pending: true, state: .needed, window: nil))
+        // Asked once: never again after it was shown (Open Read-Only), and never once the update has started or ended.
+        #expect(!FormatUpdatePolicy.shouldPresentPrompt(pending: false, state: .needed, window: front))
+        for state: FormatUpdateState? in [.updating, .failed(detail: "x"), .interrupted(reason: "y"), nil] {
+            #expect(!FormatUpdatePolicy.shouldPresentPrompt(pending: true, state: state, window: front))
+        }
+    }
 }

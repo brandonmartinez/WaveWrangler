@@ -52,6 +52,8 @@ final class ShowDocument: NSDocument {
     static var debugLibraryAcknowledger: (@MainActor (ShowID, String, PublicationStamp) async -> Void)?
     /// Debug-only fault injection for the format update (#159, `-WWUITestFailFormatUpdate`); `nil` in normal use.
     static var debugFormatUpdateHooks: (any PublicationHooks)?
+    /// Debug-only: runs before a show file is decoded (F-OLDER-BAD seeds an M1-era recovery checkpoint for it).
+    static var debugBeforeRead: (@MainActor (URL) -> Void)?
     #endif
     /// ST-11: after a failed save with autosave ON, WaveWrangler retries automatically at most this often.
     static var saveRetryInterval: TimeInterval = 30
@@ -125,7 +127,12 @@ final class ShowDocument: NSDocument {
         let interval = OpenSignposts.begin("document.read")
         defer { OpenSignposts.end(interval) }
         let data = try Data(contentsOf: url)
-        try MainActor.assumeIsolated { try load(data, url: url) }
+        try MainActor.assumeIsolated {
+            #if DEBUG
+            Self.debugBeforeRead?(url)
+            #endif
+            try load(data, url: url)
+        }
     }
 
     override func read(from data: Data, ofType typeName: String) throws {
@@ -160,12 +167,12 @@ final class ShowDocument: NSDocument {
             throw PersistenceError.unknownNewerSchema(found: found, supported: supported)
         case let .needsMigration(_, fingerprint):
             // #159 D14: view the whole older show upgraded in memory (the same decode the migration stages), read-only.
-            // An older file that can't be decoded and verified whole is refused as damaged, unchanged.
-            // (A `Result` rather than a typed `catch`: Swift 6.2's ownership verifier crashes on the latter here.)
+            // An older file that can't be decoded and verified whole is refused as damaged, unchanged, with its
+            // validated recovery checkpoints offered as a new copy (M1's "Open Recovered Copy").
             let upgraded: DecodedDocument<ShowDocumentModel>
-            switch Result(catching: { () throws(PersistenceError) in try ShowSchemaMigration.decodeUpgradingOlder(data) }) {
-            case let .success(document): upgraded = document
-            case let .failure(error): throw DocumentRecoveryOffer.error(for: error, candidates: [])
+            switch opener.olderShowForViewing(data, url: url) {
+            case let .viewable(document): upgraded = document
+            case let .damaged(error, candidates): throw DocumentRecoveryOffer.error(for: error, candidates: candidates)
             }
             store.replaceLoadedModel(upgraded.payload)
             publication = upgraded.publication
@@ -725,6 +732,9 @@ final class ShowDocument: NSDocument {
         super.showWindows()
         if firstShow { OpenSignposts.endAfterCommit(interval) }
         scheduleDeferredWorkAfterFrame()
+        // #159: a D14 sheet that is still pending (it couldn't appear on an earlier display) is asked on the next turn,
+        // once the window is on screen, whatever the deferred work above has already done.
+        DispatchQueue.main.async { [weak self] in self?.presentFormatUpdatePromptIfNeeded() }
     }
 
     /// Called by the show window when it is attached, on every display path (including state restoration).
