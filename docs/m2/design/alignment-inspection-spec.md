@@ -56,12 +56,17 @@ An occurrence that can't be decoded has no acoustic evidence available at all; i
 blocked row, not folded into U7/U8. Values map `DecodeFailure` (`DecodeFailure.swift`) to exact sentences,
 following M1's honesty rule (ST-01: a state is shown only when observed).
 
+`DecodeFailure` has **no advisory/non-blocking tier**: every case is a `throw` before any occurrence is
+produced (`DecodeEnvelope.swift` throws `.unsupported(reason)` before a single frame is read), so there is
+no "decoded, but timing might be off at the start" state. Every case below is fully blocking; the table
+below maps each `DecodeFailure`/`UnsupportedReason` case to exactly one row.
+
 | `DecodeFailure` case(s) | Label | Symbol | Sentence |
 | --- | --- | --- | --- |
-| `.unsupported(.container/.codec/.sampleFormat/.sampleRate/.channelCount)` | "Can't read this file" | `xmark.octagon` | "WaveWrangler can't decode “<file>” for alignment: <plain reason from the case, e.g. 'unsupported sample rate'>." |
-| `.truncated` / `.incompleteContent` / `.missingAudioData` / `.unreadableContainer` / `.inconsistentStream` / `.decodeFailed` | "Can't read this file" | `xmark.octagon` | "WaveWrangler started reading “<file>” but it looks damaged or incomplete, so it can't be used for alignment." |
+| `.unsupported(reason)` — every `UnsupportedReason`: `.container` / `.codec` / `.sampleFormat` / `.sampleRate` / `.channelCount` / `.encoderDelayUnknown` / `.unverifiableContainerLength` / `.variableFramesPerPacket` | "Can't read this file" | `xmark.octagon` | "WaveWrangler can't decode “<file>” for alignment: <plain reason from the case, e.g. 'unsupported sample rate' / 'can't verify this file's declared length'>." |
+| `.unreadableContainer` / `.missingAudioData` / `.truncated` / `.incompleteContent` / `.inconsistentStream` / `.decodeFailed` — exactly `DecodeFailure.isContentDamage == true` | "Can't read this file" | `xmark.octagon` | "WaveWrangler started reading “<file>” but it looks damaged or incomplete, so it can't be used for alignment." |
 | `.notFound` / `.permissionDenied` / `.notMaterialized` / `.residencyUnknown` | *(reuses the M1 source-state row that applies; see [states §3](../../m1/design/states-and-recovery.md#3-source-states-five-independent-dimensions))* | — | Alignment shows "Resolve this source's availability in Setup before it can be timed." with a **Go to Setup** button; it never duplicates the Setup remedy. |
-| `.encoderDelayUnknown` / `.variableFramesPerPacket` / `.packetTableDisagreesWithLength` / other `InconsistencyReason` | "Timing may be off at the start" | `exclamationmark.triangle` | "WaveWrangler couldn't confirm this file's exact starting point (<reason>), so timing from this source carries that uncertainty. Treat early anchors with caution." (advisory, not blocking) |
+| `.notARegularFile` / `.notOpenedReadOnly` / `.metadataUnavailable` / `.emptyFile` / `.readFailed` / `.sourceIdentityMismatch` / `.sourceChangedDuringDecode` / `.sinkFailed` / `.cancelled` | "Can't read this file" | `xmark.octagon` | "WaveWrangler couldn't read “<file>” for alignment (<brief reason, e.g. 'the file changed while reading' / 'an internal read error'>). Try again, or resolve it in Setup." |
 
 A source row showing any "Can't read this file" state has every Alignment action (anchors, numeric entry,
 audition for that occurrence) disabled, with the sentence as the disabled reason — never a silently
@@ -78,7 +83,7 @@ spec never redefines them.
 | **Source time** | `n / F` — the occurrence's own frame position, in its native sample rate | `h:mm:ss.mmm` (frame count in the Details disclosure) | Always increases; frame 0 is the start of the occurrence |
 | **Group time** | `source_frame / F + epoch` — the recorder group's shared clock coordinate | `h:mm:ss.mmm` | Equal-origin convention (`docs/research/foundation-spikes.md`); never negative within a mapped epoch |
 | **Aligned time** | `a × group + b` — the cross-group aligned coordinate used for inspection/playback | `h:mm:ss.mmm` | Same equal-origin convention; a target placed later by a positive lag has `b = −lag / F` |
-| **Rate correction** | `map_ppm = 10⁶ × (a − 1)` | **ppm**, signed (`+`/`−`), 3 decimal places | Positive = this occurrence's clock runs fast relative to the reference |
+| **Rate correction** | `map_ppm = 10⁶ × (a − 1)` | **ppm**, signed (`+`/`−`), 3 decimal places | Positive = this occurrence's recorder clock runs **slow** relative to the reference timeline: its `F` nominal frames span `a > 1` aligned seconds (actual rate `F/a`), so its content drifts later than naive `n/F` placement (`ClockConventions.swift`: "Positive ppm (a > 1) means the group's recorder clock runs SLOW relative to the reference timeline") |
 | **Offset correction** | `b`, converted to time | **ms**, signed | Positive = this occurrence's audio is shifted later on the aligned timeline |
 
 - Every numeric time field shows its exact value; WaveWrangler never rounds a displayed source/group/aligned
@@ -268,9 +273,12 @@ the selected row (consistent with M1's `Return` behaviour in Sources/Speakers ta
 Announcements (extends M1 states §7): accepting/rejecting a proposal announces "Accepted proposal for
 Epoch <n>" / "Rejected proposal for Epoch <n>"; the dependents count changing announces "<n> edits, <m>
 jobs now stale" once per change, at low priority (mirrors the M1 "3 sources need attention" pattern).
-`XCUIApplication.performAccessibilityAudit(for:)` with `.contrast, .elementDetection, .hitRegion,
-.sufficientElementDescription, .action, .parentChild` runs at the end of every new Alignment surface
-(accessibility-acceptance §4.2), scoped to the changed surfaces only (charter: essential before broad).
+`XCUIApplication.performAccessibilityAudit(for:)` with `.elementDetection, .sufficientElementDescription,
+.hitRegion, .action` runs at the end of every new Alignment surface (accessibility-acceptance §4.2), scoped
+to the changed surfaces only (charter: "essential before broad" — per-PR audit is limited to these four
+types). `.contrast` runs only on the blocked panel (§3.1, `ww.show.blocked.alignment`) and any error/recovery
+sheets (e.g. a failed Accept/Place Anchors attempt); broad `.contrast` across every Alignment surface is
+M5/WW-053, out of scope here.
 
 ### 5.3 No drag, no colour
 
