@@ -206,14 +206,17 @@ was deleted; M19 and M62 now check that check.
   makes this pipeline refuse further acceptances (`staleSnapshot`); a new pipeline instance is needed.
 - The memory bound is measured for analysis. The aligned-asset render was exercised on short fixtures
   only; a full 75-minute render (debug ≈ 0.1 s per channel-second) is unmeasured.
-- New public WWDecode API: `SourceDecoder.withDecodingCursor` / `DecodingCursor` (the streaming path the
-  pipeline uses; `ChunkPump` now copies channels in bulk). WWRender's provider pulls samples, while the
-  frozen decoder pushes them into a synchronous sink. A bridge between the two would either buffer whole
-  sources or block a cooperative thread, so the cursor has to live inside the WWDecode gateway. It changes
-  the `m2-freeze-decode` pinned trees.
-
-  At the coordinator's direction, the cursor is split out to `brandonmartinez/wwdecode-pull-cursor` (based
-  on main). The Mac lane records the dated `m2-freeze-decode-2` there: calibration, repin and registry
-  entry, with its own single holdout later. Until that merges,
-  `DecodeFreezeTests.decoderAndHarnessTreesMatchTheFreezeRecord` fails on this branch by design. The rev-1
-  holdout (#202) remains the evidence for the rev-1 tree.
+- The pipeline streams through the WWDecode pull cursor, `SourceDecoder.withDecodingCursor` /
+  `DecodingCursor`. WWRender's provider pulls samples, while the frozen decoder pushes them into a
+  synchronous sink, so a bridge would either buffer whole sources or block a cooperative thread. The
+  cursor merged to main in #212 (`m2-freeze-decode-2`), and main was merged into this branch, so WWDecode
+  here is identical to main and the freeze pin passes. Main's cursor does its synchronous reads on a
+  private serial queue. The mid-decode cancellation test therefore cancels the epoch's coordinator slot
+  from inside the read, waiting on that non-cooperative queue for the cancel to land. Negative control: if
+  the cancel is a no-op, the test fails.
+- Merging main brought a bare `contentsOf` token into `ForbiddenAPITests.forbidden`. The WWDerived and
+  WWAlignPipeline scans mask only two forms: in-memory `.append(contentsOf:`, and the store's own
+  `files.contentsOfDirectory(` listing, which is masked in `DerivedAssetStore.swift` alone.
+  `String(contentsOf:)` and every other `contentsOf` form stay flagged. Four scanner mutations were
+  checked and all four were killed: mask removed, mask applied to every `contentsOf`, store listing allowed
+  everywhere, and store listing not allowed in the store.
