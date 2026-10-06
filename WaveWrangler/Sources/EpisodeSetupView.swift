@@ -543,6 +543,7 @@ struct StatusCell: View {
             StatusIndicator(indicator: summary.indicator, tint: summary.tint)
             Text(summary.displayText)
                 .setupFont(.body)
+                .foregroundStyle(.primary)
                 .lineLimit(2)
                 .accessibilityLabel("Status")
                 .accessibilityValue(summary.accessibilityValue)
