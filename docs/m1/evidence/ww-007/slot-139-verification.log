@@ -1,0 +1,176 @@
+[22:00:00] == snapshot originals
+[22:00:00] com.apple.universalaccess increaseContrast = <absent> (absent)
+[22:00:01] com.apple.universalaccess reduceMotion = <absent> (absent)
+[22:00:01] com.apple.universalaccess reduceTransparency = <absent> (absent)
+[22:00:01] com.apple.universalaccess voiceOverOnOffKey = <absent> (absent)
+[22:00:01] com.apple.universalaccess differentiateWithoutColor = <absent> (absent)
+[22:00:01] FontSizeCategory.global = DEFAULT;
+[22:00:01] AppleInterfaceStyle = Dark
+[22:00:01] com.apple.VoiceOver4/default absent
+[22:00:01] com.apple.VoiceOverTraining absent
+[22:00:01] VoiceOver processes: 
+[22:00:01] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[22:00:01] set increaseContrast true
+[22:00:04] == snapshot ic-on
+[22:00:04] com.apple.universalaccess increaseContrast = 1 (Type is boolean)
+[22:00:04] com.apple.universalaccess reduceMotion = <absent> (absent)
+[22:00:05] com.apple.universalaccess reduceTransparency = <absent> (absent)
+[22:00:05] com.apple.universalaccess voiceOverOnOffKey = <absent> (absent)
+[22:00:05] com.apple.universalaccess differentiateWithoutColor = <absent> (absent)
+[22:00:05] FontSizeCategory.global = DEFAULT;
+[22:00:05] AppleInterfaceStyle = Dark
+[22:00:05] com.apple.VoiceOver4/default absent
+[22:00:05] com.apple.VoiceOverTraining absent
+[22:00:05] VoiceOver processes: 
+[22:00:05] probe: increaseContrast=true reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[22:02:05] IC tests exit 65
+[22:02:05] restore increaseContrast (original absent)
+[22:02:07] == snapshot ic-restored
+[22:02:07] com.apple.universalaccess increaseContrast = <absent> (absent)
+[22:02:07] com.apple.universalaccess reduceMotion = <absent> (absent)
+[22:02:07] com.apple.universalaccess reduceTransparency = <absent> (absent)
+[22:02:07] com.apple.universalaccess voiceOverOnOffKey = <absent> (absent)
+[22:02:07] com.apple.universalaccess differentiateWithoutColor = <absent> (absent)
+[22:02:08] FontSizeCategory.global = DEFAULT;
+[22:02:08] AppleInterfaceStyle = Dark
+[22:02:08] com.apple.VoiceOver4/default absent
+[22:02:08] com.apple.VoiceOverTraining absent
+[22:02:08] VoiceOver processes: 
+[22:02:08] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[22:02:46] VoiceOverTraining doNotShowSplashScreen (domain absent originally; removed in restore)
+[22:02:46] == snapshot vo-prep
+[22:02:46] com.apple.universalaccess increaseContrast = <absent> (absent)
+[22:02:46] com.apple.universalaccess reduceMotion = <absent> (absent)
+[22:02:46] com.apple.universalaccess reduceTransparency = <absent> (absent)
+[22:02:46] com.apple.universalaccess voiceOverOnOffKey = <absent> (absent)
+[22:02:46] com.apple.universalaccess differentiateWithoutColor = <absent> (absent)
+[22:02:46] FontSizeCategory.global = DEFAULT;
+[22:02:46] AppleInterfaceStyle = Dark
+[22:02:46] com.apple.VoiceOver4/default absent
+[22:02:46] com.apple.VoiceOverTraining plist present (3 lines)
+[22:02:46] VoiceOver processes: 
+[22:02:46] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[22:05:15] == snapshot vo-off
+[22:05:15] com.apple.universalaccess increaseContrast = <absent> (absent)
+[22:05:15] com.apple.universalaccess reduceMotion = <absent> (absent)
+[22:05:15] com.apple.universalaccess reduceTransparency = <absent> (absent)
+[22:05:15] com.apple.universalaccess voiceOverOnOffKey = 0 (Type is boolean)
+[22:05:15] com.apple.universalaccess differentiateWithoutColor = <absent> (absent)
+[22:05:15] FontSizeCategory.global = DEFAULT;
+[22:05:15] AppleInterfaceStyle = Dark
+[22:05:15] com.apple.VoiceOver4/default absent
+[22:05:15] com.apple.VoiceOverTraining plist present (3 lines)
+[22:05:15] VoiceOver processes: 
+[22:05:15] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[22:05:22] restore all touched keys to originals (all absent)
+[22:05:24] == snapshot after-restore
+[22:05:24] com.apple.universalaccess increaseContrast = <absent> (absent)
+[22:05:24] com.apple.universalaccess reduceMotion = <absent> (absent)
+[22:05:25] com.apple.universalaccess reduceTransparency = <absent> (absent)
+[22:05:25] com.apple.universalaccess voiceOverOnOffKey = <absent> (absent)
+[22:05:25] com.apple.universalaccess differentiateWithoutColor = <absent> (absent)
+[22:05:25] FontSizeCategory.global = DEFAULT;
+[22:05:25] AppleInterfaceStyle = Dark
+[22:05:25] com.apple.VoiceOver4/default absent
+[22:05:25] com.apple.VoiceOverTraining absent
+[22:05:25] VoiceOver processes: 
+[22:05:25] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[22:20:04] == snapshot diag-originals
+[22:20:04] com.apple.universalaccess increaseContrast = <absent> (absent)
+[22:20:04] com.apple.universalaccess reduceMotion = <absent> (absent)
+[22:20:05] com.apple.universalaccess reduceTransparency = <absent> (absent)
+[22:20:05] com.apple.universalaccess voiceOverOnOffKey = <absent> (absent)
+[22:20:05] com.apple.universalaccess differentiateWithoutColor = <absent> (absent)
+[22:20:05] FontSizeCategory.global = DEFAULT;
+[22:20:05] AppleInterfaceStyle = Dark
+[22:20:05] com.apple.VoiceOver4/default absent
+[22:20:05] com.apple.VoiceOverTraining absent
+[22:20:05] VoiceOver processes: 
+[22:20:05] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[22:20:05] set increaseContrast
+[22:20:08] == snapshot diag-ic-on
+[22:20:08] com.apple.universalaccess increaseContrast = 1 (Type is boolean)
+[22:20:09] com.apple.universalaccess reduceMotion = <absent> (absent)
+[22:20:09] com.apple.universalaccess reduceTransparency = <absent> (absent)
+[22:20:09] com.apple.universalaccess voiceOverOnOffKey = <absent> (absent)
+[22:20:09] com.apple.universalaccess differentiateWithoutColor = <absent> (absent)
+[22:20:09] FontSizeCategory.global = DEFAULT;
+[22:20:09] AppleInterfaceStyle = Dark
+[22:20:09] com.apple.VoiceOver4/default absent
+[22:20:09] com.apple.VoiceOverTraining absent
+[22:20:09] VoiceOver processes: 
+[22:20:09] probe: increaseContrast=true reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[22:20:36] == snapshot diag-restored
+[22:20:36] com.apple.universalaccess increaseContrast = <absent> (absent)
+[22:20:36] com.apple.universalaccess reduceMotion = <absent> (absent)
+[22:20:37] com.apple.universalaccess reduceTransparency = <absent> (absent)
+[22:20:37] com.apple.universalaccess voiceOverOnOffKey = <absent> (absent)
+[22:20:37] com.apple.universalaccess differentiateWithoutColor = <absent> (absent)
+[22:20:37] FontSizeCategory.global = DEFAULT;
+[22:20:37] AppleInterfaceStyle = Dark
+[22:20:37] com.apple.VoiceOver4/default absent
+[22:20:37] com.apple.VoiceOverTraining absent
+[22:20:37] VoiceOver processes: 
+[22:20:37] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[23:03:45] == snapshot originals
+[23:03:45] com.apple.universalaccess increaseContrast = 0  (Type is boolean)
+[23:03:45] com.apple.universalaccess reduceMotion = <absent>  (absent)
+[23:03:45] com.apple.universalaccess reduceTransparency = 0  (Type is boolean)
+[23:03:46] com.apple.universalaccess FontSizeCategory = <absent>  (absent)
+[23:03:46] com.apple.universalaccess voiceOverOnOffKey = 0  (Type is boolean)
+[23:03:46] AppleInterfaceStyle = Dark
+[23:03:46] VoiceOver processes: 
+[23:03:46] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[23:03:46] baseline (Increase Contrast off): aqua, darkAqua
+[23:05:59] baseline exit 0
+[23:06:02] == snapshot ic-on
+[23:06:03] com.apple.universalaccess increaseContrast = 1  (Type is boolean)
+[23:06:03] com.apple.universalaccess reduceMotion = <absent>  (absent)
+[23:06:03] com.apple.universalaccess reduceTransparency = 0  (Type is boolean)
+[23:06:03] com.apple.universalaccess FontSizeCategory = <absent>  (absent)
+[23:06:03] com.apple.universalaccess voiceOverOnOffKey = 0  (Type is boolean)
+[23:06:03] AppleInterfaceStyle = Dark
+[23:06:03] VoiceOver processes: 
+[23:06:03] probe: increaseContrast=true reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[23:08:06] increase-contrast exit 65
+[23:08:06] restore increaseContrast to snapshotted '0'
+[23:08:09] == snapshot after-restore
+[23:08:09] com.apple.universalaccess increaseContrast = 0  (Type is boolean)
+[23:08:09] com.apple.universalaccess reduceMotion = <absent>  (absent)
+[23:08:09] com.apple.universalaccess reduceTransparency = 0  (Type is boolean)
+[23:08:09] com.apple.universalaccess FontSizeCategory = <absent>  (absent)
+[23:08:09] com.apple.universalaccess voiceOverOnOffKey = 0  (Type is boolean)
+[23:08:09] AppleInterfaceStyle = Dark
+[23:08:09] VoiceOver processes: 
+[23:08:09] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[23:08:09] SLOT DONE
+[23:17:19] == snapshot originals
+[23:17:19] com.apple.universalaccess increaseContrast = 0  (Type is boolean)
+[23:17:19] com.apple.universalaccess reduceMotion = <absent>  (absent)
+[23:17:19] com.apple.universalaccess reduceTransparency = 0  (Type is boolean)
+[23:17:19] com.apple.universalaccess FontSizeCategory = <absent>  (absent)
+[23:17:19] com.apple.universalaccess voiceOverOnOffKey = 0  (Type is boolean)
+[23:17:19] AppleInterfaceStyle = Dark
+[23:17:19] VoiceOver processes: 
+[23:17:19] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[23:17:22] == snapshot ic-on
+[23:17:22] com.apple.universalaccess increaseContrast = 1  (Type is boolean)
+[23:17:22] com.apple.universalaccess reduceMotion = <absent>  (absent)
+[23:17:22] com.apple.universalaccess reduceTransparency = 0  (Type is boolean)
+[23:17:22] com.apple.universalaccess FontSizeCategory = <absent>  (absent)
+[23:17:22] com.apple.universalaccess voiceOverOnOffKey = 0  (Type is boolean)
+[23:17:22] AppleInterfaceStyle = Dark
+[23:17:22] VoiceOver processes: 
+[23:17:22] probe: increaseContrast=true reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[23:18:36] increase-contrast accent exit 0
+[23:18:36] restore increaseContrast to snapshotted '0'
+[23:18:40] == snapshot after-restore
+[23:18:40] com.apple.universalaccess increaseContrast = 0  (Type is boolean)
+[23:18:40] com.apple.universalaccess reduceMotion = <absent>  (absent)
+[23:18:40] com.apple.universalaccess reduceTransparency = 0  (Type is boolean)
+[23:18:40] com.apple.universalaccess FontSizeCategory = <absent>  (absent)
+[23:18:40] com.apple.universalaccess voiceOverOnOffKey = 0  (Type is boolean)
+[23:18:40] AppleInterfaceStyle = Dark
+[23:18:40] VoiceOver processes: 
+[23:18:40] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[23:18:40] SLOT DONE
