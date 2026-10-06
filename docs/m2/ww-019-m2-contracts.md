@@ -260,7 +260,7 @@ with new wording.
 - **Exit checkpoint (reported on its own line):** one slot of at most 30 minutes at milestone exit,
   covering in-app 200% text plus light/dark on the milestone's windows. Only a finding that makes a core
   task impossible blocks; the rest become WW-053 follow-ups.
-- **M2 EXIT GATE** (verbatim from the kickoff, cited in full in `docs/planning/milestone-exits/m2.md`):
+- **M2 EXIT GATE** (summarized from the kickoff's M2 EXIT GATE; the M2 exit record `docs/planning/milestone-exits/m2.md` must cite it in full):
   the final `main` SHA must pass the full WaveWranglerUITests suite on the Mac mini (no filter), plus the
   full `scripts/test.sh`, with zero unexplained failures, plus the exit checkpoint above reported on its
   own line. The WW-007-style performance gates and the essential XCUITest audits are **HARD gates**

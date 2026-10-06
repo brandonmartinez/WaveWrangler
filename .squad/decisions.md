@@ -216,3 +216,13 @@
 
 **Why:** the M1 retrospectives attribute most lost time to the single relayed GUI path, host outages only the user could fix, long-lived high-cost sessions and evidence over-production; these rules keep the safety gates and remove that overhead.
 
+### 2026-10-06: M2 contract numbering, freeze names, single content gateway and drift fallback
+
+**By:** M2 Squad coordinator, adopting Lead's WW-019 record ([#171](https://github.com/brandonmartinez/WaveWrangler/pull/171), `docs/m2/ww-019-m2-contracts.md`) after independent review.
+
+- **Contract numbering:** M2 contracts are M2-C1…M2-C7, extending WW-009's C1–C10 without renumbering them.
+- **Freeze names:** M2 fixture freezes are `m2-freeze-decode`, `m2-freeze-timemap`, `m2-freeze-estimator`, `m2-freeze-discontinuity` and `m2-freeze-render` (revisions add a suffix, e.g. `m2-freeze-estimator-2`). Each freeze record (recipe, truth, split/counts, gate, generator tree IDs) merges before its first holdout. The holdout runs once per frozen revision on a clean commit containing the freeze.
+- **Single content gateway (coordinator ruling):** exactly one content-capable gateway exists. It is the read-only content gateway owned by `WWDecode`, with a single system implementation file. `WWSources`' `SourceIO` stays metadata-only and unchanged. Content-capable APIs are allowed only in that file, and the forbidden-API scan is extended to `WWDecode` and every later content-capable module.
+- **Drift fallback (Lead):** until a frozen WW-016 holdout passes, alignment relies on manual epochs/anchors and the limited supported envelope, and no map becomes `clockApproved` automatically. An acoustically consistent result is only ever an `acousticConsistentProposal`.
+- **WW-019 (#16)** stays open as the documentary record until WW-014–018/050 evidence is accepted.
+
