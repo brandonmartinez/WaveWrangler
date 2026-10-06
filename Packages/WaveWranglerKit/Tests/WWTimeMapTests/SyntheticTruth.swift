@@ -84,7 +84,8 @@ struct TruthEpoch {
 
     var epochMap: EpochClockMap {
         switch mapping {
-        case .mapped(let segments, let provenance): EpochClockMap(epoch: id, mapping: .mapped(segments: segments.map(\.segment), provenance: provenance))
+        case .mapped(let segments, let provenance):
+            EpochClockMap(epoch: id, mapping: .mapped(segments: segments.map(\.segment), provenance: bound(provenance, to: id, segments.map(\.segment))))
         case .unsupported(let reason): EpochClockMap(epoch: id, mapping: .unsupported(reason))
         }
     }

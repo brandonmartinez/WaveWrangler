@@ -1,4 +1,5 @@
 import Foundation
+import WWCore
 
 // Map provenance: WHY an epoch's group-clock -> aligned segments are believed.
 //
@@ -131,19 +132,45 @@ public struct IndependentClockReference: Hashable, Sendable {
 /// Not publicly constructible (internal initialiser, encode-only conformance): until a holdout-qualified
 /// WW-016 evaluator exists there is no public construction path, and that path is planned to require an
 /// opaque evaluator token rather than free-standing measurements.
+///
+/// An approval is bound to the exact epoch and segments it measured (#177): it stores the epoch ID and
+/// a copy of the approved segments, and ``GroupTimeMap`` compilation and ``EpochClockMap`` decoding refuse
+/// a `clockApproved` epoch whose ID or segments differ in any way. Editing a map therefore drops its
+/// approval; it cannot be carried over to different or relabelled segments.
 public struct ClockApproval: Hashable, Sendable {
     /// Identifier and version of the evaluator that produced the measurements.
     public let evaluator: String
     public let reference: IndependentClockReference
     public let measurements: ClockGateMeasurements
+    /// The epoch this approval was measured for.
+    public let epoch: RecordingEpochID
+    /// The exact segments this approval was measured for (compared with exact `==`).
+    public let segments: [AffineClockSegment]
 
-    init(evaluator: String, reference: IndependentClockReference, measurements: ClockGateMeasurements) throws(TimeMapError) {
+    init(evaluator: String, reference: IndependentClockReference, measurements: ClockGateMeasurements, epoch: RecordingEpochID, segments: [AffineClockSegment]) throws(TimeMapError) {
         guard !evaluator.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw .emptyDescription("ClockApproval.evaluator") }
         let failed = measurements.failedProvisionalGates
         guard failed.isEmpty else { throw .clockApprovalGateNotMet(failed) }
+        guard !segments.isEmpty else { throw .emptyEpochMap(epoch) }
         self.evaluator = evaluator
         self.reference = reference
         self.measurements = measurements
+        self.epoch = epoch
+        self.segments = segments
+    }
+
+    /// True when this approval was issued for exactly `segments` of `epoch`.
+    func approves(epoch: RecordingEpochID, segments: [AffineClockSegment]) -> Bool {
+        self.epoch == epoch && self.segments == segments
+    }
+}
+
+extension MapProvenance {
+    /// Throws unless a `clockApproved` provenance is bound to exactly this epoch and these segments.
+    /// Other provenance kinds carry no binding and always pass.
+    func checkClockApprovalBinding(epoch: RecordingEpochID, segments: [AffineClockSegment]) throws(TimeMapError) {
+        guard case .clockApproved(let approval) = self else { return }
+        guard approval.approves(epoch: epoch, segments: segments) else { throw .clockApprovalBindingMismatch(epoch) }
     }
 }
 
@@ -313,7 +340,7 @@ extension IndependentClockReference: Encodable {
 }
 
 extension ClockApproval: Encodable {
-    enum CodingKeys: String, CodingKey, CaseIterable { case evaluator, reference, measurements }
+    enum CodingKeys: String, CodingKey, CaseIterable { case evaluator, reference, measurements, epoch, segments }
 }
 
 struct DecodedIndependentClockReference: Decodable {
@@ -333,7 +360,9 @@ struct DecodedClockApproval: Decodable {
         value = try ClockApproval(
             evaluator: c.decode(String.self, forKey: .evaluator),
             reference: c.decode(DecodedIndependentClockReference.self, forKey: .reference).value,
-            measurements: c.decode(ClockGateMeasurements.self, forKey: .measurements)
+            measurements: c.decode(ClockGateMeasurements.self, forKey: .measurements),
+            epoch: c.decode(RecordingEpochID.self, forKey: .epoch),
+            segments: c.decode([AffineClockSegment].self, forKey: .segments)
         )
     }
 }
