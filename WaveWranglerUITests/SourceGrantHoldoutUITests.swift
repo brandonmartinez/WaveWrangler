@@ -6,8 +6,12 @@ import XCTest
 /// extensions; M1 never reads their content).
 ///
 /// One cycle = 4 GUI scenarios on fresh files and a fresh show:
-///   1. **grant**: File › Import Sources… → sandboxed NSOpenPanel (powerbox) → folder → Import Review → Import.
-///   2. **relaunch**: quit, relaunch, reopen: the device-local bookmark resolves (no "Needs permission").
+///   1. **grant**: File › Import Sources… → sandboxed NSOpenPanel (powerbox) → folder → Import Review → Import
+///      (sources, read-only); then Settings › Library location › Choose Folder… → panel → Move Library (library
+///      folder, read-write; the library is written there).
+///   2. **relaunch**: quit, relaunch without a document, ⌘⇧L: the library resolves from the chosen folder; reopen
+///      the show from the library (Open Show), its source bookmarks resolve (no "Needs permission"); edit and ⌘S:
+///      the show saves through the resolved location (disk read back); the library location is still the folder.
 ///   3. **regrant**: relaunch with `-WWUITestResetSourceAccess YES` (no device-local records, as on another
 ///      Mac) → "Needs permission" → Source › Grant Access… → panel → identity comparison → Ready.
 ///   4. **relink**: the file is moved by the harness → status recorded → Source › Relink Source… → panel →
@@ -94,9 +98,9 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         try probe(["create", "--file", document.path, "--seed", "\(seeds[0])"])
         var fingerprints = try fingerprint(folder)
 
-        // 1. Grant through the sandboxed open panel.
+        // 1. Grant through the sandboxed panels: sources (read-only) and the library folder (read-write).
         failures = []
-        try launchAndOpen(document, extra: [])
+        try launchAndOpen(document, extra: ["-WWUITestResetStorage", "YES"])
         app.typeKey("i", modifierFlags: [.command, .shift])
         choosePath(folder.path, confirm: true)
         let review = element("ww.import.review")
@@ -105,17 +109,55 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         if review.exists { app.typeKey(.return, modifierFlags: []) }
         check(Acceptance.waitFor(timeout: 10) { self.statuses(names).count == names.count }, "imported rows present: \(statuses(names))")
         check(Acceptance.waitFor(timeout: 10) { self.statuses(names).values.allSatisfy { $0.hasPrefix("Ready") } }, "granted sources Ready: \(statuses(names))")
+        // Library folder through Settings › Library location › Choose Folder… (sandboxed panel, read-write).
+        let libraryFolder = workDirectory.appending(path: "Library \(cycle)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: libraryFolder, withIntermediateDirectories: true)
+        if chooseLibraryLocation("Choose Folder…") {
+            choosePath(libraryFolder.path, confirm: true)
+            confirmMove()
+        }
+        let location = app.popUpButtons["ww.settings.libraryLocation"]
+        check(Acceptance.waitFor(timeout: 20) { (location.value as? String) == libraryFolder.lastPathComponent },
+              "library location is the chosen folder: \(location.value ?? "nil")")
+        let libraryFiles = (try? FileManager.default.contentsOfDirectory(atPath: libraryFolder.path)) ?? []
+        check(!libraryFiles.isEmpty, "library written into the chosen folder (read-write grant): \(libraryFiles.count) item(s)")
+        closeSettings()
         check(try fingerprint(folder) == fingerprints, "zero source writes")
         record(cycle, "grant", failures, statuses(names))
 
-        // 2. Relaunch: bookmarks resolve.
+        // 2. Relaunch: the library folder and source bookmarks resolve; reopen the show from the library and Save.
         failures = []
         app.typeKey("q", modifierFlags: .command)
         if app.sheets.firstMatch.waitForExistence(timeout: 2) { app.sheets.firstMatch.buttons["Save"].click() }
         check(app.wait(for: .notRunning, timeout: 10), "quit")
-        try launchAndOpen(document, extra: [])
-        check(Acceptance.waitFor(timeout: 10) { self.statuses(names).values.allSatisfy { $0.hasPrefix("Ready") } && self.statuses(names).count == names.count },
-              "after relaunch the bookmarks resolve: \(statuses(names))")
+        let title = diskTitle(document) ?? ""
+        launchWithoutDocument()
+        app.typeKey("l", modifierFlags: [.command, .shift])
+        let entries = app.outlines["ww.library.entries"]
+        check(entries.waitForExistence(timeout: 10), "Library window")
+        let row = entries.outlineRows.containing(NSPredicate(format: "value == %@", title)).firstMatch
+        check(row.waitForExistence(timeout: 10), "the show is in the library after relaunch: \(title)")
+        if row.exists {
+            row.cells.firstMatch.click()
+            let open = element("ww.library.detail.open")
+            if open.waitForExistence(timeout: 5) { open.click() } else { failures.append("Open Show button") }
+        }
+        let window = app.windows.matching(identifier: "ww.show.window").firstMatch
+        check(window.waitForExistence(timeout: 15), "show reopened from the library")
+        if window.exists {
+            window.typeKey("1", modifierFlags: .command)
+            check(Acceptance.waitFor(timeout: 10) { self.statuses(names).values.allSatisfy { $0.hasPrefix("Ready") } && self.statuses(names).count == names.count },
+                  "after relaunch the source bookmarks resolve: \(statuses(names))")
+            let saved = "REF-020 Saved \(cycle + 1)"
+            editShowTitle(window, saved)
+            window.typeKey("s", modifierFlags: .command)
+            check(Acceptance.waitFor(timeout: 10) { self.diskTitle(document) == saved },
+                  "reopened show saved through the library-resolved location: \(diskTitle(document) ?? "nil")")
+        }
+        let relaunchedLocation = app.popUpButtons["ww.settings.libraryLocation"]
+        check(chooseLibraryLocation(nil) && (relaunchedLocation.value as? String) == libraryFolder.lastPathComponent,
+              "library location still the chosen folder after relaunch: \(relaunchedLocation.value ?? "nil")")
+        closeSettings()
         check(try fingerprint(folder) == fingerprints, "zero source writes")
         record(cycle, "relaunch", failures, statuses(names))
 
@@ -204,6 +246,69 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         check(seconds <= 10, "show window opened within 10 s (took \(String(format: "%.1f", seconds)) s)")
         window.typeKey("1", modifierFlags: .command)
         _ = element("ww.setup.sources").waitForExistence(timeout: 10)
+    }
+
+    private func launchWithoutDocument() {
+        app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestAutosave", "ON",
+                               "-WWUITestCenterWindows", "YES"]
+        app.launch()
+        app.activate()
+    }
+
+    /// Opens Settings › General. With `item`, picks it from the Library location pop-up; returns false if missing.
+    @discardableResult
+    private func chooseLibraryLocation(_ item: String?) -> Bool {
+        app.typeKey(",", modifierFlags: .command)
+        if app.toolbars.buttons["General"].waitForExistence(timeout: 3) { app.toolbars.buttons["General"].click() }
+        let popup = app.popUpButtons["ww.settings.libraryLocation"]
+        guard popup.waitForExistence(timeout: 5) else { failures.append("library location pop-up"); return false }
+        guard let item else { return true }
+        popup.click()
+        let menuItem = popup.menuItems[item]
+        guard menuItem.waitForExistence(timeout: 3) else {
+            failures.append("library location item \(item)")
+            app.typeKey(.escape, modifierFlags: [])
+            return false
+        }
+        menuItem.click()
+        return true
+    }
+
+    private func closeSettings() {
+        let settings = app.windows.matching(NSPredicate(format: "title IN %@", ["General", "Sources", "Settings"])).firstMatch
+        if settings.exists { settings.typeKey("w", modifierFlags: .command) }
+    }
+
+    private func confirmMove() {
+        let sheet = app.sheets.firstMatch
+        if sheet.waitForExistence(timeout: 10), sheet.buttons["Move Library"].exists {
+            Acceptance.record(self, "REF-020 move sheet: \(sheet.staticTexts.allElementsBoundByIndex.map { $0.value ?? $0.label })")
+            sheet.buttons["Move Library"].click()
+            return
+        }
+        let dialog = app.dialogs.firstMatch
+        if dialog.exists, dialog.buttons["Move Library"].exists { dialog.buttons["Move Library"].click(); return }
+        failures.append("Move Library confirmation")
+    }
+
+    private func editShowTitle(_ window: XCUIElement, _ title: String) {
+        let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
+        if showInfo.waitForExistence(timeout: 5) { showInfo.click() }
+        let field = window.textFields["Show title"]
+        guard field.waitForExistence(timeout: 5) else { failures.append("Show title field"); return }
+        field.click()
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText(title)
+        field.typeKey(.return, modifierFlags: [])
+    }
+
+    /// The show title as written on disk (independent of the app).
+    private func diskTitle(_ url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let payload = object["payload"] as? [String: Any] else { return nil }
+        return (payload["show"] as? [String: Any])?["title"] as? String
     }
 
     /// In the open panel (a sheet): Go to Folder (⇧⌘G), type the path, Return; then Return to confirm.
