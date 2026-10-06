@@ -1,11 +1,11 @@
 {
-  "registryVersion": "m1-fixtures-v6-frozen4",
+  "registryVersion": "m1-fixtures-v7-frozen5",
   "date": "2026-10-05",
   "generatedBy": "docs/m1/fixtures/generate-registry.py (do not hand-edit; regenerate)",
   "owner": "Lead (protocol); WW-003 informational owner Pipeline",
   "issue": "https://github.com/brandonmartinez/WaveWrangler/issues/5",
   "protocol": "docs/m1/ww-003-fixture-protocol.md",
-  "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and is retained, superseded by m1-freeze-3 and its m1-freeze-4 gate-text revision before any new run) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
+  "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and m1-freeze-4 FAILED 99/100, both retained; current revision m1-freeze-5 under a user product decision) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
   "freezeRule": "Each family is frozen (generator source hash, recipe, truth, counts, gate) in a dated freeze record before its first holdout case runs. Counts may increase before freeze; never decrease below a frozen gate minimum without explicit Lead/Brandon approval.",
   "freeze": {
     "freezeID": "m1-freeze-1",
@@ -113,6 +113,23 @@
       "scope": "M1-DUR-025 only; supersedes m1-freeze-3 for exactly the fields in recipeFreeze4. Everything else in m1-freeze-3 (counts 10/100 and cells, variants, setup preconditions, 20% cap, first product operations, host labels, seeds, per-case reporting, all other truths) is unchanged. Every other registry entry is unchanged.",
       "whyFreezeNotInterpretation": "Lead judgement: the m1-freeze-3 level-sampling FAIL rule, read literally, fails correct product behaviour in a real timing window: after host A's Combine, host B can receive the combined current library before the provider propagates resolution of a version whose content it already contains, and a read-only sample cannot resolve it. Replacing that FAIL predicate with a narrower one is a change to frozen gate text, not an interpretation, so it is frozen here before any run rather than recorded as a note. The new predicate exempts only objectively decidable, provably included versions (both the product's recorded-fork-base judgement and an independent harness judgement); undecodable, different-library, base-less or not-provably-included versions are never exempt; and the literal-reading count is reported alongside. The exemption is scoped by truth1LibraryClause (in-window only; at settle every unresolved version must be resolved with a backup or surfaced) and uses an independent harness judgement that never reuses product merge code. The other six items (Combine summary check, host-B tree IDs, uncounted split names, drill mechanism, variant assignment, combineOnAThenB rounds) fill gaps in m1-freeze-3 text and are frozen in the same revision for clarity; each is equal to or stricter than m1-freeze-3.",
       "postFreezeRule": "As m1-freeze-3; a run counts only on a clean commit containing this revision's merge."
+    },
+    {
+      "freezeID": "m1-freeze-5",
+      "date": "2026-10-05",
+      "recordedBy": "Lead (WW-003 protocol author), under a user product decision relayed by the M1 coordinator",
+      "baseCommit": "d843699b53254e1f17d8cfc3fb387a6220711751",
+      "baseCommitNote": "main when this revision was authored. It takes effect at the merge commit of the PR that adds it; no m1-freeze-5 calibration, drill or holdout has run.",
+      "scope": "M1-DUR-025 only; adds recipeFreeze5. Provider settle latency becomes an observation, with a 1,800 s per-case provider cap and a providerUnsettled (inconclusive) outcome; every hard gate, truth, count (10/100), cell, variant, setup rule and the m1-freeze-4 gate text is otherwise unchanged. Every other registry entry is unchanged.",
+      "authority": "User product decision, 2026-10-05 23:07, relayed verbatim by the M1 coordinator: \"iCloud can be sporadic, so I wouldn't want to hold that too firmly.\" Lead had ruled (2026-10-05) that relaxing the 420 s settle bound after observing the failure it would rescue weakens a gate and needs the user's explicit approval; this is that approval. Lead has not seen the user's original message.",
+      "decidedAfterFailure": "Disclosed: decided after observing the m1-freeze-4 failure, by user product authority. The m1-freeze-4 result (99/100, FAIL against the 420 s bound) stays recorded as failed and is never relabelled; the m1-freeze-2 result (95/100, FAIL) likewise.",
+      "supersededResult": {
+        "freeze": "m1-freeze-4",
+        "result": "FAILED (retained, not re-labelled): holdout ran once at b5f797f: show-conflict 29/30, library-conflict 30/30, cross-machine-relink 20/20, recovery 20/20 = 99/100.",
+        "reason": "Show case 15 did not reach settle within the frozen 420 s bound during a single ~7 min iCloud delivery stall (01:10-01:17Z).",
+        "evidence": "https://github.com/brandonmartinez/WaveWrangler/pull/144"
+      },
+      "postFreezeRule": "As m1-freeze-4. A holdout counts only on a clean commit containing this revision's merge, runs once, and reports every case, including providerUnsettled and setupNotEstablished cases with their state and refills."
     }
   ],
   "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
@@ -275,7 +292,8 @@
       "m1-freeze-1": 58,
       "m1-freeze-2": 0,
       "m1-freeze-3": 0,
-      "m1-freeze-4": 1
+      "m1-freeze-4": 0,
+      "m1-freeze-5": 1
     }
   },
   "fixtures": [
@@ -1220,7 +1238,7 @@
         "unit": "cases (cells: show-conflict 3/30, library-conflict 3/30, cross-machine-relink 2/20, recovery 2/20)"
       },
       "supportedClaimLimits": "iCloud Drive with two Macs on one Apple account (host labels recorded per run), synthetic files only. Sync timing is not controlled and is reported as observed. The headless harness is unsandboxed, so the regrant is an explicit harness-supplied choice, not the powerbox panel (sandboxed grant is M1-REF-020). No OneDrive/Dropbox, network-offline, power-loss or provider-atomicity claim. Neither host is the macOS 26 / 16 GB reference.",
-      "evidenceStatus": "frozen m1-freeze-4 (2026-10-05); m1-freeze-2 holdout FAILED (95/100) and is retained; no m1-freeze-3 or m1-freeze-4 calibration or holdout has run; holdout not yet reported in this registry",
+      "evidenceStatus": "frozen m1-freeze-5 (2026-10-05, user product decision); holdouts retained as FAILED: m1-freeze-2 95/100 (relink setup stalls), m1-freeze-4 99/100 (show case 15 exceeded the 420 s settle bound); m1-freeze-5 holdout not yet reported in this registry",
       "cells": [
         {
           "cell": "show-conflict",
@@ -1287,6 +1305,19 @@
         "drill": "The forced-stall drill injects the unreachable fixture as a synthetic source file in the case folder whose name ends in '.nosync' (iCloud Drive does not sync it). It is readable on host A with the expected digest; host B waits 420 s, requests the download (any error recorded), waits 420 s more; the case is setupNotEstablished with diagnostics on both hosts and a refill from 'drill-f3-reserve'. The file is deleted with the trial folder at the end of the run.",
         "variantAssignment": "Deterministic per split: for each cell, a list with the exact variant counts (show 20 simultaneous / 10 staggered; library 20 combineOnAThenB / 10 concurrentCombine) is shuffled with seed sha256('ww-m1-fixture|v1|M1-DUR-025|' + split + '|' + cell + '|variants'). Calibration is fixed: show [simultaneous, simultaneous, staggered]; library [combineOnAThenB, combineOnAThenB, concurrentCombine]; the host-B sampling gate applies to all three calibration library cases. A refilled slot keeps its slot's variant.",
         "combineOnAThenBRounds": "In combineOnAThenB, after host A's Combine round settles, host B does a product load; if B is still in L4, B runs Combine, counted as a round, within the same limit of at most 3 rounds and a 600 s settle per round. If neither an unresolved provider version nor an app-detected L4 is observed on host B within 420 s after the race trigger, the case FAILS (the product phase has started)."
+      },
+      "recipeFreeze5": {
+        "userDecision": "User product decision, 2026-10-05 23:07, relayed verbatim by the M1 coordinator: \"iCloud can be sporadic, so I wouldn't want to hold that too firmly.\" Under that authority, provider settle latency is no longer a gate; correctness is judged at eventual settle within a per-case cap.",
+        "hardGates": "Unchanged and still FAIL conditions, evaluated before, during and at settle or at the cap: zero lost edits; conflicts detected and surfaced on both hosts; library L4 -> Combine with backup-before-resolve (truth 2, recipeFreeze4.truth1LibraryClause, recipeFreeze4.levelSamplingFailRule with the dual inclusion judgement); exactly one current publication, byte-identical on both hosts, at settle; zero source writes and zero substitutions; recovery truths (6); and honest status while unsettled (honestStatusWhileUnsettled). Every other m1-freeze-3/-4 truth, variant, count, sampling rule and report is unchanged except as stated in settleAndCap.",
+        "honestStatusWhileUnsettled": "Show cells (both variants) and the recovery bSaves variant: each host keeps its saving session alive after its publication (as an open document window would) and, at least every 2 s until settle or the cap, records the session's own save status after refreshing provider conflicts: state, providerSync, provider-conflict count and the exact accessibility description. FAIL if, on either host, any sample before settle or the cap has providerSync other than unknown, has text claiming synced, current or up to date across devices, or has a state other than a C3 local state ('Saved on this Mac - revision N', Conflict or acknowledgement-uncertain); or if, after settle, a host whose publication lost shows an unqualified Saved with neither a Conflict state nor a provider-conflict count > 0 (protocol §4.2.1 condition 3). Library cells: the existing level sampling (recipeFreeze4.levelSamplingFailRule) covers the unsettled period. The rule applies to providerUnsettled cases too.",
+        "settleAndCap": "Every bounded wait that starts after the first product operation and depends on provider propagation (settle, the staggered-show wait for A's r+1 on B, combineOnAThenB's observation of the version or L4 on B, each Combine round's settle, relink/recovery observation waits) is bounded by one per-case provider cap of 1,800 s (30 min) measured from the race trigger (or, for cells without a race, from the first product operation), instead of the m1-freeze-3/-4 420 s / 600 s bounds. The 3-round Combine limit stays: not converged after round 3 with the provider settled is a FAIL. If the cap expires before settle, the case is recorded as providerUnsettled (inconclusive): neither a pass nor a product failure, unless a hard gate was violated before or at the cap, which is a FAIL.",
+        "capJustification": "Persistence's propagation data (all runs, A-clock upper bounds): the m1-freeze-4 failure was a single ~7 min iCloud delivery stall (01:10-01:17Z) that also delayed a setup fixture to 456 s; outside that window show settle max was 119 s and every other settle was <= 283 s; the longest observed non-arrival (m1-freeze-2 relink setup) was >= ~17 min without resolution. 1,800 s is about 4x the ~7 min settle stall plus margin and about 1.8x the longest observed non-arrival; beyond it a case is inconclusive, never silently passed or failed.",
+        "atCapState": "For each providerUnsettled case, the record captures on both hosts at the cap, read-only: the current file digest and publication ID, the save/library status and level, unresolved and other NSFileVersion counts, preserved candidates/journals/backups, and source digests. Lost-edit check at the cap: every locally acknowledged publication must still be present on the host that made it (current file, preserved candidate, conflict version, journal or backup); absent = FAIL.",
+        "countIntegrity": "providerUnsettled slots are refilled from the frozen reserve split 'holdout-f5-reserve' (indices consumed in order, same cell and variant, recorded per slot), the same way as setupNotEstablished, until each cell has evaluated exactly its frozen holdout count with a pass or fail. A cell is INCONCLUSIVE (not a pass) if providerUnsettled exceeds 10% of its frozen holdout count (more than 3 for show or library, more than 2 for relink or recovery), or if setupNotEstablished plus providerUnsettled exceeds 25% (more than 7 / 5). DUR-025 PASSES only if every cell evaluates its full frozen count with zero FAILs and no cell is inconclusive. Counts are never lowered: 10 calibration / 100 holdout.",
+        "setup": "setupNotEstablished, its 420 s + download-request + 420 s bound, diagnostics, 20% cap and reserve refill are unchanged from m1-freeze-3/-4 (setup waits precede the first product operation and are not provider-cap waits).",
+        "observations": "Reported per case, not gated: trigger-to-settle latency per host (and distribution p50/p95/max per cell), the number and share of cases that would have exceeded the former 420 s bound, time to surfacing per host, load average on both hosts at start and every 5 min, and whether other GUI or build lanes were active on either host.",
+        "seeds": "Fresh splits 'calibration-f5', 'holdout-f5', 'holdout-f5-reserve', 'calibration-f5-reserve', 'drill-f5' and 'drill-f5-reserve' (same derivation); earlier seeds are not reused for counted cases.",
+        "calibration": "calibration-f5: 10 cases with the m1-freeze-4 fixed composition, run under this revision and reported separately (it exercises the cap logic on real waits). Plus one uncounted forced-unsettled drill ('drill-f5'): a synthetic show race in which host B's publication is written as a '.nosync' sibling so it can never propagate, with a drill-only cap of 120 s, which must yield providerUnsettled with the at-cap state captured on both hosts, honest-status samples throughout, the lost-edit check at the cap, and a refill from 'drill-f5-reserve'. The setupNotEstablished drill is not repeated (its harness path is unchanged; the m1-freeze-4 drill is cited)."
       }
     },
     {

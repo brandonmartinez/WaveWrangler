@@ -191,6 +191,19 @@ DUR025_RECIPE_F3 = {
  "calibrationCoverage": "The 10 calibration cases ('calibration-f3') include at least one staggered show case, one concurrentCombine library case and one case exercising the host-B level-sampling gate. In addition, one forced setupNotEstablished drill (an injected unreachable fixture) exercises the 420 s + download-request retry, the diagnostics and the reserve refill. The drill is reported separately and is not one of the 10 calibration cases.",
  "seeds": "Fresh splits 'calibration-f3', 'holdout-f3' and 'holdout-f3-reserve' (seed = sha256('ww-m1-fixture|v1|M1-DUR-025|' + split + '|' + caseIndex)); the m1-freeze-2 seeds are not reused for counted cases.",
 }
+DUR025_RECIPE_F5 = {
+ "userDecision": "User product decision, 2026-10-05 23:07, relayed verbatim by the M1 coordinator: \"iCloud can be sporadic, so I wouldn't want to hold that too firmly.\" Under that authority, provider settle latency is no longer a gate; correctness is judged at eventual settle within a per-case cap.",
+ "hardGates": "Unchanged and still FAIL conditions, evaluated before, during and at settle or at the cap: zero lost edits; conflicts detected and surfaced on both hosts; library L4 -> Combine with backup-before-resolve (truth 2, recipeFreeze4.truth1LibraryClause, recipeFreeze4.levelSamplingFailRule with the dual inclusion judgement); exactly one current publication, byte-identical on both hosts, at settle; zero source writes and zero substitutions; recovery truths (6); and honest status while unsettled (honestStatusWhileUnsettled). Every other m1-freeze-3/-4 truth, variant, count, sampling rule and report is unchanged except as stated in settleAndCap.",
+ "honestStatusWhileUnsettled": "Show cells (both variants) and the recovery bSaves variant: each host keeps its saving session alive after its publication (as an open document window would) and, at least every 2 s until settle or the cap, records the session's own save status after refreshing provider conflicts: state, providerSync, provider-conflict count and the exact accessibility description. FAIL if, on either host, any sample before settle or the cap has providerSync other than unknown, has text claiming synced, current or up to date across devices, or has a state other than a C3 local state ('Saved on this Mac - revision N', Conflict or acknowledgement-uncertain); or if, after settle, a host whose publication lost shows an unqualified Saved with neither a Conflict state nor a provider-conflict count > 0 (protocol §4.2.1 condition 3). Library cells: the existing level sampling (recipeFreeze4.levelSamplingFailRule) covers the unsettled period. The rule applies to providerUnsettled cases too.",
+ "settleAndCap": "Every bounded wait that starts after the first product operation and depends on provider propagation (settle, the staggered-show wait for A's r+1 on B, combineOnAThenB's observation of the version or L4 on B, each Combine round's settle, relink/recovery observation waits) is bounded by one per-case provider cap of 1,800 s (30 min) measured from the race trigger (or, for cells without a race, from the first product operation), instead of the m1-freeze-3/-4 420 s / 600 s bounds. The 3-round Combine limit stays: not converged after round 3 with the provider settled is a FAIL. If the cap expires before settle, the case is recorded as providerUnsettled (inconclusive): neither a pass nor a product failure, unless a hard gate was violated before or at the cap, which is a FAIL.",
+ "capJustification": "Persistence's propagation data (all runs, A-clock upper bounds): the m1-freeze-4 failure was a single ~7 min iCloud delivery stall (01:10-01:17Z) that also delayed a setup fixture to 456 s; outside that window show settle max was 119 s and every other settle was <= 283 s; the longest observed non-arrival (m1-freeze-2 relink setup) was >= ~17 min without resolution. 1,800 s is about 4x the ~7 min settle stall plus margin and about 1.8x the longest observed non-arrival; beyond it a case is inconclusive, never silently passed or failed.",
+ "atCapState": "For each providerUnsettled case, the record captures on both hosts at the cap, read-only: the current file digest and publication ID, the save/library status and level, unresolved and other NSFileVersion counts, preserved candidates/journals/backups, and source digests. Lost-edit check at the cap: every locally acknowledged publication must still be present on the host that made it (current file, preserved candidate, conflict version, journal or backup); absent = FAIL.",
+ "countIntegrity": "providerUnsettled slots are refilled from the frozen reserve split 'holdout-f5-reserve' (indices consumed in order, same cell and variant, recorded per slot), the same way as setupNotEstablished, until each cell has evaluated exactly its frozen holdout count with a pass or fail. A cell is INCONCLUSIVE (not a pass) if providerUnsettled exceeds 10% of its frozen holdout count (more than 3 for show or library, more than 2 for relink or recovery), or if setupNotEstablished plus providerUnsettled exceeds 25% (more than 7 / 5). DUR-025 PASSES only if every cell evaluates its full frozen count with zero FAILs and no cell is inconclusive. Counts are never lowered: 10 calibration / 100 holdout.",
+ "setup": "setupNotEstablished, its 420 s + download-request + 420 s bound, diagnostics, 20% cap and reserve refill are unchanged from m1-freeze-3/-4 (setup waits precede the first product operation and are not provider-cap waits).",
+ "observations": "Reported per case, not gated: trigger-to-settle latency per host (and distribution p50/p95/max per cell), the number and share of cases that would have exceeded the former 420 s bound, time to surfacing per host, load average on both hosts at start and every 5 min, and whether other GUI or build lanes were active on either host.",
+ "seeds": "Fresh splits 'calibration-f5', 'holdout-f5', 'holdout-f5-reserve', 'calibration-f5-reserve', 'drill-f5' and 'drill-f5-reserve' (same derivation); earlier seeds are not reused for counted cases.",
+ "calibration": "calibration-f5: 10 cases with the m1-freeze-4 fixed composition, run under this revision and reported separately (it exercises the cap logic on real waits). Plus one uncounted forced-unsettled drill ('drill-f5'): a synthetic show race in which host B's publication is written as a '.nosync' sibling so it can never propagate, with a drill-only cap of 120 s, which must yield providerUnsettled with the at-cap state captured on both hosts, honest-status samples throughout, the lost-edit check at the cap, and a refill from 'drill-f5-reserve'. The setupNotEstablished drill is not repeated (its harness path is unchanged; the m1-freeze-4 drill is cited).",
+}
 DUR025_RECIPE_F4 = {
  "levelSamplingFailRule": "Supersedes the m1-freeze-3 levelSampling FAIL rule. A sample is a read-only evaluation of the level a product load would show at that instant, without its side effects: lib-inspect loads a LibraryStore against temporary copies of the host's library settings and recovery store, with a provider-version wrapper that never marks anything resolved; nothing on the host changes. Per sample and per unresolved provider version V of the library file on that host, the sample records: V's decode result; the product's isIncluded judgement; the fork base the product used (its identity/revision); an INDEPENDENT harness judgement of whether V's content (the seeded edits of the host that wrote V, known to the harness) is present in the sampled current library, ST-36 copies counting as present; whether a notice is shown for V; and the sampled level. A sample FAILS iff the level is ready/L1 AND at least one unresolved version V is NOT exempt. V is exempt only if ALL of: (a) V decodes as a valid library with the same libraryID; (b) the product's isIncluded is true against the sampled current library with a recorded fork base; (c) the independent harness judgement (see independentInclusionJudgement) is 'included'. A version that is undecodable, has a different libraryID, has no recorded fork base, or is not proven included by both judgements is never exempt, and ready/L1 while it is unresolved FAILS unless the sample also shows the unusable-version notice (#119) for an undecodable or different-library version. Any disagreement between (b) and (c) is reported, and a product 'included' with a harness 'not included' FAILS the sample.",
  "independentInclusionJudgement": "Computed by the harness only from its own record of the seeded edits made by the host that wrote V (collection additions, collection and alias renames, removals, reorders and recorded saves of entries or recents), compared directly against the sampled current library model on that host. An ST-36 copy of a reordered or diverging collection counts as present when it carries exactly the seeded membership and order. It must NOT call, wrap or re-derive LibraryMerge.isIncluded, LibraryReconciler or any other product merge or reconcile code, and must NOT read the product's judgement or fork base. Outcomes: 'included' (every seeded edit of that host is present), 'not included' (at least one is absent), or 'undetermined' (the harness cannot decide, e.g. an edit record is missing or the model does not decode); 'undetermined' is never exempt.",
@@ -214,7 +227,7 @@ F.append(syn("M1-DUR-025","Two-device iCloud conflict, cross-machine relink and 
   "(7) No provider-atomicity claim follows from any result.",
   10,100,"cases (cells: show-conflict 3/30, library-conflict 3/30, cross-machine-relink 2/20, recovery 2/20)",
   "iCloud Drive with two Macs on one Apple account (host labels recorded per run), synthetic files only. Sync timing is not controlled and is reported as observed. The headless harness is unsandboxed, so the regrant is an explicit harness-supplied choice, not the powerbox panel (sandboxed grant is M1-REF-020). No OneDrive/Dropbox, network-offline, power-loss or provider-atomicity claim. Neither host is the macOS 26 / 16 GB reference.",
-  extra={"cells": DUR025_CELLS, "recipeFreeze3": DUR025_RECIPE_F3, "recipeFreeze4": DUR025_RECIPE_F4},
+  extra={"cells": DUR025_CELLS, "recipeFreeze3": DUR025_RECIPE_F3, "recipeFreeze4": DUR025_RECIPE_F4, "recipeFreeze5": DUR025_RECIPE_F5},
   permission={"class": "authorized-user-grant", "status": "authorized (grant E, given by the user directly 2026-10-05; relayed to the M1 coordinator)",
               "scope": GRANT_20261005["E"]}))
 F.append(syn("M1-DUR-026","Native GUI lifecycle: Close/Quit dirty decisions, AS01/AS05 replay, panel Save As cancel, Revert, edit-checkpoint recovery presentation","autosave/native-gui","durability",["WW-005","WW-049","WW-007"],
@@ -414,7 +427,7 @@ FREEZE2 = {
   "postFreezeRule": "Same as m1-freeze-1: a holdout run counts only on a clean commit containing this revision's merge, runs once, reports every case (including failures, timeouts and exclusions) with both hosts' labels (sw_vers, hardware, Xcode), the commit SHA and the git tree IDs of the harness trees it ran on each host. Calibration may run before or after the merge and is reported separately; it never tunes truth, counts or gates. Changing the recipe, truth, counts or gate needs a new dated freeze revision.",
   "generatorSourceTrees": "Not yet written at freeze time (the persistence lane builds the two-host headless harness against this definition); each run record reports its tree IDs.",
 }
-FROZEN4_IDS = ("M1-DUR-025",)
+FROZEN4_IDS = ()
 FROZEN4_STATUS = "frozen m1-freeze-4 (2026-10-05); m1-freeze-2 holdout FAILED (95/100) and is retained; no m1-freeze-3 or m1-freeze-4 calibration or holdout has run; holdout not yet reported in this registry"
 FREEZE3 = {
   "freezeID": "m1-freeze-3",
@@ -431,6 +444,8 @@ FREEZE3 = {
   },
   "postFreezeRule": "As m1-freeze-2: a holdout run counts only on a clean commit containing this revision's merge, runs once, and reports every case (including failures, timeouts, setupNotEstablished and reserve replacements) with complete host labels for both hosts, the commit SHA and harness tree IDs. Calibration ('calibration-f3') is reported separately and never tunes truth, counts or gates. A further change needs a new dated freeze revision; the m1-freeze-2 result stays recorded as failed.",
 }
+FROZEN5_IDS = ("M1-DUR-025",)
+FROZEN5_STATUS = "frozen m1-freeze-5 (2026-10-05, user product decision); holdouts retained as FAILED: m1-freeze-2 95/100 (relink setup stalls), m1-freeze-4 99/100 (show case 15 exceeded the 420 s settle bound); m1-freeze-5 holdout not yet reported in this registry"
 FREEZE4 = {
   "freezeID": "m1-freeze-4",
   "date": "2026-10-05",
@@ -441,10 +456,29 @@ FREEZE4 = {
   "whyFreezeNotInterpretation": "Lead judgement: the m1-freeze-3 level-sampling FAIL rule, read literally, fails correct product behaviour in a real timing window: after host A's Combine, host B can receive the combined current library before the provider propagates resolution of a version whose content it already contains, and a read-only sample cannot resolve it. Replacing that FAIL predicate with a narrower one is a change to frozen gate text, not an interpretation, so it is frozen here before any run rather than recorded as a note. The new predicate exempts only objectively decidable, provably included versions (both the product's recorded-fork-base judgement and an independent harness judgement); undecodable, different-library, base-less or not-provably-included versions are never exempt; and the literal-reading count is reported alongside. The exemption is scoped by truth1LibraryClause (in-window only; at settle every unresolved version must be resolved with a backup or surfaced) and uses an independent harness judgement that never reuses product merge code. The other six items (Combine summary check, host-B tree IDs, uncounted split names, drill mechanism, variant assignment, combineOnAThenB rounds) fill gaps in m1-freeze-3 text and are frozen in the same revision for clarity; each is equal to or stricter than m1-freeze-3.",
   "postFreezeRule": "As m1-freeze-3; a run counts only on a clean commit containing this revision's merge.",
 }
+FREEZE5 = {
+  "freezeID": "m1-freeze-5",
+  "date": "2026-10-05",
+  "recordedBy": "Lead (WW-003 protocol author), under a user product decision relayed by the M1 coordinator",
+  "baseCommit": "d843699b53254e1f17d8cfc3fb387a6220711751",
+  "baseCommitNote": "main when this revision was authored. It takes effect at the merge commit of the PR that adds it; no m1-freeze-5 calibration, drill or holdout has run.",
+  "scope": "M1-DUR-025 only; adds recipeFreeze5. Provider settle latency becomes an observation, with a 1,800 s per-case provider cap and a providerUnsettled (inconclusive) outcome; every hard gate, truth, count (10/100), cell, variant, setup rule and the m1-freeze-4 gate text is otherwise unchanged. Every other registry entry is unchanged.",
+  "authority": "User product decision, 2026-10-05 23:07, relayed verbatim by the M1 coordinator: \"iCloud can be sporadic, so I wouldn't want to hold that too firmly.\" Lead had ruled (2026-10-05) that relaxing the 420 s settle bound after observing the failure it would rescue weakens a gate and needs the user's explicit approval; this is that approval. Lead has not seen the user's original message.",
+  "decidedAfterFailure": "Disclosed: decided after observing the m1-freeze-4 failure, by user product authority. The m1-freeze-4 result (99/100, FAIL against the 420 s bound) stays recorded as failed and is never relabelled; the m1-freeze-2 result (95/100, FAIL) likewise.",
+  "supersededResult": {
+    "freeze": "m1-freeze-4",
+    "result": "FAILED (retained, not re-labelled): holdout ran once at b5f797f: show-conflict 29/30, library-conflict 30/30, cross-machine-relink 20/20, recovery 20/20 = 99/100.",
+    "reason": "Show case 15 did not reach settle within the frozen 420 s bound during a single ~7 min iCloud delivery stall (01:10-01:17Z).",
+    "evidence": "https://github.com/brandonmartinez/WaveWrangler/pull/144",
+  },
+  "postFreezeRule": "As m1-freeze-4. A holdout counts only on a clean commit containing this revision's merge, runs once, and reports every case, including providerUnsettled and setupNotEstablished cases with their state and refills.",
+}
 
 def build():
     for f in F:
-        if f["id"] in FROZEN4_IDS and f["evidenceStatus"] == "not-yet-executed":
+        if f["id"] in FROZEN5_IDS and f["evidenceStatus"] == "not-yet-executed":
+            f["evidenceStatus"] = FROZEN5_STATUS
+        elif f["id"] in FROZEN4_IDS and f["evidenceStatus"] == "not-yet-executed":
             f["evidenceStatus"] = FROZEN4_STATUS
         elif f["id"] in FROZEN3_IDS and f["evidenceStatus"] == "not-yet-executed":
             f["evidenceStatus"] = FROZEN3_STATUS
@@ -472,15 +506,16 @@ def build():
       "ww006LifecycleHoldout": sum(f["split"]["holdout"] for f in F if f.get("countsToward")),
       "showPublicationBoundaries": len(P), "libraryPublicationBoundaries": len(L),
       "perBoundaryHoldoutMinimum": 100,
-      "frozenEntries": sum(1 for f in F if f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS, FROZEN3_STATUS, FROZEN4_STATUS)),
-      "frozenEntriesByRevision": {"m1-freeze-1": sum(1 for f in F if f["evidenceStatus"] == FROZEN_STATUS), "m1-freeze-2": sum(1 for f in F if f["evidenceStatus"] == FROZEN2_STATUS), "m1-freeze-3": sum(1 for f in F if f["evidenceStatus"] == FROZEN3_STATUS), "m1-freeze-4": sum(1 for f in F if f["evidenceStatus"] == FROZEN4_STATUS)},
+      "frozenEntries": sum(1 for f in F if f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS, FROZEN3_STATUS, FROZEN4_STATUS, FROZEN5_STATUS)),
+      "frozenEntriesByRevision": {"m1-freeze-1": sum(1 for f in F if f["evidenceStatus"] == FROZEN_STATUS), "m1-freeze-2": sum(1 for f in F if f["evidenceStatus"] == FROZEN2_STATUS), "m1-freeze-3": sum(1 for f in F if f["evidenceStatus"] == FROZEN3_STATUS), "m1-freeze-4": sum(1 for f in F if f["evidenceStatus"] == FROZEN4_STATUS), "m1-freeze-5": sum(1 for f in F if f["evidenceStatus"] == FROZEN5_STATUS)},
     }
-    assert all(f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS, FROZEN3_STATUS, FROZEN4_STATUS) for f in F if f["permission"]["class"] in FROZEN_CLASSES), "unfrozen authorized entry"
+    assert all(f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS, FROZEN3_STATUS, FROZEN4_STATUS, FROZEN5_STATUS) for f in F if f["permission"]["class"] in FROZEN_CLASSES), "unfrozen authorized entry"
     d25 = next(f for f in F if f["id"] == "M1-DUR-025")
     for c in d25["cells"]:
         if "variantsFreeze3" in c:
             assert sum(v for k, v in c["variantsFreeze3"].items() if isinstance(v, int)) == c["holdout"], ("DUR-025 variants", c["cell"])
     assert d25["split"]["calibration"] >= 10 and d25["split"]["holdout"] >= 100, "DUR-025 counts never lowered"
+    assert "recipeFreeze5" in d25 and "1,800 s" in d25["recipeFreeze5"]["settleAndCap"], "DUR-025 m1-freeze-5 cap"
     assert sum(c["holdout"] for c in d25["cells"]) == d25["split"]["holdout"] and sum(c["calibration"] for c in d25["cells"]) == d25["split"]["calibration"], "DUR-025 cells"
     assert counts["ww006LifecycleHoldout"] >= 1000, counts
     for f in F:
@@ -489,16 +524,16 @@ def build():
     d6 = next(f for f in F if f["id"] == "M1-DUR-006")
     assert d6["split"]["holdout"] == 100 * sum(len(b["paths"]) for b in P), "DUR-006 cells"
     return {
-     "registryVersion": "m1-fixtures-v6-frozen4",
+     "registryVersion": "m1-fixtures-v7-frozen5",
      "date": "2026-10-05",
      "generatedBy": "docs/m1/fixtures/generate-registry.py (do not hand-edit; regenerate)",
      "owner": "Lead (protocol); WW-003 informational owner Pipeline",
      "issue": "https://github.com/brandonmartinez/WaveWrangler/issues/5",
      "protocol": "docs/m1/ww-003-fixture-protocol.md",
-     "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and is retained, superseded by m1-freeze-3 and its m1-freeze-4 gate-text revision before any new run) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
+     "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and m1-freeze-4 FAILED 99/100, both retained; current revision m1-freeze-5 under a user product decision) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
      "freezeRule": "Each family is frozen (generator source hash, recipe, truth, counts, gate) in a dated freeze record before its first holdout case runs. Counts may increase before freeze; never decrease below a frozen gate minimum without explicit Lead/Brandon approval.",
      "freeze": FREEZE,
-     "freezeRevisions": [FREEZE2, FREEZE3, FREEZE4],
+     "freezeRevisions": [FREEZE2, FREEZE3, FREEZE4, FREEZE5],
      "seedDerivation": SEED,
      "claimedHost": "macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), 18-core Apple silicon, 128 GiB -- not the macOS 26/16 GB reference",
      "userGrants20261004": GRANT,
