@@ -15,7 +15,7 @@
   "scope": "M2-TIMEMAP-001: the stratum recipe, oracle truth, calibration/holdout seeds and counts, probes, and the gate exactly as written here. Frozen code: the WWTimeMap source tree (unchanged by this freeze; it equals the tree m2-freeze-estimator and m2-freeze-render recorded as a dependency) and the WWTimeMapTests tree (generator, oracle, probes, gate evaluator and holdout harness), pinned by git tree ID.",
   "pinnedTrees": {
     "Sources/WWTimeMap": "24c7aadfbf1470c8555542061ab08eb23e37325b",
-    "Tests/WWTimeMapTests": "d27b5778920d46446f17e6470bb38c2b4f978900"
+    "Tests/WWTimeMapTests": "f0e76efcb2b915813f59627b998ca6ecba85b02b"
   },
   "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit (equal to `git rev-parse <commit>:Packages/WaveWranglerKit/<path>`). TimeMapFreezeTests.timeMapAndHarnessTreesMatchTheFreezeRecord recomputes both tree IDs from the working tree on every test run and fails on any difference. A change to either tree after the freeze is a new dated freeze revision with a fresh holdout; the earlier record is retained.",
   "dependencyTreesAtFreeze": {
@@ -174,6 +174,10 @@
     {
       "what": "RoundTripPropertyTests now records a failure category per failure (no probe, seed or count changed); its 1500-timeline regression run still reports N=146170, max 0.5, p95 0.46635, unchanged.",
       "where": "this PR"
+    },
+    {
+      "what": "Compute budget (user-directed): the split now measures at most TimeMapFixture.maxConcurrency cases at once (default 4; WW_M2_FREEZE_MAX_CONCURRENCY may lower it, clamped to 1...4; splitConcurrencyIsCappedAtFour) instead of all cases at once. Calibration rerun with the cap: every gate PASS, records byte-identical to calibration.jsonl. No recipe, truth, seed, count, probe or gate changed.",
+      "where": "this PR, before the freeze"
     }
   ],
   "holdoutProcedure": {
@@ -182,6 +186,6 @@
     "report": "Commit SHA, host (sw_vers, xcodebuild -version, swift --version, cores, memory), the tree IDs it ran, every case record (the harness writes ww-015-holdout.jsonl; commit it as docs/m2/evidence/ww-015/holdout.jsonl) and every gate with its worst value, the nearest-rank p95 and the max; never a subset. Gates, truth, recipe, counts and the map code are not tuned after this freeze."
   },
   "gateChanges": "None. The gate is the WW-015 gate from docs/m2/ww-019-m2-contracts.md §4/§5 (and M2-C3) as given in the kickoff, reproduced verbatim above.",
-  "deviation": "None. Nothing ran on the holdout split.",
+  "deviation": "Pre-freeze only: the split concurrency cap (preFreezeExecutions; records byte-identical). Nothing ran on the holdout split.",
   "postFreezeRule": "A run counts as post-freeze holdout only when it executes on a commit containing this record's merge commit, with both pinnedTrees unchanged, and is reported in full (commit, host, tree IDs, every case and gate). Counts may exceed the frozen holdout counts, never fall below them. A change to a frozen recipe, truth, count, gate or pinned tree requires a new dated freeze revision and a fresh holdout; the earlier run is retained. Pre-freeze runs are calibration only."
 }

@@ -14,7 +14,7 @@
   "scope": "M2-DECODE-001: the stratum recipe, generator truth, calibration/holdout seeds and counts, measurement, the mixed-input output-settings check, and the gate exactly as written here. Frozen code: the WWDecode source tree (decoder, envelope, format interpretation, output-settings policy) and the WWDecodeTests tree (generator, plan, gate evaluator and holdout harness), pinned by git tree ID.",
   "pinnedTrees": {
     "Sources/WWDecode": "868334419dda625c5f5380de8903c09fd0b7bd75",
-    "Tests/WWDecodeTests": "68178e6b5d2224a9e6d1a73dfa7f1ad6b0f58d19"
+    "Tests/WWDecodeTests": "c1d08f667f377913fc20449d2a572888896e2659"
   },
   "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit (equal to `git rev-parse <commit>:Packages/WaveWranglerKit/<path>`). DecodeFreezeTests.decoderAndHarnessTreesMatchTheFreezeRecord recomputes both tree IDs from the working tree on every test run and fails on any difference. A change to either tree after the freeze is a new dated freeze revision with a fresh holdout; the earlier record is retained.",
   "dependencyTreesAtFreeze": {
@@ -176,6 +176,10 @@
     {
       "what": "OutputSettingsPolicy unit tests (13) and the existing WWDecode unit, envelope, planted-failure and behaviour suites",
       "where": "this PR"
+    },
+    {
+      "what": "Compute budget (user-directed): the split now measures at most DecodeFixture.maxConcurrency cases at once (default 4; WW_M2_FREEZE_MAX_CONCURRENCY may lower it, clamped to 1...4; splitConcurrencyIsCappedAtFour) instead of all cases at once. Calibration rerun with the cap: every gate PASS, records byte-identical to calibration.jsonl. No recipe, truth, seed, count, measurement or gate changed.",
+      "where": "this PR, before the freeze"
     }
   ],
   "holdoutProcedure": {
@@ -184,7 +188,7 @@
     "report": "Commit SHA, host (sw_vers, xcodebuild -version, swift --version, cores, memory), the tree IDs it ran (pinned and dependency), every case record (the harness writes ww-050-holdout.jsonl; commit it as docs/m2/evidence/ww-050/holdout.jsonl) and every gate with its worst value; never a subset. Gates, truth, recipe, counts and decoder are not tuned after this freeze."
   },
   "gateChanges": "None. The gate is the WW-050 gate from docs/m2/ww-019-m2-contracts.md §4/§5 as given in the WW-050 part 2 kickoff, reproduced verbatim above. The two detection correlations are measurement thresholds fixed here before any holdout.",
-  "deviation": "Pre-freeze only: the landmark search window (preFreezeExecutions). Nothing ran on the holdout split.",
+  "deviation": "Pre-freeze only: the landmark search window and the split concurrency cap (preFreezeExecutions; the cap leaves every record byte-identical). Nothing ran on the holdout split.",
   "risks": "Opus landmarks: 24 of 48 calibration observations at |lag| 1, at the gate limit; a holdout lag of 2 would fail the gate and must be reported, not re-tuned. Single host, debug build, macOS 27 AudioToolbox; codec behaviour may differ on other OS versions.",
   "postFreezeRule": "A run counts as post-freeze holdout only when it executes on a commit containing this record's merge commit, with both pinnedTrees unchanged, and is reported in full (commit, host, tree IDs, every case and gate). Counts may exceed the frozen holdout counts, never fall below them. A change to a frozen recipe, truth, count, gate, pinned tree or version requires a new dated freeze revision and a fresh holdout; the earlier run is retained. Pre-freeze runs are calibration only."
 }

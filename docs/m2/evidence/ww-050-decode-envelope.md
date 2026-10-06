@@ -87,7 +87,7 @@ processes.
 
 Disclosed pre-freeze deviation: the first calibration run failed 3 bit-exact cases. The fixed ±3000-frame landmark search
 had reached a neighbouring identical burst, so the window is now `min(3000, half-gap)`. No gate changed.
-`scripts/test.sh` runs the calibration split in its own serialized pass.
+`scripts/test.sh` runs the calibration split in its own serialized pass. A split measures at most 4 cases at once (`WW_M2_FREEZE_MAX_CONCURRENCY` may lower it); the rerun under that cap gave byte-identical records.
 
 **Holdout NOT RUN.** It runs once, in its own PR after this one merges, with
 `WW_M2_DECODE_HOLDOUT=1 swift test --filter DecodeCalibrationTests/holdoutSplitMeetsEveryFrozenGate`.

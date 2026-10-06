@@ -107,7 +107,7 @@ Refs #10. [`m2-freeze-timemap.json`](../fixtures/m2-freeze-timemap.json) (2026-1
 - Forward gap / unsupported / outside: 8,624 / 6,231 / 28,877. Inverse: 8,090 / 2,005 / 12,476.
 - 0 failures in every category.
 
-Same host as above. `scripts/test.sh` runs the calibration split in its own serialized pass.
+Same host as above. `scripts/test.sh` runs the calibration split in its own serialized pass. A split measures at most 4 cases at once (`WW_M2_FREEZE_MAX_CONCURRENCY` may lower it); the rerun under that cap gave byte-identical records.
 
 **Holdout NOT RUN.** It runs once, in its own PR after this one merges, with
 `WW_M2_TIMEMAP_HOLDOUT=1 swift test --filter TimeMapCalibrationTests/holdoutSplitMeetsEveryFrozenGate`.
