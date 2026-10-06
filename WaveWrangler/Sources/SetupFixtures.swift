@@ -89,7 +89,7 @@ enum SetupFixtures {
         engine.transferOutcome = { action, current in
             var next = current
             switch action {
-            case .download, .retry: next.transfer = .queued
+            case .download, .retry: next.transfer = .downloading(fraction: nil)  // as WWSources' `.requested`
             case .pause: next.transfer = .paused
             case .resume: next.transfer = .downloading(fraction: nil)
             case .cancel: next.transfer = .cancelled
@@ -110,8 +110,9 @@ enum SetupFixtures {
 enum SimulatedNetwork {
     private(set) static var engaged = false
     private(set) static var online = true
-    /// Time per simulated transfer step (Waiting → Downloading… → Ready).
-    static let step: Duration = .milliseconds(1500)
+    /// Time per simulated transfer step (Downloading… → Ready).
+    /// Long enough for UI tests to observe "Downloading…" before "Ready".
+    static let step: Duration = .milliseconds(2500)
 
     /// The network drops: every active download fails with "No connection", in one update.
     static func goOffline() {
@@ -142,15 +143,13 @@ enum SimulatedNetwork {
         transfer([id], in: engine)
     }
 
-    /// Waiting → Downloading… → Ready (or → No connection while offline), one batched update per step, so
-    /// the attention count changes once per step and no row is announced on its own.
+    /// Downloading… → Ready (or → No connection while offline), as the real engine reports a request
+    /// (`.requested` is "Downloading…"; it never shows "Waiting"). One batched update per step, so the
+    /// attention count changes once and no row is announced on its own.
     private static func transfer(_ ids: Set<SourceID>, in engine: InMemorySourceSetupEngine) {
         guard !ids.isEmpty else { return }
-        apply(ids, engine, from: [.noConnection, .queued, .cancelled]) { $0.transfer = .queued }
+        apply(ids, engine, from: [.noConnection, .downloading(fraction: nil), .cancelled]) { $0.transfer = .downloading(fraction: nil) }
         Task { @MainActor in
-            try? await Task.sleep(for: step)
-            guard online else { return apply(ids, engine, from: [.queued]) { $0.transfer = .noConnection } }
-            apply(ids, engine, from: [.queued]) { $0.transfer = .downloading(fraction: nil) }
             try? await Task.sleep(for: step)
             guard online else { return apply(ids, engine, from: [.downloading(fraction: nil)]) { $0.transfer = .noConnection } }
             apply(ids, engine, from: [.downloading(fraction: nil)]) {

@@ -273,7 +273,7 @@ struct InMemoryEngineTests {
         #expect(first?[id]?.residency == .cloudOnly)
         await engine.perform(.download, on: id)
         let second = await iterator.next()
-        #expect(second?[id]?.transfer == .queued)
+        #expect(second?[id]?.transfer == .downloading(fraction: nil), "a request reads Downloading…, as from the real engine")
         #expect(engine.calls == [.perform(.download, id)])
     }
 }

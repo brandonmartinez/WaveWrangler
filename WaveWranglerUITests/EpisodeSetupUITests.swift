@@ -617,7 +617,7 @@ final class EpisodeSetupUITests: XCTestCase {
         select("offline.wav")
         XCTAssertEqual(value("ww.inspector.transfer"), "Can't download — no network connection. Checked \(checkedTime())")
         menu("Source", "Retry Download")
-        XCTAssertTrue(waitForValue("ww.inspector.transfer", beginsWith: "Waiting to download"))
+        XCTAssertTrue(waitForValue("ww.inspector.transfer", beginsWith: "Downloading — progress unknown"), "a request reads Downloading…, as from the real engine")
     }
 
     // MARK: T30 — automatic retry on reconnect (simulated offline, F-OFFLINE)
@@ -658,7 +658,7 @@ final class EpisodeSetupUITests: XCTestCase {
         app.typeKey(offline ? "o" : "r", modifierFlags: [.control, .option, .command])
     }
 
-    /// Downloads On: after a simulated reconnect the "No connection" rows go Waiting → Downloading… → Ready
+    /// Downloads On: after a simulated reconnect the "No connection" rows go Downloading… → Ready
     /// with no user action, the attention count drops once, and keyboard focus and selection stay put.
     func testT30AutomaticRetryOnReconnectDownloadsOn() {
         print("[phase] begin t30-on \(Date().timeIntervalSince1970)")
@@ -674,10 +674,9 @@ final class EpisodeSetupUITests: XCTestCase {
 
         print("[phase] begin t30-on-reconnect \(Date().timeIntervalSince1970)")
         simulateNetwork(offline: false)
-        XCTAssertTrue(waitForStatusCount("Waiting", 3, timeout: 3), "requeued automatically: Waiting")
+        XCTAssertTrue(waitForStatusCount("Downloading…", 3, timeout: 3), "requested again automatically: Downloading…")
         XCTAssertEqual(statusCount("No connection"), 0)
         XCTAssertTrue(attentionCount(4), "attention count drops once (7 → 4)")
-        XCTAssertTrue(waitForStatusCount("Downloading…", 3), "then Downloading…")
         XCTAssertTrue(waitForStatusCount("Ready", 5), "then Ready (2 + 3), with no user action")
         XCTAssertTrue(attentionCount(4), "Downloading/Ready don't change the count again")
         print("[phase] end t30-on-reconnect \(Date().timeIntervalSince1970)")
@@ -704,10 +703,10 @@ final class EpisodeSetupUITests: XCTestCase {
 
         print("[phase] begin t30-off-reconnect \(Date().timeIntervalSince1970)")
         simulateNetwork(offline: false)
-        // Longer than a full simulated transfer (2 × 1.5 s): nothing moves.
-        Thread.sleep(forTimeInterval: 4)
+        // Longer than a full simulated transfer (2.5 s): nothing moves.
+        Thread.sleep(forTimeInterval: 5)
         XCTAssertEqual(statusCount("No connection"), 3, "not retried automatically")
-        XCTAssertEqual(statusCount("Waiting"), 0, "no other source requested")
+        XCTAssertEqual(statusCount("Downloading"), 0, "no other source requested")
         XCTAssertEqual(statusCount("Ready"), 2)
         XCTAssertTrue(attentionCount(7, timeout: 1))
         XCTAssertTrue(value("ww.inspector.transfer")?.hasPrefix("Can't download — no network connection") == true, "stays until Retry")
@@ -715,8 +714,7 @@ final class EpisodeSetupUITests: XCTestCase {
 
         // Retry (K28) is the way back: only this source moves.
         menu("Source", "Retry Download")
-        XCTAssertTrue(waitForValue("ww.inspector.transfer", beginsWith: "Waiting to download", timeout: 2))
-        XCTAssertTrue(waitForValue("ww.inspector.transfer", beginsWith: "Downloading — progress unknown"))
+        XCTAssertTrue(waitForValue("ww.inspector.transfer", beginsWith: "Downloading — progress unknown", timeout: 2))
         XCTAssertTrue(waitForStatusCount("Ready", 3), "the retried source is Ready")
         XCTAssertEqual(statusCount("No connection"), 2, "the others still wait for Retry")
         XCTAssertTrue(waitForOutline("1 selected"))

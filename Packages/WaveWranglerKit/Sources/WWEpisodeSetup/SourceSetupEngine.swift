@@ -236,7 +236,8 @@ public final class InMemorySourceSetupEngine: SourceSetupEngine, @unchecked Send
         transferOutcome = { action, current in
             var next = current
             switch action {
-            case .download, .retry: next.transfer = .queued
+            // As the real engine reports it: a request is "Downloading…" at once (`.requested`).
+            case .download, .retry: next.transfer = .downloading(fraction: nil)
             case .pause: next.transfer = .paused
             case .resume: next.transfer = .downloading(fraction: nil)
             case .cancel: next.transfer = .cancelled
