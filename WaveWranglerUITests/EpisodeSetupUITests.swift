@@ -273,6 +273,83 @@ final class EpisodeSetupUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.speaker.' AND value CONTAINS '1 backup,'")).firstMatch.waitForExistence(timeout: 3), "previous primary stays as one backup")
     }
 
+    // MARK: K05 — chosen destructive actions confirm with Return, cancel with Esc (#114)
+
+    func testDeleteConfirmationsAcceptReturnAndEsc() {
+        importFixture()
+        let alert = app.sheets.firstMatch
+
+        // Remove Source: ⌫ asks; Esc changes nothing; Return removes.
+        select("intro.wav")
+        app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.buttons["Remove"].waitForExistence(timeout: 3), "⌫ asks before removing")
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 3), "Esc dismisses")
+        XCTAssertTrue(text("Ungrouped · 9 sources").waitForExistence(timeout: 2), "Esc removes nothing")
+
+        select("intro.wav")
+        app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.buttons["Remove"].waitForExistence(timeout: 3))
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 3), "Return confirms")
+        XCTAssertTrue(text("Ungrouped · 8 sources").waitForExistence(timeout: 3), "Return removed the source")
+
+        // Delete Speaker: same keys in the Speakers table.
+        select("tr2.wav")
+        menu("Source", "Assign Speaker", "New Speaker…")
+        let name = element("ww.setup.nameField")
+        XCTAssertTrue(name.waitForExistence(timeout: 2))
+        name.click()
+        name.typeText("Ana")
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        let speaker = app.outlines["ww.setup.speakers"].outlineRows.firstMatch
+        XCTAssertTrue(speaker.waitForExistence(timeout: 3))
+        speaker.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).click()
+        app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.buttons["Delete"].waitForExistence(timeout: 3), "⌫ asks before deleting a speaker")
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 3))
+        XCTAssertTrue(speaker.exists, "Esc deletes nothing")
+        app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.buttons["Delete"].waitForExistence(timeout: 3))
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 3), "Return confirms")
+        XCTAssertTrue(app.outlines["ww.setup.speakers"].outlineRows.firstMatch.waitForNonExistence(timeout: 3), "Return deleted the speaker")
+    }
+
+    // MARK: K08/K09 — Return on a grouped row lands in the first editable field
+
+    func testReturnOnGroupedRowFocusesFirstEditableField() {
+        importFixture()
+        select("tr1.wav")
+        menu("Source", "Assign to Recorder Group", "New Recorder Group…")
+        let name = element("ww.setup.nameField")
+        XCTAssertTrue(name.waitForExistence(timeout: 2))
+        name.click()
+        name.typeText("Zoom H6")
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        XCTAssertTrue(text("Zoom H6 — recorder group · 1 source").waitForExistence(timeout: 3))
+
+        select("tr1.wav")
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        if NSApplication.shared.isFullKeyboardAccessEnabled {
+            // With Full Keyboard Access the Recorder group pop-up is the first editable field.
+            let group = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'ww.inspector.source.group' AND hasKeyboardFocus == true")).firstMatch
+            XCTAssertTrue(group.waitForExistence(timeout: 2), "focus in Recorder group")
+            return
+        }
+        // Without it, pop-ups can't take focus: the Epoch field is first, and typing goes there.
+        app.typeKey("a", modifierFlags: .command)
+        app.typeKey("3", modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        let epoch = element("ww.inspector.source.epoch")
+        let set = expectation(for: NSPredicate(format: "value == '3'"), evaluatedWith: epoch)
+        wait(for: [set], timeout: 3)
+        app.menuBars.menuBarItems["Edit"].click()
+        XCTAssertTrue(app.menuItems["Undo Set Epoch"].exists, "typed into Epoch and committed with Return")
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+    }
+
     // MARK: T11/T12/T13 — relink, regrant and the five dimensions
 
     func testT13InspectorShowsAllFiveDimensions() throws {
@@ -376,6 +453,59 @@ final class EpisodeSetupUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(status.frame.minX, frame.minX - 1, "\(context): status inside the table", file: file, line: line)
         XCTAssertLessThanOrEqual(status.frame.maxX, frame.maxX + 1, "\(context): status not clipped (\(status.frame) vs \(frame))", file: file, line: line)
         XCTAssertGreaterThan(status.frame.width, 20, "\(context): status has width", file: file, line: line)
+    }
+
+    /// #129: repeated Window › Zoom out/in must not grow the columns (a width-derived Name ideal used to
+    /// compound with column autoresizing until Status scrolled off and the frame width became NaN).
+    func testColumnsStayStableAcrossRepeatedZoom() {
+        importFixture()
+        let outline = app.outlines["ww.setup.sources"]
+        let status = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status'")).firstMatch
+        // AppKit's column autoresizing may re-spread width a little between cycles; what must hold is that
+        // the columns never outgrow the table: Status stays fully inside it, at least its minimum width.
+        func assertFits(_ context: String) {
+            assertStatusVisible(outline, context)
+            // The Status column (its row's last cell), not the status text inside it.
+            let row = outline.outlineRows.containing(NSPredicate(format: "identifier == %@", status.identifier)).firstMatch
+            let column = row.cells.allElementsBoundByIndex.last?.frame ?? .zero
+            XCTAssertGreaterThanOrEqual(column.width, 95, "\(context): Status column keeps its minimum width (\(column))")
+            XCTAssertLessThanOrEqual(column.maxX, outline.frame.maxX + 1, "\(context): no horizontal overflow (\(column) vs \(outline.frame))")
+        }
+        // Ten cycles: the invariant holds every time, and any drift converges (bounded, not compounding).
+        var offsets: [Double] = []
+        var widths: [Double] = []
+        // Each cycle crosses a column tier (#129): at the default size Epoch and Ch are hidden (their values
+        // move into the Name cell's VoiceOver value); zoomed, every column shows again.
+        let epochInName = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND value CONTAINS 'epoch'")).firstMatch
+        for cycle in 1...10 {
+            menu("Window", "Zoom")  // default size
+            assertFits("zoom cycle \(cycle), default size")
+            XCTAssertTrue(epochInName.waitForExistence(timeout: 2), "zoom cycle \(cycle): default size hides Epoch (tier change)")
+            menu("Window", "Zoom")  // zoomed
+            assertFits("zoom cycle \(cycle), zoomed")
+            XCTAssertTrue(epochInName.waitForNonExistence(timeout: 2), "zoom cycle \(cycle): zoomed shows Epoch again (tier change)")
+            offsets.append(status.frame.minX - outline.frame.minX)
+            widths.append(outline.frame.width)
+        }
+        let record = zip(offsets, widths).enumerated().map { "cycle \($0.offset + 1): Status x \($0.element.0), table \($0.element.1)" }
+        print("ZOOM \(record.joined(separator: "; "))")
+        let summary = XCTAttachment(string: record.joined(separator: "\n"))
+        summary.name = "zoom cycles"
+        summary.lifetime = .keepAlways
+        add(summary)
+        func spread(_ values: ArraySlice<Double>) -> Double { values.max()! - values.min()! }
+        XCTAssertLessThanOrEqual(spread(offsets.suffix(3)), spread(offsets.prefix(3)) + 20, "drift converges: \(offsets)")
+        select("tr2.wav")
+
+        // #104: columns follow the width plan only; the header offers no show/hide/reorder menu.
+        outline.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 60, dy: -10)).rightClick()
+        // Only on-screen menu items count: the menu bar's View › Sort By also has Name/Epoch/Speaker/Status
+        // items, with zero-size frames while closed.
+        Thread.sleep(forTimeInterval: 1)
+        let shown = app.menuItems.allElementsBoundByIndex.filter { $0.frame.width > 0 && $0.frame.height > 0 }
+        let columnItems = shown.filter { ["Epoch", "Ch", "Speaker", "Role", "Status", "Name"].contains($0.title) }
+        XCTAssertTrue(columnItems.isEmpty, "no header menu to show/hide columns: \(columnItems.map(\.title))")
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
     }
 
     /// At the default show-window size Sources shows several rows with Status readable (no horizontal

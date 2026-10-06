@@ -41,3 +41,24 @@ struct ConfirmationButtonsTests {
         #expect(!buttons.confirm.hasDestructiveAction)
     }
 }
+
+/// #114: which Setup confirmations are chosen destruction (Return confirms, no destructive role).
+/// `SetupConfirmationKind.swift` is compiled into this unhosted target; the app's `Confirmation.kind`
+/// switch is exhaustive, so a new confirmation must pick a kind here.
+@Suite("Setup confirmation kinds")
+struct SetupConfirmationKindTests {
+    @Test func chosenDeletesConfirmWithReturn() {
+        #expect(SetupConfirmationKind.removeSources.isChosenDestruction)
+        #expect(SetupConfirmationKind.deleteSpeaker.isChosenDestruction)
+        #expect(SetupConfirmationKind.deleteGroup.isChosenDestruction)
+    }
+
+    @Test func cancelDownloadKeepsTheSafeSide() {
+        #expect(!SetupConfirmationKind.cancelDownload.isChosenDestruction, "Keep Downloading stays the safe side")
+    }
+
+    @Test func everyKindIsClassified() {
+        #expect(SetupConfirmationKind.allCases.filter(\.isChosenDestruction).count == 3)
+        #expect(SetupConfirmationKind.allCases.count == 4)
+    }
+}

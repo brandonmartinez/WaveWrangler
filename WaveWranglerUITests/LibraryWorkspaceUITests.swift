@@ -184,10 +184,9 @@ final class LibraryWorkspaceUITests: XCTestCase {
             let cell = entries.staticTexts.matching(NSPredicate(format: "label == 'Status' AND value == %@", status)).firstMatch
             XCTAssertTrue(cell.exists, "Status text \(status) (text, not colour)")
         }
-        // An unknown episode count shows "—" and reads "unknown" to VoiceOver (not the dash).
+        // The Episodes column is hidden at the default width (#140); its "unknown" value is checked where it's shown,
+        // in testEntryColumnsKeepStatusVisibleAtDefaultSizeZoomAnd200Percent.
         let newer = entries.outlineRows.containing(NSPredicate(format: "label == 'Status' AND value == 'Needs newer WaveWrangler'")).firstMatch
-        XCTAssertTrue(newer.staticTexts.matching(NSPredicate(format: "value == 'unknown'")).firstMatch.exists,
-                      "Episodes reads unknown: \(newer.staticTexts.allElementsBoundByIndex.map { self.value($0) })")
         // Status wraps to a second line rather than truncating at 1 line (IA §3.2, CMD-20): its row is taller
         // than a one-line row when the text doesn't fit the column.
         let status = newer.staticTexts.matching(NSPredicate(format: "label == 'Status'")).firstMatch
@@ -198,6 +197,79 @@ final class LibraryWorkspaceUITests: XCTestCase {
         }
         XCTAssertLessThanOrEqual(status.frame.height, newer.frame.height, "status text fits its row")
         try audit("Library window (F-LIB100, Unavailable)")
+    }
+
+    /// #140: the entry list's Status column is fully visible at the default Library window, after zooming the
+    /// window and back, and at 200% text; columns hide by priority (Episodes, Last Opened, Location) instead.
+    func testEntryColumnsKeepStatusVisibleAtDefaultSizeZoomAnd200Percent() throws {
+        launch(["-WWUITestLibraryFixture", "lib100"])
+        let window = app.windows["Library"]
+        waitFor(element("ww.library.sidebar"))
+        let entries = app.outlines["ww.library.entries"]
+        waitFor(entries)
+        func statusCell() -> XCUIElement { entries.staticTexts.matching(NSPredicate(format: "label == 'Status'")).firstMatch }
+        func assertStatusVisible(_ context: String, file: StaticString = #filePath, line: UInt = #line) {
+            let status = statusCell()
+            XCTAssertTrue(status.waitForExistence(timeout: 5), "\(context): a Status cell", file: file, line: line)
+            let frame = status.frame, list = entries.frame, win = window.frame
+            XCTAssertGreaterThanOrEqual(frame.minX, list.minX, "\(context): Status \(frame) starts inside the list \(list)", file: file, line: line)
+            XCTAssertLessThanOrEqual(frame.maxX, min(list.maxX, win.maxX) + 1.5, "\(context): Status \(frame) ends inside the list \(list) and window \(win)", file: file, line: line)
+            XCTAssertTrue(status.isHittable, "\(context): Status is on screen", file: file, line: line)
+        }
+        func headerTitles() -> [String] {
+            entries.descendants(matching: .any).matching(NSPredicate(format: "elementType == %d", XCUIElement.ElementType.button.rawValue))
+                .allElementsBoundByIndex.map(\.title).filter { !$0.isEmpty }
+        }
+        assertStatusVisible("default 1000×600")
+        print("COLUMNS default: \(headerTitles())")
+        // Episodes and Last Opened are hidden at this width: the Name cell's VoiceOver value carries them.
+        let name = entries.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.' AND label BEGINSWITH 'Synthetic Show' AND value CONTAINS 'episode' AND value CONTAINS 'last opened'")).firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 3),
+                      "hidden column values are in the Name cell's VoiceOver value: \(entries.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.'")).firstMatch.debugDescription.prefix(300))")
+
+        // Zoom the window (wider: every column fits), then back. Window › Zoom (the green title-bar button may be
+        // full screen only, depending on system settings).
+        func zoomWindow() {
+            let windowMenu = app.menuBars.menuBarItems["Window"]
+            windowMenu.click()
+            let item = windowMenu.menuItems["Zoom"].firstMatch
+            XCTAssertTrue(item.waitForExistence(timeout: 2), "Window › Zoom")
+            item.click()
+        }
+        let before = window.frame
+        zoomWindow()
+        XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.frame.width > before.width + 100 }, object: nil)], timeout: 5),
+                       .completed, "window zoomed: \(window.frame)")
+        assertStatusVisible("zoomed")
+        print("COLUMNS zoomed: \(headerTitles())")
+        print("ENTRIES zoomed: list \(entries.frame) window \(window.frame)")
+        // An unknown episode count reads "unknown" to VoiceOver (not the dash): in the Episodes cell when that
+        // column is shown, else in the Name cell's value ("episodes unknown, …"; the split view may give a wider
+        // window's extra width to the detail column).
+        app.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.downArrow, modifierFlags: [])
+        XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Unavailable (3)'"), object: entries)], timeout: 5), .completed)
+        let newer = entries.outlineRows.containing(NSPredicate(format: "label == 'Status' AND value == 'Needs newer WaveWrangler'")).firstMatch
+        let unknown = newer.staticTexts.matching(NSPredicate(format: "value == 'unknown' OR value BEGINSWITH 'episodes unknown'")).firstMatch
+        XCTAssertTrue(unknown.waitForExistence(timeout: 3),
+                      "Episodes reads unknown: \(newer.staticTexts.allElementsBoundByIndex.map { self.value($0) })")
+        zoomWindow()
+        XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in abs(window.frame.width - before.width) < 2 }, object: nil)], timeout: 5),
+                       .completed, "window back to its size: \(window.frame)")
+        assertStatusVisible("unzoomed")
+
+        // 200% text: Status stays fully visible; zooming in and out at 200% stays stable.
+        for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
+        let grown = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in statusCell().frame.height > 28 }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [grown], timeout: 5), .completed, "200% applied: \(statusCell().frame)")
+        assertStatusVisible("200% text")
+        print("COLUMNS 200%: \(headerTitles())")
+        zoomWindow()
+        assertStatusVisible("200% zoomed")
+        zoomWindow()
+        assertStatusVisible("200% unzoomed")
+        XCTAssertEqual(app.state, .runningForeground, "no crash across zoom and text-size changes")
+        try audit("Library window at 200% text after zoom")
     }
 
     func testCollectionsCreateAddReorderDeleteWithKeyboardAndMenus() throws {
@@ -485,7 +557,8 @@ final class LibraryWorkspaceUITests: XCTestCase {
         app.typeKey("l", modifierFlags: [.command, .shift])
         let entries = app.outlines["ww.library.entries"]
         waitFor(entries, timeout: 10)
-        let row = entries.outlineRows.containing(NSPredicate(format: "value == 'Relaunch Show'")).firstMatch
+        // The Name cell: label = name when columns are hidden (#140), else its value is the name.
+        let row = entries.outlineRows.containing(NSPredicate(format: "label == 'Relaunch Show' OR value == 'Relaunch Show'")).firstMatch
         waitFor(row, timeout: 10)
         let statusCell = row.staticTexts.matching(NSPredicate(format: "label == 'Status'")).firstMatch
         let available = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Available'"), object: statusCell)
