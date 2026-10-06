@@ -18,7 +18,8 @@ import XCTest
 ///      comparison → confirm → Ready.
 /// Every scenario checks the sources are byte- and mtime-unchanged (zero source writes).
 /// `TEST_RUNNER_WW_HOLDOUT_SCENARIOS` / 4 cycles run (default 1 cycle = calibration; 20 = 5 cycles).
-/// `TEST_RUNNER_WW_FIXTURE_SPLIT=holdout` selects the registry's holdout seeds (see `fixtureSeed`).
+/// `TEST_RUNNER_WW_FIXTURE_SPLIT=holdout` selects the registry's holdout seeds (see `fixtureSeed`; fresh per
+/// freeze revision, currently m1-freeze-6).
 @MainActor
 final class SourceGrantHoldoutUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -29,8 +30,14 @@ final class SourceGrantHoldoutUITests: XCTestCase {
     /// Registry split: `WW_FIXTURE_SPLIT` = holdout | calibration (default calibration; anything else fails the test).
     private var split: String { Acceptance.environment["WW_FIXTURE_SPLIT"] ?? "calibration" }
 
+    /// Seed split label for the registry derivation. Calibration keeps its seeds; the holdout uses fresh seeds per
+    /// freeze revision (m1-freeze-6: "holdout-f6"), so a later holdout never reuses an earlier one's cases.
+    static func seedSplit(_ split: String) -> String {
+        split == "holdout" ? "holdout-f6" : split
+    }
+
     static func fixtureSeed(split: String, caseIndex: Int) -> UInt64 {
-        let digest = SHA256.hash(data: Data("ww-m1-fixture|v1|M1-REF-020|\(split)|\(caseIndex)".utf8))
+        let digest = SHA256.hash(data: Data("ww-m1-fixture|v1|M1-REF-020|\(seedSplit(split))|\(caseIndex)".utf8))
         return digest.prefix(8).reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
     }
 
@@ -106,7 +113,8 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let names = ["ref020-\(cycle)-a.wav", "ref020-\(cycle)-b.wav"]
         // Registry generator (m1-fixture-registry.json, M1-REF-020): one seed per GUI scenario,
-        // sha256("ww-m1-fixture|v1|M1-REF-020|<split>|<caseIndex>") → first 8 bytes big-endian. Cycle c covers case
+        // sha256("ww-m1-fixture|v1|M1-REF-020|<seed split>|<caseIndex>") → first 8 bytes big-endian, where the seed
+        // split is "calibration" or, for the holdout, "holdout-f6" (m1-freeze-6). Cycle c covers case
         // indices 4c…4c+3: the show document uses seed(4c); source a and b bytes come from seed(4c+1) and seed(4c+2).
         let seeds = (0..<4).map { Self.fixtureSeed(split: split, caseIndex: cycle * 4 + $0) }
         cycleSeeds = seeds
@@ -239,7 +247,7 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         let offset = ["grant": 0, "relaunch": 1, "regrant": 2].first { scenario.hasPrefix($0.key) }?.value
             ?? (scenario.hasPrefix("relink") ? 3 : nil)
         var entry: [String: Any] = ["cycle": cycle + 1, "scenario": scenario, "passed": failures.isEmpty, "failures": failures,
-                                    "statuses": statuses, "split": split, "cycleSeeds": cycleSeeds.map { "\($0)" }]
+                                    "statuses": statuses, "split": split, "seedSplit": Self.seedSplit(split), "cycleSeeds": cycleSeeds.map { "\($0)" }]
         if let offset { entry["caseIndex"] = cycle * 4 + offset }
         records.append(entry)
         Acceptance.record(self, "REF-020 cycle \(cycle + 1) \(scenario): \(failures.isEmpty ? "PASS" : "FAIL \(failures)") \(statuses)")
@@ -332,18 +340,42 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         return (payload["show"] as? [String: Any])?["title"] as? String
     }
 
-    /// In the open panel (a sheet): Go to Folder (⇧⌘G), type the path, Return; then Return to confirm.
+    /// How long `choosePath` waits for the sandboxed open panel to appear.
+    static let openPanelTimeout: TimeInterval = 20
+
+    /// Where the sandboxed open panel is shown, or nil if it isn't visible yet. The panel is drawn by the
+    /// out-of-process panel service (powerbox), but XCUITest doesn't always report that service as running: in the
+    /// m1-freeze-5 holdout (cdb56bd, cycle 1) the first library panel was an app **window** with identifier
+    /// `open-panel` (not a sheet), and the service was not reported running (#151).
+    private func openPanelHost(_ service: XCUIApplication) -> String? {
+        if service.state != .notRunning { return "openAndSavePanelService" }
+        if app.windows["open-panel"].exists { return "app window open-panel" }
+        if app.sheets.firstMatch.exists { return "app sheet" }
+        if app.dialogs.firstMatch.exists { return "app dialog" }
+        return nil
+    }
+
+    /// In the open panel: Go to Folder (⇧⌘G), type the path, Return; then Return to confirm.
     private func choosePath(_ path: String, confirm: Bool) {
-        // The sandboxed open panel is drawn by the out-of-process panel service (powerbox); the app's own AX
-        // snapshot stalls while it is up, so keys go to the service.
+        // The app's own AX snapshot stalls while the panel is up, so keys go to the service when it is reported.
         let service = XCUIApplication(bundleIdentifier: "com.apple.appkit.xpc.openAndSavePanelService")
-        Thread.sleep(forTimeInterval: 2.0)
-        guard service.state != .notRunning || app.sheets.firstMatch.exists else {
-            failures.append("open panel shown")
+        let start = Date()
+        var host: String?
+        // Bounded wait for any panel host (a cold panel can take longer than the 2 s the frozen harness allowed).
+        _ = Acceptance.waitFor(timeout: Self.openPanelTimeout) {
+            host = self.openPanelHost(service)
+            return host != nil
+        }
+        guard let host else {
+            let windows = app.windows.allElementsBoundByIndex.map { "\($0.identifier)|\($0.title)" }
+            failures.append("open panel shown (no panel host within \(Int(Self.openPanelTimeout)) s; saw service \(service.state.rawValue), app windows \(windows), sheets \(app.sheets.count), dialogs \(app.dialogs.count))")
             return
         }
-        let target: XCUIApplication = service.state == .notRunning ? app : service
-        Acceptance.record(self, "REF-020 panel host: \(target === service ? "openAndSavePanelService" : "app")")
+        // Keep at least the frozen harness's 2 s settle before typing, so a warm panel is driven as before.
+        let settle = 2.0 - Date().timeIntervalSince(start)
+        if settle > 0 { Thread.sleep(forTimeInterval: settle) }
+        let target: XCUIApplication = host == "openAndSavePanelService" ? service : app
+        Acceptance.record(self, "REF-020 panel host: \(host) after \(String(format: "%.1f", Date().timeIntervalSince(start))) s")
         target.typeKey("g", modifierFlags: [.command, .shift])
         Thread.sleep(forTimeInterval: 1.0)
         target.typeText(path)
