@@ -226,3 +226,12 @@
 - **Drift fallback (Lead):** until a frozen WW-016 holdout passes, alignment relies on manual epochs/anchors and the limited supported envelope, and no map becomes `clockApproved` automatically. An acoustically consistent result is only ever an `acousticConsistentProposal`.
 - **WW-019 (#16)** stays open as the documentary record until WW-014–018/050 evidence is accepted.
 
+### 2026-10-06: Compute budget on the user's working Mac
+
+**By:** the user (relayed 2026-10-06 09:27), recorded by the M2 coordinator. A WW-017 calibration sweep ran at 766–1609% CPU while other lanes' tests ran, pushing the dev Mac's 1-minute load to 192 on 18 cores while the user was working on it.
+
+- Bound test parallelism: `swift test --num-workers ≤4` (or `--no-parallel` for sweeps). Calibration/sweep/holdout code caps its internal concurrency through an env/config default of ≤4, never `ProcessInfo.activeProcessorCount`, so no single test process uses more than ~4 cores here.
+- Run heavy calibration/sweep/holdout jobs one at a time on this Mac. They may run on the Mac mini when it has spare non-GUI capacity: at most one non-GUI lane there, and never during a GUI gate run if it would perturb timing.
+- Keep this Mac's total compiler and test work within ~3 concurrent `-jobs 4` jobs, counting the M1 coordinator's lanes. Check `uptime` before heavy work and wait while the load is above ~24.
+- Carried into routing.md (Milestone orchestration) and the M3 kickoff.
+
