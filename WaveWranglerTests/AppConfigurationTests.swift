@@ -57,6 +57,21 @@ struct AppConfigurationTests {
         #expect(decoded.payload == model)
         #expect(decoded.revision == 1)
     }
+
+    /// #126: windowless error presentation is routed to the opaque panel by `WaveWranglerApplication`, so it
+    /// must be the app's NSApp: the principal class in every configuration, and the first `shared` in main().
+    @Test func applicationClassIsWaveWranglerApplication() throws {
+        let project = try String(contentsOf: Self.appFolder.deletingLastPathComponent().appending(path: "WaveWrangler.xcodeproj/project.pbxproj"), encoding: .utf8)
+        let principal = project.components(separatedBy: "\n").filter { $0.contains("INFOPLIST_KEY_NSPrincipalClass") }
+        #expect(principal.count == 2)
+        #expect(principal.allSatisfy { $0.contains("= WaveWranglerApplication;") })
+        let app = try String(contentsOf: Self.appFolder.appending(path: "App/WaveWranglerApplication.swift"), encoding: .utf8)
+        #expect(app.contains("@objc(WaveWranglerApplication)\nfinal class WaveWranglerApplication: NSApplication"))
+        let main = try String(contentsOf: Self.appFolder.appending(path: "App/AppDelegate.swift"), encoding: .utf8)
+        let entry = try #require(main.range(of: "static func main() {"))
+        let firstShared = try #require(main[entry.upperBound...].range(of: ".shared"))
+        #expect(main[entry.upperBound..<firstShared.upperBound].hasSuffix("WaveWranglerApplication.shared"))
+    }
 }
 
 /// UI-test hooks (isolated storage, distributed autosave toggles) must never be active in Release builds.

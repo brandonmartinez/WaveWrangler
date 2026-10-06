@@ -1,0 +1,62 @@
+{
+  "cells": {
+    "library": "library-conflict",
+    "recovery": "recovery",
+    "relink": "cross-machine-relink",
+    "show": "show-conflict"
+  },
+  "cleanup": {
+    "at": "2026-10-05T19:53:34Z",
+    "deleted": "<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025/holdout",
+    "existedBefore": true,
+    "existsAfterLocally": false
+  },
+  "clockOffsetEnd": {
+    "offsetMs": 190,
+    "rttMs": 391.2
+  },
+  "clockOffsetStart": {
+    "offsetMs": 24,
+    "rttMs": 52.8
+  },
+  "commit": "8456bcde770012d761ef6599c5db8355aeaeed22",
+  "counts": {
+    "library": 30,
+    "recovery": 20,
+    "relink": 20,
+    "show": 30
+  },
+  "finishedAt": "2026-10-05T19:53:33Z",
+  "fixture": "M1-DUR-025",
+  "freeze": "m1-freeze-2",
+  "hostLabels": {
+    "A": "this Mac (MacBook, macOS 27.0.1, 18-core, 128 GiB)",
+    "B": "Mac mini (Macsimus, Apple M2 Pro, macOS 27.0.1, 12-core/32 GiB)"
+  },
+  "hosts": {
+    "A": {
+      "cores": "18",
+      "cpu": "Apple M5 Max",
+      "hostname": "Macatron.local",
+      "macOS": "27.0.1 (26A434)"
+    },
+    "B": {
+      "cores": "12",
+      "cpu": "Apple M2 Pro",
+      "hostname": "Macsimus",
+      "macOS": "27.0.1 (26A434)"
+    }
+  },
+  "interpretation": "ww-003-fixture-protocol.md \u00a74.2.1",
+  "label": "two-host evidence (Mac + Mac mini), same Apple account, iCloud Drive, synthetic data only",
+  "probeSha256": "4450c9fea3907b58ba86edfce778b83b093ea61d0067acbf26dcffe2720fe797",
+  "requiredCommits": "ad9af5afd786ed9c45a74d487244bcc12fabf78e,ce1eb236b182129e7f970a63ca5e2131348c39fc,e0ac452ee7dae1f843a79f66a284089f4a1405e2,d1aeb9f3a2d0c52a96b5bb8c8d840604eb35f8e8",
+  "split": "holdout",
+  "startedAt": "2026-10-05T18:51:30Z",
+  "trees": {
+    "Packages/WaveWranglerKit/Sources/WWPersistence": "dea497dea6eb1510a706c43ba933fd4a375885bc",
+    "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "92dc8ab055386d81b99feda8ecc6b1f8d7622add",
+    "scripts/dur025": "8286cc08029b4536ae824a57ae5ad977e7599e1a"
+  },
+  "trialRoot": "<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025"
+}
