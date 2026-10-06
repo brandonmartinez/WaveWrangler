@@ -34,6 +34,12 @@ final class SelectionContrastUITests: XCTestCase {
             let shows = app.descendants(matching: .any)["ww.library.sidebar.shows"]
             XCTAssertTrue(shows.waitForExistence(timeout: 15), "\(appearance): Library sidebar")
             results.append(measureSelected(shows, surface: "Library sidebar 'Shows'", appearance: appearance, increaseContrast: increaseContrast))
+            // Focus leaves the sidebar: the selection becomes unemphasized (grey); its text must stay legible
+            // (guards against white text drawn on a grey selection).
+            app.typeKey("\t", modifierFlags: [])
+            Thread.sleep(forTimeInterval: 1)
+            results.append(measureUnemphasized(shows, surface: "Library sidebar 'Shows' (focus in the entry list)", appearance: appearance,
+                                               increaseContrast: increaseContrast))
             app.terminate()
 
             launch(["-WWUITestOpenShow", "Synthetic Show", "-WWUITestShowEpisodes", "2"] + overrides)
@@ -71,6 +77,21 @@ final class SelectionContrastUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(count, AcceptanceAudit.minimumGlyphPixels, "\(label): glyph pixels \(count)")
         XCTAssertGreaterThanOrEqual(p75, 4.5, "\(label): text p75 \(p75) (\(m["text"] ?? "") on \(background))")
         Acceptance.record(self, "#138 \(label): \(count) px, p75 \(p75), \(m["text"] ?? "") on \(background)")
+        return ["appearance": appearance, "systemIncreaseContrast": increaseContrast, "surface": surface, "crop": name,
+                "frame": "\(row.frame)"].merging(m) { $1 }
+    }
+
+    /// Measures a selected row whose list no longer has keyboard focus: text ≥ 4.5:1 on whatever selection is drawn.
+    private func measureUnemphasized(_ row: XCUIElement, surface: String, appearance: String, increaseContrast: Bool) -> [String: Any] {
+        let shot = row.screenshot()
+        let name = "selection-\(appearance)-\(surface.filter { $0.isLetter || $0.isNumber }).png"
+        Acceptance.attach(self, png: shot.pngRepresentation, name: name)
+        let m = ContrastMeter.measure(shot.image) ?? [:]
+        let count = m["glyphPixels"] as? Int ?? 0, p75 = m["glyphP75"] as? Double ?? 0
+        let label = "\(appearance) (system Increase Contrast \(increaseContrast)) \(surface)"
+        XCTAssertGreaterThanOrEqual(count, AcceptanceAudit.minimumGlyphPixels, "\(label): glyph pixels \(count)")
+        XCTAssertGreaterThanOrEqual(p75, 4.5, "\(label): text p75 \(p75) (\(m["text"] ?? "") on \(m["background"] ?? ""))")
+        Acceptance.record(self, "#139 \(label): \(count) px, p75 \(p75), \(m["text"] ?? "") on \(m["background"] ?? "")")
         return ["appearance": appearance, "systemIncreaseContrast": increaseContrast, "surface": surface, "crop": name,
                 "frame": "\(row.frame)"].merging(m) { $1 }
     }

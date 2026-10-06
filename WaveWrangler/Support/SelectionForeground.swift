@@ -1,18 +1,19 @@
 import SwiftUI
 
-/// #138: text and symbols on an emphasized (accent-filled) selection are drawn in opaque white.
+/// #138/#139: text and symbols on an emphasized (accent-filled) sidebar selection are drawn in opaque white.
 ///
-/// In a sidebar `List`, a selected row's label uses the vibrant primary style. With the system Increase
-/// Contrast setting on (macOS 27.0.1), that label rendered as about 55 % white blended into the accent fill
-/// (#94B6F8 on #0A6CF0, 2.33:1). Explicit white is not vibrant, so the label stays white and reaches the
-/// accent's measured white-text ratio (≥ 4.5:1 for every `AccentColor` variant; see `AccentColorContrastTests`).
-/// Applies only while SwiftUI reports an emphasized selection behind the view (`backgroundProminence ==
-/// .increased`), so unemphasized selections (inactive window, list not focused) keep the system colours.
+/// With the system Increase Contrast setting on, in dark appearance (macOS 27.0.1), a selected sidebar row's label
+/// rendered as a vibrant tint blended into the accent fill (#94B3F4 on #0B65E8, 2.48:1). Explicit white renders
+/// non-vibrant and reaches 5.2:1 (diagnostic run, this Mac, 2026-10-05). SwiftUI's `backgroundProminence` never
+/// reads `.increased` in the macOS sidebar `List`, so emphasis is derived from the row's own state instead: the
+/// row is selected, its list has keyboard focus, and the window is key (the conditions under which AppKit draws
+/// the accent-filled selection). An unemphasized (grey) selection keeps the system colours.
 struct EmphasizedSelectionForeground: ViewModifier {
-    @Environment(\.backgroundProminence) private var prominence
+    let isSelectedInFocusedList: Bool
+    @Environment(\.controlActiveState) private var controlActiveState
 
     func body(content: Content) -> some View {
-        if prominence == .increased {
+        if isSelectedInFocusedList && controlActiveState == .key {
             content.foregroundStyle(Color.white)
         } else {
             content
@@ -21,9 +22,9 @@ struct EmphasizedSelectionForeground: ViewModifier {
 }
 
 extension View {
-    /// See `EmphasizedSelectionForeground` (#138).
-    func emphasizedSelectionForeground() -> some View {
-        modifier(EmphasizedSelectionForeground())
+    /// See `EmphasizedSelectionForeground` (#138/#139).
+    func emphasizedSelectionForeground(selectedInFocusedList: Bool) -> some View {
+        modifier(EmphasizedSelectionForeground(isSelectedInFocusedList: selectedInFocusedList))
     }
 }
 
