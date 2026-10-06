@@ -49,7 +49,9 @@ enum ShowDocumentStatusMapping {
         let final: WWOrganizer.DocumentSaveState = if let formatUpdate {
             // #159: until the update publishes, the show is read-only whatever the persistence state says (D14/D15).
             switch formatUpdate {
-            case .needed, .updating: .updateNeeded
+            case .needed: .updateNeeded
+            // No actions while the update runs: Update… would be a dead button.
+            case .updating: .updatingFormat
             case .failed: .updateFailed
             case .interrupted(let reason): .readOnly(reason: reason)
             }

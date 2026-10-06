@@ -75,7 +75,10 @@ struct FormatUpdateTests {
                                           formatUpdate: update)
         }
         #expect(map(.needed).state == .updateNeeded)
-        #expect(map(.updating).state == .updateNeeded)
+        #expect(map(.updating).state == .updatingFormat)
+        // #175 review: no dead Update… button while the update runs.
+        #expect(SaveStatusPresentation(map(.updating), showName: "S").actions.isEmpty)
+        #expect(SaveStatusPresentation(map(.needed), showName: "S").actions == [.updateFormat])
         #expect(map(.failed(detail: "x")).state == .updateFailed)
         #expect(map(.interrupted(reason: "it changed")).state == .readOnly(reason: "it changed"))
         for update in Self.awaiting {

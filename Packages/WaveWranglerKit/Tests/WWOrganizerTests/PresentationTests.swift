@@ -59,7 +59,7 @@ struct SaveStatusTests {
         .edited, .saving(cancellable: false), .notConfirmed, .conflict(changedAt: nil), .locationUnavailable,
         .diskFull(volumeName: "Data"), .failed(reason: "WaveWrangler doesn't have permission to save in this folder"),
         .cancelled, .recovered(incompleteSaveAt: date, openedVersionAt: date), .readOnlyNewerFormat, .readOnlyDamaged,
-        .updateNeeded, .updateFailed, .readOnlyLocation, .readOnly(reason: "it's a recovered copy"),
+        .updateNeeded, .updatingFormat, .updateFailed, .readOnlyLocation, .readOnly(reason: "it's a recovered copy"),
     ]
 
     private func present(_ state: DocumentSaveState, autosave: Bool = true, retrying: Bool = false) -> SaveStatusPresentation {
@@ -258,6 +258,13 @@ struct FormatUpdatePromptTests {
         // The D14 sheet stays reachable from the status item if its first presentation didn't happen or was dismissed.
         #expect(needed.actions == [.updateFormat] && SaveStatusAction.updateFormat.rawValue == "Update…")
         #expect(needed.messageBar == nil)
+        // While the update runs there's nothing to choose: no dead Update… button, still read-only, not dirty.
+        let updating = SaveStatusPresentation(DocumentSaveStatus(state: .updatingFormat, autosaveEnabled: true), showName: "Show")
+        #expect(DocumentSaveState.updatingFormat.isReadOnly && !DocumentSaveState.updatingFormat.impliesUnsavedChanges)
+        #expect(updating.actions.isEmpty && updating.messageBar == nil && updating.isReadOnly)
+        #expect(updating.itemText == "Updating…" && updating.symbolName == nil)
+        #expect(updating.accessibilityValue == "Updating…. WaveWrangler is updating “Show” to the current format.")
+        #expect(CloseDecision(state: .updatingFormat, autosaveEnabled: true, showName: "Show") == .closeImmediately)
         let failed = SaveStatusPresentation(DocumentSaveStatus(state: .updateFailed, autosaveEnabled: true), showName: "Show")
         #expect(failed.itemText == "Read-only")
         #expect(failed.messageBar?.heading == "Couldn't update this show")
