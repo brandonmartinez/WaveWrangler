@@ -1,0 +1,187 @@
+{
+  "freezeID": "m2-freeze-timemap",
+  "date": "2026-10-06",
+  "recordedBy": "Mac (WW-050 part 2 / WW-015 freeze), at the M2 coordinator's direction",
+  "status": "FROZEN 2026-10-06, taking effect at the merge commit of the PR that adds this record. HOLDOUT NOT RUN.",
+  "issues": [
+    "https://github.com/brandonmartinez/WaveWrangler/issues/10",
+    "https://github.com/brandonmartinez/WaveWrangler/issues/45"
+  ],
+  "registry": "docs/m2/fixtures/m2-fixture-registry.json",
+  "calibrationEvidence": "docs/m2/evidence/ww-015-time-maps.md",
+  "fixtureID": "M2-TIMEMAP-001",
+  "baseCommit": "c9709e7fee4908d6d70ce5ba3349cfd1e570de1d",
+  "baseCommitNote": "origin/main when this record was authored (merge of PR #184). The freeze takes effect at the merge commit of the PR that adds it; pinnedTrees, not a commit SHA, identify the frozen code.",
+  "scope": "M2-TIMEMAP-001: the stratum recipe, oracle truth, calibration/holdout seeds and counts, probes, and the gate exactly as written here. Frozen code: the WWTimeMap source tree (unchanged by this freeze; it equals the tree m2-freeze-estimator and m2-freeze-render recorded as a dependency) and the WWTimeMapTests tree (generator, oracle, probes, gate evaluator and holdout harness), pinned by git tree ID.",
+  "pinnedTrees": {
+    "Sources/WWTimeMap": "PENDING",
+    "Tests/WWTimeMapTests": "PENDING"
+  },
+  "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit (equal to `git rev-parse <commit>:Packages/WaveWranglerKit/<path>`). TimeMapFreezeTests.timeMapAndHarnessTreesMatchTheFreezeRecord recomputes both tree IDs from the working tree on every test run and fails on any difference. A change to either tree after the freeze is a new dated freeze revision with a fresh holdout; the earlier record is retained.",
+  "dependencyTreesAtFreeze": {
+    "note": "Informational, not pinned: another lane owns this module. The holdout run reports the tree IDs it actually ran.",
+    "Sources/WWCore": "c310389c4b41ebde80c5dabaea12fd5376f5d9ba"
+  },
+  "generator": {
+    "kind": "synthetic-deterministic, in memory, in test code only (no files, recordings, clocks or tasks inside the map code)",
+    "files": [
+      "Packages/WaveWranglerKit/Tests/WWTimeMapTests/TimeMapFreezeTests.swift",
+      "Packages/WaveWranglerKit/Tests/WWTimeMapTests/SyntheticTruth.swift (SyntheticTimeMapGenerator, oracle)",
+      "Packages/WaveWranglerKit/Tests/WWTimeMapTests/RoundTripPropertyTests.swift (probe, checkInverse, Stats, FailureCategory)"
+    ],
+    "seedDerivation": "first 8 bytes, big-endian, of SHA-256(\"ww-m2-fixture|v1|M2-TIMEMAP-001|<split>|<index>\"); SplitMix64(seed:) drives SyntheticTimeMapGenerator.timeline until the stratum accepts it (rejection sampling, at most maximumDraws), then the same stream drives RoundTripPropertyTests.probe for every occurrence. Disjoint from the pre-freeze regression seeds 0x57573031355f544d and 0x57573031355f4744 (checked by seedsAreStableAndSplitSeparated)."
+  },
+  "recipe": {
+    "case": "stratum = index mod 7; one SyntheticTimeMapGenerator timeline (1-3 groups of epochs, affine segments, occurrences and spans) per case",
+    "strata": [
+      "general",
+      "multi-segment",
+      "gap",
+      "unsupported",
+      "extreme-rate-ratio",
+      "edge-nominal-rate",
+      "long-occurrence"
+    ],
+    "strataDetail": {
+      "general": "any timeline",
+      "multi-segment": "some mapped epoch has >= 2 affine segments",
+      "gap": "some occurrence has a known gap between consecutive spans",
+      "unsupported": "some span lies on an unsupported epoch",
+      "extreme-rate-ratio": "some segment has |a - 1| >= 0.1 (100,000 ppm)",
+      "edge-nominal-rate": "some occurrence's nominal rate is 1, 7, 44099 or 2^20 Hz",
+      "long-occurrence": "some occurrence has frameCount >= 2^32"
+    },
+    "maximumDraws": 10000,
+    "generatorRates": [
+      8000,
+      11025,
+      16000,
+      22050,
+      32000,
+      44100,
+      48000,
+      88200,
+      96000,
+      176400,
+      192000,
+      352800,
+      384000,
+      1,
+      7,
+      44099,
+      1048576
+    ],
+    "generatorPPMMilli": [
+      0,
+      1,
+      -1,
+      1000,
+      -1000,
+      100000,
+      -100000,
+      1000000,
+      -1000000,
+      10000000,
+      -10000000,
+      100000000,
+      -100000000,
+      -500000000,
+      1000000000
+    ]
+  },
+  "truth": "The oracle evaluated in exact rational arithmetic from the generating parameters (M2-C3: u = n/F + e, t = a*u + b; inverse n = F*((t - b)/a - e)), with gaps, unsupported epochs and coverage taken from the generated spans; never from the compiled map under test.",
+  "measurement": "RoundTripPropertyTests.probe per occurrence. Forward: frames -1, 0, end-1, end, Int64.min/max, every span edge and its neighbours, 3 seeded interior frames per span, the frames either side of every segment knot, a seeded frame in every gap; each must match the oracle state (aligned instant/epoch/provenance, gap with a bracketing boundary, unsupported, outside), aligned times strictly increase, and every aligned frame must round-trip exactly (frame -> aligned -> same frame). Inverse: hull ends, grid instants at a seeded rate in {8000, 44100, 48000, 96000, 192000, F} (ends plus 8 seeded), knot images, 2 seeded rationals per span, points just outside coverage and inside every gap; each must match the oracle state, and a returned source must have exactFrame equal to the oracle, frame = round-half-up(exact), |frame - exact| <= 1/2, and aligned -> nearest frame -> aligned within half a frame of the steepest local slope. Quantisation |frame - exact| is recorded per inverse source; p95 is nearest-rank (value at rank ceil(0.95 n)).",
+  "failureCategories": {
+    "round-trip": "frame or inverse round-trip mismatch or > 0.5 source frame",
+    "gap-non-invertibility": "a gap answered as anything but a gap (or an unbracketed boundary), forward or inverse",
+    "unsupported-gap-agreement": "unsupported answered as anything else, forward or inverse",
+    "oracle-agreement": "any other state mismatch, a throw, non-monotonic aligned times, a refused generated timeline, or a stratum not met in maximumDraws"
+  },
+  "countJustification": "Zero failures in n independent cases bounds the per-case failure rate below 3/n at 95% confidence (rule of three). Calibration 700 cases (100 per stratum): about 0.43% overall, 3% per stratum. Holdout 2100 cases (300 per stratum): about 0.14% overall, 1% per stratum. Each case carries about 113 inverse round trips and 75 exact frame round trips (calibration: 78,913 and 52,887), so the holdout's round-trip gate rests on roughly 240,000 inverse probes (rule-of-three bound about 1.3e-5 per probe). A case takes well under a millisecond in parallel; the holdout runs in about a second.",
+  "splits": {
+    "calibration": {
+      "cases": 700,
+      "run": true,
+      "enable": "WW_TIMEMAP_CALIBRATION=1 swift test --filter TimeMapCalibrationTests/calibrationSplitMeetsEveryGate (serialized pass in scripts/test.sh)"
+    },
+    "holdout": {
+      "cases": 2100,
+      "run": false,
+      "enable": "WW_M2_TIMEMAP_HOLDOUT=1 swift test --filter TimeMapCalibrationTests/holdoutSplitMeetsEveryFrozenGate"
+    }
+  },
+  "gate": {
+    "verbatim": "round trip ≤0.5 source frame (report nearest-rank p95 and the max), gap non-invertibility, and unsupported/gap agreement between forward and inverse"
+  },
+  "gateValues": {
+    "roundTripSourceFrames": 0.5,
+    "maximumRoundTripFailures": 0,
+    "maximumGapNonInvertibilityFailures": 0,
+    "maximumStateAgreementFailures": 0,
+    "maximumOracleFailures": 0,
+    "reportedPercentile": 95
+  },
+  "gates": [
+    {
+      "gate": "round-trip",
+      "limit": "max |frame - exact| <= 0.5 source frame and 0 round-trip failures; nearest-rank p95 and max reported",
+      "kind": "frozen-holdout (shared WW-015/WW-050 gate, ww-019 §5)"
+    },
+    {
+      "gate": "gap-non-invertibility",
+      "limit": "0 failures; forward and inverse gap probes both present",
+      "kind": "frozen-holdout"
+    },
+    {
+      "gate": "unsupported-gap-agreement",
+      "limit": "0 failures; forward and inverse gap and unsupported probes all present",
+      "kind": "frozen-holdout"
+    },
+    {
+      "gate": "oracle-agreement",
+      "limit": "0 failures",
+      "kind": "frozen-holdout"
+    },
+    {
+      "gate": "strata-coverage",
+      "limit": "every one of the 7 strata present",
+      "kind": "frozen-holdout"
+    }
+  ],
+  "gateRule": "A gate with no evidence fails; it never passes vacuously (TimeMapGateEvaluation).",
+  "calibrationSummary": {
+    "host": "Apple M5 Max, 18 cores, 128 GiB, macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, debug build",
+    "command": "cd Packages/WaveWranglerKit && WW_TIMEMAP_CALIBRATION=1 WW_TIMEMAP_RECORDS_DIR=<dir> swift test --scratch-path .build/swiftpm --filter TimeMapCalibrationTests/calibrationSplitMeetsEveryGate",
+    "records": 700,
+    "recordsFile": "docs/m2/evidence/ww-015/calibration.jsonl",
+    "recordsSHA256": "42bb956624f7fd167741eb4492f96ffb393215f4be18d982c06cec488a7e9e96",
+    "recordsOrder": "caseIndex order; JSON keys sorted; per-case quantisation count/max/p95 (the raw values are gated in memory); byte-identical across separate processes",
+    "result": "every gate PASS: 700 cases, 1298 draws, 3104 occurrences, 6248 spans, max frameCount 185522597535; 52887 exact frame round trips; 78913 inverse sources, quantisation max 0.5, p95 (nearest-rank) 0.4679; forward gap 8624 / unsupported 6231 / outside 28877; inverse gap 8090 / unsupported 2005 / outside 12476; 0 failures in every category.",
+    "allGatesPassed": true
+  },
+  "host": {
+    "sw_vers": "macOS 27.0.1 (26A434)",
+    "xcodebuild": "Xcode 27.0 (27A266a)",
+    "swift": "Apple Swift 6.4 (swiftlang-6.4.0.34.1)",
+    "cpu": "Apple M5 Max, 18 cores",
+    "memoryBytes": 137438953472
+  },
+  "preFreezeExecutions": [
+    {
+      "what": "Calibration (700 cases): every gate PASS on the first run; run twice more in separate processes with byte-identical records.",
+      "where": "this PR, before the freeze"
+    },
+    {
+      "what": "RoundTripPropertyTests now records a failure category per failure (no probe, seed or count changed); its 1500-timeline regression run still reports N=146170, max 0.5, p95 0.46635, unchanged.",
+      "where": "this PR"
+    }
+  ],
+  "holdoutProcedure": {
+    "when": "Once, in a separate follow-up PR, on a clean commit that contains this record's merge commit and whose pinned trees still equal pinnedTrees.",
+    "command": "cd Packages/WaveWranglerKit && WW_M2_TIMEMAP_HOLDOUT=1 WW_TIMEMAP_RECORDS_DIR=<dir> swift test --scratch-path .build/swiftpm --filter TimeMapCalibrationTests/holdoutSplitMeetsEveryFrozenGate",
+    "report": "Commit SHA, host (sw_vers, xcodebuild -version, swift --version, cores, memory), the tree IDs it ran, every case record (the harness writes ww-015-holdout.jsonl; commit it as docs/m2/evidence/ww-015/holdout.jsonl) and every gate with its worst value, the nearest-rank p95 and the max; never a subset. Gates, truth, recipe, counts and the map code are not tuned after this freeze."
+  },
+  "gateChanges": "None. The gate is the WW-015 gate from docs/m2/ww-019-m2-contracts.md §4/§5 (and M2-C3) as given in the kickoff, reproduced verbatim above.",
+  "deviation": "None. Nothing ran on the holdout split.",
+  "postFreezeRule": "A run counts as post-freeze holdout only when it executes on a commit containing this record's merge commit, with both pinnedTrees unchanged, and is reported in full (commit, host, tree IDs, every case and gate). Counts may exceed the frozen holdout counts, never fall below them. A change to a frozen recipe, truth, count, gate or pinned tree requires a new dated freeze revision and a fresh holdout; the earlier run is retained. Pre-freeze runs are calibration only."
+}

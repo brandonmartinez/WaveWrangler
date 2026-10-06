@@ -44,3 +44,51 @@ remainder trimming. Output frame *n* is source frame *n* at the source rate.
 - Channel layouts the writer did not declare (M4A stereo ALAC stores none).
 - Dataless/iCloud materialisation against a real file provider.
 - SRC (WW-018), time maps (WW-015), real recordings and the frozen holdout (later WW-050 units).
+
+## WW-050 part 2: output-settings policy and `m2-freeze-decode` (calibration only)
+
+Refs #45. Host: Apple M5 Max, 18 cores, 128 GiB, macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, debug build.
+
+**Output-settings policy.** `OutputSettingsPolicy` (WWDecode, pure, `version` 1) takes the `FormatInterpretation`s of a
+group or episode. It returns one common output rate, one sample format and one output channel per source channel
+(no downmix or upmix), plus the ordered reasons for each choice. Defaults: the configurable 48 kHz and 24-bit integer
+PCM.
+- A rate is feasible when it is on the standard-rate grid and no source needs more than 64 source frames per output
+  frame.
+- When 48 kHz is infeasible, or the user chooses `.matchSources`, the rate is the most common feasible source rate
+  (ties go to the higher rate). The highest source rate is always feasible.
+- Stale interpretation versions, non-envelope rates and conflicting duplicates are refused with typed errors.
+
+Each decision records its basis: the policy version, the configuration, and per-input interpretation and envelope
+version, fingerprint, rate, format and channel count. `invalidations(for:configuration:)` names every change:
+policy version, configuration, input added, dropped, changed or reordered. `OutputSettingsPolicyTests` covers mixed
+rates, bit depths and channel counts, the refusals and the invalidations (13 tests). Six policy mutants were each
+killed (see the PR).
+
+**Freeze.** [`m2-freeze-decode.json`](../fixtures/m2-freeze-decode.json) (2026-10-06, in the
+[registry](../fixtures/m2-fixture-registry.json)) freezes fixture M2-DECODE-001 with:
+- 13 strata: priming/padding per codec, decoded-frame origin, variable-rate, bit-depth/channel metadata, and
+  truncated/corrupt/unsupported/changed sources;
+- seeds `SHA-256("ww-m2-fixture|v1|M2-DECODE-001|<split>|<index>")`;
+- 130 calibration and 520 holdout cases. Rule of three: zero failures in the holdout bounds the per-case failure rate
+  below about 0.58 % overall and 7.5 % per stratum;
+- the gate verbatim. 100 % of supported truth cases mapped correctly. Landmarks within 1 output frame. Every planted
+  bad case is an explicit typed error, with no mutation (`FileSnapshot` equality) and no stale publication;
+- the pinned `WWDecode` / `WWDecodeTests` tree IDs, which `DecodeFreezeTests` re-checks on every run.
+
+**Calibration (pre-freeze), every gate PASS.** Records:
+[`ww-050/calibration.jsonl`](ww-050/calibration.jsonl), SHA-256 `f2617e4b…3b01d07f38`, byte-identical across separate
+processes.
+- 90 supported cases (2,173,299 frames) mapped with 0 failures; 48 of them were bit-exact.
+- 1,221 landmark observations: |lag| 0 ×1,197 and 1 ×24. All 24 lag-1 observations are Opus, at the gate limit.
+- Minimum correlation: lossy 0.669, exact 0.9999995.
+- All 40 planted cases returned the expected error, with 0 mutations and 0 publications.
+- Priming observed: AAC 2112, Opus 52/104/156/312 (rate/50 frames per packet), ALAC/FLAC/PCM 0.
+
+Disclosed pre-freeze deviation: the first calibration run failed 3 bit-exact cases. The fixed ±3000-frame landmark search
+had reached a neighbouring identical burst, so the window is now `min(3000, half-gap)`. No gate changed.
+`scripts/test.sh` runs the calibration split in its own serialized pass.
+
+**Holdout NOT RUN.** It runs once, in its own PR after this one merges, with
+`WW_M2_DECODE_HOLDOUT=1 swift test --filter DecodeCalibrationTests/holdoutSplitMeetsEveryFrozenGate`.
+Calibration is not holdout evidence.

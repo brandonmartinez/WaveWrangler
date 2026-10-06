@@ -55,8 +55,8 @@ correction, not a deliverable audio product.
 
 | Module / unit | WW ID(s) | Owner | Status at authoring | Notes |
 | --- | --- | --- | --- | --- |
-| `WWDecode` | WW-050 (#45) | Mac | In progress (open lane) | Read-only content gateway + native decoder; evidence-driven envelope only, no unsupported-format claim. |
-| `WWTimeMap` | WW-015 (#10) | Alignment | In progress (open lane) | Clock-epoch/coordinate contract; supported inverse ≤0.5 source frame. |
+| `WWDecode` | WW-050 (#45) | Mac | In progress: decode envelope landed; output-settings policy v1 and `m2-freeze-decode` calibrated and frozen; holdout NOT RUN | Read-only content gateway + native decoder; evidence-driven envelope only, no unsupported-format claim. |
+| `WWTimeMap` | WW-015 (#10) | Alignment | In progress: time-map contract landed; `m2-freeze-timemap` calibrated and frozen; holdout NOT RUN | Clock-epoch/coordinate contract; supported inverse ≤0.5 source frame. |
 | WW-020 infra (derived-asset/job infra, versioned map persistence, C5 migration, #63 channel) | WW-020 (#19) | Mac | Planned | Builds on `WWDecode`/`WWTimeMap`; adds the explicit stated-channel value replacing the v1 index-0 placeholder. |
 | Estimator with abstention | WW-016 (#15) / WW-021 (#24) | Alignment | In progress: `WWAlignEstimate` calibrated and `m2-freeze-estimator` frozen; holdout NOT RUN (research candidate FAILED; see §6) | Must clear the WW-016 holdout gate (§5) before WW-021 production use. |
 | Discontinuity handling | WW-017 (#11) | Alignment | Planned | Depends on WW-015/016 residual behavior. |
@@ -123,8 +123,10 @@ are `M2-C1`...`M2-C7`.
 
 **Status (2026-10-06):** `m2-freeze-estimator` (`docs/m2/fixtures/m2-freeze-estimator.json`) and
 `m2-freeze-render` (`docs/m2/fixtures/m2-freeze-render.json`) are frozen, both listed in the registry
-`docs/m2/fixtures/m2-fixture-registry.json`; neither holdout has run. The other freeze points below are still
-plans. The original plan text follows.
+`docs/m2/fixtures/m2-fixture-registry.json`; each holdout has since run once (#184, #185; results in the
+WW-016 and WW-018 evidence notes). `m2-freeze-decode` and `m2-freeze-timemap` (`docs/m2/fixtures/`) are frozen
+and listed in the registry, with calibration reported in the WW-050 and WW-015 evidence notes; their holdouts
+have NOT run. `m2-freeze-discontinuity` is still a plan. The original plan text follows.
 
 M2 fixture generators do not exist yet, so **nothing is frozen in this record** — this section documents
 the *plan*, following the M1 pattern in `docs/m1/ww-003-fixture-protocol.md` (§3–4): calibration may only
@@ -183,11 +185,11 @@ revision per §4).
 | --- | --- | --- |
 | M1 / WW-013 | **Exit pending; GUI gate open** | Any GUI-dependent M2 acceptance (XCUITest suite, exit checkpoint, essential-accessibility audits) waits until the M1 GUI gate passes. |
 | WW-014 | **PARTIAL** | Inspection/manual-correction UI spec; not yet implemented. |
-| WW-015 | **PARTIAL** | Time-map contract; in progress (open lane). |
+| WW-015 | **PARTIAL**; `m2-freeze-timemap` calibrated, frozen, holdout NOT RUN | Time-map contract landed. Calibration (700 cases) met every gate pre-freeze: round trip max 0.5, p95 0.4679 source frames, 0 gap/state/oracle failures (`docs/m2/evidence/ww-015-time-maps.md`). |
 | WW-016 | **FAILED** (research candidate); new estimator calibrated, frozen, holdout NOT RUN | Research candidate holdout failed (below). `WWAlignEstimate` emits only `acousticConsistentProposal` or abstentions and never `clockApproved`; calibration: `docs/m2/evidence/ww-016-estimator-calibration.md`. |
 | WW-017 | **PARTIAL** | Discontinuity handling planned, not yet built. |
 | WW-018 | **PENDING**; `WWRender` candidate calibrated, frozen, holdout NOT RUN | Listening gate BLOCKED (not granted); SRC/render candidate not qualified. Calibration (16 cases + multi-span) met every objective gate pre-freeze: `docs/m2/evidence/ww-018-render-calibration.md`. |
-| WW-050 | **No evidence yet** | Decode module in progress (open lane); no decode evidence landed in this record. |
+| WW-050 | **PARTIAL**; `m2-freeze-decode` calibrated, frozen, holdout NOT RUN | Decode envelope (part 1) and output-settings policy v1 (48 kHz / 24-bit default, source-derived fallback, explicit reasons and invalidation) landed. Calibration (130 cases) met every gate pre-freeze; Opus landmarks at the 1-frame limit (`docs/m2/evidence/ww-050-decode-envelope.md`). |
 
 **Drift-fallback decision (Lead):** until a frozen WW-016 holdout passes, alignment relies on manual
 epochs/anchors and the limited supported envelope already evidenced; no map becomes `clockApproved`

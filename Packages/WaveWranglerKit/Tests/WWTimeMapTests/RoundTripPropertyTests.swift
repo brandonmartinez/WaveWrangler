@@ -19,9 +19,27 @@ struct RoundTripPropertyTests {
         /// |returned frame - exact inverse| in source frames, for every inverse that returned a source.
         var quantisation: [Double] = []
         var failures: [String] = []
+        /// Every failure, uncapped, by the m2-freeze-timemap gate it counts against.
+        var failureCounts: [FailureCategory: Int] = [:]
 
-        mutating func fail(_ message: @autoclosure () -> String) {
-            if failures.count < 25 { failures.append(message()) }
+        mutating func fail(_ category: FailureCategory, _ message: @autoclosure () -> String) {
+            failureCounts[category, default: 0] += 1
+            if failures.count < 25 { failures.append("[\(category.rawValue)] \(message())") }
+        }
+    }
+
+    enum FailureCategory: String, CaseIterable, Codable, Sendable {
+        /// Frame -> aligned -> frame not exact, or aligned -> nearest frame wrong or beyond half a frame.
+        case roundTrip = "round-trip"
+        /// A gap frame or gap instant mapped (or a mapped one reported as a gap), or a gap mis-bracketed.
+        case gapNonInvertibility = "gap-non-invertibility"
+        /// Forward and inverse disagree about an unsupported region or a gap.
+        case stateAgreement = "unsupported-gap-agreement"
+        /// Any other disagreement with the oracle: thrown errors, refused timelines, wrong instants, order.
+        case oracle = "oracle-agreement"
+
+        static func mismatch(gap: Bool, unsupported: Bool) -> FailureCategory {
+            gap ? .gapNonInvertibility : unsupported ? .stateAgreement : .oracle
         }
     }
 
@@ -32,7 +50,7 @@ struct RoundTripPropertyTests {
             let truth = SyntheticTimeMapGenerator.timeline(&rng)
             let map: AlignedTimelineMap
             do { map = try truth.build() } catch {
-                stats.fail("generated timeline refused: \(error)")
+                stats.fail(.oracle, "generated timeline refused: \(error)")
                 continue
             }
             stats.timelines += 1
@@ -107,13 +125,13 @@ struct RoundTripPropertyTests {
             let expected = SyntheticTimeline.oracleForward(group, occ, frame: n)
             let actual: ForwardMapping
             do { actual = try map.alignedTime(ofFrame: n, in: id) } catch {
-                stats.fail("forward threw \(error) for frame \(n)")
+                stats.fail(.oracle, "forward threw \(error) for frame \(n)")
                 continue
             }
             switch (expected, actual) {
             case (.aligned(let t, let epoch), .aligned(let position)):
                 guard position.instant == t, position.epoch == epoch, position.provenance == epochKind(group, epoch) else {
-                    stats.fail("forward mismatch frame \(n): \(position) vs \(t)")
+                    stats.fail(.oracle, "forward mismatch frame \(n): \(position) vs \(t)")
                     continue
                 }
                 doubleSanity(group, occ, n, t, &stats)
@@ -123,11 +141,11 @@ struct RoundTripPropertyTests {
                 case .source(let back)? where back.frame == n && back.exactFrame == q(n) && back.epoch == epoch:
                     stats.frameRoundTrips += 1
                 default:
-                    stats.fail("frame round trip failed for frame \(n) at \(t)")
+                    stats.fail(.roundTrip, "frame round trip failed for frame \(n) at \(t)")
                 }
             case (.gap, .gap(let boundary)):
                 guard boundary.precedingLastFrame < n, boundary.followingFirstFrame > n else {
-                    stats.fail("gap boundary \(boundary) does not bracket frame \(n)")
+                    stats.fail(.gapNonInvertibility, "gap boundary \(boundary) does not bracket frame \(n)")
                     continue
                 }
                 stats.forwardGap += 1
@@ -136,13 +154,13 @@ struct RoundTripPropertyTests {
             case (.outside, .outsideCoverage):
                 stats.forwardOutside += 1
             default:
-                stats.fail("forward frame \(n): expected \(expected), got \(actual)")
+                stats.fail(Self.forwardCategory(expected, actual), "forward frame \(n): expected \(expected), got \(actual)")
             }
         }
         // Strictly increasing over all mapped frames of the occurrence (positive map, across epochs too).
         let sorted = mappedTimes.sorted { $0.0 < $1.0 }
         for (left, right) in zip(sorted, sorted.dropFirst()) where left.0 != right.0 && !(left.1 < right.1) {
-            stats.fail("non-monotonic: frame \(left.0) -> \(left.1), frame \(right.0) -> \(right.1)")
+            stats.fail(.oracle, "non-monotonic: frame \(left.0) -> \(left.1), frame \(right.0) -> \(right.1)")
         }
 
         // Inverse probes: aligned grid instants, hull ends, knot images, arbitrary rationals, gaps, outside.
@@ -178,11 +196,33 @@ struct RoundTripPropertyTests {
         for t in instants { checkInverse(map, group, occ, t, &stats) }
     }
 
+    static func forwardCategory(_ expected: OracleForward, _ actual: ForwardMapping) -> FailureCategory {
+        let actualGap: Bool, actualUnsupported: Bool
+        switch actual {
+        case .gap: (actualGap, actualUnsupported) = (true, false)
+        case .unsupported: (actualGap, actualUnsupported) = (false, true)
+        default: (actualGap, actualUnsupported) = (false, false)
+        }
+        return .mismatch(gap: expected == .gap || actualGap, unsupported: expected == .unsupported || actualUnsupported)
+    }
+
+    static func inverseCategory(_ expected: OracleInverse, _ actual: InverseMapping) -> FailureCategory {
+        var expectedUnsupported = false
+        if case .unsupported = expected { expectedUnsupported = true }
+        let actualGap: Bool, actualUnsupported: Bool
+        switch actual {
+        case .gap: (actualGap, actualUnsupported) = (true, false)
+        case .unsupported: (actualGap, actualUnsupported) = (false, true)
+        default: (actualGap, actualUnsupported) = (false, false)
+        }
+        return .mismatch(gap: expected == .gap || actualGap, unsupported: expectedUnsupported || actualUnsupported)
+    }
+
     static func checkInverse(_ map: AlignedTimelineMap, _ group: TruthGroup, _ occ: TruthOccurrence, _ t: ExactRational, _ stats: inout Stats) {
         let expected = SyntheticTimeline.oracleInverse(group, occ, at: t)
         let actual: InverseMapping
         do { actual = try map.sourceFrame(at: t, in: occ.occurrence.id) } catch {
-            stats.fail("inverse threw \(error) at \(t)")
+            stats.fail(.oracle, "inverse threw \(error) at \(t)")
             return
         }
         switch (expected, actual) {
@@ -192,20 +232,20 @@ struct RoundTripPropertyTests {
             guard position.exactFrame == exact, position.epoch == epoch, Int128(position.frame) == exact.roundedHalfUp(),
                   absError <= q(1, 2), position.provenance == epochKind(group, epoch)
             else {
-                stats.fail("inverse mismatch at \(t): \(position) vs exact \(exact)")
+                stats.fail(.roundTrip, "inverse mismatch at \(t): \(position) vs exact \(exact)")
                 return
             }
             // aligned -> nearest frame -> aligned stays within half a frame of the steepest local slope.
             guard case .aligned(let back)? = try? map.alignedTime(ofFrame: position.frame, in: occ.occurrence.id),
                   case .mapped(let segments, _) = group.epoch(epoch).mapping
             else {
-                stats.fail("nearest frame \(position.frame) of \(t) is not mapped")
+                stats.fail(.roundTrip, "nearest frame \(position.frame) of \(t) is not mapped")
                 return
             }
             let aMax = segments.map(\.a).max()!
             let bound = try! aMax.divided(by: q(2 * occ.rate))
             let drift = try! back.instant.subtracting(t)
-            if (drift < .zero ? drift.negated() : drift) > bound { stats.fail("aligned round trip \(drift) exceeds \(bound) at \(t)") }
+            if (drift < .zero ? drift.negated() : drift) > bound { stats.fail(.roundTrip, "aligned round trip \(drift) exceeds \(bound) at \(t)") }
             stats.inverseSource += 1
             stats.quantisation.append(absError.approximateDouble)
         case (.gap, .gap(let boundary)):
@@ -214,32 +254,32 @@ struct RoundTripPropertyTests {
             guard let i = occ.spans.firstIndex(where: { $0.epoch == boundary.precedingEpoch }), i + 1 < occ.spans.count,
                   occ.spans[i + 1].epoch == boundary.followingEpoch
             else {
-                stats.fail("inverse gap at \(t) skips a span: \(boundary)")
+                stats.fail(.stateAgreement, "inverse gap at \(t) skips a span: \(boundary)")
                 return
             }
             if boundary.followingFirstFrame - boundary.precedingLastFrame > 1,
                (try? map.alignedTime(ofFrame: boundary.precedingLastFrame + 1, in: occ.occurrence.id)) != .gap(boundary) {
-                stats.fail("forward state disagrees with inverse gap \(boundary)")
+                stats.fail(.stateAgreement, "forward state disagrees with inverse gap \(boundary)")
             }
             stats.inverseGap += 1
         case (.unsupported(let epochs), .unsupported(let region)):
             // State agreement: every candidate is an unsupported span whose frames map forward to
             // unsupported with the same epoch and reason.
             guard region.occurrence == occ.occurrence.id, region.candidates.map(\.epoch) == epochs else {
-                stats.fail("inverse unsupported at \(t): expected \(epochs), got \(region)")
+                stats.fail(.stateAgreement, "inverse unsupported at \(t): expected \(epochs), got \(region)")
                 return
             }
             for candidate in region.candidates {
                 for frame in [candidate.startFrame, candidate.endFrame - 1] where
                     (try? map.alignedTime(ofFrame: frame, in: occ.occurrence.id)) != .unsupported(epoch: candidate.epoch, reason: candidate.reason) {
-                    stats.fail("forward state of frame \(frame) disagrees with inverse \(region)")
+                    stats.fail(.stateAgreement, "forward state of frame \(frame) disagrees with inverse \(region)")
                 }
             }
             stats.inverseUnsupported += 1
         case (.outside, .outsideCoverage):
             stats.inverseOutside += 1
         default:
-            stats.fail("inverse at \(t): expected \(expected), got \(actual)")
+            stats.fail(Self.inverseCategory(expected, actual), "inverse at \(t): expected \(expected), got \(actual)")
         }
     }
 
@@ -251,14 +291,14 @@ struct RoundTripPropertyTests {
         // arithmetic below is pure Double and independent of ExactRational.
         let exactU = try! q(n, occ.rate).adding(span.e)
         guard let s = segments.first(where: { exactU >= $0.u0 && exactU < $0.u1 }) else {
-            stats.fail("double sanity: no segment for frame \(n)")
+            stats.fail(.oracle, "double sanity: no segment for frame \(n)")
             return
         }
         let u = Double(n) / Double(occ.rate) + span.e.approximateDouble
         let a = s.a.approximateDouble, b = s.b.approximateDouble
         let approx = a * u + b
         let tolerance = (abs(a * u) + abs(b) + 1) * 1e-12
-        if abs(approx - t.approximateDouble) > tolerance { stats.fail("double sanity frame \(n): \(approx) vs \(t.approximateDouble)") }
+        if abs(approx - t.approximateDouble) > tolerance { stats.fail(.oracle, "double sanity frame \(n): \(approx) vs \(t.approximateDouble)") }
     }
 }
 

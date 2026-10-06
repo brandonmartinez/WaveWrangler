@@ -83,3 +83,31 @@ CI runs on macos-26 / Xcode 26.6.
   necessary but not sufficient for `clockApproved` (M2-C4 also requires the frozen WW-016 holdout).
 - The lag sign is a *declared* convention, tested here only definitionally. Estimating the lag sign is untested and
   remains open (M2-C3).
+
+## `m2-freeze-timemap` (calibration only)
+
+Refs #10. [`m2-freeze-timemap.json`](../fixtures/m2-freeze-timemap.json) (2026-10-06, in the
+[registry](../fixtures/m2-fixture-registry.json)) freezes fixture M2-TIMEMAP-001 with:
+- 7 strata: general, multi-segment, gap, unsupported, extreme rate ratio, edge nominal rate and long occurrence;
+- seeds `SHA-256("ww-m2-fixture|v1|M2-TIMEMAP-001|<split>|<index>")`, disjoint from the regression seeds above;
+- 700 calibration and 2,100 holdout cases. Rule of three: zero failures in the holdout bounds the per-case failure rate
+  below about 0.14 % overall and 1 % per stratum;
+- the gate verbatim. Round trip within 0.5 source frame (nearest-rank p95 and max reported). Gaps are not invertible.
+  Forward and inverse agree on unsupported and gap. The oracle agrees on everything;
+- the pinned `WWTimeMap` (`24c7aadf…`, unchanged by this PR) and `WWTimeMapTests` tree IDs, which `TimeMapFreezeTests`
+  re-checks on every run.
+
+`RoundTripPropertyTests` now labels each failure with a category. Its regression numbers above are unchanged.
+
+**Calibration (pre-freeze), every gate PASS, first run.** Records:
+[`ww-015/calibration.jsonl`](ww-015/calibration.jsonl), SHA-256 `42bb9566…ec488a7e9e96`, byte-identical across separate processes.
+- 700 cases: 3,104 occurrences, 6,248 spans, up to 185,522,597,535 frames.
+- 52,887 exact frame round trips.
+- 78,913 inverse round trips: quantisation **max 0.5, p95 (nearest-rank) 0.4679** source frames.
+- Forward gap / unsupported / outside: 8,624 / 6,231 / 28,877. Inverse: 8,090 / 2,005 / 12,476.
+- 0 failures in every category.
+
+Same host as above. `scripts/test.sh` runs the calibration split in its own serialized pass.
+
+**Holdout NOT RUN.** It runs once, in its own PR after this one merges, with
+`WW_M2_TIMEMAP_HOLDOUT=1 swift test --filter TimeMapCalibrationTests/holdoutSplitMeetsEveryFrozenGate`.
