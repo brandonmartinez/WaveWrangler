@@ -1,0 +1,154 @@
+{
+ "freezeID": "m2-freeze-estimator",
+ "date": "2026-10-06",
+ "recordedBy": "Alignment (WW-016/WW-021 lane), at the M2 coordinator's direction",
+ "status": "FROZEN 2026-10-06, taking effect at the merge commit of the PR that adds this record. HOLDOUT NOT RUN.",
+ "issues": [
+  "https://github.com/brandonmartinez/WaveWrangler/issues/15",
+  "https://github.com/brandonmartinez/WaveWrangler/issues/24",
+  "https://github.com/brandonmartinez/WaveWrangler/issues/11"
+ ],
+ "registry": "docs/m2/fixtures/m2-fixture-registry.json",
+ "calibrationEvidence": "docs/m2/evidence/ww-016-estimator-calibration.md",
+ "baseCommit": "a670b8b152c9629f09cd2c86e84bb51b083634f6",
+ "baseCommitNote": "origin/main when this record was authored (merge of PR #174). The freeze takes effect at the merge commit of the PR that adds it; pinnedTrees, not a commit SHA, identify the frozen code.",
+ "scope": "Every M2-EST-* entry in the registry: stratum recipe, clock truth, calibration/holdout seeds and counts, scoring, and the gate exactly as written here. Frozen code: the WWAlignEstimate source tree and the WWAlignEstimateTests tree (generator, plan, gate evaluator and holdout harness), pinned by git tree ID.",
+ "pinnedTrees": {
+  "Sources/WWAlignEstimate": "1896b4656d78415af6ba2c8b3daf13d10256819e",
+  "Tests/WWAlignEstimateTests": "00024e7fa1be8e6762791322964f0b5d37a77b4b"
+ },
+ "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit. HoldoutTests.estimatorAndHarnessTreesMatchTheFreezeRecord recomputes both git tree IDs from the working tree on every test run and fails on any difference. A change to either tree after the freeze is a new dated freeze revision with a fresh holdout; the earlier record is retained.",
+ "dependencyTreesAtFreeze": {
+  "note": "Informational, not pinned: other lanes own these modules. The holdout run reports the tree IDs it actually ran.",
+  "Sources/WWTimeMap": "24c7aadfbf1470c8555542061ab08eb23e37325b",
+  "Sources/WWCore": "c310389c4b41ebde80c5dabaea12fd5376f5d9ba"
+ },
+ "estimator": {
+  "identifier": "ww-align-estimate/1",
+  "module": "WWAlignEstimate",
+  "parameters": {
+   "proxyRate": 4000,
+   "proxyCutoffFraction": 0.45,
+   "windowSeconds": 2,
+   "windowCount": 16,
+   "minimumPeakScore": 0.35,
+   "ambiguityRatio": 0.8,
+   "periodicityThreshold": 0.5,
+   "lobeExclusionMilliseconds": 5,
+   "silenceRMS": 0.0001,
+   "consistencyToleranceMilliseconds": 1,
+   "maximumAbsolutePPM": 500,
+   "cycleToleranceMilliseconds": 2
+  },
+  "internalConstants": {
+   "cycleSearchSeconds": 0.25
+  },
+  "parametersNote": "EstimatorParameters() defaults; HoldoutTests.frozenDefinitionMatchesTheFreezeRecord compares them. Calibration tuned no parameter: the first full calibration run passed and every later change was a bug fix found by unit/scenario tests (DC bias in the proxy, FIR edge padding), after which calibration numbers were identical.",
+  "outputs": "Per epoch: acousticConsistentProposal (WWTimeMap segment + AcousticConsistencyProposal provenance) or a typed abstention with an unsupported map. The module has no clockApproved path (EstimatorPurityTests bans the approval surface)."
+ },
+ "generator": {
+  "kind": "synthetic-deterministic, in test code only (no files, no recordings)",
+  "files": [
+   "Tests/WWAlignEstimateTests/SyntheticGenerator.swift",
+   "Tests/WWAlignEstimateTests/CalibrationPlan.swift"
+  ],
+  "seedDerivation": "SplitMix64. caseSeed(master, stratum, index) = first output of SplitMix64(seed: master XOR fnv1a64(UTF-8 stratum.rawValue) XOR (index &* 0x9E3779B97F4A7C15)) (SyntheticGenerator.swift). Every draw for a case comes from a SplitMix64 stream seeded with caseSeed, in the order written in CalibrationPlan.make.",
+  "clockModel": "Reference group: t = u (group clock = aligned time), 8 kHz, 126 s. Target epoch sample n at group-clock u = groupClockStart + n/rate has clock truth t(u) = (1 + ppm*1e-6)*u + offset (+ step for discontinuity) and records the scene at t(u) - acousticDelay(u). Clock truth is generated independently of the estimator and is the only scoring reference.",
+  "scene": "Poisson events at 4/s over -5..135 s, each either a Gaussian click (sigma 0.2-0.6 ms, amplitude 0.3-0.8) or a Gaussian-windowed chirp (sigma 10-40 ms, centre 600-1300 Hz, +/-600-900 Hz sweep, amplitude 0.05-0.2). 'periodic' repeats one chirp + one event every 0.2-1.8 s. 'disconnected' targets hear their own later scene.",
+  "commonDraws": "Reference noise RMS 0.003..0.008. Target: ppm uniform -100..100; offset uniform -1.5..1.5 s; rate 8 or 16 kHz; 120 s with declared overlap 3..117 s; gain 0.5..1.5; noise RMS 0.003..0.01; positives carry a constant 0..1 ms acoustic path; search +/-2 s."
+ },
+ "truth": {
+  "scoring": "|proposal(u) - clockTruth(u)| in ms on a 1 s grid over the proposal's group-clock span (both ends included). Never against the fitted map, correlation peaks or acoustic residuals.",
+  "positive strata": "positive, positiveRestart, positiveThreeGroup: clock truth is known; the estimator must propose and meet the gate.",
+  "acoustic-delay negatives": "constantDelay (35 ms), variableDelay (20->50 ms ramp + 0.3 ms wobble): acoustically consistent and clock-wrong by construction. Emitting acousticConsistentProposal is correct labelling; emitting clockApproved, or any other provenance, is a false accept.",
+  "abstention-required negatives": "discontinuity, unrelated, silent, periodic, disconnected, and the cycleConflict mechanism stratum: any proposal is a false accept."
+ },
+ "split": {
+  "unit": "cases (a case renders one reference and 1-2 target epochs)",
+  "calibration": {
+   "masterSeed": "0x57571600CA11B000",
+   "counts": {
+    "positive": 12,
+    "positiveRestart": 2,
+    "positiveThreeGroup": 2,
+    "constantDelay": 3,
+    "variableDelay": 3,
+    "discontinuity": 3,
+    "unrelated": 3,
+    "silent": 2,
+    "periodic": 3,
+    "disconnected": 2,
+    "cycleConflict": 2
+   },
+   "totalCases": 37,
+   "totalEpochs": 43,
+   "status": "executed pre-freeze in this PR (calibration only; see calibrationSummary)"
+  },
+  "holdout": {
+   "masterSeed": "0x57571600401D0000",
+   "counts": {
+    "positive": 40,
+    "positiveRestart": 10,
+    "positiveThreeGroup": 10,
+    "constantDelay": 10,
+    "variableDelay": 10,
+    "discontinuity": 10,
+    "unrelated": 10,
+    "silent": 10,
+    "periodic": 10,
+    "disconnected": 10,
+    "cycleConflict": 10
+   },
+   "totalCases": 140,
+   "totalEpochs": 170,
+   "positiveEpochs": 80,
+   "negativeEpochs": 90,
+   "status": "NOT RUN. No holdout case has been rendered or estimated. HoldoutTests.holdoutIsDisjointFromCalibration derives seeds only."
+  }
+ },
+ "gate": {
+  "verbatim": "held-out residual p95 ≤5 ms / max ≤10 ms; ≥5 windows spanning ≥80% of declared overlap and ≥60% eligible windows; zero false accepts on the finite negative set.",
+  "values": {
+   "maximumResidualP95Milliseconds": 5,
+   "maximumResidualMaxMilliseconds": 10,
+   "minimumWindows": 5,
+   "minimumOverlapSpanFraction": 0.8,
+   "minimumEligibleWindowFraction": 0.6,
+   "maximumFalseAccepts": 0
+  },
+  "evaluator": "GateEvaluation (Tests/WWAlignEstimateTests/GateEvaluation.swift), shared by calibration and the holdout.",
+  "definition": [
+   "Residuals: clock-truth residuals of every positive-stratum proposal, pooled; nearest-rank p95 (rank ceil(0.95 n)) <= 5 ms and maximum <= 10 ms.",
+   "Windows: EVERY held-out positive epoch must propose with >= 5 eligible windows, eligible windows spanning >= 80% of its declared overlap, and >= 60% of its windows eligible. A positive epoch that abstains fails this gate (abstaining everywhere is not evidence).",
+   "No positive proposal at all leaves the residual gate undefined, which FAILS.",
+   "False accepts (must be 0): any epoch in any stratum whose map is clockApproved; any proposal in an abstention-required stratum; any acoustic-delay proposal whose provenance is not acousticConsistentProposal."
+  ],
+  "reportedNotGated": [
+   "Acoustic-delay proposals that would pass the clock gates if promoted (a non-zero count means the negative no longer discriminates and must be called out).",
+   "Per-stratum abstention reasons, flags and cycle results.",
+   "Debug-build wall time."
+  ],
+  "authority": "A PASS qualifies only this behaviour: positives proposed within the clock gates and every finite negative abstained or labelled acousticConsistentProposal. It does NOT authorize clockApproved. Audio alone cannot tell a constant or slowly varying propagation delay from a clock offset/drift (calibration: 6/6 acoustic-delay proposals are 35-49 ms clock-wrong while acoustically excellent). Under M2-C4 and the 2026-10-06 drift-fallback decision, the M2 drift fallback stays manual epochs/anchors; clockApproved needs genuinely independent clock evidence and a new freeze."
+ },
+ "calibrationSummary": {
+  "host": "Apple M5 Max, 18 cores, 128 GiB, macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, debug build",
+  "command": "cd Packages/WaveWranglerKit && swift test --scratch-path .build/swiftpm --filter CalibrationTests",
+  "result": "gate PASS on calibration: positives 20/20 epochs proposed, pooled clock residual p95 0.9659 ms / max 0.9767 ms over 2060 grid points; false accepts 0; acoustic-delay 6/6 emitted as acousticConsistentProposal only, 0 within clock gates if promoted (constantDelay max 35.0107 ms, variableDelay max 49.3176 ms).",
+  "perStratum": "docs/m2/evidence/ww-016-estimator-calibration.md"
+ },
+ "holdoutProcedure": {
+  "when": "Once, in a separate follow-up PR, on a clean commit that contains this record's merge commit and whose WWAlignEstimate trees still equal pinnedTrees.",
+  "command": "cd Packages/WaveWranglerKit && WW_ESTIMATOR_HOLDOUT=1 swift test --scratch-path .build/swiftpm --filter HoldoutTests",
+  "report": "Commit SHA, host (sw_vers, xcodebuild -version, swift --version, cores, memory), the tree IDs it ran (git rev-parse HEAD:Packages/WaveWranglerKit/Sources/WWAlignEstimate, ...Tests/WWAlignEstimateTests, ...Sources/WWTimeMap, ...Sources/WWCore), the printed table, every per-epoch line including failures, and the GateEvaluation summary, unedited.",
+  "rules": "Run at the frozen counts; never fewer. Never rerun to change the result: a failed run is retained as is and the gate question goes to the user once, with the data. Calibration is never relabelled as holdout."
+ },
+ "gateChanges": "None. The gate values are the provisional WW-016 gates reproduced verbatim from docs/m2/ww-019-m2-contracts.md §5. This record defines how they are evaluated (above) before any holdout.",
+ "deviation": "None. This is the first M2 freeze. The research candidate's FAILED holdout (docs/research/waveform-clock-render-readiness.md) is historical and is not reused or relabelled.",
+ "preFreezeExecutions": [
+  {
+   "what": "Calibration (37 cases, 43 epochs), scenario, unit, gate-evaluator and purity tests",
+   "where": "this PR (WW-016/WW-021 part 1)"
+  }
+ ],
+ "postFreezeRule": "A run counts as post-freeze holdout only when it executes on a commit containing this record's merge commit, with both pinnedTrees unchanged, and is reported in full (commit, host, tree IDs, every case and the actual counts). Counts may exceed the frozen holdout counts, never fall below them. A change to a frozen recipe, truth, count, gate, pinned tree or estimator parameter requires a new dated freeze revision and a fresh holdout; the earlier run is retained. Pre-freeze runs are calibration only."
+}
