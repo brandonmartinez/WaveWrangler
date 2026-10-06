@@ -27,8 +27,10 @@ restore_visual() {
   defaults delete $U reduceMotion 2>/dev/null
   defaults delete $U FontSizeCategory 2>/dev/null
 }
+# Snapshotted before anything changes; restore_vo writes it back exactly (absent -> delete, else the boolean).
+ORIG_VO_KEY=$(defaults read $U voiceOverOnOffKey 2>/dev/null || echo "<absent>")
 restore_vo() {
-  log "restore VoiceOver"
+  log "restore VoiceOver (voiceOverOnOffKey original: $ORIG_VO_KEY)"
   # Turn VoiceOver off the system's way first (kill leaves com.apple.universalaccess voiceOverOnOffKey = 1, as
   # observed on 2026-10-05), then fall back to kill.
   if pgrep -x VoiceOver >/dev/null; then
@@ -36,6 +38,8 @@ restore_vo() {
   fi
   for p in $(pgrep -x VoiceOver); do log "kill VoiceOver pid $p"; kill $p; done
   sleep 3
+  if [ "$ORIG_VO_KEY" = "<absent>" ]; then defaults delete $U voiceOverOnOffKey 2>/dev/null
+  else defaults write $U voiceOverOnOffKey -bool "$([ "$ORIG_VO_KEY" = 1 ] && echo true || echo false)"; fi
   # An emptied domain stays as an empty plist file (cfprefsd), which reads as present: remove the file too.
   for d in com.apple.VoiceOverTraining com.apple.VoiceOver4/default; do
     defaults delete $d 2>/dev/null

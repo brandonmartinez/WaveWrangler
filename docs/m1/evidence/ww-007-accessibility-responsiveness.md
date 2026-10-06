@@ -372,7 +372,7 @@ Context for the dates: `479eb9e` predates #112 (fixes #104, Setup layout) and #1
 | **T17/T20 NSAlert text** (`_NS:74`, `_NS:58`) | 6,264–10,462 · **2.85–2.95** | **Real failure**: sharp white text on translucent alert material (crops `contrast-crops/mini-de30c99-audit-crop-T17_*`, `…T20_*`) | [#126](https://github.com/brandonmartinez/WaveWrangler/issues/126) (P1, Mac). T17 and T20 audits = **Fail** |
 | T16 "Edit the show's title…" (window content around a document-modal sheet) | 1,029–18,550 · 3.15–3.85 | **Modal dim**, measured from crop `contrast-crops/mini-de30c99-audit-crop-T16_external-change_sheet-10.png` | Rule 1, recorded. T16 = Fail anyway (#66) |
 | Show sidebar episode row in C03 `testTextSize200Screenshots`, `479eb9e` | 63 · 1.69 | **Occlusion artefact**: audited after ⌘⇧L put the Library window in front. Audited while frontmost (`3b2a878`): 9,795 px, p75 9.89 | The test now audits the show window while frontmost; rule 3 |
-| Setup "Role"/"Speaker" cells "none", 12 pt wide (T03, `479eb9e`/`de30c99`) | 0–384 · 1.06–2.07 | **Clipped column** (#104 layout, predates #112) | Gone after #112 (not present at `94176b5`) |
+| Setup "Role"/"Speaker" cells "none", 12 pt wide (T03, `479eb9e`/`de30c99`) | 0–384 · 1.06–2.07 | **Clipped column** (#104 layout) | **Correction:** not present in the T03 audit at `94176b5`, but **still present at `475adf3` (after #112)** with the Episode inspector open (§10.1: 0 text pixels). **Unresolved**; re-check on #130's head, and file if it persists. |
 | Setup cells with 0 glyph pixels (scrolled) | 0 | Offscreen | Rule 2, recorded |
 | Library bottom-row cells at the window edge: "5", "Synthetic Show 017", "iCloud Drive › …", dates (y 833–845, darkAqua 100 % and 200 %, `479eb9e`) | 1,480–4,983 · **1.93–2.16** | **Candidate partly clipped edge cells** (frames extend past the window's bottom edge) | Same position as the "5" cell that `PartialClipContrast` waived on its visible part at `550506d`. **Not reproduced** on the re-measurement (`475adf3`, §10.1) |
 | Library date cells x 1170, aqua 100 % / 200 % (`479eb9e`) | 623–1,832 · **4.23–4.42** | **Unresolved candidate.** Just under 4.5; no crop | Re-measured (`475adf3`, §10.1): the cell extends under the scroller; visible text p75 15.91 / 14.92 → **measured artefact** |
@@ -412,11 +412,11 @@ Context for the dates: `479eb9e` predates #112 (fixes #104, Setup layout) and #1
 ## 10. Follow-up: Mac mini slot `475adf3` (C03/C07 re-measurement, C04/C05, VoiceOver)
 
 **Run record**
-- **Host:** Mac mini (Macsimus), Apple M2 Pro, macOS 27.0.1, 12-core / 32 GiB, under the coordinator GUI lock, 2026-10-05 17:04–17:38.
+- **Host:** Mac mini (M2 Pro), macOS 27.0.1, 12-core / 32 GiB, under the coordinator GUI lock, 2026-10-05 17:04–17:38.
 - **Build:** products built on the 18-core host at `475adf3`, whose test and harness code is identical to this PR's (rebased onto main).
 - **Driver:** [`visual-vo-slot.sh`](ww-007/visual-vo-slot.sh); its log is [`visual-vo-slot-475adf3.log`](ww-007/visual-vo-slot-475adf3.log).
 - **Raw records:** [`raw-mini-475adf3-slot.jsonl`](ww-007/raw-mini-475adf3-slot.jsonl).
-- **Reproducible measurements:** [`glyphstat.swift`](ww-007/glyphstat.swift) (now with an optional `@x,y,w,h` region) over the crops in [`contrast-crops/mini-475adf3-*`](ww-007/contrast-crops/), with output in [`glyphstat-results-475adf3.txt`](ww-007/contrast-crops/glyphstat-results-475adf3.txt).
+- **Reproducible measurements:** [`contrast-crops/glyphstat-475adf3.sh`](ww-007/contrast-crops/glyphstat-475adf3.sh) runs [`glyphstat.swift`](ww-007/glyphstat.swift) (now with an optional `@x,y,w,h` region) over the crops in [`contrast-crops/mini-475adf3-*`](ww-007/contrast-crops/). It lists the **exact region of every figure** (image pixels, origin top-left, 2× crops); output is [`glyphstat-results-475adf3.txt`](ww-007/contrast-crops/glyphstat-results-475adf3.txt).
 - **Consent:** the user granted temporary Increase Contrast, Reduce Motion, larger text and VoiceOver on the mini (2026-10-05). Originals were recorded first and restored afterwards (§10.4).
 
 ### 10.1 C03/C07 re-measurement at the system originals
@@ -428,15 +428,19 @@ Tests: `testVisualOverridesLightDarkReduceMotion200`, `testSaturationZeroShowWin
 | Library darkAqua bottom-row cells, p75 1.93–2.16 | **Not reproduced** (no unwaived finding at those cells) |
 | Library 200% "Recent" 2.38 / 2.66, "Synthetic Show" 3.34 | **Not reproduced.** Library aqua and darkAqua 200% have no unwaived findings. These predated #113 (#109 overflow). |
 | **Setup darkAqua 200% "Access denied" status, 1.77** | **Not reproduced.** Setup aqua and darkAqua 200% have no unwaived findings. It predated #112's Setup layout. **No product bug.** |
-| Aqua date cells (x 1170), 4.23 | Still flagged at 4.23. The crop shows the cell extends under the vertical scroller and the detail column; only "Se" is visible. **Visible text: 207 px at p75 15.91 / 14.92.** → **measured artefact** (scroller pixels). |
+| Aqua date cells (x 1170), 4.23 | Still flagged at 4.23. The crop shows the cell extends under the vertical scroller and the detail column; only "Se" is visible. **Visible text: 207 px at p75 15.91 / 14.92.** → **measured artefact** (scroller pixels). The truncation itself (Last Opened cut off, Status off-screen at the default window size) is a readability issue: [#140](https://github.com/brandonmartinez/WaveWrangler/issues/140) (P2, Library lane). |
 
 Remaining findings in this run, classified from their crops:
-- **Setup selected row "intro.wav … Not found", p75 2.27** (all its cells).
-  - The crop shows a **selected** row cut off at the bottom by the Sources table's scroll edge; the lower half is a different band.
-  - **Visible text: 297 px at p75 7.35, #FFFFFF on the accent selection #004DC4.**
-  - → measured artefact (scroll-edge clip). `PartialClipContrast` handles window edges only, so the harness records it as unwaived; it is classified here.
+- **Setup selected row "intro.wav … Not found", p75 2.27** (Name, Speaker, Role and Status cells). Each cell is measured from **its own crop** (`contrast-crops/mini-475adf3-setup-selected-row-{name,speaker,role,clipped}.png`).
+  - The row is a **selected** row cut off by the Sources table's scroll edge: the top 14 px band is the accent selection; below it is the table background (#1E1E1E).
+  - In every full crop, the 2.27 "glyph" figure is the **accent fill against #1E1E1E**, not text.
+  - **Status** visible band: 297 px at p75 7.35 (#FFFFFF on #004DC4) → measured artefact (scroll-edge clip).
+  - **Name** visible band: 207 px at p75 7.35 → measured artefact (scroll-edge clip).
+  - `PartialClipContrast` handles window edges only, so the harness records these as unwaived; they are classified here.
+  - **Speaker and Role: unresolved.** Each column is 12 pt wide and its crop has **0 text pixels** (no white at all): the "none" value isn't drawn. That is the **#104 clipped-column signature, at `475adf3`, after #112.** It occurs here with the Episode inspector open, which narrows the table. #130 (fix for P0 #129) changes the Setup column mechanism (constant ideal column widths). **To re-check on #130's head once it merges; if the clipping persists, file it.**
 - **Sidebar "Synthetic Collection 3" (darkAqua), 2,753 px at p75 15.72.** Legible, but collection rows aren't in `measuredArtefact`'s scope → measured artefact.
-- **200% Library bottom-row cells (y 850, visible slice 5 pt), 0 glyph pixels.** No text is rendered in the visible sliver (the row lies below the window edge) → clipped, not colour.
+- **200% Library bottom-row cells (y 850, visible slice 5 pt).** Name, "1" and location: 0 glyph pixels. No text is rendered in the visible sliver (the row lies below the window edge) → clipped, not colour.
+- **Unresolved:** the date cell at {1170, 850} in the same row has **56 glyph pixels at p75 1.61** in the 5-pt visible slice. There's no crop of the slice, so its pixels can't be classified.
 - **"Label not human-readable" for fixture file names** "ana-zoom.m4a" and "intro.wav". These are the same file-name heuristic as `synthetic-N.wav` / `trN.wav`; the names are outside the harness waiver's pattern.
 
 **C03 Setup: Pass. C07: Pass.**
@@ -458,7 +462,7 @@ Remaining findings in this run, classified from their crops:
 - **Measured artefacts under Increase Contrast** (Increase Contrast draws heavier borders and scrollers, which the crops include):
   - date cells at x 1170, 2.86 → visible "Se" text 253 px at p75 12.08;
   - "Library" title band, 3.69 → title text 1,129 px at p75 16.29;
-  - the Setup selected clipped row, 3.51 → visible text 282 px at p75 4.76.
+  - the Setup selected clipped row, 3.51 (the accent fill #0A6CF0 against #1E1E1E): Status visible band 282 px at p75 4.76 and Name visible band 198 px at p75 4.76 → measured artefacts. **Speaker and Role: 0 text pixels**, unresolved, the same as §10.1 (#104 signature).
 - **Unresolved, no crop.** Two bottom-row cells partly below the window edge: "5" (visible slice 10 pt, 333 px at p75 4.11) and a date cell (2.0). The visible slice probably includes Increase Contrast's window border. They stay unwaived and are not classified.
 - **C05 Reduce Motion: Not run.** The setting was in effect (the runner observed it) and the flows completed with `MotionPolicy` honouring it, but motion isn't observable in static captures. Checking motion by eye is a user item.
 - **C04: Fail (#138).**
@@ -470,11 +474,13 @@ What was attempted:
 2. `VoiceOverWalkUITests` (3 walks) drove the app by keyboard and read VoiceOver's caption panel through XCTest after each step, also cropping the panel's pixels.
 3. **All 3 walks failed at the first step** (`Failed to resolve query: Timed out snapshotting 'VoiceOver', app is either unresponsive or taking too long to snapshot`). The test bundle exited 65.
 
+**Disclosure:** at the `vo-on` snapshot (17:33:08), with VoiceOver pid 21864 running, the probe read **`isVoiceOverEnabled` = false**. `voiceOverOnOffKey` wasn't snapshotted then; it read 1 only after the slot. **VoiceOver may never have been enabled during the walks.** `open -a VoiceOver.app` starts the process, but that apparently doesn't (or didn't yet) turn VoiceOver on. That is consistent with the caption panel not being snapshot-able.
+
 **No announcement was captured, and none is claimed.** **VoiceOver listening is a user-manual exit item** (checklist §5.1).
 
 ### 10.4 Restoration (recorded, then diffed against the originals)
 
-| Key | Original (17:04:34) | After the slot (17:37:52) | Final (20:13, after manual steps) |
+| Key | Original (17:04:34) | After the slot (17:37:52) | Final (20:13–20:20, after manual steps) |
 | --- | --- | --- | --- |
 | `com.apple.universalaccess increaseContrast` | 0 (boolean) | 0 (boolean) | 0 (boolean) ✅ |
 | `… reduceMotion` | absent | absent | absent ✅ |
@@ -482,7 +488,7 @@ What was attempted:
 | `… FontSizeCategory` | absent | absent | absent ✅ |
 | `com.apple.VoiceOver4/default` | absent | absent | absent ✅ |
 | `com.apple.VoiceOverTraining` | absent | **present (empty plist)** | absent ✅. The coordinator authorized deleting it. `defaults delete` reports "Domain not found" for an emptied domain, so the empty 42-byte plist file (contents `{}`) was removed and re-read as absent. |
-| `com.apple.universalaccess voiceOverOnOffKey` | **not snapshotted** (the original probe reported `isVoiceOverEnabled` = false) | 1 | **0 (boolean) ✅.** Coordinator-authorized restore to the observed original, 2026-10-05 20:19:59: `defaults write com.apple.universalaccess voiceOverOnOffKey -bool false`. Read back: `0`, Type is boolean; probe `voiceOver=false`; no VoiceOver process. |
+| `com.apple.universalaccess voiceOverOnOffKey` | **not snapshotted.** Inferred off: the original probe reported `isVoiceOverEnabled` = false. An absent key and `0` can't be told apart that way. | 1 | **0 (boolean)**, restored with the coordinator's authorization at **20:19:59** (`defaults write com.apple.universalaccess voiceOverOnOffKey -bool false`, writing false rather than deleting the key). Re-read at 20:20:01: `0`, Type is boolean; probe `voiceOver=false`; no VoiceOver process. If the original was an absent key, the residual difference is "absent → 0 (false)", which is functionally off. |
 | VoiceOver process | none | none | none ✅ |
 
 Before the restore, `voiceOverOnOffKey` read 1 and the probe reported `voiceOver=true`. The key was set because the slot stopped VoiceOver with `kill` rather than quitting it through VoiceOver. This is a **slot-script gap**: the script didn't snapshot that key. False is the restored state, matching the original probe.
