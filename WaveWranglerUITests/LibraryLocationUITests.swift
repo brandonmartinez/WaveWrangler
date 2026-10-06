@@ -40,9 +40,15 @@ final class LibraryLocationUITests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        Acceptance.writeEvidence("t25-keyboard-navigation-\(name.replacingOccurrences(of: " ", with: "_"))",
-                                 ["keyboardNavigation": Self.keyboardNavigation,
-                                  "notRunNeedsFullKeyboardAccess": Array(Set(needsKeyboardNavigation)).sorted()], test: self)
+        // Only for a test body that ran (a skip in setUp never launches the app), with its outcome, so an empty
+        // "not run" list can't read as a clean run.
+        if app != nil {
+            let run = testRun
+            let outcome = run?.hasBeenSkipped == true ? "skipped" : run?.hasSucceeded == true ? "passed" : "failed"
+            Acceptance.writeEvidence("t25-keyboard-navigation-\(name.replacingOccurrences(of: " ", with: "_"))",
+                                     ["outcome": outcome, "keyboardNavigation": Self.keyboardNavigation,
+                                      "notRunNeedsFullKeyboardAccess": Array(Set(needsKeyboardNavigation)).sorted()], test: self)
+        }
         if let app, app.state != .notRunning { app.terminate() }
         // Leave no library location or library behind for later suites: they share the isolated UI-test
         // preferences and storage, and the folders chosen here are deleted below. One launch with storage reset
@@ -445,7 +451,9 @@ final class LibraryLocationUITests: XCTestCase {
 
     /// K26: in the Library window, Tab reaches the message bar's buttons first. Without system keyboard navigation the
     /// Tab step is recorded as not run, and the order is checked in the accessibility tree instead: the message bar
-    /// comes before the entry list (commands-keyboard: "The message bar is announced before the tables").
+    /// comes before the entry list (commands-keyboard: "The message bar is announced before the tables"). The entry
+    /// list is absent when there is no library to list (L5 newer format shows the empty state); then the bar is
+    /// still the first of the two.
     private func assertTabReachesMessageBarFirst(_ button: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
         app.typeKey("l", modifierFlags: [.command, .shift])
         guard Self.keyboardNavigation else {
@@ -453,8 +461,7 @@ final class LibraryLocationUITests: XCTestCase {
             let order = app.windows["Library"].descendants(matching: .any)
                 .matching(NSPredicate(format: "identifier IN %@", ["ww.library.messageBar", "ww.library.entries"])).allElementsBoundByIndex
                 .map(\.identifier)
-            XCTAssertEqual(order.first, "ww.library.messageBar", "message bar before the entry list in AX order: \(order)", file: file, line: line)
-            XCTAssertTrue(order.contains("ww.library.entries"), "entry list present: \(order)", file: file, line: line)
+            XCTAssertEqual(order.first, "ww.library.messageBar", "message bar present and before the entry list in AX order: \(order)", file: file, line: line)
             return
         }
         var reached = false
