@@ -79,4 +79,16 @@
 
 **iCloud and media on the Mac mini (user-directed, 2026-10-05):** synthetic iCloud Drive trials may also run on the Mac mini (the user's same Apple account), with grant-C scope: dedicated trial folder, generated synthetic files only, deleted afterwards. The disposable episode copy is at the same location on the mini, under the same M1/M2 consent. Multi-device iCloud testing (main Mac + Mac mini deliberately editing the same synthetic documents in the trial folder) is also allowed (user-directed 2026-10-05 13:37). UI stays on the Mac mini; the main Mac's side runs headless.
 
+**Full-suite-on-merge regression policy (user-directed, 2026-10-05; applies to the rest of M1 and to M2+):**
+- **After each coalesced merge batch to main:**
+  - one build-for-testing from that main SHA;
+  - the FULL WaveWranglerUITests suite on the Mac mini (test-without-building, no filter);
+  - the full scripts/test.sh on the same SHA.
+
+  Record the SHA, host, pass/fail counts and xcresult location.
+- **Failures:** any failure is a regression. Triage it immediately, deduplicate and file it with severity and a P0/follow-up classification, and freeze merges in the same area until it's understood.
+- **Scheduling:** the full run pre-empts targeted PR runs only when a batch has landed since the last full run. One GUI run at a time.
+- **Milestone exit gate:** the final main SHA passes the full UI suite on the Mac mini and the full scripts/test.sh with zero unexplained failures, cited in the exit record. Flaky failures are fixed or tracked with an issue, never silently re-run.
+- **Rationale:** hosted CI is macOS 26 with no XCUITests; the claimed hosts are macOS 27.
+
 **Process deviations disclosed:** M1 briefly ran 5–6 writer sessions during short review-fix rounds (budget 4) and had windows with two concurrent read-only reviewer agents (budget 1); `gh pr create` was used as a fallback for six PRs when `create_pull_request` was bound to a merged PR; one batched keystroke briefly listed the consented episode folder's parent's metadata in-app (nothing read, imported or committed). The M2 kickoff restates the budgets and rules.
