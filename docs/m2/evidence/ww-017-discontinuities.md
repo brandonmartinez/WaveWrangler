@@ -209,3 +209,27 @@ The holdout is a separate PR after merge.
 This PASS covers only synthetic signals with plants in the frozen size ranges. It does not qualify any real
 recording, codec or device. It authorizes no `clockApproved`. Mapped regions remain acoustic proposals, so WW-016
 holdout status and the manual-epoch fallback still govern production use.
+
+## Frozen holdout (2026-10-06): FAIL
+
+This is separate from the calibration above. The frozen `m2-freeze-discontinuity` holdout ran once, with no
+`WW_SEGMENT_MAX_CONCURRENCY` override (the frozen default is 4), on commit
+`f835948b1500a1af471c68050e085070464c712a` (Apple M5 Max, 18 cores, 128 GiB, macOS 27.0.1 (26A434), Xcode
+27.0 (27A266a), Swift 6.4). It started at 2026-10-06T17:19:40Z and finished at 2026-10-06T17:32:16Z. The frozen
+trees were `WWAlignSegment` `08bc77339aee0ccb9294e5c1610529ef5e088320`,
+`WWAlignSegmentTests` `b4d12045d3fe0e2c913f4c3545bec56f0d8f9ce0`, `WWAlignEstimate`
+`8efd588a6b57dc56bf7eafa1ccf2c7709253f3a9`, `WWTimeMap`
+`24c7aadfbf1470c8555542061ab08eb23e37325b`, and `WWCore`
+`c310389c4b41ebde80c5dabaea12fd5376f5d9ba`.
+
+- **PASS:** 130/130 planted discontinuities flagged; 0 unsupported-only, 0 bridged, 0 bridging regions, and 0 silent bridges.
+- **FAIL:** negatives false-split 3/50 (0.060) against the frozen maximum of 0; `transient#6`, `transient#13`, and `silenceGap#4`.
+- **PASS:** 0 positive/monotonic, gap-inverse, or retention failures; supported worst nearest-rank p95/max was 1.078/1.096 ms, within the WW-016 5/10 ms gate.
+
+The full verbatim run log (including every case and UTC start/end lines) is
+[`ww-017/holdout-raw.txt`](ww-017/holdout-raw.txt). The unedited canonical case records are
+[`ww-017/holdout.jsonl`](ww-017/holdout.jsonl), SHA-256
+`c26445d14e4b8c64a587c4f07c37debd75514f2113bdb227087fd60e2949e6b7`
+([`holdout.jsonl.sha256`](ww-017/holdout.jsonl.sha256)); the raw-log SHA-256 is
+`ae8dbd818d6deec418deada812e6426c9c9a050bb2f8fd9cc81b8addcaf3d812`. This failed holdout does not authorize
+`clockApproved`; mapped regions remain acoustic proposals.
