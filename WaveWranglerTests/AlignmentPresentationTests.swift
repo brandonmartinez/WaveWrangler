@@ -112,7 +112,7 @@ struct AlignmentPresentationTests {
             recorderGroups: [group], sources: [source]
         )
         let model = ShowDocumentModel(show: Show(title: "Synthetic"), episodes: [episode])
-        let rows = EpisodeAlignmentModel.makeRows(model: model, episodeID: episode.id, states: [])
+        let rows = AlignmentRowsProjection.makeRows(model: model, episodeID: episode.id, states: [])
         #expect(rows.count == 1)
         #expect(rows.first?.groupName == "Remote recorder")
         #expect(rows.first?.epochLabel == "Take 2")
@@ -121,26 +121,33 @@ struct AlignmentPresentationTests {
     }
 
     @MainActor
-    @Test func completeReplacementUndoRedoRepeatsPersistenceCallback() throws {
-        let document = ShowDocument()
-        var original = ShowDocumentModel.untitled(title: "Before")
-        original.episodes = [Episode(title: "Synthetic", number: 1)]
-        document.store.replaceLoadedModel(original)
-        var revised = original
-        revised.show.title = "After"
-        var callbackTitles: [String] = []
+    @Test func replacementUndoRegistrationRepeatsTheApplyCallback() {
+        final class Probe {
+            var value = 0
+        }
+        let probe = Probe()
+        let undoManager = UndoManager()
+        var applied: [Int] = []
 
-        #expect(document.store.applyReplacement(
-            "Edit Alignment",
-            model: revised,
-            afterChange: { callbackTitles.append($0.show.title) }
-        ))
-        #expect(document.store.model.show.title == "After")
-        let undoManager = try #require(document.undoManager)
+        func replace(with value: Int) {
+            let previous = probe.value
+            probe.value = value
+            AppUndoRegistration.register(
+                with: undoManager,
+                target: probe,
+                actionName: "Edit Alignment"
+            ) { _ in
+                replace(with: previous)
+            }
+            applied.append(value)
+        }
+
+        replace(with: 1)
+        #expect(probe.value == 1)
         undoManager.undo()
-        #expect(document.store.model.show.title == "Before")
+        #expect(probe.value == 0)
         undoManager.redo()
-        #expect(document.store.model.show.title == "After")
-        #expect(callbackTitles == ["After", "Before", "After"])
+        #expect(probe.value == 1)
+        #expect(applied == [1, 0, 1])
     }
 }

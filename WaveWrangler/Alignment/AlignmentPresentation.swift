@@ -14,6 +14,92 @@ struct AlignmentStateCopy: Equatable {
     var symbol = "questionmark.circle"
 }
 
+struct AlignmentRow: Identifiable, Equatable {
+    var id: RecordingEpochID { epochID }
+    var groupID: RecorderGroupID
+    var epochID: RecordingEpochID
+    var groupName: String
+    var epochLabel: String
+    var sourceNames: String
+    var state: AlignmentStateCopy
+    var ratePPM: Double?
+    var offsetMilliseconds: Double?
+}
+
+enum AlignmentRowsProjection {
+    static func makeRows(
+        model: ShowDocumentModel,
+        episodeID: EpisodeID,
+        states: [EpochAlignmentState],
+        map: AlignedTimelineMap? = nil
+    ) -> [AlignmentRow] {
+        guard let episode = model.episode(episodeID) else { return [] }
+        let byEpoch = Dictionary(uniqueKeysWithValues: states.map { ($0.epoch, $0) })
+        let timing = Dictionary(
+            uniqueKeysWithValues: (map?.groups ?? []).flatMap { group in
+                group.epochs.compactMap { epoch -> (RecordingEpochID, (Double, Double))? in
+                    guard case let .mapped(segments, _) = epoch.mapping, let segment = segments.first else { return nil }
+                    return (
+                        epoch.epoch,
+                        ((segment.rateRatio.approximateDouble - 1) * 1_000_000,
+                         segment.alignedOffset.approximateDouble * 1_000)
+                    )
+                }
+            }
+        )
+        var mappedSources: [RecordingEpochID: [SourceID]] = [:]
+        for group in map?.groups ?? [] {
+            for placement in group.placements {
+                for span in placement.spans {
+                    if mappedSources[span.epoch]?.contains(placement.occurrence.source) != true {
+                        mappedSources[span.epoch, default: []].append(placement.occurrence.source)
+                    }
+                }
+            }
+        }
+        return episode.recorderGroups.flatMap { group in
+            group.epochs.map { epoch in
+                let mapped = Set(mappedSources[epoch.id] ?? [])
+                let sources = episode.sources.filter {
+                    mapped.contains($0.id)
+                        || ($0.placement.recorderGroupID == group.id && $0.placement.epochID == epoch.id)
+                }
+                let status = byEpoch[epoch.id]?.status ?? .unsupported(.notAttempted, .analysisPending)
+                let blockedName: String? = {
+                    guard case let .sourceBlocked(sourceID, _) = status else { return nil }
+                    return episode.source(sourceID)?.displayNameHint
+                }()
+                return AlignmentRow(
+                    groupID: group.id,
+                    epochID: epoch.id,
+                    groupName: group.name,
+                    epochLabel: epoch.label,
+                    sourceNames: sources.map(\.displayNameHint).joined(separator: ", "),
+                    state: AlignmentPresentation.copy(for: status, fileName: blockedName),
+                    ratePPM: timing[epoch.id]?.0,
+                    offsetMilliseconds: timing[epoch.id]?.1
+                )
+            }
+        }
+    }
+}
+
+@MainActor
+enum AppUndoRegistration {
+    static func register<Target: AnyObject>(
+        with manager: UndoManager?,
+        target: Target,
+        actionName: String,
+        handler: @escaping @MainActor (Target) -> Void
+    ) {
+        guard let manager else { return }
+        manager.registerUndo(withTarget: target) { target in
+            MainActor.assumeIsolated { handler(target) }
+        }
+        manager.setActionName(actionName)
+    }
+}
+
 enum AlignmentPresentation {
     static let gap = AlignmentStateCopy(
         heading: "Gap — clock restarted",

@@ -92,12 +92,13 @@ final class ShowDocumentStore {
         model = newModel
         coalescingKey = nil
         if let undoManager = document?.undoManager {
-            undoManager.registerUndo(withTarget: self) { store in
-                MainActor.assumeIsolated {
-                    store.replace(with: previous, actionName: actionName, afterChange: afterChange)
-                }
+            AppUndoRegistration.register(
+                with: undoManager,
+                target: self,
+                actionName: actionName
+            ) { store in
+                store.replace(with: previous, actionName: actionName, afterChange: afterChange)
             }
-            undoManager.setActionName(actionName)
         }
         afterChange?(newModel)
     }
