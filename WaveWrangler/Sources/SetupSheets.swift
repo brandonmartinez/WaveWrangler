@@ -36,7 +36,7 @@ struct ImportReviewSheet: View {
                 TableColumn("Include") { row in
                     Toggle("Include \(row.candidate.displayName)", isOn: includeBinding(row.id))
                         .toggleStyle(.checkbox)
-                        .checkboxTint()
+                        .checkboxTint(onSelectedRow: selection.contains(row.id))
                         .labelsHidden()
                         .accessibilityIdentifier("ww.import.row.\(index(of: row.id)).include")
                 }

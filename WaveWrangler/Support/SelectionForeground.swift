@@ -33,7 +33,11 @@ extension View {
     /// There one blue can't serve both white selection text (≥ 4.5:1, needs a dark blue) and a checked-box fill
     /// that stands out from the dark sheet background (≥ 3:1 against #363636, needs a lighter blue), so checkboxes
     /// get the lighter #2F86FF. The white checkmark on it stays ≥ 3:1. Measured by `testAccentTintedControls`.
-    func checkboxTint() -> some View {
-        tint(Color("CheckboxTint"))
+    ///
+    /// On a selected table row AppKit draws the checkbox fill lighter still (#6BA5FF with `CheckboxTint`), which put
+    /// the white checkmark at 2.48:1 (Mac mini, dark + Increase Contrast). There the accent is used instead (its
+    /// lightened fill keeps the checkmark ≥ 3:1). Pass `onSelectedRow` for checkboxes inside selectable tables.
+    func checkboxTint(onSelectedRow: Bool = false) -> some View {
+        tint(onSelectedRow ? Color.accentColor : Color("CheckboxTint"))
     }
 }
