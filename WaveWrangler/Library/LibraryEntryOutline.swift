@@ -26,8 +26,9 @@ struct LibraryEntryOutline: NSViewRepresentable {
         for column in EntryColumn.allCases {
             let tableColumn = NSTableColumn(identifier: column.identifier)
             tableColumn.title = column.title
-            tableColumn.minWidth = column.minWidth
-            tableColumn.width = column.idealWidth
+            // Widths come from LibraryEntryColumnPlan (#140); a low minimum keeps AppKit from overriding them.
+            tableColumn.minWidth = 20
+            tableColumn.width = column.kind.baseWidth
             tableColumn.resizingMask = .userResizingMask
             if let key = column.sortKey {
                 tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: key, ascending: true)
@@ -39,7 +40,8 @@ struct LibraryEntryOutline: NSViewRepresentable {
         outline.style = .inset
         outline.usesAlternatingRowBackgroundColors = true
         outline.usesAutomaticRowHeights = false
-        outline.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        // The column plan sizes every column to the outline's width; AppKit mustn't redistribute it.
+        outline.columnAutoresizingStyle = .noColumnAutoresizing
         outline.allowsMultipleSelection = true
         outline.allowsTypeSelect = true
         outline.autosaveTableColumns = false
@@ -53,7 +55,8 @@ struct LibraryEntryOutline: NSViewRepresentable {
         outline.onFocus = { [weak coordinator = context.coordinator] in coordinator?.state.focusedRegion = .entries }
         outline.onResign = { [weak coordinator = context.coordinator] in coordinator?.resignEntriesFocus() }
 
-        let scroll = NSScrollView()
+        let scroll = EntryScrollView()
+        scroll.onTile = { [weak coordinator = context.coordinator] width in coordinator?.applyColumnPlan(availableWidth: width) }
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
@@ -86,6 +89,10 @@ struct LibraryEntryOutline: NSViewRepresentable {
         private var font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
         private var lineCounts: [StatusLineKey: Int] = [:]
         private var syncingSelection = false
+        private var columnPlan: LibraryEntryColumnPlan.Plan?
+        private var applyingColumnPlan = false
+        /// Columns the plan hides (#140); their values go into the Name cell's accessibility help.
+        private(set) var hiddenColumns: Set<EntryColumn> = []
 
         init(state: LibraryWindowState) {
             self.state = state
@@ -103,6 +110,8 @@ struct LibraryEntryOutline: NSViewRepresentable {
                 outline.headerView?.needsDisplay = true
                 lineCounts = [:]
                 force = true
+                columnPlan = nil
+                if let scroll = outline.enclosingScrollView { applyColumnPlan(availableWidth: scroll.contentView.bounds.width) }
             }
             self.list = list
             unsorted = rows
@@ -138,6 +147,36 @@ struct LibraryEntryOutline: NSViewRepresentable {
             } else if plan.scrollToTop, let clip = outline.enclosingScrollView?.contentView {
                 clip.scroll(to: NSPoint(x: clip.bounds.minX, y: -clip.contentInsets.top))
                 outline.enclosingScrollView?.reflectScrolledClipView(clip)
+            }
+        }
+
+        /// #140: shows and sizes the columns for the outline's width and the text size. Called when the scroll
+        /// view tiles (window resize, zoom, split-view drag) and when the text size changes. The column set is fixed;
+        /// columns are hidden, never added or removed, and every width is finite.
+        func applyColumnPlan(availableWidth: CGFloat) {
+            guard let outline, !applyingColumnPlan, availableWidth.isFinite, availableWidth > 0 else { return }
+            let scale = Double(font.pointSize) / Double(NSFont.systemFontSize)
+            let plan = LibraryEntryColumnPlan.plan(availableWidth: Double(availableWidth), scale: scale)
+            guard plan != columnPlan else { return }
+            applyingColumnPlan = true
+            defer { applyingColumnPlan = false }
+            columnPlan = plan
+            for tableColumn in outline.tableColumns {
+                guard let column = EntryColumn(rawValue: tableColumn.identifier.rawValue) else { continue }
+                if let width = plan.widths[column.kind] {
+                    tableColumn.isHidden = false
+                    if tableColumn.width != CGFloat(width) { tableColumn.width = CGFloat(width) }
+                } else {
+                    tableColumn.isHidden = true
+                }
+            }
+            let hidden = Set(plan.hidden.compactMap { EntryColumn(rawValue: $0.rawValue) })
+            let hiddenChanged = hidden != hiddenColumns
+            hiddenColumns = hidden
+            guard outline.numberOfRows > 0 else { return }
+            outline.noteHeightOfRows(withIndexesChanged: IndexSet(0..<outline.numberOfRows))
+            if hiddenChanged, let name = outline.tableColumns.firstIndex(where: { $0.identifier == EntryColumn.name.identifier }) {
+                outline.reloadData(forRowIndexes: IndexSet(0..<outline.numberOfRows), columnIndexes: [name])
             }
         }
 
@@ -210,7 +249,7 @@ struct LibraryEntryOutline: NSViewRepresentable {
                   let row = (item as? EntryItem)?.row else { return nil }
             let cell = outlineView.makeView(withIdentifier: identifier, owner: nil) as? EntryCellView
                 ?? EntryCellView(column: column)
-            cell.configure(row, font: font)
+            cell.configure(row, font: font, hidden: hiddenColumns)
             return cell
         }
 
@@ -316,24 +355,8 @@ enum EntryColumn: String, CaseIterable {
         }
     }
 
-    var minWidth: CGFloat {
-        switch self {
-        case .name: 120
-        case .episodes: 60
-        case .location, .lastOpened: 90
-        case .status: 120
-        }
-    }
-
-    var idealWidth: CGFloat {
-        switch self {
-        case .name: 200
-        case .episodes: 70
-        case .location: 150
-        case .lastOpened: 140
-        case .status: 170
-        }
-    }
+    /// The column plan's kind (#140).
+    var kind: LibraryEntryColumnKind { LibraryEntryColumnKind(rawValue: rawValue)! }
 
     var sortKey: String? {
         switch self {
@@ -355,7 +378,7 @@ final class EntryCellView: NSTableCellView {
 
     init(column: EntryColumn) {
         self.column = column
-        super.init(frame: NSRect(x: 0, y: 0, width: column.idealWidth, height: 24))
+        super.init(frame: NSRect(x: 0, y: 0, width: column.kind.baseWidth, height: 24))
         identifier = column.identifier
         if column == .status {
             Self.configureWrapping(label)
@@ -385,13 +408,16 @@ final class EntryCellView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func configure(_ row: LibraryEntryRow, font: NSFont) {
+    func configure(_ row: LibraryEntryRow, font: NSFont, hidden: Set<EntryColumn> = []) {
         label.font = font
         switch column {
         case .name:
             label.stringValue = row.name
             label.setAccessibilityIdentifier(row.accessibilityIdentifier)
             toolTip = row.name
+            // #140: values of columns hidden at this width, for VoiceOver (they're also in the detail pane).
+            let extra = Self.hiddenValues(row, hidden: hidden)
+            label.setAccessibilityHelp(extra.isEmpty ? nil : extra)
         case .episodes:
             label.stringValue = row.episodesText
             label.font = NSFont.monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular)
@@ -422,6 +448,19 @@ final class EntryCellView: NSTableCellView {
             }
         }
         needsLayout = true
+    }
+
+    /// "5 episodes. Location: iCloud Drive › Podcasts. Last opened: Sep 21, 2026 at 10:00 AM."
+    static func hiddenValues(_ row: LibraryEntryRow, hidden: Set<EntryColumn>) -> String {
+        var parts: [String] = []
+        if hidden.contains(.episodes) {
+            parts.append(row.episodeCount.map { $0 == 1 ? "1 episode" : "\($0) episodes" } ?? "Episodes unknown")
+        }
+        if hidden.contains(.location) { parts.append("Location: \(row.locationText)") }
+        if hidden.contains(.lastOpened) {
+            parts.append("Last opened: \(row.lastOpened.map { $0.formatted(dateStyle) } ?? "not yet")")
+        }
+        return parts.map { $0 + "." }.joined(separator: " ")
     }
 
     override func layout() {
@@ -524,6 +563,16 @@ final class EntryLabel: NSTextField {
 
     override func accessibilityValue() -> String? {
         accessibilityValueOverride ?? super.accessibilityValue()
+    }
+}
+
+/// Reports its content width whenever it tiles (resize, zoom, split-view drag), so the column plan follows it.
+final class EntryScrollView: NSScrollView {
+    var onTile: ((CGFloat) -> Void)?
+
+    override func tile() {
+        super.tile()
+        onTile?(contentView.bounds.width)
     }
 }
 
