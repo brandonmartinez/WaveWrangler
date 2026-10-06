@@ -1,5 +1,4 @@
 import Accelerate
-import CryptoKit
 import Darwin
 import Foundation
 import Testing
@@ -20,8 +19,11 @@ import WWTimeMap
 //   the only other content read is plain read-only SHA-256 hashing of the folder's audio items to prove
 //   they are byte-unchanged. Non-audio items are never opened (metadata only).
 // * Derived data (the rendered test segment) goes only to WW_LOCAL_SCRATCH_DIR, a fresh `mktemp -d`
-//   directory outside the repository that the operator deletes after the run. Analysis buffers stay in
-//   memory and are never written.
+//   directory that ConsentGuards.checkScratch requires to be empty, local, non-ubiquitous and outside the
+//   approved folder, the repository and cloud-synced folders. The render asset is removed when render()
+//   exits, and the operator deletes the directory after the run. Analysis buffers stay in memory and are
+//   never written.
+// * The immutability snapshot is re-taken and compared even when an earlier step throws.
 // * Output names sources S01..Snn only (audio by size descending then SHA-256; then non-audio by size). It
 //   never prints a path, a file name, or any audio content.
 // * No transcription, speech analysis, network or GUI.
@@ -47,8 +49,8 @@ struct LocalEpisodeValidationTests {
     func validateApprovedEpisodeCopy() async throws {
         let episode = URL(fileURLWithPath: try #require(Env.episode), isDirectory: true).standardizedFileURL
         let scratchPath = try #require(Env.scratch, "set WW_LOCAL_SCRATCH_DIR to a fresh mktemp -d directory")
-        let scratch = URL(fileURLWithPath: scratchPath, isDirectory: true).standardizedFileURL
-        try Harness.checkScratch(scratch, episode: episode)
+        let scratch = try ConsentGuards.checkScratch(URL(fileURLWithPath: scratchPath, isDirectory: true), episode: episode)
+        log("scratch guard: empty directory on a local, non-ubiquitous volume; outside the approved folder, the repository and cloud-synced folders")
 
         var harness = Harness(episode: episode, scratch: scratch)
         try await harness.run()
@@ -69,15 +71,6 @@ private struct Harness {
         self.scratch = scratch
     }
 
-    static func checkScratch(_ scratch: URL, episode: URL) throws {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: scratch.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw HarnessError("scratch directory missing")
-        }
-        guard try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty else { throw HarnessError("scratch directory not empty") }
-        guard !scratch.path.hasPrefix(episode.path + "/"), scratch.path != episode.path else { throw HarnessError("scratch inside the approved folder") }
-    }
-
     mutating func run() async throws {
         let started = Date()
         log("host: \(Host.summary)")
@@ -89,6 +82,33 @@ private struct Harness {
         items = number(items, snapshots: before)
         log("items: \(items.count) numbered (\(items.filter(\.isAudio).count) audio, \(items.filter { !$0.isAudio }.count) non-audio)")
 
+        // Steps 2-5 run inside a do/catch so the immutability check (step 6) always runs, like a finally.
+        var stepError: (any Error)?
+        do {
+            try await steps(items)
+        } catch {
+            // Only HarnessError text is known path-free; anything else is reported by type alone.
+            let sanitized = error as? HarnessError ?? HarnessError("a validation step threw \(type(of: error))")
+            stepError = sanitized
+            log("step failed: \(sanitized)")
+            findings.append("a validation step threw")
+        }
+
+        // 6. Immutability, even when an earlier step threw.
+        do {
+            let after = try snapshot(items)
+            verifyUnchanged(items, before: before, after: after)
+        } catch {
+            log("immutability: NOT VERIFIED (\(error))")
+            findings.append("P0 immutability not verified: \(error)")
+        }
+
+        log("wall time: \(f(Date().timeIntervalSince(started), 1)) s; process peak RSS \(Host.peakRSSMegabytes) MB")
+        log("findings: \(findings.isEmpty ? "none" : findings.joined(separator: "; "))")
+        if let stepError { throw stepError }
+    }
+
+    mutating func steps(_ items: [Item]) async throws {
         // 2. Decode every audio item through the gateway, one at a time.
         var decoded: [Int: Decoded] = [:]
         for item in items {
@@ -107,13 +127,6 @@ private struct Harness {
 
         // 5. Channel-consistent render.
         try await render(groups, decoded)
-
-        // 6. Immutability.
-        let after = try snapshot(items)
-        verifyUnchanged(items, before: before, after: after)
-
-        log("wall time: \(f(Date().timeIntervalSince(started), 1)) s; process peak RSS \(Host.peakRSSMegabytes) MB")
-        log("findings: \(findings.isEmpty ? "none" : findings.joined(separator: "; "))")
     }
 
     // MARK: Enumeration and numbering
@@ -176,9 +189,11 @@ private struct Harness {
         var result: [URL: Snapshot] = [:]
         var hashedBytes: Int64 = 0
         let started = Date()
-        for item in items {
+        for (index, item) in items.enumerated() {
+            // Before numbering (numbering needs the hashes) an item is identified only by its listing index.
+            let label = item.number > 0 ? item.label : "unnumbered item \(index + 1)"
             var status = stat()
-            guard lstat(item.url.path, &status) == 0 else { throw HarnessError("lstat failed: errno \(errno)") }
+            guard lstat(item.url.path, &status) == 0 else { throw HarnessError("lstat of \(label) failed: errno \(errno)") }
             var snap = Snapshot(
                 size: Int64(status.st_size),
                 mtime: Int64(status.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(status.st_mtimespec.tv_nsec),
@@ -186,7 +201,7 @@ private struct Harness {
                 inode: UInt64(status.st_ino)
             )
             if item.isAudio {
-                snap.sha256 = try Self.sha256(item.url)
+                snap.sha256 = try ConsentGuards.sha256(item.url, label: label)
                 hashedBytes += snap.size
             }
             result[item.url] = snap
@@ -194,19 +209,6 @@ private struct Harness {
         let seconds = Date().timeIntervalSince(started)
         log("snapshot: \(items.count) items (lstat size/mtime/ctime/inode), \(items.filter(\.isAudio).count) audio items SHA-256, \(f(Double(hashedBytes) / 1e9, 2)) GB hashed in \(f(seconds, 1)) s")
         return result
-    }
-
-    /// Plain read-only hashing of an approved audio item (FileHandle opens O_RDONLY). Never writes.
-    static func sha256(_ url: URL) throws -> String {
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        var hasher = SHA256()
-        while true {
-            let block = try handle.read(upToCount: 8 << 20) ?? Data()
-            if block.isEmpty { break }
-            hasher.update(data: block)
-        }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     mutating func verifyUnchanged(_ items: [Item], before: [URL: Snapshot], after: [URL: Snapshot]) {
@@ -526,6 +528,14 @@ private struct Harness {
         let request = RenderRequest(groupMap: map, outputRate: try NominalRate(rate), outputFrames: outputStart ..< outputStart + outputCount, channels: channels, inputAssets: assets)
 
         let file = scratch.appendingPathComponent("render-\(group.label).f32")
+        // The rendered asset is derived data: remove it however render() exits, before the operator deletes
+        // the scratch directory itself.
+        defer {
+            if FileManager.default.fileExists(atPath: file.path) {
+                let removed = (try? FileManager.default.removeItem(at: file)) != nil
+                log("render \(group.label): scratch asset \(removed ? "removed" : "NOT removed (the scratch directory deletion still covers it)")")
+            }
+        }
         let provider = SliceProvider(buffers: buffers)
         let footprintBefore = Host.footprintMegabytes
         let started = Date()
@@ -634,11 +644,6 @@ private struct Harness {
 }
 
 // MARK: - Sinks and provider
-
-private struct HarnessError: Error, CustomStringConvertible {
-    let description: String
-    init(_ description: String) { self.description = description }
-}
 
 /// What the analysis decode keeps: a zero-phase low-passed, decimated mono mix (analysis only, never
 /// written) plus a short full-rate slice of every channel for the render check.
@@ -806,7 +811,11 @@ private struct FileSink: RenderOutputSink {
     init(url: URL, channelCount: Int) throws {
         guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw HarnessError("cannot create scratch file") }
         self.url = url
-        handle = try FileHandle(forWritingTo: url)
+        do {
+            handle = try FileHandle(forWritingTo: url)
+        } catch {
+            throw HarnessError("cannot open scratch asset: \(ConsentGuards.errnoDescription(error))")
+        }
         channels = Array(repeating: [], count: channelCount)
     }
 
@@ -819,11 +828,19 @@ private struct FileSink: RenderOutputSink {
             channels[c].append(contentsOf: planar)
             for (i, value) in planar.enumerated() { interleaved[i * chunk.channelCount + c] = value }
         }
-        try handle.write(contentsOf: interleaved.withUnsafeBufferPointer { Data(buffer: $0) })
+        do {
+            try handle.write(contentsOf: interleaved.withUnsafeBufferPointer { Data(buffer: $0) })
+        } catch {
+            throw HarnessError("scratch asset write failed: \(ConsentGuards.errnoDescription(error))")
+        }
     }
 
     mutating func finish() throws -> RenderedAsset {
-        try handle.close()
+        do {
+            try handle.close()
+        } catch {
+            throw HarnessError("scratch asset close failed: \(ConsentGuards.errnoDescription(error))")
+        }
         return RenderedAsset(channels: channels, sawMainThread: sawMainThread, chunkChannelCountsConsistent: consistent)
     }
 

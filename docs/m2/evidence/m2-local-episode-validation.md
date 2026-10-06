@@ -119,6 +119,8 @@ The only derived file was the render asset, written in the `mktemp -d` scratch d
 deleted with `rm -rf` immediately after the run, and a check confirmed it no longer existed. Analysis
 buffers were never written. Nothing derived was kept or committed.
 
+After this run, a review of #186 led to hardening the harness's consent guards. The scratch guard now resolves paths with realpath and refuses the approved folder and anything above or below it, the repository, cloud-synced folders, and non-local or ubiquitous volumes. The render asset is removed in a `defer`. Immutability is checked even if an earlier step throws. Hashing errors carry only the S-label and errno. These changes are unit-tested on synthetic directories. The real episode was not re-run, and the evidence above stands because the scratch directory was a fresh `mktemp -d` that was deleted and verified.
+
 ## What this does NOT show
 
 - **Alignment accuracy or correctness on real material.** There is no clock truth; every estimator outcome
