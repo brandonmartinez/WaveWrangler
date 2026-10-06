@@ -3,7 +3,7 @@
 Refs #45. Host: Apple M5 Max, macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4. Code measured: the commit that
 adds this note on `brandonmartinez/ww-050-decode-engine` (PR head; SHA in the PR); `DecodeEnvelope.version` 1, `FormatInterpretation.currentVersion` 1, envelope
 SHA-256 pin `0ad289ec…0ebb7fa` (`DecodeEnvelopeTests`). Commands, from `Packages/WaveWranglerKit`:
-`swift test --scratch-path .build/swiftpm --filter WWDecodeTests` (35 tests, 4 suites, pass) and `--filter ForbiddenAPITests` (6 pass);
+`swift test --scratch-path .build/swiftpm --filter WWDecodeTests` (40 tests, 5 suites, pass) and `--filter ForbiddenAPITests` (8 pass);
 then `scripts/test.sh`. Every fixture is generated in `$TMPDIR` by the native writers (AVAudioFile/ExtAudioFile): planar noise plus
 three Hann-windowed chirp landmarks per channel at known source frames. Each one is decoded through `SourceDecoder` with rotating
 chunk sizes (7 / 333 / 1000 / 4096 / 65 536 frames). "Lag" is |located landmark − truth| in output frames, measured after priming and
@@ -30,8 +30,11 @@ remainder trimming. Output frame *n* is source frame *n* at the source rate.
 - Missing, unreadable, directory or symlink source, unknown or not-downloaded residency → typed refusal before content opens; swapped file → `sourceIdentityMismatch`.
 - Mid-decode change to the file or descriptor → `sourceChangedDuringDecode`.
 - Read error, short or over-long stream, sink refusal or cancellation at any point → nothing published, reader closed.
+- A writable descriptor (injected `O_RDWR` / `O_WRONLY` open) → `notOpenedReadOnly` before any read; the gateway checks `fcntl(F_GETFL)`.
+- Every content read, including header and container-length reads, runs with dataless materialization off. This was observed per read for WAVE, AIFF, CAF, M4A AAC and M4A ALAC.
+- "Source untouched" means equal SHA-256, size, mtime, ctime, inode, mode, `st_flags`, and every extended attribute (name and value).
 
-28 source mutations were each caught by a failing test or a crash (see the PR).
+28 source mutations, plus 13 more on the review hardening (gateway, scan, snapshot), were each caught by a failing test or a crash (see the PR).
 
 **Not claimed (unevidenced, refused as `unsupported`).**
 - Codecs and containers: MP3 (no native encoder), ADTS/raw AAC, RF64/W64/BWF extensions, µ-law/A-law/IMA4, 8-bit and packed 20-bit PCM.
