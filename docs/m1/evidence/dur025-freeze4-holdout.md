@@ -5,6 +5,7 @@
 - **Hosts:** host A and host B (pseudonyms only, per m1-freeze-3 `hostLabels`), same Apple account (operator-attested, user grant E), iCloud Drive.
 - **Data:** synthetic files only, headless on both hosts; no GUI.
 - **Recipe:** registry M1-DUR-025 `recipeFreeze3` / `variantsFreeze3` (m1-freeze-3, `d55f992`, protocol §4.3), with `recipeFreeze4` (m1-freeze-4, `e70be08`, protocol §4.4): the level-sampling FAIL rule, the independent inclusion judgement, the truth-1 settle clause and the Combine summary check.
+- **Reproduce at `b5f797f`**, the commit that ran. This PR's head also has later commits: evidence documents, plus one post-run harness change, `fdd9999`, which makes `cleanup()` also delete the `<split>-reserve` folder. That change is verdict-neutral and doesn't alter any recorded result.
 - **Lead rulings applied:**
   - an SSH or harness error is a case FAILURE (none occurred);
   - the settle clause uses the raw listing with no exemption;
@@ -100,7 +101,15 @@ Per-case records: [`holdout/results.jsonl`](dur025-freeze4/holdout/results.jsonl
 - holdout-f3 #15 (show/simultaneous): fail —
 
 **Notes on the library cell:**
-- **Freeze-4 level sampling:** 0 FAIL samples on either host. The literal freeze-3 reading (ready while the raw list is non-empty) would have failed 53 samples on host A and 110 on host B, in 10 cases (listed above), as `literalReadingReport` requires. All of these are versions the product had already included and both judgements proved included, during the window before iCloud dropped them from its list.
+- **Freeze-4 level sampling:** 0 FAIL samples on either host among the evaluable samples. The literal freeze-3 reading (ready while the raw list is non-empty), as `literalReadingReport` requires:
+  - **190 samples across 23 cases** (host A 74, host B 116), counting both the in-window samples and the samples taken right after each product load (`samplesAtLoads`);
+  - the summary lines above count in-window samples only (A 53, B 110 in 10 cases). All of these are versions the product had already included and both judgements proved included, during the window before iCloud dropped them from its list.
+- **Unevaluable at-load samples (record honesty, verdicts unchanged):**
+  - In cases 42, 55 and 58 (all combineOnAThenB), host A's sample taken right after its round-1 Combine load shows `level: ready` with 1 raw unresolved version but an **empty** per-version list.
+  - The read-only load enumerated no version, so `judge_sample` evaluated nothing and scored the sample as passing.
+  - Under freeze-4's "never exempt" wording, a ready sample with an unresolved version that can't be shown exempt arguably FAILS. **On that strict reading the library cell is 27/30, not 30/30.**
+  - The recorded verdicts stay as the run produced them: library 30/30 on the truth-2 assertions, which the review confirmed (L4 on both hosts, all 120 presences, non-vacuous backups, converged). The gate outcome is FAIL either way.
+  - **Harness gap, for #146:** the probe's `seenByLoad` (versions the read-only load saw) and `unresolvedAfterLevel` (raw count after the load) weren't kept in the per-sample records. So these three samples can't be resolved after the fact into "the version left the list between the raw read and the load" versus "the load missed it". A requalification harness must keep both fields and treat an empty enumeration with raw > 0 as unevaluable, never as a pass.
 - **Product/harness inclusion disagreements:** 12 in-window version samples (11 in case 30, 1 in case 40) and 8 samples taken right after a load. In every one the product said "not included" and the independent judgement said "included", and the level was L4 (changedElsewhere), so the version was surfaced. This is the conservative direction: the product's strict inclusion doesn't count an ST-36 copy, the harness judgement does. The failing direction (product included, harness not) occurred 0 times.
 - **Settle clause** (raw listing, no exemption): 30/30. The completed-Combine criterion held in all 30 cases: byte-identical on both hosts, both changes present (current ×104, copy ×16), 0 unresolved, and every resolved version backed up with exactly its bytes.
 - **Combine rounds:** 1 round in 29 cases. Case 30 (concurrentCombine) needed 2, because the two concurrent Combines raced and host A was still in L4 after round 1. Combine summary checks: 40/40.
@@ -131,10 +140,15 @@ Compiled from every freeze-2, freeze-3 and freeze-4 run record for Lead's remedy
 | calibration-f3 | show / library / recovery | max 148.4 / 88.1 / 12.7 s | 0 | max 135.0 s |
 | dev-f3 attempts 2–3, drill | all | max 93.5 s | 0 | max 105.4 s |
 | freeze-2 holdout | show | 86.1 / 97.5 / 98.5 s | 0 | 57.1 / 81.2 / 81.4 s |
-| freeze-2 holdout | library | 101.2 / 122.5 / 122.8 s | 0 | 43.6 / 75.7 / 76.2 s |
+| freeze-2 holdout | library (trigger → first settle, **before** Combine; not comparable with freeze-4's per-round values) | 101.2 / 122.5 / 122.8 s | 0 | 43.6 / 75.7 / 76.2 s |
+| freeze-2 holdout | library (trigger → final settle **after** Combine, `finalSettleMs`) | 179.2 / 257.0 / 257.2 s | 0 | – |
 | freeze-2 holdout | recovery | 14.8 / 56.5 / 57.0 s | 0 | – |
 | freeze-2 holdout | relink | – | – | not recorded per fixture: 15 passing cases took 40–133 s in total; 5 failed cases waited out 3 × 420 s on one source (939–1016 s) |
-| freeze-2 calibrations 1–3 and dev-calibration-1 | show / library / recovery | max 97.1 / 98.0 / 13.1 s | 0 | 35–81 s |
+| freeze-2 calibrations 1–3 and dev-calibration-1 | show / library (pre-Combine) / recovery | max 97.1 / 98.0 / 13.1 s; library after Combine (`finalSettleMs`) max 189.0 s | 0 | 35–81 s |
+| freeze-2 dev-check (freeze-2 cells, 1 case each) | show / library (pre-Combine) / recovery | 32.7 / 45.2 / 13.0 s; library after Combine 133.7 s | 0 | 173.3–173.9 s |
+| freeze-2 dev-smoke (pre-freeze-2) | all | settle not recorded | – | 85.4–87.0 s |
+
+Library columns differ by run: freeze-4 reports each Combine round's settle (post-Combine), while freeze-2's first library row is trigger → first settle before any Combine. Use the `finalSettleMs` row to compare.
 
 **Shared window in the freeze-4 holdout:**
 - Show case 15's settle window (01:10:05Z to about 01:17:07Z; FAIL at the bound) and show case 16's setup stall (01:10:05–01:17:42Z; first wait expired at 424.6 s, fixture arrived 31.9 s into the download-request retry) cover the same ~7 minutes.
@@ -242,7 +256,7 @@ Harness commits after dev-f3 attempt 1 (all harness bugs or Lead rulings; none t
 
 ## Redaction note (2026-10-06)
 
-Records were written with paths redacted at write time (`<home>`, `<iCloud Drive>`). One committed file needed an additional redaction: `pre-holdout/dev-f3-attempt1/results.jsonl` captured SSH stderr containing host B's `user@address`. That one string was replaced with `<user>@<host B>`; nothing else changed. Pre-redaction sha256: `73b491bc117528241e49a2a0dd7679d705bbde22c931a23685a5651daaa1c120`. The committed evidence contains no home path, user@host string, LAN address or computer name.
+Records were written with paths redacted at write time (`<home>`, `<iCloud Drive>`). One committed file needed an additional redaction: `pre-holdout/dev-f3-attempt1/results.jsonl` captured SSH stderr containing host B's `user@address`. That one string, `<user>@<address>`, was replaced with `<user>@<host B>` by exact-string replacement; nothing else changed. Every line is valid JSON, and the parsed records equal the original records with only that string replaced. Pre-redaction sha256: `73b491bc117528241e49a2a0dd7679d705bbde22c931a23685a5651daaa1c120`. Correction: the first redaction (in `2ba35d1`) used a pattern that also consumed the `n` of a preceding `\n` escape, which made line 2 invalid JSON. Fixed in review. The committed evidence contains no home path, user@host string, LAN address or computer name.
 
 ## Final cleanup (grants C and E; 2026-10-06)
 
