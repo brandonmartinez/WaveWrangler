@@ -19,7 +19,7 @@
   "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit (equal to `git rev-parse <commit>:Packages/WaveWranglerKit/<path>`). DecodeFreezeTests.decoderAndHarnessTreesMatchTheFreezeRecord recomputes both tree IDs from the working tree on every test run and fails on any difference. A change to either tree after this freeze is a new dated freeze revision with a fresh holdout; both earlier records and the revision-1 holdout stay retained.",
   "dependencyTreesAtFreeze": {
     "note": "Informational dependency trees recorded for the revision-2 calibration and required in the future holdout report; other lanes own these modules.",
-    "Sources/WWSources": "fc8fb0fb661f318262d54d161baa3a04b475c792",
+    "Sources/WWSources": "d9192948bb5bdee78771c882b788f81bc8b53c2f",
     "Sources/WWCore": "c310389c4b41ebde80c5dabaea12fd5376f5d9ba"
   },
   "versions": {
@@ -140,7 +140,7 @@
     "records": 131,
     "recordsFile": "docs/m2/evidence/ww-050/calibration-2.jsonl",
     "recordsSHA256": "d9b58446340222a9f92b0e4ded8047a391b2be8f6bd94e16f4071c798951b356",
-    "recordsOrder": "caseIndex order, then the split output-settings record; JSON keys sorted; byte-identical across five separate serialized processes at maximum concurrency 4. The final process used both pinned trees after independent review fixes made terminal failures unconditionally propagate and made the final unchanged-source check mandatory after reads.",
+    "recordsOrder": "caseIndex order, then the split output-settings record; JSON keys sorted; byte-identical across six separate serialized processes at maximum concurrency 4. The final process used both pinned trees and the post-merge WWSources dependency tree after independent review fixes made terminal failures unconditionally propagate and made the final unchanged-source check mandatory after reads.",
     "metrics": {
       "supportedCases": 90,
       "supportedFrames": 2178575,
@@ -181,7 +181,7 @@
       "where": "this PR, before revision-2 freeze"
     },
     {
-      "what": "Calibration (130 cases + output-settings record) at WW_M2_FREEZE_MAX_CONCURRENCY=4: every gate PASS. Five separate serialized processes produced byte-identical calibration-2.jsonl (SHA-256 d9b58446340222a9f92b0e4ded8047a391b2be8f6bd94e16f4071c798951b356); the final process used both pinned trees after the independent review fixes for swallowed terminal failures and mandatory final source verification.",
+      "what": "Calibration (130 cases + output-settings record) at WW_M2_FREEZE_MAX_CONCURRENCY=4: every gate PASS. Six separate serialized processes produced byte-identical calibration-2.jsonl (SHA-256 d9b58446340222a9f92b0e4ded8047a391b2be8f6bd94e16f4071c798951b356); the final process used both pinned trees and the post-merge WWSources dependency tree after the independent review fixes for swallowed terminal failures and mandatory final source verification.",
       "where": "this PR, before revision-2 freeze"
     },
     {

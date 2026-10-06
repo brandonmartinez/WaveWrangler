@@ -140,13 +140,13 @@ evidence unchanged. Revision 2 preserves the revision-1 recipe, truth, gate and 
 `M2-DECODE-002` so all 520 holdout seeds are disjoint from revision 1, and has its own
 `WW_M2_DECODE_2_HOLDOUT` switch.
 
-**Calibration PASS; holdout NOT RUN.** The serialized 130-case calibration ran five times at maximum concurrency
+**Calibration PASS; holdout NOT RUN.** The serialized 130-case calibration ran six times at maximum concurrency
 4 and produced byte-identical [`ww-050/calibration-2.jsonl`](ww-050/calibration-2.jsonl), SHA-256
 `d9b58446340222a9f92b0e4ded8047a391b2be8f6bd94e16f4071c798951b356`. All gates passed: 90 supported
 cases / 2,178,575 frames with 0 mapping failures; 1,014 landmarks (`lag 0` ×996, `lag +1` ×18, all +1 at
 24 kHz Opus), 0 below correlation; 53 exact cases bit-exact; 40 planted cases with their expected typed errors,
 0 mutations and 0 publications; output-settings failures 0. The always-on
 `committedCalibrationRecordsReproduceTheReportedCalibration` test verifies the file SHA, seeds, counts, metrics and
-all gate outcomes. The final calibration run used both pinned trees after the independent review fixes for
-swallowed terminal failures and mandatory final source verification. No revision-2 holdout source was materialized
-or decoded; it runs once in a separate PR after this freeze merges.
+all gate outcomes. The final calibration run used both pinned trees and the post-merge `WWSources` dependency tree
+after the independent review fixes for swallowed terminal failures and mandatory final source verification. No
+revision-2 holdout source was materialized or decoded; it runs once in a separate PR after this freeze merges.
