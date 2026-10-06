@@ -18,6 +18,9 @@ final class DocumentStatusModel {
     private(set) var readOnlyReason: String?
     /// ST-11: an automatic retry of a failed save is pending (the popover then says it will try again).
     private(set) var retryingAutomatically = false
+    /// ST-16: after Save a Copy Elsewhere…, "You're now editing “<copy>” in <folder>. The original at <folder> wasn't
+    /// changed." Shown in the message bar until dismissed.
+    private(set) var copyNotice: String?
 
     var accessibilityDescription: String { saveStatus.accessibilityDescription }
 
@@ -35,6 +38,10 @@ final class DocumentStatusModel {
 
     func setRetryingAutomatically(_ value: Bool) {
         if retryingAutomatically != value { retryingAutomatically = value }
+    }
+
+    func setCopyNotice(_ notice: String?) {
+        copyNotice = notice
     }
 
     func setReadOnly(_ reason: String?) {

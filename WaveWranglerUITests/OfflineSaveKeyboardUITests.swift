@@ -133,6 +133,96 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
         }
     }
 
+    /// T28 (K27), ST-16: from the unreachable state, Save a Copy Elsewhere… (popover, keyboard) → native save panel
+    /// named "<Show> copy" → a writable folder. The window then edits the copy (title, Saved), the message bar says
+    /// so, the copy is a complete separate show, and the original file is byte-unchanged.
+    func testT28SaveACopyElsewhere() throws {
+        let unreachable = try folder("Unreachable"), elsewhere = try folder("Elsewhere")
+        let document = try makeDocument("Offline Copy", in: unreachable)
+        let original = try Data(contentsOf: document)
+        try task("T28") {
+            let window = try launchAndOpen(document, autosave: false, retryInterval: 2, offlineFolder: unreachable)
+            addEpisodeByKeyboard(window)
+            let status = element("ww.show.saveStatus")
+            app.typeKey("s", modifierFlags: .command)
+            dismissErrorSheetIfAny("T28 after ⌘S")
+            check(Acceptance.waitFor(timeout: 5) { self.value(status).hasPrefix(Self.cantReach) }, "Can't reach before the copy: \(value(status))")
+            try openSaveStatus()
+            let popover = element("ww.show.saveStatus.popover")
+            check(popover.waitForExistence(timeout: 5), "save-status popover opened")
+            // Try Again is focused first; Tab reaches Save a Copy Elsewhere…; Space activates it.
+            app.typeKey("\t", modifierFlags: [])
+            check(isFocused(popover.buttons["Save a Copy Elsewhere…"]), "Tab reaches Save a Copy Elsewhere…")
+            app.typeKey(" ", modifierFlags: [])
+            let copy = try saveCopyThroughPanel(named: "Offline Copy copy", into: elsewhere, surface: "T28 save panel")
+            check(Acceptance.waitFor(timeout: 10) { self.diskEpisodeCount(copy) == 1 }, "the copy holds the edit: \(String(describing: diskEpisodeCount(copy)))")
+            check(Acceptance.waitFor(timeout: 5) { window.title.hasPrefix("Offline Copy copy") }, "window title is the copy: \(window.title)")
+            check(Acceptance.waitFor(timeout: 5) { self.value(status).hasPrefix("Saved") }, "status Saved after the copy: \(value(status))")
+            let bar = window.descendants(matching: .any).matching(identifier: "ww.show.messageBar").firstMatch
+            let expected = "You're now editing “Offline Copy copy” in Elsewhere. The original at Unreachable wasn't changed."
+            check(bar.waitForExistence(timeout: 5) && texts(in: bar).contains(expected), "message bar: \(texts(in: bar))")
+            try audit("T28 copy message bar")
+            Acceptance.record(self, "T28 focus after the copy: save status focused \(isFocused(status))")
+            check(try Data(contentsOf: document) == original, "the original is byte-unchanged")
+            check(diskShowID(copy) != nil && diskShowID(copy) != diskShowID(document), "the copy is a separate show (new show ID)")
+            check(diskTitle(copy) == "Offline Copy copy", "the copy is titled after its name: \(String(describing: diskTitle(copy)))")
+            Acceptance.record(self, "T28 library: not asserted — the F-OFFLINE seam fails publications only; the library itself still reaches the original's folder, so its \"Location unavailable\" status can't be exercised here")
+        }
+    }
+
+    /// T23 D7 (K20): closing while the folder can't be reached asks "“…” couldn't be saved: …" with Save a Copy
+    /// Elsewhere… (default, Return), Cancel (Esc) and Don't Save (⌘⌫). Esc keeps the window; Return saves a copy and
+    /// then closes; the original is byte-unchanged.
+    func testT23D7CloseWhileUnreachableSavesACopy() throws {
+        let unreachable = try folder("Unreachable"), elsewhere = try folder("Elsewhere")
+        let document = try makeDocument("Offline Close", in: unreachable)
+        let original = try Data(contentsOf: document)
+        try task("T23-D7") {
+            let window = try launchAndOpen(document, autosave: true, retryInterval: nil, offlineFolder: unreachable)
+            addEpisodeByKeyboard(window)
+            let status = element("ww.show.saveStatus")
+            check(Acceptance.waitFor(timeout: 8) { self.value(status).hasPrefix(Self.cantReach) }, "Can't reach: \(value(status))")
+            dismissErrorSheetIfAny("T23 D7 after the failed autosave")
+            app.typeKey("w", modifierFlags: .command)
+            let sheet = app.sheets.firstMatch
+            check(sheet.waitForExistence(timeout: 5), "close asks how to keep the changes")
+            Acceptance.record(self, "T23 D7 sheet: \(texts(in: sheet)) buttons \(sheet.buttons.allElementsBoundByIndex.map(\.title))")
+            check(texts(in: sheet).contains("“Offline Close” couldn't be saved: the folder can't be reached."), "sheet message: \(texts(in: sheet))")
+            check(sheet.buttons.allElementsBoundByIndex.map(\.title) == ["Save a Copy Elsewhere…", "Cancel", "Don't Save"],
+                  "buttons, default first: \(sheet.buttons.allElementsBoundByIndex.map(\.title))")
+            try audit("T23 D7 close sheet")
+            app.typeKey(.escape, modifierFlags: [])
+            check(Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists } && window.exists, "Esc = Cancel keeps the window")
+            app.typeKey("w", modifierFlags: .command)
+            check(app.sheets.firstMatch.waitForExistence(timeout: 5), "close sheet again")
+            app.typeKey(.return, modifierFlags: [])
+            let copy = try saveCopyThroughPanel(named: "Offline Close copy", into: elsewhere, surface: "T23 D7 save panel")
+            check(Acceptance.waitFor(timeout: 10) { !window.exists }, "the window closes once the copy is saved")
+            check(diskEpisodeCount(copy) == 1, "the copy holds the edit: \(String(describing: diskEpisodeCount(copy)))")
+            check(try Data(contentsOf: document) == original, "the original is byte-unchanged")
+        }
+    }
+
+    /// T23 D7: Don't Save (⌘⌫) closes without writing anything; the original is byte-unchanged.
+    func testT23D7CloseWhileUnreachableDontSave() throws {
+        let unreachable = try folder("Unreachable")
+        let document = try makeDocument("Offline Discard", in: unreachable)
+        let original = try Data(contentsOf: document)
+        try task("T23-D7-dont-save") {
+            let window = try launchAndOpen(document, autosave: false, retryInterval: 2, offlineFolder: unreachable)
+            addEpisodeByKeyboard(window)
+            app.typeKey("s", modifierFlags: .command)
+            dismissErrorSheetIfAny("T23 D7 after ⌘S")
+            let status = element("ww.show.saveStatus")
+            check(Acceptance.waitFor(timeout: 5) { self.value(status).hasPrefix(Self.cantReach) }, "Can't reach: \(value(status))")
+            app.typeKey("w", modifierFlags: .command)
+            check(app.sheets.firstMatch.waitForExistence(timeout: 5), "close sheet")
+            app.typeKey(.delete, modifierFlags: .command)
+            check(Acceptance.waitFor(timeout: 5) { !window.exists }, "⌘⌫ = Don't Save closes the window")
+            check(try Data(contentsOf: document) == original, "nothing was written")
+        }
+    }
+
     // MARK: - Recording
 
     private func task(_ id: String, _ body: () throws -> Void) throws {
@@ -150,7 +240,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func launchAndOpen(_ document: URL, autosave: Bool, retryInterval: Double?) throws -> XCUIElement {
+    private func launchAndOpen(_ document: URL, autosave: Bool, retryInterval: Double?, offlineFolder: URL? = nil) throws -> XCUIElement {
         app = XCUIApplication()
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
                                "-WWUITestResetStorage", "YES", "-WWUITestCenterWindows", "YES",
@@ -159,6 +249,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
                                // GUI host doesn't have Full Keyboard Access on, and tests never change system settings.
                                "-AppleKeyboardUIMode", "2"]
             + (retryInterval.map { ["-WWUITestSaveRetryInterval", "\($0)"] } ?? [])
+            + (offlineFolder.map { ["-WWUITestOfflineFolder", $0.path(percentEncoded: false)] } ?? [])
         // One launch only: see `XCUIApplication.launchOnce(opening:)`.
         app.launchOnce(opening: document)
         let name = document.deletingPathExtension().lastPathComponent
@@ -246,8 +337,40 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
         DistributedNotificationCenter.default().postNotificationName(name, object: nil, userInfo: nil, deliverImmediately: true)
     }
 
-    private func makeDocument(_ name: String) throws -> URL {
-        let url = workDirectory.appending(path: "\(name).wwshow")
+    private func folder(_ name: String) throws -> URL {
+        let url = workDirectory.appending(path: name, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// In the open save panel (sheet): checks the proposed name, goes to `folder` with ⇧⌘G, and saves with Return.
+    private func saveCopyThroughPanel(named name: String, into folder: URL, surface: String) throws -> URL {
+        let panel = app.sheets.firstMatch
+        check(panel.waitForExistence(timeout: 5), "\(surface): native save panel shown")
+        let names = panel.textFields.allElementsBoundByIndex.compactMap { $0.value as? String }
+        check(names.contains(name), "\(surface): proposed name \"\(name)\": \(names)")
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        Thread.sleep(forTimeInterval: 0.5)
+        app.typeText(folder.path(percentEncoded: false) + "\r")
+        Thread.sleep(forTimeInterval: 0.5)
+        app.typeKey(.return, modifierFlags: [])
+        let copy = folder.appending(path: "\(name).wwshow")
+        check(Acceptance.waitFor(timeout: 10) { FileManager.default.fileExists(atPath: copy.path) }, "\(surface): copy written at the chosen folder")
+        return copy
+    }
+
+    private func diskPayload(_ url: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return object["payload"] as? [String: Any]
+    }
+
+    private func diskShowID(_ url: URL) -> String? { (diskPayload(url)?["show"] as? [String: Any])?["id"] as? String }
+
+    private func diskTitle(_ url: URL) -> String? { (diskPayload(url)?["show"] as? [String: Any])?["title"] as? String }
+
+    private func makeDocument(_ name: String, in folder: URL? = nil) throws -> URL {
+        let url = (folder ?? workDirectory).appending(path: "\(name).wwshow")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["WW_PROBE"]!)
         process.arguments = ["create", "--file", url.path, "--seed", "1"]

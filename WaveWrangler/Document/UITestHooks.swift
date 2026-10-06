@@ -17,6 +17,8 @@ import Foundation
 ///   publication attempt is counted; the count and the offline flag are written to the named pasteboard
 ///   `com.brandonmartinez.wavewrangler.uitest` as JSON `{"publicationAttempts": n, "offline": bool, "attemptTimes": [s]}`
 ///   (attempt times are seconds since 1970, the same clock as the test runner's).
+/// - `-WWUITestOfflineFolder <absolute folder path>` (with `-WWUITestOffline YES`): only publications into that folder
+///   fail, so Save a Copy Elsewhere… to another folder works while the show's own folder is "unreachable" (T28, T23 D7).
 /// - `-WWUITestSaveRetryInterval <seconds>` shortens the automatic retry after a failed save (ST-11; 30 s).
 ///
 /// Debug builds only: in Release the whole type is compiled out, so `-WWUITestHooks YES` and the
@@ -67,6 +69,8 @@ enum UITestHooks {
         }
         if UserDefaults.standard.bool(forKey: "WWUITestOffline") {
             ShowDocument.debugPublicationHooks = UITestOfflineHooks.shared
+            UITestOfflineHooks.shared.unreachableFolder = UserDefaults.standard.string(forKey: "WWUITestOfflineFolder")
+                .map { URL(filePath: $0, directoryHint: .isDirectory) }
             UITestOfflineHooks.shared.publish()
             for (name, offline) in [(UITestOfflineHooks.onNotification, true), (UITestOfflineHooks.offNotification, false)] {
                 observers.append(center.addObserver(forName: name, object: nil, queue: .main) { _ in
@@ -90,18 +94,31 @@ final class UITestOfflineHooks: PublicationHooks, @unchecked Sendable {
     private var offline = true
     private var attempts = 0
     private var attemptTimes: [Double] = []
+    /// When set, only publications into this folder fail while offline.
+    var unreachableFolder: URL?
+    /// The publication about to run (set by `ShowDocument` before it publishes; saves run on the main thread).
+    var target: URL?
 
     func reached(_ boundary: PublicationBoundary) throws {
         guard boundary == .candidateValidated else { return }
+        let inUnreachableFolder = unreachableFolder.map { folder in
+            target.map { Self.canonicalPath($0.deletingLastPathComponent()) } == Self.canonicalPath(folder)
+        } ?? true
         let failing = lock.withLock {
             attempts += 1
             attemptTimes.append(Date().timeIntervalSince1970)
-            return offline
+            return offline && inUnreachableFolder
         }
         publish()
         if failing {
             throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedFailureReasonErrorKey: "The folder can't be reached (simulated)."])
         }
+    }
+
+    private static func canonicalPath(_ url: URL) -> String {
+        var path = url.resolvingSymlinksInPath().path(percentEncoded: false)
+        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        return path
     }
 
     func setOffline(_ value: Bool) {
