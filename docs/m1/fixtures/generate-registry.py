@@ -491,7 +491,7 @@ FROZEN6_IDS = ("M1-REF-020",)
 # from the registry alone (the generic SEED with split "holdout" gives the m1-freeze-1/-5 holdout cases).
 REF020_SEED_SPLIT = {"calibration": "calibration", "holdout": "holdout-f6"}
 REF020_SEED = "sha256(\"ww-m1-fixture|v1|M1-REF-020|\" + seedSplit[split] + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64, with seedSplit = {\"calibration\": \"calibration\", \"holdout\": \"holdout-f6\"} (m1-freeze-6); the m1-freeze-1 and m1-freeze-5 holdouts used split \"holdout\" directly"
-FROZEN6_STATUS = "frozen m1-freeze-6 (2026-10-06; definition unchanged from m1-freeze-1; harness open-panel wait and fresh holdout seeds); retained FAILED holdouts: m1-freeze-1 short 16/20 executed at 08f62ee (12 pass, 4 fail, 4 not executed; harness defects; PR #111) and m1-freeze-5 18/20 at cdb56bd (2 fail, cycle 1 grant and relaunch; harness open-panel detection race; 0 product failures; #151); m1-freeze-6 holdout not yet reported in this registry"
+FROZEN6_STATUS = "frozen m1-freeze-6 (2026-10-06; definition unchanged from m1-freeze-1; harness open-panel wait and fresh holdout seeds); retained FAILED holdouts: m1-freeze-1 short 16/20 executed at 08f62ee (12 pass, 4 fail, 4 not executed; harness defects; PR #111) and m1-freeze-5 18/20 at cdb56bd (2 fail, cycle 1 grant and relaunch; harness open-panel detection race; 0 product failures; #151); m1-freeze-6 holdout PASSED 20/20 (one run, 2026-10-06 10:44-10:57 EDT, product cdb56bd + harness fix #190 as tested tree e34b954, pinned blobs matched, Mac mini; grant, relaunch, regrant and relink 5/5 each; zero source writes; seed split holdout-f6; reported on #151)"
 FREEZE6 = {
   "freezeID": "m1-freeze-6",
   "date": "2026-10-06",
@@ -585,7 +585,7 @@ def build():
      "owner": "Lead (protocol); WW-003 informational owner Pipeline",
      "issue": "https://github.com/brandonmartinez/WaveWrangler/issues/5",
      "protocol": "docs/m1/ww-003-fixture-protocol.md",
-     "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and m1-freeze-4 FAILED 99/100, both retained; M1-DUR-025 deferred by user to #146, post-M4; M1-REF-020: m1-freeze-1 holdout FAILED short 16/20 and m1-freeze-5 holdout FAILED 18/20 (harness detection race, 0 product failures), both retained; re-frozen unchanged as m1-freeze-6 with a harness open-panel wait and fresh holdout seeds) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
+     "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and m1-freeze-4 FAILED 99/100, both retained; M1-DUR-025 deferred by user to #146, post-M4; M1-REF-020: m1-freeze-1 holdout FAILED short 16/20 and m1-freeze-5 holdout FAILED 18/20 (harness detection race, 0 product failures), both retained; re-frozen unchanged as m1-freeze-6 with a harness open-panel wait and fresh holdout seeds; m1-freeze-6 holdout PASSED 20/20) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
      "freezeRule": "Each family is frozen (generator source hash, recipe, truth, counts, gate) in a dated freeze record before its first holdout case runs. Counts may increase before freeze; never decrease below a frozen gate minimum without explicit Lead/Brandon approval.",
      "freeze": FREEZE,
      "freezeRevisions": [FREEZE2, FREEZE3, FREEZE4, FREEZE5, FREEZE6],

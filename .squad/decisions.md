@@ -246,3 +246,18 @@
 - Applies to new child sessions and task agents; running sessions aren't interrupted. Review stays independent: a different model or session from the author.
 - Carried into routing.md and the M3 kickoff.
 
+
+### 2026-10-06: M1 exit results — host restored, m1-exit branch, REF-020 freeze-6
+
+**By:** the user (09:06), the relay (user-directed) and the M1 coordinator, recorded by Lead in the M1 results PR. Evidence lives in `docs/planning/milestone-exits/m1.md`, not here.
+
+- **Host restored (user, 09:06):** the user restored the 1Password SSH agent on the main Mac. The Mac mini runs that had been blocked since about 01:27 went ahead.
+- **m1-exit branch (relay approval, user-directed):** three M1 fix lanes were approved for the failures found by the first exit gate on `cdb56bd`. The final M1 product under test is the `m1-exit` branch: `cdb56bd` plus squash cherry-picks of #190, #192, #197, #194 and #205's code commit, with no M2 code.
+  - Every fix also merges to `main`.
+  - `main` already contains M2 code, so it gets its full-suite coverage at M2's next capped full run. This is the condition of the approval.
+- **REF-020:**
+  - `m1-freeze-5` FAILED 18/20, from a harness open-panel detection race with no product failure. That result is retained, with no waiver and no re-run on freeze-5.
+  - #190 fixed the panel detection and re-froze `M1-REF-020` unchanged as `m1-freeze-6`, with fresh `holdout-f6` seeds (WW-003 §4.7).
+  - `m1-freeze-6` PASSED 20/20 in one run. #151 is closed.
+- **GPT models (user, 11:47):** already recorded above ("Prefer GPT models for new sessions and agents"). M1 gate reviews after 11:47 used gpt-6-sol.
+- **Closure:** the required M1 issues close with proof once the final gate on `m1-exit` passes and the M1 results PR merges.
