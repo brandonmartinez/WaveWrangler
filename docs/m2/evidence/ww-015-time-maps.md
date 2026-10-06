@@ -112,5 +112,28 @@ Each case record carries its raw quantisation values, so the pooled p95 can be r
 
 Same host as above. `scripts/test.sh` runs the calibration split in its own serialized pass. A split measures at most 4 cases at once (`WW_M2_FREEZE_MAX_CONCURRENCY` may lower it); the rerun under that cap gave byte-identical records.
 
-**Holdout NOT RUN.** It runs once, in its own PR after this one merges, with
-`WW_M2_TIMEMAP_HOLDOUT=1 swift test --filter TimeMapCalibrationTests/holdoutSplitMeetsEveryFrozenGate`.
+## `m2-freeze-timemap` holdout (frozen run)
+
+**PASS — all gates.** This is the sole 2,100-case frozen holdout run. It followed the committed decode evidence
+only; before it started the checkout was clean, `origin/main` at
+`7f17bfc417b52e5cc138be31cca4cd75632d24f0` remained an ancestor, and the code/harness trees still matched the
+freeze: `Sources/WWTimeMap` `24c7aadfbf1470c8555542061ab08eb23e37325b`;
+`Tests/WWTimeMapTests` `330f7ca81fe1626269b00ba42b5990bd3ef6c44d`. The 1-minute load was below 24. On the
+claimed Apple M5 Max host (macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, 18 cores, 128 GiB), it ran
+with the default maximum concurrency of four:
+
+`cd Packages/WaveWranglerKit && WW_M2_TIMEMAP_HOLDOUT=1 WW_TIMEMAP_RECORDS_DIR=../../docs/m2/evidence/ww-015 swift test --scratch-path .build/swiftpm --filter TimeMapCalibrationTests/holdoutSplitMeetsEveryFrozenGate`
+
+The full raw output, including UTC start/end lines (2026-10-06T16:39:42Z through
+2026-10-06T16:39:48Z), is [`ww-015/holdout-run.log`](ww-015/holdout-run.log). The per-case records are
+[`ww-015/holdout.jsonl`](ww-015/holdout.jsonl); SHA-256s for both artifacts are in
+[`ww-015/holdout.sha256`](ww-015/holdout.sha256).
+
+- **Round trip: PASS.** 154,558 exact frame round trips and 231,783 inverse sources had 0 round-trip failures;
+  quantisation **max 0.5** and pooled nearest-rank **p95 0.46658590084369295** source frames.
+- **Gap non-invertibility: PASS.** 25,024 forward and 23,152 inverse gap probes had 0 failures.
+- **Forward/inverse agreement: PASS.** 18,679 forward and 5,949 inverse unsupported probes had 0 agreement
+  failures; oracle agreement also had 0 failures. All seven frozen strata contributed 300 cases.
+
+The run generated 3,910 draws, 9,364 occurrences and 18,426 spans (maximum frame count 274,880,552,223). This
+is frozen holdout evidence, not calibration evidence.
