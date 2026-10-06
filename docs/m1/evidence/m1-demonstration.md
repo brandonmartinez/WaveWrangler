@@ -129,3 +129,59 @@ Already tracked and confirmed here: take-folder epochs not applied on import (#7
 - **App state left behind:** the app container library still lists the two demo shows, whose files are deleted (they will show as unavailable), because Remove from Library couldn't be driven. Device-local access records in the app container keep metadata and bookmark hints for the 13 real sources and the temporary copy. These are never in canonical documents or the repo; the coordinator or user may reset the container.
 - No VoiceOver, text-size, contrast or Reduce Motion checks were run. Accessibility acceptance is a separate lane.
 - One run on one host. These are manual observations, not timing evidence (WW-007 budgets were not measured).
+
+## 7. Final pass on this Mac (MacBook, macOS 27.0.1, 18-core): not run, ready-to-run checklist
+
+**Status: NOT RUN. No result in this section is a pass.** The final M1 pass on **main `c562e0b`** was granted a GUI slot on 2026-10-05 from 22:08 to 23:38 EDT. The build was ready: `scripts/build.sh` Debug reported BUILD SUCCEEDED for exactly `c562e0b1706abb5597bb7eb0062bb0de4a12c241`. Every computer-use call, four attempts between 22:08 and 22:15, returned *"escape unavailable — Computer Use could not arm the physical Escape stop handler, so no desktop action was performed"*. That stop handler is the user-interrupt safety mechanism, so it was not worked around. **No desktop action took place.** The lock was released at 22:16, with no WaveWrangler process running, app preferences untouched and temporary fixtures deleted. The user-provided local disposable episode copy (path withheld) was not imported. Its pre-check manifest at 21:49 showed 0 changes since the 10-05 baseline.
+
+The pass is therefore a **user-manual exit item**. The checklist below is what was prepared, in order, about 45 minutes in total. Run it on `c562e0b` or later and fill in **Result** (Pass / Fail with issue link / Not run with reason).
+
+### 7.1 Preparation
+
+```sh
+scripts/build.sh                                         # record git rev-parse HEAD
+scripts/demo/make-synthetic-episode.sh "$TMPDIR/ww-m1-final/fixture"
+mkdir -p "$TMPDIR/ww-m1-final/Shows" "$TMPDIR/ww-m1-final/manifests"
+scripts/demo/fs-manifest.py snapshot "<episode copy>" "$TMPDIR/ww-m1-final/manifests/real-before.json"   # path stays local
+open .build/DerivedData/Build/Products/Debug/WaveWrangler.app
+```
+
+Keep VoiceOver off unless that is the test. Don't change System Settings. When an open panel is showing, check the path field before choosing **Choose** (see the incident in §4).
+
+### 7.2 Synthetic data
+
+| ID | Steps (keyboard first) | Expected | Covers | Result |
+| --- | --- | --- | --- | --- |
+| F01 | Launch. Look at the Library at its default size (1000×600). | Status stays visible. Lower-priority columns hide to fit, and their values move into the Name cell's help/VoiceOver text. Stale entries from earlier runs show a precise unavailable state, not a permanent "Checking…". | #140 (#141), #88 | |
+| F02 | ⌘N → name → ⇧⌘G `$TMPDIR/ww-m1-final/Shows/` → Create. ⇧⌘N twice, typing titles. ⌘I → Title/Number → Tab (K01–K03). | Show created and Saved. Episodes renamed. One named undo per committed field. | K01–K03 | |
+| F03 | ⇧⌘I → fixture folder → Accept All Suggestions → Return (**Import 9**) (K07). | 9 sources; 7 decoys skipped; groups Recorder A/B/C; Duration/Channels/Sample rate Unknown; all Ready. | WW-012 | |
+| F04 | Inspector Role Primary/Backup for each speaker. Set the ZOOM0002 epoch to 2 (K08–K10). | One primary per speaker. The Speakers table shows several rows without scrolling. | #89 | |
+| F05 | Setup visible → Window › Zoom (or double-click the title bar) out, in, out. | No crash. Status column stays visible. Name ≤ 50% of the table width. | #129 (#130) | |
+| F06 | Autosave On: make an edit, wait 3 s. | Status "Saved" **and** no "— Edited" suffix. | #87 | |
+| F07 | ⌘Q → relaunch → ⇧⌘L → arrows to the show → Return (K21). | The entry shows its location, episodes and last-opened time, then opens with its organization intact. | #88, K21 | |
+| F08 | Quit. In a shell, `mv` one source into `Relink Target/`, `chmod 000` the Recorder C folder, and copy a third source to `Relink Target/` then delete the original. Reopen. | Moved / Access denied / Not found are each separate. Not found has **no** "needs permission" or Grant Access. Denied is never shown as Not found. | #90, WW-006 | |
+| F09 | Relink the moved source (match → **Use This File**, Return). Relink the copied one (different → the checkbox is required, no default button) (K11). `chmod 755`, then **Try Again** (K12). | Comparison headlines as in S13/S16. 0 need attention afterwards. ⌘S. | K11, K12 | |
+| F10 | Autosave Off (⌘, → Tab → Space, K13). Edit → ⌘W (K20). | "Not saved. Autosave is off."; the close sheet offers Save · Don't Save · Cancel; Esc = Cancel. | K13, K20 | |
+| F11 | Recovery offer: `defaults write com.brandonmartinez.wavewrangler WWAutosaveDelaySeconds 30` (an app preference). Autosave On, edit, wait 2 s, then `kill -9` the app. Relaunch and reopen. | Message bar "Restore unsaved changes from <time>?" with **Restore Unsaved Changes** · Discard…. Restore applies as one undo step and stays dirty. ⌘S → Saved. Afterwards `defaults write … WWAutosaveDelaySeconds 1`. | #84 (#95) | |
+| F12 | Copy a saved synthetic `.wwshow`, set its `"schemaVersion"` to `99` (`python3 -c` JSON edit), then ⌘O it. | An opaque dialog (`ww.app.errorDialog`) with the newer-version refusal; Return/Esc dismiss it; the file is unchanged. | #126 (#136), T20 | |
+| F13 | Copy a show that has been saved at least twice, change one payload value without updating `checksum`, then ⌘O it. | Opaque recovery dialog: **Open Recovered Copy** (default, Return) · Cancel (Esc). The copy opens untitled and dirty; the damaged file is unchanged. | #126, T17 | |
+| F14 | Library: Collections **+** (`ww.library.sidebar.newCollection`) → name → Return. Add the show (File › Library › Add to Collection ▸, or ⌘? and type "Add to Collection"). Rename. ⌥⌘↑/↓ (K05). | Collection with members in order; undo names as commands §3. | K05 | |
+| F15 | ⌘, → Library location → Choose Folder… → `~/Library/Mobile Documents/com~apple~CloudDocs/WaveWrangler-M1-Synthetic-Trial/demo/` → **Move Library**. Check the collection is intact. Move back to **In WaveWrangler**, then delete only `demo/` (K26). | Copy → verify → switch with the ST-33 wording; the old copy is kept; nothing is dropped. | ST-33 | |
+| F16 | File › Library › Rebuild Library Index… (or ⌘? search). | Collections and order intact (zero semantic loss). | ST-31 | |
+| F17 | ⌘, → Sources → Downloads Off/On (K14). | Exact captions (S17). | K14 | |
+| F18 | Concurrent library edits from two Macs. | Not observable on one host. See the M1-DUR-025 evidence (#128). | #117 (#118) | N/A (single host) |
+
+### 7.3 User-provided local disposable episode copy (path withheld)
+
+Same consent and rules as §4: read-only, downloads Off, generic wording only, no decoding and no transcript reading.
+
+| ID | Steps | Expected | Result |
+| --- | --- | --- | --- |
+| R1 | New show saved under `$TMPDIR`. ⇧⌘I → select the episode folder **from its parent** (check the path field) → Accept All → Import. | Aggregate counts only: sources found, non-recordings skipped, provisional groups. All Ready; audio properties Unknown. | |
+| R2 | Confirm the groups; set a primary and a backup per speaker; ⌘S; ⌘Q; relaunch; reopen **from the Library**. | The organization persists; the entry opens directly (#88). | |
+| R3 | `cp -p` one source to `$TMPDIR` as "Source 1". Import it into a separate episode, ⌘S, `mv` the copy, then Relink. | Moved → Relink → details match → Use This File. The copy is deleted afterwards. | |
+| R4 | `fs-manifest.py snapshot` again, then `compare` with `real-before.json`. | `added 0, removed 0, changed 0, ctime-only 0`. | |
+
+### 7.4 Cleanup
+
+Restore `WWAutosaveDelaySeconds = 1`, autosave On and downloads On. Remove the demo entries from the Library. Quit. Check with `pgrep -fl WaveWrangler.app/Contents/MacOS` that nothing is left running. Delete `$TMPDIR/ww-m1-final`, the temporary copies and the temporary show, and only the iCloud `demo/` subfolder.
