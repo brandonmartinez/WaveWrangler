@@ -111,7 +111,7 @@ struct ConcurrencyTests {
             }
         } else {
             #expect(published.isEmpty)
-            #expect(results.contains { $0.outcome == .discardedStale([.mapChanged(fixture.episodeID)]) })
+            #expect(results.contains { if case let .discardedStale(reasons) = $0.outcome { reasons.contains(.mapChanged(fixture.episodeID)) } else { false } })
             for result in results { #expect(fixture.store.payload(for: result.key) == nil) }
             for group in rendered.groups {
                 switch group.failure {

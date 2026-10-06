@@ -26,6 +26,11 @@ public enum AlignedAssetRefusal: Error, Sendable, Equatable {
     case acceptedMapNotActive(document: Int, coordinator: Int?)
     case mapNotApplicable([MapStaleness])
     case mapUnreadable(MapHistoryError)
+    /// The accepted map no longer matches the sources, format or placements it was accepted against.
+    case mapStale([AlignmentDependencyChange])
+    /// The coordinator is not publishing for this exact map content (a different map with the same revision
+    /// number is active, or this one was never activated).
+    case acceptedMapContentNotActive
     /// The output-settings policy refused the renderable sources' interpretations.
     case outputSettings(OutputSettingsFailure)
     /// The policy's rate is not a valid nominal rate (unreachable for grid rates; explicit, never a guess).
@@ -57,16 +62,50 @@ public final class AlignmentPipeline: Sendable {
     public let decoder: SourceDecoder
     public let configuration: AlignmentPipelineConfiguration
     let gate: ResourceGate
+    let ledger = AcceptanceLedger()
+    let activation = AsyncSerial()
+    /// Group renders (they hold gateway cursors outside coordinator jobs); `shutdown()` awaits them.
+    let renders = TrackedWork()
+    #if DEBUG
+    let hooks: AlignmentPipelineTestHooks
+    #endif
 
     public init(coordinator: DerivedJobCoordinator, decoder: SourceDecoder, configuration: AlignmentPipelineConfiguration = AlignmentPipelineConfiguration()) {
         self.coordinator = coordinator
         self.decoder = decoder
         self.configuration = configuration
         gate = ResourceGate(permits: configuration.concurrency, budgetBytes: configuration.analysisMemoryBudgetBytes)
+        #if DEBUG
+        hooks = AlignmentPipelineTestHooks()
+        #endif
     }
 
+    #if DEBUG
+    init(coordinator: DerivedJobCoordinator, decoder: SourceDecoder, configuration: AlignmentPipelineConfiguration = AlignmentPipelineConfiguration(), testHooks: AlignmentPipelineTestHooks) {
+        self.coordinator = coordinator
+        self.decoder = decoder
+        self.configuration = configuration
+        gate = ResourceGate(permits: configuration.concurrency, budgetBytes: configuration.analysisMemoryBudgetBytes)
+        hooks = testHooks
+    }
+    #endif
+
     var environment: PipelineEnvironment {
+        #if DEBUG
+        PipelineEnvironment(coordinator: coordinator, decoder: decoder, configuration: configuration, gate: gate, hooks: hooks)
+        #else
         PipelineEnvironment(coordinator: coordinator, decoder: decoder, configuration: configuration, gate: gate)
+        #endif
+    }
+
+    /// Stops the pipeline: refuses new renders, cancels every running one and the coordinator's jobs, and
+    /// returns only once every render has finished, i.e. every gateway cursor it opened is closed. Call it
+    /// before releasing source access. Idempotent.
+    public func shutdown() async {
+        let running = await renders.close()
+        for entry in running { entry.cancel() }
+        await coordinator.shutdown()
+        for entry in running { await entry.wait() }
     }
 
     // MARK: Plan (metadata only)
@@ -220,8 +259,13 @@ public final class AlignmentPipeline: Sendable {
     ) async throws(AlignmentAcceptanceError) -> AcceptedAlignment {
         guard let episode = model.episode(episodeID), report.plan.episode == episodeID else { throw .episodeNotFound(episodeID) }
         if await coordinator.isShutdown { throw .coordinatorShutDown }
-        let registered = await coordinator.inputs.sources
-        let facts = report.facts.filter { registered[$0.key] == $0.value.revisionToken }
+        let inputs = await coordinator.inputs
+        // A plan or facts that no longer describe the episode are stale: never filtered, never accepted.
+        let changes = MapDependencies.analysisChanges(
+            plan: report.plan, facts: report.facts, episode: episode, registered: inputs.sources, format: inputs.format
+        )
+        guard changes.isEmpty else { throw .analysisStale(changes) }
+        let facts = report.facts
         let analyses = await currentRecords(report)
 
         var prior: AlignedTimelineMap?
@@ -234,33 +278,85 @@ public final class AlignmentPipeline: Sendable {
             }
         }
         let built = try MapAcceptance.build(plan: report.plan, facts: facts, analyses: analyses, decisions: decisions, prior: prior)
+        let tokens = Dictionary(uniqueKeysWithValues: facts.map { ($0.key, $0.value.revisionToken) })
+        guard let dependencies = MapDependencies.digest(map: built.map, tokens: tokens, format: inputs.format) else {
+            throw .analysisStale([.dependenciesMissing])
+        }
+        let base = AcceptanceLedger.Snapshot(alignment: episode.alignment)
+        let accepted: ShowDocumentModel
+        let revision: MapRevisionReference
+        let version: TimeMapVersion
         do throws(MapHistoryError) {
-            let (recorded, revision) = try model.recordingMap(
+            let recorded: ShowDocumentModel
+            (recorded, revision) = try model.recordingMap(
                 built.map, in: episodeID, inputs: built.inputs,
-                recipe: AlignmentAssetKinds.acceptanceRecipe, derivedFrom: priorRevision
+                recipe: MapDependencies.recipe(digest: dependencies), derivedFrom: priorRevision
             )
-            let accepted = try recorded.acceptingMap(revision: revision.revision, in: episodeID)
-            guard let updated = accepted.episode(episodeID) else { throw MapHistoryError.episodeNotFound(episodeID) }
+            accepted = try recorded.acceptingMap(revision: revision.revision, in: episodeID)
+            guard let updated = accepted.episode(episodeID), let recordedVersion = updated.alignment?.map(revision: revision.revision) else {
+                throw MapHistoryError.episodeNotFound(episodeID)
+            }
             let applicability = try updated.applicability(ofMapRevision: revision.revision)
             guard applicability.isCurrent else {
                 throw MapHistoryError.invalidMap("the episode changed since the analysis: \(applicability.staleness)")
             }
-            return AcceptedAlignment(model: accepted, revision: revision, map: built.map)
+            version = recordedVersion
         } catch {
             throw .history(error)
         }
+        let identity: AcceptedMapIdentity
+        do { identity = try AcceptedMapIdentity(revision: revision, version: version) } catch { throw .invalidMap(String(describing: error)) }
+        let token = try await ledger.issue(episode: episodeID, base: base)
+        return AcceptedAlignment(
+            model: accepted, revision: revision, map: built.map, sourcesOutsideCoverage: built.outsideCoverage,
+            identity: identity, token: token, base: base,
+            result: AcceptanceLedger.Snapshot(alignment: accepted.episode(episodeID)?.alignment)
+        )
     }
 
-    /// Makes the coordinator publish for `accepted.revision`: everything derived from any other revision
-    /// becomes stale and late results for it are discarded. Call after the document is saved.
+    /// Makes the coordinator publish for `accepted`'s exact map content: everything derived from any other
+    /// map (another revision, or another map with the same revision number) becomes stale and late results
+    /// for it are discarded. Call after the document is saved. Refused when a later acceptance superseded
+    /// this one, when the episode's alignment changed since its snapshot, or when its sources, format or
+    /// placements changed since it was accepted. Activations are serialized.
     public func activate(_ accepted: AcceptedAlignment) async throws(AlignmentAcceptanceError) {
+        await activation.lock()
+        var failure: AlignmentAcceptanceError?
+        do throws(AlignmentAcceptanceError) { try await activateSerialized(accepted) } catch { failure = error }
+        await activation.unlock()
+        if let failure { throw failure }
+    }
+
+    private func activateSerialized(_ accepted: AcceptedAlignment) async throws(AlignmentAcceptanceError) {
         let episodeID = accepted.revision.episode
         guard let episode = accepted.model.episode(episodeID) else { throw .episodeNotFound(episodeID) }
-        guard episode.alignment?.acceptedRevision == accepted.revision.revision else {
+        guard episode.alignment?.acceptedRevision == accepted.revision.revision,
+              let version = episode.alignment?.map(revision: accepted.revision.revision)
+        else {
             throw .history(.mapNotFound(revision: accepted.revision.revision))
         }
+        // The document carries exactly the map this acceptance built.
+        let map: AlignedTimelineMap
+        do throws(MapHistoryError) { map = try accepted.model.timeMap(revision: accepted.revision.revision, in: episodeID) } catch { throw .history(error) }
+        guard AcceptanceLedger.Snapshot(alignment: episode.alignment) == accepted.result, map == accepted.map,
+              (try? AcceptedMapIdentity(revision: accepted.revision, version: version)) == accepted.identity
+        else { throw .mapContentMismatch }
         if await coordinator.isShutdown { throw .coordinatorShutDown }
+        let inputs = await coordinator.inputs
+        let changes = MapDependencies.verify(version: version, map: map, episode: episode, registered: inputs.sources, format: inputs.format)
+        guard changes.isEmpty else { throw .analysisStale(changes) }
+        try await ledger.activate(episode: episodeID, token: accepted.token, base: accepted.base, result: accepted.result)
+
+        let identity = accepted.identity
         await coordinator.acceptMap(accepted.revision)
+        await coordinator.setRecipe(identity.recipe)
+        await coordinator.setAssetRevision(AlignmentAssetKinds.acceptedMapIdentity)
+        let canonical = Data(identity.digest.utf8)
+        let published = await coordinator.run(identity.slot, key: identity.key) { () throws(AlignmentWorkFailure) -> Data in canonical }
+        guard published.isAvailable else {
+            if await coordinator.isShutdown { throw .coordinatorShutDown }
+            throw .invalidMap("the accepted map identity did not publish: \(published.outcome)")
+        }
     }
 
     // MARK: Aligned assets
@@ -289,6 +385,16 @@ public final class AlignmentPipeline: Sendable {
         }
         guard applicability.isCurrent else { throw .mapNotApplicable(applicability.staleness) }
         let revision = MapRevisionReference(episode: episodeID, revision: revisionNumber)
+        guard let version = episode.alignment?.map(revision: revisionNumber) else { throw .mapUnreadable(.mapNotFound(revision: revisionNumber)) }
+        let currentInputs = await coordinator.inputs
+        let changes = MapDependencies.verify(
+            version: version, map: map, episode: episode, registered: currentInputs.sources, format: currentInputs.format
+        )
+        guard changes.isEmpty else { throw .mapStale(changes) }
+        // The coordinator must be publishing for this exact map content, not just this revision number.
+        guard let identity = try? AcceptedMapIdentity(revision: revision, version: version),
+              await coordinator.state(of: identity.slot) == .ready(identity.key)
+        else { throw .acceptedMapContentNotActive }
         for spec in AlignmentAssetKinds.all { await coordinator.setAssetRevision(spec) }
         let registered = await coordinator.inputs.sources
         let eligibility = ContentEligibility(sources: sources, authorizations: authorizations, registered: registered)
@@ -346,10 +452,7 @@ public final class AlignmentPipeline: Sendable {
         for (group, participants) in renderable {
             let hull: Range<Int64>?
             do throws(AlignmentWorkFailure) {
-                hull = try GroupRenderJob.hull(
-                    map: group, occurrences: participants.map(\.occurrence),
-                    frameCounts: participants.map(\.facts.frameCount), outputRate: outputRate
-                )
+                hull = try GroupRenderJob.hull(map: group, occurrences: participants.map(\.occurrence), outputRate: outputRate)
             } catch {
                 var failed = GroupRenderReport(group: group.group, outputRate: outputRate, outputFrames: 0 ..< 0, segments: 0)
                 failed.failure = error
@@ -358,20 +461,36 @@ public final class AlignmentPipeline: Sendable {
             }
             guard let hull, !hull.isEmpty else { continue }
             jobs.append(GroupRenderJob(
-                episode: episodeID, revision: revision, map: group, nominalOutputRate: nominalOutputRate,
+                episode: episodeID, revision: revision, identity: identity, map: group, nominalOutputRate: nominalOutputRate,
                 participants: participants, outputFrames: hull,
                 segmentFrames: Int64(configuration.renderSegmentSeconds) * Int64(outputRate),
                 recipeBaseName: configuration.renderRecipeName
             ))
         }
         let environment = environment
+        let renders = renders
         let reports = await boundedMap(jobs, limit: configuration.concurrency) { job in
-            await AlignedAssetRun.run(job, environment: environment)
+            // Registered before any cursor opens, so shutdown() cancels and awaits it.
+            await Self.tracked(renders, environment: environment) { await AlignedAssetRun.run(job, environment: environment) }
+                ?? Self.cancelledReport(job)
         }
         return AlignedAssetReport(revision: revision, outputSettings: decision, groups: failedGroups + reports, notRendered: notRendered)
     }
 
     // MARK: Helpers
+
+    static func tracked<T: Sendable>(_ work: TrackedWork, environment: PipelineEnvironment, _ operation: @escaping @Sendable () async -> T) async -> T? {
+        #if DEBUG
+        guard environment.hooks.trackRenders else { return await operation() }
+        #endif
+        return await work.run(operation)
+    }
+
+    static func cancelledReport(_ job: GroupRenderJob) -> GroupRenderReport {
+        var report = GroupRenderReport(group: job.map.group, outputRate: job.outputRate, outputFrames: job.outputFrames, segments: job.segmentIndices.count)
+        report.failure = .cancelled
+        return report
+    }
 
     /// Analysis records whose keys the coordinator still considers current.
     func currentRecords(_ report: AlignmentAnalysisReport) async -> [RecordingEpochID: EpochAnalysisRecord] {

@@ -11,7 +11,21 @@ struct PipelineEnvironment: Sendable {
     let decoder: SourceDecoder
     let configuration: AlignmentPipelineConfiguration
     let gate: ResourceGate
+    #if DEBUG
+    var hooks = AlignmentPipelineTestHooks()
+    #endif
 }
+
+#if DEBUG
+/// Test-only seams (DEBUG builds only).
+struct AlignmentPipelineTestHooks: Sendable {
+    /// Called in a group render after a segment is rendered and verified, before its currency re-check and
+    /// publication, while every gateway cursor of the group is still open.
+    var beforeSegmentPublish: (@Sendable (RecorderGroupID, Int64) async -> Void)?
+    /// Negative control: `false` runs group renders untracked, so `shutdown()` neither cancels nor awaits them.
+    var trackRenders = true
+}
+#endif
 
 // MARK: - Source probe (header only)
 

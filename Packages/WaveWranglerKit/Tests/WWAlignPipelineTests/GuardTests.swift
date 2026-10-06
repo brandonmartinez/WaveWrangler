@@ -147,8 +147,10 @@ struct GuardTests {
         let map = try fixture.model.timeMap(revision: revision, in: fixture.episodeID)
         let group = try #require(map.groups.first)
         let rate = try #require(group.placements.first?.occurrence.nominalRate)
+        let reference = MapRevisionReference(episode: fixture.episodeID, revision: revision)
+        let version = try #require(fixture.model.episode(fixture.episodeID)?.alignment?.map(revision: revision))
         return GroupRenderJob(
-            episode: fixture.episodeID, revision: MapRevisionReference(episode: fixture.episodeID, revision: revision), map: group,
+            episode: fixture.episodeID, revision: reference, identity: try AcceptedMapIdentity(revision: reference, version: version), map: group,
             nominalOutputRate: rate, participants: [], outputFrames: 0 ..< 1, segmentFrames: 1, recipeBaseName: "guard"
         )
     }
@@ -161,6 +163,26 @@ struct GuardTests {
         await #expect(throws: Never.self) { try await AlignedAssetRun.checkCurrent(job, coordinator: coordinator) }
         await coordinator.acceptMap(MapRevisionReference(episode: fixture.episodeID, revision: job.revision.revision + 1))
         await #expect(throws: AlignmentWorkFailure.acceptedMapChanged) { try await AlignedAssetRun.checkCurrent(job, coordinator: coordinator) }
+    }
+
+    @Test("Between segments a render stops when the active map content is not its identity, even under the same revision number")
+    func renderStopsOnMapContentChange() async throws {
+        let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "guard-identity")
+        let job = try await Self.renderJob(fixture)
+        let coordinator = fixture.coordinator
+        await #expect(throws: Never.self) { try await AlignedAssetRun.checkCurrent(job, coordinator: coordinator) }
+        // Another version of the same map, recorded under another recipe: different content, same number.
+        let map = try fixture.model.timeMap(revision: job.revision.revision, in: fixture.episodeID)
+        let inputs = try #require(fixture.model.episode(fixture.episodeID)?.alignment?.map(revision: job.revision.revision)?.inputs)
+        let (other, revision) = try fixture.model.recordingMap(map, in: fixture.episodeID, inputs: inputs.sources, recipe: RecipeReference(name: "other", revision: 1), derivedFrom: job.revision.revision)
+        let version = try #require(other.episode(fixture.episodeID)?.alignment?.map(revision: revision.revision))
+        let impostor = GroupRenderJob(
+            episode: fixture.episodeID, revision: job.revision, identity: try AcceptedMapIdentity(revision: job.revision, version: version), map: job.map,
+            nominalOutputRate: job.nominalOutputRate, participants: [], outputFrames: 0 ..< 1, segmentFrames: 1, recipeBaseName: "guard"
+        )
+        #expect(impostor.identity != job.identity)
+        await #expect(throws: AlignmentWorkFailure.acceptedMapChanged) { try await AlignedAssetRun.checkCurrent(impostor, coordinator: coordinator) }
+        #expect(await coordinator.inputs.acceptedMaps[fixture.episodeID] == job.revision.revision, "only the content differs")
     }
 
     @Test("Between segments a render stops once the coordinator has shut down")

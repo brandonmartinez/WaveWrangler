@@ -21,10 +21,16 @@ public enum AlignmentAssetKinds {
     public static let estimatorIdentifier = AcousticEstimator.identifier
     public static let rendererVersion = RenderVersions.renderer
     public static let renderRecipeVersion = RenderRecipe.currentVersion
-    /// The recipe recorded on every map revision this module creates.
-    public static let acceptanceRecipe = RecipeReference(name: "ww.alignment-acceptance", revision: 1)
+    /// The content identity of the active accepted map revision of an episode (its canonical version
+    /// encoding, verified against the document). Every aligned segment is keyed on it as an upstream.
+    public static let acceptedMapIdentity = AssetSpec(kind: "ww.accepted-map-identity", revision: 1)
 
-    static let all = [sourceFacts, analysis, alignedAudio]
+    /// Prefix of the recipe recorded on every map revision this module creates; the rest of the name is the
+    /// digest of the revisions and placements the map was accepted against (`MapDependencies`).
+    public static let acceptanceRecipePrefix = "ww.alignment-acceptance;deps="
+    public static let acceptanceRecipeRevision = 2
+
+    static let all = [sourceFacts, analysis, alignedAudio, acceptedMapIdentity]
 }
 
 /// A source as the caller (the app) currently knows it: where it is and its Setup availability. The

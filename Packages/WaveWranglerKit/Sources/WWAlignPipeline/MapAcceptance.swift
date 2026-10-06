@@ -21,9 +21,13 @@ public struct AlignmentAnchor: Sendable, Hashable {
 /// `.manual(...)` (a decided epoch) or the estimator's own `.acousticConsistentProposal` (an undecided epoch
 /// with a current proposal). A clock approval cannot be created, forwarded or faked through it.
 public enum EpochMapDecision: Sendable, Hashable {
-    /// Accept the epoch's current acoustic proposal. Recorded as `manual(.acceptedAcousticProposal)`: human
-    /// acceptance of a proposal is not a clock correction.
+    /// Accept the epoch's current acoustic proposal over the interval it was measured on. Recorded as
+    /// `manual(.acceptedAcousticProposal)`: human acceptance of a proposal is not a clock correction. Frames
+    /// outside the measured interval stay `outsideCoverage` (no extrapolation, M2-C3).
     case acceptProposal(note: String = "")
+    /// Explicitly extend the current proposal's rate and offset over the whole epoch: a separate manual
+    /// decision, recorded as `manual(.acceptedAcousticProposal)` with a note saying it was extended.
+    case extendProposalToEpoch(note: String = "")
     /// Rate correction in ppm (quantised to 1 ppb) and offset in milliseconds (quantised to 1 ns).
     case numeric(ppm: Double, offsetMilliseconds: Double, note: String = "")
     /// At least two anchors; fitted by least squares, quantised like numeric entry.
@@ -55,13 +59,34 @@ public enum AlignmentAcceptanceError: Error, Sendable, Equatable {
     case invalidMap(String)
     case history(MapHistoryError)
     case coordinatorShutDown
+    /// The analysis (or the accepted map) no longer describes the current sources, format or placements.
+    /// Re-analyse; a stale plan is never accepted or applied.
+    case analysisStale([AlignmentDependencyChange])
+    /// The episode's alignment changed since this acceptance's snapshot (another acceptance was activated,
+    /// or the document passed in is not the one last activated). Accept again on the current document.
+    case staleSnapshot
+    /// A later acceptance on the same snapshot replaced this one; only the latest may be activated.
+    case supersededAcceptance
+    /// The persisted map revision is not the map this acceptance built.
+    case mapContentMismatch
 }
 
 /// The result of accepting a map: the new document value (persist it), the new accepted revision and map.
+/// Only this module creates one; activation re-verifies it against the ledger and the document.
 public struct AcceptedAlignment: Sendable {
     public let model: ShowDocumentModel
     public let revision: MapRevisionReference
     public let map: AlignedTimelineMap
+    /// Sources with probed facts that the map leaves unplaced because no frame of theirs lies inside their
+    /// epoch's supported interval (they are `outsideCoverage` entirely).
+    public let sourcesOutsideCoverage: [SourceID]
+    /// The verified content identity of the new map revision.
+    public var mapContentDigest: String { identity.digest }
+
+    let identity: AcceptedMapIdentity
+    let token: UInt64
+    let base: AcceptanceLedger.Snapshot
+    let result: AcceptanceLedger.Snapshot
 }
 
 enum MapAcceptance {
@@ -70,6 +95,7 @@ enum MapAcceptance {
     struct Built {
         let map: AlignedTimelineMap
         let inputs: [TimeMapSourceInput]
+        let outsideCoverage: [SourceID]
     }
 
     /// Builds the full aligned map from the plan, probed facts, current analysis records, the person's
@@ -86,7 +112,7 @@ enum MapAcceptance {
         for epoch in decisions.keys {
             guard plan.epoch(epoch) != nil else { throw .unknownEpoch(epoch) }
             if epoch == reference.epoch { throw .decisionForReferenceEpoch(epoch) }
-            if case .acceptProposal = decisions[epoch], analyses[epoch]?.proposal == nil { throw .noCurrentProposal(epoch) }
+            // A decision needing a proposal is checked where it is applied (`mapping`), which binds the proposal.
         }
         let timelineReference = TimelineReference(group: reference.group, epoch: reference.epoch, occurrence: reference.occurrence)
         var priorMappings: [RecordingEpochID: EpochClockMap.Mapping] = [:]
@@ -105,26 +131,21 @@ enum MapAcceptance {
 
         var groups: [GroupTimeMap] = []
         var inputs: [TimeMapSourceInput] = []
+        var outsideCoverage: [SourceID] = []
         for groupID in groupOrder {
             let planned = epochsByGroup[groupID] ?? []
-            var placements: [OccurrencePlacement] = []
             var epochEnd: [RecordingEpochID: ExactRational] = [:]
             for epoch in planned {
                 for source in epoch.sources {
                     guard let sourceFacts = facts[source] else { continue }
-                    let placement = try placement(source, facts: sourceFacts, epoch: epoch.epoch)
-                    placements.append(placement)
-                    inputs.append(TimeMapSourceInput(sourceID: source, formatInterpretationVersion: sourceFacts.formatInterpretationVersion))
                     let end = try exact(sourceFacts.frameCount, Int64(sourceFacts.sampleRate))
                     if let current = epochEnd[epoch.epoch], current >= end { continue }
                     epochEnd[epoch.epoch] = end
                 }
             }
-            guard !placements.isEmpty else {
-                for epoch in planned where decisions[epoch.epoch] != nil { throw .noPlaceableSource(epoch.epoch) }
-                continue
-            }
             var epochMaps: [EpochClockMap] = []
+            var placements: [OccurrencePlacement] = []
+            var placedPerEpoch: [RecordingEpochID: Int] = [:]
             for epoch in planned {
                 let mapping = try mapping(
                     for: epoch.epoch, reference: reference, end: epochEnd[epoch.epoch],
@@ -132,6 +153,23 @@ enum MapAcceptance {
                     prior: priorMappings[epoch.epoch]
                 )
                 epochMaps.append(EpochClockMap(epoch: epoch.epoch, mapping: mapping))
+                for source in epoch.sources {
+                    guard let sourceFacts = facts[source] else { continue }
+                    guard let placement = try placement(source, facts: sourceFacts, epoch: epoch.epoch, mapping: mapping) else {
+                        outsideCoverage.append(source)
+                        continue
+                    }
+                    placements.append(placement)
+                    placedPerEpoch[epoch.epoch, default: 0] += 1
+                    inputs.append(TimeMapSourceInput(sourceID: source, formatInterpretationVersion: sourceFacts.formatInterpretationVersion))
+                }
+            }
+            for epoch in planned where decisions[epoch.epoch] != nil && decisions[epoch.epoch] != .unmapped && placedPerEpoch[epoch.epoch] == nil {
+                throw .noPlaceableSource(epoch.epoch)
+            }
+            guard !placements.isEmpty else {
+                for epoch in planned where decisions[epoch.epoch] != nil { throw .noPlaceableSource(epoch.epoch) }
+                continue
             }
             do throws(TimeMapError) {
                 groups.append(try GroupTimeMap(group: groupID, reference: timelineReference, epochs: epochMaps, placements: placements))
@@ -140,19 +178,33 @@ enum MapAcceptance {
             }
         }
         do throws(TimeMapError) {
-            return Built(map: try AlignedTimelineMap(reference: timelineReference, groups: groups), inputs: inputs)
+            return Built(map: try AlignedTimelineMap(reference: timelineReference, groups: groups), inputs: inputs, outsideCoverage: outsideCoverage)
         } catch {
             throw .invalidMap(String(describing: error))
         }
     }
 
-    private static func placement(_ source: SourceID, facts: SourceFacts, epoch: RecordingEpochID) throws(AlignmentAcceptanceError) -> OccurrencePlacement {
+    /// The source's frames whose group-clock time `n/F` lies inside the mapping's supported interval (all
+    /// of them for an unsupported epoch); `nil` when none does. Frames outside it stay unplaced, so the map
+    /// answers `outsideCoverage` for them in both directions instead of extrapolating.
+    private static func placement(_ source: SourceID, facts: SourceFacts, epoch: RecordingEpochID, mapping: EpochClockMap.Mapping) throws(AlignmentAcceptanceError) -> OccurrencePlacement? {
         do throws(TimeMapError) {
             let occurrence = try SourceOccurrence(
                 id: alignmentOccurrenceID(for: source), source: source,
                 nominalRate: NominalRate(Int64(facts.sampleRate)), frameCount: facts.frameCount
             )
-            return OccurrencePlacement(occurrence: occurrence, spans: [EpochSpan(startFrame: 0, endFrame: facts.frameCount, epoch: epoch, groupClockOffset: .zero)])
+            var start: Int64 = 0
+            var end = facts.frameCount
+            if case let .mapped(segments, _) = mapping, let first = segments.first, let last = segments.last {
+                let rate = ExactRational(Int64(facts.sampleRate))
+                // u(n) = n/F in [lo, hi)  <=>  n in [ceil(lo*F), ceil(hi*F)).
+                let lo = try first.groupClockStart.multiplied(by: rate).ceil()
+                let hi = try last.groupClockEnd.multiplied(by: rate).ceil()
+                start = Int64(clamping: max(lo, 0))
+                end = Int64(clamping: min(hi, Int128(facts.frameCount)))
+            }
+            guard end > start else { return nil }
+            return OccurrencePlacement(occurrence: occurrence, spans: [EpochSpan(startFrame: start, endFrame: end, epoch: epoch, groupClockOffset: .zero)])
         } catch {
             throw .invalidMap(String(describing: error))
         }
@@ -180,10 +232,10 @@ enum MapAcceptance {
             }
             // Undecided with a current proposal: persisted as the unaccepted proposal it is (U3), so
             // accepting another epoch never silently rejects this one.
-            if let analysis, let proposal = analysis.proposal, let end,
-               isCurrent(analysis, epoch: epoch, reference: reference, facts: facts),
-               let segment = try? segment(end: end, rate: proposal.segment.rateRatio, offset: proposal.segment.alignedOffset) {
-                return .mapped(segments: [segment], provenance: .acousticConsistentProposal(proposal.provenance))
+            // Only over the interval it was measured on.
+            if let analysis, let proposal = analysis.proposal, end != nil,
+               isCurrent(analysis, epoch: epoch, reference: reference, facts: facts) {
+                return .mapped(segments: [proposal.segment], provenance: .acousticConsistentProposal(proposal.provenance))
             }
             return .unsupported(analysis?.abstention?.abstentionReason?.unsupportedReason ?? .notAttempted)
         }
@@ -198,10 +250,16 @@ enum MapAcceptance {
         case let .acceptProposal(text):
             guard let analysis, let proposal = analysis.proposal else { throw .noCurrentProposal(epoch) }
             guard isCurrent(analysis, epoch: epoch, reference: reference, facts: facts) else { throw .proposalNotCurrent(epoch) }
+            guard end != nil else { throw .noPlaceableSource(epoch) }
+            // The measured interval only; frames outside it stay outsideCoverage.
+            return .mapped(segments: [proposal.segment], provenance: .manual(ManualCorrection(basis: .acceptedAcousticProposal, note: text)))
+        case let .extendProposalToEpoch(text):
+            guard let analysis, let proposal = analysis.proposal else { throw .noCurrentProposal(epoch) }
+            guard isCurrent(analysis, epoch: epoch, reference: reference, facts: facts) else { throw .proposalNotCurrent(epoch) }
             rate = proposal.segment.rateRatio
             offset = proposal.segment.alignedOffset
             basis = .acceptedAcousticProposal
-            note = text
+            note = Self.extendedNote(text)
         case let .numeric(ppm, offsetMilliseconds, text):
             (rate, offset) = try numeric(epoch, ppm: ppm, offsetSeconds: offsetMilliseconds / 1000)
             basis = .numericEntry
@@ -223,6 +281,11 @@ enum MapAcceptance {
             throw error
         }
         return .mapped(segments: [segment], provenance: .manual(ManualCorrection(basis: basis, note: note)))
+    }
+
+    /// The note recorded when a person extends a proposal beyond its measured interval.
+    static func extendedNote(_ text: String) -> String {
+        text.isEmpty ? "proposal extended to the whole epoch" : "proposal extended to the whole epoch: \(text)"
     }
 
     /// The record was measured against this reference and the sources' current revisions.

@@ -332,6 +332,11 @@ struct GroupSpec: Sendable {
 
 /// A synthetic episode on disk (placeholders only), its derived store, coordinator and pipeline.
 final class PipelineFixture: @unchecked Sendable {
+    /// A document reopened in a new pipeline instance on the same coordinator (no acceptance history).
+    func reopenPipeline() {
+        pipeline = AlignmentPipeline(coordinator: coordinator, decoder: decoder, configuration: configuration, testHooks: hooks)
+    }
+
     let directory: TemporaryDirectory
     let media: URL
     let content = ProceduralContentIO()
@@ -339,7 +344,10 @@ final class PipelineFixture: @unchecked Sendable {
     let script = CommitScript()
     let store: DerivedAssetStore
     let coordinator: DerivedJobCoordinator
-    let pipeline: AlignmentPipeline
+    private(set) var pipeline: AlignmentPipeline
+    let decoder: SourceDecoder
+    let configuration: AlignmentPipelineConfiguration
+    let hooks: AlignmentPipelineTestHooks
     let episodeID = EpisodeID()
     let groups: [RecorderGroupID]
     let epochs: [RecordingEpochID]
@@ -360,6 +368,7 @@ final class PipelineFixture: @unchecked Sendable {
         configuration: AlignmentPipelineConfiguration = smallConfiguration,
         chunkFrames: Int = 16_384,
         skipCurrencyCheck: Bool = false,
+        hooks: AlignmentPipelineTestHooks = AlignmentPipelineTestHooks(),
         label: String = "pipeline"
     ) async throws {
         directory = try TemporaryDirectory(label)
@@ -368,7 +377,10 @@ final class PipelineFixture: @unchecked Sendable {
         store = try DerivedAssetStore(root: directory.url.appendingPathComponent("cache/DerivedAssets/v1", isDirectory: true), sourceLocations: [media])
         coordinator = DerivedJobCoordinator(store: store, inputs: DerivedInputs(), testHooks: script.hooks(skipCurrencyCheck: skipCurrencyCheck))
         let decoder = SourceDecoder(access: SourceAccessContext(io: metadataIO), content: content, configuration: .init(chunkFrames: chunkFrames))
-        pipeline = AlignmentPipeline(coordinator: coordinator, decoder: decoder, configuration: configuration)
+        self.decoder = decoder
+        self.configuration = configuration
+        self.hooks = hooks
+        pipeline = AlignmentPipeline(coordinator: coordinator, decoder: decoder, configuration: configuration, testHooks: hooks)
 
         var groups: [RecorderGroupID] = []
         var epochs: [RecordingEpochID] = []
@@ -444,6 +456,19 @@ final class PipelineFixture: @unchecked Sendable {
 
     func render() async throws -> AlignedAssetReport {
         try await pipeline.renderAlignedAssets(model: model, episode: episodeID, sources: sources, authorizations: authorizations)
+    }
+
+    /// Moves a source into a new epoch of its own recorder group (the person splits a take) and returns it.
+    @discardableResult
+    func moveToNewEpoch(_ name: String) throws -> RecordingEpochID {
+        let epoch = RecordingEpochID()
+        let index = try #require(model.episodes.firstIndex { $0.id == episodeID })
+        let record = try #require(model.episodes[index].sources.firstIndex { $0.id == id(name) })
+        let group = model.episodes[index].sources[record].placement.recorderGroupID
+        let groupIndex = try #require(model.episodes[index].recorderGroups.firstIndex { $0.id == group })
+        model.episodes[index].recorderGroups[groupIndex].epochs.append(RecordingEpoch(id: epoch, label: "Take 2"))
+        model.episodes[index].sources[record].placement = SourcePlacement(recorderGroupID: group, epochID: epoch)
+        return epoch
     }
 
     /// Rewrites a placeholder (new size and identity): the registered metadata revision no longer matches.

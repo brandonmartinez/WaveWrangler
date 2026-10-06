@@ -137,13 +137,15 @@ struct EligibilityTests {
         #expect(state.status == .unsupported(.notAttempted, .analysisPending))
         #expect(state.remedies == [.retryAnalysis, .editNumerically, .placeAnchors])
         #expect(state.analysis == nil)
-        await #expect(throws: AlignmentAcceptanceError.noCurrentProposal(targetEpoch)) {
+        // The whole report is stale: neither its proposal nor its placements can be accepted (F3).
+        let changes: [AlignmentDependencyChange] = [.sourceChanged(tgt)]
+        await #expect(throws: AlignmentAcceptanceError.analysisStale(changes)) {
             _ = try await fixture.pipeline.accept(model: fixture.model, episode: fixture.episodeID, report: report, decisions: [targetEpoch: .acceptProposal()])
         }
-        // Its old facts no longer count either: a numeric decision has nothing current to place.
-        await #expect(throws: AlignmentAcceptanceError.noPlaceableSource(targetEpoch)) {
+        await #expect(throws: AlignmentAcceptanceError.analysisStale(changes)) {
             _ = try await fixture.pipeline.accept(model: fixture.model, episode: fixture.episodeID, report: report, decisions: [targetEpoch: .numeric(ppm: 0, offsetMilliseconds: 0)])
         }
+        #expect(await fixture.coordinator.inputs.acceptedMaps.isEmpty)
     }
 }
 
