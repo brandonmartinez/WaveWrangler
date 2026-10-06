@@ -1,0 +1,13 @@
+{
+  "commit": "4a01cac2cc2388107a38b5e6789bccb6a74afe81",
+  "command": "git merge-base --is-ancestor <c> <commit>",
+  "ancestors": {
+    "d55f992": true,
+    "de3800a": true,
+    "e70be08": true,
+    "2531a97": true,
+    "24dd627": true,
+    "dc5b9ea": true,
+    "5027e19": true
+  }
+}
