@@ -757,9 +757,27 @@ def level_sample(dev, host, key, libfile, edits):
 
 
 def settle_clause(sample):
-    """truth1LibraryClause at settle: every unresolved version resolved, or surfaced (L4 or the #119 notice)."""
-    surfaced = sample["level"] == "changedElsewhere" or (sample["versions"] and all(v.get("noticeShown") for v in sample["versions"]))
-    return {"level": sample["level"], "rawUnresolved": sample["raw"], "ok": (sample["raw"] == 0 or bool(surfaced)) and not sample["unsampled"]}
+    """truth1LibraryClause at settle (no exemption at settle): on the raw NSFileVersion listing, every version is
+    resolved (absent from the list; its backup is checked per operation) or surfaced: L4, or the #119 notice for an
+    undecodable or different-library version."""
+    if sample["unsampled"]:
+        return {"level": sample["level"], "rawUnresolved": sample["raw"], "ok": False}
+    l4 = sample["level"] == "changedElsewhere"
+    noticed = bool(sample["versions"]) and len(sample["versions"]) == sample["raw"] and all(
+        v.get("noticeShown") and (v.get("decode") != "valid" or v.get("sameLibraryID") is False) for v in sample["versions"])
+    return {"level": sample["level"], "rawUnresolved": sample["raw"], "ok": sample["raw"] == 0 or l4 or noticed}
+
+
+def wait_settle_clause(dev, key, libfile, edits, deadline_ms):
+    """A version still listed while a host shows L1 means settle has not been reached: keep polling within the
+    frozen bound; at the bound the clause is evaluated as it stands (FAIL if still unmet)."""
+    polls = 0
+    while True:
+        polls += 1
+        clause = {h: settle_clause(level_sample(dev, h, key, libfile, edits)) for h in ("A", "B")}
+        if all(c["ok"] for c in clause.values()) or now_ms() >= deadline_ms:
+            return clause, polls
+        time.sleep(3)
 
 
 def case_library(dev, case):
@@ -825,6 +843,7 @@ def case_library(dev, case):
                     "updateResults": {h: updates[h].get("update") for h in updates}}
         rounds, converged, final = [], False, None
         for number in range(1, MAX_ROUNDS + 1):
+            round_started = now_ms()
             if number == 1 and case.variant == "concurrentCombine":
                 hosts, at = ("A", "B"), now_ms() + 6000
             elif case.variant == "combineOnAThenB" and number > 1:
@@ -859,8 +878,9 @@ def case_library(dev, case):
                            "finalLevels": {h: finals[h].get("levelState") for h in finals}, "unresolved": unresolved,
                            "byteIdentical": byte_identical, "presence": presence, "converged": converged})
             # truth1LibraryClause at settle, per host, from a read-only sample taken at the settle point.
-            clause = {h: settle_clause(level_sample(dev, h, key, libfile, edits)) for h in ("A", "B")}
+            clause, clause_polls = wait_settle_clause(dev, key, libfile, edits, round_started + ROUND_SETTLE * 1000)
             rounds[-1]["settleClause"] = clause
+            rounds[-1]["settleClausePolls"] = clause_polls
             final = (a2, b2, presence, unresolved, clause, byte_identical, settled1 and settled2)
             still_l4 = any(finals[h].get("levelState") == "changedElsewhere" for h in finals)
             done = converged if case.variant == "concurrentCombine" else not still_l4
