@@ -10,7 +10,9 @@ This publication session authorizes **documentation only**, not application impl
 
 The public research JSON files are **sanitized-provenance companions, NOT byte-identical mirrors of local archives after pointer redaction**. [Publication provenance](publication-provenance.json) records original archive hashes separately from published hashes. Archived-original hashes, measurements, pins, counts and failures are retained; publication does not rerun or qualify them.
 
-## Six milestones
+**User-directed 2026-10-06 01:20:** add **M5 — Accessible MVP qualification** after M4 and before Release, with new stable ID **WW-053** ([#167](https://github.com/brandonmartinez/WaveWrangler/issues/167)). Broad accessibility portions of WW-007/029 transfer to WW-053; essential accessibility stays an invariant in every milestone ([below](#essential-accessibility-invariant-and-exit-checkpoint)).
+
+## Seven milestones
 
 | Milestone | Demonstrable increment | Required stable IDs |
 | --- | --- | --- |
@@ -18,19 +20,31 @@ The public research JSON files are **sanitized-provenance companions, NOT byte-i
 | [M2 - Recording alignment](https://github.com/brandonmartinez/WaveWrangler/milestone/2) | Validated imports/decoded-frame time maps, group clocks/alignment, explicit uncertainty and manual correction, channel-consistent assets. **Not an audio-handoff shortcut.** | WW-014-024, WW-050. |
 | [M3 - Speech and edit review](https://github.com/brandonmartinez/WaveWrangler/milestone/3) | Local selected-primary transcription, contextual filler proposals, human-accepted safe common-map shortening or editable protected lift, native review, undo and multi-speaker preview. | WW-025-034, WW-043-046. |
 | [M4 - Cleaned-track MVP](https://github.com/brandonmartinez/WaveWrangler/milestone/4) | Zero-origin cleaned speaker stems plus editable reconstructive record/source recipe/assets and demonstrated restoration/regeneration. **First audio handoff; full internal M1-M4 MVP.** | WW-035-038, WW-040, WW-042. |
-| [Release - Public distribution qualification](https://github.com/brandonmartinez/WaveWrangler/milestone/5) | Signed/notarized direct route, actual macOS26/16GB reference, broader device/participant/accessibility/listening, rights, clean-install and supported-claim qualification. | WW-041, WW-052. |
+| [M5 - Accessible MVP qualification](https://github.com/brandonmartinez/WaveWrangler/milestone/7) | Broad accessibility across all MVP windows once UI is stable: 200% text, system Increase Contrast, light/dark, Reduce Motion, VoiceOver listening, FKA, saturation and the zero-unwaived contrast baseline. Entry: M4 accepted, layouts/theme final, waiver baseline pinned at the M4 exit SHA. | WW-053. |
+| [Release - Public distribution qualification](https://github.com/brandonmartinez/WaveWrangler/milestone/5) | Signed/notarized direct route, actual macOS26/16GB reference, broader device/participant/listening, rights, clean-install and supported-claim qualification. Broad accessibility is qualified in M5 (WW-053). | WW-041, WW-052. |
 | [Future - Optional extensions](https://github.com/brandonmartinez/WaveWrangler/milestone/6) | Separately scoped portable copies and optional native DAW adapters. | WW-039, WW-047/048/051. |
 
-Historical snapshots retain **51 IDs / 196 acyclic edges / 3 documentary-completed / 14 partial / 34 pending**. The approved current graph has **52 stable IDs / 203 acyclic edges**, with **49 open issues**, 3 completed historical items, 14 partial and 35 pending. WW-041 moves to Release, no longer blocks WW-042, and instead depends on WW-042. WW-052 depends on WW-042/041/007/008/018/026/029. Do not rewrite old snapshots as if they measured this later graph.
+Historical snapshots retain **51 IDs / 196 acyclic edges / 3 documentary-completed / 14 partial / 34 pending**. The approved current graph has **53 stable IDs / 207 acyclic edges**, with **50 open issues**, 3 completed historical items, 14 partial and 36 pending (the 2026-10-04 graph of 52 / 203 / 49 open is the previous snapshot). WW-041 moves to Release, no longer blocks WW-042, and instead depends on WW-042. WW-053 depends on WW-042/007/029. WW-052 depends on WW-042/041/007/008/018/026/029/053. Do not rewrite old snapshots as if they measured this later graph.
 
 ### Stage-scoped acceptance, not gate weakening
 
 - **WW-003/M1:** complete fixture permissions/truth/provenance, calibration/holdout freeze and supported-claim protocol, with all applicable M1 organizer/durability/reference evidence. Later M2-M4 domain qualification remains in those domain issues; whole-product empirical coverage must not keep this foundation issue permanently open.
 - **WW-008/M1:** establish feasible native lifecycle/support/permission/privacy/rights registers and an honest internal-use envelope. Signed/notarized/clean-installed public artifact proof belongs to WW-041/052 after the app exists.
-- **WW-007/029:** essential native keyboard/VoiceOver, core workflow usability and safety remain in their current internal milestone. Only broader reference-device/participant qualification transfers to WW-052. Documentary/pure-state scenarios are not native accessible or human tests.
+- **WW-007/029:** essential native keyboard/VoiceOver, core workflow usability, responsiveness and safety remain in their current internal milestone. Broad accessibility transfers to WW-053 (M5): from WW-007, C03–C07, the C02 VoiceOver listen and FKA; from WW-029, contrast, Reduce Motion and 200% text. Only reference-device/participant qualification transfers to WW-052, which depends on WW-053. Documentary/pure-state scenarios are not native accessible or human tests.
 - **WW-018/026:** qualify the selected internal renderer/speech path and exact asset rights/permissions on the claimed host. Public support/resource/device breadth is WW-052; offline loading, protected speech, timing and source immutability cannot transfer.
 
 Dependencies gate **declaring an outcome accepted**, not safe preparatory coding behind isolated/provisional interfaces. Do not demand a production-like research prototype or complete M1 UI qualification before creating the application. Implement bounded contracts and tests, iterate with real results, and accept only when the applicable gates pass. A blocked dependency restricts only work that actually relies on it; continue independent safe tasks.
+
+### Essential accessibility invariant and exit checkpoint
+
+Essential accessibility is an invariant in **every** milestone, M1 included. Each UI PR checks only the surfaces it changes:
+
+- keyboard-only path with visible focus and Return/Esc;
+- AX role, label and value (audit types `elementDetection`, `sufficientElementDescription`, `hitRegion`, `action`; `.contrast` only on blocked/recovery surfaces);
+- every blocked, error and recovery state reachable, labelled and legible;
+- no colour-only state and no drag-only interaction.
+
+Each milestone exit includes one checkpoint of at most 30 minutes: in-app 200% text plus light and dark appearance on that milestone's windows. System Increase Contrast is not part of this checkpoint (it is WW-053). Only a finding that makes a core task impossible blocks the exit; every other finding becomes a WW-053 follow-up. Severity follows [accessibility acceptance §6](../m1/design/accessibility-acceptance.md#6-exit-criteria-for-the-design-accessibility-gate-proposal-for-lead).
 
 ## Invariants and settled scope
 
@@ -77,6 +91,6 @@ At exit, publish `docs/planning/milestone-exits/m1.md` (then m2/m3/m4 analogues)
 - bugs/follow-ups with owner/severity/acceptance/next milestone, plus exact asset permissions and remaining user-required inputs;
 - current GitHub milestone URL, changed-file links and a **ready-to-copy next-milestone user kickoff**.
 
-For M1 exit, write `docs/planning/kickoffs/m2.md` using [the M1 prompt](kickoffs/m1.md) as the authorization/orchestration template, replacing scope with M2 and including the actual M1 exit evidence, updated main commit, issue mapping and consent gaps. Subsequent exits produce m3/m4 and, after M4, a separately permissioned Release prompt. Do not publish a fictional completion or pre-authorize recording access.
+For M1 exit, write `docs/planning/kickoffs/m2.md` using [the M1 prompt](kickoffs/m1.md) as the authorization/orchestration template, replacing scope with M2 and including the actual M1 exit evidence, updated main commit, issue mapping and consent gaps. Subsequent exits produce m3/m4/m5 and, after M5, a separately permissioned Release prompt. Do not publish a fictional completion or pre-authorize recording access.
 
 After independently reviewed merges, keep the coordinator's own main workspace updated safely (fast-forward only when its user changes permit it); isolated worktrees stay isolated. Never switch, stash or reset the parent's checkout. **Stop at the milestone boundary; never automatically start the next milestone.**

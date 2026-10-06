@@ -4,7 +4,9 @@
 
 **User-directed 2026-10-04:** internal usable M1-M4 on this Mac first, with first audio handoff at full cleaned-track M4; public Release and optional Future separate. [Runbook](milestone-runbook.md) · [M1 copyable kickoff](kickoffs/m1.md) · [Product brief](product-brief.md) · [Evidence/protocols](research.md) · [Public provenance](publication-provenance.json).
 
-**52 stable WW IDs / 203 acyclic edges / 49 open issues / 3 completed historical items.** Old 51-ID/196-edge snapshots remain historical. WW-003/008 are staged M1; WW-041 follows WW-042 in Release rather than blocking it; WW-052 depends on WW-042/041/007/008/018/026/029. Optional Future nodes are absent from internal MVP acceptance ancestry.
+**53 stable WW IDs / 207 acyclic edges / 50 open issues / 3 completed historical items.** Old 51-ID/196-edge and 52-ID/203-edge snapshots remain historical. WW-003/008 are staged M1; WW-041 follows WW-042 in Release rather than blocking it; WW-053 (M5) depends on WW-042/007/029; WW-052 depends on WW-042/041/007/008/018/026/029/053. Optional Future nodes are absent from internal MVP acceptance ancestry.
+
+**User-directed 2026-10-06 01:20:** new milestone [M5 — Accessible MVP qualification](https://github.com/brandonmartinez/WaveWrangler/milestone/7) and stable ID WW-053 ([#167](https://github.com/brandonmartinez/WaveWrangler/issues/167)). The four new edges are added to this index; the native-edge count below is the 2026-10-05 snapshot value.
 
 **Issue labels are informational:** owner/type/priority/gate and appropriate status:partial. No squad/squad:* auto-dispatch or fictional GitHub assignees. Dependencies gate acceptance, not safe preparatory coding. Native GitHub issue dependencies cover the 180 open-to-open edges; completed-history predecessors remain linked evidence, not reopened tickets.
 
@@ -18,7 +20,8 @@
 | [M2 — Recording alignment](https://github.com/brandonmartinez/WaveWrangler/milestone/2) | 12 | Validated import/alignment, no early audio handoff |
 | [M3 — Speech and edit review](https://github.com/brandonmartinez/WaveWrangler/milestone/3) | 14 | Local primary speech and protected human review |
 | [M4 — Cleaned-track MVP](https://github.com/brandonmartinez/WaveWrangler/milestone/4) | 6 | First cleaned-track handoff / internal full MVP |
-| [Release — Public distribution qualification](https://github.com/brandonmartinez/WaveWrangler/milestone/5) | 2 | Public distribution and broader claims |
+| [M5 — Accessible MVP qualification](https://github.com/brandonmartinez/WaveWrangler/milestone/7) | 1 | Broad accessibility across all MVP windows after M4 (also holds #147 user-manual items) |
+| [Release — Public distribution qualification](https://github.com/brandonmartinez/WaveWrangler/milestone/5) | 2 | Public distribution and broader claims; broad accessibility via M5 |
 | [Future — Optional extensions](https://github.com/brandonmartinez/WaveWrangler/milestone/6) | 4 | Optional copies/native adapters |
 
 ## Completed documentary history
@@ -88,12 +91,18 @@ WW-001 (historical review reconciliation), WW-002 (accepted policy integration) 
 | [WW-040](backlog.md#ww-040) | [#37: WW-040: Implement the native export workspace and recovery status](https://github.com/brandonmartinez/WaveWrangler/issues/37) | P1 / IMPLEMENTATION / Mac / PENDING | [WW-038 / #33](https://github.com/brandonmartinez/WaveWrangler/issues/33), [WW-035 / #29](https://github.com/brandonmartinez/WaveWrangler/issues/29), [WW-037 / #35](https://github.com/brandonmartinez/WaveWrangler/issues/35), [WW-033 / #30](https://github.com/brandonmartinez/WaveWrangler/issues/30) |
 | [WW-042](backlog.md#ww-042) | [#38: WW-042: Accept the actually usable internal cleaned-track MVP](https://github.com/brandonmartinez/WaveWrangler/issues/38) | P0 / PRODUCT/DESIGN / Lead / PENDING | [WW-013 / #12](https://github.com/brandonmartinez/WaveWrangler/issues/12), [WW-024 / #20](https://github.com/brandonmartinez/WaveWrangler/issues/20), [WW-034 / #31](https://github.com/brandonmartinez/WaveWrangler/issues/31), [WW-038 / #33](https://github.com/brandonmartinez/WaveWrangler/issues/33), [WW-040 / #37](https://github.com/brandonmartinez/WaveWrangler/issues/37), [WW-046 / #43](https://github.com/brandonmartinez/WaveWrangler/issues/43) |
 
+## M5 — Accessible MVP qualification
+
+| Stable ID | Live issue (exact title) | Priority / type / owner / status | Direct predecessors |
+| --- | --- | --- | --- |
+| [WW-053](backlog.md#ww-053) | [#167: WW-053: Qualify broad accessibility across the MVP windows](https://github.com/brandonmartinez/WaveWrangler/issues/167) | P0 / RESEARCH SPIKE / Design / PENDING | [WW-042 / #38](https://github.com/brandonmartinez/WaveWrangler/issues/38), [WW-007 / #8](https://github.com/brandonmartinez/WaveWrangler/issues/8), [WW-029 / #26](https://github.com/brandonmartinez/WaveWrangler/issues/26) |
+
 ## Release — Public distribution qualification
 
 | Stable ID | Live issue (exact title) | Priority / type / owner / status | Direct predecessors |
 | --- | --- | --- | --- |
 | [WW-041](backlog.md#ww-041) | [#39: WW-041: Qualify signed public distribution, privacy and notices](https://github.com/brandonmartinez/WaveWrangler/issues/39) | P1 / IMPLEMENTATION / Mac / PENDING | [WW-008 / #7](https://github.com/brandonmartinez/WaveWrangler/issues/7), [WW-018 / #13](https://github.com/brandonmartinez/WaveWrangler/issues/13), [WW-026 / #23](https://github.com/brandonmartinez/WaveWrangler/issues/23), [WW-037 / #35](https://github.com/brandonmartinez/WaveWrangler/issues/35), [WW-038 / #33](https://github.com/brandonmartinez/WaveWrangler/issues/33), [WW-040 / #37](https://github.com/brandonmartinez/WaveWrangler/issues/37), [WW-050 / #45](https://github.com/brandonmartinez/WaveWrangler/issues/45), [WW-042 / #38](https://github.com/brandonmartinez/WaveWrangler/issues/38) |
-| [WW-052](backlog.md#ww-052) | [#49: WW-052: Qualify public release and broader supported-use claims](https://github.com/brandonmartinez/WaveWrangler/issues/49) | P0 / PRODUCT/DESIGN / Lead / PENDING | [WW-042 / #38](https://github.com/brandonmartinez/WaveWrangler/issues/38), [WW-041 / #39](https://github.com/brandonmartinez/WaveWrangler/issues/39), [WW-007 / #8](https://github.com/brandonmartinez/WaveWrangler/issues/8), [WW-008 / #7](https://github.com/brandonmartinez/WaveWrangler/issues/7), [WW-018 / #13](https://github.com/brandonmartinez/WaveWrangler/issues/13), [WW-026 / #23](https://github.com/brandonmartinez/WaveWrangler/issues/23), [WW-029 / #26](https://github.com/brandonmartinez/WaveWrangler/issues/26) |
+| [WW-052](backlog.md#ww-052) | [#49: WW-052: Qualify public release and broader supported-use claims](https://github.com/brandonmartinez/WaveWrangler/issues/49) | P0 / PRODUCT/DESIGN / Lead / PENDING | [WW-042 / #38](https://github.com/brandonmartinez/WaveWrangler/issues/38), [WW-041 / #39](https://github.com/brandonmartinez/WaveWrangler/issues/39), [WW-007 / #8](https://github.com/brandonmartinez/WaveWrangler/issues/8), [WW-008 / #7](https://github.com/brandonmartinez/WaveWrangler/issues/7), [WW-018 / #13](https://github.com/brandonmartinez/WaveWrangler/issues/13), [WW-026 / #23](https://github.com/brandonmartinez/WaveWrangler/issues/23), [WW-029 / #26](https://github.com/brandonmartinez/WaveWrangler/issues/26), [WW-053 / #167](https://github.com/brandonmartinez/WaveWrangler/issues/167) |
 
 ## Future — Optional extensions
 
@@ -106,7 +115,7 @@ WW-001 (historical review reconciliation), WW-002 (accepted policy integration) 
 
 ## Staging and native dependency semantics
 
-WW-003 closes on complete M1-applicable fixture/truth/provenance/freeze protocol and evidence; later domain qualification remains required in M2-M4. WW-008 closes on feasible internal lifecycle/support/permission/privacy/rights registers; public signed/notarized/clean-install artifact proof is WW-041/052. Core WW-007/029 keyboard/accessibility/usability safety remains in its internal milestone; only broader reference/participant studies transfer to WW-052. All other numeric gates stay unchanged.
+WW-003 closes on complete M1-applicable fixture/truth/provenance/freeze protocol and evidence; later domain qualification remains required in M2-M4. WW-008 closes on feasible internal lifecycle/support/permission/privacy/rights registers; public signed/notarized/clean-install artifact proof is WW-041/052. Core WW-007/029 keyboard/accessibility/usability safety and responsiveness remain in their internal milestone. Broad accessibility (WW-007: C03–C07, the C02 VoiceOver listen and FKA; WW-029: contrast, Reduce Motion and 200% text) transfers to WW-053 in M5; only reference-device/participant studies transfer to WW-052. All other numeric gates stay unchanged.
 
 A pasted named kickoff grants engineering scope; WW-009/019/030/037 record chosen contracts/evidence/risks rather than asking for another generic approval. Never claim applicable gates passed without evidence, inspect original samples because source-download defaults ON, or adopt a candidate engine/format by publication.
 

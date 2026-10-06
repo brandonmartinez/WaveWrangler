@@ -118,5 +118,5 @@ Notation: **Role** uses the XCUITest element type (AppKit AX role in brackets; e
 1. A-01 through A-08 pass in CI.
 2. Under the GUI grant and lock: T01–T30 pass under C01 and C02 (60/60 cells). C03–C07 pass on their listed subsets. The XCUITest audits report no unwaived issues, and each waiver has a written rationale.
 3. **User-manual exit item (not performed by agents):** the user runs T01–T30's K-flows with the macOS Full Keyboard Access setting on and records Pass/Fail. Until then the FKA cell is **Not run**, and it is never inferred from the XCUITest key-event results.
-4. Any Fail in an essential task (T01–T30) is a P0 M1 blocker. It is never transferred to make M1 complete. Broader participant studies and reference-device runs remain WW-052.
+4. **Severity (user-directed 2026-10-06):** a C01 failure, or a missing or incorrect AX role, label or value, in a core task (T01–T30) is a P0 M1 blocker and is never transferred to make M1 complete. A C03–C07 failure is P1 and becomes a follow-up on WW-053 ([#167](https://github.com/brandonmartinez/WaveWrangler/issues/167), M5) unless it makes the task impossible, in which case it is P0. Broader participant studies and reference-device runs remain WW-052.
 5. Results are recorded with the §1 metadata. Simulated provider states are labelled as simulated.

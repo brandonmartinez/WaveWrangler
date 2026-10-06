@@ -4,9 +4,11 @@
 
 [Live GitHub issues/milestones](github-backlog.md) and [machine-readable mapping](github-backlog.json) now govern execution; this backlog retains evidence, stable IDs and original thresholds. Use [the runbook](milestone-runbook.md) and [M1 user kickoff](kickoffs/m1.md). Publish via independent PR review; this session is documentation only. A pasted named kickoff authorizes that milestone's engineering; WW-009/019/030/037 record contracts/evidence/risks, not another generic approval. Dependencies gate accepting outcomes, not safe preparatory code behind isolated/provisional interfaces.
 
-Internal M1-M4 run on this Mac first; **first audio handoff is full cleaned-track M4, not uncut M2**. Public Release WW-041/052 separately qualifies signing/notarization, actual macOS26/16GB and broader participant/device/accessibility/listening/rights/clean-install claims. Core source/durability/protected-speech/offline/privacy/keyboard/accessibility and existing numeric gates remain current-milestone requirements. WW-003/008 are M1, with stage-scoped closure in the runbook; later domain qualification remains owned. Informational owner labels never auto-dispatch.
+Internal M1-M4 run on this Mac first; **first audio handoff is full cleaned-track M4, not uncut M2**. Public Release WW-041/052 separately qualifies signing/notarization, actual macOS26/16GB and broader participant/device/listening/rights/clean-install claims; broad accessibility qualification is M5/WW-053. Core source/durability/protected-speech/offline/privacy/keyboard/accessibility and existing numeric gates remain current-milestone requirements. WW-003/008 are M1, with stage-scoped closure in the runbook; later domain qualification remains owned. Informational owner labels never auto-dispatch.
 
-Current graph: **52 stable IDs / 203 acyclic edges / 49 open items / 3 completed historical items / 14 partial / 35 pending**. Completed WW-001/002/004 are not reopened. WW-041 moves to Release, depends on WW-042 and no longer blocks WW-042. WW-052 depends on WW-042/041/007/008/018/026/029. No new engine/format or input consent is adopted. Older **51/196** counts and no-issues/implementation restrictions below are preserved **historical phase snapshots**, not current policy.
+**User-directed 2026-10-06 01:20:** new milestone **M5 — Accessible MVP qualification** (after M4, before Release) with new stable ID **[WW-053](#ww-053)** ([#167](https://github.com/brandonmartinez/WaveWrangler/issues/167)). Broad accessibility portions of WW-007/029 transfer to WW-053; their essential clauses and responsiveness stay. Essential accessibility remains an invariant in every milestone (see [the runbook](milestone-runbook.md#essential-accessibility-invariant-and-exit-checkpoint)).
+
+Current graph: **53 stable IDs / 207 acyclic edges / 50 open items / 3 completed historical items / 14 partial / 36 pending**. The 2026-10-04 graph of 52 IDs / 203 edges / 49 open items is the previous snapshot. Completed WW-001/002/004 are not reopened. WW-041 moves to Release, depends on WW-042 and no longer blocks WW-042. WW-053 depends on WW-042/007/029. WW-052 depends on WW-042/041/007/008/018/026/029/053. No new engine/format or input consent is adopted. Older **51/196** counts and no-issues/implementation restrictions below are preserved **historical phase snapshots**, not current policy.
 
 [Public provenance](publication-provenance.json) distinguishes original local hashes from published pointer-redacted companions; current public JSON is not byte-identical archived evidence.
 
@@ -90,7 +92,8 @@ Phase-A preparation and false-frozen calibration remain historical. Original 5,5
 | M2 | Validated common-format decoding/time maps, group synchronization/manual correction and channel-consistent assets | WW-014–WW-018 plus WW-050 and M1 | Lead / WW-019 | Lead / WW-024 |
 | M3 | Local primary speech/human review; safe common-map shortening default, editable lift alternatives, preview/undo | WW-025–WW-029 plus foundational WW-043/WW-044 and M2 | Lead / WW-030, including WW-045 | Lead / WW-046 then WW-034 |
 | M4 / internal full MVP | First audio handoff: cleaned zero-origin speaker stems + editable reconstructive record/source recipe/assets + demonstrated restoration/regeneration; no native adapter gate | WW-035–WW-036 plus M3 | User kickoff; Lead / WW-037 (WW-038/040) | Lead / WW-042 |
-| Release | Signed/notarized direct artifact, actual macOS26/16GB, broader device/participant/accessibility/listening/rights/clean-install claims | WW-042/041/007/008/018/026/029 | Exact release scope and credentials/inputs, never inferred from M1-M4 | Mac / WW-041; Lead / WW-052 |
+| M5 | Broad accessibility qualification across all MVP windows once UI is stable: 200% text, Increase Contrast, light/dark, Reduce Motion, VoiceOver listening, FKA, saturation, zero-unwaived contrast baseline | WW-042 (M4 accepted) plus WW-007/029 essential clauses | User kickoff after M4 exit | Design / WW-053 |
+| Release | Signed/notarized direct artifact, actual macOS26/16GB, broader device/participant/listening/rights/clean-install claims; broad accessibility via M5/WW-053 | WW-042/041/007/008/018/026/029/053 | Exact release scope and credentials/inputs, never inferred from M1-M4 | Mac / WW-041; Lead / WW-052 |
 | Future | Portable copies and optional DAW-native adapters/formats | WW-047–WW-048 | Copies need a new future gate; optional adapter Lead / WW-051 then WW-039 | Mac / Pipeline; Lead reviews actual WW-039 results for optional acceptance |
 
 **Historical accepted next-phase direction (2026-10-04):** Q04/Q08 bounded synthetic research/design permission is now activated by the research-start direction above. Production, recordings/participant access, installs, each exact model download after source/license/size, native provisioning/network and provider/cloud-writing trials retain separate gates. Four earlier revised documentary reviews/final narrow verification remain historical, not current empirical signoffs. [Twenty answered decision facets](research.md#approval-questions)
@@ -163,6 +166,7 @@ Phase-A preparation and false-frozen calibration remain historical. Original 5,5
 - **Acceptance criteria:** provisional p95 open <1 s/interaction <100 ms on initial Apple-silicon/macOS26+/16GB reference, not minimum; no main-thread provider I/O; 100% core M1 keyboard/VoiceOver tasks including cloud save/conflict/autosave ON/off/explicit Save and source download ON/off/unknown/offline/cancel/retry; cold/warm/recovery/text/contrast/reduce-motion coverage.
 - **Dependencies:** WW-004, WW-005, WW-006, WW-049.
 - **Validation:** [scale protocol](research.md#mac-storage-access-scale-and-distribution); calibrate after pilot. Go on pass; fallback paged/deferred data or approved size limit, never dropping durable collections.
+- **Transfer (user-directed 2026-10-06):** C03–C07, the C02 VoiceOver listen and FKA move to [WW-053](#ww-053) (#167). WW-007 keeps its essential clauses (C01 keyboard-only core tasks; AX role, label and value) and responsiveness.
 
 ### WW-008
 - **Priority / milestone / type / owner:** P0 / M1 / RESEARCH SPIKE / Mac.
@@ -343,6 +347,7 @@ Phase-A preparation and false-frozen calibration remain historical. Original 5,5
 - **Acceptance criteria:** provisionally ≥80% unassisted/≥90% state+mode comprehension/median recovery ≤2min; zero lost work/unexpected or disabled/cancelled/unconsented downloads/overlap loss; visible default-ON source policy distinguished from OFF trials. Cloud conflict/autosave/Save/offline/cancel and common-map shorten/lift/partial-inverse/undo tasks; 100% core keyboard/VoiceOver no blockers, contrast/reduce-motion/200% text; controlled pilot calibration/freeze before holdout, weaker gates explicitly approved, participant permission and sample limitations recorded.
 - **Dependencies:** WW-004, WW-007, WW-014, WW-025, WW-028, WW-043, WW-044.
 - **Validation:** [accessible-workflow spike](research.md#speech-assets-accuracy-edit-safety-and-accessible-review); calibrate after pilot, fix blockers before go; export-specific extension required by WW-035/WW-036/WW-042.
+- **Transfer (user-directed 2026-10-06):** contrast, Reduce Motion and 200% text move to [WW-053](#ww-053) (#167). WW-029 keeps its essential clauses and responsiveness.
 
 ### WW-030
 - **Priority / milestone / type / owner:** P0 / M3 / PRODUCT/DESIGN / Lead.
@@ -523,18 +528,31 @@ These IDs retain provenance but no longer describe optional post-MVP global ripp
 - **Dependencies:** WW-048, WW-042.
 - **Validation:** dated go/no-go authorization of exact scope, distinct from a spec/research approval. Failed/absent permission disables adapter, neutral MVP unchanged; no semantic authorization↔implementation completion cycle.
 
+## M5 — accessible MVP qualification
+
+### WW-053
+- **Priority / milestone / type / owner:** P0 / M5 / RESEARCH SPIKE / Design.
+- **Origin:** user-directed 2026-10-06 01:20; [#167](https://github.com/brandonmartinez/WaveWrangler/issues/167), [milestone 7](https://github.com/brandonmartinez/WaveWrangler/milestone/7). User-manual items: #147.
+- **Outcome:** broad accessibility qualified across all MVP windows once the UI is stable after M4.
+- **Scope:** in-app 200% text, system Increase Contrast, light/dark matrices, Reduce Motion, VoiceOver listening, FKA, saturation, the zero-unwaived contrast baseline and colour polish. Receives C03–C07, the C02 VoiceOver listen and FKA from WW-007, and contrast, Reduce Motion and 200% text from WW-029.
+- **Entry:** M4 accepted; layouts and theme final; waiver baseline pinned at the M4 exit SHA.
+- **Acceptance criteria:** core tasks pass C01 and user-verified C02; C03–C07 pass on one frozen matrix; no unwaived audit issue outside the pinned baseline; FKA and Reduce Motion user-recorded.
+- **Dependencies:** WW-042, WW-007, WW-029.
+- **Validation:** [M1 accessibility acceptance suite](../m1/design/accessibility-acceptance.md) conditions extended to all MVP windows; user-manual items are never inferred from automation. Earlier milestones keep the essential-accessibility invariant; their non-blocking checkpoint findings become WW-053 follow-ups.
+
 ## Release qualification
 
 ### WW-052
 - **Priority / milestone / type / owner:** P0 / Release / PRODUCT/DESIGN / Lead.
 - **Outcome:** qualify public distribution and broader supported-use claims after full cleaned-track internal MVP acceptance.
 - **Acceptance criteria:** actual macOS26/Apple-silicon/16GB reference, broader device/participant/accessibility/listening studies, signed/notarized direct artifact from WW-041, clean-install/grant/relaunch/offline/cloud/source matrices and artifact-specific rights/notices support every public claim. Existing calibrated numeric gates from WW-007/018/026/029 and shared protocols are unchanged. No minimum/universal-support/notarization-as-legal-or-App-Review assurance; core internal source/durability/protected-speech/privacy/offline/keyboard/accessibility cannot be deferred here.
-- **Dependencies:** WW-042, WW-041, WW-007, WW-008, WW-018, WW-026, WW-029.
+- **Dependencies:** WW-042, WW-041, WW-007, WW-008, WW-018, WW-026, WW-029, WW-053.
+- **Scope note (user-directed 2026-10-06):** keeps reference-device and participant work; broad accessibility qualification is [WW-053](#ww-053), now a dependency.
 - **Validation:** frozen authorized matrix, actual device/participant/listening/installed-state evidence, independent domain review and Lead claim-to-evidence/rights acceptance; exact asset/provider/credential/GUI/participant permissions remain required.
 
 ## Current dependency graph
 
-The [live index](github-backlog.json) records **52 IDs / 203 edges / acyclic**, including three completed historical nodes and 49 operational open items. WW-041 follows WW-042; optional Future nodes remain absent from internal MVP acceptance ancestry. Dependencies govern acceptance, not safe provisional coding. The older checks, fingerprints, topological order and milestone paths below are **historical 196-edge snapshots**, preserved rather than retroactively rewritten.
+The [live index](github-backlog.json) records **53 IDs / 207 edges / acyclic**, including three completed historical nodes and 50 operational open items (previously 52 / 203 / 49 before WW-053 on 2026-10-06). WW-041 follows WW-042; WW-053 follows WW-042 and precedes WW-052; optional Future nodes remain absent from internal MVP acceptance ancestry. Dependencies govern acceptance, not safe provisional coding. The older checks, fingerprints, topological order and milestone paths below are **historical 196-edge snapshots**, preserved rather than retroactively rewritten.
 
 ## Historical dependency graph sanity
 
