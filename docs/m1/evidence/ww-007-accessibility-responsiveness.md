@@ -482,8 +482,10 @@ What was attempted:
 | `… FontSizeCategory` | absent | absent | absent ✅ |
 | `com.apple.VoiceOver4/default` | absent | absent | absent ✅ |
 | `com.apple.VoiceOverTraining` | absent | **present (empty plist)** | absent ✅. The coordinator authorized deleting it. `defaults delete` reports "Domain not found" for an emptied domain, so the empty 42-byte plist file (contents `{}`) was removed and re-read as absent. |
-| `com.apple.universalaccess voiceOverOnOffKey` | **not snapshotted** (the probe reported VoiceOver off) | 1 | **1: pending the coordinator's decision.** `NSWorkspace.isVoiceOverEnabled` reports true with no VoiceOver process. Cause: the slot stopped VoiceOver with `kill`, not by quitting it. |
+| `com.apple.universalaccess voiceOverOnOffKey` | **not snapshotted** (the original probe reported `isVoiceOverEnabled` = false) | 1 | **0 (boolean) ✅.** Coordinator-authorized restore to the observed original, 2026-10-05 20:19:59: `defaults write com.apple.universalaccess voiceOverOnOffKey -bool false`. Read back: `0`, Type is boolean; probe `voiceOver=false`; no VoiceOver process. |
 | VoiceOver process | none | none | none ✅ |
+
+Before the restore, `voiceOverOnOffKey` read 1 and the probe reported `voiceOver=true`. The key was set because the slot stopped VoiceOver with `kill` rather than quitting it through VoiceOver. This is a **slot-script gap**: the script didn't snapshot that key. False is the restored state, matching the original probe.
 
 The slot script is now fixed for reuse:
 - it snapshots `voiceOverOnOffKey`;
