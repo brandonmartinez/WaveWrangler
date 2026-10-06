@@ -20,6 +20,8 @@ import Foundation
 /// - `-WWUITestOfflineFolder <absolute folder path>` (with `-WWUITestOffline YES`): only publications into that folder
 ///   fail, so Save a Copy Elsewhere… to another folder works while the show's own folder is "unreachable" (T28, T23 D7).
 /// - `-WWUITestSaveRetryInterval <seconds>` shortens the automatic retry after a failed save (ST-11; 30 s).
+/// - `-WWUITestFailFormatUpdate YES` (#159 D15, T21 failure case): every format update fails at M3 (after the
+///   backup is preserved and the update validated, before anything is published), so the original stays unchanged.
 ///
 /// Debug builds only: in Release the whole type is compiled out, so `-WWUITestHooks YES` and the
 /// distributed notifications have no effect (`PersistenceEnvironment.isUITestRun` is always `false`).
@@ -66,6 +68,9 @@ enum UITestHooks {
         }
         if let interval = UserDefaults.standard.string(forKey: "WWUITestSaveRetryInterval").flatMap(Double.init), interval > 0 {
             ShowDocument.saveRetryInterval = interval
+        }
+        if UserDefaults.standard.bool(forKey: "WWUITestFailFormatUpdate") {
+            ShowDocument.debugFormatUpdateHooks = UITestFailingFormatUpdateHooks()
         }
         if UserDefaults.standard.bool(forKey: "WWUITestOffline") {
             ShowDocument.debugPublicationHooks = UITestOfflineHooks.shared
@@ -136,6 +141,14 @@ final class UITestOfflineHooks: PublicationHooks, @unchecked Sendable {
                 board.setString(json, forType: .string)
             }
         }
+    }
+}
+
+/// `-WWUITestFailFormatUpdate YES`: fails the migration once it is validated, before publication (P1) begins.
+struct UITestFailingFormatUpdateHooks: PublicationHooks {
+    func reached(_ boundary: PublicationBoundary) throws {
+        guard boundary == .migrationValidated else { return }
+        throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedFailureReasonErrorKey: "The update was stopped by a simulated failure."])
     }
 }
 #endif

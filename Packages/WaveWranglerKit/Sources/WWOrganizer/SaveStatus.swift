@@ -266,7 +266,7 @@ public struct SaveStatusPresentation: Sendable, Equatable {
         case .updateNeeded:
             text = "Read-only"
             symbol = "lock.fill"
-            popover = "WaveWrangler needs to update this show before you can edit it. The original is kept unchanged as a backup next to it."
+            popover = FormatUpdatePrompt.body
             actions = []
             suffix = false
         case .updateFailed:

@@ -239,3 +239,28 @@ struct ProviderConflictStatusTests {
         }
     }
 }
+
+@Suite("Format update prompt (D14/D15, #159)")
+struct FormatUpdatePromptTests {
+    @Test func promptWordingAndButtonOrder() {
+        let prompt = FormatUpdatePrompt(showName: "The Daily Wrangle")
+        #expect(prompt.title == "Update “The Daily Wrangle” to the current format?")
+        #expect(prompt.buttons == [.update, .openReadOnly, .cancel])
+        #expect(prompt.buttons.map(\.rawValue) == ["Update", "Open Read-Only", "Cancel"])
+        // The C5 backup is in this Mac's recovery store: never claim it's next to the show.
+        #expect(prompt.body.contains("backup on this Mac") && !prompt.body.contains("next to it"))
+    }
+
+    @Test func updateNeededAndFailedAreReadOnlyAndHonest() {
+        let needed = SaveStatusPresentation(DocumentSaveStatus(state: .updateNeeded, autosaveEnabled: true), showName: "Show")
+        #expect(DocumentSaveState.updateNeeded.isReadOnly && DocumentSaveState.updateFailed.isReadOnly)
+        #expect(needed.itemText == "Read-only" && needed.popoverText.hasPrefix(FormatUpdatePrompt.body))
+        let failed = SaveStatusPresentation(DocumentSaveStatus(state: .updateFailed, autosaveEnabled: true), showName: "Show")
+        #expect(failed.itemText == "Read-only")
+        #expect(failed.messageBar?.heading == "Couldn't update this show")
+        #expect(failed.messageBar?.body == "The original is unchanged. You can view it read-only.")
+        #expect(failed.messageBar?.actions == [.tryAgain, .showDetails])
+        // Not colour-only: a distinct symbol and text accompany the tint.
+        #expect(failed.symbolName == "xmark.octagon" && failed.accessibilityValue.contains("Read-only"))
+    }
+}

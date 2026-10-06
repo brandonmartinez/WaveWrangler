@@ -15,6 +15,7 @@
 		6B1E5CB5C9CA81007F6A81B8 /* WWCore in Frameworks */ = {isa = PBXBuildFile; productRef = 16B37CD1081A7D1F8BD805E3 /* WWCore */; };
 		4D283E5538B35FC08990F6D5 /* WWPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 9E46055AA9A5DEF6E328B117 /* WWPersistence */; };
 		5E8F2A71C4B39D6E0A1F7C82 /* WWOrganizer in Frameworks */ = {isa = PBXBuildFile; productRef = 9B3D6E1F2A4C7085D2E6F193 /* WWOrganizer */; };
+		5C1A9E3B7D2F4A6E8B0C2D42 /* ShowSchema1Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1A9E3B7D2F4A6E8B0C2D41 /* ShowSchema1Fixtures.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -31,6 +32,7 @@
 		2793E8D2F64EF711A331B014 /* WaveWrangler.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WaveWrangler.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		65BA5EA7D383BDC1C1B6760D /* WaveWranglerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WaveWranglerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E932B07FC4428F442F2A99D1 /* WaveWranglerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WaveWranglerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5C1A9E3B7D2F4A6E8B0C2D41 /* ShowSchema1Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Packages/WaveWranglerKit/Tests/WWPersistenceTests/ShowSchema1Fixtures.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -46,6 +48,7 @@
 			membershipExceptions = (
 				Commands/ConfirmationButtons.swift,
 				Commands/OpaqueErrorPanel.swift,
+				Document/FormatUpdate.swift,
 				Library/MoveStepRelay.swift,
 				Sources/SetupConfirmationKind.swift,
 				Workspace/ShowDocumentStatusMapping.swift,
@@ -115,8 +118,17 @@
 				B28B916FDF2C4DB2572E1227 /* WaveWrangler */,
 				64588220B0AF205B4D9A35D0 /* WaveWranglerTests */,
 				1F7EA7BCA174E803041CF1A9 /* WaveWranglerUITests */,
+				5C1A9E3B7D2F4A6E8B0C2D43 /* Shared Fixtures */,
 				CBECE766B90506CB71FA4DEC /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		5C1A9E3B7D2F4A6E8B0C2D43 /* Shared Fixtures */ = {
+			isa = PBXGroup;
+			children = (
+				5C1A9E3B7D2F4A6E8B0C2D41 /* ShowSchema1Fixtures.swift */,
+			);
+			name = "Shared Fixtures";
 			sourceTree = "<group>";
 		};
 		CBECE766B90506CB71FA4DEC /* Products */ = {
@@ -296,6 +308,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5C1A9E3B7D2F4A6E8B0C2D42 /* ShowSchema1Fixtures.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -21,6 +21,8 @@ final class DocumentStatusModel {
     /// ST-16: after Save a Copy Elsewhere…, "You're now editing “<copy>” in <folder>. The original at <folder> wasn't
     /// changed." Shown in the message bar until dismissed.
     private(set) var copyNotice: String?
+    /// #159: non-nil while an older-format show waits for, runs or failed its update (read-only until it publishes).
+    private(set) var formatUpdate: FormatUpdateState?
 
     var accessibilityDescription: String { saveStatus.accessibilityDescription }
 
@@ -42,6 +44,10 @@ final class DocumentStatusModel {
 
     func setCopyNotice(_ notice: String?) {
         copyNotice = notice
+    }
+
+    func setFormatUpdate(_ value: FormatUpdateState?) {
+        if formatUpdate != value { formatUpdate = value }
     }
 
     func setReadOnly(_ reason: String?) {

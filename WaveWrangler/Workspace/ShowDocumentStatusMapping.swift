@@ -10,7 +10,8 @@ enum ShowDocumentStatusMapping {
         autosaveEnabled: Bool,
         folderDisplayName: String?,
         providerConflictVersions: Int = 0,
-        retryingAutomatically: Bool = false
+        retryingAutomatically: Bool = false,
+        formatUpdate: FormatUpdateState? = nil
     ) -> WWOrganizer.DocumentSaveStatus {
         let mapped: WWOrganizer.DocumentSaveState = switch state {
         case .clean(nil):
@@ -45,7 +46,14 @@ enum ShowDocumentStatusMapping {
         @unknown default:
             .unknown(reason: "the save state isn't recognized")
         }
-        let final: WWOrganizer.DocumentSaveState = if let readOnlyReason, !mapped.isReadOnly {
+        let final: WWOrganizer.DocumentSaveState = if let formatUpdate {
+            // #159: until the update publishes, the show is read-only whatever the persistence state says (D14/D15).
+            switch formatUpdate {
+            case .needed, .updating: .updateNeeded
+            case .failed: .updateFailed
+            case .interrupted(let reason): .readOnly(reason: reason)
+            }
+        } else if let readOnlyReason, !mapped.isReadOnly {
             .readOnly(reason: readOnlyReason)
         } else {
             mapped
@@ -55,7 +63,7 @@ enum ShowDocumentStatusMapping {
             autosaveEnabled: autosaveEnabled,
             // ST-11: only while ShowDocument really has a retry pending.
             retryingAutomatically: retryingAutomatically && autosaveEnabled && state.isAutomaticallyRetryable,
-            hasUnsavedChanges: state.hasUnsavedWork,
+            hasUnsavedChanges: formatUpdate == nil && state.hasUnsavedWork,
             providerConflictVersions: providerConflictVersions
         )
     }

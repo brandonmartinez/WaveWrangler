@@ -11,6 +11,18 @@ extension ShowDocument: DocumentStatusActionHandling {
             // T28: whether the copy was saved or the panel cancelled, focus returns to the save-status item.
             saveACopyElsewhere { _ in ShowWindowRegistry.state(for: window)?.focusSaveStatus() }
             return true
+        case .tryAgain where isAwaitingFormatUpdate:
+            // D15 Try Again re-runs the update; never a save, which an older show can't do.
+            updateFormat()
+            return true
+        case .showDetails where isAwaitingFormatUpdate:
+            if case let .failed(detail) = status.formatUpdate {
+                Task { @MainActor [showFileName] in
+                    await Dialogs.inform(in: window, message: "Couldn’t update “\(showFileName)”",
+                                         informative: "\(detail) The original file is unchanged.")
+                }
+            }
+            return true
         default:
             return false
         }
@@ -32,6 +44,45 @@ extension ShowDocument: DocumentStatusActionHandling {
         guard case let .sheet(sheet) = CloseDecision(state: mapped.state, autosaveEnabled: autosave, showName: showFileName),
               sheet.buttons.contains(.saveACopyElsewhere) else { return nil }
         return sheet
+    }
+
+    /// D14 (T21): once the window has appeared, asks whether to update an older-format show. Update is the default
+    /// (Return) and runs the C5 migration; Open Read-Only (⌘R) keeps the in-memory upgrade and writes nothing; Cancel
+    /// (Escape) closes the show unchanged.
+    func presentFormatUpdatePromptIfNeeded() {
+        guard formatUpdatePromptPending, status.formatUpdate == .needed,
+              let window = windowControllers.lazy.compactMap(\.window).first(where: \.isVisible) else { return }
+        formatUpdatePromptPending = false
+        let prompt = FormatUpdatePrompt(showName: showFileName)
+        let alert = NSAlert()
+        alert.messageText = prompt.title
+        alert.informativeText = prompt.body
+        for button in prompt.buttons {
+            let added = alert.addButton(withTitle: button.rawValue)
+            switch button {
+            case .update:
+                added.setAccessibilityIdentifier("ww.formatUpdate.update")
+            case .openReadOnly:
+                added.keyEquivalent = "r"
+                added.keyEquivalentModifierMask = .command
+                added.setAccessibilityIdentifier("ww.formatUpdate.openReadOnly")
+            case .cancel:
+                added.keyEquivalent = "\u{1b}"
+                added.setAccessibilityIdentifier("ww.formatUpdate.cancel")
+            }
+        }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            let choice = prompt.buttons.indices.contains(index) ? prompt.buttons[index] : .cancel
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                switch choice {
+                case .update: self.updateFormat()
+                case .openReadOnly: break
+                case .cancel: self.close()
+                }
+            }
+        }
     }
 
     /// Presents `sheet` on `window`: its first button is the default (Return), Cancel is Escape and Don't Save is ⌘⌫.
