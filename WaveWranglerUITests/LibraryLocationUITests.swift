@@ -26,6 +26,16 @@ final class LibraryLocationUITests: XCTestCase {
 
     override func tearDown() async throws {
         if let app, app.state != .notRunning { app.terminate() }
+        // Leave no library location or library behind for later suites: they share the isolated UI-test
+        // preferences and storage, and the folders chosen here are deleted below. One launch with storage reset
+        // clears the location setting and the UI-test library.
+        if app != nil {
+            let reset = XCUIApplication()
+            reset.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetStorage", "YES",
+                                     "-WWUITestResetPreferences", "YES", "-WWUITestLibraryFixture", "empty"]
+            reset.launch()
+            reset.terminate()
+        }
         if let work {
             // Restore permissions changed by a test so the folder can be removed.
             for item in (try? FileManager.default.subpathsOfDirectory(atPath: work.path)) ?? [] {
