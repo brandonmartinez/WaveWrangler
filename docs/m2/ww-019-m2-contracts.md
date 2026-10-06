@@ -126,7 +126,9 @@ are `M2-C1`...`M2-C7`.
 `docs/m2/fixtures/m2-fixture-registry.json`; each holdout has since run once (#184, #185; results in the
 WW-016 and WW-018 evidence notes). `m2-freeze-decode` and `m2-freeze-timemap` (`docs/m2/fixtures/`) are frozen
 and listed in the registry, with calibration reported in the WW-050 and WW-015 evidence notes; their holdouts
-have NOT run. `m2-freeze-discontinuity` is still a plan. The original plan text follows.
+have NOT run. `m2-freeze-discontinuity` (`docs/m2/fixtures/m2-freeze-discontinuity.json`) is frozen and listed in
+the registry, with calibration reported in the WW-017 evidence note; its holdout has NOT run. The original plan text
+follows.
 
 M2 fixture generators do not exist yet, so **nothing is frozen in this record** — this section documents
 the *plan*, following the M1 pattern in `docs/m1/ww-003-fixture-protocol.md` (§3–4): calibration may only

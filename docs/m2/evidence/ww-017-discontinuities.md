@@ -7,7 +7,9 @@ estimator and the time map. It imports only Foundation, `WWCore`, `WWTimeMap` an
 `WWAlignEstimate` through its public API only. Under `m2-freeze-estimator` the estimator's sources and tests are
 unchanged. `SegmentPurityTests` bans the following in the module, and the repo-wide decode scan covers it too:
 - file, content and decode APIs;
-- randomness, wall clocks and concurrency;
+- random-number, UUID, shuffle and hashing APIs, wall clocks and concurrency;
+- `RecordingEpochID()` minting outside its two known sites (one per region kind). Those IDs are opaque labels; every
+  numeric result (positions, sizes, scores, maps) is deterministic, and scoring never compares epoch IDs;
 - `clockApproved`;
 - probability wording.
 
@@ -82,6 +84,17 @@ segment pass of `scripts/test.sh`:
 `WW_SEGMENT_TESTS=1 swift test --no-parallel --filter 'WWAlignSegmentTests\.(CalibrationTests|FloorSweepTests|EdgeSilenceTests)'`
 
 With the compute cap (4 cases in flight) the wall times were 186 s for calibration, 112 s for the floor sweep and 24 s for edge silence. Every per-case line is identical to the pre-cap run.
+
+**Per-case records.** Setting `WW_SEGMENT_RECORDS_DIR` makes the same suites write one canonical JSON line per case
+(seed, truth, per-plant status and detected kind, counts, residuals, failures). The committed records are
+[`ww-017/calibration.jsonl`](ww-017/calibration.jsonl), [`ww-017/floor.jsonl`](ww-017/floor.jsonl) and
+[`ww-017/edge-silence.jsonl`](ww-017/edge-silence.jsonl). Their SHA-256 values and totals are in the freeze record's
+`calibrationSummary`. A rerun that wrote them produced per-case lines identical to the earlier run. The cheap test
+`committedRecordsReproduceTheReportedCalibration` checks the following without decoding audio:
+- the hashes;
+- each record's seed and truth against the frozen plan;
+- the recomputed totals against the reported ones;
+- the gates again.
 
 | stratum | cases | plants flagged / unsupported / bridged | false splits | spurious det. | mean coverage | worst p95 / max ms | position error median / max s |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -170,7 +183,7 @@ Not caught, all six reported honestly:
 - **Image-overlap guard off.** This fails closed: WWTimeMap throws `overlappingEpochs`.
 
 **Compute budget** (user-directed 2026-10-06):
-- The harness keeps at most `WW_SEGMENT_MAX_CONCURRENCY` cases in flight. The default is 4, valid values are 1–16,
+- The harness keeps at most `WW_SEGMENT_MAX_CONCURRENCY` cases in flight. The default is 4, valid values are 1–4 (it may only lower),
   and it is never derived from the processor count. `SegmentBudgetTests` asserts the default and the bound.
 - The heavy suites run in their own serialized `--no-parallel` pass, gated by `WW_SEGMENT_TESTS=1`.
 - The holdout is gated by `WW_SEGMENT_HOLDOUT=1`.

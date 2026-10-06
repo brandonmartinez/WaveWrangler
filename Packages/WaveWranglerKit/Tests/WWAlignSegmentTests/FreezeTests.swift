@@ -141,6 +141,72 @@ struct SegmentFreezeTests {
         }
     }
 
+    /// The committed per-case records are the ones the freeze hashed, they cover exactly the planned cases with
+    /// their planted truth, and they alone reproduce every reported total and the calibration gate verdict.
+    @Test func committedRecordsReproduceTheReportedCalibration() throws {
+        let summary = try #require(try Self.freeze()["calibrationSummary"] as? [String: Any])
+
+        // Calibration: plan order, identities and planted truth; totals; the WW-017 gates recomputed.
+        let (calibration, calibrationTotals) = try Self.committedRecords(summary)
+        let plan = SegmentPlan.cases()
+        #expect(calibration.map(\.label) == plan.map(SegmentCaseRecord.label))
+        try Self.expectTruth(calibration, plan)
+        let c = SegmentRecordTotals(calibration)
+        #expect(c.dictionary == calibrationTotals)
+        #expect(c.cases == SegmentPlan.counts.reduce(0) { $0 + $1.1 })
+        #expect(c.plants == Self.plants(SegmentPlan.counts))
+        #expect(c.plantsFlagged + c.plantsUnsupported == c.plants)
+        #expect(c.plantsBridged == 0 && c.bridgingRegions == 0 && c.silentBridges == 0)
+        #expect(c.casesWithHardFailures == 0 && c.invariantFailures == 0)
+        #expect(c.negatives == SegmentPlan.counts.filter { $0.0.isNegative }.reduce(0) { $0 + $1.1 })
+        #expect(c.falseSplitRate <= SegmentPlan.maximumFalseSplitRate)
+        #expect(c.worstResidualP95Milliseconds <= Scoring.p95Gate && c.worstResidualMaxMilliseconds <= Scoring.maxGate)
+
+        // Floor sweep (reported, not gated): plan order and truth; totals; the hard invariants hold.
+        let (floor, floorTotals) = try Self.committedRecords(try #require(summary["floorSweepRecords"] as? [String: Any]))
+        let floorPlan = SegmentPlan.floorCases()
+        #expect(floor.map(\.label) == floorPlan.map(\.label))
+        try Self.expectTruth(floor, floorPlan.map(\.kase))
+        let f = SegmentRecordTotals(floor)
+        #expect(f.dictionary == floorTotals)
+        #expect(f.invariantFailures == 0)
+
+        // Edge silence (gated with calibration): the six muted calibration cases.
+        let (edge, edgeTotals) = try Self.committedRecords(try #require(summary["edgeSilenceRecords"] as? [String: Any]))
+        let edgePlan = EdgeSilenceTests.cases()
+        #expect(edge.map(\.label) == edgePlan.map(SegmentCaseRecord.edgeSilenceLabel))
+        #expect(edge.map(\.mute) == edgePlan.map { $0.mute.map { [$0.lowerBound, $0.upperBound] } })
+        try Self.expectTruth(edge, edgePlan)
+        let e = SegmentRecordTotals(edge)
+        #expect(e.dictionary == edgeTotals)
+        #expect(e.cases == 6 && e.plantsBridged == 0 && e.silentBridges == 0 && e.casesWithHardFailures == 0)
+        #expect(e.worstResidualMaxMilliseconds <= Scoring.maxGate)
+    }
+
+    /// Reads `recordsFile`, checks `recordsSHA256`, and returns the records with the reported `totals`.
+    static func committedRecords(_ entry: [String: Any]) throws -> ([SegmentCaseRecord], [String: Double]) {
+        let file = try #require(entry["recordsFile"] as? String)
+        let data = try Data(contentsOf: repository.appendingPathComponent(file))
+        let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        #expect(sha == entry["recordsSHA256"] as? String, "\(file)")
+        let records = try SegmentCaseRecord.decode(data)
+        #expect(try SegmentCaseRecord.jsonLines(records) == data, "\(file) is not canonical (sorted keys, one case per line)")
+        return (records, try #require(entry["totals"] as? [String: Double]))
+    }
+
+    /// Each record carries its planned case's seed, rate, length and plants (independent truth, not the fit).
+    static func expectTruth(_ records: [SegmentCaseRecord], _ plan: [SegmentCase]) throws {
+        try #require(records.count == plan.count)
+        for (record, kase) in zip(records, plan) {
+            #expect(record.stratum == kase.stratum.rawValue && record.index == kase.index, "\(record.label)")
+            #expect(record.seed == hex(kase.seed) && record.rate == kase.truth.rate && record.lengthSeconds == kase.lengthSeconds, "\(record.label)")
+            #expect(record.negative == kase.stratum.isNegative, "\(record.label)")
+            #expect(record.plants.map(\.kind) == kase.plants.map(\.kind.rawValue), "\(record.label)")
+            #expect(record.plants.map(\.frame) == kase.plants.map(\.frame), "\(record.label)")
+            #expect(record.plants.map(\.insertedFrames) == kase.plants.map { $0.inserted?.count }, "\(record.label)")
+        }
+    }
+
     /// Seeds only (nothing rendered): calibration, floor sweep and holdout never share a case.
     @Test func holdoutIsDisjointFromCalibrationAndFloor() {
         let calibration = SegmentPlan.seeds(master: SegmentPlan.calibrationMasterSeed, counts: SegmentPlan.counts)
@@ -166,6 +232,7 @@ struct SegmentHoldoutTests {
         let scores = try await SegmentRunner.runAll(SegmentPlan.cases(master: SegmentPlan.holdoutMasterSeed, counts: SegmentPlan.holdoutCounts))
         print("WW-017 FROZEN HOLDOUT m2-freeze-discontinuity (master seed \(SegmentFreezeTests.hex(SegmentPlan.holdoutMasterSeed)), segmenter \(DiscontinuitySegmenter.identifier), estimator \(AcousticEstimator.identifier))")
         for score in scores { print("WW-017 holdout " + SegmentRunner.line(score)) }
+        try SegmentCaseRecord.write(scores.map { SegmentCaseRecord(label: SegmentCaseRecord.label($0.kase), score: $0) }, split: "holdout")
         print("WW-017 holdout table\n" + SegmentRunner.table(scores))
         let failures = SegmentRunner.gateFailures(scores, maximumFalseSplitRate: SegmentPlan.maximumFalseSplitRate)
         #expect(failures.isEmpty, "\(failures.joined(separator: "\n"))")

@@ -24,9 +24,9 @@ enum SegmentRunner {
     /// derives from the processor count.
     static let defaultMaximumConcurrency = 4
 
-    /// `WW_SEGMENT_MAX_CONCURRENCY` (1...16) overrides the default; anything else falls back to it.
+    /// `WW_SEGMENT_MAX_CONCURRENCY` may only lower the cap (1...4); anything else falls back to the default.
     static func maximumConcurrency(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> Int {
-        guard let raw = environment["WW_SEGMENT_MAX_CONCURRENCY"], let value = Int(raw), (1...16).contains(value) else {
+        guard let raw = environment["WW_SEGMENT_MAX_CONCURRENCY"], let value = Int(raw), (1...defaultMaximumConcurrency).contains(value) else {
             return defaultMaximumConcurrency
         }
         return value
@@ -112,6 +112,7 @@ struct CalibrationTests {
     @Test func calibrationAgainstPlantedTruth() async throws {
         let scores = try await SegmentRunner.runAll(SegmentPlan.cases())
         for score in scores { print("WW-017 calibration " + SegmentRunner.line(score)) }
+        try SegmentCaseRecord.write(scores.map { SegmentCaseRecord(label: SegmentCaseRecord.label($0.kase), score: $0) }, split: "calibration")
         print("WW-017 calibration table\n" + SegmentRunner.table(scores))
         let failures = SegmentRunner.gateFailures(scores, maximumFalseSplitRate: SegmentPlan.maximumFalseSplitRate)
         #expect(failures.isEmpty, "\(failures.joined(separator: "\n"))")
@@ -130,6 +131,7 @@ struct FloorSweepTests {
     @Test func detectionFloor() async throws {
         let cases = SegmentPlan.floorCases()
         let scores = try await SegmentRunner.runAll(cases.map(\.1))
+        try SegmentCaseRecord.write(zip(cases, scores).map { SegmentCaseRecord(label: $0.0.label, score: $0.1) }, split: "floor")
         for ((label, _), score) in zip(cases, scores) {
             print("WW-017 floor \(label): " + SegmentRunner.line(score))
             #expect(score.retentionFailures.isEmpty && score.monotonicFailures.isEmpty && score.inverseFailures.isEmpty, "\(label)")
@@ -137,15 +139,16 @@ struct FloorSweepTests {
     }
 }
 
-/// The heavy passes share a developer Mac: the harness keeps at most four cases in flight unless told otherwise,
-/// and the bound actually holds. Cheap; runs in the parallel pass.
+/// The heavy passes share a developer Mac: the harness keeps at most four cases in flight (an override may only
+/// lower that), and the bound actually holds. Cheap; runs in the parallel pass.
 @Suite("Segment harness compute budget")
 struct SegmentBudgetTests {
     @Test func defaultConcurrencyIsAtMostFour() {
         #expect(SegmentRunner.defaultMaximumConcurrency <= 4)
         #expect(SegmentRunner.maximumConcurrency([:]) == SegmentRunner.defaultMaximumConcurrency)
         #expect(SegmentRunner.maximumConcurrency(["WW_SEGMENT_MAX_CONCURRENCY": "2"]) == 2)
-        for bad in ["0", "-3", "17", "many", ""] {
+        #expect(SegmentRunner.maximumConcurrency(["WW_SEGMENT_MAX_CONCURRENCY": "4"]) == 4)
+        for bad in ["0", "-3", "5", "16", "17", "many", ""] {
             #expect(SegmentRunner.maximumConcurrency(["WW_SEGMENT_MAX_CONCURRENCY": bad]) == SegmentRunner.defaultMaximumConcurrency)
         }
     }

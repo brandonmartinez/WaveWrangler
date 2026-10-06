@@ -13,7 +13,7 @@
  "scope": "Every M2-SEG-* entry in the registry: stratum recipe, planted truth, calibration/holdout seeds and counts, scoring, and the gate exactly as written here. Frozen code: the WWAlignSegment source tree and the WWAlignSegmentTests tree (generator, plan, scoring, gate checks, edge-silence regression and holdout harness), pinned by git tree ID. The segmenter consumes the frozen WW-016 estimator (m2-freeze-estimator) through its public API only.",
  "pinnedTrees": {
   "Sources/WWAlignSegment": "08bc77339aee0ccb9294e5c1610529ef5e088320",
-  "Tests/WWAlignSegmentTests": "3ee2e028bca8fa9e47caf3d34482772293d888fc"
+  "Tests/WWAlignSegmentTests": "b4d12045d3fe0e2c913f4c3545bec56f0d8f9ce0"
  },
  "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit. SegmentFreezeTests.segmenterAndHarnessTreesMatchTheFreezeRecord recomputes both git tree IDs from the working tree on every test run and fails on any difference (including an untracked file). A change to either tree after the freeze is a new dated freeze revision with a fresh holdout; the earlier record is retained.",
  "dependencyTreesAtFreeze": {
@@ -38,7 +38,7 @@
   },
   "parametersNote": "SegmenterParameters() defaults with the frozen EstimatorParameters() defaults underneath; SegmentFreezeTests.frozenDefinitionMatchesTheFreezeRecord compares them. Any other parameter set is stamped ww-align-segment/1+custom.",
   "algorithm": "Dense overlapping estimator tiles give (group-clock centre, offset) points per eligible window; recursive least-squares two-line splitting until every piece fits one line within splitToleranceMilliseconds (islands of unresolved windows stay unsupported); each boundary is bracketed from window evidence (widened by the jump size and, for slope changes, by where the lines are within stepToleranceFactor x tolerance); supported candidates exclude brackets and the half-window edge margins and must be >= minimumSupportedSeconds; each candidate is re-estimated by the frozen estimator on exactly its frames and kept only if it proposes and agrees with the segment line within proposalAgreementMilliseconds; overlapping mapped images are demoted; every region becomes its own epoch in a compiled WWTimeMap GroupTimeMap. Header: Sources/WWAlignSegment/Segmenter.swift.",
-  "outputs": "Per region: a mapped epoch with an acousticConsistentProposal segment (never clockApproved), or an unsupported epoch with a typed cause (discontinuity, unresolvedWindows, noEvidence, edgeMargin, tooShort, estimatorAbstained, lineDisagreement, imageOverlap). Detections carry kind (offsetStep, slopeChange, unresolved), bracket, frames, position, step ms, slope change ppm, window counts, residuals and median peak scores (coefficients, never probabilities). SegmentPurityTests ban clockApproved, probability language, randomness, wall clocks, I/O and concurrency in the module."
+  "outputs": "Per region: a mapped epoch with an acousticConsistentProposal segment (never clockApproved), or an unsupported epoch with a typed cause (discontinuity, unresolvedWindows, noEvidence, edgeMargin, tooShort, estimatorAbstained, lineDisagreement, imageOverlap). Detections carry kind (offsetStep, slopeChange, unresolved), bracket, frames, position, step ms, slope change ppm, window counts, residuals and median peak scores (coefficients, never probabilities). SegmentPurityTests ban clockApproved, probability language, wall clocks, I/O, concurrency, and randomness or hash-order dependence in the module, with one exception: fresh epoch identifiers are minted with RecordingEpochID() (a UUID) at exactly two sites (each extra region a split creates, and an estimator track's scratch epoch). Identifiers never feed a numeric result, so detections, positions, residuals and region decisions are deterministic; only the minted epoch IDs differ between runs."
  },
  "generator": {
   "kind": "synthetic-deterministic, in test code only (no files, no recordings)",
@@ -128,17 +128,82 @@
  },
  "calibrationSummary": {
   "host": "Apple M5 Max, 18 cores, 128 GiB, macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, debug build",
-  "command": "cd Packages/WaveWranglerKit && WW_SEGMENT_TESTS=1 swift test --no-parallel --scratch-path ../../.build/swiftpm --filter 'WWAlignSegmentTests\\.(CalibrationTests|FloorSweepTests|EdgeSilenceTests)' (the serialized segment pass of scripts/test.sh)",
+  "command": "cd Packages/WaveWranglerKit && WW_SEGMENT_TESTS=1 [WW_SEGMENT_RECORDS_DIR=\"$PWD/../../docs/m2/evidence/ww-017\"] swift test --no-parallel --scratch-path ../../.build/swiftpm --filter 'WWAlignSegmentTests\\.(CalibrationTests|FloorSweepTests|EdgeSilenceTests)' (the serialized segment pass of scripts/test.sh, which does not set WW_SEGMENT_RECORDS_DIR)",
   "result": "gate PASS on calibration: 38/38 planted discontinuities flagged (0 unsupported-only, 0 bridged), each with the expected kind (offsetStep for dropped/inserted/clockStep/restart, slopeChange for rateChange); 0 bridging regions, 0 silent smooth bridges; every mapped region within the WW-016 gate (worst p95 0.996 ms / max 0.996 ms); 0 monotonic, inverse or retention failures; false splits 0/14 negatives (clean 0/6, transient 0/4, silenceGap 0/4); 1 spurious (conservative) detection on positives; detection position error median 0.17 s, max 0.81 s.",
   "floorSweep": "Reported, not gated: steps of +/-2 and +/-5 ms 8/8 flagged offsetStep; +/-1 ms 4/4 flagged (3 as whole-span slopeChange, coverage <= 0.11); +/-0.5 ms 2/4 flagged, 2/4 bridged (max 1.130 ms); +/-0.25 ms 4/4 bridged (max 0.734 ms); rate changes 100-300 ppm 6/6 flagged slopeChange; 25-50 ppm 4/4 bridged (max 1.135 ms). Every bridged floor case stays inside the WW-016 gate against truth.",
   "perStratum": "docs/m2/evidence/ww-017-discontinuities.md",
-  "edgeSilence": "Regression, gated with calibration: the first dropped, clockStep and restart calibration cases with the target muted for 1.2 s just after, or just before, the plant (6 cases). 6/6 plants flagged, 0 bridged, every mapped region within the gate (worst max 0.996 ms); position error grows to 0.46-1.31 s because windows straddling the jump hear only one side. Removing both the half-window edge trim and the bracket's half-window margin fails all 6 cases with bridged plants (for example dropped#0 max 45.8 ms, clockStep#0 max 22.7 ms); calibration alone does not exercise those margins."
+  "edgeSilence": "Regression, gated with calibration: the first dropped, clockStep and restart calibration cases with the target muted for 1.2 s just after, or just before, the plant (6 cases). 6/6 plants flagged, 0 bridged, every mapped region within the gate (worst max 0.996 ms); position error grows to 0.46-1.31 s because windows straddling the jump hear only one side. Removing both the half-window edge trim and the bracket's half-window margin fails all 6 cases with bridged plants (for example dropped#0 max 45.8 ms, clockStep#0 max 22.7 ms); calibration alone does not exercise those margins.",
+  "recordsFile": "docs/m2/evidence/ww-017/calibration.jsonl",
+  "recordsSHA256": "0f1605bfa37a85dac66258a035c17948dd7d8a60afa0620786af96e420d0143a",
+  "totals": {
+   "bridgingRegions": 0,
+   "cases": 48,
+   "casesWithHardFailures": 0,
+   "falseSplitRate": 0.0,
+   "falseSplits": 0,
+   "invariantFailures": 0,
+   "negatives": 14,
+   "plants": 38,
+   "plantsBridged": 0,
+   "plantsFlagged": 38,
+   "plantsFlaggedWithExpectedKind": 38,
+   "plantsUnsupported": 0,
+   "silentBridges": 0,
+   "spuriousDetectionsOnPositives": 1,
+   "worstResidualMaxMilliseconds": 0.9959760379558702,
+   "worstResidualP95Milliseconds": 0.9959760379558702
+  },
+  "recordsNote": "One JSON line per case in plan order, sorted keys (SegmentCaseRecord, Tests/WWAlignSegmentTests/Records.swift), written by the serialized pass with WW_SEGMENT_RECORDS_DIR set. SegmentFreezeTests.committedRecordsReproduceTheReportedCalibration checks each file's SHA-256 and canonical form, reconciles every record with its planned case (seed, rate, length, plant kinds, frames, inserted counts), recomputes every totals entry below from the records alone, and re-applies the calibration gates to them.",
+  "floorSweepRecords": {
+   "recordsFile": "docs/m2/evidence/ww-017/floor.jsonl",
+   "recordsSHA256": "f8f601562eb83aed9b73cdc5653320dbeea19cc2d4d149a774e6dba414f800f3",
+   "totals": {
+    "bridgingRegions": 10,
+    "cases": 30,
+    "casesWithHardFailures": 10,
+    "falseSplitRate": 0,
+    "falseSplits": 0,
+    "invariantFailures": 0,
+    "negatives": 0,
+    "plants": 30,
+    "plantsBridged": 10,
+    "plantsFlagged": 20,
+    "plantsFlaggedWithExpectedKind": 15,
+    "plantsUnsupported": 0,
+    "silentBridges": 10,
+    "spuriousDetectionsOnPositives": 0,
+    "worstResidualMaxMilliseconds": 1.1352607690966465,
+    "worstResidualP95Milliseconds": 1.1241770122296657
+   }
+  },
+  "edgeSilenceRecords": {
+   "recordsFile": "docs/m2/evidence/ww-017/edge-silence.jsonl",
+   "recordsSHA256": "3550e6d57967b60a0ffc7ca2e591250f6fa0a195eaee0af76e060d92209f2660",
+   "totals": {
+    "bridgingRegions": 0,
+    "cases": 6,
+    "casesWithHardFailures": 0,
+    "falseSplitRate": 0,
+    "falseSplits": 0,
+    "invariantFailures": 0,
+    "negatives": 0,
+    "plants": 6,
+    "plantsBridged": 0,
+    "plantsFlagged": 6,
+    "plantsFlaggedWithExpectedKind": 6,
+    "plantsUnsupported": 0,
+    "silentBridges": 0,
+    "spuriousDetectionsOnPositives": 0,
+    "worstResidualMaxMilliseconds": 0.9964021362662834,
+    "worstResidualP95Milliseconds": 0.9964021362662834
+   }
+  }
  },
  "holdoutProcedure": {
   "when": "Once, in a separate follow-up PR, on a clean commit that contains this record's merge commit and whose WWAlignSegment trees still equal pinnedTrees (and whose WWAlignEstimate trees still equal m2-freeze-estimator's).",
-  "command": "cd Packages/WaveWranglerKit && WW_SEGMENT_HOLDOUT=1 swift test --no-parallel --scratch-path ../../.build/swiftpm --filter SegmentHoldoutTests",
-  "compute": "The harness keeps at most WW_SEGMENT_MAX_CONCURRENCY cases in flight (default 4, never derived from the processor count; SegmentBudgetTests). Run it as the only heavy job on the machine.",
-  "report": "Commit SHA, host (sw_vers, xcodebuild -version, swift --version, cores, memory), the tree IDs it ran (git rev-parse HEAD:Packages/WaveWranglerKit/Sources/WWAlignSegment, ...Tests/WWAlignSegmentTests, ...Sources/WWAlignEstimate, ...Sources/WWTimeMap, ...Sources/WWCore), the printed table, every per-case line including failures, and the gate summary, unedited.",
+  "command": "cd Packages/WaveWranglerKit && WW_SEGMENT_HOLDOUT=1 WW_SEGMENT_RECORDS_DIR=\"$PWD/../../docs/m2/evidence/ww-017\" swift test --no-parallel --scratch-path ../../.build/swiftpm --filter SegmentHoldoutTests",
+  "compute": "The harness keeps at most 4 cases in flight (never derived from the processor count); WW_SEGMENT_MAX_CONCURRENCY may only lower that (clamped to 1...4; SegmentBudgetTests). Run it as the only heavy job on the machine.",
+  "report": "Commit SHA, host (sw_vers, xcodebuild -version, swift --version, cores, memory), the tree IDs it ran (git rev-parse HEAD:Packages/WaveWranglerKit/Sources/WWAlignSegment, ...Tests/WWAlignSegmentTests, ...Sources/WWAlignEstimate, ...Sources/WWTimeMap, ...Sources/WWCore), the printed table, every per-case line including failures, the case records (the harness writes docs/m2/evidence/ww-017/holdout.jsonl via WW_SEGMENT_RECORDS_DIR; commit it unedited), and the gate summary, unedited.",
   "rules": "Run at the frozen counts; never fewer. Never rerun to change the result: a failed run is retained as is and the gate question goes to the user once, with the data. Calibration and the floor sweep are never relabelled as holdout."
  },
  "gateChanges": "None to the WW-016 residual gate (reproduced from docs/m2/ww-019-m2-contracts.md §5). maximumFalseSplitRate 0 is set here from the calibration measurement (0/14 negatives) before any holdout; it is the strictest possible value, not a relaxation.",
@@ -146,6 +211,10 @@
  "preFreezeExecutions": [
   {
    "what": "Calibration (48 cases, 38 plants), floor sweep (30 cases), edge-silence regression (6 calibration-derived cases), unit, purity and scoring self-check tests, mutation checks",
+   "where": "this PR (WW-017)"
+  },
+  {
+   "what": "Independent review before merge (no gate, recipe, truth, seed, count, parameter or segmenter-source change): per-case records committed under docs/m2/evidence/ww-017/ and recomputed by SegmentFreezeTests; WW_SEGMENT_MAX_CONCURRENCY clamped to 1...4 (was 1...16); SegmentPurityTests now also ban randomness and hash-order dependence except the two RecordingEpochID() mint sites; the holdout harness writes holdout.jsonl. The serialized calibration, floor and edge-silence pass was rerun once to write the records; every per-case line equals the earlier run. The test tree was re-pinned.",
    "where": "this PR (WW-017)"
   }
  ],

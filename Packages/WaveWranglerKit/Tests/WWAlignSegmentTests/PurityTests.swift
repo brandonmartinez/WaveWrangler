@@ -23,6 +23,14 @@ struct SegmentPurityTests {
 
     static let vocabulary = ["probab", "confiden", "likelihood", "percent", "certain", "chance"]
 
+    /// Randomness and hash-order dependence (matched case-insensitively). The single exception is minting a fresh
+    /// epoch identifier with `RecordingEpochID()` (a UUID), at exactly `epochMintSites` places; identifiers never
+    /// feed a numeric result, so every position, residual and decision is deterministic.
+    static let nondeterminism = ["random", "uuid", "shuffle", "hasher", "hashvalue", "arc4", "seed"]
+    static let epochMint = "RecordingEpochID()"
+    /// Segmenter.swift: the epoch of each extra region a split creates, and the scratch epoch of an estimator track.
+    static let epochMintSites = 2
+
     static let allowedImports = ["import Foundation", "import WWCore", "import WWTimeMap", "import WWAlignEstimate"]
 
     static let moduleFiles: Set = ["Inputs.swift", "Results.swift", "Segmenter.swift"]
@@ -43,6 +51,7 @@ struct SegmentPurityTests {
         var found = (forbidden + approvalSurface).filter { code.contains($0) }.map { "\(fileName): \($0)" }
         let lower = code.lowercased()
         found += vocabulary.filter { lower.contains($0) }.map { "\(fileName): \($0)" }
+        found += nondeterminism.filter { lower.contains($0) }.map { "\(fileName): \($0)" }
         let imports = code.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.hasPrefix("import ") || $0.hasPrefix("@testable import ") || $0.hasPrefix("@_") }
         found += imports.filter { !allowedImports.contains($0) }.map { "\(fileName): \($0)" }
         return found
@@ -67,6 +76,13 @@ struct SegmentPurityTests {
         #expect(Self.violations(in: "let m = try JSONDecoder().decode(MapProvenance.self, from: d)", fileName: "X.swift") == ["X.swift: Decoder"])
         #expect(Self.violations(in: "let detail = \"split likelihood\"", fileName: "X.swift") == ["X.swift: likelihood"])
         #expect(Self.violations(in: "// clockApproved and probability in a comment\nlet a = 1 // FileHandle", fileName: "X.swift").isEmpty)
+        #expect(Self.violations(in: "let x = Double.random(in: 0...1)", fileName: "X.swift") == ["X.swift: random"])
+        #expect(Self.violations(in: "var g = SystemRandomNumberGenerator()", fileName: "X.swift") == ["X.swift: random"])
+        #expect(Self.violations(in: "let id = UUID()", fileName: "X.swift") == ["X.swift: uuid"])
+        #expect(Self.violations(in: "items.shuffled()", fileName: "X.swift") == ["X.swift: shuffle"])
+        #expect(Self.violations(in: "var h = Hasher()", fileName: "X.swift") == ["X.swift: hasher"])
+        #expect(Self.violations(in: "let e = RecordingEpochID()", fileName: "X.swift").isEmpty)
+        #expect(Self.epochMints(in: "let e = RecordingEpochID()\n// RecordingEpochID()\nlet f = RecordingEpochID()") == 2)
     }
 
     /// Public callers can only run the frozen defaults: every stored parameter's setter is internal.
@@ -81,13 +97,21 @@ struct SegmentPurityTests {
         #expect(publicSetters.isEmpty, "\(publicSetters)")
     }
 
+    static func epochMints(in source: String) -> Int {
+        code(source).components(separatedBy: epochMint).count - 1
+    }
+
     @Test func wwAlignSegmentIsPure() throws {
         let files = try FileManager.default.contentsOfDirectory(at: Self.sourcesDirectory, includingPropertiesForKeys: nil).filter { $0.pathExtension == "swift" }
         #expect(Set(files.map(\.lastPathComponent)) == Self.moduleFiles)
         var violations: [String] = []
+        var mints = 0
         for file in files {
-            violations += Self.violations(in: try String(contentsOf: file, encoding: .utf8), fileName: file.lastPathComponent)
+            let source = try String(contentsOf: file, encoding: .utf8)
+            violations += Self.violations(in: source, fileName: file.lastPathComponent)
+            mints += Self.epochMints(in: source)
         }
         #expect(violations.isEmpty, "\(violations)")
+        #expect(mints == Self.epochMintSites, "fresh epoch identifiers are minted at \(mints) sites, not \(Self.epochMintSites)")
     }
 }

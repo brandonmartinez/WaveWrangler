@@ -31,6 +31,7 @@ struct EdgeSilenceTests {
     @Test func silenceBesideAJumpNeverBridgesIt() async throws {
         let scores = try await SegmentRunner.runAll(Self.cases())
         for score in scores { print("WW-017 edge-silence " + SegmentRunner.line(score)) }
+        try SegmentCaseRecord.write(scores.map { SegmentCaseRecord(label: SegmentCaseRecord.edgeSilenceLabel($0.kase), score: $0) }, split: "edge-silence")
         let failures = SegmentRunner.gateFailures(scores, maximumFalseSplitRate: 0)
         #expect(failures.isEmpty, "\(failures.joined(separator: "\n"))")
         #expect(scores.count == 6)
