@@ -175,7 +175,11 @@ struct AnalysisDecimatorTests {
         #expect(throws: AnalysisDecimator.Refusal.emptyRange) { try AnalysisDecimator(sourceRate: 48_000, minimumRate: 8000, range: 10 ..< 10) }
         let decimator = try AnalysisDecimator(sourceRate: 48_000, minimumRate: 8000, range: 48_000 ..< 96_000)
         #expect(decimator.outputRate == 8000 && decimator.outputCount == 8000)
-        #expect(decimator.neededInput == (48_000 - 48) ..< (48_000 + 7999 * 6 + 49))
+        // Typed bounds: Swift 6.3's type checker times out on the untyped literal range inside #expect.
+        let first: Int64 = 48_000 - 48
+        let end: Int64 = 48_000 + 7999 * 6 + 49
+        let expected: Range<Int64> = first ..< end
+        #expect(decimator.neededInput == expected)
     }
 
     @Test("Factor 1 is an exact passthrough of the channel mean")
