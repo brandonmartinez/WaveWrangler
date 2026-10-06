@@ -627,7 +627,12 @@ public final class AlignmentPipeline: Sendable {
         }
         let identity: AcceptedMapIdentity
         do {
-            identity = try AcceptedMapIdentity(revision: revision, version: version)
+            identity = try mapIdentity(
+                revision: revision,
+                version: version,
+                map: map,
+                registered: inputs.sources
+            )
         } catch {
             throw .invalidMap(String(describing: error))
         }
