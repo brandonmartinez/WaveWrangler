@@ -122,7 +122,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
         self.pump = pump
     }
 
-    static func open(
+    static func make(
         decoder: SourceDecoder,
         url: URL,
         source: SourceID
@@ -353,7 +353,7 @@ extension SourceDecoder {
         source: SourceID,
         _ body: @Sendable (DecodingCursor) async throws -> T
     ) async throws -> T {
-        let worker = try await CursorWorker.open(decoder: self, url: url, source: source)
+        let worker = try await CursorWorker.make(decoder: self, url: url, source: source)
         do {
             try Self.checkCancellation()
         } catch {
