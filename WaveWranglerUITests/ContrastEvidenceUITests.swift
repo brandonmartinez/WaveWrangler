@@ -292,6 +292,89 @@ final class ContrastEvidenceUITests: XCTestCase {
         }
     }
 
+    /// C04/C05 with the **system** settings (Mac mini slot, user-granted temporary Increase Contrast, Reduce Motion
+    /// and larger text). Runs only when `WW_EXPECT_SYSTEM_VISUAL` is `on` (the slot script sets the settings, records
+    /// the originals and restores them) and fails if the system didn't actually report them, so a result is never
+    /// labelled "system" without the setting being in effect. No appearance or motion overrides are passed.
+    func testSystemVisualSettings() throws {
+        guard Acceptance.environment["WW_EXPECT_SYSTEM_VISUAL"] == "on" else {
+            throw XCTSkip("system visual settings not set by the slot script (WW_EXPECT_SYSTEM_VISUAL != on)")
+        }
+        let workspace = NSWorkspace.shared
+        let system: [String: Any] = [
+            "increaseContrast": workspace.accessibilityDisplayShouldIncreaseContrast,
+            "reduceMotion": workspace.accessibilityDisplayShouldReduceMotion,
+            "reduceTransparency": workspace.accessibilityDisplayShouldReduceTransparency,
+            "bodyFontPointSize": NSFont.preferredFont(forTextStyle: .body).pointSize,
+        ]
+        Acceptance.record(self, "C04/C05 system settings seen by the test runner: \(system)")
+        XCTAssertTrue(workspace.accessibilityDisplayShouldIncreaseContrast, "Increase Contrast in effect")
+        XCTAssertTrue(workspace.accessibilityDisplayShouldReduceMotion, "Reduce Motion in effect")
+        var results: [[String: Any]] = []
+
+        // Library (lib100, message bar shown) at 100% and in-app 200%.
+        app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
+                               "-WWUITestCenterWindows", "YES", "-WWUITestLibraryFixture", "lib100"]
+        app.launch()
+        app.activate()
+        let entries = app.outlines["ww.library.entries"]
+        XCTAssertTrue(entries.waitForExistence(timeout: 15))
+        Thread.sleep(forTimeInterval: 1)
+        let names = entries.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.'"))
+        var measured: [[String: Any]] = []
+        for (name, element) in [("sidebar 'Shows' (selected)", app.descendants(matching: .any)["ww.library.sidebar.shows"]),
+                                ("sidebar 'Recent'", app.descendants(matching: .any)["ww.library.sidebar.recent"]),
+                                ("entry row 1 (under the message bar)", names.element(boundBy: 0)),
+                                ("entry row 2", names.element(boundBy: 1))] where element.exists {
+            let shot = element.screenshot()
+            Acceptance.attach(self, png: shot.pngRepresentation, name: "system-visual-\(slug(name)).png")
+            measured.append(["element": name, "frame": "\(element.frame)"].merging(ContrastMeter.measure(shot.image) ?? [:]) { $1 })
+        }
+        if let row1 = measured.first(where: { ($0["element"] as? String)?.hasPrefix("entry row 1") == true }) {
+            let count = row1["glyphPixels"] as? Int ?? 0, p75 = row1["glyphP75"] as? Double ?? 0
+            XCTAssertTrue(count >= AcceptanceAudit.minimumGlyphPixels && p75 >= 4.5, "#59 under system Increase Contrast: row 1 \(count) px, p75 \(p75)")
+        }
+        capture("system-visual-library-100")
+        let library100 = try AcceptanceAudit.run(app, surface: "System visual Library 100%", test: self)
+        for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
+        Thread.sleep(forTimeInterval: 1.5)
+        capture("system-visual-library-200")
+        let library200 = try AcceptanceAudit.run(app, surface: "System visual Library 200%", test: self)
+        results.append(["surface": "Library", "measurements": measured, "unwaived100": library100, "unwaived200": library200])
+        app.terminate()
+
+        // Show window: Setup (F-STATES) with import review, then the episode inspector, at 200%.
+        app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
+                               "-WWUITestCenterWindows", "YES", "-WWUITestOpenShow", "Synthetic Show", "-WWUITestShowEpisodes", "2"]
+        app.launchEnvironment["WW_SETUP_ENGINE"] = "fixture-states"
+        app.launch()
+        app.activate()
+        let window = app.windows.matching(identifier: "ww.show.window").firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 15))
+        window.typeKey("1", modifierFlags: .command)
+        app.typeKey("i", modifierFlags: [.command, .shift])
+        Thread.sleep(forTimeInterval: 1.5)
+        capture("system-visual-import-review-100")
+        app.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 1.5)
+        capture("system-visual-setup-100")
+        let setup100 = try AcceptanceAudit.run(app, surface: "System visual Setup 100%", test: self)
+        for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
+        app.menuBars.menuBarItems["Window"].click()
+        app.menuBars.menuItems["Zoom"].click()
+        Thread.sleep(forTimeInterval: 1.5)
+        capture("system-visual-setup-200-zoomed")
+        let setup200 = try AcceptanceAudit.run(app, surface: "System visual Setup 200%", test: self)
+        window.typeKey("i", modifierFlags: .command)
+        Thread.sleep(forTimeInterval: 1)
+        capture("system-visual-episode-inspector-200")
+        results.append(["surface": "Setup", "unwaived100": setup100, "unwaived200": setup200])
+        app.terminate()
+        Acceptance.writeEvidence("system-visual", ["revision": Acceptance.revision(), "system": system, "results": results], test: self)
+    }
+
     private func isOn(_ element: XCUIElement) -> Bool {
         element.exists && ("\(element.value ?? "")" == "1" || (element.value as? Bool) == true)
     }
