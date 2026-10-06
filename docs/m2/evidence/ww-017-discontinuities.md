@@ -263,5 +263,26 @@ class gate. Raw canonical per-case records and SHA-256 values are
 and [`edge-silence-2.jsonl`](ww-017/edge-silence-2.jsonl)
 (`28cc677d486824d289ea524c82f4075064b6879afc1b74e23f5a63e4b5aa73ca`).
 
-**Rev-2 holdout NOT RUN.** Its fresh 165-case/130-plant split remains untouched until one post-merge run on
-the frozen trees in a separate PR. Calibration does not qualify real recordings, and no map is `clockApproved`.
+### Rev-2 holdout (2026-10-06): PASS
+
+This separate, one-time run used the frozen 165-case/130-plant split on
+`d1fdd446ed2c2faab6c0365bab6ad9259d3f0bc9` (Apple M5 Max, 128 GiB, macOS 27.0.1
+(26A434), Xcode 27.0 (27A266a), Swift 6.4), from 2026-10-06T19:09:11Z to
+2026-10-06T19:22:05Z. Frozen trees matched: `WWAlignSegment`
+`cdd2da1e2134d46221a67ced1fd9efd857ae2d40`, `WWAlignSegmentTests`
+`68ddb5e0b66a0e43c2c34fd625fca4deb70da715`, `WWAlignEstimate`
+`8efd588a6b57dc56bf7eafa1ccf2c7709253f3a9`, `WWTimeMap`
+`24c7aadfbf1470c8555542061ab08eb23e37325b`, and `WWCore`
+`c310389c4b41ebde80c5dabaea12fd5376f5d9ba`.
+
+- **PASS:** 130/130 plants flagged, 0 unsupported-only, 0 bridged, 0 bridging regions, and 0 silent bridges.
+- **PASS:** negatives false-split 0/50 against the frozen maximum of 0.
+- **PASS:** 0 monotonicity, gap-inverse, retention, or residual-gate failures; supported worst nearest-rank
+  p95/max was 1.015/1.016 ms, within the unchanged WW-016 5/10 ms gate.
+
+The full verbatim dated log is [`ww-017/holdout-2-raw.txt`](ww-017/holdout-2-raw.txt), SHA-256
+`c2f45e63206819dc94dc180eb63b9e7ef9564013c090d8c41ff1aad0619e015c`. The unedited canonical records are
+[`ww-017/holdout-2.jsonl`](ww-017/holdout-2.jsonl), SHA-256
+`aabc8fe5a4b568a20d72e7c34c0c84ed0aa333d7430225413074a8d64978b3cd`
+([`holdout-2.jsonl.sha256`](ww-017/holdout-2.jsonl.sha256)). This synthetic evidence does not qualify real
+recordings; mapped regions remain acoustic proposals and no map is `clockApproved`.
