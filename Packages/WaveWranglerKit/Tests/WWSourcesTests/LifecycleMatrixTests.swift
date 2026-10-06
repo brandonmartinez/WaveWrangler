@@ -891,18 +891,14 @@ extension MatrixScenarios {
 
         switch variant {
         case 0:
-            env.io.armMetadataGate()
+            let evaluationGate = AsyncGate()
+            await evaluationGate.arm()
+            monitor.beforeEvaluation = { await evaluationGate.pass() }
             let refresh = Task { await monitor.refresh([id]) }
-            let clock = ContinuousClock()
-            let deadline = clock.now + .seconds(60)
-            while !env.io.gateEntered && clock.now < deadline {
-                try await Task.sleep(for: .milliseconds(1))
-            }
-            env.check(env.io.gateEntered, "refresh never reached evaluation")
+            env.check(await evaluationGate.waitUntilEntered(), "refresh never reached evaluation")
             await monitor.setAvailabilitySetting(.off)
-            env.io.releaseGate()
+            await evaluationGate.release()
             await refresh.value
-            try await Task.sleep(for: .milliseconds(env.int(1...5)))
             env.check(env.io.count(.downloadRequest) == 0, "requests after OFF \(env.io.count(.downloadRequest))")
             env.check(await monitor.transfers.activeCount == 0, "active transfer after OFF")
             env.check(monitor.observations[id]?.transfer == .notRequested(.availabilityOff), "observation \(String(describing: monitor.observations[id]?.transfer))")

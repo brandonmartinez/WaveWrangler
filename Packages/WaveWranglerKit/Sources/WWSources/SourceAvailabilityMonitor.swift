@@ -23,6 +23,12 @@ public final class SourceAvailabilityMonitor {
     /// change triggers its own refresh).
     @ObservationIgnored private var settingGeneration = 0
     @ObservationIgnored private var eventTask: Task<Void, Never>?
+    #if DEBUG
+    /// Test only: suspends a refresh after it captures the setting generation but before evaluation.
+    @ObservationIgnored package var beforeEvaluation: (@Sendable () async -> Void)?
+    /// Test only: reports each published observation so tests can await the main-actor consumer.
+    @ObservationIgnored package var observationDidChange: (@Sendable (SourceID, AvailabilityObservation) -> Void)?
+    #endif
 
     public init(
         showID: ShowID,
@@ -167,6 +173,9 @@ public final class SourceAvailabilityMonitor {
         let evaluator = SourceAvailabilityEvaluator(context: context)
         let evaluatedSetting = setting
         let evaluatedGeneration = settingGeneration
+        #if DEBUG
+        if let beforeEvaluation { await beforeEvaluation() }
+        #endif
         let evaluation = await Task.detached {
             evaluator.evaluate(key: key, record: record, setting: evaluatedSetting, transfer: transferState)
         }.value
@@ -177,6 +186,9 @@ public final class SourceAvailabilityMonitor {
         guard settingGeneration == evaluatedGeneration, !isStopped, lifecycleGeneration == generation else { return }
         resolvedURLs[sourceID] = evaluation.resolvedURL
         observations[sourceID] = evaluation.observation
+        #if DEBUG
+        observationDidChange?(sourceID, evaluation.observation)
+        #endif
 
         let needsUserRetry: Bool = switch evaluation.observation.transfer {
         case .failed, .offlineOrUnknown, .cancelled: true
@@ -199,5 +211,8 @@ public final class SourceAvailabilityMonitor {
         observation.transferEvidence = .transferController
         if event.state == .idle { observation.residency = .local }
         observations[event.key.sourceID] = observation
+        #if DEBUG
+        observationDidChange?(event.key.sourceID, observation)
+        #endif
     }
 }

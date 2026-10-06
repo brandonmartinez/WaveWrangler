@@ -110,15 +110,6 @@ final class HarnessIO: SourceIO, @unchecked Sendable {
     private var _faults = Faults()
     private var cloud: [String: SimulatedCloudItem] = [:]
     private var _provenance: ObservationProvenance = .observed
-    private var gateArmed = false
-    private var _gateEntered = false
-    private let gateRelease = DispatchSemaphore(value: 0)
-
-    /// Blocks the *next* metadata call (on whatever thread runs it) until `releaseGate()`, so tests can
-    /// change state deterministically while an off-main evaluation is in flight.
-    func armMetadataGate() { lock.withLock { gateArmed = true; _gateEntered = false } }
-    var gateEntered: Bool { lock.withLock { _gateEntered } }
-    func releaseGate() { gateRelease.signal() }
 
     var provenance: ObservationProvenance { lock.withLock { _provenance } }
 
@@ -160,13 +151,6 @@ final class HarnessIO: SourceIO, @unchecked Sendable {
 
     func metadata(at url: URL) -> MetadataResult {
         bump(.metadata)
-        let shouldBlock = lock.withLock { () -> Bool in
-            guard gateArmed else { return false }
-            gateArmed = false
-            _gateEntered = true
-            return true
-        }
-        if shouldBlock { gateRelease.wait() }
         if let failure = lock.withLock({ _faults.metadataFailures[Self.key(url)] }) { return .failure(failure) }
         let result = base.metadata(at: url)
         guard case var .success(metadata) = result, let item = simulated(url) else { return result }
@@ -289,6 +273,51 @@ actor AsyncGate {
             try? await Task.sleep(for: .milliseconds(1))
         }
         return entered
+    }
+}
+
+/// Records monitor publications in an async stream so tests can await the main-actor event consumer
+/// without relying on a fixed number of scheduler yields.
+final class MonitorObservationProbe: @unchecked Sendable {
+    struct Event: Sendable {
+        var sourceID: SourceID
+        var transfer: TransferState
+    }
+
+    let events: AsyncStream<Event>
+    private let continuation: AsyncStream<Event>.Continuation
+
+    init() {
+        (events, continuation) = AsyncStream<Event>.makeStream()
+    }
+
+    func record(_ sourceID: SourceID, _ observation: AvailabilityObservation) {
+        continuation.yield(Event(sourceID: sourceID, transfer: observation.transfer))
+    }
+}
+
+/// Event-driven correctness wait with a wall-clock liveness guard so a regression fails instead of
+/// hanging the suite.
+func waitUntilObserved(
+    _ probe: MonitorObservationProbe,
+    sourceID: SourceID,
+    transfer: TransferState,
+    limit: Duration = .seconds(30)
+) async -> Bool {
+    await withTaskGroup(of: Bool.self) { group in
+        group.addTask {
+            for await event in probe.events where event.sourceID == sourceID {
+                if event.transfer == transfer { return true }
+            }
+            return false
+        }
+        group.addTask {
+            try? await Task.sleep(for: limit)
+            return false
+        }
+        let first = await group.next() ?? false
+        group.cancelAll()
+        return first
     }
 }
 
