@@ -180,7 +180,7 @@ default** in `scripts/test.sh`, the UI suite and CI. Opt in with `WW_LIVE_PROVID
 |---|---|
 | `ProviderTrialTests` (WWSources: `observedICloudTrial`, `frozenHoldoutCycles`) | — |
 | `HoldoutICloudTrialTests` (WWPersistence, M1-DUR-024) | `WW_HOLDOUT=1 WW_ICLOUD_TRIAL=1`, or `scripts/holdout.sh --icloud` |
-| `scripts/dur025/run.py` (M1-DUR-025 two-device harness) | `WW_DUR025_REMOTE=user@host`, `WW_SAME_ACCOUNT_ATTESTED=1`, a second Mac on the same Apple account |
+| `scripts/dur025/run.py` (M1-DUR-025 two-device harness) | `WW_DUR025_REMOTE=user@host` (or `--remote`), `WW_SAME_ACCOUNT_ATTESTED=1` (the operator attests the same Apple account; `main()` refuses to start without either), and a second Mac on that account |
 
 Without the flag, each one skips with a message naming the flag. Opt in only with the user's grant
 for live iCloud trials (synthetic data in `WaveWrangler-M1-Synthetic-Trial/` only). The deterministic,
