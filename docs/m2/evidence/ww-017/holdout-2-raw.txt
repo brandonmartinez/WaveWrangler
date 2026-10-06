@@ -1,0 +1,448 @@
+2026-10-06T19:09:11Z
+Building for debugging...
+[Computing dependencies]
+[Pre-planning 1 / 965]
+[Planning deferred tasks]
+[57 / 462] WWRender
+[192 / 462]
+[193 / 463] WWCore
+[199 / 509]
+[205 / 509]
+[210 / 509]
+[212 / 509]
+[216 / 509]
+[219 / 509]
+[224 / 509]
+[225 / 509]
+[226 / 509]
+[227 / 509]
+[232 / 509] WWCore
+[242 / 509] WWTimeMap
+[247 / 509]
+[250 / 512]
+[252 / 513] WWTimeMap
+[257 / 561]
+[269 / 578] WWTimeMap
+[273 / 578] WWPersistence
+[277 / 578] WWOrganizer
+[296 / 578] WWSourcesTests-product
+[297 / 578] WWSourcesTests-product
+[303 / 578] WWSources
+[304 / 578] WWSources
+[307 / 578] WWSources
+[309 / 578] WWSources
+[311 / 578] WWSources
+[314 / 578] WWSources
+[317 / 578] WWPersistence
+[320 / 578] WWPersistence
+[323 / 578] WWPersistence
+[326 / 578] WWPersistence
+[329 / 578] WWOrganizer
+[331 / 578] WWOrganizer
+[333 / 578] WWOrganizer
+[336 / 578] WWOrganizerTests-product
+[339 / 578] WWOrganizer
+[342 / 578] WWOrganizer
+[348 / 578] WWTimeMapTests-product
+[353 / 579]
+[355 / 581] wwpersist-probe-product
+[359 / 591] WWPersistenceProbe
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-animated-chainsaw/Packages/WaveWranglerKit/Sources/WWPersistenceProbe/TwoDeviceSources.swift:149:19: [1;33mwarning: [1;39mno 'async' operations occur within 'await' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+[0;36m147 |[0;0m         }
+[0;36m148 |[0;0m         object["status"] = "\(await session.status.state)"
+[0;36m149 |[0;0m         let key = await session.key
+    [0;36m|[0;0m                   `- [1;33mwarning: [1;39mno 'async' operations occur within 'await' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+[0;36m150 |[0;0m         object["editCheckpointsKept"] = recovery?.editCheckpoints(for: key).count ?? 0
+[0;36m151 |[0;0m         emit(object)
+
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[376 / 595] WWRender
+[377 / 595] WWRender
+[379 / 595] WWRenderTests-product
+[382 / 595] WWPersistenceProbe
+[384 / 595] WWPersistenceTests-product
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-animated-chainsaw/Packages/WaveWranglerKit/Sources/WWPersistenceProbe/TwoDeviceSources.swift:149:19: [1;33mwarning: [1;39mno 'async' operations occur within 'await' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+[0;36m147 |[0;0m         }
+[0;36m148 |[0;0m         object["status"] = "\(await session.status.state)"
+[0;36m149 |[0;0m         let key = await session.key
+    [0;36m|[0;0m                   `- [1;33mwarning: [1;39mno 'async' operations occur within 'await' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+[0;36m150 |[0;0m         object["editCheckpointsKept"] = recovery?.editCheckpoints(for: key).count ?? 0
+[0;36m151 |[0;0m         emit(object)
+
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[393 / 598]
+[403 / 615] WWEpisodeSetup
+[417 / 634] WWEpisodeSetup
+[419 / 634] WWEpisodeSetup
+[427 / 634] WWEpisodeSetup
+[430 / 634] WWEpisodeSetup
+[432 / 634]
+[438 / 634] WWEpisodeSetup
+[441 / 634] WWDecode
+[443 / 634] WWDecode
+[451 / 634] WWDecode
+[455 / 634] WWAlignEstimate
+[468 / 635] WWAlignEstimate
+[470 / 636] WWSources
+[480 / 637] WWPersistenceProbe
+[481 / 644] WWTimeMapTests-product
+[492 / 661] WWPersistenceProbe
+[495 / 670] WWTimeMapTests-product
+[497 / 684] WWRenderTests-product
+[498 / 684] WWCoreTests-product
+[510 / 684] WWTimeMapTests-product
+[523 / 684] WWOrganizerTests-product
+[525 / 720] WWTimeMapTests-product
+[532 / 720]
+[538 / 720]
+[542 / 720]
+[547 / 720]
+[549 / 720]
+[552 / 720] WWTimeMapTests-product
+[554 / 720] WWTimeMapTests-product
+[556 / 720] WWTimeMapTests-product
+[558 / 720] WWTimeMapTests-product
+[561 / 720] WWTimeMapTests-product
+[563 / 720] WWSourcesTests-product
+[565 / 720] WWTimeMapTests-product
+[571 / 720] WWSourcesTests-product
+[572 / 720] WWSourcesTests-product
+[574 / 720] WWSourcesTests-product
+[576 / 720] WWRenderTests-product
+[577 / 720] WWTimeMapTests-product
+[581 / 720] WWRenderTests-product
+[582 / 720] WWRenderTests-product
+[584 / 720] WWRenderTests-product
+[586 / 720] WWOrganizerTests-product
+[587 / 720] WWOrganizerTests-product
+[589 / 720] WWOrganizerTests-product
+[590 / 720] WWOrganizerTests-product
+[592 / 720] WWOrganizerTests-product
+[596 / 720] WWOrganizerTests-product
+[596 / 720] WWRenderTests-product
+macro expansion #expect:1:22: [1;33mwarning: [1;39mno calls to throwing functions occur within 'try' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+`- /Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-animated-chainsaw/Packages/WaveWranglerKit/Tests/WWSourcesTests/EngineTests.swift:658:71: [1;39mnote: [1;39mexpanded code originates here[0;0m
+ [0;36m656 |[0;0m         try await copyMonitor.adopt([original])  // a record from another show is not adopted
+ [0;36m657 |[0;0m         await copyMonitor.refresh([copy.sourceID])
+ [0;36m658 |[0;0m         [4;39m#expect(try await store.record(for: original.key) == original)[0;0m
+     [0;36m|[0;0m         `- [1;39mnote: [1;39min expansion of macro 'expect' here[0;0m
+[0;36m     +--- [0;0mmacro expansion #expect [0;36m--------------------------------------[0;0m
+[0;36m     |[0;0m[0;36m1 |[0;0m Testing.__checkValue(try await store.record(for: original.key) == original,expression: .__fromSyntaxNode("try await store.record(for: original.key) == original"),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+[0;36m     |[0;0m  [0;36m|[0;0m                      `- [1;33mwarning: [1;39mno calls to throwing functions occur within 'try' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+[0;36m     +----------------------------[0;0m[0;36m--------------------------------------[0;0m
+ [0;36m659 |[0;0m         #expect(try await store.record(for: copy.key)?.bookmark != copy.bookmark)  // copy's own bookmark refreshed
+ [0;36m660 |[0;0m         guard case .moved = copyMonitor.observations[copy.sourceID]?.location else {
+
+macro expansion #expect:1:22: [1;33mwarning: [1;39mno calls to throwing functions occur within 'try' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+`- /Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-animated-chainsaw/Packages/WaveWranglerKit/Tests/WWSourcesTests/EngineTests.swift:659:82: [1;39mnote: [1;39mexpanded code originates here[0;0m
+ [0;36m657 |[0;0m         await copyMonitor.refresh([copy.sourceID])
+ [0;36m658 |[0;0m         #expect(try await store.record(for: original.key) == original)
+ [0;36m659 |[0;0m         [4;39m#expect(try await store.record(for: copy.key)?.bookmark != copy.bookmark)[0;0m  // copy's own bookmark refreshed
+     [0;36m|[0;0m         `- [1;39mnote: [1;39min expansion of macro 'expect' here[0;0m
+[0;36m     +--- [0;0mmacro expansion #expect [0;36m--------------------------------------[0;0m
+[0;36m     |[0;0m[0;36m1 |[0;0m Testing.__checkValue(try await store.record(for: copy.key)?.bookmark != copy.bookmark,expression: .__fromSyntaxNode("try await store.record(for: copy.key)?.bookmark != copy.bookmark"),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+[0;36m     |[0;0m  [0;36m|[0;0m                      `- [1;33mwarning: [1;39mno calls to throwing functions occur within 'try' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+[0;36m     +----------------------------[0;0m[0;36m--------------------------------------[0;0m
+ [0;36m660 |[0;0m         guard case .moved = copyMonitor.observations[copy.sourceID]?.location else {
+ [0;36m661 |[0;0m             Issue.record("expected moved")
+
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-animated-chainsaw/Packages/WaveWranglerKit/Tests/WWSourcesTests/EngineTests.swift:1055:18: [1;33mwarning: [1;39mweak variable 'weakController' was never mutated; consider changing to 'let' constant[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated\VariableNeverMutated]8;;\::]8;;https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability\WeakMutability]8;;\]
+[0;36m1053 |[0;0m         io.simulate(file, SimulatedCloudItem(script: Self.stallForever))
+[0;36m1054 |[0;0m         var monitor: SourceAvailabilityMonitor? = SourceAvailabilityMonitor(showID: testShow, store: InMemoryDeviceAccessStore(), context: context, setting: .on, transferPolicy: StallFollowUpTests.policy)
+[0;36m1055 |[0;0m         weak var weakController = monitor?.transfers
+     [0;36m|[0;0m                  `- [1;33mwarning: [1;39mweak variable 'weakController' was never mutated; consider changing to 'let' constant[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated\VariableNeverMutated]8;;\::]8;;https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability\WeakMutability]8;;\]
+[0;36m1056 |[0;0m         let collector = await eventCollector(monitor!.transfers, key: record.key) { $0.isOfflineOrUnknown }
+[0;36m1057 |[0;0m         monitor?.start()
+
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+[#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
+[601 / 720] WWSourcesTests-product
+[602 / 720] WWOrganizerTests-product
+[604 / 720] WWCoreTests-product
+[607 / 720] WWCoreTests-product
+[608 / 720] WWAlignSegmentTests-product
+[609 / 720] WWAlignSegment
+[611 / 720] WWAlignSegment
+[616 / 720] WWRenderTests-product
+[625 / 720] WWOrganizer-product
+[638 / 722] WWDecode
+[644 / 723]
+[647 / 742] WWPersistenceTests-product
+[648 / 763] WWEpisodeSetupTests-product
+[649 / 763] WWPersistenceTests-product
+[663 / 763] WWDecodeTests-product
+[665 / 763] WWPersistenceTests-product
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-animated-chainsaw/Packages/WaveWranglerKit/Tests/WWPersistenceTests/LibraryProviderConflictTests.swift:156:22: [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m154 |[0;0m         var theirs = try rig.disk().payload
+[0;36m155 |[0;0m         theirs.collections.append(LibraryCollection(name: "Theirs"))
+[0;36m156 |[0;0m         rig.provider.add(try LibraryCoder.library.encode(theirs, revision: 3), to: rig.rig.containerFile)
+    [0;36m|[0;0m                      `- [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m157 |[0;0m         let before = try rig.disk().publication
+[0;36m158 |[0;0m         let result = try await store.update { var l = $0; l.collections.append(LibraryCollection(name: "Mine")); return l }
+
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-animated-chainsaw/Packages/WaveWranglerKit/Tests/WWPersistenceTests/LibraryProviderConflictTests.swift:242:22: [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m240 |[0;0m         var theirs = disk.payload
+[0;36m241 |[0;0m         theirs.collections.removeAll()
+[0;36m242 |[0;0m         rig.provider.add(try LibraryCoder.library.encode(theirs, revision: disk.revision + 7), to: rig.rig.containerFile)
+    [0;36m|[0;0m                      `- [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m243 |[0;0m         _ = await store.reload()
+[0;36m244 |[0;0m         #expect(await store.levelState == .changedElsewhere)
+
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-animated-chainsaw/Packages/WaveWranglerKit/Tests/WWPersistenceTests/LibraryProviderConflictTests.swift:284:22: [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m282 |[0;0m         theirs = LibraryReconciler.acknowledging(show, title: "Show r2", publication: r2, in: theirs)
+[0;36m283 |[0;0m         _ = try await store.update { var l = $0; l.collections.append(LibraryCollection(name: "Here")); return l }
+[0;36m284 |[0;0m         rig.provider.add(try LibraryCoder.library.encode(theirs, revision: base.revision + 1), to: rig.rig.containerFile)
+    [0;36m|[0;0m                      `- [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m285 |[0;0m         _ = await store.reload()
+[0;36m286 |[0;0m         #expect(await store.levelState == .changedElsewhere)
+
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-animated-chainsaw/Packages/WaveWranglerKit/Tests/WWPersistenceTests/LibraryProviderConflictTests.swift:333:22: [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m331 |[0;0m         var theirs = disk.payload
+[0;36m332 |[0;0m         theirs.collections.append(LibraryCollection(name: "Theirs"))
+[0;36m333 |[0;0m         rig.provider.add(try LibraryCoder.library.encode(theirs, revision: disk.revision + 1), to: rig.rig.containerFile)
+    [0;36m|[0;0m                      `- [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m334 |[0;0m 
+[0;36m335 |[0;0m         let relaunched = rig.store()
+
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-animated-chainsaw/Packages/WaveWranglerKit/Tests/WWPersistenceTests/LibraryProviderConflictTests.swift:356:19: [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m354 |[0;0m         let (_, theirs, _) = try await rig.concurrentCopies()
+[0;36m355 |[0;0m         let providerB = FakeProviderVersions(recovery: rig.rig.recovery)
+[0;36m356 |[0;0m         providerB.add(theirs, to: rig.rig.containerFile, from: "This Mac")
+    [0;36m|[0;0m                   `- [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m357 |[0;0m         let macA = rig.store()
+[0;36m358 |[0;0m         let macB = rig.store(provider: providerB, recovery: RecoveryStore(root: rig.rig.dir.sub("RecoveryB")))
+
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+[667 / 763] WWPersistenceTests-product
+[673 / 763] WWPersistenceTests-product
+[674 / 763] WWPersistenceTests-product
+[675 / 763] WWPersistenceTests-product
+[676 / 763] WWPersistenceTests-product
+[678 / 763] WWPersistenceTests-product
+[679 / 763] WWPersistenceTests-product
+[680 / 763] WWPersistenceTests-product
+[681 / 763] WWPersistenceTests-product
+[683 / 763] WWEpisodeSetupTests-product
+[684 / 763] WWEpisodeSetupTests-product
+[686 / 763] WWEpisodeSetupTests-product
+[687 / 763] WWEpisodeSetupTests-product
+[688 / 763] WWEpisodeSetupTests-product
+[692 / 763] WWDecodeTests-product
+[694 / 763] WWDecodeTests-product
+[696 / 763] WWDecodeTests-product
+[697 / 763] WWDecodeTests-product
+[698 / 763] WWDecodeTests-product
+[700 / 763] WWDecodeTests-product
+[702 / 763] WWDecodeTests-product
+[703 / 763] WWDecode-product
+[710 / 763]
+[712 / 764] WWPersistenceTests-product
+[714 / 765]
+[723 / 770] WWLocalEpisodeValidationTests-product
+[725 / 782] WWLocalEpisodeValidationTests-product
+[734 / 782] WWLocalEpisodeValidationTests-product
+[736 / 782] WWLocalEpisodeValidationTests-product
+[738 / 782] WWAlignEstimateTests-product
+[745 / 782] WWAlignEstimateTests-product
+[748 / 782] WWAlignEstimateTests-product
+[750 / 782] WWAlignEstimateTests-product
+[754 / 782] WWCoreTests-product
+[759 / 782]
+[766 / 783] WWAlignEstimateTests-product
+[770 / 795] WWAlignSegmentTests-product
+[771 / 795] WWAlignSegmentTests-product
+[773 / 795] WWAlignSegmentTests-product
+[778 / 795] WWAlignSegmentTests-product
+[781 / 795] WWAlignSegmentTests-product
+[783 / 795] WWAlignSegmentTests-product
+[785 / 795] AllIncludingTests
+[789 / 795] WWAlignSegmentTests-product
+[791 / 795] WWAlignSegmentTests-product
+Build complete! (35.17 sec)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Segment holdout (m2-freeze-discontinuity-2)" started.
+◇ Test frozenHoldout() started.
+WW-017 FROZEN HOLDOUT m2-freeze-discontinuity-2 (master seed 0x57571700401D2000, segmenter ww-align-segment/2, estimator ww-align-estimate/1)
+WW-017 holdout clean#0 rate 8000 L 63.6s: detections 0 mapped 1 coverage 0.94 p95 0.318 max 0.319 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 61.6-63.6s edgeMargin
+WW-017 holdout clean#1 rate 8000 L 64.2s: detections 0 mapped 1 coverage 0.94 p95 0.783 max 0.784 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 62.2-64.2s edgeMargin
+WW-017 holdout clean#2 rate 16000 L 57.5s: detections 0 mapped 1 coverage 0.93 p95 0.076 max 0.076 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 55.5-57.5s edgeMargin
+WW-017 holdout clean#3 rate 16000 L 58.8s: detections 0 mapped 1 coverage 0.93 p95 0.779 max 0.780 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 56.8-58.8s edgeMargin
+WW-017 holdout clean#4 rate 16000 L 59.6s: detections 0 mapped 1 coverage 0.93 p95 0.679 max 0.689 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 57.6-59.6s edgeMargin
+WW-017 holdout clean#5 rate 8000 L 56.4s: detections 0 mapped 1 coverage 0.93 p95 0.769 max 0.769 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 54.4-56.4s edgeMargin
+WW-017 holdout clean#6 rate 16000 L 58.2s: detections 0 mapped 1 coverage 0.93 p95 0.778 max 0.779 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 56.2-58.2s edgeMargin
+WW-017 holdout clean#7 rate 8000 L 53.3s: detections 0 mapped 1 coverage 0.91 p95 0.286 max 0.286 ms bridges 0  | det - | unsupported 0.0-2.8s noEvidence(weak), 51.3-53.3s edgeMargin
+WW-017 holdout clean#8 rate 8000 L 65.7s: detections 0 mapped 1 coverage 0.94 p95 0.316 max 0.316 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 63.7-65.7s edgeMargin
+WW-017 holdout clean#9 rate 16000 L 64.3s: detections 0 mapped 1 coverage 0.94 p95 0.175 max 0.177 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 62.3-64.3s edgeMargin
+WW-017 holdout clean#10 rate 16000 L 51.9s: detections 0 mapped 1 coverage 0.92 p95 0.155 max 0.155 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 49.9-51.9s edgeMargin
+WW-017 holdout clean#11 rate 8000 L 66.0s: detections 0 mapped 1 coverage 0.94 p95 0.299 max 0.299 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 64.0-66.0s edgeMargin
+WW-017 holdout clean#12 rate 16000 L 50.8s: detections 0 mapped 1 coverage 0.92 p95 0.374 max 0.375 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 48.8-50.8s edgeMargin
+WW-017 holdout clean#13 rate 16000 L 61.9s: detections 0 mapped 1 coverage 0.94 p95 0.037 max 0.037 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 59.9-61.9s edgeMargin
+WW-017 holdout clean#14 rate 16000 L 65.3s: detections 0 mapped 1 coverage 0.94 p95 0.760 max 0.760 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 63.3-65.3s edgeMargin
+WW-017 holdout clean#15 rate 16000 L 61.4s: detections 0 mapped 1 coverage 0.93 p95 0.117 max 0.117 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 59.4-61.4s noEvidence(periodic)
+WW-017 holdout clean#16 rate 16000 L 57.4s: detections 0 mapped 1 coverage 0.93 p95 0.513 max 0.514 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 55.4-57.4s edgeMargin
+WW-017 holdout clean#17 rate 16000 L 65.5s: detections 0 mapped 1 coverage 0.93 p95 0.435 max 0.435 ms bridges 0  | det - | unsupported 0.0-2.0s noEvidence(periodic), 63.1-65.5s noEvidence(periodic)
+WW-017 holdout clean#18 rate 16000 L 67.7s: detections 0 mapped 1 coverage 0.94 p95 0.491 max 0.492 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 65.7-67.7s edgeMargin
+WW-017 holdout clean#19 rate 16000 L 50.3s: detections 0 mapped 1 coverage 0.90 p95 0.635 max 0.636 ms bridges 0  | det - | unsupported 0.0-2.8s noEvidence(periodic), 48.3-50.3s edgeMargin
+WW-017 holdout transient#0 rate 16000 L 52.8s: detections 0 mapped 1 coverage 0.71 p95 0.319 max 0.320 ms bridges 0  | det - | unsupported 0.0-4.8s unresolved(3), 42.4-52.8s unresolved(19)
+WW-017 holdout transient#1 rate 16000 L 67.1s: detections 0 mapped 1 coverage 0.94 p95 0.936 max 0.936 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 65.1-67.1s edgeMargin
+WW-017 holdout transient#2 rate 16000 L 68.0s: detections 0 mapped 1 coverage 0.94 p95 0.432 max 0.435 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 66.0-68.0s edgeMargin
+WW-017 holdout transient#3 rate 8000 L 59.7s: detections 0 mapped 1 coverage 0.93 p95 0.696 max 0.697 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 57.7-59.7s edgeMargin
+WW-017 holdout transient#4 rate 8000 L 66.5s: detections 0 mapped 1 coverage 0.94 p95 0.535 max 0.536 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 64.5-66.5s edgeMargin
+WW-017 holdout transient#5 rate 16000 L 67.8s: detections 0 mapped 1 coverage 0.94 p95 0.140 max 0.141 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 65.8-67.8s edgeMargin
+WW-017 holdout transient#6 rate 16000 L 67.3s: detections 0 mapped 1 coverage 0.94 p95 0.690 max 0.691 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 65.3-67.3s edgeMargin
+WW-017 holdout transient#7 rate 8000 L 58.4s: detections 0 mapped 1 coverage 0.93 p95 0.785 max 0.785 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 56.4-58.4s edgeMargin
+WW-017 holdout transient#8 rate 16000 L 51.0s: detections 0 mapped 1 coverage 0.92 p95 0.168 max 0.168 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 49.0-51.0s edgeMargin
+WW-017 holdout transient#9 rate 8000 L 50.7s: detections 0 mapped 1 coverage 0.77 p95 0.898 max 0.899 ms bridges 0  | det - | unsupported 0.0-9.6s unresolved(5), 48.7-50.7s edgeMargin
+WW-017 holdout transient#10 rate 8000 L 64.2s: detections 0 mapped 1 coverage 0.94 p95 0.813 max 0.813 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 62.2-64.2s edgeMargin
+WW-017 holdout transient#11 rate 8000 L 66.4s: detections 0 mapped 1 coverage 0.94 p95 0.450 max 0.450 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 64.4-66.4s edgeMargin
+WW-017 holdout transient#12 rate 8000 L 68.6s: detections 0 mapped 1 coverage 0.94 p95 0.638 max 0.638 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 66.6-68.6s edgeMargin
+WW-017 holdout transient#13 rate 8000 L 62.9s: detections 0 mapped 1 coverage 0.94 p95 0.226 max 0.226 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 60.9-62.9s edgeMargin
+WW-017 holdout transient#14 rate 8000 L 53.4s: detections 0 mapped 1 coverage 0.93 p95 0.746 max 0.747 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 51.4-53.4s edgeMargin
+WW-017 holdout silenceGap#0 rate 16000 L 67.0s: detections 0 mapped 1 coverage 0.94 p95 0.910 max 0.911 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 65.0-67.0s edgeMargin
+WW-017 holdout silenceGap#1 rate 16000 L 52.7s: detections 0 mapped 1 coverage 0.92 p95 0.209 max 0.209 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 50.7-52.7s edgeMargin
+WW-017 holdout silenceGap#2 rate 8000 L 63.5s: detections 0 mapped 1 coverage 0.94 p95 0.439 max 0.439 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 61.5-63.5s edgeMargin
+WW-017 holdout silenceGap#3 rate 8000 L 53.4s: detections 0 mapped 1 coverage 0.93 p95 0.654 max 0.655 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 51.4-53.4s edgeMargin
+WW-017 holdout silenceGap#4 rate 16000 L 64.0s: detections 0 mapped 1 coverage 0.94 p95 0.459 max 0.460 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 62.0-64.0s edgeMargin
+WW-017 holdout silenceGap#5 rate 8000 L 62.5s: detections 0 mapped 1 coverage 0.94 p95 0.108 max 0.108 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 60.5-62.5s edgeMargin
+WW-017 holdout silenceGap#6 rate 8000 L 53.9s: detections 0 mapped 1 coverage 0.93 p95 0.691 max 0.691 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 51.9-53.9s edgeMargin
+WW-017 holdout silenceGap#7 rate 16000 L 68.0s: detections 0 mapped 1 coverage 0.94 p95 0.962 max 0.962 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 66.0-68.0s edgeMargin
+WW-017 holdout silenceGap#8 rate 8000 L 63.7s: detections 0 mapped 1 coverage 0.94 p95 0.843 max 0.844 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 61.7-63.7s edgeMargin
+WW-017 holdout silenceGap#9 rate 8000 L 58.2s: detections 0 mapped 1 coverage 0.93 p95 0.040 max 0.041 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 56.2-58.2s edgeMargin
+WW-017 holdout silenceGap#10 rate 16000 L 67.8s: detections 0 mapped 1 coverage 0.94 p95 0.857 max 0.857 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 65.8-67.8s edgeMargin
+WW-017 holdout silenceGap#11 rate 8000 L 68.5s: detections 0 mapped 1 coverage 0.94 p95 0.912 max 0.912 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 66.5-68.5s edgeMargin
+WW-017 holdout silenceGap#12 rate 16000 L 53.5s: detections 0 mapped 1 coverage 0.93 p95 0.970 max 0.970 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 51.5-53.5s edgeMargin
+WW-017 holdout silenceGap#13 rate 16000 L 67.9s: detections 0 mapped 1 coverage 0.94 p95 0.191 max 0.192 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 65.9-67.9s edgeMargin
+WW-017 holdout silenceGap#14 rate 8000 L 55.3s: detections 0 mapped 1 coverage 0.93 p95 0.968 max 0.969 ms bridges 0  | det - | unsupported 0.0-2.0s edgeMargin, 53.3-55.3s edgeMargin
+WW-017 holdout dropped#0 rate 16000 L 50.6s: detections 1 mapped 2 coverage 0.86 p95 0.820 max 0.820 ms bridges 0 dropped[364.0 ms, 0 ppm]=flagged offsetStep err 0.063s | det offsetStep@29.60s[28.04-31.16] | unsupported 0.0-2.0s edgeMargin, 28.0-31.2s discontinuity, 48.6-50.6s edgeMargin
+WW-017 holdout dropped#1 rate 8000 L 53.9s: detections 1 mapped 2 coverage 0.87 p95 0.552 max 0.552 ms bridges 0 dropped[23.8 ms, 0 ppm]=flagged offsetStep err 0.766s | det offsetStep@32.20s[30.78-33.62] | unsupported 0.0-2.0s edgeMargin, 30.8-33.6s discontinuity, 51.9-53.9s edgeMargin
+WW-017 holdout dropped#2 rate 16000 L 57.4s: detections 1 mapped 2 coverage 0.88 p95 0.759 max 0.759 ms bridges 0 dropped[233.6 ms, 0 ppm]=flagged offsetStep err 0.730s | det offsetStep@18.00s[16.57-19.43] | unsupported 0.0-2.0s edgeMargin, 16.6-19.4s discontinuity, 55.4-57.4s edgeMargin
+WW-017 holdout dropped#3 rate 8000 L 62.0s: detections 1 mapped 2 coverage 0.89 p95 0.469 max 0.469 ms bridges 0 dropped[57.0 ms, 0 ppm]=flagged offsetStep err 0.404s | det offsetStep@26.40s[25.14-27.66] | unsupported 0.0-2.0s edgeMargin, 25.1-27.7s discontinuity, 60.0-62.0s edgeMargin
+WW-017 holdout dropped#4 rate 8000 L 54.3s: detections 1 mapped 2 coverage 0.88 p95 0.286 max 0.286 ms bridges 0 dropped[131.5 ms, 0 ppm]=flagged offsetStep err 0.080s | det offsetStep@33.20s[31.87-34.53] | unsupported 0.0-2.0s edgeMargin, 31.9-34.5s discontinuity, 52.3-54.3s edgeMargin
+WW-017 holdout dropped#5 rate 16000 L 53.2s: detections 1 mapped 2 coverage 0.87 p95 0.062 max 0.062 ms bridges 0 dropped[61.6 ms, 0 ppm]=flagged offsetStep err 0.207s | det offsetStep@29.00s[27.54-30.46] | unsupported 0.0-2.0s edgeMargin, 27.5-30.5s discontinuity, 51.2-53.2s edgeMargin
+WW-017 holdout dropped#6 rate 8000 L 62.0s: detections 1 mapped 2 coverage 0.89 p95 0.240 max 0.240 ms bridges 0 dropped[74.5 ms, 0 ppm]=flagged offsetStep err 0.432s | det offsetStep@9.80s[8.33-11.27] | unsupported 0.0-2.0s edgeMargin, 8.3-11.3s discontinuity, 60.0-62.0s edgeMargin
+WW-017 holdout dropped#7 rate 8000 L 66.2s: detections 1 mapped 2 coverage 0.90 p95 0.200 max 0.201 ms bridges 0 dropped[9.3 ms, 0 ppm]=flagged offsetStep err 0.025s | det offsetStep@41.20s[39.99-42.41] | unsupported 0.0-2.0s edgeMargin, 40.0-42.4s discontinuity, 64.2-66.2s noEvidence(periodic)
+WW-017 holdout dropped#8 rate 8000 L 63.2s: detections 1 mapped 2 coverage 0.89 p95 0.644 max 0.644 ms bridges 0 dropped[59.0 ms, 0 ppm]=flagged offsetStep err 0.067s | det offsetStep@16.60s[15.14-18.06] | unsupported 0.0-2.0s edgeMargin, 15.1-18.1s discontinuity, 61.2-63.2s edgeMargin
+WW-017 holdout dropped#9 rate 8000 L 69.2s: detections 1 mapped 2 coverage 0.90 p95 0.460 max 0.461 ms bridges 0 dropped[6.1 ms, 0 ppm]=flagged offsetStep err 0.323s | det offsetStep@47.80s[46.39-49.21] | unsupported 0.0-2.0s edgeMargin, 46.4-49.2s discontinuity, 67.2-69.2s edgeMargin
+WW-017 holdout dropped#10 rate 8000 L 65.9s: detections 1 mapped 2 coverage 0.90 p95 0.617 max 0.618 ms bridges 0 dropped[97.1 ms, 0 ppm]=flagged offsetStep err 0.312s | det offsetStep@50.80s[49.50-52.10] | unsupported 0.0-2.0s edgeMargin, 49.5-52.1s discontinuity, 63.9-65.9s edgeMargin
+WW-017 holdout dropped#11 rate 16000 L 55.8s: detections 1 mapped 2 coverage 0.88 p95 0.668 max 0.668 ms bridges 0 dropped[76.3 ms, 0 ppm]=flagged offsetStep err 0.209s | det offsetStep@18.20s[16.72-19.68] | unsupported 0.0-2.0s edgeMargin, 16.7-19.7s discontinuity, 53.8-55.8s edgeMargin
+WW-017 holdout dropped#12 rate 16000 L 65.1s: detections 1 mapped 2 coverage 0.90 p95 0.767 max 0.767 ms bridges 0 dropped[57.0 ms, 0 ppm]=flagged offsetStep err 0.809s | det offsetStep@26.40s[25.14-27.66] | unsupported 0.0-2.0s edgeMargin, 25.1-27.7s discontinuity, 63.1-65.1s edgeMargin
+WW-017 holdout dropped#13 rate 16000 L 65.0s: detections 1 mapped 2 coverage 0.90 p95 0.509 max 0.510 ms bridges 0 dropped[5.8 ms, 0 ppm]=flagged offsetStep err 0.398s | det offsetStep@41.60s[40.39-42.81] | unsupported 0.0-2.0s edgeMargin, 40.4-42.8s discontinuity, 63.0-65.0s edgeMargin
+WW-017 holdout dropped#14 rate 16000 L 68.8s: detections 1 mapped 2 coverage 0.90 p95 0.251 max 0.251 ms bridges 0 dropped[8.3 ms, 0 ppm]=flagged offsetStep err 0.028s | det offsetStep@56.00s[54.39-57.61] | unsupported 0.0-2.0s edgeMargin, 54.4-57.6s discontinuity, 66.8-68.8s edgeMargin
+WW-017 holdout dropped#15 rate 8000 L 53.1s: detections 1 mapped 2 coverage 0.87 p95 0.240 max 0.240 ms bridges 0 dropped[271.6 ms, 0 ppm]=flagged offsetStep err 0.489s | det offsetStep@44.40s[42.93-45.87] | unsupported 0.0-2.0s edgeMargin, 42.9-45.9s discontinuity, 51.1-53.1s edgeMargin
+WW-017 holdout dropped#16 rate 8000 L 50.8s: detections 1 mapped 2 coverage 0.87 p95 0.582 max 0.583 ms bridges 0 dropped[31.1 ms, 0 ppm]=flagged offsetStep err 0.408s | det offsetStep@42.80s[41.57-44.03] | unsupported 0.0-2.0s edgeMargin, 41.6-44.0s discontinuity, 48.8-50.8s edgeMargin
+WW-017 holdout dropped#17 rate 16000 L 65.5s: detections 1 mapped 2 coverage 0.90 p95 0.870 max 0.871 ms bridges 0 dropped[6.4 ms, 0 ppm]=flagged offsetStep err 0.318s | det offsetStep@36.00s[34.79-37.21] | unsupported 0.0-2.0s edgeMargin, 34.8-37.2s discontinuity, 63.5-65.5s edgeMargin
+WW-017 holdout dropped#18 rate 16000 L 65.7s: detections 1 mapped 2 coverage 0.89 p95 0.966 max 0.967 ms bridges 0 dropped[146.0 ms, 0 ppm]=flagged offsetStep err 0.482s | det offsetStep@50.20s[48.65-51.75] | unsupported 0.0-2.4s noEvidence(periodic), 48.7-51.7s discontinuity, 63.7-65.7s edgeMargin
+WW-017 holdout dropped#19 rate 8000 L 53.8s: detections 1 mapped 2 coverage 0.88 p95 0.255 max 0.256 ms bridges 0 dropped[40.5 ms, 0 ppm]=flagged offsetStep err 0.035s | det offsetStep@19.20s[17.96-20.44] | unsupported 0.0-2.0s edgeMargin, 18.0-20.4s discontinuity, 51.8-53.8s edgeMargin
+WW-017 holdout inserted#0 rate 16000 L 59.3s: detections 1 mapped 2 coverage 0.89 p95 0.876 max 0.876 ms bridges 0 inserted[-92.7 ms, 0 ppm]=flagged offsetStep err 0.360s | det offsetStep@46.40s[45.11-47.69] | unsupported 0.0-2.0s edgeMargin, 45.1-47.7s discontinuity, 57.3-59.3s edgeMargin
+WW-017 holdout inserted#1 rate 16000 L 61.0s: detections 1 mapped 2 coverage 0.89 p95 0.329 max 0.329 ms bridges 0 inserted[-5.0 ms, 0 ppm]=flagged offsetStep err 0.431s | det offsetStep@26.40s[25.19-27.61] | unsupported 0.0-2.0s edgeMargin, 25.2-27.6s discontinuity, 59.0-61.0s edgeMargin
+WW-017 holdout inserted#2 rate 16000 L 54.8s: detections 1 mapped 2 coverage 0.88 p95 0.358 max 0.358 ms bridges 0 inserted[-6.4 ms, 0 ppm]=flagged offsetStep err 0.418s | det offsetStep@45.80s[44.39-47.21] | unsupported 0.0-2.0s edgeMargin, 44.4-47.2s discontinuity, 52.8-54.8s edgeMargin
+WW-017 holdout inserted#3 rate 8000 L 63.0s: detections 1 mapped 2 coverage 0.89 p95 0.964 max 0.964 ms bridges 0 inserted[-11.5 ms, 0 ppm]=flagged offsetStep err 0.127s | det offsetStep@27.00s[25.59-28.41] | unsupported 0.0-2.0s edgeMargin, 25.6-28.4s discontinuity, 61.1-63.1s edgeMargin
+WW-017 holdout inserted#4 rate 16000 L 59.2s: detections 1 mapped 2 coverage 0.88 p95 0.595 max 0.595 ms bridges 0 inserted[-40.8 ms, 0 ppm]=flagged offsetStep err 0.075s | det offsetStep@43.40s[41.96-44.84] | unsupported 0.0-2.0s edgeMargin, 42.0-44.8s discontinuity, 57.2-59.2s edgeMargin
+WW-017 holdout inserted#5 rate 16000 L 60.3s: detections 1 mapped 2 coverage 0.89 p95 0.300 max 0.301 ms bridges 0 inserted[-8.8 ms, 0 ppm]=flagged offsetStep err 0.434s | det offsetStep@33.60s[32.39-34.81] | unsupported 0.0-2.0s edgeMargin, 32.4-34.8s discontinuity, 58.3-60.3s edgeMargin
+WW-017 holdout inserted#6 rate 8000 L 50.3s: detections 1 mapped 2 coverage 0.87 p95 0.079 max 0.079 ms bridges 0 inserted[-89.5 ms, 0 ppm]=flagged offsetStep err 0.617s | det offsetStep@9.60s[8.31-10.89] | unsupported 0.0-2.0s edgeMargin, 8.3-10.9s discontinuity, 48.4-50.4s edgeMargin
+WW-017 holdout inserted#7 rate 8000 L 51.1s: detections 1 mapped 2 coverage 0.86 p95 0.087 max 0.087 ms bridges 0 inserted[-277.4 ms, 0 ppm]=flagged offsetStep err 0.608s | det offsetStep@38.60s[36.92-40.28] | unsupported 0.0-2.0s edgeMargin, 36.9-40.3s discontinuity, 49.4-51.4s edgeMargin
+WW-017 holdout inserted#8 rate 8000 L 69.5s: detections 1 mapped 2 coverage 0.91 p95 0.657 max 0.657 ms bridges 0 inserted[-97.4 ms, 0 ppm]=flagged offsetStep err 0.148s | det offsetStep@25.20s[23.90-26.50] | unsupported 0.0-2.0s edgeMargin, 23.9-26.5s discontinuity, 67.6-69.6s edgeMargin
+WW-017 holdout inserted#9 rate 16000 L 65.8s: detections 1 mapped 2 coverage 0.90 p95 0.269 max 0.270 ms bridges 0 inserted[-33.8 ms, 0 ppm]=flagged offsetStep err 0.261s | det offsetStep@23.20s[21.97-24.43] | unsupported 0.0-2.0s edgeMargin, 22.0-24.4s discontinuity, 63.8-65.8s edgeMargin
+WW-017 holdout inserted#10 rate 16000 L 59.4s: detections 1 mapped 2 coverage 0.89 p95 0.146 max 0.147 ms bridges 0 inserted[-7.1 ms, 0 ppm]=flagged offsetStep err 0.462s | det offsetStep@38.00s[36.79-39.21] | unsupported 0.0-2.0s edgeMargin, 36.8-39.2s discontinuity, 57.4-59.4s edgeMargin
+WW-017 holdout inserted#11 rate 8000 L 50.0s: detections 1 mapped 2 coverage 0.86 p95 0.866 max 0.866 ms bridges 0 inserted[-184.7 ms, 0 ppm]=flagged offsetStep err 0.368s | det offsetStep@35.00s[33.42-36.58] | unsupported 0.0-2.0s edgeMargin, 33.4-36.6s discontinuity, 48.2-50.2s edgeMargin
+WW-017 holdout inserted#12 rate 8000 L 62.1s: detections 1 mapped 2 coverage 0.88 p95 0.896 max 0.896 ms bridges 0 inserted[-485.0 ms, 0 ppm]=flagged offsetStep err 0.369s | det offsetStep@44.60s[42.72-46.48] | unsupported 0.0-2.0s edgeMargin, 42.7-46.5s discontinuity, 60.6-62.6s edgeMargin
+WW-017 holdout inserted#13 rate 8000 L 57.3s: detections 1 mapped 2 coverage 0.87 p95 0.915 max 0.916 ms bridges 0 inserted[-452.9 ms, 0 ppm]=flagged offsetStep err 0.622s | det offsetStep@34.00s[32.35-35.65] | unsupported 0.0-2.0s edgeMargin, 32.3-35.7s discontinuity, 55.7-57.7s edgeMargin
+WW-017 holdout inserted#14 rate 16000 L 56.4s: detections 1 mapped 2 coverage 0.87 p95 0.480 max 0.482 ms bridges 0 inserted[-386.5 ms, 0 ppm]=flagged offsetStep err 0.249s | det offsetStep@48.00s[46.41-49.59] | unsupported 0.0-2.0s edgeMargin, 46.4-49.6s discontinuity, 54.8-56.8s edgeMargin
+WW-017 holdout inserted#15 rate 16000 L 65.1s: detections 1 mapped 2 coverage 0.89 p95 0.277 max 0.278 ms bridges 0 inserted[-8.4 ms, 0 ppm]=flagged offsetStep err 0.536s | det offsetStep@13.60s[11.99-15.21] | unsupported 0.0-2.0s edgeMargin, 12.0-15.2s discontinuity, 63.1-65.1s edgeMargin
+WW-017 holdout inserted#16 rate 16000 L 51.6s: detections 1 mapped 2 coverage 0.88 p95 0.959 max 0.959 ms bridges 0 inserted[-20.8 ms, 0 ppm]=flagged offsetStep err 0.524s | det offsetStep@37.20s[35.98-38.42] | unsupported 0.0-2.0s edgeMargin, 36.0-38.4s discontinuity, 49.7-51.7s edgeMargin
+WW-017 holdout inserted#17 rate 8000 L 52.9s: detections 1 mapped 2 coverage 0.88 p95 0.718 max 0.719 ms bridges 0 inserted[-5.8 ms, 0 ppm]=flagged offsetStep err 0.015s | det offsetStep@26.80s[25.59-28.01] | unsupported 0.0-2.0s edgeMargin, 25.6-28.0s discontinuity, 50.9-52.9s edgeMargin
+WW-017 holdout inserted#18 rate 8000 L 51.0s: detections 1 mapped 2 coverage 0.86 p95 0.056 max 0.056 ms bridges 0 inserted[-79.9 ms, 0 ppm]=flagged offsetStep err 0.701s | det offsetStep@17.40s[15.92-18.88] | unsupported 0.0-2.0s edgeMargin, 15.9-18.9s discontinuity, 49.1-51.1s edgeMargin
+WW-017 holdout inserted#19 rate 8000 L 51.1s: detections 1 mapped 2 coverage 0.87 p95 0.016 max 0.016 ms bridges 0 inserted[-262.9 ms, 0 ppm]=flagged offsetStep err 0.463s | det offsetStep@38.00s[36.54-39.46] | unsupported 0.0-2.0s edgeMargin, 36.5-39.5s discontinuity, 49.4-51.4s edgeMargin
+WW-017 holdout clockStep#0 rate 16000 L 68.5s: detections 2 mapped 0 coverage 0.00 p95 0.000 max 0.000 ms bridges 0 clockStep[5.7 ms, 0 ppm]=flagged unresolved err 8.748s | det unresolved@51.20s[0.00-68.54], offsetStep@59.60s[58.39-60.81] | unsupported 0.0-68.5s discontinuity
+WW-017 holdout clockStep#1 rate 8000 L 53.9s: detections 1 mapped 2 coverage 0.88 p95 0.711 max 0.711 ms bridges 0 clockStep[5.2 ms, 0 ppm]=flagged offsetStep err 0.632s | det offsetStep@13.60s[12.39-14.81] | unsupported 0.0-2.0s edgeMargin, 12.4-14.8s discontinuity, 51.9-53.9s edgeMargin
+WW-017 holdout clockStep#2 rate 8000 L 58.3s: detections 1 mapped 2 coverage 0.87 p95 0.121 max 0.121 ms bridges 0 clockStep[389.1 ms, 0 ppm]=flagged offsetStep err 0.137s | det offsetStep@9.80s[8.01-11.59] | unsupported 0.0-2.0s edgeMargin, 8.0-11.6s discontinuity, 56.3-58.3s edgeMargin
+WW-017 holdout clockStep#3 rate 8000 L 51.2s: detections 1 mapped 2 coverage 0.86 p95 0.727 max 0.727 ms bridges 0 clockStep[69.7 ms, 0 ppm]=flagged offsetStep err 0.446s | det offsetStep@39.80s[38.33-41.27] | unsupported 0.0-2.0s edgeMargin, 38.3-41.3s discontinuity, 49.2-51.2s edgeMargin
+WW-017 holdout clockStep#4 rate 8000 L 56.6s: detections 1 mapped 2 coverage 0.87 p95 0.798 max 0.798 ms bridges 0 clockStep[-7.7 ms, 0 ppm]=flagged offsetStep err 0.009s | det offsetStep@39.20s[37.59-40.81] | unsupported 0.0-2.0s edgeMargin, 37.6-40.8s discontinuity, 54.6-56.6s edgeMargin
+WW-017 holdout clockStep#5 rate 16000 L 62.3s: detections 1 mapped 2 coverage 0.89 p95 0.812 max 0.812 ms bridges 0 clockStep[-10.0 ms, 0 ppm]=flagged offsetStep err 0.350s | det offsetStep@36.60s[35.19-38.01] | unsupported 0.0-2.0s edgeMargin, 35.2-38.0s discontinuity, 60.3-62.3s edgeMargin
+WW-017 holdout clockStep#6 rate 16000 L 69.9s: detections 1 mapped 2 coverage 0.91 p95 1.015 max 1.016 ms bridges 0 clockStep[-47.6 ms, 0 ppm]=flagged offsetStep err 0.584s | det offsetStep@46.40s[45.15-47.65] | unsupported 0.0-2.0s edgeMargin, 45.2-47.6s discontinuity, 67.9-69.9s edgeMargin
+WW-017 holdout clockStep#7 rate 8000 L 55.3s: detections 1 mapped 2 coverage 0.88 p95 0.453 max 0.454 ms bridges 0 clockStep[110.8 ms, 0 ppm]=flagged offsetStep err 0.242s | det offsetStep@29.60s[28.29-30.91] | unsupported 0.0-2.0s edgeMargin, 28.3-30.9s discontinuity, 53.3-55.3s edgeMargin
+WW-017 holdout clockStep#8 rate 16000 L 58.0s: detections 1 mapped 2 coverage 0.88 p95 0.371 max 0.371 ms bridges 0 clockStep[-33.3 ms, 0 ppm]=flagged offsetStep err 0.082s | det offsetStep@48.60s[47.17-50.03] | unsupported 0.0-2.0s edgeMargin, 47.2-50.0s discontinuity, 56.0-58.0s edgeMargin
+WW-017 holdout clockStep#9 rate 16000 L 68.2s: detections 1 mapped 2 coverage 0.90 p95 0.784 max 0.784 ms bridges 0 clockStep[-106.7 ms, 0 ppm]=flagged offsetStep err 0.062s | det offsetStep@30.00s[28.69-31.31] | unsupported 0.0-2.0s edgeMargin, 28.7-31.3s discontinuity, 66.2-68.2s edgeMargin
+WW-017 holdout clockStep#10 rate 16000 L 51.0s: detections 1 mapped 2 coverage 0.87 p95 0.311 max 0.312 ms bridges 0 clockStep[-150.4 ms, 0 ppm]=flagged offsetStep err 0.728s | det offsetStep@42.00s[40.65-43.35] | unsupported 0.0-2.0s edgeMargin, 40.6-43.4s discontinuity, 49.0-51.0s edgeMargin
+WW-017 holdout clockStep#11 rate 8000 L 57.8s: detections 1 mapped 2 coverage 0.89 p95 0.940 max 0.940 ms bridges 0 clockStep[25.9 ms, 0 ppm]=flagged offsetStep err 0.395s | det offsetStep@40.40s[39.17-41.63] | unsupported 0.0-2.0s edgeMargin, 39.2-41.6s discontinuity, 55.8-57.8s edgeMargin
+WW-017 holdout clockStep#12 rate 8000 L 52.7s: detections 1 mapped 2 coverage 0.87 p95 0.775 max 0.775 ms bridges 0 clockStep[-73.2 ms, 0 ppm]=flagged offsetStep err 0.106s | det offsetStep@32.40s[31.13-33.67] | unsupported 0.0-2.4s noEvidence(periodic), 31.1-33.7s discontinuity, 50.7-52.7s edgeMargin
+WW-017 holdout clockStep#13 rate 8000 L 51.1s: detections 1 mapped 2 coverage 0.87 p95 0.399 max 0.399 ms bridges 0 clockStep[34.2 ms, 0 ppm]=flagged offsetStep err 0.118s | det offsetStep@31.80s[30.37-33.23] | unsupported 0.0-2.0s edgeMargin, 30.4-33.2s discontinuity, 49.1-51.1s edgeMargin
+WW-017 holdout clockStep#14 rate 16000 L 68.5s: detections 1 mapped 2 coverage 0.90 p95 0.945 max 0.945 ms bridges 0 clockStep[202.2 ms, 0 ppm]=flagged offsetStep err 0.201s | det offsetStep@47.60s[46.20-49.00] | unsupported 0.0-2.0s edgeMargin, 46.2-49.0s discontinuity, 66.5-68.5s edgeMargin
+WW-017 holdout clockStep#15 rate 16000 L 68.7s: detections 1 mapped 2 coverage 0.91 p95 0.307 max 0.307 ms bridges 0 clockStep[-7.0 ms, 0 ppm]=flagged offsetStep err 0.843s | det offsetStep@39.60s[38.39-40.81] | unsupported 0.0-2.0s edgeMargin, 38.4-40.8s discontinuity, 66.7-68.7s edgeMargin
+WW-017 holdout clockStep#16 rate 16000 L 56.2s: detections 1 mapped 2 coverage 0.86 p95 0.104 max 0.104 ms bridges 0 clockStep[464.5 ms, 0 ppm]=flagged offsetStep err 0.270s | det offsetStep@26.20s[24.34-28.06] | unsupported 0.0-2.0s edgeMargin, 24.3-28.1s discontinuity, 54.2-56.2s edgeMargin
+WW-017 holdout clockStep#17 rate 16000 L 52.2s: detections 1 mapped 2 coverage 0.87 p95 0.146 max 0.147 ms bridges 0 clockStep[137.6 ms, 0 ppm]=flagged offsetStep err 0.087s | det offsetStep@28.80s[27.46-30.14] | unsupported 0.0-2.0s edgeMargin, 27.5-30.1s discontinuity, 50.2-52.2s edgeMargin
+WW-017 holdout clockStep#18 rate 8000 L 65.1s: detections 1 mapped 2 coverage 0.89 p95 0.780 max 0.781 ms bridges 0 clockStep[-25.6 ms, 0 ppm]=flagged offsetStep err 0.048s | det offsetStep@41.00s[39.57-42.43] | unsupported 0.0-2.0s edgeMargin, 39.6-42.4s discontinuity, 63.1-65.1s edgeMargin
+WW-017 holdout clockStep#19 rate 8000 L 69.5s: detections 1 mapped 2 coverage 0.90 p95 0.322 max 0.323 ms bridges 0 clockStep[-431.8 ms, 0 ppm]=flagged offsetStep err 0.616s | det offsetStep@49.60s[47.97-51.23] | unsupported 0.0-2.0s edgeMargin, 48.0-51.2s discontinuity, 67.5-69.5s edgeMargin
+WW-017 holdout restart#0 rate 8000 L 57.9s: detections 1 mapped 2 coverage 0.86 p95 0.502 max 0.503 ms bridges 0 restart[563.5 ms, 98 ppm]=flagged offsetStep err 0.019s | det offsetStep@27.80s[25.84-29.76] | unsupported 0.0-2.0s edgeMargin, 25.8-29.8s discontinuity, 55.9-57.9s edgeMargin
+WW-017 holdout restart#1 rate 8000 L 66.2s: detections 1 mapped 2 coverage 0.89 p95 0.619 max 0.619 ms bridges 0 restart[346.9 ms, 77 ppm]=flagged offsetStep err 0.067s | det offsetStep@57.40s[55.65-59.15] | unsupported 0.0-2.0s edgeMargin, 55.7-59.1s discontinuity, 64.2-66.2s noEvidence(periodic)
+WW-017 holdout restart#2 rate 8000 L 54.2s: detections 1 mapped 2 coverage 0.86 p95 0.520 max 0.521 ms bridges 0 restart[706.9 ms, 141 ppm]=flagged offsetStep err 0.946s | det offsetStep@29.60s[27.69-31.51] | unsupported 0.0-2.0s edgeMargin, 27.7-31.5s discontinuity, 52.2-54.2s edgeMargin
+WW-017 holdout restart#3 rate 16000 L 53.0s: detections 1 mapped 2 coverage 0.86 p95 0.268 max 0.268 ms bridges 0 restart[354.7 ms, 5 ppm]=flagged offsetStep err 0.224s | det offsetStep@38.60s[36.85-40.35] | unsupported 0.0-2.0s edgeMargin, 36.8-40.4s discontinuity, 51.0-53.0s edgeMargin
+WW-017 holdout restart#4 rate 8000 L 59.7s: detections 1 mapped 2 coverage 0.86 p95 0.216 max 0.216 ms bridges 0 restart[884.7 ms, -26 ppm]=flagged offsetStep err 0.526s | det offsetStep@44.20s[41.92-46.48] | unsupported 0.0-2.0s edgeMargin, 41.9-46.5s discontinuity, 57.7-59.7s edgeMargin
+WW-017 holdout restart#5 rate 8000 L 61.5s: detections 1 mapped 2 coverage 0.86 p95 0.171 max 0.171 ms bridges 0 restart[1067.9 ms, -7 ppm]=flagged offsetStep err 0.413s | det offsetStep@9.20s[6.93-11.47] | unsupported 0.0-2.0s edgeMargin, 6.9-11.5s discontinuity, 59.5-61.5s edgeMargin
+WW-017 holdout restart#6 rate 16000 L 55.8s: detections 1 mapped 2 coverage 0.86 p95 0.538 max 0.538 ms bridges 0 restart[602.5 ms, -74 ppm]=flagged offsetStep err 0.059s | det offsetStep@11.20s[9.40-13.00] | unsupported 0.0-2.0s edgeMargin, 9.4-13.0s discontinuity, 53.8-55.8s edgeMargin
+WW-017 holdout restart#7 rate 16000 L 50.9s: detections 1 mapped 2 coverage 0.84 p95 0.377 max 0.377 ms bridges 0 restart[717.6 ms, -23 ppm]=flagged offsetStep err 0.050s | det offsetStep@38.20s[36.08-40.32] | unsupported 0.0-2.0s edgeMargin, 36.1-40.3s discontinuity, 48.9-50.9s edgeMargin
+WW-017 holdout restart#8 rate 8000 L 65.2s: detections 1 mapped 2 coverage 0.86 p95 0.227 max 0.228 ms bridges 0 restart[1123.6 ms, 13 ppm]=flagged offsetStep err 0.494s | det offsetStep@29.00s[26.48-31.52] | unsupported 0.0-2.0s edgeMargin, 26.5-31.5s discontinuity, 63.2-65.2s edgeMargin
+WW-017 holdout restart#9 rate 8000 L 51.8s: detections 1 mapped 2 coverage 0.83 p95 0.431 max 0.431 ms bridges 0 restart[1181.3 ms, 37 ppm]=flagged offsetStep err 0.181s | det offsetStep@11.20s[8.82-13.58] | unsupported 0.0-2.0s edgeMargin, 8.8-13.6s discontinuity, 49.8-51.8s edgeMargin
+WW-017 holdout restart#10 rate 8000 L 61.7s: detections 1 mapped 2 coverage 0.87 p95 0.120 max 0.120 ms bridges 0 restart[913.0 ms, -1 ppm]=flagged offsetStep err 0.421s | det offsetStep@10.00s[7.89-12.11] | unsupported 0.0-2.0s edgeMargin, 7.9-12.1s discontinuity, 59.7-61.7s edgeMargin
+WW-017 holdout restart#11 rate 16000 L 50.7s: detections 1 mapped 2 coverage 0.83 p95 0.832 max 0.832 ms bridges 0 restart[976.3 ms, 87 ppm]=flagged offsetStep err 0.159s | det offsetStep@24.20s[21.82-26.58] | unsupported 0.0-2.0s edgeMargin, 21.8-26.6s discontinuity, 48.7-50.7s edgeMargin
+WW-017 holdout restart#12 rate 8000 L 61.9s: detections 1 mapped 2 coverage 0.86 p95 0.463 max 0.463 ms bridges 0 restart[1060.3 ms, -8 ppm]=flagged offsetStep err 0.121s | det offsetStep@17.60s[15.34-19.86] | unsupported 0.0-2.0s edgeMargin, 15.3-19.9s discontinuity, 59.9-61.9s edgeMargin
+WW-017 holdout restart#13 rate 8000 L 67.5s: detections 1 mapped 2 coverage 0.88 p95 0.292 max 0.293 ms bridges 0 restart[545.6 ms, 82 ppm]=flagged offsetStep err 0.154s | det offsetStep@14.20s[12.25-16.15] | unsupported 0.0-2.0s edgeMargin, 12.3-16.1s discontinuity, 65.5-67.5s edgeMargin
+WW-017 holdout restart#14 rate 16000 L 63.4s: detections 1 mapped 2 coverage 0.88 p95 0.686 max 0.686 ms bridges 0 restart[500.4 ms, 63 ppm]=flagged offsetStep err 0.140s | det offsetStep@20.20s[18.30-22.10] | unsupported 0.0-2.0s edgeMargin, 18.3-22.1s discontinuity, 61.4-63.4s edgeMargin
+WW-017 holdout restart#15 rate 8000 L 50.2s: detections 1 mapped 2 coverage 0.83 p95 0.129 max 0.129 ms bridges 0 restart[1030.1 ms, -109 ppm]=flagged offsetStep err 0.074s | det offsetStep@9.20s[6.97-11.43] | unsupported 0.0-2.0s edgeMargin, 7.0-11.4s discontinuity, 48.2-50.2s edgeMargin
+WW-017 holdout restart#16 rate 8000 L 61.1s: detections 1 mapped 2 coverage 0.87 p95 0.468 max 0.468 ms bridges 0 restart[723.5 ms, -39 ppm]=flagged offsetStep err 0.014s | det offsetStep@45.60s[43.68-47.52] | unsupported 0.0-2.0s edgeMargin, 43.7-47.5s discontinuity, 59.1-61.1s edgeMargin
+WW-017 holdout restart#17 rate 16000 L 62.7s: detections 1 mapped 2 coverage 0.89 p95 0.845 max 0.846 ms bridges 0 restart[348.4 ms, -71 ppm]=flagged offsetStep err 0.005s | det offsetStep@34.00s[32.45-35.55] | unsupported 0.0-2.0s edgeMargin, 32.5-35.5s discontinuity, 60.7-62.7s edgeMargin
+WW-017 holdout restart#18 rate 16000 L 58.1s: detections 1 mapped 2 coverage 0.87 p95 0.138 max 0.138 ms bridges 0 restart[395.8 ms, -4 ppm]=flagged offsetStep err 0.332s | det offsetStep@21.00s[19.20-22.80] | unsupported 0.0-2.0s edgeMargin, 19.2-22.8s discontinuity, 56.1-58.1s edgeMargin
+WW-017 holdout restart#19 rate 16000 L 60.1s: detections 1 mapped 2 coverage 0.86 p95 0.335 max 0.335 ms bridges 0 restart[1131.2 ms, -87 ppm]=flagged offsetStep err 0.115s | det offsetStep@18.00s[15.67-20.33] | unsupported 0.0-2.0s edgeMargin, 15.7-20.3s discontinuity, 58.1-60.1s edgeMargin
+WW-017 holdout rateChange#0 rate 16000 L 62.4s: detections 1 mapped 1 coverage 0.35 p95 0.299 max 0.299 ms bridges 0 rateChange[0.0 ms, -384 ppm]=flagged slopeChange err 0.020s | det slopeChange@27.25s[23.64-30.86] | unsupported 0.0-2.0s edgeMargin, 23.6-30.9s discontinuity, 30.9-60.4s abstained(inconsistent), 60.4-62.4s edgeMargin
+WW-017 holdout rateChange#1 rate 8000 L 65.7s: detections 1 mapped 2 coverage 0.83 p95 0.150 max 0.150 ms bridges 0 rateChange[0.0 ms, -379 ppm]=flagged slopeChange err 0.023s | det slopeChange@37.37s[33.71-41.03] | unsupported 0.0-2.0s edgeMargin, 33.7-41.0s discontinuity, 63.7-65.7s edgeMargin
+WW-017 holdout rateChange#2 rate 16000 L 55.2s: detections 1 mapped 2 coverage 0.79 p95 0.768 max 0.768 ms bridges 0 rateChange[0.0 ms, 349 ppm]=flagged slopeChange err 0.063s | det slopeChange@34.51s[30.63-38.39] | unsupported 0.0-2.0s edgeMargin, 30.6-38.4s discontinuity, 53.2-55.2s edgeMargin
+WW-017 holdout rateChange#3 rate 8000 L 56.5s: detections 1 mapped 2 coverage 0.80 p95 0.467 max 0.468 ms bridges 0 rateChange[0.0 ms, 361 ppm]=flagged slopeChange err 0.026s | det slopeChange@15.61s[11.84-19.38] | unsupported 0.0-2.0s edgeMargin, 11.8-19.4s discontinuity, 54.5-56.5s edgeMargin
+WW-017 holdout rateChange#4 rate 8000 L 67.3s: detections 1 mapped 2 coverage 0.82 p95 1.004 max 1.007 ms bridges 0 rateChange[0.0 ms, -318 ppm]=flagged slopeChange err 0.020s | det slopeChange@38.21s[34.05-42.36] | unsupported 0.0-2.0s edgeMargin, 34.1-42.4s discontinuity, 65.3-67.3s edgeMargin
+WW-017 holdout rateChange#5 rate 16000 L 50.9s: detections 1 mapped 2 coverage 0.77 p95 0.761 max 0.761 ms bridges 0 rateChange[0.0 ms, -341 ppm]=flagged slopeChange err 0.012s | det slopeChange@40.14s[36.19-44.08] | unsupported 0.0-2.0s edgeMargin, 36.2-44.1s discontinuity, 48.9-50.9s edgeMargin
+WW-017 holdout rateChange#6 rate 8000 L 52.3s: detections 1 mapped 1 coverage 0.69 p95 0.606 max 0.606 ms bridges 0 rateChange[0.0 ms, -312 ppm]=flagged slopeChange err 0.073s | det slopeChange@9.95s[5.70-14.20] | unsupported 0.0-2.0s edgeMargin, 2.0-5.7s tooShort, 5.7-14.2s discontinuity, 50.3-52.3s edgeMargin
+WW-017 holdout rateChange#7 rate 8000 L 67.1s: detections 1 mapped 2 coverage 0.82 p95 0.728 max 0.729 ms bridges 0 rateChange[0.0 ms, -347 ppm]=flagged slopeChange err 0.031s | det slopeChange@34.15s[30.27-38.02] | unsupported 0.0-2.0s edgeMargin, 30.3-38.0s discontinuity, 65.1-67.1s edgeMargin
+WW-017 holdout rateChange#8 rate 16000 L 56.3s: detections 2 mapped 0 coverage 0.00 p95 0.000 max 0.000 ms bridges 0 rateChange[0.0 ms, 353 ppm]=flagged slopeChange err 0.004s | det slopeChange@23.32s[19.49-27.16], slopeChange@55.47s[0.00-56.34] | unsupported 0.0-56.3s discontinuity
+WW-017 holdout rateChange#9 rate 16000 L 60.0s: detections 1 mapped 2 coverage 0.80 p95 0.185 max 0.186 ms bridges 0 rateChange[0.0 ms, -333 ppm]=flagged slopeChange err 0.027s | det slopeChange@27.53s[23.53-31.54] | unsupported 0.0-2.0s edgeMargin, 23.5-31.5s discontinuity, 58.0-60.0s edgeMargin
+WW-017 holdout rateChange#10 rate 8000 L 60.0s: detections 1 mapped 2 coverage 0.81 p95 0.143 max 0.145 ms bridges 0 rateChange[0.0 ms, 386 ppm]=flagged slopeChange err 0.017s | det slopeChange@17.78s[14.19-21.36] | unsupported 0.0-2.0s edgeMargin, 14.2-21.4s discontinuity, 58.0-60.0s edgeMargin
+WW-017 holdout rateChange#11 rate 8000 L 50.1s: detections 1 mapped 2 coverage 0.74 p95 0.954 max 0.954 ms bridges 0 rateChange[0.0 ms, -361 ppm]=flagged slopeChange err 0.167s | det slopeChange@29.92s[26.10-33.74] | unsupported 0.0-2.8s noEvidence(periodic), 26.1-33.7s discontinuity, 47.7-50.1s noEvidence(weak)
+WW-017 holdout rateChange#12 rate 16000 L 53.1s: detections 2 mapped 0 coverage 0.00 p95 0.000 max 0.000 ms bridges 0 rateChange[0.0 ms, 398 ppm]=flagged slopeChange err 0.325s | det slopeChange@28.86s[25.10-32.62], slopeChange@31.58s[0.69-53.13] | unsupported 0.0-53.1s discontinuity
+WW-017 holdout rateChange#13 rate 8000 L 63.2s: detections 1 mapped 2 coverage 0.82 p95 0.265 max 0.266 ms bridges 0 rateChange[0.0 ms, 362 ppm]=flagged slopeChange err 0.052s | det slopeChange@19.84s[16.08-23.60] | unsupported 0.0-2.0s edgeMargin, 16.1-23.6s discontinuity, 61.2-63.2s edgeMargin
+WW-017 holdout rateChange#14 rate 8000 L 59.6s: detections 1 mapped 1 coverage 0.74 p95 0.022 max 0.022 ms bridges 0 rateChange[0.0 ms, -322 ppm]=flagged slopeChange err 0.023s | det slopeChange@50.07s[45.93-54.20] | unsupported 0.0-2.0s edgeMargin, 45.9-54.2s discontinuity, 54.2-57.6s tooShort, 57.6-59.6s edgeMargin
+WW-017 holdout rateChange#15 rate 16000 L 69.5s: detections 1 mapped 2 coverage 0.84 p95 0.197 max 0.197 ms bridges 0 rateChange[0.0 ms, -368 ppm]=flagged slopeChange err 0.041s | det slopeChange@56.81s[53.09-60.53] | unsupported 0.0-2.0s edgeMargin, 53.1-60.5s discontinuity, 67.5-69.5s edgeMargin
+WW-017 holdout rateChange#16 rate 16000 L 65.2s: detections 1 mapped 2 coverage 0.81 p95 0.379 max 0.383 ms bridges 0 rateChange[0.0 ms, -327 ppm]=flagged slopeChange err 0.015s | det slopeChange@30.89s[26.83-34.95] | unsupported 0.0-2.0s edgeMargin, 26.8-35.0s discontinuity, 63.2-65.2s edgeMargin
+WW-017 holdout rateChange#17 rate 16000 L 58.5s: detections 1 mapped 2 coverage 0.80 p95 0.620 max 0.620 ms bridges 0 rateChange[0.0 ms, 368 ppm]=flagged slopeChange err 0.024s | det slopeChange@47.94s[44.23-51.65] | unsupported 0.0-2.0s edgeMargin, 44.2-51.7s discontinuity, 56.5-58.5s edgeMargin
+WW-017 holdout rateChange#18 rate 8000 L 54.8s: detections 1 mapped 2 coverage 0.78 p95 0.394 max 0.394 ms bridges 0 rateChange[0.0 ms, 331 ppm]=flagged slopeChange err 0.020s | det slopeChange@20.42s[16.39-24.45] | unsupported 0.0-2.0s edgeMargin, 16.4-24.4s discontinuity, 52.8-54.8s edgeMargin
+WW-017 holdout rateChange#19 rate 16000 L 63.6s: detections 2 mapped 0 coverage 0.00 p95 0.000 max 0.000 ms bridges 0 rateChange[0.0 ms, 336 ppm]=flagged slopeChange err 0.014s | det slopeChange@16.28s[12.26-20.30], unresolved@30.60s[0.00-63.64] | unsupported 0.0-63.6s discontinuity
+WW-017 holdout compound#0 rate 16000 L 66.0s: detections 2 mapped 3 coverage 0.85 p95 0.827 max 0.827 ms bridges 0 clockStep[51.7 ms, 0 ppm]=flagged offsetStep err 0.208s; inserted[-77.7 ms, 0 ppm]=flagged offsetStep err 0.328s | det offsetStep@19.00s[17.55-20.45], offsetStep@54.40s[53.12-55.68] | unsupported 0.0-2.4s noEvidence(periodic), 17.5-20.5s discontinuity, 53.1-55.7s discontinuity, 64.1-66.1s noEvidence(periodic)
+WW-017 holdout compound#1 rate 8000 L 61.6s: detections 2 mapped 2 coverage 0.71 p95 0.140 max 0.140 ms bridges 0 dropped[6.8 ms, 0 ppm]=flagged offsetStep err 0.144s; rateChange[0.0 ms, -305 ppm]=flagged slopeChange err 0.048s | det offsetStep@33.40s[31.99-34.81], slopeChange@52.97s[48.64-57.30] | unsupported 0.0-2.0s edgeMargin, 32.0-34.8s discontinuity, 48.6-57.3s discontinuity, 57.3-59.6s tooShort, 59.6-61.6s edgeMargin
+WW-017 holdout compound#2 rate 8000 L 60.8s: detections 2 mapped 3 coverage 0.84 p95 0.780 max 0.780 ms bridges 0 clockStep[46.8 ms, 0 ppm]=flagged offsetStep err 0.108s; inserted[-30.9 ms, 0 ppm]=flagged offsetStep err 0.045s | det offsetStep@24.60s[23.15-26.05], offsetStep@43.40s[41.97-44.83] | unsupported 0.0-2.0s edgeMargin, 23.2-26.0s discontinuity, 42.0-44.8s discontinuity, 58.9-60.9s edgeMargin
+WW-017 holdout compound#3 rate 8000 L 50.7s: detections 2 mapped 3 coverage 0.78 p95 0.818 max 0.818 ms bridges 0 restart[560.6 ms, 10 ppm]=flagged offsetStep err 0.262s; restart[425.8 ms, -54 ppm]=flagged offsetStep err 0.024s | det offsetStep@18.00s[16.24-19.76], offsetStep@34.60s[32.77-36.43] | unsupported 0.0-2.0s edgeMargin, 16.2-19.8s discontinuity, 32.8-36.4s discontinuity, 48.7-50.7s edgeMargin
+WW-017 holdout compound#4 rate 8000 L 64.3s: detections 2 mapped 3 coverage 0.75 p95 0.165 max 0.165 ms bridges 0 rateChange[0.0 ms, -374 ppm]=flagged slopeChange err 0.023s; inserted[-7.2 ms, 0 ppm]=flagged unresolved err 0.648s | det slopeChange@20.51s[16.83-24.19], unresolved@39.80s[37.59-42.01] | unsupported 0.0-2.0s edgeMargin, 16.8-24.2s discontinuity, 37.6-42.0s discontinuity, 62.3-64.3s edgeMargin
+WW-017 holdout compound#5 rate 16000 L 70.0s: detections 2 mapped 3 coverage 0.85 p95 0.875 max 0.875 ms bridges 0 dropped[280.8 ms, 0 ppm]=flagged offsetStep err 0.041s; clockStep[-140.7 ms, 0 ppm]=flagged offsetStep err 0.217s | det offsetStep@16.80s[15.32-18.28], offsetStep@49.60s[47.86-51.34] | unsupported 0.0-2.0s edgeMargin, 15.3-18.3s discontinuity, 47.9-51.3s discontinuity, 68.0-70.0s edgeMargin
+WW-017 holdout compound#6 rate 16000 L 53.2s: detections 2 mapped 3 coverage 0.80 p95 0.797 max 0.797 ms bridges 0 inserted[-38.8 ms, 0 ppm]=flagged offsetStep err 0.683s; dropped[314.7 ms, 0 ppm]=flagged offsetStep err 0.496s | det offsetStep@13.20s[11.96-14.44], offsetStep@39.00s[36.89-41.11] | unsupported 0.0-2.0s edgeMargin, 12.0-14.4s discontinuity, 36.9-41.1s discontinuity, 51.2-53.2s edgeMargin
+WW-017 holdout compound#7 rate 8000 L 67.3s: detections 2 mapped 3 coverage 0.86 p95 0.050 max 0.050 ms bridges 0 clockStep[-40.3 ms, 0 ppm]=flagged offsetStep err 0.642s; clockStep[14.0 ms, 0 ppm]=flagged offsetStep err 0.592s | det offsetStep@36.40s[35.16-37.64], offsetStep@55.40s[53.99-56.81] | unsupported 0.0-2.0s edgeMargin, 35.2-37.6s discontinuity, 54.0-56.8s discontinuity, 65.3-67.3s edgeMargin
+WW-017 holdout compound#8 rate 8000 L 63.0s: detections 2 mapped 3 coverage 0.83 p95 0.715 max 0.715 ms bridges 0 dropped[461.0 ms, 0 ppm]=flagged offsetStep err 0.424s; clockStep[369.1 ms, 0 ppm]=flagged offsetStep err 0.018s | det offsetStep@40.20s[38.34-42.06], offsetStep@54.80s[53.23-56.37] | unsupported 0.0-2.0s edgeMargin, 38.3-42.1s discontinuity, 53.2-56.4s discontinuity, 61.0-63.0s edgeMargin
+WW-017 holdout compound#9 rate 8000 L 50.2s: detections 2 mapped 3 coverage 0.81 p95 0.985 max 0.985 ms bridges 0 clockStep[-17.3 ms, 0 ppm]=flagged offsetStep err 0.364s; inserted[-86.8 ms, 0 ppm]=flagged offsetStep err 0.335s | det offsetStep@19.40s[17.98-20.82], offsetStep@35.20s[33.91-36.49] | unsupported 0.0-2.0s edgeMargin, 18.0-20.8s discontinuity, 33.9-36.5s discontinuity, 48.2-50.2s edgeMargin
+WW-017 holdout compound#10 rate 8000 L 69.6s: detections 2 mapped 3 coverage 0.79 p95 0.905 max 0.905 ms bridges 0 rateChange[0.0 ms, -335 ppm]=flagged slopeChange err 0.039s; dropped[66.6 ms, 0 ppm]=flagged offsetStep err 0.235s | det slopeChange@44.48s[40.45-48.51], offsetStep@61.20s[59.93-62.47] | unsupported 0.0-2.0s edgeMargin, 40.4-48.5s discontinuity, 59.9-62.5s discontinuity, 67.6-69.6s edgeMargin
+WW-017 holdout compound#11 rate 8000 L 61.9s: detections 2 mapped 3 coverage 0.68 p95 0.542 max 0.542 ms bridges 0 rateChange[0.0 ms, -352 ppm]=flagged slopeChange err 0.134s; rateChange[0.0 ms, 343 ppm]=flagged slopeChange err 0.115s | det slopeChange@32.19s[28.29-36.09], slopeChange@47.58s[43.62-51.55] | unsupported 0.0-2.0s edgeMargin, 28.3-36.1s discontinuity, 43.6-51.5s discontinuity, 59.9-61.9s edgeMargin
+WW-017 holdout compound#12 rate 8000 L 60.8s: detections 2 mapped 2 coverage 0.60 p95 0.601 max 0.605 ms bridges 0 rateChange[0.0 ms, 372 ppm]=flagged slopeChange err 0.093s; rateChange[0.0 ms, -300 ppm]=flagged slopeChange err 0.086s | det slopeChange@9.69s[5.96-13.42], slopeChange@41.40s[37.04-45.76] | unsupported 0.0-2.0s edgeMargin, 2.0-6.0s tooShort, 6.0-13.4s discontinuity, 37.0-45.8s discontinuity, 58.8-60.8s edgeMargin
+WW-017 holdout compound#13 rate 8000 L 69.8s: detections 2 mapped 3 coverage 0.78 p95 0.092 max 0.092 ms bridges 0 restart[461.3 ms, -73 ppm]=flagged offsetStep err 0.295s; rateChange[0.0 ms, 336 ppm]=flagged slopeChange err 0.051s | det offsetStep@37.40s[35.54-39.26], slopeChange@53.09s[49.10-57.08] | unsupported 0.0-2.0s edgeMargin, 35.5-39.3s discontinuity, 49.1-57.1s discontinuity, 67.8-69.8s edgeMargin
+WW-017 holdout compound#14 rate 8000 L 52.2s: detections 2 mapped 2 coverage 0.68 p95 0.502 max 0.502 ms bridges 0 inserted[-21.9 ms, 0 ppm]=flagged offsetStep err 0.082s; rateChange[0.0 ms, 396 ppm]=flagged slopeChange err 0.069s | det offsetStep@29.00s[27.58-30.42], slopeChange@44.09s[40.51-47.67] | unsupported 0.0-2.0s edgeMargin, 27.6-30.4s discontinuity, 40.5-47.7s discontinuity, 47.7-50.2s tooShort, 50.2-52.2s edgeMargin
+WW-017 holdout table
+stratum | cases | plants flagged/unsupported/bridged | false splits | spurious detections | coverage (mean) | worst p95 / max ms
+clean | 20 | 0/0/0 | 0/20 | 0 | 0.93 | 0.783 / 0.784
+transient | 15 | 0/0/0 | 0/15 | 0 | 0.91 | 0.936 / 0.936
+silenceGap | 15 | 0/0/0 | 0/15 | 0 | 0.93 | 0.970 / 0.970
+dropped | 20 | 20/0/0 | n/a | 0 | 0.89 | 0.966 / 0.967
+inserted | 20 | 20/0/0 | n/a | 0 | 0.88 | 0.964 / 0.964
+clockStep | 20 | 20/0/0 | n/a | 0 | 0.84 | 1.015 / 1.016
+restart | 20 | 20/0/0 | n/a | 0 | 0.86 | 0.845 / 0.846
+rateChange | 20 | 20/0/0 | n/a | 0 | 0.65 | 1.004 / 1.007
+compound | 15 | 30/0/0 | n/a | 0 | 0.77 | 0.985 / 0.985
+✔ Test frozenHoldout() passed after 734.773 seconds.
+✔ Suite "Segment holdout (m2-freeze-discontinuity-2)" passed after 734.773 seconds.
+✔ Test run with 1 test in 1 suite passed after 734.773 seconds.
+2026-10-06T19:22:05Z
