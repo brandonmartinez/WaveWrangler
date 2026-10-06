@@ -13,7 +13,8 @@ private typealias ShowSession = CanonicalDocumentSession<ShowCoder>
 /// recreated at the start and deleted at the end (deletion recorded). Opt-in: `WW_HOLDOUT=1 WW_ICLOUD_TRIAL=1`.
 /// Results describe what iCloud Drive was observed to do here; nothing is generalized to other providers.
 @Suite("M1 durability holdout — iCloud Drive observed trial", .serialized,
-       .enabled(if: Holdout.enabled && Holdout.iCloudEnabled, "WW_HOLDOUT=1 WW_ICLOUD_TRIAL=1"))
+       .enabled(if: Holdout.enabled && Holdout.iCloudEnabled,
+                "Live iCloud/two-device test: skipped by default; set WW_LIVE_PROVIDER_TESTS=1 to opt in (#146), with WW_HOLDOUT=1 WW_ICLOUD_TRIAL=1"))
 struct HoldoutICloudTrialTests {
     static let trialRoot = FileManager.default.homeDirectoryForCurrentUser
         .appending(path: "Library/Mobile Documents/com~apple~CloudDocs/WaveWrangler-M1-Synthetic-Trial", directoryHint: .isDirectory)
