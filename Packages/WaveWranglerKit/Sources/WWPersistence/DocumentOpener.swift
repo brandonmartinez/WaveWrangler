@@ -52,6 +52,9 @@ public struct DocumentOpener<Coder: CanonicalDocumentCoding>: Sendable {
     /// Logical identity of a decoded payload. When set and the caller passes the expected `key`, a valid
     /// document of a *different* identity at that location is refused as damaged (`identityMismatch`).
     public let identityOf: (@Sendable (Coder.Payload) -> DocumentKey)?
+    /// Decodes recovery records offered read-only (default: `coder`). A format with a migration may also
+    /// upgrade supported older records in memory here; the canonical file itself still needs the migration.
+    public let recoveryDecode: (@Sendable (Data) throws -> DecodedDocument<Coder.Payload>)?
 
     public init(
         coder: Coder,
@@ -59,7 +62,8 @@ public struct DocumentOpener<Coder: CanonicalDocumentCoding>: Sendable {
         coordination: any FileCoordinating = NSFileCoordination(),
         recovery: RecoveryStore?,
         migratableSchemas: Set<Int> = [],
-        identityOf: (@Sendable (Coder.Payload) -> DocumentKey)? = nil
+        identityOf: (@Sendable (Coder.Payload) -> DocumentKey)? = nil,
+        recoveryDecode: (@Sendable (Data) throws -> DecodedDocument<Coder.Payload>)? = nil
     ) {
         self.coder = coder
         self.ops = ops
@@ -67,6 +71,7 @@ public struct DocumentOpener<Coder: CanonicalDocumentCoding>: Sendable {
         self.recovery = recovery
         self.migratableSchemas = migratableSchemas
         self.identityOf = identityOf
+        self.recoveryDecode = recoveryDecode
     }
 
     /// Opens `url`. `key` (when known, e.g. from the library) locates recovery checkpoints; otherwise the
@@ -105,7 +110,9 @@ public struct DocumentOpener<Coder: CanonicalDocumentCoding>: Sendable {
         var keys: [DocumentKey] = key.map { [$0] } ?? []
         if let url { keys += recovery.keys(forLocation: url).filter { !keys.contains($0) } }
         return keys.flatMap { key in
-            ((try? recovery.validatedCheckpoints(for: key, coder: coder)) ?? []).map {
+            let records = recoveryDecode.map { try? recovery.validatedCheckpoints(for: key, decode: $0) }
+                ?? (try? recovery.validatedCheckpoints(for: key, coder: coder))
+            return (records ?? []).map {
                 RecoveryCandidate(checkpoint: $0.checkpoint, document: $0.document)
             }
         }

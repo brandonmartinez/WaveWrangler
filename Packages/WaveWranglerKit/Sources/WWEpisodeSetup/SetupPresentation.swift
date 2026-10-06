@@ -184,7 +184,8 @@ public struct SetupPresentation: Sendable {
                         id: .channel(source.id, ref.speakerID),
                         name: "Channel assignment",
                         epoch: .none,
-                        channel: channel,
+                        // The reference's own channel: `.unknown` reads "Unknown", never channel 1.
+                        channel: Self.channelText(ref.channel.channel.value),
                         speaker: CellText(speakerNames[ref.speakerID] ?? "Unknown speaker"),
                         role: Self.roleText(ref, source: source, assignment: episode.assignment(for: ref.speakerID)),
                         status: nil,
@@ -237,7 +238,8 @@ public struct SetupPresentation: Sendable {
             let primaryText: CellText
             let rowStatus: SetupSpeakerRow.Status
             if let primary = assignment.primary, let source = episode.source(primary.sourceID) {
-                let channelWords = episode.statedChannel(of: source.id).map { "channel \($0 + 1)" } ?? "channel unknown"
+                // The primary reference's own channel (schema 2): Unknown reads "channel unknown", never channel 1.
+                let channelWords = primary.channel.value.map { "channel \($0 + 1)" } ?? "channel unknown"
                 let confirmed = assignment.primaryConfirmation == .userConfirmed
                 let text = "\(source.displayNameHint) · \(channelWords)" + (confirmed ? "" : " (not confirmed)")
                 primaryText = CellText(text, accessibilityValue: text.replacingOccurrences(of: " · ", with: " "))

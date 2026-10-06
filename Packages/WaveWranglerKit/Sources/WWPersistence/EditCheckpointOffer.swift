@@ -73,6 +73,7 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
         documentID: String,
         onDisk: RevisionFingerprint?,
         coder: JSONEnvelopeCoder<Payload>,
+        decodeOlder: ((Data) throws(PersistenceError) -> DecodedDocument<Payload>)? = nil,
         belongsToDocument: (Payload) -> Bool
     ) -> EditCheckpointOffer {
         var usable: [Candidate] = []
@@ -96,7 +97,12 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
             }
             let decoded: DecodedDocument<Payload>
             do throws(PersistenceError) {
-                decoded = try coder.decode(record.snapshot)
+                do throws(PersistenceError) {
+                    decoded = try coder.decode(record.snapshot)
+                } catch .unsupportedOlderSchema(found: _, minimum: _) where decodeOlder != nil {
+                    // A record written before a format change: upgraded in memory (read-only), never "damaged".
+                    decoded = try decodeOlder!(record.snapshot)
+                }
             } catch {
                 if case let .unknownNewerSchema(found, supported) = error {
                     problems.append(.newerFormat(entry.url, found: found, supported: supported))

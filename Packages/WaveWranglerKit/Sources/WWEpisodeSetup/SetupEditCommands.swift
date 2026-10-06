@@ -83,7 +83,7 @@ public struct SetupEditCommands {
     public func setChannel(_ channel: Int?, for sourceIDs: [SourceID]) -> Bool {
         let id = episodeID
         return editor.applySetupEdit(SetupUndoName.setChannel) { model throws(DomainError) in
-            if let channel, channel < 1 { throw .invalidChannel(ChannelReference(sourceID: sourceIDs.first ?? SourceID(), channel: channel - 1)) }
+            if let channel, channel < 1 { throw .invalidChannel(ChannelReference(sourceID: sourceIDs.first ?? SourceID(), channel: .known(channel - 1))) }
             var result = model
             for source in sourceIDs { result = try result.settingStatedChannel(channel.map { $0 - 1 }, forSource: source, in: id) }
             return result

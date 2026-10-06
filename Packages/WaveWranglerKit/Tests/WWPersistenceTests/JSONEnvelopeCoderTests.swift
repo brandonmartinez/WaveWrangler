@@ -15,7 +15,7 @@ struct JSONEnvelopeCoderTests {
             number: 1,
             recordedOn: CalendarDay(year: 2026, month: 10, day: 1),
             sources: [source],
-            speakerAssignments: [SpeakerAssignment(speakerID: speaker.id, primary: ChannelReference(sourceID: source.id, channel: 0), primaryConfirmation: .userConfirmed)]
+            speakerAssignments: [SpeakerAssignment(speakerID: speaker.id, primary: ChannelReference(sourceID: source.id, channel: .known(0)), primaryConfirmation: .userConfirmed)]
         )
         let history = EditHistory().recording(EditRecord(actionName: "Add Episode", timestamp: Date(timeIntervalSince1970: 1_790_000_000.123)))
         return ShowDocumentModel(show: Show(title: "Show / Title"), speakers: [speaker], episodes: [episode], history: history)
@@ -105,7 +105,10 @@ struct JSONEnvelopeCoderTests {
     @Test func refusesUnsupportedOlderSchema() throws {
         var object = try json(coder.encode(sampleModel(), revision: 1))
         object["schemaVersion"] = 0
-        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 0, minimum: 1)) { try coder.decode(data(object)) }
+        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 0, minimum: SchemaVersion.show)) { try coder.decode(data(object)) }
+        // Schema 1 shows (index-0 channel placeholder) need the C5 migration; the current reader never reinterprets them.
+        object["schemaVersion"] = 1
+        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 1, minimum: SchemaVersion.show)) { try coder.decode(data(object)) }
     }
 
     @Test func refusesOtherFormats() throws {

@@ -192,14 +192,16 @@ public final class ShowLocationStore: Sendable {
 }
 
 extension DocumentOpener where Coder == JSONEnvelopeCoder<ShowDocumentModel> {
-    /// A show opener that refuses a different show found at an expected location.
+    /// A show opener that refuses a different show found at an expected location. A schema 1 show opens as
+    /// `.needsMigration` (never as damaged, never upgraded on open); schema 1 recovery records stay offerable.
     public static func show(
         ops: any FileOperations = LocalFileOperations(),
         coordination: any FileCoordinating = NSFileCoordination(),
         recovery: RecoveryStore?,
-        migratableSchemas: Set<Int> = []
+        migratableSchemas: Set<Int> = ShowSchemaMigration.migratableSchemas
     ) -> DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>> {
         DocumentOpener(coder: .show, ops: ops, coordination: coordination, recovery: recovery,
-                       migratableSchemas: migratableSchemas, identityOf: { .show($0.show.id) })
+                       migratableSchemas: migratableSchemas, identityOf: { .show($0.show.id) },
+                       recoveryDecode: { try ShowSchemaMigration.decodeUpgradingOlder($0) })
     }
 }

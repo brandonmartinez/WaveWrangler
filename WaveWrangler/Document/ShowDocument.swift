@@ -125,7 +125,11 @@ final class ShowDocument: NSDocument {
     }
 
     private func load(_ data: Data, url: URL?) throws {
-        let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery)
+        // A schema 1 show reports `.needsMigration` (refused below with the file unchanged until the #159 prompt
+        // flow exists); schema 1 recovery checkpoints stay offerable, upgraded in memory.
+        let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery,
+                                    migratableSchemas: ShowSchemaMigration.migratableSchemas,
+                                    recoveryDecode: { try ShowSchemaMigration.decodeUpgradingOlder($0) })
         let outcome = OpenSignposts.measure("document.decode") { opener.outcome(for: data, url: url) }
         switch outcome {
         case let .editable(document, fingerprint):
@@ -530,6 +534,7 @@ final class ShowDocument: NSDocument {
         let offer = EditCheckpointOffer.assess(
             recovery.offeredEditCheckpoints(for: documentKey),
             documentID: documentKey.rawValue, onDisk: onDiskBase, coder: coder,
+            decodeOlder: ShowSchemaMigration.decodeUpgradingOlder,
             belongsToDocument: { $0.show.id == showID }
         ).excluding(restoredOfferURLs.union(setAsideOfferURLs))
         status.setEditCheckpointOffer(offer.isEmpty ? nil : offer)

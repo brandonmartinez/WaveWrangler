@@ -48,6 +48,8 @@ public enum Knowledge<Value: Sendable & Codable & Equatable>: Sendable, Equatabl
     }
 }
 
+extension Knowledge: Hashable where Value: Hashable {}
+
 /// Whether a human has confirmed a fact or it is still a provisional suggestion.
 public enum Confirmation: String, Sendable, Codable, Equatable, CaseIterable {
     case provisional

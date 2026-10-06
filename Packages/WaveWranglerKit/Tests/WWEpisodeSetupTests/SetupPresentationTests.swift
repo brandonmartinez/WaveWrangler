@@ -20,7 +20,7 @@ private struct Fixture {
         model = try model.addingSpeaker(ana, toEpisode: episodeID).addingSpeaker(guest, toEpisode: episodeID)
         model = try model.assigningSpeaker(ana.id, toSource: tr1.id, in: episodeID)
         model = try model.settingStatedChannel(0, forSource: tr1.id, in: episodeID)
-        model = try model.usingAsPrimary(ChannelReference(sourceID: tr1.id, channel: 0), for: ana.id, in: episodeID)
+        model = try model.usingAsPrimary(ChannelReference(sourceID: tr1.id, channel: .known(0)), for: ana.id, in: episodeID)
         self.model = model
     }
 }
@@ -49,6 +49,29 @@ struct SetupPresentationTests {
         #expect(tr1.recordedFacts?.channelCount.text == "Unknown")
         #expect(tr1.recordedFacts?.sampleRate.text == "Unknown")
         #expect(SetupPresentation(model: f.model, episodeID: f.episodeID, statuses: [:]).sourceRows.last?.id == .group(nil))
+    }
+
+    @Test func unknownChannelReferencesReadUnknownNeverChannelOne() throws {
+        let f = try Fixture()
+        // Guest gets an explicit unknown-channel backup on tr1 (whose stated channel 0 belongs to Ana's primary),
+        // and a primary on tr2 (no stated channel): schema 2 keeps both unknown, never index 0.
+        var model = try f.model.addingBackup(ChannelReference(sourceID: f.tr1.id, channel: .unknown), to: f.guest.id, in: f.episodeID)
+        model = try model.assigningSpeaker(f.guest.id, toSource: f.tr2.id, in: f.episodeID)
+        let tr2Ref = try #require(model.episode(f.episodeID)?.references(to: f.tr2.id).first)
+        #expect(tr2Ref.channel.channel == .unknown)
+        model = try model.usingAsPrimary(tr2Ref.channel, for: f.guest.id, in: f.episodeID)
+        let p = SetupPresentation(model: model, episodeID: f.episodeID, statuses: [f.tr2.id: ready])
+
+        let tr1 = try #require(p.sourceRows[0].children?.first)
+        let children = try #require(tr1.children)
+        #expect(children.map(\.speaker.text) == ["Ana", "Guest"])
+        #expect(children[0].channel == CellText("1", accessibilityValue: "1, not checked against the file"))
+        #expect(children[1].channel == .unknown, "the unknown reference is not shown as channel 1")
+        #expect(children[1].channel.accessibilityValue == "unknown")
+
+        let guest = try #require(p.speakerRows.first { $0.id == f.guest.id })
+        #expect(guest.primary.text == "tr2.wav · channel unknown")
+        #expect(guest.accessibilityValue == "Primary tr2.wav channel unknown, 1 backup, Primary chosen")
     }
 
     @Test func headerCountsSourcesNeedingAttention() throws {
