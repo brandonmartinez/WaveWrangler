@@ -740,11 +740,26 @@ def check_summary(op, edits):
             "carried": [edit_target(e) for e in edits.values() if edit_presence(after, e) is not None]}
 
 
-def product_load_ok(op):
-    """'At every load': a product load showing ready must not leave an unresolved version outside the notice."""
-    if op.get("levelAfterLoad") != "ready":
-        return True
-    return int(op.get("rawUnresolvedAfterLoad") or 0) <= int(op.get("unusableAfterLoad") or 0)
+def backups_for_resolved(op):
+    """Every provider version a product operation resolved was backed up during that operation."""
+    added = int(op.get("conflictBackups") or 0) - int(op.get("conflictBackupsAtStart") or 0)
+    return added >= int(op.get("resolvedProviderConflicts") or 0)
+
+
+def level_sample(dev, host, key, libfile, edits):
+    """A read-only level sample (lib-inspect), judged by the m1-freeze-4 rule."""
+    base = dev.state(host, f"library-{key}")
+    report = dev.run(host, ["lib-inspect", "--file", libfile, "--level-settings", f"{base}/settings.json", "--level-recovery", f"{base}/recovery"],
+                     timeout=120)
+    sample = judge_sample(report, host, edits)
+    sample["aClockMs"] = dev.a_time(host, report.get("epochMs")) or now_ms()
+    return sample
+
+
+def settle_clause(sample):
+    """truth1LibraryClause at settle: every unresolved version resolved, or surfaced (L4 or the #119 notice)."""
+    surfaced = sample["level"] == "changedElsewhere" or (sample["versions"] and all(v.get("noticeShown") for v in sample["versions"]))
+    return {"level": sample["level"], "rawUnresolved": sample["raw"], "ok": (sample["raw"] == 0 or bool(surfaced)) and not sample["unsampled"]}
 
 
 def case_library(dev, case):
@@ -784,12 +799,20 @@ def case_library(dev, case):
     edits = {"A": edit_a, "B": edit_b}
     skew, first, t0, ta, tb = race_times(rng)
     sampler = Sampler(dev, case, libfile, edits)
+    at_load = []   # 'and at every load': a read-only sample right after each product load, per host
+
+    def after_load(host, label):
+        sample = level_sample(dev, host, key, libfile, edits)
+        sample.update({"host": host, "after": label})
+        at_load.append(sample)
     try:
         with cf.ThreadPoolExecutor(2) as pool:
             fa = pool.submit(dev.run, "A", lib_args(dev, "A", key, args_a + ["--at-epoch-ms", str(ta)]))
             fb = pool.submit(dev.run, "B", lib_args(dev, "B", key, args_b + ["--at-epoch-ms", str(dev.b_time(tb))]))
             updates = {"A": fa.result(), "B": fb.result()}
         ops += [("A", "edit", updates["A"]), ("B", "edit", updates["B"])]
+        for host in ("A", "B"):
+            after_load(host, "edit")
         # Ordering gate: B holds the unresolved version (or app-detected L4) for ≥2 samples before A combines;
         # in concurrentCombine, on both hosts before round 1. A must hold it too for its Combine to act.
         gate = {"B": wait_holding(sampler, "B", AWAIT_TIMEOUT)}
@@ -816,10 +839,12 @@ def case_library(dev, case):
                 results = {h: f.result() for h, f in futures.items()}
             for h, r in results.items():
                 ops.append((h, f"round{number}", r))
+                after_load(h, f"round{number}")
             a1, b1, ms1, settled1, _ = settle_tracking(dev, ["lib-inspect", "--file", libfile], lib_key, lambda r: 0, now_ms(), timeout=ROUND_SETTLE)
             finals = {h: dev.run(h, lib_args(dev, h, key, [])) for h in ("A", "B")}
             for h, r in finals.items():
                 ops.append((h, f"round{number}-load", r))
+                after_load(h, f"round{number}-load")
             a2, b2, ms2, settled2, _ = settle_tracking(dev, ["lib-inspect", "--file", libfile], lib_key, lambda r: 0, now_ms(), timeout=ROUND_SETTLE)
             cur2 = {"A": a2.get("current", {}), "B": b2.get("current", {})}
             presence = {h: {host: edit_presence(cur2[host].get("model", {}), edits[h]) for host in ("A", "B")} for h in ("A", "B")}
@@ -833,15 +858,10 @@ def case_library(dev, case):
                            "settleMs": ms1, "settled": settled1, "afterLoadsSettleMs": ms2, "afterLoadsSettled": settled2,
                            "finalLevels": {h: finals[h].get("levelState") for h in finals}, "unresolved": unresolved,
                            "byteIdentical": byte_identical, "presence": presence, "converged": converged})
-            # truth1LibraryClause at settle, per host: every unresolved version resolved or surfaced (L4 / #119 notice).
-            settle_clause = {h: {"level": finals[h].get("levelState"), "rawUnresolvedAfterLoad": finals[h].get("rawUnresolvedAfterLoad"),
-                                 "unusableWithNotice": finals[h].get("unusableAfterLoad"),
-                                 "ok": int(finals[h].get("rawUnresolvedAfterLoad") or 0) == 0
-                                 or finals[h].get("levelState") == "changedElsewhere"
-                                 or int(finals[h].get("rawUnresolvedAfterLoad") or 0) <= int(finals[h].get("unusableAfterLoad") or 0)}
-                             for h in finals}
-            rounds[-1]["settleClause"] = settle_clause
-            final = (a2, b2, presence, unresolved, settle_clause, byte_identical, settled1 and settled2)
+            # truth1LibraryClause at settle, per host, from a read-only sample taken at the settle point.
+            clause = {h: settle_clause(level_sample(dev, h, key, libfile, edits)) for h in ("A", "B")}
+            rounds[-1]["settleClause"] = clause
+            final = (a2, b2, presence, unresolved, clause, byte_identical, settled1 and settled2)
             still_l4 = any(finals[h].get("levelState") == "changedElsewhere" for h in finals)
             done = converged if case.variant == "concurrentCombine" else not still_l4
             if done or not (settled1 and settled2):
@@ -850,20 +870,24 @@ def case_library(dev, case):
         sampler.finish()
     combines = [(h, label, op) for h, label, op in ops if "combineSummary" in op]
     summary_checks = [{"host": h, "op": label, **(check_summary(op, edits) or {})} for h, label, op in combines]
-    backups_ok = all(int(op.get("conflictBackups") or 0) >= int(op.get("providerConflictsAfterLoad") or 0) for _, _, op in combines)
-    load_checks = [{"host": h, "op": label, "level": op.get("levelAfterLoad"), "rawUnresolved": op.get("rawUnresolvedAfterLoad"),
-                    "unusable": op.get("unusableAfterLoad"), "ok": product_load_ok(op)} for h, label, op in ops if "levelAfterLoad" in op]
+    backups_ok = all(backups_for_resolved(op) for _, _, op in ops if "levelAfterLoad" in op)
+    load_checks = [{"host": s["host"], "after": s["after"], "level": s["level"], "rawUnresolved": s["raw"], "versions": s["versions"],
+                    "freeze4Fail": s["freeze4Fail"], "literalFreeze3Fail": s["literalFreeze3Fail"], "ok": not s["freeze4Fail"] and not s["unsampled"]}
+                   for s in at_load]
+    product_ops = [{"host": h, "op": label, "levelAfterLoad": op.get("levelAfterLoad"), "rawUnresolvedAfterLoad": op.get("rawUnresolvedAfterLoad"),
+                    "resolved": op.get("resolvedProviderConflicts"), "backupsAdded": int(op.get("conflictBackups") or 0) - int(op.get("conflictBackupsAtStart") or 0)}
+                   for h, label, op in ops if "levelAfterLoad" in op]
     sampling = sampler.summary()
     sampling_ok = all(s["freeze4Fails"] == 0 for s in sampling.values())
     cadence_ok = all((s["maxGapWhileHoldingMs"] or 0) <= SAMPLE_MAX_GAP_MS for s in sampling.values())
     l4 = {h: any(op.get("levelAfterLoad") == "changedElsewhere" for hh, _, op in ops if hh == h) for h in ("A", "B")}
     app_detected = {h: str(updates[h].get("update", "")).startswith("failed") for h in ("A", "B")}
-    a2, b2, presence, unresolved, settle_clause, byte_identical, settled = final
+    a2, b2, presence, unresolved, clause_at_settle, byte_identical, settled = final
     if case.variant == "concurrentCombine":
         outcome_ok = converged
     else:   # combineOnAThenB: one current byte-identical library holding both changes on both hosts + the settle clause
         outcome_ok = (settled and byte_identical and all(p in ("current", "copy") for per in presence.values() for p in per.values()))
-    outcome_ok = outcome_ok and all(c["ok"] for c in settle_clause.values())
+    outcome_ok = outcome_ok and all(c["ok"] for c in clause_at_settle.values())
     ok = (outcome_ok and sampling_ok and cadence_ok and all(c.get("ok") for c in summary_checks) and bool(summary_checks)
           and backups_ok and all(c["ok"] for c in load_checks) and setup_wait_order_ok(case))
     return {"verdict": "pass" if ok else "fail", "setupOutcome": "established", "variant": case.variant, "skewMs": skew, "first": first,
@@ -871,8 +895,8 @@ def case_library(dev, case):
             "updateResults": {h: updates[h].get("update") for h in updates},
             "detectionPath": "appDetected" if any(app_detected.values()) else "providerL4" if any(l4.values()) else "undetected",
             "l4OnLoad": l4, "orderingGate": gate, "rounds": rounds, "converged": converged, "presence": presence,
-            "settleClause": settle_clause, "unresolvedAtSettle": unresolved,
-            "summaryChecks": summary_checks, "backupsBeforeResolve": backups_ok, "productLoads": load_checks,
+            "settleClause": clause_at_settle, "unresolvedAtSettle": unresolved,
+            "summaryChecks": summary_checks, "backupsForResolved": backups_ok, "samplesAtLoads": load_checks, "productOps": product_ops,
             "levelSampling": sampling, "levelSamplingOk": sampling_ok, "samplingCadenceOk": cadence_ok,
             "levelSamples": sampler.records(), "versionCounts": version_counts_lib(a2, b2),
             "conflictBackups": {h: max([int(op.get("conflictBackups") or 0) for hh, _, op in ops if hh == h] or [0]) for h in ("A", "B")},

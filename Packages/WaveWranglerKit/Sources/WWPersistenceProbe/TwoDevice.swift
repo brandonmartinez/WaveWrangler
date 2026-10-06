@@ -134,7 +134,8 @@ extension Probe {
         }
         let store = LibraryStore(containerFolder: container, settings: FileLibrarySettings(url: file), bookmarks: PathBookmarks(),
                                  recovery: recovery, indexCache: LibraryIndexCache(url: cache))
-        var object: [String: Any] = ["host": hostLabel(), "loadStartedEpochMs": epochMs()]
+        var object: [String: Any] = ["host": hostLabel(), "loadStartedEpochMs": epochMs(),
+                                     "conflictBackupsAtStart": ((try? recovery.conflictCandidates(for: .library)) ?? []).count]
         object["load"] = "\(await store.load())"
         object["loadFinishedEpochMs"] = epochMs()
         object["levelAfterLoad"] = "\(await store.levelState)"
@@ -224,6 +225,7 @@ extension Probe {
         object["providerConflicts"] = await store.providerConflicts.count
         object["unusableProviderConflicts"] = await store.unusableProviderConflicts.count
         object["conflictBackups"] = ((try? recovery.conflictCandidates(for: .library)) ?? []).count
+        object["resolvedProviderConflicts"] = await store.resolvedProviderConflicts.count
         object["pendingEdits"] = await store.pendingEditCount
         let library = await store.library
         object["collections"] = library?.collections.map(\.name) ?? []
