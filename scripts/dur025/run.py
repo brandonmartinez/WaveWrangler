@@ -741,9 +741,8 @@ def check_summary(op, edits):
 
 
 def backups_for_resolved(op):
-    """Every provider version a product operation resolved was backed up during that operation."""
-    added = int(op.get("conflictBackups") or 0) - int(op.get("conflictBackupsAtStart") or 0)
-    return added >= int(op.get("resolvedProviderConflicts") or 0)
+    """Every provider version a product operation resolved has a backup with exactly its bytes (probe-checked)."""
+    return op.get("resolvedWithoutBackup") == 0
 
 
 def level_sample(dev, host, key, libfile, edits):
@@ -895,7 +894,9 @@ def case_library(dev, case):
                     "freeze4Fail": s["freeze4Fail"], "literalFreeze3Fail": s["literalFreeze3Fail"], "ok": not s["freeze4Fail"] and not s["unsampled"]}
                    for s in at_load]
     product_ops = [{"host": h, "op": label, "levelAfterLoad": op.get("levelAfterLoad"), "rawUnresolvedAfterLoad": op.get("rawUnresolvedAfterLoad"),
-                    "resolved": op.get("resolvedProviderConflicts"), "backupsAdded": int(op.get("conflictBackups") or 0) - int(op.get("conflictBackupsAtStart") or 0)}
+                    "resolved": op.get("resolvedProviderConflicts"), "resolvedDistinct": op.get("resolvedDistinct"),
+                    "resolvedWithoutBackup": op.get("resolvedWithoutBackup"),
+                    "backupsAdded": int(op.get("conflictBackups") or 0) - int(op.get("conflictBackupsAtStart") or 0)}
                    for h, label, op in ops if "levelAfterLoad" in op]
     sampling = sampler.summary()
     sampling_ok = all(s["freeze4Fails"] == 0 for s in sampling.values())

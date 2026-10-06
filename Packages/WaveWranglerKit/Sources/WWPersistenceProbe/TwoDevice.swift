@@ -225,7 +225,13 @@ extension Probe {
         object["providerConflicts"] = await store.providerConflicts.count
         object["unusableProviderConflicts"] = await store.unusableProviderConflicts.count
         object["conflictBackups"] = ((try? recovery.conflictCandidates(for: .library)) ?? []).count
-        object["resolvedProviderConflicts"] = await store.resolvedProviderConflicts.count
+        // "Resolved with its backup present": each version this operation resolved has a backup with exactly its
+        // bytes (backups are content-addressed, so re-resolving the same version adds no new file).
+        let resolved = await store.resolvedProviderConflicts
+        let backupDigests = Set(((try? recovery.conflictCandidates(for: .library)) ?? []).compactMap { try? Data(contentsOf: $0) }.map(sha256Hex))
+        object["resolvedProviderConflicts"] = resolved.count
+        object["resolvedDistinct"] = Set(resolved.map(\.id)).count
+        object["resolvedWithoutBackup"] = resolved.filter { version in version.bytes.map { !backupDigests.contains(sha256Hex($0)) } ?? true }.count
         object["pendingEdits"] = await store.pendingEditCount
         let library = await store.library
         object["collections"] = library?.collections.map(\.name) ?? []
