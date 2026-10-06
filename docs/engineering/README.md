@@ -27,6 +27,8 @@ Packages/WaveWranglerKit/         Local Swift package linked by the app
   Sources/WWPersistence/          Formats/coder, publication protocol, recovery store, migration, autosave policy, library store
   Sources/WWPersistenceProbe/     `wwpersist-probe` headless CLI for multi-process/provider trials (synthetic files only)
   Sources/WWSources/              Source references: read-only gateway, access records, availability, import, relink
+  Sources/WWDecode/               Read-only content gateway (the only source-content opener), native streaming decoder,
+                                  format-interpretation descriptor, typed decode failures
   Sources/WWOrganizer/            Library/workspace presentation: wording catalogs, preference keys,
                                   collection/combine operations, library session, sidebar models, menu shortcut register
   Tests/WW*Tests/                 Swift Testing suites per module
@@ -36,7 +38,7 @@ scripts/demo/                     Manual demonstration helpers: synthetic fixtur
 .github/workflows/ci.yml          Ordinary build/test CI
 ```
 
-**Planned (M2):** `WWDecode` (WW-050) and `WWTimeMap` (WW-015) are in progress in open lanes; a WW-020
+**Planned (M2):** `WWTimeMap` (WW-015) adds its row through its own lane; a WW-020
 module (name TBD, derived-asset/job infrastructure, versioned map persistence, C5 migration) is planned.
 Each lane adds its own `Sources/<Module>/` row here when its module merges.
 
@@ -56,11 +58,13 @@ Parallel sessions work on disjoint folders. Cross-folder changes go through the 
 | `Document/`, `WWPersistence` | Persistence owner | Publication, prior checkpoint, recovery, migration, autosave policy, newer-format refusal. |
 | `Library/`, `Workspace/`, `Commands/`, `Settings/` | Library UI owner | Keyboard/VoiceOver/visible focus are part of done, not polish. |
 | `Sources/`, `WWSources` | Sources owner | Access records, bookmarks, availability/download states, relink. |
-| Planned (M2) | — | `WWDecode` (WW-050) and `WWTimeMap` (WW-015) are in progress in open lanes; a WW-020 module (name TBD) is planned. See [`docs/m2/ww-019-m2-contracts.md`](../m2/ww-019-m2-contracts.md). Each lane adds its own row here when its module merges. |
+| `WWDecode` | Mac (WW-050) | Only `SystemSourceContentIO.swift` may open source content, read-only (`ForbiddenAPITests` enforces this, recursively). No writes, no dataless materialization, no partial publication on failure or cancel. Bump `formatInterpretationVersion` whenever the interpretation of the same bytes changes. Envelope evidence: [`docs/m2/evidence/ww-050-decode-envelope.md`](../m2/evidence/ww-050-decode-envelope.md). |
+| Planned (M2) | — | `WWTimeMap` (WW-015) adds its row through its own lane; a WW-020 module (name TBD) is planned. See [`docs/m2/ww-019-m2-contracts.md`](../m2/ww-019-m2-contracts.md). Each lane adds its own row here when its module merges. |
 | `.github/workflows/ci.yml`, `scripts/` | Mac (app foundation) | Keep scripts working for every lane. |
 
 Pure domain logic belongs in the package (testable without the app); the app target holds AppKit/SwiftUI
-integration. `WWPersistence` and `WWSources` depend on `WWCore`; nothing depends on the app.
+integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depends on `WWCore` and
+`WWSources` (scoped access); nothing depends on the app.
 
 ## Selected M1 contracts (implemented behind swappable seams)
 
