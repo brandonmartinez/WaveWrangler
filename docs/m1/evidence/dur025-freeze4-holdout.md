@@ -243,3 +243,14 @@ Harness commits after dev-f3 attempt 1 (all harness bugs or Lead rulings; none t
 ## Redaction note (2026-10-06)
 
 Records were written with paths redacted at write time (`<home>`, `<iCloud Drive>`). One committed file needed an additional redaction: `pre-holdout/dev-f3-attempt1/results.jsonl` captured SSH stderr containing host B's `user@address`. That one string was replaced with `<user>@<host B>`; nothing else changed. Pre-redaction sha256: `73b491bc117528241e49a2a0dd7679d705bbde22c931a23685a5651daaa1c120`. The committed evidence contains no home path, user@host string, LAN address or computer name.
+
+## Final cleanup (grants C and E; 2026-10-06)
+
+**Cleanup gap (harness defect):** `cleanup()` deleted only the run's split folder, so the drill's reserve refill (`drill-f3-reserve`, one synthetic show plus three synthetic sources) remained in the trial folder on both hosts. The calibration and holdout reserves were never used, so they created no folders. Fixed in this PR: `cleanup()` now also deletes `<split>-reserve`. The fix doesn't affect any recorded verdict.
+
+**Final deletion of the `WaveWrangler-M1-Synthetic-Trial` folder, after the M1 DUR-025 work ended:**
+- **Before (03:06:24–25Z):** both hosts listed only the `drill-f3-reserve` synthetic files under `dur025/`.
+- **Deleted:** the whole `WaveWrangler-M1-Synthetic-Trial` folder on host A at 2026-10-06T03:06:31Z and on host B at 2026-10-06T03:06:31Z.
+- **Verified after a 120 s iCloud sync wait:** absent on host A (03:08:31Z) and on host B (03:08:32Z). Neither host's iCloud Drive lists the folder.
+- **Elsewhere:** host B's probe builds and device-local state for all runs were already deleted; host A's device-local state lives under the untracked `.build/` only.
+

@@ -1128,14 +1128,16 @@ def host_record(dev, device):
 
 
 def cleanup(dev, split):
-    """Deletes this run's trial subfolder (iCloud propagates the deletion) and both hosts' device-local state."""
-    target = f"{TRIAL_ROOT}/{split}"
-    existed = os.path.exists(target)
-    shutil.rmtree(target, ignore_errors=True)
+    """Deletes this run's trial subfolders — the split and its reserve split (refills live there) — (iCloud
+    propagates the deletion) and both hosts' device-local state."""
+    targets = [f"{TRIAL_ROOT}/{split}", f"{TRIAL_ROOT}/{split}-reserve"]
+    existed = {redact(t): os.path.exists(t) for t in targets}
+    for target in targets:
+        shutil.rmtree(target, ignore_errors=True)
     shutil.rmtree(dev.local_state, ignore_errors=True)
     subprocess.run(SSH + [f"rm -rf {shlex.quote(dev.remote_state)}"])
-    return {"deleted": redact(target), "existedBefore": existed, "existsAfterLocally": os.path.exists(target),
-            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    return {"deleted": [redact(t) for t in targets], "existedBefore": existed,
+            "existsAfterLocally": any(os.path.exists(t) for t in targets), "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
 
 
 def main():
