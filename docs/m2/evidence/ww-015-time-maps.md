@@ -38,7 +38,7 @@ killed.** One is an equivalent mutant: relaxing the explicit half-open end check
 rejected with the same `placementNotCoveredByEpochMap`, because the hull piece lookup for the last frame finds no
 covering piece. The guard is retained as the early, explicit check.
 
-**Host and commands.** macOS 27.0.1 arm64, Swift 6.4, code at `3b20d0c`. Commands:
+**Host and commands.** macOS 27.0.1 arm64, Swift 6.4, code at `5ad6338` (based on main `109a23c`). Commands:
 - `cd Packages/WaveWranglerKit && swift test --filter WWTimeMapTests` (41 tests in 9 suites, about 4.4 s);
 - `scripts/test.sh`.
 
@@ -48,4 +48,7 @@ CI runs on macos-26 / Xcode 26.6.
 - No offset/drift *estimator* (WW-016/021), no real-recording validation, and no frozen-holdout evaluation;
   calibration on synthetic maps is not holdout evidence.
 - No decoding, resampling or rendering (WW-018), and no persistence or schema migration (WW-020).
-- The clock-approval gate thresholds are the provisional foundation-spike values, not tuned.
+- The clock-approval gate thresholds are the provisional foundation-spike values, not tuned. Passing them is
+  necessary but not sufficient for `clockApproved` (M2-C4 also requires the frozen WW-016 holdout).
+- The lag sign is a *declared* convention, tested here only definitionally. Estimating the lag sign is untested and
+  remains open (M2-C3).
