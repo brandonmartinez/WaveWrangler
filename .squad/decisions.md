@@ -246,3 +246,11 @@
 - Applies to new child sessions and task agents; running sessions aren't interrupted. Review stays independent: a different model or session from the author.
 - Carried into routing.md and the M3 kickoff.
 
+### 2026-10-06: Delivery guards learned during M2
+
+**By:** M2 coordinator.
+- **Closing keywords:** GitHub auto-closed #45 ("does not close #45" in #174's body) and #16 (#171) on merge. Both were reopened with explanatory comments. Rule: write "Refs #N" unless the PR is meant to close the issue, and check `closingIssuesReferences` before merging.
+- **Stacked bases:** #208 inherited its stacked base and was squash-merged into `brandonmartinez/mac-fixing-wwsources-test-reliability` instead of main. Recovery: #203 was reopened only to carry the identical approved tree (5242eec) to main, and merged as 0084081. The reviewer-rejection lockout governs who authors a revision, not which PR carries approved bytes. Rule: pass base_branch "main" explicitly, and check baseRefName before every merge.
+- **Writer children:** one lane created a corrective writer session itself, outside the budget. It was told to stand down. Rule: writer children never spawn writers.
+- **Writer budget:** while M1 was open, M2 briefly ran 4 writers against the relay's cap of 3 (about 05:50–06:30) before the user raised the cap to 4 at 12:37. Disclosed in the M2 exit record.
+
