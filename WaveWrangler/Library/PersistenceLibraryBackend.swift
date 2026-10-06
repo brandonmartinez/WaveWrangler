@@ -15,17 +15,19 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
     @ObservationIgnored let controller: LibraryLocationController
     private(set) var resultMessage: String?
     /// The running move's step, reported by the store (ST-33 step 3).
-    private var moveStep: LibraryMoveStep?
+    private(set) var moveStep: LibraryMoveStep?
 
     init(store: LibraryDocumentStore = .shared, controller: LibraryLocationController = .shared) {
         self.store = store
         self.controller = controller
         let libraryStore = store.store
         let sink = MoveStepSink(self)
+        var hold = Duration.zero
+        #if DEBUG
+        hold = LibraryLocationFixture.moveStepHold
+        #endif
         Task {
-            await libraryStore.onMoveStep { step in
-                Task { @MainActor in sink.backend?.moveStep = step }
-            }
+            await libraryStore.onMoveStep(Self.moveStepHandler(sink: sink, holdAfterChecking: hold))
         }
     }
 
@@ -133,11 +135,6 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
         } else {
             await controller.moveToThisMac()
         }
-        #if DEBUG
-        if case .success(.moved)? = controller.lastOutcome {
-            await LibraryLocationFixture.holdFinishedMoveSteps { self.moveStep = $0 }
-        }
-        #endif
         return result(previous: previous)
     }
 
@@ -177,9 +174,19 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
         }
     }
 
+    /// The store's move-step callback: each reported step becomes the adapter's `moveStep` on the main actor, in
+    /// order. `holdAfterChecking` (UI tests only; zero otherwise) keeps a reported "checking" step visible that long
+    /// before the end is shown, because on a local disk it lasts milliseconds.
+    nonisolated static func moveStepHandler(sink: MoveStepSink, holdAfterChecking: Duration) -> @Sendable (LibraryMoveStep?) -> Void {
+        MoveStepRelay.handler(holdAfterChecking: holdAfterChecking,
+                              current: { sink.backend?.moveStep },
+                              show: { sink.backend?.moveStep = $0 })
+    }
+
     /// §5.1 step 6: the reason for a folder's library this version can't use, then what didn't happen.
     static func blockedReason(_ problem: LibraryDestinationProblem) -> String {
         let block: LibraryMoveWording.ExistingLibraryBlock = switch problem {
+        case .needsPermission: .needsPermission
         case .unreadable: .unreachable
         case .newerFormat: .newerFormat
         case .notALibrary: .damaged
@@ -286,7 +293,7 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
 
 /// Weak, main-actor reference from the store's move-step callback to the adapter.
 @MainActor
-private final class MoveStepSink: Sendable {
+final class MoveStepSink: Sendable {
     weak var backend: PersistenceLibraryBackend?
     init(_ backend: PersistenceLibraryBackend) { self.backend = backend }
 }

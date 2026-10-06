@@ -50,13 +50,14 @@ struct LibraryDestinationProblemTests {
         #expect(await store.library?.collections.map(\.name) == ["Mine"])
     }
 
-    @Test func unreadableLibraryIsReportedAndNeverWritten() async throws {
+    /// A library file WaveWrangler isn't allowed to read is L3 for that library ("needs permission").
+    @Test func permissionDeniedLibraryIsReportedAndNeverWritten() async throws {
         let (rig, store) = try await current(); _ = rig
         let target = try await folderLibrary("unreadable") { _ in }
         let before = try Data(contentsOf: target.file)
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: target.file.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: target.file.path) }
-        #expect(await store.moveLibrary(to: target.folder) == .success(.destinationUnusable(target.file, problem: .unreadable)))
+        #expect(await store.moveLibrary(to: target.folder) == .success(.destinationUnusable(target.file, problem: .needsPermission)))
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: target.file.path)
         #expect(try Data(contentsOf: target.file) == before)
         #expect(await store.levelState == .ready)
@@ -103,8 +104,18 @@ struct LibraryDestinationProblemTests {
         #expect(failed.values == [.copying, nil], "a failed copy is never reported as checking")
     }
 
+    @Test func permissionErrorsAreRecognisedThroughUnderlyingErrors() {
+        #expect(LibraryStore.isPermissionError(CocoaError(.fileReadNoPermission)))
+        #expect(LibraryStore.isPermissionError(NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))))
+        let wrapped = NSError(domain: "Coordination", code: 1, userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM))])
+        #expect(LibraryStore.isPermissionError(wrapped))
+        #expect(!LibraryStore.isPermissionError(CocoaError(.fileReadNoSuchFile)))
+        #expect(!LibraryStore.isPermissionError(NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))))
+    }
+
     @Test func problemReasonsAreDescriptive() {
         #expect(LibraryDestinationProblem.unreadable.reason.contains("could not be read"))
+        #expect(LibraryDestinationProblem.needsPermission.reason.contains("permission"))
         #expect(LibraryDestinationProblem.newerFormat(found: 99, supported: 2).reason.contains("format 99"))
         #expect(LibraryDestinationProblem.notALibrary.reason.contains("not a readable library"))
     }

@@ -82,14 +82,11 @@ enum LibraryLocationFixture {
         }
     }
 
-    /// `-WWUITestHoldMoveSteps YES`: after a move, show its steps for a moment each (they last milliseconds on a
-    /// local disk), so a test can read "Moving library — checking copy…". The move has already finished; this
-    /// only holds the progress the store reported.
-    static func holdFinishedMoveSteps(_ show: (LibraryMoveStep?) -> Void) async {
-        guard PersistenceEnvironment.isUITestRun, UserDefaults.standard.bool(forKey: "WWUITestHoldMoveSteps") else { return }
-        show(.checking)
-        try? await Task.sleep(for: .seconds(2))
-        show(nil)
+    /// `-WWUITestHoldMoveSteps YES`: how long a move's reported "checking" step stays visible after the store reports
+    /// the end (it lasts milliseconds on a local disk), so a test can read "Moving library — checking copy…". Applied
+    /// in the adapter's handler for the store's real step reports; nothing about the move changes. Zero otherwise.
+    nonisolated static var moveStepHold: Duration {
+        PersistenceEnvironment.isUITestRun && UserDefaults.standard.bool(forKey: "WWUITestHoldMoveSteps") ? .seconds(2) : .zero
     }
 
     /// Another writer (as another Mac would) publishes a change to the same library file.

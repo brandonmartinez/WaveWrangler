@@ -9,9 +9,11 @@ import XCTest
 /// panel by keyboard (⇧⌘G, path, Return). Each target folder is checksummed before and after where nothing may be
 /// written. Synthetic data only.
 ///
-/// As in CoreTasksKeyboardUITests: menu-bar commands without a shortcut (File › Library › New Collection…) use
-/// XCUITest's menu API, because the keyboard path to the menu bar (⌃F2) needs Full Keyboard Access, a user-manual
-/// exit item.
+/// Keyboard only (C01): no pointer events. The app runs with macOS keyboard navigation (the Full Keyboard Access /
+/// "Keyboard navigation" setting, `AppleKeyboardUIMode` 2) turned on **for its own process only**, through a
+/// launch argument; no system setting changes. With it, Tab reaches pop-ups and buttons and ⌃F2 reaches the menu
+/// bar. This doesn't stand in for the user's system FKA run: that C01 cell stays **Not run** until the user records
+/// it (accessibility-acceptance §6 item 3).
 @MainActor
 final class LibraryLocationUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -167,9 +169,10 @@ final class LibraryLocationUITests: XCTestCase {
         XCTAssertEqual(combined.collectionNames.count, 8, "\(combined.collectionNames)")
     }
 
-    /// L5 (newer format) and L2 (can't be read now) libraries in the folder: Use That Library is disabled, the reason
-    /// is the §5.1 step 6 sentence, nothing is written (checksums unchanged), and the current library stays in use.
-    func testFolderWithANewerOrUnreadableLibraryIsNeverUsedOrWritten() throws {
+    /// L5 (newer format) and L3 (no permission to read it) libraries in the folder: Use That Library is disabled, the
+    /// reason is the §5.1 step 6 sentence, nothing is written (checksums unchanged), and the current library stays in
+    /// use.
+    func testFolderWithANewerOrPermissionDeniedLibraryIsNeverUsedOrWritten() throws {
         launch(state: "ready")
         let before = libraryState()
 
@@ -188,16 +191,16 @@ final class LibraryLocationUITests: XCTestCase {
         XCTAssertEqual(try digest(newer), newerDigest, "nothing written to the newer library")
         XCTAssertEqual(popup.value as? String, "In WaveWrangler")
 
-        let unreadable = folder("Unreadable Library")
+        let unreadable = folder("Locked Library")
         try probeLibrary(unreadable, ["--seed-fixture", "1"])
         let unreadableFile = unreadable.appending(path: "Library.wwlibrary")
         let unreadableDigest = try digest(unreadable)
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadableFile.path)
         chooseFolder(unreadable, from: popup)
-        confirmMove(to: "Unreadable Library")
-        assertBlocked("Unreadable Library", reason: "WaveWrangler can't reach the library in this folder right now.")
+        confirmMove(to: "Locked Library")
+        assertBlocked("Locked Library", reason: "WaveWrangler needs permission to use the library in this folder.")
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadableFile.path)
-        XCTAssertEqual(try digest(unreadable), unreadableDigest, "nothing written to the unreadable library")
+        XCTAssertEqual(try digest(unreadable), unreadableDigest, "nothing written to the locked library")
         XCTAssertEqual(popup.value as? String, "In WaveWrangler")
         XCTAssertEqual(libraryState(), before, "the current library stays in use, unchanged")
     }
@@ -265,24 +268,21 @@ final class LibraryLocationUITests: XCTestCase {
         XCTAssertTrue(bar.buttons["Library Settings…"].exists)
         assertTabReachesMessageBarFirst(bar.buttons["Library Settings…"])
         let file = app.menuBars.menuBarItems["File"]
-        file.click()
-        let library = file.menuItems["Library"]
-        library.hover()
-        XCTAssertFalse(library.menuItems["New Collection…"].isEnabled, "no library edits in L5")
-        app.typeKey(.escape, modifierFlags: [])
-        app.typeKey(.escape, modifierFlags: [])
-        file.click()
+        openMenu("File", path: ["Library"])
+        XCTAssertFalse(file.menuItems["Library"].menuItems["New Collection…"].isEnabled, "no library edits in L5")
+        closeMenus()
+        openMenu("File", path: [])
         XCTAssertTrue(file.menuItems["Open…"].isEnabled, "shows still open with File › Open")
-        app.typeKey(.escape, modifierFlags: [])
+        closeMenus()
+        focus(bar.buttons["Library Settings…"])
         app.typeKey(" ", modifierFlags: [])
         XCTAssertTrue(app.popUpButtons["ww.settings.libraryLocation"].waitForExistence(timeout: 5), "Library Settings… opens Settings")
     }
 
     // MARK: - Helpers
 
-    /// `-AppleKeyboardUIMode 2` turns on macOS keyboard navigation (Tab reaches pop-ups and buttons) for this app
-    /// process only, through its argument domain: no system setting changes. It isn't the Full Keyboard Access toggle,
-    /// which stays a user-manual exit item (accessibility-acceptance C01).
+    /// `-AppleKeyboardUIMode 2` is the Full Keyboard Access / "Keyboard navigation" setting, applied to this app
+    /// process only (its argument domain): no system setting changes. See the type's note on C01.
     private func launch(state: String) {
         app = XCUIApplication()
         app.launchArguments = ["-AppleKeyboardUIMode", "2", "-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetStorage", "YES",
@@ -344,13 +344,10 @@ final class LibraryLocationUITests: XCTestCase {
         element.staticTexts.allElementsBoundByIndex.map { ($0.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? $0.label }
     }
 
-    /// ⌘, → General → Tab to Library location.
+    /// ⌘, (Settings opens on General: preferences are reset at launch) → Tab to Library location.
     private func openLibraryLocation() -> XCUIElement {
         app.typeKey(",", modifierFlags: .command)
         let popup = app.popUpButtons["ww.settings.libraryLocation"]
-        if !popup.waitForExistence(timeout: 3) {
-            app.toolbars.buttons["General"].click()
-        }
         XCTAssertTrue(popup.waitForExistence(timeout: 5), "Library location pop-up")
         XCTAssertEqual(popup.label, "Library location")
         focus(popup)
@@ -420,14 +417,32 @@ final class LibraryLocationUITests: XCTestCase {
         XCTAssertTrue(reached, "Tab reaches \(button.label) first", file: file, line: line)
     }
 
-    /// File › Library › New Collection… → name → Return.
+    /// ⌃F2 to the menu bar, type-select `menu` and open it with ↓, then type-select each submenu item along `path`
+    /// and enter it with →. Leaves the last menu open with its item selected.
+    private func openMenu(_ menu: String, path: [String]) {
+        app.typeKey(XCUIKeyboardKey.F2.rawValue, modifierFlags: .control)
+        Thread.sleep(forTimeInterval: 0.3)
+        app.typeText(menu)
+        app.typeKey(.downArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.3)
+        for item in path {
+            app.typeText(item)
+            app.typeKey(.rightArrow, modifierFlags: [])
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+    }
+
+    /// Esc until no menu is open.
+    private func closeMenus() {
+        for _ in 0..<4 { app.typeKey(.escape, modifierFlags: []) }
+    }
+
+    /// ⌃F2 → File › Library › New Collection… (Return) → name → Return.
     private func addCollection(_ name: String) {
         app.typeKey("l", modifierFlags: [.command, .shift])
-        let file = app.menuBars.menuBarItems["File"]
-        file.click()
-        let library = file.menuItems["Library"]
-        library.hover()
-        library.menuItems["New Collection…"].click()
+        openMenu("File", path: ["Library"])
+        app.typeText("New Collection")
+        app.typeKey(.return, modifierFlags: [])
         let field = element("ww.dialog.name")
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.typeText(name + "\r")

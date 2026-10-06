@@ -127,6 +127,8 @@ public enum LibraryMoveStep: Sendable, Equatable {
 
 /// Why a destination folder's existing file can't be used (states-and-recovery §5.1 step 6).
 public enum LibraryDestinationProblem: Sendable, Equatable {
+    /// The file is there but WaveWrangler isn't allowed to read it (L3 for that library).
+    case needsPermission
     /// The file is there but can't be read right now (L2 for that library).
     case unreadable
     /// Saved by a newer WaveWrangler (L5): adding to it would be a down-save.
@@ -137,6 +139,7 @@ public enum LibraryDestinationProblem: Sendable, Equatable {
     /// Developer-facing description (logs, probe output); the UI maps the case to its own wording.
     public var reason: String {
         switch self {
+        case .needsPermission: "The existing file can't be read without permission."
         case .unreadable: "The existing file could not be read."
         case let .newerFormat(found, supported): "The library there was saved by a newer version (format \(found); this version supports \(supported))."
         case .notALibrary: "A file that is not a readable library is already there."

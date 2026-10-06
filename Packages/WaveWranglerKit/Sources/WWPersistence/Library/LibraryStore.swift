@@ -746,8 +746,11 @@ public actor LibraryStore {
         defer { if started { bookmarks.stopAccessing(folder) } }
 
         if ops.exists(destination) {
-            guard let existing = try? publisher.coordination.coordinateReading(at: destination, { try ops.read($0) }) else {
-                return .success(.destinationUnusable(destination, problem: .unreadable))
+            let existing: Data
+            do {
+                existing = try publisher.coordination.coordinateReading(at: destination) { try ops.read($0) }
+            } catch {
+                return .success(.destinationUnusable(destination, problem: Self.isPermissionError(error) ? .needsPermission : .unreadable))
             }
             if RevisionFingerprint.digest(existing) == base.byteDigest {
                 return await switchSetting(place: place, libraryID: current.payload.libraryID, outcome: .adoptedIdentical(destination))
@@ -1092,6 +1095,19 @@ public actor LibraryStore {
                 return nil
             }
         }
+    }
+
+    /// Permission refusals (sandbox or POSIX), as distinct from a file that can't be reached or read right now.
+    static func isPermissionError(_ error: Error) -> Bool {
+        var current: NSError? = error as NSError
+        while let error = current {
+            if error.domain == NSCocoaErrorDomain, error.code == CocoaError.fileReadNoPermission.rawValue || error.code == CocoaError.fileWriteNoPermission.rawValue {
+                return true
+            }
+            if error.domain == NSPOSIXErrorDomain, error.code == Int(EACCES) || error.code == Int(EPERM) { return true }
+            current = error.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
     }
 
     private func stopFolderAccess() {
