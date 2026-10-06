@@ -13,6 +13,44 @@ final class FailureLog: @unchecked Sendable {
     func append(_ value: DecodeFailure?) { lock.withLock { _values.append(value) } }
 }
 
+final class AsyncStartGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var open = false
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let resume = lock.withLock {
+                if open { return true }
+                self.continuation = continuation
+                return false
+            }
+            if resume { continuation.resume() }
+        }
+    }
+
+    func release() {
+        let continuation = lock.withLock {
+            open = true
+            return self.continuation
+        }
+        continuation?.resume()
+    }
+}
+
+final class TaskCancellationTarget: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelBody: (@Sendable () -> Void)?
+
+    func install<T, E>(_ task: Task<T, E>) where E: Error {
+        lock.withLock { cancelBody = { task.cancel() } }
+    }
+
+    func cancel() {
+        lock.withLock { cancelBody?() }
+    }
+}
+
 @Suite("Decoding cursor")
 struct DecodingCursorTests {
     struct Probe: Error, Equatable {}
@@ -50,6 +88,7 @@ struct DecodingCursorTests {
         #expect(audio.channels[0].first == Float(ScriptedSource.aacPriming))
         #expect(content.record.closes == content.record.opens)
         #expect(content.record.readsOnMainThread == 0)
+        #expect(content.record.contentCallsInsideTask == 0, "blocking content calls run only on the cursor's Dispatch worker")
         #expect(ledger.snapshot.openScopes == 0)
     }
 
@@ -186,6 +225,31 @@ struct DecodingCursorTests {
         }
         #expect(await early.value == .cancelled)
         #expect(untouched.record.opens == 0 && io.metadataCalls == 0)
+    }
+
+    @Test("Cancellation during a read discards that read instead of returning a chunk")
+    func cancellationDuringRead() async throws {
+        let source = try ScriptedSource()
+        let target = TaskCancellationTarget()
+        var script = source.script()
+        script.onRead = { if $0 == 0 { target.cancel() } }
+        let content = ScriptedContentIO(script)
+        let gate = AsyncStartGate()
+        let task = Task { () -> DecodeFailure? in
+            await gate.wait()
+            return await Self.failure {
+                _ = try await makeDecoder(io: AdjustableIO(), content: content).withDecodingCursor(source.url, source: SourceID()) { cursor in
+                    _ = try await cursor.next()
+                }
+            }
+        }
+        target.install(task)
+        gate.release()
+
+        #expect(await task.value == .cancelled)
+        #expect(content.record.reads == 1)
+        #expect(content.record.closes == 1)
+        #expect(content.record.contentCallsInsideTask == 0)
     }
 
     @Test("A body error closes the reader and propagates unchanged")
