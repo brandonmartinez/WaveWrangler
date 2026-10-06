@@ -86,8 +86,16 @@ final class AutosavePolicyController {
         preference = PersistenceEnvironment.autosaveGate.preference
         // Capture weakly instead of reaching through `shared`: the notification is posted synchronously by our
         // own writes, which can happen while `shared` is still being initialized.
-        observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.syncFromDefaults() }
+        //
+        // Not in UI-test runs: there the launch arguments (`-WWUITestAutosave`, `-WWUITestAutosaveDelay`) and this
+        // process's own changes are the policy. The isolated UI-test preferences suite is shared by every UI-test
+        // app process on the host, so re-reading it on each defaults change could apply another (or a just-exited)
+        // process's stored value over this run's launch arguments: a 30 s test delay silently became the previous
+        // test's 1 s. Settings changes still reach the gate in UI-test runs, through this controller.
+        if !PersistenceEnvironment.isUITestRun {
+            observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.syncFromDefaults() }
+            }
         }
         #if DEBUG
         UITestHooks.installIfRequested(self)
