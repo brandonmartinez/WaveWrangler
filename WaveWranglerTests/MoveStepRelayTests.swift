@@ -142,6 +142,57 @@ struct MoveStepRelayTests {
         await releaseSleep.open()
         #expect(try await move.value == [.copying, .checking, nil])
     }
+
+    @Test func newerMoveSupersedesHeldCompletion() async throws {
+        let shown = Shown()
+        let firstSleepStarted = LivenessGate()
+        let releaseFirstSleep = LivenessGate()
+        let secondSleepStarted = LivenessGate()
+        let releaseSecondSleep = LivenessGate()
+        let finished = LivenessGate()
+        var sleepCount = 0
+        let report = MoveStepRelay.handler(holdAfterChecking: .milliseconds(300), sleep: { duration in
+            #expect(duration == .milliseconds(300))
+            sleepCount += 1
+            if sleepCount == 1 {
+                await firstSleepStarted.open()
+                do {
+                    try await releaseFirstSleep.wait(for: "the first move hold to be released")
+                } catch {
+                    Issue.record(error)
+                }
+            } else {
+                await secondSleepStarted.open()
+                do {
+                    try await releaseSecondSleep.wait(for: "the second move hold to be released")
+                } catch {
+                    Issue.record(error)
+                }
+            }
+        }, current: { shown.current }) { step in
+            shown.current = step
+            shown.steps.append(step)
+            if step == nil {
+                Task { await finished.open() }
+            }
+        }
+
+        report(.copying)
+        report(.checking)
+        report(nil)
+        try await firstSleepStarted.wait(for: "the first move checking hold to start")
+
+        report(.copying)
+        report(.checking)
+        report(nil)
+        try await secondSleepStarted.wait(for: "the second move to supersede the first hold")
+        #expect(shown.steps == [.copying, .checking, .copying, .checking])
+
+        await releaseFirstSleep.open()
+        await releaseSecondSleep.open()
+        try await finished.wait(for: "the second move completion")
+        #expect(shown.steps == [.copying, .checking, .copying, .checking, nil])
+    }
 }
 
 private final class InMemorySettings: LibraryLocationSettingsStoring, @unchecked Sendable {

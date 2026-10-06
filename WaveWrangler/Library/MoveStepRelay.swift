@@ -14,31 +14,46 @@ enum MoveStepRelay {
         current: @escaping @MainActor () -> LibraryMoveStep?,
         show: @escaping @MainActor (LibraryMoveStep?) -> Void
     ) -> @Sendable (LibraryMoveStep?) -> Void {
-        let queue = Queue()
+        let queue = MoveQueue()
         return { step in
-            queue.append {
+            queue.append(startingNewMove: step == .copying) { generation in
+                guard queue.isCurrent(generation) else { return }
                 if step == nil, holdAfterChecking > .zero, current() == .checking {
                     await sleep(holdAfterChecking)
                 }
+                guard queue.isCurrent(generation) else { return }
                 show(step)
             }
         }
     }
 
-    private final class Queue: @unchecked Sendable {
+    private final class MoveQueue: @unchecked Sendable {
         private let lock = NSLock()
+        private var generation = 0
         private var tail: Task<Void, Never>?
 
-        func append(_ operation: @escaping @MainActor @Sendable () async -> Void) {
+        func append(
+            startingNewMove: Bool,
+            _ operation: @escaping @MainActor @Sendable (Int) async -> Void
+        ) {
             lock.withLock {
+                if startingNewMove {
+                    generation += 1
+                    tail = nil
+                }
+                let operationGeneration = generation
                 let previous = tail
                 tail = Task { @MainActor in
                     if let previous {
                         await previous.value
                     }
-                    await operation()
+                    await operation(operationGeneration)
                 }
             }
+        }
+
+        func isCurrent(_ operationGeneration: Int) -> Bool {
+            lock.withLock { operationGeneration == generation }
         }
     }
 }
