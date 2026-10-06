@@ -36,6 +36,7 @@ struct ImportReviewSheet: View {
                 TableColumn("Include") { row in
                     Toggle("Include \(row.candidate.displayName)", isOn: includeBinding(row.id))
                         .toggleStyle(.checkbox)
+                        .checkboxTint()
                         .labelsHidden()
                         .accessibilityIdentifier("ww.import.row.\(index(of: row.id)).include")
                 }
@@ -248,6 +249,7 @@ struct RelinkSheet: View {
             if comparison.requiresAcknowledgement && comparison.canConfirm {
                 Toggle(RelinkComparison.acknowledgementTitle, isOn: $acknowledged)
                     .toggleStyle(.checkbox)
+                    .checkboxTint()
                     .setupFont(.body)
                     .accessibilityIdentifier("ww.relink.acknowledge")
             }
@@ -319,7 +321,7 @@ struct NumberSheet: View {
                 .disabled(unknown)
                 .accessibilityIdentifier("ww.setup.numberField")
             if context.kind == .channel {
-                Toggle("Unknown", isOn: $unknown).toggleStyle(.checkbox).setupFont(.body)
+                Toggle("Unknown", isOn: $unknown).toggleStyle(.checkbox).checkboxTint().setupFont(.body)
                     .accessibilityIdentifier("ww.setup.numberUnknown")
                 Text("WaveWrangler doesn't check this against the file in this version.")
                     .setupFont(.caption1).fixedSize(horizontal: false, vertical: true)

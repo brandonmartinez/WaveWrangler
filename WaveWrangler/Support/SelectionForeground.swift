@@ -26,3 +26,13 @@ extension View {
         modifier(EmphasizedSelectionForeground())
     }
 }
+
+extension View {
+    /// #139: checked checkboxes use `CheckboxTint`, which equals `AccentColor` except in dark + Increase Contrast.
+    /// There one blue can't serve both white selection text (≥ 4.5:1, needs a dark blue) and a checked-box fill
+    /// that stands out from the dark sheet background (≥ 3:1 against #363636, needs a lighter blue), so checkboxes
+    /// get the lighter #2F86FF. The white checkmark on it stays ≥ 3:1. Measured by `testAccentTintedControls`.
+    func checkboxTint() -> some View {
+        tint(Color("CheckboxTint"))
+    }
+}

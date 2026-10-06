@@ -20,9 +20,9 @@ struct AccentColorContrastTests {
     static let lightBackgrounds = [0xFFFFFF, 0xECECEC]
     static let darkBackgrounds = [0x1E1E1E, 0x202020, 0x242424]
 
-    static func variants() throws -> [Variant] {
+    static func variants(_ colorSet: String = "AccentColor") throws -> [Variant] {
         let url = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appending(path: "WaveWrangler/Assets.xcassets/AccentColor.colorset/Contents.json")
+            .appending(path: "WaveWrangler/Assets.xcassets/\(colorSet).colorset/Contents.json")
         let json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         let colors = try #require(json["colors"] as? [[String: Any]])
         return try colors.map { entry in
@@ -85,6 +85,34 @@ struct AccentColorContrastTests {
             for background in variant.dark ? Self.darkBackgrounds : Self.lightBackgrounds {
                 let ratio = Self.ratio(Self.luminance(variant.rgb), Self.luminance(hex: background))
                 #expect(ratio >= 3, "\(variant) accent vs #\(String(background, radix: 16)): \(ratio)")
+            }
+        }
+    }
+
+    /// Dark sheet backgrounds measured behind checkboxes on macOS 27.0.1 (#139: Import Review sheet, #363636 with
+    /// Increase Contrast; #2D2D2D without).
+    static let darkSheetBackgrounds = [0x2D2D2D, 0x363636]
+
+    /// #139: `CheckboxTint` equals `AccentColor` except in dark + Increase Contrast, where a checked box's fill must
+    /// stand out from the dark sheet (≥ 3:1) while its white checkmark stays ≥ 3:1 on the fill. (AppKit renders the
+    /// fill slightly lighter than the tint, ≈ +0.03 luminance, which helps the first and is covered by the second's
+    /// margin; the rendered values are measured by `testAccentTintedControls`.)
+    @Test func checkboxTintFillAndCheckmark() throws {
+        let accent = try Self.variants()
+        let checkbox = try Self.variants("CheckboxTint")
+        #expect(checkbox.count == 4)
+        for variant in checkbox {
+            let lum = Self.luminance(variant.rgb)
+            #expect(Self.ratio(1, lum) >= 3, "white checkmark on the \(variant) checkbox fill: \(Self.ratio(1, lum))")
+            let backgrounds = variant.dark ? Self.darkBackgrounds + Self.darkSheetBackgrounds : Self.lightBackgrounds
+            if variant.dark && variant.highContrast {
+                for background in backgrounds {
+                    let ratio = Self.ratio(lum, Self.luminance(hex: background))
+                    #expect(ratio >= 3, "\(variant) checkbox fill vs #\(String(background, radix: 16)): \(ratio)")
+                }
+            } else {
+                let same = accent.first { $0.dark == variant.dark && $0.highContrast == variant.highContrast }
+                #expect(same.map { $0.rgb == variant.rgb } == true, "\(variant) checkbox tint equals the accent")
             }
         }
     }

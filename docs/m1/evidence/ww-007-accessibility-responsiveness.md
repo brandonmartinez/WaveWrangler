@@ -499,3 +499,25 @@ The slot script is now fixed for reuse:
 - it removes emptied plist files.
 
 No orphan processes remained, and the run folder on the mini was removed after the bundles were fetched.
+
+### 10.5 VoiceOver listening attempt via computer-use (this Mac, 2026-10-05 22:02–22:05)
+
+**Host:** this Mac (MacBook, macOS 27.0.1, 18-core), user-directed GUI window, consents A/B/D.
+
+**Originals, recorded first (22:00:00):**
+- `com.apple.universalaccess`: increaseContrast, reduceMotion, reduceTransparency, voiceOverOnOffKey and differentiateWithoutColor were absent.
+- FontSizeCategory.global was DEFAULT, and AppleInterfaceStyle was Dark.
+- The VoiceOver4 and VoiceOverTraining domains were absent, and VoiceOver wasn't running.
+
+**What was attempted:**
+1. Fixture: the Debug app at `0e4bad9` with `-WWUITestHooks YES -WWUITestLibraryFixture lib100` (in-memory library, no user data). The Quickstart splash was suppressed (`VoiceOverTraining doNotShowSplashScreen`).
+2. **Cmd-F5** sent with computer-use `press_key` to the app **did not** turn VoiceOver on: the system hotkey wasn't delivered.
+3. **System Settings › Accessibility › VoiceOver toggle** (`AX_VOICEOVER_ENABLED`, clicked with computer-use) **turned VoiceOver on** at 22:04:00: probe `isVoiceOverEnabled` = true, VoiceOver pid 92230.
+4. **Caption panel not readable:** `get_window_state(com.apple.VoiceOver)` returned `no_window`, and `list_apps` doesn't list VoiceOver, so computer-use can't read the caption panel's text.
+5. The first keyboard step in WaveWrangler (↓ in the sidebar) returned **interrupted**: "user input was detected". Either the user was active or VoiceOver moved focus; the cause can't be told apart. Per the coordinator's rule, the attempt stopped.
+6. VoiceOver was turned **off with the same toggle** (value 0), not killed. No VoiceOver process remained.
+
+**Restoration** (shell, after the UI workflow, 22:05:24): increaseContrast and voiceOverOnOffKey deleted; the VoiceOver4 and VoiceOverTraining domains and their plist files removed. **Every recorded key matches its original.** The probe reports all false. The fixture app was terminated; no orphans.
+
+**Result: A11Y-002 = Blocked. No announcement was captured, and none is claimed. VoiceOver listening is a user-manual exit item** (checklist §5.1).
+
