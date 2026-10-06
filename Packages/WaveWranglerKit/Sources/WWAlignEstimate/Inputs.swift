@@ -101,30 +101,32 @@ public struct EstimationRequest: Sendable {
 
 /// Estimator parameters. The defaults are the values frozen by `m2-freeze-estimator`
 /// (docs/m2/fixtures/m2-freeze-estimator.json); a change is a new estimator version and needs a new freeze.
+/// Setters are internal, so the public API can only run the frozen defaults; in-module (test) variants are
+/// stamped `AcousticEstimator.customIdentifier`, never the frozen identifier.
 public struct EstimatorParameters: Sendable, Equatable {
     /// Common analysis (proxy) rate every track is resampled to, Hz.
-    public var proxyRate: Double = 4000
+    public internal(set) var proxyRate: Double = 4000
     /// Proxy low-pass cutoff as a fraction of the proxy rate.
-    public var proxyCutoffFraction: Double = 0.45
-    public var windowSeconds: Double = 2
+    public internal(set) var proxyCutoffFraction: Double = 0.45
+    public internal(set) var windowSeconds: Double = 2
     /// Windows placed evenly across each track's declared overlap.
-    public var windowCount: Int = 16
+    public internal(set) var windowCount: Int = 16
     /// Minimum normalised-correlation peak for an eligible window.
-    public var minimumPeakScore: Double = 0.35
+    public internal(set) var minimumPeakScore: Double = 0.35
     /// A window is ambiguous when its second correlation peak reaches this fraction of the first.
-    public var ambiguityRatio: Double = 0.8
+    public internal(set) var ambiguityRatio: Double = 0.8
     /// A window is periodic when its self-similarity at a non-trivial shift reaches this value.
-    public var periodicityThreshold: Double = 0.5
+    public internal(set) var periodicityThreshold: Double = 0.5
     /// Peaks/shifts closer than this to the main peak (or to zero shift) are the same lobe, milliseconds.
-    public var lobeExclusionMilliseconds: Double = 5
+    public internal(set) var lobeExclusionMilliseconds: Double = 5
     /// Proxy-band RMS below which a window (target or reference region) is silent.
-    public var silenceRMS: Double = 1e-4
+    public internal(set) var silenceRMS: Double = 1e-4
     /// Every eligible window must lie within this distance of one affine line, milliseconds.
-    public var consistencyToleranceMilliseconds: Double = 1
+    public internal(set) var consistencyToleranceMilliseconds: Double = 1
     /// Fitted drift beyond this magnitude is refused as implausible, ppm.
-    public var maximumAbsolutePPM: Double = 500
+    public internal(set) var maximumAbsolutePPM: Double = 500
     /// Cycle (triangle) disagreement above this abstains every epoch in the cycle, milliseconds.
-    public var cycleToleranceMilliseconds: Double = 2
+    public internal(set) var cycleToleranceMilliseconds: Double = 2
 
     public init() {}
 

@@ -15,6 +15,7 @@ struct EstimatorPurityTests {
         "ExtAudioFile", "QLThumbnail", "QuickLook", "CryptoKit", "SHA256", "CC_SHA", "Insecure.",
         "bookmarkData(", "startAccessingSecurityScopedResource", "FileManager", ".resourceValues(",
         "URL(", "Date(", "DispatchQueue", "Task {", "Task.detached", "@MainActor", "Accelerate", "vDSP",
+        "contentsOf", "contentsOfFile", "URLSession", "NSData", "Process(", "Bundle",
     ]
 
     /// No path to a clock approval: the estimator may not name the approval case, its types, or decode a
@@ -48,12 +49,33 @@ struct EstimatorPurityTests {
     }
 
     @Test func scannerDetectsViolations() {
-        #expect(Self.violations(in: "let d = try Data(contentsOf: url)", fileName: "X.swift") == ["X.swift: Data(contentsOf"])
+        #expect(Self.violations(in: "let d = try Data(contentsOf: url)", fileName: "X.swift") == ["X.swift: Data(contentsOf", "X.swift: contentsOf"])
+        #expect(Self.violations(in: "let s = try String(contentsOf: url, encoding: .utf8)", fileName: "X.swift") == ["X.swift: contentsOf"])
+        #expect(Self.violations(in: "let s = try String(contentsOfFile: path)", fileName: "X.swift") == ["X.swift: contentsOf", "X.swift: contentsOfFile"])
+        #expect(Self.violations(in: "let t = URLSession.shared.dataTask(with: request)", fileName: "X.swift") == ["X.swift: URLSession"])
+        #expect(Self.violations(in: "let d = NSData(bytes: p, length: n)", fileName: "X.swift") == ["X.swift: NSData"])
+        #expect(Self.violations(in: "let p = Process()", fileName: "X.swift") == ["X.swift: Process("])
+        #expect(Self.violations(in: "let b = Bundle.main", fileName: "X.swift") == ["X.swift: Bundle"])
         #expect(Self.violations(in: "import AVFoundation", fileName: "X.swift") == ["X.swift: import AVFoundation"])
         #expect(Self.violations(in: "return .clockApproved(x)", fileName: "X.swift") == ["X.swift: clockApproved"])
         #expect(Self.violations(in: "let m = try JSONDecoder().decode(MapProvenance.self, from: d)", fileName: "X.swift") == ["X.swift: Decoder"])
         #expect(Self.violations(in: "let detail = \"92 percent Confidence\"", fileName: "X.swift") == ["X.swift: confiden", "X.swift: percent"])
         #expect(Self.violations(in: "// clockApproved and probability in a comment\nlet a = 1 // FileHandle", fileName: "X.swift").isEmpty)
+    }
+
+    /// Public callers can only run the frozen defaults: every stored parameter's setter is internal.
+    @Test func parameterSettersAreNotPublic() throws {
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/WWAlignEstimate/Inputs.swift")
+        let source = Self.code(try String(contentsOf: file, encoding: .utf8))
+        let start = try #require(source.range(of: "public struct EstimatorParameters"))
+        let end = try #require(source.range(of: "public init() {}", range: start.upperBound..<source.endIndex))
+        let declarations = source[start.upperBound..<end.lowerBound].split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.contains("var ") || $0.contains("let ") }
+        #expect(declarations.count == 12)
+        let publicSetters = declarations.filter { !$0.hasPrefix("public internal(set) var ") }
+        #expect(publicSetters.isEmpty, "\(publicSetters)")
     }
 
     @Test func wwAlignEstimateIsPure() throws {

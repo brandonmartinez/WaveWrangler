@@ -47,8 +47,8 @@ abstain), but it cannot see a delay common to every path. The module therefore r
 abstention whose map is unsupported. It has no `clockApproved` path, the `ClockApproval` initialisers stay
 internal, and `EstimatorPurityTests` bans the approval surface. Under M2-C4 and the 2026-10-06 drift-fallback decision, the
 M2 drift fallback stays manual epochs and anchors. A holdout PASS under this freeze would qualify proposals and
-abstentions only; `clockApproved` would need genuinely independent clock evidence (for example a shared timecode
-or sync track, or a user-confirmed anchor) and a new freeze.
+abstentions only. `clockApproved` needs independent clock truth plus a new freeze; under M2-C4, user anchors are
+`manual` and supplied timecode or word clock is `externalEvidence`, so neither is a route to `clockApproved`.
 
 **Mutation checks (each guard broken, failing test observed, guard restored).**
 - #177 binding, 4 mutants killed: the compile guard, the decode guard, the segment comparison and the epoch comparison.
@@ -58,6 +58,13 @@ or sync track, or a user-confirmed anchor) and a new freeze.
   - every false-accept class, abstaining positive, pooled p95 and max, window count, and acoustic mislabel;
   - holdout seed overlapping calibration, frozen counts, a frozen estimator parameter, any edit in the pinned test
     tree, a registry split, the freeze seed, a freeze gate value, and the freeze's pinned-tree record.
+- Frozen identity and purity, 16 mutants killed (R1–R4 and 12 token drops):
+  - the identifier stamp ignoring parameters, the report or the proposal stamped frozen under custom parameters,
+    and a public parameter setter;
+  - dropping each of `contentsOf`, `contentsOfFile`, `URLSession`, `NSData`, `Process(` and `Bundle` from the
+    WWAlignEstimate and WWTimeMap purity scans.
+- Only the frozen default parameters are stamped `ww-align-estimate/1`. Parameter setters are internal, so the public
+  API can only run the defaults. In-module variants are stamped `ww-align-estimate/1+custom`.
 
 **Throughput** (`estimatorThroughputBenchmark`, `WW_TIMING_TESTS=1` serialized pass of `scripts/test.sh`, debug build):
 1,780 s of 48 kHz audio (a reference plus 2 tracks, 10 min) estimated in 75.3 s, about 24× real time. Report only; there is no throughput gate.

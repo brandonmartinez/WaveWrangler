@@ -14,8 +14,8 @@
  "baseCommitNote": "origin/main when this record was authored (merge of PR #174). The freeze takes effect at the merge commit of the PR that adds it; pinnedTrees, not a commit SHA, identify the frozen code.",
  "scope": "Every M2-EST-* entry in the registry: stratum recipe, clock truth, calibration/holdout seeds and counts, scoring, and the gate exactly as written here. Frozen code: the WWAlignEstimate source tree and the WWAlignEstimateTests tree (generator, plan, gate evaluator and holdout harness), pinned by git tree ID.",
  "pinnedTrees": {
-  "Sources/WWAlignEstimate": "1896b4656d78415af6ba2c8b3daf13d10256819e",
-  "Tests/WWAlignEstimateTests": "09d1b1653cc2c9eafb4241337a1ff3ddc9fa15ca"
+  "Sources/WWAlignEstimate": "8efd588a6b57dc56bf7eafa1ccf2c7709253f3a9",
+  "Tests/WWAlignEstimateTests": "b65bd478d1e2dfaa664006ba66433e0011f89dd0"
  },
  "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit. HoldoutTests.estimatorAndHarnessTreesMatchTheFreezeRecord recomputes both git tree IDs from the working tree on every test run and fails on any difference. A change to either tree after the freeze is a new dated freeze revision with a fresh holdout; the earlier record is retained.",
  "dependencyTreesAtFreeze": {
@@ -128,7 +128,7 @@
    "Per-stratum abstention reasons, flags and cycle results.",
    "Debug-build wall time."
   ],
-  "authority": "A PASS qualifies only this behaviour: positives proposed within the clock gates and every finite negative abstained or labelled acousticConsistentProposal. It does NOT authorize clockApproved. Audio alone cannot tell a constant or slowly varying propagation delay from a clock offset/drift (calibration: 6/6 acoustic-delay proposals are 35-49 ms clock-wrong while acoustically excellent). Under M2-C4 and the 2026-10-06 drift-fallback decision, the M2 drift fallback stays manual epochs/anchors; clockApproved needs genuinely independent clock evidence and a new freeze."
+  "authority": "A PASS qualifies only this behaviour: positives proposed within the clock gates and every finite negative abstained or labelled acousticConsistentProposal. It does NOT authorize clockApproved. Audio alone cannot tell a constant or slowly varying propagation delay from a clock offset/drift (calibration: 6/6 acoustic-delay proposals are 35-49 ms clock-wrong while acoustically excellent). Under M2-C4 and the 2026-10-06 drift-fallback decision, the M2 drift fallback stays manual epochs/anchors; clockApproved needs independent clock truth plus a new freeze (M2-C4: anchors are manual, supplied timecode/word clock is externalEvidence)."
  },
  "calibrationSummary": {
   "host": "Apple M5 Max, 18 cores, 128 GiB, macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, debug build",

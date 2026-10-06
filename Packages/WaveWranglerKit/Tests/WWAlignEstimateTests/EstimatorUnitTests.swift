@@ -51,6 +51,37 @@ struct EstimatorUnitTests {
         }
     }
 
+    /// Only the frozen defaults carry the frozen identifier; any other parameter set (reachable in-module
+    /// only, since the setters are internal) stamps the report and every proposal as custom.
+    @Test func onlyFrozenParametersCarryTheFrozenIdentifier() throws {
+        #expect(AcousticEstimator.identifier == "ww-align-estimate/1")
+        #expect(AcousticEstimator.customIdentifier == "ww-align-estimate/1+custom")
+        #expect(AcousticEstimator.identifier(for: EstimatorParameters()) == AcousticEstimator.identifier)
+        let variants: [(inout EstimatorParameters) -> Void] = [
+            { $0.proxyRate = 8000 }, { $0.proxyCutoffFraction = 0.4 }, { $0.windowSeconds = 3 }, { $0.windowCount = 17 },
+            { $0.minimumPeakScore = 0.36 }, { $0.ambiguityRatio = 0.79 }, { $0.periodicityThreshold = 0.51 },
+            { $0.lobeExclusionMilliseconds = 6 }, { $0.silenceRMS = 2e-4 }, { $0.consistencyToleranceMilliseconds = 0.9 },
+            { $0.maximumAbsolutePPM = 400 }, { $0.cycleToleranceMilliseconds = 3 },
+        ]
+        for vary in variants {
+            var parameters = EstimatorParameters()
+            vary(&parameters)
+            try parameters.validate()
+            #expect(AcousticEstimator.identifier(for: parameters) == AcousticEstimator.customIdentifier)
+        }
+
+        var s = Scene40(seed: 0x1D_57A4)
+        let target = s.target(rate: 8000)
+        let frozen = try s.run([(RecorderGroupID(), target)])
+        #expect(frozen.report.estimator == AcousticEstimator.identifier)
+        #expect(try #require(proposal(frozen.epochs[0])).provenance.estimator == AcousticEstimator.identifier)
+        var custom = EstimatorParameters()
+        custom.windowCount = 17
+        let varied = try s.run([(RecorderGroupID(), target)], parameters: custom)
+        #expect(varied.report.estimator == AcousticEstimator.customIdentifier)
+        #expect(try #require(proposal(varied.epochs[0])).provenance.estimator == AcousticEstimator.customIdentifier)
+    }
+
     @Test func requestValidation() throws {
         let reference = try Self.track()
         let search = try SearchRange(maximumDeviationSeconds: 1)

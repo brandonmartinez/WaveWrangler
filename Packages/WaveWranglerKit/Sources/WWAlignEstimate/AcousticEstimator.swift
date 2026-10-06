@@ -5,7 +5,14 @@ import WWTimeMap
 /// The WW-016 acoustic offset/drift estimator. See the module header in Inputs.swift: it emits
 /// acoustically consistent PROPOSALS or ABSTENTIONS and never approves a clock.
 public enum AcousticEstimator {
+    /// The frozen estimator (`m2-freeze-estimator`): stamped only when every parameter equals the frozen default.
     public static let identifier = "ww-align-estimate/1"
+    /// Stamped on reports and proposals produced with any non-frozen parameter.
+    public static let customIdentifier = identifier + "+custom"
+
+    static func identifier(for parameters: EstimatorParameters) -> String {
+        parameters == EstimatorParameters() ? identifier : customIdentifier
+    }
     /// Half-width of the pairwise search used by the cycle check around the predicted pairwise offset, seconds.
     static let cycleSearchSeconds = 0.25
 
@@ -36,7 +43,7 @@ public enum AcousticEstimator {
             drafts.append(draft)
         }
         checkCycles(&drafts, parameters: parameters, correlator: &correlator)
-        return EstimationReport(estimator: identifier, epochs: drafts.map(\.estimate))
+        return EstimationReport(estimator: identifier(for: parameters), epochs: drafts.map(\.estimate))
     }
 
     // MARK: - Per-epoch analysis
@@ -156,7 +163,7 @@ public enum AcousticEstimator {
             let end = try track.groupClockStart.adding(ExactRational(Int64(overlap.upperBound), Int64(track.buffer.sampleRate)))
             segment = try AffineClockSegment(groupClockStart: start, groupClockEnd: end, rateRatio: ExactRational(aNumerator, 1_000_000_000), alignedOffset: ExactRational(Int64(bNanos), 1_000_000_000))
             let measurements = try AcousticConsistencyMeasurements(windowCount: eligible.count, overlapSpanFraction: span, eligibleWindowFraction: eligibleFraction, acousticResidualP95Milliseconds: p95, acousticResidualMaxMilliseconds: maxResidual)
-            provenance = try AcousticConsistencyProposal(estimator: identifier, evidenceScore: scores.medianPeakScore, measurements: measurements, seed: search.seed)
+            provenance = try AcousticConsistencyProposal(estimator: identifier(for: parameters), evidenceScore: scores.medianPeakScore, measurements: measurements, seed: search.seed)
         } catch {
             throw .timeMap(error)
         }
