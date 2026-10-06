@@ -60,7 +60,7 @@ correction, not a deliverable audio product.
 | WW-020 infra (derived-asset/job infra, versioned map persistence, C5 migration, #63 channel) | WW-020 (#19) | Mac | Planned | Builds on `WWDecode`/`WWTimeMap`; adds the explicit stated-channel value replacing the v1 index-0 placeholder. |
 | Estimator with abstention | WW-016 (#15) / WW-021 (#24) | Alignment | In progress: `WWAlignEstimate` calibrated and `m2-freeze-estimator` frozen; holdout NOT RUN (research candidate FAILED; see §6) | Must clear the WW-016 holdout gate (§5) before WW-021 production use. |
 | Discontinuity handling | WW-017 (#11) | Alignment | Planned | Depends on WW-015/016 residual behavior. |
-| Channel-consistent SRC/render + streamed assets | WW-018 (#13) / WW-023 (#18) | Alignment | Planned (WW-018 PENDING) | 64-tap Blackman sinc is a *candidate*, not a qualified production SRC (§6). |
+| Channel-consistent SRC/render + streamed assets | WW-018 (#13) / WW-023 (#18) | Alignment | In progress: `WWRender` candidate calibrated and `m2-freeze-render` frozen; holdout NOT RUN; listening BLOCKED (WW-018 PENDING) | The research 64-tap Blackman sinc and the `WWRender` 64-tap Kaiser sinc are *candidates*, not qualified production SRCs (§6). |
 | Inspection & manual-correction UI | WW-014 (#14) spec / WW-022 (#17) impl | Design (spec) / Mac (impl) | Spec PARTIAL, impl PENDING | Anchor list, time editors, audition, source-vs-aligned labels, keyboard/VoiceOver. |
 | Milestone acceptance | WW-024 (#20 in M2 issue numbering, milestone-exit unit) | Lead | PENDING | Gated on all of the above; not opened by this record. |
 
@@ -121,9 +121,10 @@ are `M2-C1`...`M2-C7`.
 
 ## 4. Fixture-registry / freeze plan
 
-**Status (2026-10-06):** `m2-freeze-estimator` is frozen (`docs/m2/fixtures/m2-freeze-estimator.json`,
-registry `docs/m2/fixtures/m2-fixture-registry.json`); its holdout has NOT run. The other freeze points below
-are still plans. The original plan text follows.
+**Status (2026-10-06):** `m2-freeze-estimator` (`docs/m2/fixtures/m2-freeze-estimator.json`) and
+`m2-freeze-render` (`docs/m2/fixtures/m2-freeze-render.json`) are frozen, both listed in the registry
+`docs/m2/fixtures/m2-fixture-registry.json`; neither holdout has run. The other freeze points below are still
+plans. The original plan text follows.
 
 M2 fixture generators do not exist yet, so **nothing is frozen in this record** — this section documents
 the *plan*, following the M1 pattern in `docs/m1/ww-003-fixture-protocol.md` (§3–4): calibration may only
@@ -185,7 +186,7 @@ revision per §4).
 | WW-015 | **PARTIAL** | Time-map contract; in progress (open lane). |
 | WW-016 | **FAILED** (research candidate); new estimator calibrated, frozen, holdout NOT RUN | Research candidate holdout failed (below). `WWAlignEstimate` emits only `acousticConsistentProposal` or abstentions and never `clockApproved`; calibration: `docs/m2/evidence/ww-016-estimator-calibration.md`. |
 | WW-017 | **PARTIAL** | Discontinuity handling planned, not yet built. |
-| WW-018 | **PENDING** | Listening gate blocked (not granted); SRC/render candidate not qualified. |
+| WW-018 | **PENDING**; `WWRender` candidate calibrated, frozen, holdout NOT RUN | Listening gate BLOCKED (not granted); SRC/render candidate not qualified. Calibration (16 cases + multi-span) met every objective gate pre-freeze: `docs/m2/evidence/ww-018-render-calibration.md`. |
 | WW-050 | **No evidence yet** | Decode module in progress (open lane); no decode evidence landed in this record. |
 
 **Drift-fallback decision (Lead):** until a frozen WW-016 holdout passes, alignment relies on manual
@@ -197,7 +198,7 @@ automatically.
 | Item | Status | Evidence |
 | --- | --- | --- |
 | WW-016 candidate gate | **FAILED** | 4/4 positive windows met targets (worst max error 0.007505 ms), but 2/6 acoustic negatives were falsely accepted: a constant ~35 ms delay produced a ~35.0 ms max clock-error estimate, and a variable delay produced a ~44.2 ms max clock-error estimate *with stronger confidence than the true positives*. Discontinuity/unrelated/silent/periodic negatives correctly abstained (4/4). See `docs/research/waveform-clock-render-readiness.md`. |
-| SRC/render candidate | Not qualified | The 64-tap Blackman-windowed-sinc renderer is a **candidate**, not a qualified production SRC; WW-018's objective gates (§5) are not yet cleared against it. |
+| SRC/render candidate | Not qualified | The 64-tap Blackman-windowed-sinc renderer is a **candidate**, not a qualified production SRC; WW-018's objective gates (§5) are not yet cleared against it. The M2 `WWRender` candidate (64-tap Kaiser sinc) met every objective gate on the 16-case calibration split only; it is not qualified until the frozen `m2-freeze-render` holdout passes, and the listening gate is BLOCKED. |
 | Decode envelope | Narrow, evidenced only | Exercised decode is 6-channel, 16-bit PCM WAV at 12/16 kHz only; render inputs exercised at 16 kHz only. No compressed-codec, BWF, broader-codec, or 12→48 kHz render claim exists yet. |
 | Foundation sparse maps | Synthetic/finite | Foundation-spike maps (`docs/research/foundation-spikes.md`): **160 maps** (20 each of 8 strata; **80 accepted / 80 abstained**), **500 truth probes** (shared across the 80 accepted maps — not 500 independent recordings). They inform the timing-contract formulas (§3, M2-C3) but carry no production-scale coverage claim. |
 | WW-018 listening | **Blocked, never passed** | ≥3 consented listeners for the objectionable-artifact rating has **not** been granted; this must be reported as blocked, not as passed, until granted with exact scope. |
