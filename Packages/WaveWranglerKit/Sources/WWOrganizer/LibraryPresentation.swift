@@ -344,6 +344,13 @@ public struct LibraryEntryCheckResult: Sendable, Equatable {
 }
 
 public enum LibraryEntryRefresh {
+    /// Entries this Mac has never started a check for (no details at all), in library order: shows another library
+    /// or another Mac brought in (Use That Library, Combine, a change from another Mac). Each needs one check;
+    /// otherwise it stays "Checking…" and is missing from Unavailable.
+    public static func unchecked(_ library: LibraryModel, details: [ShowID: LibraryEntryDetails]) -> [ShowID] {
+        library.entries.map(\.showID).filter { details[$0] == nil }
+    }
+
     /// Applies background check results. A result is dropped when the entry changed while the check ran
     /// (its generation moved on: e.g. a show window opened, or an identity collision was found), and an
     /// identity collision is never overwritten by a check.

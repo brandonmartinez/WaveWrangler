@@ -28,6 +28,8 @@ final class LibraryLocationUITests: XCTestCase {
     private var work: URL!
     /// Steps not run as key events because the system keyboard navigation setting is off.
     private var needsKeyboardNavigation: [String] = []
+    /// Spec details this run couldn't verify, with what was observed instead.
+    private var notVerified: [String] = []
 
     /// The system Full Keyboard Access / "Keyboard navigation" setting (`AppleKeyboardUIMode` bit 2, global domain).
     private static let keyboardNavigation = UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0
@@ -47,7 +49,8 @@ final class LibraryLocationUITests: XCTestCase {
             let outcome = run?.hasBeenSkipped == true ? "skipped" : run?.hasSucceeded == true ? "passed" : "failed"
             Acceptance.writeEvidence("t25-keyboard-navigation-\(name.replacingOccurrences(of: " ", with: "_"))",
                                      ["outcome": outcome, "keyboardNavigation": Self.keyboardNavigation,
-                                      "notRunNeedsFullKeyboardAccess": Array(Set(needsKeyboardNavigation)).sorted()], test: self)
+                                      "notRunNeedsFullKeyboardAccess": Array(Set(needsKeyboardNavigation)).sorted(),
+                                      "notVerified": notVerified], test: self)
         }
         if let app, app.state != .notRunning { app.terminate() }
         // Leave no library location or library behind for later suites: they share the isolated UI-test
@@ -178,6 +181,9 @@ final class LibraryLocationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Combined libraries' OR value BEGINSWITH 'Combined libraries'")).firstMatch.waitForExistence(timeout: 5),
                       "ST-36 summary stated")
 
+        // The folder library's shows get their first check on this Mac after the combine (off the main thread).
+        app.typeKey("l", modifierFlags: [.command, .shift])
+        waitForValue(element("ww.library.sidebar.unavailable"), "7 items need attention", timeout: 10)
         let combined = libraryState()
         XCTAssertEqual(combined.shows, "16 shows", "every entry from both libraries")
         // The 3 unavailable entries, plus the folder library's 4 shows, which this Mac has never opened (Location
@@ -255,10 +261,15 @@ final class LibraryLocationUITests: XCTestCase {
         XCTAssertTrue(grant.exists)
         assertTabReachesMessageBarFirst(grant)
         press(grant, step: "Tab to Grant Access…", alreadyFocused: true)
-        // The panel opens at the library's folder: choose it.
-        let service = XCUIApplication(bundleIdentifier: "com.apple.appkit.xpc.openAndSavePanelService")
-        Thread.sleep(forTimeInterval: 2)
-        (service.state == .notRunning ? app! : service).typeKey(.return, modifierFlags: [])
+        // The panel is pre-pointed at the library's folder. The fixture's folder is in the app's own sandbox
+        // container, which the open panel may not display (the gate run's panel opened at Documents), so the
+        // starting folder is recorded rather than relied on, and the library folder is chosen by keyboard (⇧⌘G).
+        let target = openPanelHost()
+        let startingFolder = openPanelFolderName(target)
+        if startingFolder != Self.permissionFixtureFolder.lastPathComponent {
+            notVerified.append("Grant Access… panel pre-pointed at the library folder: it opened at “\(startingFolder ?? "unknown")” (fixture folder is in the app container)")
+        }
+        choosePanelFolder(Self.permissionFixtureFolder, in: target)
         XCTAssertTrue(bar.waitForNonExistence(timeout: 10), "access granted: \(texts(app.windows["Library"]))")
         XCTAssertEqual(libraryState().shows, "12 shows")
     }
@@ -287,12 +298,11 @@ final class LibraryLocationUITests: XCTestCase {
         let bar = messageBar(heading: "Your library needs a newer WaveWrangler")
         XCTAssertTrue(bar.buttons["Library Settings…"].exists)
         assertTabReachesMessageBarFirst(bar.buttons["Library Settings…"])
-        let file = app.menuBars.menuBarItems["File"]
         openMenu("File", path: ["Library"])
-        XCTAssertFalse(file.menuItems["Library"].menuItems["New Collection…"].isEnabled, "no library edits in L5")
+        XCTAssertFalse(menuItem("File", ["Library", "New Collection…"]).isEnabled, "no library edits in L5")
         closeMenus()
         openMenu("File", path: [])
-        XCTAssertTrue(file.menuItems["Open…"].isEnabled, "shows still open with File › Open")
+        XCTAssertTrue(menuItem("File", ["Open…"]).isEnabled, "shows still open with File › Open")
         closeMenus()
         press(bar.buttons["Library Settings…"], step: "Tab to Library Settings…")
         XCTAssertTrue(app.popUpButtons["ww.settings.libraryLocation"].waitForExistence(timeout: 5), "Library Settings… opens Settings")
@@ -408,9 +418,31 @@ final class LibraryLocationUITests: XCTestCase {
     /// Choose Folder… → the open panel → ⇧⌘G, path, Return, Return.
     private func chooseFolder(_ folder: URL, from popup: XCUIElement) {
         select("Choose Folder…", in: popup)
+        choosePanelFolder(folder, in: openPanelHost())
+    }
+
+    /// The process that hosts the open panel: the out-of-process panel service, or the app itself.
+    private func openPanelHost() -> XCUIApplication {
         let service = XCUIApplication(bundleIdentifier: "com.apple.appkit.xpc.openAndSavePanelService")
         Thread.sleep(forTimeInterval: 2)
-        let target = service.state == .notRunning ? app! : service
+        return service.state == .notRunning ? app : service
+    }
+
+    /// The folder the open panel is showing (its location pop-up), if the panel exposes it.
+    private func openPanelFolderName(_ host: XCUIApplication) -> String? {
+        let location = host.sheets.firstMatch.exists ? host.sheets.firstMatch.popUpButtons.firstMatch : host.windows.firstMatch.popUpButtons.firstMatch
+        return location.exists ? (location.value as? String) : nil
+    }
+
+    /// The L3 fixture's library folder (LibraryLocationFixture: the app's temporary directory, in its container).
+    private static var permissionFixtureFolder: URL {
+        let home = getpwuid(getuid()).map { String(cString: $0.pointee.pw_dir) } ?? NSHomeDirectory()
+        return URL(filePath: home).appending(path: "Library/Containers/com.brandonmartinez.wavewrangler/Data/tmp/WWLibraryLocation-Current",
+                                             directoryHint: .isDirectory)
+    }
+
+    /// In the open panel: ⇧⌘G, path, Return (go there), Return (choose it).
+    private func choosePanelFolder(_ folder: URL, in target: XCUIApplication) {
         target.typeKey("g", modifierFlags: [.command, .shift])
         Thread.sleep(forTimeInterval: 1)
         target.typeText(folder.path)
@@ -479,12 +511,10 @@ final class LibraryLocationUITests: XCTestCase {
         guard Self.keyboardNavigation else {
             needsKeyboardNavigation.append("⌃F2 to the menu bar (\(([menu] + path).joined(separator: " › ")))")
             app.menuBars.menuBarItems[menu].click()
-            var parent = app.menuBars.menuBarItems[menu]
-            for item in path {
-                let next = parent.menuItems[item]
-                XCTAssertTrue(next.waitForExistence(timeout: 3), "menu item \(item)")
+            for depth in path.indices {
+                let next = menuItem(menu, Array(path[...depth]))
+                XCTAssertTrue(next.waitForExistence(timeout: 3), "menu item \(path[depth])")
                 next.hover()
-                parent = next
             }
             return
         }
@@ -500,6 +530,16 @@ final class LibraryLocationUITests: XCTestCase {
         }
     }
 
+    /// A menu-bar item by its title path, matching only each menu's own items: the Library submenu has
+    /// "New Collection…" and Add to Collection ▸ "New Collection…".
+    private func menuItem(_ menu: String, _ path: [String]) -> XCUIElement {
+        var element = app.menuBars.menuBarItems[menu]
+        for title in path {
+            element = element.children(matching: .menu).firstMatch.children(matching: .menuItem)[title]
+        }
+        return element
+    }
+
     /// Esc until no menu is open.
     private func closeMenus() {
         for _ in 0..<4 { app.typeKey(.escape, modifierFlags: []) }
@@ -513,7 +553,7 @@ final class LibraryLocationUITests: XCTestCase {
             app.typeText("New Collection")
             app.typeKey(.return, modifierFlags: [])
         } else {
-            app.menuBars.menuBarItems["File"].menuItems["Library"].menuItems["New Collection…"].click()
+            menuItem("File", ["Library", "New Collection…"]).click()
         }
         let field = element("ww.dialog.name")
         XCTAssertTrue(field.waitForExistence(timeout: 5))
