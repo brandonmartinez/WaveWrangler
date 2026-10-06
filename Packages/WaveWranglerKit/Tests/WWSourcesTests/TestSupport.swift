@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import Observation
 import WWCore
 @testable import WWSources
 
@@ -110,15 +111,6 @@ final class HarnessIO: SourceIO, @unchecked Sendable {
     private var _faults = Faults()
     private var cloud: [String: SimulatedCloudItem] = [:]
     private var _provenance: ObservationProvenance = .observed
-    private var gateArmed = false
-    private var _gateEntered = false
-    private let gateRelease = DispatchSemaphore(value: 0)
-
-    /// Blocks the *next* metadata call (on whatever thread runs it) until `releaseGate()`, so tests can
-    /// change state deterministically while an off-main evaluation is in flight.
-    func armMetadataGate() { lock.withLock { gateArmed = true; _gateEntered = false } }
-    var gateEntered: Bool { lock.withLock { _gateEntered } }
-    func releaseGate() { gateRelease.signal() }
 
     var provenance: ObservationProvenance { lock.withLock { _provenance } }
 
@@ -160,13 +152,6 @@ final class HarnessIO: SourceIO, @unchecked Sendable {
 
     func metadata(at url: URL) -> MetadataResult {
         bump(.metadata)
-        let shouldBlock = lock.withLock { () -> Bool in
-            guard gateArmed else { return false }
-            gateArmed = false
-            _gateEntered = true
-            return true
-        }
-        if shouldBlock { gateRelease.wait() }
         if let failure = lock.withLock({ _faults.metadataFailures[Self.key(url)] }) { return .failure(failure) }
         let result = base.metadata(at: url)
         guard case var .success(metadata) = result, let item = simulated(url) else { return result }
@@ -289,6 +274,33 @@ actor AsyncGate {
             try? await Task.sleep(for: .milliseconds(1))
         }
         return entered
+    }
+}
+
+/// Event-driven correctness wait with a wall-clock liveness guard so a regression fails instead of
+/// hanging the suite.
+@MainActor
+func waitUntilObserved(
+    _ monitor: SourceAvailabilityMonitor,
+    sourceID: SourceID,
+    transfer: TransferState,
+    limit: Duration = .seconds(30)
+) async -> Bool {
+    let changes = Observations { monitor.observations[sourceID]?.transfer }
+    return await withTaskGroup(of: Bool.self) { group in
+        group.addTask {
+            for await state in changes {
+                if state == transfer { return true }
+            }
+            return false
+        }
+        group.addTask {
+            try? await Task.sleep(for: limit)
+            return false
+        }
+        let first = await group.next() ?? false
+        group.cancelAll()
+        return first
     }
 }
 
