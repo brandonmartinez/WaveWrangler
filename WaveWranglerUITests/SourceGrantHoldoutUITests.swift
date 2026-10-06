@@ -26,7 +26,7 @@ final class SourceGrantHoldoutUITests: XCTestCase {
     private var failures: [String] = []
     private var records: [[String: Any]] = []
     private var cycleSeeds: [UInt64] = []
-    /// Registry split: `WW_FIXTURE_SPLIT` = holdout | calibration (default calibration).
+    /// Registry split: `WW_FIXTURE_SPLIT` = holdout | calibration (default calibration; anything else fails the test).
     private var split: String { Acceptance.environment["WW_FIXTURE_SPLIT"] ?? "calibration" }
 
     static func fixtureSeed(split: String, caseIndex: Int) -> UInt64 {
@@ -64,8 +64,23 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         if let workDirectory { try? FileManager.default.removeItem(at: workDirectory) }
     }
 
+    /// The registry's frozen holdout count for M1-REF-020 (m1-fixture-registry.json split.holdout).
+    static let registryHoldoutScenarios = 20
+
     func testGrantRelaunchRegrantRelink() throws {
-        let scenarios = Acceptance.count("WW_HOLDOUT_SCENARIOS", default: 4)
+        guard ["holdout", "calibration"].contains(split) else {
+            XCTFail("WW_FIXTURE_SPLIT must be holdout or calibration, not '\(split)'")
+            return
+        }
+        let requested = Acceptance.environment["WW_HOLDOUT_SCENARIOS"].flatMap(Int.init)
+        if split == "holdout" {
+            // A holdout never runs on a default or mistyped count: it must be exactly the registry's 20.
+            guard requested == Self.registryHoldoutScenarios else {
+                XCTFail("holdout split requires WW_HOLDOUT_SCENARIOS=\(Self.registryHoldoutScenarios), got \(Acceptance.environment["WW_HOLDOUT_SCENARIOS"] ?? "unset")")
+                return
+            }
+        }
+        let scenarios = requested ?? 4
         let cycles = max(1, (scenarios + 3) / 4)
         for cycle in 0..<cycles {
             do { try runCycle(cycle) } catch { record(cycle, "cycle", ["threw \(error)"]) }
@@ -75,6 +90,10 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         Acceptance.writeEvidence("ref020-native-grant", [
             "revision": Acceptance.revision(), "split": split, "scenarios": records, "executed": records.count, "passed": passed,
         ], test: self)
+        if split == "holdout" {
+            XCTAssertEqual(records.count, Self.registryHoldoutScenarios,
+                           "holdout executed \(records.count) of \(Self.registryHoldoutScenarios) scenarios (an aborted cycle records fewer)")
+        }
         for record in records where record["passed"] as? Bool != true {
             XCTFail("REF-020 \(record["cycle"] ?? "?") \(record["scenario"] ?? ""): \(record["failures"] ?? "")")
         }
@@ -135,7 +154,9 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         app.typeKey("l", modifierFlags: [.command, .shift])
         let entries = app.outlines["ww.library.entries"]
         check(entries.waitForExistence(timeout: 10), "Library window")
-        let row = entries.outlineRows.containing(NSPredicate(format: "value == %@", title)).firstMatch
+        // At the default Library width the Name cell's value is the hidden-columns summary (#140); its label is the
+        // show name. Match either (as LibraryWorkspaceUITests does).
+        let row = entries.outlineRows.containing(NSPredicate(format: "label == %@ OR value == %@", title, title)).firstMatch
         check(row.waitForExistence(timeout: 10), "the show is in the library after relaunch: \(title)")
         if row.exists {
             row.cells.firstMatch.click()
