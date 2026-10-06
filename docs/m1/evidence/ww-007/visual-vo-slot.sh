@@ -1,6 +1,8 @@
 #!/bin/sh
 # WW-007 C04/C05 + VoiceOver slot. Mac mini only, under the coordinator GUI lock.
 # Records originals, sets temporary settings, runs tests, ALWAYS restores (trap), verifies by re-reading.
+# Revised after the 475adf3 run: also snapshots voiceOverOnOffKey, quits VoiceOver properly, removes emptied plists.
+# The restore restores the *observed* originals of the 2026-10-05 mini; re-check them before reuse elsewhere.
 cd "$(dirname "$0")"
 U=com.apple.universalaccess
 LOG=slot.log
@@ -9,7 +11,7 @@ T=WaveWranglerUITests
 log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a $LOG; }
 snapshot() { # $1 = label
   log "== snapshot $1"
-  for k in increaseContrast reduceMotion reduceTransparency FontSizeCategory; do
+  for k in increaseContrast reduceMotion reduceTransparency FontSizeCategory voiceOverOnOffKey; do
     v=$(defaults read $U $k 2>/dev/null | tr '\n' ' ' || true); t=$(defaults read-type $U $k 2>/dev/null || echo absent)
     log "$U $k = ${v:-<absent>} ($t)"
   done
@@ -27,10 +29,18 @@ restore_visual() {
 }
 restore_vo() {
   log "restore VoiceOver"
+  # Turn VoiceOver off the system's way first (kill leaves com.apple.universalaccess voiceOverOnOffKey = 1, as
+  # observed on 2026-10-05), then fall back to kill.
+  if pgrep -x VoiceOver >/dev/null; then
+    osascript -e 'tell application "VoiceOver" to quit' 2>&1 | tee -a $LOG; sleep 4
+  fi
   for p in $(pgrep -x VoiceOver); do log "kill VoiceOver pid $p"; kill $p; done
   sleep 3
-  defaults delete com.apple.VoiceOverTraining 2>/dev/null
-  defaults delete com.apple.VoiceOver4/default 2>/dev/null
+  # An emptied domain stays as an empty plist file (cfprefsd), which reads as present: remove the file too.
+  for d in com.apple.VoiceOverTraining com.apple.VoiceOver4/default; do
+    defaults delete $d 2>/dev/null
+    f="$HOME/Library/Preferences/$d.plist"; [ -f "$f" ] && [ "$(plutil -p "$f" | tr -d ' \n')" = "{}" ] && rm "$f"
+  done
 }
 cleanup() { restore_visual; restore_vo; sleep 2; snapshot after-restore; log "SLOT DONE"; }
 trap cleanup EXIT INT TERM

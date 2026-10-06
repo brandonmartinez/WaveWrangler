@@ -1,0 +1,55 @@
+[17:04:34] == snapshot originals
+[17:04:34] com.apple.universalaccess increaseContrast = 0  (Type is boolean)
+[17:04:34] com.apple.universalaccess reduceMotion = <absent> (absent)
+[17:04:34] com.apple.universalaccess reduceTransparency = 0  (Type is boolean)
+[17:04:34] com.apple.universalaccess FontSizeCategory = <absent> (absent)
+[17:04:34] com.apple.VoiceOver4/default absent
+[17:04:34] com.apple.VoiceOverTraining absent
+[17:04:34] VoiceOver processes: 
+[17:04:34] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[17:24:19] re-measurement tests exit 0
+[17:24:19] set visual
+[17:24:23] == snapshot visual-on
+[17:24:23] com.apple.universalaccess increaseContrast = 1  (Type is boolean)
+[17:24:23] com.apple.universalaccess reduceMotion = 1  (Type is boolean)
+[17:24:23] com.apple.universalaccess reduceTransparency = 0  (Type is boolean)
+[17:24:23] com.apple.universalaccess FontSizeCategory = {     global = XXXL; }  (Type is dictionary)
+[17:24:23] com.apple.VoiceOver4/default absent
+[17:24:23] com.apple.VoiceOverTraining absent
+[17:24:23] VoiceOver processes: 
+[17:24:23] probe: increaseContrast=true reduceMotion=true reduceTransparency=false voiceOver=false bodyFont=13.0
+[17:32:56] visual tests exit 0
+[17:32:56] restore visual
+[17:32:59] == snapshot visual-restored
+[17:32:59] com.apple.universalaccess increaseContrast = 0  (Type is boolean)
+[17:32:59] com.apple.universalaccess reduceMotion = <absent> (absent)
+[17:32:59] com.apple.universalaccess reduceTransparency = 0  (Type is boolean)
+[17:33:00] com.apple.universalaccess FontSizeCategory = <absent> (absent)
+[17:33:00] com.apple.VoiceOver4/default absent
+[17:33:00] com.apple.VoiceOverTraining absent
+[17:33:00] VoiceOver processes: 
+[17:33:00] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[17:33:00] start VoiceOver
+[17:33:08] == snapshot vo-on
+[17:33:08] com.apple.universalaccess increaseContrast = 0  (Type is boolean)
+[17:33:08] com.apple.universalaccess reduceMotion = <absent> (absent)
+[17:33:08] com.apple.universalaccess reduceTransparency = 0  (Type is boolean)
+[17:33:08] com.apple.universalaccess FontSizeCategory = <absent> (absent)
+[17:33:08] com.apple.VoiceOver4/default absent
+[17:33:08] com.apple.VoiceOverTraining present
+[17:33:08] VoiceOver processes: 21864 
+[17:33:08] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=false bodyFont=13.0
+[17:37:46] VoiceOver tests exit 65
+[17:37:46] restore visual
+[17:37:46] restore VoiceOver
+[17:37:46] kill VoiceOver pid 21864
+[17:37:52] == snapshot after-restore
+[17:37:52] com.apple.universalaccess increaseContrast = 0  (Type is boolean)
+[17:37:52] com.apple.universalaccess reduceMotion = <absent> (absent)
+[17:37:52] com.apple.universalaccess reduceTransparency = 0  (Type is boolean)
+[17:37:52] com.apple.universalaccess FontSizeCategory = <absent> (absent)
+[17:37:52] com.apple.VoiceOver4/default absent
+[17:37:52] com.apple.VoiceOverTraining present
+[17:37:52] VoiceOver processes: 
+[17:37:52] probe: increaseContrast=false reduceMotion=false reduceTransparency=false voiceOver=true bodyFont=13.0
+[17:37:52] SLOT DONE
