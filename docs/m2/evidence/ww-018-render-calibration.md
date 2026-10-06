@@ -1,6 +1,6 @@
 # WW-018 evidence: candidate group renderer, calibration and `m2-freeze-render`
 
-**Status: CANDIDATE, calibrated, gates frozen. Holdout NOT run. Not qualified. Listening BLOCKED.**
+**Status: CANDIDATE. Objective holdout gates PASSED on this host. Not qualified overall — listening BLOCKED.**
 
 **Scope.** `WWRender` (Packages/WaveWranglerKit) is a pure module: Foundation, `WWCore` and `WWTimeMap` only.
 It has no file, URL, decoder or content API. `RenderPurityTests` checks this, and the repo-wide
@@ -111,8 +111,50 @@ pinned tree drift from the record.
 It takes effect at this PR's merge commit. Disclosed: the multi-span case is fixed, so it is the same in both
 splits and is not held out.
 
-**Holdout: not run.** It runs once on a clean commit after merge, with `WW_M2_RENDER_HOLDOUT=1`. Every case and
-gate is reported. Nothing is tuned after the freeze.
+## Holdout (`m2-freeze-render`, run once)
+
+**Run record.** Commit `94d3b7598cd00f4c3284f98fb261afc9c8f256c1` (the freeze record's own merge commit; clean
+checkout, `git status` empty). Pinned trees match exactly: `Sources/WWRender`
+`94604633d6464391ade116b363f8874675381bf5` and `Tests/WWRenderTests` `ef0617bdeb96cc718d5985ba5da618b4f4e4a62e`
+(`git rev-parse HEAD:<path>`, re-checked at run time). Nothing concurrent: `pgrep -fl
+'swift-test|swiftpm-testing-helper|xctest'` found no other test process before or during the run.
+
+- Host: macOS 27.0.1 (26A434); Xcode 27.0 (27A266a); Apple Swift 6.4 (swiftlang-6.4.0.34.1); Mac17,14, 18 cores,
+  128 GiB (137438953472 bytes).
+- Command (holdout split, exactly as frozen):
+  `WW_M2_RENDER_HOLDOUT=1 WW_RENDER_RECORDS_DIR=<dir> swift test --package-path Packages/WaveWranglerKit
+  --scratch-path .build/swiftpm --jobs 4 --filter holdoutSplitMeetsEveryFrozenGate`
+  Start 2026-10-06T11:49:16Z, end 2026-10-06T11:49:56Z (8.419 s test time). Result: **passed**.
+- Family peak (same gate, same renderer tree, run once on this commit per `scripts/test.sh`'s own invocation):
+  `WW_TIMING_TESTS=1 WW_RENDER_RECORDS_DIR=<dir> swift test --package-path Packages/WaveWranglerKit
+  --scratch-path .build/swiftpm --jobs 4 --filter renderFamilyPeakAndThroughput`
+  Start 2026-10-06T11:50:03Z, end 2026-10-06T11:50:41Z (34.921 s test time). Result: **passed**.
+- Records: 48 holdout cases + 1 multi-span (49 case indices, 9 strata including multi-span), 1370 lines,
+  [`ww-018/holdout.jsonl`](ww-018/holdout.jsonl), SHA-256
+  `f24a08cc701bd802c56dd41e93c21c7adedae4d5137ef108644e16ba540a3be8`. Timing line:
+  [`ww-018/holdout-timing.txt`](ww-018/holdout-timing.txt).
+
+**Per-gate holdout results (every gate, worst measured value; nearest-rank p95 is not applicable — these gates
+are worst-case, not percentile):**
+
+| Gate (verbatim) | Limit | Worst holdout value | n | Verdict |
+| --- | --- | --- | --- | --- |
+| Landmarks | ≤1 output frame | 0.1697 frames | 588 | **PASS** |
+| Passband | ±0.1 dB to 80% of lower Nyquist | 0.000146 dB | 288 | **PASS** |
+| Alias | ≤−80 dBc | −92.85 dBc stopband; in-band residual (passband) −108.82 dBc | 396 (passband+stopband) | **PASS** |
+| Interchannel skew | ≤1 output frame | 0.0537 frames | 98 | **PASS** |
+| Inversions/swaps | 0 | 0 of 588 landmark measurements | 588 | **PASS** |
+| Inactive output | ≤−80 dBFS | exact zero (−∞ dBFS) | 240 | **PASS** |
+| Phase tolerance | ≤0.001° (frozen) | 3.64e-6° | 288 | **PASS** |
+| Family peak | ≤1 GiB resident | 38.5 MiB resident (`ru_maxrss`); working set 198,632 bytes; 704 chunks, 34.92 s wall (1.7× real time) | 1 run | **PASS** |
+| License/notices | native or self-written only | unchanged since calibration: `Package.swift` declares zero package dependencies for `WWRender`/`WWRenderTests`; no third-party code, no notices needed | — | **PASS** |
+| Listening (≥3 consented listeners, ≤5% objectionable) | — | not granted, not measured | — | **BLOCKED — never reported as passed** |
+
+**Overall: every objective holdout gate PASSED on this host, once, at the frozen counts.** This qualifies the
+renderer's objective (measurable DSP) behaviour only. WW-018 as a whole is **not** complete: the listening gate
+stays BLOCKED (no consented listeners, no frozen rubric), so this candidate renderer is not fully qualified for
+release pending that separate, user-scoped step. No code, recipe, gate, seed or count was changed before or
+after this run; the holdout ran exactly once and its result — pass or fail — is recorded as-is.
 
 **Robustness (tested, typed errors, nothing read on refusal):**
 - empty, oversized or out-of-envelope output ranges;
@@ -157,7 +199,8 @@ swift test --filter WWRenderTests`, and the same with `WW_RENDER_CALIBRATION=1` 
     the planner is correct. P14 plants an off-by-one planner bug, which the self-checks catch (21 tests fail).
 
 **Not claimed.**
-- Not qualified: the holdout is not run.
+- Not qualified: the objective holdout ran once and passed every gate (see Holdout section), but WW-018 overall
+  is not complete while the listening gate stays blocked.
 - Listening is BLOCKED.
 - No real recordings were used.
 - No decode-envelope widening.
