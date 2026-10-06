@@ -150,4 +150,155 @@ struct AlignmentPresentationTests {
         #expect(probe.value == 1)
         #expect(applied == [1, 0, 1])
     }
+
+    @Test func editorDefaultsPreserveExistingCorrectionsAndAnchorPairs() {
+        let row = AlignmentRow(
+            groupID: RecorderGroupID(),
+            epochID: RecordingEpochID(),
+            groupName: "Remote",
+            epochLabel: "Take",
+            sourceNames: "synthetic.wav",
+            state: AlignmentPresentation.copy(for: .unsupported(.notAttempted, .analysisPending)),
+            ratePPM: 12.04,
+            offsetMilliseconds: 84.2
+        )
+        let numeric = AlignmentEditorDefaults.numeric(row: row)
+        #expect(numeric.ratePPM == 12.04)
+        #expect(numeric.offsetMilliseconds == 84.2)
+        let existing = [
+            AlignmentAnchorRow(id: 0, sourceSeconds: 1, groupSeconds: 0, alignedSeconds: 3),
+            AlignmentAnchorRow(id: 1, sourceSeconds: 4, groupSeconds: 3, alignedSeconds: 6),
+            AlignmentAnchorRow(id: 2, sourceSeconds: 7, groupSeconds: 6, alignedSeconds: 9),
+        ]
+        #expect(AlignmentEditorDefaults.anchors(existing: existing, map: nil, row: row) == [
+            AlignmentAnchor(sourceSeconds: 1, alignedSeconds: 3),
+            AlignmentAnchor(sourceSeconds: 4, alignedSeconds: 6),
+            AlignmentAnchor(sourceSeconds: 7, alignedSeconds: 9),
+        ])
+    }
+
+    @Test func auditionBoundsRejectOverflowMemoryAndUnboundedSeekMutations() throws {
+        #expect(throws: AlignmentAuditionRequestError.invalidStart) {
+            _ = try AlignmentAuditionRequest.frameRange(
+                startSeconds: .infinity,
+                durationSeconds: 1,
+                sampleRate: 48_000,
+                availableFrames: 48_000
+            )
+        }
+        #expect(throws: AlignmentAuditionRequestError.durationTooLong(maximumSeconds: 30)) {
+            _ = try AlignmentAuditionRequest.frameRange(
+                startSeconds: 0,
+                durationSeconds: 30.001,
+                sampleRate: 48_000,
+                availableFrames: 48_000 * 60
+            )
+        }
+        #expect(throws: AlignmentAuditionRequestError.startTooDistant(maximumSeconds: 300)) {
+            _ = try AlignmentAuditionRequest.frameRange(
+                startSeconds: 300.001,
+                durationSeconds: 1,
+                sampleRate: 48_000,
+                availableFrames: 48_000 * 600
+            )
+        }
+        #expect(throws: AlignmentAuditionRequestError.tooManyFrames(maximum: 1_500_000)) {
+            _ = try AlignmentAuditionRequest.frameRange(
+                startSeconds: 0,
+                durationSeconds: 30,
+                sampleRate: 96_000,
+                availableFrames: 96_000 * 30
+            )
+        }
+        #expect(try AlignmentAuditionRequest.frameRange(
+            startSeconds: 1,
+            durationSeconds: 2,
+            sampleRate: 48_000,
+            availableFrames: 48_000 * 10
+        ) == 48_000..<144_000)
+    }
+
+    @Test func gapAndOutsideCoverageMapResultsReachInspectionPresentation() throws {
+        let groupID = RecorderGroupID()
+        let firstEpoch = RecordingEpochID()
+        let secondEpoch = RecordingEpochID()
+        let occurrence = try SourceOccurrence(
+            id: SourceOccurrenceID(),
+            source: SourceID(),
+            nominalRate: NominalRate(10),
+            frameCount: 50
+        )
+        let reference = TimelineReference(
+            group: groupID,
+            epoch: firstEpoch,
+            occurrence: occurrence.id
+        )
+        let spanEnd = try ExactRational(numerator: 2, denominator: 1)
+        let identity = try AffineClockSegment(
+            groupClockStart: .zero,
+            groupClockEnd: spanEnd,
+            rateRatio: .one,
+            alignedOffset: .zero
+        )
+        let group = try GroupTimeMap(
+            group: groupID,
+            reference: reference,
+            epochs: [
+                EpochClockMap(
+                    epoch: firstEpoch,
+                    mapping: .mapped(segments: [identity], provenance: .timelineReference)
+                ),
+                EpochClockMap(
+                    epoch: secondEpoch,
+                    mapping: .mapped(
+                        segments: [identity],
+                        provenance: .manual(ManualCorrection(basis: .numericEntry))
+                    )
+                ),
+            ],
+            placements: [OccurrencePlacement(
+                occurrence: occurrence,
+                spans: [
+                    EpochSpan(
+                        startFrame: 0,
+                        endFrame: 20,
+                        epoch: firstEpoch,
+                        groupClockOffset: .zero
+                    ),
+                    EpochSpan(
+                        startFrame: 30,
+                        endFrame: 50,
+                        epoch: secondEpoch,
+                        groupClockOffset: try ExactRational(numerator: -3, denominator: 1)
+                    ),
+                ]
+            )]
+        )
+        let map = try AlignedTimelineMap(reference: reference, groups: [group])
+        let row = AlignmentRow(
+            groupID: groupID,
+            epochID: firstEpoch,
+            groupName: "Recorder",
+            epochLabel: "Take 1",
+            sourceNames: "synthetic.wav",
+            state: AlignmentPresentation.gap
+        )
+
+        let gap = try #require(AlignmentRegionProjection.project(
+            map: map,
+            row: row,
+            sourceSeconds: 2.5
+        ))
+        #expect(gap.copy == AlignmentPresentation.gap)
+        #expect(gap.precedingEpoch == firstEpoch)
+        #expect(gap.followingEpoch == secondEpoch)
+
+        let outside = try #require(AlignmentRegionProjection.project(
+            map: map,
+            row: row,
+            sourceSeconds: 8
+        ))
+        #expect(outside.copy == AlignmentPresentation.outsideCoverage)
+        #expect(outside.nearestSourceSeconds == 4.9)
+    }
 }

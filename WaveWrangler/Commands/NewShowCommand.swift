@@ -29,14 +29,18 @@ enum NewShowCommand {
     }
 
     static func create(at url: URL, episodes: [Episode] = []) {
-        let controller = NSDocumentController.shared
         let name = url.deletingPathExtension().lastPathComponent
+        var model = (try? ShowDocumentModel.untitled().renamingShow(to: name)) ?? .untitled()
+        for episode in episodes {
+            model = (try? model.addingEpisode(episode)) ?? model
+        }
+        create(at: url, model: model)
+    }
+
+    static func create(at url: URL, model: ShowDocumentModel) {
+        let controller = NSDocumentController.shared
         do {
             guard let document = try controller.makeUntitledDocument(ofType: DocumentTypes.show) as? ShowDocument else { return }
-            var model = (try? ShowDocumentModel.untitled().renamingShow(to: name)) ?? .untitled()
-            for episode in episodes {
-                model = (try? model.addingEpisode(episode)) ?? model
-            }
             document.store.replaceLoadedModel(model)
             document.save(to: url, ofType: DocumentTypes.show, for: .saveAsOperation) { error in
                 MainActor.assumeIsolated {

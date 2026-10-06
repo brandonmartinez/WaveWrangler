@@ -244,7 +244,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     @objc func acceptAlignmentProposal(_ sender: Any?) { activeShowState?.alignmentModel?.acceptProposal() }
     @objc func rejectAlignmentProposal(_ sender: Any?) { activeShowState?.alignmentModel?.rejectProposal() }
     @objc func editAlignmentTiming(_ sender: Any?) { activeShowState?.alignmentModel?.requestNumericEditor() }
-    @objc func placeAlignmentAnchorAtPlayhead(_ sender: Any?) { activeShowState?.alignmentModel?.requestAnchorEditor() }
+    @objc func placeAlignmentAnchorAtPlayhead(_ sender: Any?) { activeShowState?.alignmentModel?.placeAnchorAtPlayhead() }
     @objc func placeAlignmentAnchors(_ sender: Any?) { activeShowState?.alignmentModel?.requestAnchorEditor() }
     @objc func startNewEpochAtAnchor(_ sender: Any?) { activeShowState?.alignmentModel?.startNewEpochAtSelectedAnchor() }
     @objc func auditionAlignmentSelection(_ sender: Any?) { activeShowState?.alignmentModel?.auditionSelection() }
@@ -385,15 +385,17 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
         case #selector(acceptAlignmentProposal(_:)), #selector(rejectAlignmentProposal(_:)):
             return show?.destination == .alignment
                 && show?.alignmentModel?.selectedRow?.state.heading.hasPrefix("Proposed") == true
-        case #selector(editAlignmentTiming(_:)), #selector(placeAlignmentAnchorAtPlayhead(_:)),
-             #selector(placeAlignmentAnchors(_:)):
+        case #selector(editAlignmentTiming(_:)), #selector(placeAlignmentAnchors(_:)):
             return show?.destination == .alignment && show?.alignmentModel?.canCorrect == true
+        case #selector(placeAlignmentAnchorAtPlayhead(_:)):
+            return show?.destination == .alignment
+                && show?.alignmentModel?.canPlaceAnchorAtPlayhead == true
         case #selector(startNewEpochAtAnchor(_:)):
             return show?.destination == .alignment && show?.alignmentModel?.canStartNewEpoch == true
         case #selector(auditionAlignmentSelection(_:)):
             return show?.destination == .alignment && show?.alignmentModel?.canAudition == true
         case #selector(stopAlignmentAudition(_:)):
-            return show?.destination == .alignment && show?.alignmentModel?.isAuditioning == true
+            return show?.destination == .alignment && show?.alignmentModel?.canStopAudition == true
         case #selector(goToAlignmentSetup(_:)):
             return show?.destination == .alignment
         default:

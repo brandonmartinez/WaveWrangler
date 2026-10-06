@@ -40,8 +40,19 @@ final class AlignmentInspectionUITests: XCTestCase {
 
     func testTM202PlaceAnchorFromMenu() {
         selectTargetEpoch()
+        chooseEpisodeMenu("Place Anchors…")
+        app.buttons["alignment.anchors.apply"].click()
+        XCTAssertTrue(app.staticTexts["Set by you"].waitForExistence(timeout: 5))
+        replace(app.textFields["ww.alignment.audition.range.start"], with: "1")
+        replace(app.textFields["ww.alignment.audition.range.duration"], with: "1")
+        app.typeKey(.return, modifierFlags: .command)
+        XCTAssertTrue(waitForLabel("Auditioning", in: app.staticTexts["alignment.auditionStatus"]))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitForLabel("Audition stopped at", in: app.staticTexts["alignment.auditionStatus"]))
         chooseEpisodeMenu("Place Anchor at Playhead")
-        XCTAssertTrue(app.textFields["alignment.anchors.first.source"].waitForExistence(timeout: 2))
+        let appended = app.textFields["ww.alignment.anchor.2.alignedTime"]
+        XCTAssertTrue(appended.waitForExistence(timeout: 5))
+        XCTAssertTrue(appended.value(forKey: "hasKeyboardFocus") as? Bool == true)
     }
 
     func testTM203EditAnchorTimeNumerically() {
@@ -83,7 +94,9 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(app.staticTexts["Set by you"].waitForExistence(timeout: 5))
         chooseEpisodeMenu("Edit Epoch Timing Numerically…")
-        XCTAssertTrue(app.textFields["alignment.numeric.rate"].waitForExistence(timeout: 2))
+        let preserved = app.textFields["alignment.numeric.rate"]
+        XCTAssertTrue(preserved.waitForExistence(timeout: 2))
+        XCTAssertEqual(preserved.value as? String, "12.5")
         app.typeKey(.escape, modifierFlags: [])
     }
 
@@ -112,22 +125,27 @@ final class AlignmentInspectionUITests: XCTestCase {
 
     func testTM209AuditionAndStopShortcuts() {
         selectTargetEpoch()
+        replace(app.textFields["ww.alignment.audition.range.duration"], with: "2")
         app.typeKey(.return, modifierFlags: .command)
+        XCTAssertTrue(waitForLabel("Auditioning", in: app.staticTexts["alignment.auditionStatus"]))
         app.typeKey(.escape, modifierFlags: [])
-        XCTAssertTrue(app.staticTexts["alignment.auditionStatus"].exists)
+        XCTAssertTrue(waitForLabel("Audition stopped at", in: app.staticTexts["alignment.auditionStatus"]))
     }
 
     func testTM210BlockedStateAndRemedyAreLabelled() {
         selectTargetEpoch()
-        chooseEpisodeMenu("Reject Proposal")
-        app.typeKey("i", modifierFlags: [.command, .control])
-        XCTAssertTrue(app.staticTexts["ww.inspector.alignment.evidence"].waitForExistence(timeout: 2))
+        replace(app.textFields["ww.alignment.audition.range.start"], with: "2.5")
+        let heading = app.staticTexts["ww.alignment.region.heading"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 2))
+        XCTAssertEqual(heading.label, "Gap — clock restarted")
+        XCTAssertTrue(app.buttons["Go to Epoch After"].exists)
     }
 
     func testTM211DependentsNoticeIsReadableWithoutFocusMove() {
         selectTargetEpoch()
+        XCTAssertTrue(app.staticTexts["1 dependent job current; none stale."].waitForExistence(timeout: 5))
         chooseEpisodeMenu("Accept Proposal as Manual")
-        XCTAssertTrue(app.staticTexts["ww.alignment.dependents"].exists)
+        XCTAssertTrue(app.staticTexts["1 of 1 dependent job stale."].waitForExistence(timeout: 5))
     }
 
     func testTM212NoRecorderGroupBlockedPanel() {
@@ -141,7 +159,11 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.activate()
         app.typeKey("2", modifierFlags: .command)
         XCTAssertTrue(app.staticTexts["ww.show.blocked.heading"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["ww.show.blocked.goToSetup"].exists)
+        let goToSetup = app.buttons["ww.show.blocked.goToSetup"]
+        XCTAssertTrue(goToSetup.exists)
+        XCTAssertTrue(tabToFocus(goToSetup))
+        app.typeKey(.space, modifierFlags: [])
+        XCTAssertTrue(app.tables["ww.setup.sources"].waitForExistence(timeout: 5))
     }
 
     func testAlignmentWindowSmokeAndResize() throws {
@@ -174,5 +196,33 @@ final class AlignmentInspectionUITests: XCTestCase {
         let state = app.staticTexts["Proposed — not confirmed"]
         XCTAssertTrue(state.waitForExistence(timeout: 5))
         state.click()
+    }
+
+    private func replace(_ field: XCUIElement, with text: String) {
+        XCTAssertTrue(field.waitForExistence(timeout: 2))
+        field.click()
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText(text)
+        field.typeKey(.return, modifierFlags: [])
+    }
+
+    private func waitForLabel(
+        _ prefix: String,
+        in element: XCUIElement,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let predicate = NSPredicate(format: "label BEGINSWITH %@", prefix)
+        return XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: predicate, object: element)],
+            timeout: timeout
+        ) == .completed
+    }
+
+    private func tabToFocus(_ element: XCUIElement) -> Bool {
+        for _ in 0..<30 {
+            if element.value(forKey: "hasKeyboardFocus") as? Bool == true { return true }
+            app.typeKey(.tab, modifierFlags: [])
+        }
+        return element.value(forKey: "hasKeyboardFocus") as? Bool == true
     }
 }

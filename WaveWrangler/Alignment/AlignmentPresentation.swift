@@ -26,6 +26,200 @@ struct AlignmentRow: Identifiable, Equatable {
     var offsetMilliseconds: Double?
 }
 
+struct AlignmentAnchorRow: Identifiable, Equatable {
+    var id: Int
+    var sourceSeconds: Double
+    var groupSeconds: Double
+    var alignedSeconds: Double
+}
+
+struct AlignmentRegionPresentation: Equatable {
+    var copy: AlignmentStateCopy
+    var precedingEpoch: RecordingEpochID?
+    var followingEpoch: RecordingEpochID?
+    var nearestSourceSeconds: Double?
+}
+
+enum AlignmentRegionProjection {
+    static func project(
+        map: AlignedTimelineMap?,
+        row: AlignmentRow?,
+        sourceSeconds: Double
+    ) -> AlignmentRegionPresentation? {
+        guard sourceSeconds.isFinite, let map, let row,
+              let group = map.groups.first(where: { $0.group == row.groupID }),
+              let placement = group.placements.first(where: {
+                  $0.spans.contains(where: { $0.epoch == row.epochID })
+              })
+        else { return nil }
+        let sourceRate = Double(placement.occurrence.nominalRate.framesPerSecond)
+        let frameValue = (sourceSeconds * sourceRate).rounded(.down)
+        guard frameValue.isFinite,
+              frameValue >= Double(Int64.min),
+              frameValue <= Double(Int64.max)
+        else {
+            return AlignmentRegionPresentation(
+                copy: AlignmentPresentation.outsideCoverage,
+                nearestSourceSeconds: nearestSourceTime(
+                    sourceSeconds, placement: placement, sourceRate: sourceRate
+                )
+            )
+        }
+        let mapping = try? map.alignedTime(
+            ofFrame: Int64(frameValue),
+            in: placement.occurrence.id
+        )
+        switch mapping {
+        case let .some(.gap(boundary)):
+            return AlignmentRegionPresentation(
+                copy: AlignmentPresentation.gap,
+                precedingEpoch: boundary.precedingEpoch,
+                followingEpoch: boundary.followingEpoch
+            )
+        case .some(.outsideCoverage):
+            return AlignmentRegionPresentation(
+                copy: AlignmentPresentation.outsideCoverage,
+                nearestSourceSeconds: nearestSourceTime(
+                    sourceSeconds, placement: placement, sourceRate: sourceRate
+                )
+            )
+        default:
+            return nil
+        }
+    }
+
+    private static func nearestSourceTime(
+        _ sourceSeconds: Double,
+        placement: OccurrencePlacement,
+        sourceRate: Double
+    ) -> Double? {
+        guard let first = placement.spans.first, let last = placement.spans.last else { return nil }
+        let firstTime = Double(first.startFrame) / sourceRate
+        let lastTime = Double(max(last.startFrame, last.endFrame - 1)) / sourceRate
+        return sourceSeconds < firstTime ? firstTime : lastTime
+    }
+}
+
+enum AlignmentEditorDefaults {
+    static func numeric(row: AlignmentRow?) -> (ratePPM: Double, offsetMilliseconds: Double) {
+        (row?.ratePPM ?? 0, row?.offsetMilliseconds ?? 0)
+    }
+
+    static func anchors(
+        existing: [AlignmentAnchorRow],
+        map: AlignedTimelineMap?,
+        row: AlignmentRow?
+    ) -> [AlignmentAnchor] {
+        if !existing.isEmpty {
+            return existing.map {
+                AlignmentAnchor(
+                    sourceSeconds: $0.sourceSeconds,
+                    alignedSeconds: $0.alignedSeconds
+                )
+            }
+        }
+        guard let map, let row,
+              let group = map.groups.first(where: { $0.group == row.groupID }),
+              let epoch = group.epochs.first(where: { $0.epoch == row.epochID }),
+              case let .mapped(segments, _) = epoch.mapping,
+              let segment = segments.first,
+              let placement = group.placements.first(where: {
+                  $0.spans.contains(where: { $0.epoch == row.epochID })
+              }),
+              let span = placement.spans.first(where: { $0.epoch == row.epochID })
+        else {
+            return [
+                AlignmentAnchor(sourceSeconds: 0, alignedSeconds: 0),
+                AlignmentAnchor(sourceSeconds: 1, alignedSeconds: 1),
+            ]
+        }
+        let sourceRate = Double(placement.occurrence.nominalRate.framesPerSecond)
+        return [
+            Double(span.startFrame) / sourceRate,
+            Double(max(span.startFrame, span.endFrame - 1)) / sourceRate,
+        ].compactMap { sourceSeconds in
+            let groupSeconds = sourceSeconds + span.groupClockOffset.approximateDouble
+            guard let groupTime = try? ExactRational(
+                numerator: Int128((groupSeconds * 1_000_000_000).rounded()),
+                denominator: 1_000_000_000
+            ), let aligned = try? segment.rateRatio.multiplied(by: groupTime)
+                .adding(segment.alignedOffset)
+            else { return nil }
+            return AlignmentAnchor(
+                sourceSeconds: sourceSeconds,
+                alignedSeconds: aligned.approximateDouble
+            )
+        }
+    }
+}
+
+enum AlignmentAuditionRequestError: Error, LocalizedError, Equatable {
+    case invalidStart
+    case invalidDuration
+    case startTooDistant(maximumSeconds: Double)
+    case durationTooLong(maximumSeconds: Double)
+    case outsideSource
+    case tooManyFrames(maximum: Int64)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidStart:
+            "Audition start must be a finite non-negative time."
+        case .invalidDuration:
+            "Audition duration must be a finite positive time."
+        case let .startTooDistant(maximum):
+            "Audition start is limited to \(Int(maximum)) seconds so preparing playback stays bounded."
+        case let .durationTooLong(maximum):
+            "Audition duration is limited to \(Int(maximum)) seconds."
+        case .outsideSource:
+            "The requested audition starts outside this source."
+        case let .tooManyFrames(maximum):
+            "The requested audition contains more than \(maximum) frames."
+        }
+    }
+}
+
+enum AlignmentAuditionRequest {
+    static let maximumStartSeconds = 300.0
+    static let maximumDurationSeconds = 30.0
+    static let maximumFrameCount: Int64 = 1_500_000
+
+    static func frameRange(
+        startSeconds: Double,
+        durationSeconds: Double,
+        sampleRate: Double,
+        availableFrames: Int64
+    ) throws(AlignmentAuditionRequestError) -> Range<Int64> {
+        guard startSeconds.isFinite, startSeconds >= 0 else { throw .invalidStart }
+        guard durationSeconds.isFinite, durationSeconds > 0 else { throw .invalidDuration }
+        guard startSeconds <= maximumStartSeconds else {
+            throw .startTooDistant(maximumSeconds: maximumStartSeconds)
+        }
+        guard durationSeconds <= maximumDurationSeconds else {
+            throw .durationTooLong(maximumSeconds: maximumDurationSeconds)
+        }
+        guard sampleRate.isFinite, sampleRate > 0, availableFrames >= 0 else {
+            throw .outsideSource
+        }
+        let startValue = (startSeconds * sampleRate).rounded(.down)
+        let durationValue = (durationSeconds * sampleRate).rounded(.up)
+        guard startValue.isFinite, durationValue.isFinite,
+              startValue >= 0, durationValue >= 1,
+              startValue <= Double(Int64.max),
+              durationValue <= Double(Int64.max)
+        else { throw .tooManyFrames(maximum: maximumFrameCount) }
+        let start = Int64(startValue)
+        let duration = Int64(durationValue)
+        guard duration <= maximumFrameCount else {
+            throw .tooManyFrames(maximum: maximumFrameCount)
+        }
+        guard start < availableFrames else { throw .outsideSource }
+        let (requestedEnd, overflow) = start.addingReportingOverflow(duration)
+        guard !overflow else { throw .tooManyFrames(maximum: maximumFrameCount) }
+        return start..<min(availableFrames, requestedEnd)
+    }
+}
+
 enum AlignmentRowsProjection {
     static func makeRows(
         model: ShowDocumentModel,

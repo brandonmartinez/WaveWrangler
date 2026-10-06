@@ -92,6 +92,20 @@ public final class AlignmentPipeline: Sendable {
     }
 
     #if DEBUG
+    /// Synthetic UI-fixture seam: records the same dependency recipe production acceptance would persist,
+    /// without decoding or inventing source facts.
+    public static func fixtureDependencyRecipe(
+        map: AlignedTimelineMap,
+        revisions: [SourceRevision],
+        format: FormatRevision = .current
+    ) -> RecipeReference? {
+        let tokens = Dictionary(uniqueKeysWithValues: revisions.map { ($0.source, $0.token) })
+        return MapDependencies.digest(map: map, tokens: tokens, format: format)
+            .map { MapDependencies.recipe(digest: $0) }
+    }
+    #endif
+
+    #if DEBUG
     init(coordinator: DerivedJobCoordinator, decoder: SourceDecoder, configuration: AlignmentPipelineConfiguration = AlignmentPipelineConfiguration(), testHooks: AlignmentPipelineTestHooks) {
         self.coordinator = coordinator
         self.decoder = decoder
@@ -363,12 +377,18 @@ public final class AlignmentPipeline: Sendable {
     ) async throws(AlignmentAcceptanceError) -> AcceptedAlignment {
         guard let episode = model.episode(episodeID) else { throw .episodeNotFound(episodeID) }
         guard let priorRevision = episode.alignment?.acceptedRevision else { throw .noReference }
+        guard let priorVersion = episode.alignment?.map(revision: priorRevision) else {
+            throw .history(.mapNotFound(revision: priorRevision))
+        }
         let prior: AlignedTimelineMap
         do throws(MapHistoryError) {
             prior = try model.timeMap(revision: priorRevision, in: episodeID)
         } catch {
             throw .priorMapUnreadable(error)
         }
+        try await verifyPriorRevision(
+            version: priorVersion, map: prior, episode: episode
+        )
 
         let groups = try prior.groups.map { group throws(AlignmentAcceptanceError) in
             let epochs = try group.epochs.map { epoch throws(AlignmentAcceptanceError) in
@@ -377,7 +397,8 @@ public final class AlignmentPipeline: Sendable {
                     epoch: epoch.epoch,
                     mapping: try Self.revisedMapping(
                         decision, epoch: epoch.epoch, current: epoch.mapping,
-                        range: Self.groupClockRange(epoch: epoch.epoch, placements: group.placements)
+                        range: Self.groupClockRange(epoch: epoch.epoch, placements: group.placements),
+                        placements: group.placements
                     )
                 )
             }
@@ -415,12 +436,18 @@ public final class AlignmentPipeline: Sendable {
     ) async throws(AlignmentAcceptanceError) -> AcceptedAlignment {
         guard let episode = model.episode(episodeID) else { throw .episodeNotFound(episodeID) }
         guard let priorRevision = episode.alignment?.acceptedRevision else { throw .noReference }
+        guard let priorVersion = episode.alignment?.map(revision: priorRevision) else {
+            throw .history(.mapNotFound(revision: priorRevision))
+        }
         let prior: AlignedTimelineMap
         do throws(MapHistoryError) {
             prior = try model.timeMap(revision: priorRevision, in: episodeID)
         } catch {
             throw .priorMapUnreadable(error)
         }
+        try await verifyPriorRevision(
+            version: priorVersion, map: prior, episode: episode
+        )
 
         var changed = false
         let groups = try prior.groups.map { group throws(AlignmentAcceptanceError) in
@@ -614,11 +641,29 @@ public final class AlignmentPipeline: Sendable {
         )
     }
 
+    private func verifyPriorRevision(
+        version: TimeMapVersion,
+        map: AlignedTimelineMap,
+        episode: Episode
+    ) async throws(AlignmentAcceptanceError) {
+        if await coordinator.isShutdown { throw .coordinatorShutDown }
+        let inputs = await coordinator.inputs
+        let changes = MapDependencies.verify(
+            version: version,
+            map: map,
+            episode: episode,
+            registered: inputs.sources,
+            format: inputs.format
+        )
+        guard changes.isEmpty else { throw .analysisStale(changes) }
+    }
+
     private static func revisedMapping(
         _ decision: EpochMapDecision,
         epoch: RecordingEpochID,
         current: EpochClockMap.Mapping,
-        range: (start: ExactRational, end: ExactRational)?
+        range: (start: ExactRational, end: ExactRational)?,
+        placements: [OccurrencePlacement]
     ) throws(AlignmentAcceptanceError) -> EpochClockMap.Mapping {
         switch decision {
         case .unmapped:
@@ -660,7 +705,10 @@ public final class AlignmentPipeline: Sendable {
             )
         case let .anchors(anchors, note):
             guard let range else { throw .noPlaceableSource(epoch) }
-            let (rate, offset) = try MapAcceptance.fit(epoch, anchors: anchors)
+            let groupAnchors = try Self.groupClockAnchors(
+                anchors, epoch: epoch, placements: placements
+            )
+            let (rate, offset) = try MapAcceptance.fit(epoch, anchors: groupAnchors)
             return .mapped(
                 segments: [try Self.segment(range: range, rate: rate, offset: offset)],
                 provenance: .manual(ManualCorrection(
@@ -669,6 +717,33 @@ public final class AlignmentPipeline: Sendable {
                 ))
             )
         }
+    }
+
+    private static func groupClockAnchors(
+        _ anchors: [AlignmentAnchor],
+        epoch: RecordingEpochID,
+        placements: [OccurrencePlacement]
+    ) throws(AlignmentAcceptanceError) -> [AlignmentAnchor] {
+        for placement in placements {
+            let sourceRate = Double(placement.occurrence.nominalRate.framesPerSecond)
+            guard let span = placement.spans.first(where: { $0.epoch == epoch }) else { continue }
+            let sourceStart = Double(span.startFrame) / sourceRate
+            let sourceEnd = Double(span.endFrame) / sourceRate
+            guard anchors.allSatisfy({
+                $0.sourceSeconds >= sourceStart && $0.sourceSeconds < sourceEnd
+            }) else { continue }
+            let offset = span.groupClockOffset.approximateDouble
+            return anchors.map {
+                AlignmentAnchor(
+                    sourceSeconds: $0.sourceSeconds + offset,
+                    alignedSeconds: $0.alignedSeconds
+                )
+            }
+        }
+        throw .invalidAnchors(
+            epoch,
+            "every source-time anchor must lie inside one occurrence span of the selected epoch"
+        )
     }
 
     private static func groupClockRange(

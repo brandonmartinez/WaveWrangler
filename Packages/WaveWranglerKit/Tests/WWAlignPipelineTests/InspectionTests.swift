@@ -1,6 +1,7 @@
 import Testing
 import WWAlignPipeline
 import WWCore
+import WWDerived
 import WWTimeMap
 
 @Suite("Metadata-only Alignment inspection")
@@ -148,6 +149,132 @@ struct InspectionTests {
             Issue.record("expected a manual anchor map")
             return
         }
+        #expect(AlignmentAnchorNote.decode(correction.note) == anchors)
+    }
+
+    @Test func manualRevisionAndSplitRefuseChangedSourceRevisions() async throws {
+        let fixture = try await PipelineFixture([
+            .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 27))]),
+            .init(name: "Target", sources: [.init(name: "target", seconds: 30, signal: .scene(seed: 27, rate: 1.00001, offset: 0.02))]),
+        ])
+        let report = try await fixture.analyse()
+        let target = fixture.epochs[1]
+        let accepted = try await fixture.acceptAndActivate(
+            report, [target: .numeric(ppm: 1, offsetMilliseconds: 2)]
+        )
+        await fixture.coordinator.updateSource(
+            SourceRevision(source: fixture.id("target"), token: "metadata:changed-after-acceptance")
+        )
+
+        await #expect(
+            throws: AlignmentAcceptanceError.analysisStale([.dependenciesChanged])
+        ) {
+            _ = try await fixture.pipeline.reviseAcceptedMap(
+                model: accepted.model,
+                episode: fixture.episodeID,
+                decisions: [target: .numeric(ppm: 3, offsetMilliseconds: 4)]
+            )
+        }
+
+        var splitModel = accepted.model
+        let episodeIndex = try #require(
+            splitModel.episodes.firstIndex(where: { $0.id == fixture.episodeID })
+        )
+        let groupIndex = try #require(
+            splitModel.episodes[episodeIndex].recorderGroups.firstIndex(where: {
+                $0.id == fixture.groups[1]
+            })
+        )
+        let newEpoch = RecordingEpochID()
+        splitModel.episodes[episodeIndex].recorderGroups[groupIndex].epochs.append(
+            RecordingEpoch(id: newEpoch, label: "Take 2")
+        )
+        let placement = try #require(
+            accepted.map.groups
+                .first(where: { $0.group == fixture.groups[1] })?
+                .placements.first(where: { $0.occurrence.source == fixture.id("target") })
+        )
+        await #expect(
+            throws: AlignmentAcceptanceError.analysisStale([.dependenciesChanged])
+        ) {
+            _ = try await fixture.pipeline.splitAcceptedOccurrence(
+                model: splitModel,
+                episode: fixture.episodeID,
+                group: fixture.groups[1],
+                source: fixture.id("target"),
+                epoch: target,
+                frame: placement.occurrence.frameCount / 2,
+                newEpoch: newEpoch
+            )
+        }
+    }
+
+    @Test func anchorRevisionAfterSplitFitsSourcePairsInGroupTime() async throws {
+        let fixture = try await PipelineFixture([
+            .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 28))]),
+            .init(name: "Target", sources: [.init(name: "target", seconds: 30, signal: .scene(seed: 28, rate: 1.00001, offset: 0.02))]),
+        ])
+        let report = try await fixture.analyse()
+        let oldEpoch = fixture.epochs[1]
+        let accepted = try await fixture.acceptAndActivate(
+            report, [oldEpoch: .numeric(ppm: 1, offsetMilliseconds: 2)]
+        )
+        let placement = try #require(
+            accepted.map.groups
+                .first(where: { $0.group == fixture.groups[1] })?
+                .placements.first(where: { $0.occurrence.source == fixture.id("target") })
+        )
+        let splitFrame = placement.occurrence.frameCount / 2
+        let splitSeconds = Double(splitFrame)
+            / Double(placement.occurrence.nominalRate.framesPerSecond)
+        let newEpoch = RecordingEpochID()
+        var splitModel = accepted.model
+        let episodeIndex = try #require(
+            splitModel.episodes.firstIndex(where: { $0.id == fixture.episodeID })
+        )
+        let groupIndex = try #require(
+            splitModel.episodes[episodeIndex].recorderGroups.firstIndex(where: {
+                $0.id == fixture.groups[1]
+            })
+        )
+        splitModel.episodes[episodeIndex].recorderGroups[groupIndex].epochs.append(
+            RecordingEpoch(id: newEpoch, label: "Take 2")
+        )
+        let split = try await fixture.pipeline.splitAcceptedOccurrence(
+            model: splitModel,
+            episode: fixture.episodeID,
+            group: fixture.groups[1],
+            source: fixture.id("target"),
+            epoch: oldEpoch,
+            frame: splitFrame,
+            newEpoch: newEpoch
+        )
+        try await fixture.pipeline.activate(split)
+
+        let anchors = [
+            AlignmentAnchor(
+                sourceSeconds: splitSeconds + 1,
+                alignedSeconds: 101
+            ),
+            AlignmentAnchor(
+                sourceSeconds: splitSeconds + 10,
+                alignedSeconds: 110
+            ),
+        ]
+        let revised = try await fixture.pipeline.reviseAcceptedMap(
+            model: split.model,
+            episode: fixture.episodeID,
+            decisions: [newEpoch: .anchors(anchors)]
+        )
+        let mapping = try #require(
+            revised.map.groups.flatMap(\.epochs).first(where: { $0.epoch == newEpoch })
+        ).mapping
+        guard case let .mapped(segments, .manual(correction)) = mapping else {
+            Issue.record("expected a manual anchor map")
+            return
+        }
+        #expect(abs(segments[0].rateRatio.approximateDouble - 1) < 0.000_000_001)
+        #expect(abs(segments[0].alignedOffset.approximateDouble - 100) < 0.000_000_001)
         #expect(AlignmentAnchorNote.decode(correction.note) == anchors)
     }
 }

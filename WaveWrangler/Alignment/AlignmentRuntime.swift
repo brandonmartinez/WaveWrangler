@@ -16,6 +16,11 @@ actor AlignmentRuntime {
         var samples: [Float]
     }
 
+    struct DependentCounts: Sendable, Equatable {
+        var total: Int
+        var stale: Int
+    }
+
     let coordinator: DerivedJobCoordinator
     let pipeline: AlignmentPipeline
     private let showID: ShowID
@@ -23,6 +28,9 @@ actor AlignmentRuntime {
     private let access: SourceAccessContext
     private var sourceByEpoch: [EpisodeID: [RecordingEpochID: AlignmentSource]] = [:]
     private var reports: [EpisodeID: AlignmentAnalysisReport] = [:]
+    #if DEBUG
+    private var seededFixtureDependents: Set<EpisodeID> = []
+    #endif
 
     init(showID: ShowID, accessStore: any DeviceAccessStore, access: SourceAccessContext) throws {
         self.showID = showID
@@ -53,6 +61,10 @@ actor AlignmentRuntime {
             }
         }
         sourceByEpoch[episodeID] = byEpoch
+        try? await pipeline.activate(model: model, episode: episodeID)
+        #if DEBUG
+        await seedFixtureDependentIfRequested(model: model, episode: episodeID)
+        #endif
         return Prepared(sources: sources, snapshot: snapshot)
     }
 
@@ -81,6 +93,7 @@ actor AlignmentRuntime {
             return try await pipeline.accept(model: model, episode: episodeID, report: report, decisions: decisions)
         }
         if model.episode(episodeID)?.alignment?.acceptedRevision != nil {
+            _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
             return try await pipeline.reviseAcceptedMap(model: model, episode: episodeID, decisions: decisions)
         }
         guard let report = reports[episodeID] else { throw AlignmentAcceptanceError.noReference }
@@ -96,7 +109,8 @@ actor AlignmentRuntime {
         frame: Int64,
         newEpoch: RecordingEpochID
     ) async throws -> AcceptedAlignment {
-        try await pipeline.splitAcceptedOccurrence(
+        _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        return try await pipeline.splitAcceptedOccurrence(
             model: model, episode: episodeID, group: group, source: source,
             epoch: epoch, frame: frame, newEpoch: newEpoch
         )
@@ -123,19 +137,26 @@ actor AlignmentRuntime {
     ) async throws -> AuditionClip {
         guard let source = sourceByEpoch[episodeID]?[epoch] else { throw DecodeFailure.notFound }
         return try await pipeline.decoder.withDecodingCursor(source.url, source: source.id) { cursor in
-            let rate = Int64(cursor.interpretation.sourceSampleRate)
-            let start = max(0, Int64((startSeconds * Double(rate)).rounded(.down)))
-            let duration = max(1, Int64((durationSeconds * Double(rate)).rounded(.up)))
-            let end = min(cursor.interpretation.frames.validFrames, start + duration)
+            let sampleRate = Double(cursor.interpretation.sourceSampleRate)
+            let range = try AlignmentAuditionRequest.frameRange(
+                startSeconds: startSeconds,
+                durationSeconds: durationSeconds,
+                sampleRate: sampleRate,
+                availableFrames: cursor.interpretation.frames.validFrames
+            )
             var samples: [Float] = []
-            samples.reserveCapacity(Int(max(0, end - start)))
-            var position: Int64 = 0
-            while position < end, let chunk = try await cursor.next() {
-                let chunkStart = position
-                let chunkEnd = position + Int64(chunk.frameCount)
-                position = chunkEnd
-                let lo = max(start, chunkStart)
-                let hi = min(end, chunkEnd)
+            samples.reserveCapacity(range.count)
+            while await cursor.position < range.upperBound, let chunk = try await cursor.next() {
+                try Task.checkCancellation()
+                let chunkStart = chunk.firstSourceFrame
+                let (chunkEnd, overflow) = chunkStart.addingReportingOverflow(Int64(chunk.frameCount))
+                guard !overflow else {
+                    throw AlignmentAuditionRequestError.tooManyFrames(
+                        maximum: AlignmentAuditionRequest.maximumFrameCount
+                    )
+                }
+                let lo = max(range.lowerBound, chunkStart)
+                let hi = min(range.upperBound, chunkEnd)
                 guard hi > lo else { continue }
                 let first = Int(lo - chunkStart)
                 let count = Int(hi - lo)
@@ -148,13 +169,15 @@ actor AlignmentRuntime {
                 }
             }
             try await cursor.verifyUnchanged()
-            return AuditionClip(sampleRate: Double(rate), samples: samples)
+            return AuditionClip(sampleRate: sampleRate, samples: samples)
         }
     }
 
-    func dependentJobCount(episode episodeID: EpisodeID) async -> Int {
-        await coordinator.states().values.reduce(into: 0) { count, state in
-            if state.key?.map?.episode == episodeID { count += 1 }
+    func dependentCounts(episode episodeID: EpisodeID) async -> DependentCounts {
+        await coordinator.states().values.reduce(into: DependentCounts(total: 0, stale: 0)) { counts, state in
+            guard state.key?.map?.episode == episodeID else { return }
+            counts.total += 1
+            if case .stale = state { counts.stale += 1 }
         }
     }
 
@@ -209,6 +232,30 @@ actor AlignmentRuntime {
         }
         return values
     }
+
+    #if DEBUG
+    private func seedFixtureDependentIfRequested(
+        model: ShowDocumentModel,
+        episode episodeID: EpisodeID
+    ) async {
+        guard UserDefaults.standard.bool(forKey: "WWUITestAlignmentFixture"),
+              !seededFixtureDependents.contains(episodeID),
+              let revision = model.episode(episodeID)?.alignment?.acceptedRevision
+        else { return }
+        seededFixtureDependents.insert(episodeID)
+        let asset = AssetSpec(kind: "ww.uitest.alignment-dependent", revision: 1)
+        let map = MapRevisionReference(episode: episodeID, revision: revision)
+        await coordinator.setAssetRevision(asset)
+        await coordinator.acceptMap(map)
+        let job = await coordinator.submit(
+            DerivedSlot("ww.uitest.alignment-dependent.\(episodeID)"),
+            key: DerivedAssetKey(asset: asset, map: map)
+        ) {
+            Data("synthetic-dependent".utf8)
+        }
+        _ = await job.outcome
+    }
+    #endif
 }
 
 @MainActor

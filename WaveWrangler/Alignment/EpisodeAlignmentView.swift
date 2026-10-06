@@ -39,6 +39,7 @@ struct EpisodeAlignmentContent: View {
             }
         }
         .onDisappear {
+            model?.stopAudition()
             if let model, state.alignmentModel === model { state.alignmentModel = nil }
         }
     }
@@ -117,6 +118,14 @@ private struct AlignmentWorkspace: View {
                     .disabled(!model.canCorrect)
                     .help(model.canCorrect ? "Type source and aligned time anchors." : "Select an epoch that can be timed manually.")
                     .accessibilityIdentifier("alignment.placeAnchors")
+                Button("Place Anchor at Playhead") { model.placeAnchorAtPlayhead() }
+                    .disabled(!model.canPlaceAnchorAtPlayhead)
+                    .help(
+                        model.canPlaceAnchorAtPlayhead
+                            ? "Append an anchor at the stopped audition position."
+                            : "Stop audition on an epoch that already has a persisted anchor map."
+                    )
+                    .accessibilityIdentifier("alignment.placeAnchorAtPlayhead")
                 Button("Delete Anchor") { model.requestDeleteSelectedAnchor() }
                     .disabled(model.anchorSelection == nil)
                     .help(model.anchorSelection == nil ? "Select an anchor first." : "Delete the selected anchor.")
@@ -143,16 +152,42 @@ private struct AlignmentWorkspace: View {
                             .accessibilityIdentifier("ww.alignment.audition.range.duration")
                     }
                     Spacer()
-                    Button(model.isAuditioning ? "Stop" : "Play") {
-                        model.isAuditioning ? model.stopAudition() : model.auditionSelection()
+                    Button(model.canStopAudition ? "Stop" : "Play") {
+                        model.canStopAudition ? model.stopAudition() : model.auditionSelection()
                     }
-                    .disabled(!model.canAudition && !model.isAuditioning)
+                    .disabled(!model.canAudition && !model.canStopAudition)
                     .help(model.canAudition ? "Play the selected source range. Nothing is exported." : "Select a mapped epoch with an available source.")
                     .accessibilityIdentifier("ww.alignment.audition.play")
                 }
                 .accessibilityIdentifier("ww.alignment.audition.range")
             }
             .accessibilityIdentifier("ww.alignment.audition")
+
+            if let region = model.selectedRegion {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(region.copy.heading, systemImage: region.copy.symbol)
+                        .font(.callout.weight(.semibold))
+                        .accessibilityLabel("Audition position state")
+                        .accessibilityValue(region.copy.heading)
+                        .accessibilityIdentifier("ww.alignment.region.heading")
+                    Text(region.copy.evidence)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("ww.alignment.region.evidence")
+                    HStack {
+                        ForEach(region.copy.remedies, id: \.self) { remedy in
+                            Button(remedy) { model.goToRegionRemedy(remedy) }
+                                .accessibilityIdentifier(
+                                    "ww.alignment.region.remedy.\(remedy.replacingOccurrences(of: " ", with: "-"))"
+                                )
+                        }
+                    }
+                }
+                .padding(8)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("ww.alignment.region")
+            }
 
             Text(model.message)
                 .font(.callout)
@@ -404,7 +439,7 @@ private enum AlignmentKeyHandler {
         else { return false }
 
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
-        if event.keyCode == 53, modifiers.isEmpty, model.isAuditioning {
+        if event.keyCode == 53, modifiers.isEmpty, model.canStopAudition {
             model.stopAudition()
             return true
         }
@@ -485,8 +520,15 @@ struct AlignmentInspectorView: View {
 private struct NumericTimingSheet: View {
     @Bindable var model: EpisodeAlignmentModel
     @Environment(\.dismiss) private var dismiss
-    @State private var rate = 0.0
-    @State private var offset = 0.0
+    @State private var rate: Double
+    @State private var offset: Double
+
+    init(model: EpisodeAlignmentModel) {
+        self.model = model
+        let initial = model.numericEditorDefaults
+        _rate = State(initialValue: initial.ratePPM)
+        _offset = State(initialValue: initial.offsetMilliseconds)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -536,30 +578,44 @@ private struct NumericTimingSheet: View {
 private struct AnchorTimingSheet: View {
     @Bindable var model: EpisodeAlignmentModel
     @Environment(\.dismiss) private var dismiss
-    @State private var firstSource = 0.0
-    @State private var firstAligned = 0.0
-    @State private var secondSource = 60.0
-    @State private var secondAligned = 60.0
+    @State private var anchors: [AlignmentAnchor]
+
+    init(model: EpisodeAlignmentModel) {
+        self.model = model
+        _anchors = State(initialValue: model.anchorEditorDefaults)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Place Anchors")
                 .font(.title2.weight(.semibold))
-            Text("Enter two source/aligned time pairs. This numeric path is the keyboard alternative to dragging.")
+            Text("Edit the complete source/aligned anchor list. Untouched pairs are preserved.")
                 .foregroundStyle(.secondary)
-            anchorRow("Anchor 1", source: $firstSource, aligned: $firstAligned, identifier: "first")
-            anchorRow("Anchor 2", source: $secondSource, aligned: $secondAligned, identifier: "second")
+            ForEach(anchors.indices, id: \.self) { index in
+                anchorRow(
+                    "Anchor \(index + 1)",
+                    source: $anchors[index].sourceSeconds,
+                    aligned: $anchors[index].alignedSeconds,
+                    identifier: index == 0 ? "first" : index == 1 ? "second" : "\(index + 1)"
+                )
+            }
+            Button("Add Pair") {
+                let last = anchors.last ?? AlignmentAnchor(sourceSeconds: 0, alignedSeconds: 0)
+                anchors.append(AlignmentAnchor(
+                    sourceSeconds: last.sourceSeconds + 1,
+                    alignedSeconds: last.alignedSeconds + 1
+                ))
+            }
+            .accessibilityIdentifier("alignment.anchors.addPair")
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Apply") {
-                    model.placeAnchors([
-                        AlignmentAnchor(sourceSeconds: firstSource, alignedSeconds: firstAligned),
-                        AlignmentAnchor(sourceSeconds: secondSource, alignedSeconds: secondAligned),
-                    ])
+                    model.placeAnchors(anchors)
                     dismiss()
                 }
+                .disabled(anchors.count < 2)
                 .keyboardShortcut(.defaultAction)
                 .accessibilityIdentifier("alignment.anchors.apply")
             }

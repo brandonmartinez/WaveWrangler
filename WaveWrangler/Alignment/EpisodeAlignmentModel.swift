@@ -7,13 +7,6 @@ import WWCore
 import WWOrganizer
 import WWTimeMap
 
-struct AlignmentAnchorRow: Identifiable, Equatable {
-    var id: Int
-    var sourceSeconds: Double
-    var groupSeconds: Double
-    var alignedSeconds: Double
-}
-
 @MainActor
 @Observable
 final class EpisodeAlignmentModel {
@@ -26,6 +19,8 @@ final class EpisodeAlignmentModel {
     private(set) var lastError: String?
     private(set) var auditionLabel = "Audition stopped"
     private(set) var isAuditioning = false
+    private(set) var isPreparingAudition = false
+    private(set) var auditionPlayheadSeconds = 0.0
     var auditionStartSeconds = 0.0
     var auditionDurationSeconds = 5.0
     var editorRequest: AlignmentEditorRequest?
@@ -39,6 +34,11 @@ final class EpisodeAlignmentModel {
     private let runtime: AlignmentRuntime
     @ObservationIgnored private let auditionEngine = AVAudioEngine()
     @ObservationIgnored private var auditionSource: AVAudioSourceNode?
+    @ObservationIgnored private var auditionTask: Task<Void, Never>?
+    @ObservationIgnored private var auditionStopTask: Task<Void, Never>?
+    @ObservationIgnored private var auditionStartedAt: Date?
+    @ObservationIgnored private var auditionPlaybackStartSeconds = 0.0
+    @ObservationIgnored private var auditionPlaybackDurationSeconds = 0.0
 
     init(document: ShowDocument, episodeID: EpisodeID, runtime: AlignmentRuntime) {
         self.document = document
@@ -60,9 +60,31 @@ final class EpisodeAlignmentModel {
     var canAudition: Bool {
         selectedRow?.state.remedies.contains("Audition") == true && !isWorking
     }
+    var canStopAudition: Bool { isPreparingAudition || isAuditioning }
+    var canPlaceAnchorAtPlayhead: Bool {
+        !isWorking && !isAuditioning && selectedAnchors.count >= 2
+            && alignedTime(atSourceSeconds: auditionPlayheadSeconds) != nil
+    }
     var selectedAnchors: [AlignmentAnchorRow] {
         guard let selection else { return [] }
         return anchorsByEpoch[selection] ?? []
+    }
+    var selectedRegion: AlignmentRegionPresentation? {
+        AlignmentRegionProjection.project(
+            map: acceptedMap,
+            row: selectedRow,
+            sourceSeconds: auditionStartSeconds
+        )
+    }
+    var numericEditorDefaults: (ratePPM: Double, offsetMilliseconds: Double) {
+        AlignmentEditorDefaults.numeric(row: selectedRow)
+    }
+    var anchorEditorDefaults: [AlignmentAnchor] {
+        AlignmentEditorDefaults.anchors(
+            existing: selectedAnchors,
+            map: acceptedMap,
+            row: selectedRow
+        )
     }
 
     func requestNumericEditor() {
@@ -78,6 +100,48 @@ final class EpisodeAlignmentModel {
     func requestSelectedAnchorFocus() {
         guard let anchorSelection else { return }
         requestedAnchorFocus = anchorSelection
+    }
+
+    func placeAnchorAtPlayhead() {
+        guard canPlaceAnchorAtPlayhead,
+              let alignedSeconds = alignedTime(atSourceSeconds: auditionPlayheadSeconds)
+        else { return }
+        let anchors = selectedAnchors.map {
+            AlignmentAnchor(
+                sourceSeconds: $0.sourceSeconds,
+                alignedSeconds: $0.alignedSeconds
+            )
+        }
+        guard !anchors.contains(where: {
+            abs($0.sourceSeconds - auditionPlayheadSeconds) < 0.000_000_5
+        }) else {
+            message = "An anchor already exists at the current audition position."
+            return
+        }
+        placeAnchors(
+            anchors + [AlignmentAnchor(
+                sourceSeconds: auditionPlayheadSeconds,
+                alignedSeconds: alignedSeconds
+            )],
+            focusSourceSeconds: auditionPlayheadSeconds
+        )
+    }
+
+    func goToRegionRemedy(_ remedy: String) {
+        guard let region = selectedRegion else { return }
+        switch remedy {
+        case "Go to Epoch Before":
+            if let epoch = region.precedingEpoch { selection = epoch }
+        case "Go to Epoch After":
+            if let epoch = region.followingEpoch { selection = epoch }
+        case "Go to Nearest Mapped Time":
+            if let time = region.nearestSourceSeconds {
+                auditionStartSeconds = time
+                auditionPlayheadSeconds = time
+            }
+        default:
+            break
+        }
     }
 
     func startNewEpochAtSelectedAnchor() {
@@ -133,20 +197,32 @@ final class EpisodeAlignmentModel {
               auditionStartSeconds.isFinite, auditionStartSeconds >= 0,
               auditionDurationSeconds.isFinite, auditionDurationSeconds > 0
         else { return }
+        auditionTask?.cancel()
+        isPreparingAudition = true
         auditionLabel = "Preparing the selected internal audition range. Nothing is exported."
-        Task {
+        auditionTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                isPreparingAudition = false
+                auditionTask = nil
+            }
             do {
                 let clip = try await runtime.audition(
                     episode: episodeID, epoch: epoch,
                     startSeconds: auditionStartSeconds,
                     durationSeconds: auditionDurationSeconds
                 )
+                try Task.checkCancellation()
                 try play(clip)
+                try Task.checkCancellation()
                 isAuditioning = true
                 auditionLabel = "Auditioning the selected source region as an internal check. Nothing is exported."
+            } catch is CancellationError {
+                stopPlayback(updatePlayhead: true)
             } catch {
                 lastError = String(describing: error)
-                auditionLabel = "Audition unavailable for this source."
+                auditionLabel = (error as? LocalizedError)?.errorDescription
+                    ?? "Audition unavailable for this source."
             }
         }
     }
@@ -217,20 +293,115 @@ final class EpisodeAlignmentModel {
         accept(actionName: UndoActionName.rejectProposal, decisions: [epoch: .unmapped])
     }
 
-    func placeAnchors(_ anchors: [AlignmentAnchor]) {
+    func placeAnchors(
+        _ anchors: [AlignmentAnchor],
+        focusSourceSeconds: Double? = nil
+    ) {
         guard let epoch = selection else { return }
         accept(
             actionName: UndoActionName.placeAnchor,
             decisions: [epoch: .anchors(anchors)]
         ) { [weak self] in
-            self?.anchorsByEpoch[epoch] = anchors.sorted { $0.sourceSeconds < $1.sourceSeconds }.enumerated().map {
-                AlignmentAnchorRow(
-                    id: $0.offset, sourceSeconds: $0.element.sourceSeconds,
-                    groupSeconds: $0.element.sourceSeconds,
-                    alignedSeconds: $0.element.alignedSeconds
-                )
+            guard let self, let focusSourceSeconds,
+                  let focused = self.anchorsByEpoch[epoch]?.min(by: {
+                      abs($0.sourceSeconds - focusSourceSeconds)
+                          < abs($1.sourceSeconds - focusSourceSeconds)
+                  })
+            else { return }
+            self.anchorSelection = focused.id
+            self.requestedAnchorFocus = focused.id
+        }
+    }
+
+    func stopAudition() {
+        auditionTask?.cancel()
+        auditionTask = nil
+        isPreparingAudition = false
+        auditionStopTask?.cancel()
+        auditionStopTask = nil
+        stopPlayback(updatePlayhead: true)
+    }
+
+    private func stopPlayback(updatePlayhead: Bool) {
+        if updatePlayhead, isAuditioning, let auditionStartedAt {
+            let elapsed = max(0, -auditionStartedAt.timeIntervalSinceNow)
+            auditionPlayheadSeconds = auditionPlaybackStartSeconds
+                + min(elapsed, auditionPlaybackDurationSeconds)
+        }
+        auditionEngine.stop()
+        if let auditionSource, auditionEngine.attachedNodes.contains(auditionSource) {
+            auditionEngine.detach(auditionSource)
+        }
+        auditionSource = nil
+        auditionStartedAt = nil
+        isAuditioning = false
+        auditionLabel = "Audition stopped at \(AlignmentPresentation.formatTime(auditionPlayheadSeconds))."
+    }
+
+    private func alignedTime(atSourceSeconds sourceSeconds: Double) -> Double? {
+        guard sourceSeconds.isFinite, sourceSeconds >= 0,
+              let row = selectedRow,
+              let map = acceptedMap,
+              let group = map.groups.first(where: { $0.group == row.groupID }),
+              let placement = group.placements.first(where: {
+                  $0.spans.contains(where: { $0.epoch == row.epochID })
+              })
+        else { return nil }
+        let rate = Double(placement.occurrence.nominalRate.framesPerSecond)
+        let frameValue = (sourceSeconds * rate).rounded(.down)
+        guard frameValue >= 0, frameValue <= Double(Int64.max),
+              case let .aligned(position)? = try? map.alignedTime(
+                  ofFrame: Int64(frameValue),
+                  in: placement.occurrence.id
+              )
+        else { return nil }
+        return position.instant.approximateDouble
+    }
+
+    private func play(_ clip: AlignmentRuntime.AuditionClip) throws {
+        stopPlayback(updatePlayhead: false)
+        guard !clip.samples.isEmpty,
+              let format = AVAudioFormat(standardFormatWithSampleRate: clip.sampleRate, channels: 1)
+        else { throw CocoaError(.fileReadCorruptFile) }
+        let cursor = AuditionSampleCursor(samples: clip.samples)
+        let source = AVAudioSourceNode(format: format) { _, _, frameCount, output in
+            cursor.render(frameCount: frameCount, output: output)
+        }
+        auditionSource = source
+        auditionEngine.attach(source)
+        auditionEngine.connect(source, to: auditionEngine.mainMixerNode, format: format)
+        try auditionEngine.start()
+        auditionPlaybackStartSeconds = auditionStartSeconds
+        auditionPlayheadSeconds = auditionStartSeconds
+        auditionPlaybackDurationSeconds = Double(clip.samples.count) / clip.sampleRate
+        auditionStartedAt = Date()
+        auditionStopTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(auditionPlaybackDurationSeconds))
+            guard !Task.isCancelled, isAuditioning else { return }
+            stopAudition()
+        }
+    }
+
+    private final class AuditionSampleCursor: @unchecked Sendable {
+        private let samples: [Float]
+        private var index = 0
+
+        init(samples: [Float]) {
+            self.samples = samples
+        }
+
+        func render(frameCount: AVAudioFrameCount, output: UnsafeMutablePointer<AudioBufferList>) -> OSStatus {
+            let buffers = UnsafeMutableAudioBufferListPointer(output)
+            let count = Int(frameCount)
+            for buffer in buffers {
+                guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+                for frame in 0..<count {
+                    data[frame] = index + frame < samples.count ? samples[index + frame] : 0
+                }
             }
-            self?.anchorSelection = self?.anchorsByEpoch[epoch]?.first?.id
+            index = min(samples.count, index + count)
+            return noErr
         }
     }
 
@@ -293,59 +464,6 @@ final class EpisodeAlignmentModel {
         }
     }
 
-    func stopAudition() {
-        auditionEngine.stop()
-        if let auditionSource, auditionEngine.attachedNodes.contains(auditionSource) {
-            auditionEngine.detach(auditionSource)
-        }
-        auditionSource = nil
-        isAuditioning = false
-        auditionLabel = "Audition stopped"
-    }
-
-    private func play(_ clip: AlignmentRuntime.AuditionClip) throws {
-        stopAudition()
-        guard !clip.samples.isEmpty,
-              let format = AVAudioFormat(standardFormatWithSampleRate: clip.sampleRate, channels: 1)
-        else { throw CocoaError(.fileReadCorruptFile) }
-        let cursor = AuditionSampleCursor(samples: clip.samples)
-        let source = AVAudioSourceNode(format: format) { _, _, frameCount, output in
-            cursor.render(frameCount: frameCount, output: output)
-        }
-        auditionSource = source
-        auditionEngine.attach(source)
-        auditionEngine.connect(source, to: auditionEngine.mainMixerNode, format: format)
-        try auditionEngine.start()
-        let duration = Double(clip.samples.count) / clip.sampleRate
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(duration))
-            guard self?.isAuditioning == true else { return }
-            self?.stopAudition()
-        }
-    }
-
-    private final class AuditionSampleCursor: @unchecked Sendable {
-        private let samples: [Float]
-        private var index = 0
-
-        init(samples: [Float]) {
-            self.samples = samples
-        }
-
-        func render(frameCount: AVAudioFrameCount, output: UnsafeMutablePointer<AudioBufferList>) -> OSStatus {
-            let buffers = UnsafeMutableAudioBufferListPointer(output)
-            let count = Int(frameCount)
-            for buffer in buffers {
-                guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
-                for frame in 0..<count {
-                    data[frame] = index + frame < samples.count ? samples[index + frame] : 0
-                }
-            }
-            index = min(samples.count, index + count)
-            return noErr
-        }
-    }
-
     enum AlignmentEditorRequest: Identifiable {
         case numeric
         case anchors
@@ -376,7 +494,6 @@ final class EpisodeAlignmentModel {
                     afterChange: persistenceCallback(document: document, accepted: accepted)
                 )
                 if applied {
-                    onAccepted()
                     acceptedMap = accepted.map
                     rows = Self.makeRows(
                         model: accepted.model, episodeID: episodeID,
@@ -385,6 +502,7 @@ final class EpisodeAlignmentModel {
                     )
                     message = "Map revision \(accepted.revision.revision) will activate after the show is verified on disk."
                     anchorsByEpoch = Self.makeAnchors(map: accepted.map)
+                    onAccepted()
                     if actionName == UndoActionName.acceptProposal {
                         announce("Accepted proposal for \(selectedRow?.epochLabel ?? "selected epoch")")
                     } else if actionName == UndoActionName.rejectProposal {
@@ -439,12 +557,20 @@ final class EpisodeAlignmentModel {
     }
 
     private func updateDependents(announce: Bool = false) async {
-        let jobs = await runtime.dependentJobCount(episode: episodeID)
-        dependents = jobs == 0
-            ? "No dependent work yet."
-            : "Dependents affected by accepting this map: 0 edits, \(jobs) jobs will become stale."
+        let counts = await runtime.dependentCounts(episode: episodeID)
+        if counts.total == 0 {
+            dependents = "No dependent work yet."
+        } else if counts.stale == 0 {
+            dependents = "\(counts.total) dependent job\(counts.total == 1 ? "" : "s") current; none stale."
+        } else {
+            dependents = "\(counts.stale) of \(counts.total) dependent job\(counts.total == 1 ? "" : "s") stale."
+        }
         if announce {
-            self.announce(jobs == 0 ? "No dependent work is stale" : "0 edits, \(jobs) jobs now stale")
+            self.announce(
+                counts.stale == 0
+                    ? "No dependent work is stale"
+                    : "\(counts.stale) dependent job\(counts.stale == 1 ? "" : "s") now stale"
+            )
         }
     }
 
