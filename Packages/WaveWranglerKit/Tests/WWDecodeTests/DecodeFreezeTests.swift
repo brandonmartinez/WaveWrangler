@@ -4,7 +4,7 @@ import Testing
 import WWCore
 @testable import WWDecode
 
-@Suite("Decode calibration (M2-DECODE-001)")
+@Suite("Decode calibration (M2-DECODE-002)")
 struct DecodeCalibrationTests {
     @Test(.enabled(if: DecodeFixture.calibrationEnabled, "serialized calibration pass (WW_DECODE_CALIBRATION=1)"))
     func calibrationSplitMeetsEveryGate() async throws {
@@ -15,7 +15,7 @@ struct DecodeCalibrationTests {
         }
     }
 
-    /// Frozen holdout: runs once, only with WW_M2_DECODE_HOLDOUT=1, after m2-freeze-decode.
+    /// Frozen holdout: runs once, only with WW_M2_DECODE_2_HOLDOUT=1, after m2-freeze-decode-2.
     @Test(.enabled(if: DecodeFixture.holdoutEnabled))
     func holdoutSplitMeetsEveryFrozenGate() async throws {
         let records = try await runDecodeSplit("holdout", cases: DecodeFixture.holdoutCases)
@@ -78,8 +78,12 @@ struct DecodeCalibrationTests {
         #expect(DecodeFixture.seed(split: "calibration", index: 0) == DecodeFixture.seed(split: "calibration", index: 0))
         let calibration = Set((0 ..< DecodeFixture.calibrationCases).map { DecodeFixture.seed(split: "calibration", index: $0) })
         let holdout = Set((0 ..< DecodeFixture.holdoutCases).map { DecodeFixture.seed(split: "holdout", index: $0) })
+        let revisionOneHoldout = Set((0 ..< DecodeFixture.holdoutCases).map {
+            DecodeFixture.seed(fixtureID: "M2-DECODE-001", split: "holdout", index: $0)
+        })
         #expect(calibration.count == DecodeFixture.calibrationCases && holdout.count == DecodeFixture.holdoutCases)
         #expect(calibration.isDisjoint(with: holdout))
+        #expect(holdout.isDisjoint(with: revisionOneHoldout), "revision 2 must never reuse a revision-1 holdout seed")
         for index in [0, 7, 12, 129] {
             let a = DecodeFreezeCase(split: "calibration", index: index), b = DecodeFreezeCase(split: "calibration", index: index)
             #expect(a.label == b.label && a.seed == b.seed)
@@ -132,18 +136,34 @@ struct DecodeCalibrationTests {
     ]).union(StaleChange.allCases.map { "stale-\($0.rawValue)" })
 }
 
-/// m2-freeze-decode consistency (docs/m2/fixtures/m2-freeze-decode.json). These checks decode nothing and
+/// m2-freeze-decode-2 consistency (docs/m2/fixtures/m2-freeze-decode-2.json). These checks decode nothing and
 /// always run: they fail if the gates, versions, split counts or pinned trees drift from the committed
 /// freeze. A deliberate change is a new dated freeze revision, never a silent edit.
-@Suite("Decode freeze (m2-freeze-decode)")
+@Suite("Decode freeze (m2-freeze-decode-2)")
 struct DecodeFreezeTests {
     static let repository = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
-    static let freezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-decode.json")
+    static let freezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-decode-2.json")
+    static let revisionOneFreezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-decode.json")
+    static let calibrationURL = repository.appendingPathComponent("docs/m2/evidence/ww-050/calibration-2.jsonl")
 
     static func freeze() throws -> [String: Any] {
         try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: freezeURL)) as? [String: Any])
+    }
+
+    @Test func revisionTwoPreservesRevisionOneDefinition() throws {
+        let revisionOne = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: Self.revisionOneFreezeURL)) as? [String: Any]
+        )
+        let revisionTwo = try Self.freeze()
+        for key in ["recipe", "truth", "measurement", "countJustification", "gate", "gateValues", "gates", "gateRule"] {
+            #expect((revisionTwo[key] as? NSObject)?.isEqual(revisionOne[key]) == true, "\(key) changed from revision 1")
+        }
+        let oneSplits = try #require(revisionOne["splits"] as? [String: [String: Any]])
+        let twoSplits = try #require(revisionTwo["splits"] as? [String: [String: Any]])
+        #expect(oneSplits["calibration"]?["cases"] as? Int == twoSplits["calibration"]?["cases"] as? Int)
+        #expect(oneSplits["holdout"]?["cases"] as? Int == twoSplits["holdout"]?["cases"] as? Int)
     }
 
     @Test func splitConcurrencyIsCappedAtFour() {
@@ -158,8 +178,9 @@ struct DecodeFreezeTests {
 
     @Test func frozenDefinitionMatchesTheFreezeRecord() throws {
         let json = try Self.freeze()
-        #expect(json["freezeID"] as? String == "m2-freeze-decode")
+        #expect(json["freezeID"] as? String == "m2-freeze-decode-2")
         #expect(json["fixtureID"] as? String == DecodeFixture.fixtureID)
+        #expect(json["supersedes"] as? String == "m2-freeze-decode")
 
         let gates = try #require(json["gateValues"] as? [String: Double])
         #expect(gates == [
@@ -218,7 +239,7 @@ struct DecodeFreezeTests {
         let package = Self.repository.appendingPathComponent("Packages/WaveWranglerKit")
         for (path, frozen) in trees {
             let actual = try Self.gitTreeID(package.appendingPathComponent(path))
-            #expect(actual == frozen, "\(path) is \(actual) but m2-freeze-decode pins \(frozen): a frozen tree changed; record a new freeze revision before any holdout")
+            #expect(actual == frozen, "\(path) is \(actual) but m2-freeze-decode-2 pins \(frozen): a frozen tree changed; record a new freeze revision before any holdout")
         }
     }
 
@@ -227,8 +248,11 @@ struct DecodeFreezeTests {
         let url = Self.freezeURL.deletingLastPathComponent().appendingPathComponent("m2-fixture-registry.json")
         let json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         let freezes = try #require(json["freezes"] as? [[String: Any]])
-        let entry = try #require(freezes.first { $0["freezeID"] as? String == "m2-freeze-decode" })
-        #expect(entry["record"] as? String == "docs/m2/fixtures/m2-freeze-decode.json")
+        let revisionOne = try #require(freezes.first { $0["freezeID"] as? String == "m2-freeze-decode" })
+        #expect(revisionOne["supersededBy"] as? String == "m2-freeze-decode-2")
+        #expect((revisionOne["status"] as? String)?.contains("holdout passed once") == true)
+        let entry = try #require(freezes.first { $0["freezeID"] as? String == "m2-freeze-decode-2" })
+        #expect(entry["record"] as? String == "docs/m2/fixtures/m2-freeze-decode-2.json")
         #expect(entry["fixtures"] as? [String] == [DecodeFixture.fixtureID])
         let counts = try #require(entry["counts"] as? [String: Int])
         #expect(counts["calibrationCases"] == DecodeFixture.calibrationCases)
@@ -239,5 +263,48 @@ struct DecodeFreezeTests {
         #expect(fixtures.first?["id"] as? String == DecodeFixture.fixtureID)
         #expect(split["calibration"] as? Int == DecodeFixture.calibrationCases)
         #expect(split["holdout"] as? Int == DecodeFixture.holdoutCases)
+    }
+
+    @Test func committedCalibrationRecordsReproduceTheReportedCalibration() throws {
+        let data = try Data(contentsOf: Self.calibrationURL)
+        let decoder = JSONDecoder()
+        let records = try data.split(separator: 0x0A).map { try decoder.decode(DecodeCaseRecord.self, from: Data($0)) }
+        #expect(records.count == DecodeFixture.calibrationCases + 1)
+        #expect(records.allSatisfy { $0.split == "calibration" })
+        #expect(records.map(\.caseIndex) == Array(0 ..< DecodeFixture.calibrationCases) + [-1])
+        for record in records where record.caseIndex >= 0 {
+            #expect(record.seed == String(
+                format: "0x%016llX",
+                DecodeFixture.seed(split: "calibration", index: record.caseIndex)
+            ))
+        }
+        #expect(DecodeGateEvaluation.evaluate(records).allSatisfy { $0.passed })
+
+        let json = try Self.freeze()
+        let summary = try #require(json["calibrationSummary"] as? [String: Any])
+        let metrics = try #require(summary["metrics"] as? [String: Any])
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        #expect(summary["recordsSHA256"] as? String == digest)
+        #expect(summary["records"] as? Int == records.count)
+
+        let supported = records.filter { $0.kind == "supported" }
+        let planted = records.filter { $0.kind == "planted" }
+        let settings = records.filter { $0.kind == "output-settings" }
+        let lags = supported.flatMap(\.landmarkLags)
+        let lagCounts = Dictionary(grouping: lags, by: { String($0) }).mapValues(\.count)
+        #expect(metrics["supportedCases"] as? Int == supported.count)
+        #expect(metrics["supportedFrames"] as? Int == supported.reduce(0) { $0 + $1.frames })
+        #expect(metrics["mappingFailures"] as? Int == supported.reduce(0) { $0 + $1.mappingFailures.count })
+        #expect(metrics["landmarkObservations"] as? Int == lags.count)
+        #expect(metrics["landmarkLagCounts"] as? [String: Int] == lagCounts)
+        #expect(metrics["landmarksBelowCorrelation"] as? Int == supported.reduce(0) { $0 + $1.landmarksBelowCorrelation })
+        #expect(metrics["exactCases"] as? Int == supported.count { $0.bitExact != nil })
+        #expect(metrics["plantedCases"] as? Int == planted.count)
+        #expect(metrics["plantedMutations"] as? Int == planted.count { !$0.sourceUnchanged })
+        #expect(metrics["plantedPublications"] as? Int == planted.count {
+            $0.published || $0.finishCalled != false || $0.appendedNotAbandoned != false
+                || $0.readersLeftOpen != 0 || $0.scopesBalanced != true
+        })
+        #expect(metrics["outputSettingsFailures"] as? Int == settings.reduce(0) { $0 + $1.mappingFailures.count })
     }
 }

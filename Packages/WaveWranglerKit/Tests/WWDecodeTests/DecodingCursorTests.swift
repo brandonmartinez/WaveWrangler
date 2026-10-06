@@ -235,11 +235,13 @@ struct DecodingCursorTests {
         script.onRead = { if $0 == 0 { target.cancel() } }
         let content = ScriptedContentIO(script)
         let gate = AsyncStartGate()
+        let returned = Counter()
         let task = Task { () -> DecodeFailure? in
             await gate.wait()
             return await Self.failure {
                 _ = try await makeDecoder(io: AdjustableIO(), content: content).withDecodingCursor(source.url, source: SourceID()) { cursor in
                     _ = try await cursor.next()
+                    returned.increment()
                 }
             }
         }
@@ -247,6 +249,7 @@ struct DecodingCursorTests {
         gate.release()
 
         #expect(await task.value == .cancelled)
+        #expect(returned.count == 0, "the chunk read while cancellation arrived must not reach the cursor body")
         #expect(content.record.reads == 1)
         #expect(content.record.closes == 1)
         #expect(content.record.contentCallsInsideTask == 0)
