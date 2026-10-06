@@ -391,12 +391,25 @@ final class EpisodeSetupUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(status.frame.width, 95, "\(context): Status keeps its minimum width (\(status.frame.width))")
             XCTAssertLessThanOrEqual(status.frame.maxX, outline.frame.maxX + 1, "\(context): no horizontal overflow")
         }
-        for cycle in 1...3 {
+        // Ten cycles: the invariant holds every time, and any drift converges (bounded, not compounding).
+        var offsets: [Double] = []
+        var widths: [Double] = []
+        for cycle in 1...10 {
             menu("Window", "Zoom")  // default size
             assertFits("zoom cycle \(cycle), default size")
             menu("Window", "Zoom")  // zoomed
             assertFits("zoom cycle \(cycle), zoomed")
+            offsets.append(status.frame.minX - outline.frame.minX)
+            widths.append(outline.frame.width)
         }
+        let record = zip(offsets, widths).enumerated().map { "cycle \($0.offset + 1): Status x \($0.element.0), table \($0.element.1)" }
+        print("ZOOM \(record.joined(separator: "; "))")
+        let summary = XCTAttachment(string: record.joined(separator: "\n"))
+        summary.name = "zoom cycles"
+        summary.lifetime = .keepAlways
+        add(summary)
+        func spread(_ values: ArraySlice<Double>) -> Double { values.max()! - values.min()! }
+        XCTAssertLessThanOrEqual(spread(offsets.suffix(3)), spread(offsets.prefix(3)) + 20, "drift converges: \(offsets)")
         select("tr2.wav")
 
         // #104: columns follow the width plan only; the header offers no show/hide/reorder menu.
