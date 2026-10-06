@@ -59,7 +59,7 @@ def main():
         print(f"- setup waits: {len(waits)} ({len(retries)} after a download request); first-product-operation order OK in "
               f"{sum(1 for r in cases if r.get('setupWaitsBeforeFirstProductOperation'))}/{len(cases)}")
         print(f"- time to settle: {stats([r.get('timeToSettleMs') for r in cases])}")
-        print(f"- setup propagation: {stats([r.get('setupPropagationMs') for r in cases])}")
+        print(f"- setup wait per fixture (until observed on host B): {stats([w.get('waitedMs') for w in waits if w.get('observed')])}")
         if cell in ("show", "library"):
             paths = collections.Counter(json.dumps(r.get("detectionPath"), sort_keys=True) for r in cases if r["verdict"] != "setupNotEstablished")
             print("- detection paths: " + "; ".join(f"{k} ×{v}" for k, v in paths.most_common()))

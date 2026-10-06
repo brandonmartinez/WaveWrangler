@@ -251,7 +251,7 @@ def establish(dev, case, fixtures):
             observed = fixture_observed_on_b(dev, fixture, SETUP_WAIT)
             end = now_ms()
             case.setup["waits"].append({"fixture": fixture["name"], "attempt": attempt, "startAClockMs": start,
-                                        "startBClockMs": dev.b_time(start), "observed": observed,
+                                        "startBClockMs": dev.b_time(start), "observed": observed, "endAClockMs": end, "waitedMs": end - start,
                                         "expiryAClockMs": None if observed else end, "expiryBClockMs": None if observed else dev.b_time(end)})
             if observed:
                 break
