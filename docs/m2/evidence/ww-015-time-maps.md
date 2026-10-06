@@ -63,7 +63,7 @@ Two are equivalent mutants:
 
 Both checks are kept explicit.
 
-**Host and commands.** macOS 27.0.1 arm64, Swift 6.4, code at `5ad6338` (based on main `109a23c`). Commands:
+**Host and commands.** macOS 27.0.1 arm64, Swift 6.4, code at `f0102d6` (based on main `219debc`). Commands:
 - `cd Packages/WaveWranglerKit && swift test --filter WWTimeMapTests` (49 tests in 11 suites, about 4.5 s);
 - `scripts/test.sh`.
 
