@@ -1242,4 +1242,8 @@ def main():
 
 
 if __name__ == "__main__":
+    # Live two-device iCloud harness: opt-in only (#146).
+    if os.environ.get("WW_LIVE_PROVIDER_TESTS") != "1":
+        print("skipped: the DUR-025 two-device iCloud harness is a live-provider test; set WW_LIVE_PROVIDER_TESTS=1 to opt in (#146)")
+        sys.exit(0)
     main()

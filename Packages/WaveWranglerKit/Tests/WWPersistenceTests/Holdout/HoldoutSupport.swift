@@ -14,7 +14,10 @@ enum Holdout {
     static let enabled = environment["WW_HOLDOUT"] == "1"
     static let split = environment["WW_HOLDOUT_SPLIT"] == "holdout" ? "holdout" : "calibration"
     static var isHoldout: Bool { split == "holdout" }
-    static let iCloudEnabled = environment["WW_ICLOUD_TRIAL"] == "1"
+    /// Live-provider tests (real iCloud Drive, `brctl`) run only with the explicit opt-in WW_LIVE_PROVIDER_TESTS=1
+    /// (#146); WW_ICLOUD_TRIAL=1 still selects the iCloud pass within a holdout run.
+    static let liveProviderTests = environment["WW_LIVE_PROVIDER_TESTS"] == "1"
+    static let iCloudEnabled = liveProviderTests && environment["WW_ICLOUD_TRIAL"] == "1"
 
     /// `sha256("ww-m1-fixture|v1|" + fixtureId + "|" + split + "|" + caseIndex)` → first 8 bytes big-endian.
     static func seed(_ fixture: String, _ index: Int, split: String = Holdout.split) -> UInt64 {

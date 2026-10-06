@@ -5,7 +5,8 @@
 #   --package  WWPersistence holdout families (synthetic, temp dirs)            [default when no pass is given]
 #   --timing   serialized timing pass: M1-DUR-002 and M1-SCALE-001 (model level) [default when no pass is given]
 #   --native   NSDocument cells of M1-DUR-006 and M1-DUR-008: launches the Debug app (GUI lock required)
-#   --icloud   M1-DUR-024 observed iCloud Drive trial (grant C; synthetic; persistence/ subfolder deleted after)
+#   --icloud   M1-DUR-024 observed iCloud Drive trial (grant C; synthetic; persistence/ subfolder deleted after).
+#              Live-provider test: runs only with WW_LIVE_PROVIDER_TESTS=1 (#146); skipped otherwise.
 #
 # The holdout split runs once per frozen revision and must run on a clean commit that contains the freeze
 # merge (2fcf4d7). Results: .build/holdout/<split>/ (JSON lines + run metadata).
@@ -73,6 +74,11 @@ for pass in "${PASSES[@]}"; do
       run_package 'HoldoutTimingTests' WW_TIMING_TESTS=1 || echo "TIMING PASS REPORTED FAILURES" >&2
       ;;
     icloud)
+      # Live iCloud Drive (real provider, brctl): opt-in only (#146).
+      if [[ "${WW_LIVE_PROVIDER_TESTS:-}" != 1 ]]; then
+        echo "==> holdout ($SPLIT): iCloud Drive observed trial SKIPPED (live-provider test; set WW_LIVE_PROVIDER_TESTS=1 to opt in, #146)"
+        continue
+      fi
       echo "==> holdout ($SPLIT): iCloud Drive observed trial (grant C)"
       run_package 'HoldoutICloudTrialTests' WW_ICLOUD_TRIAL=1 || echo "ICLOUD PASS REPORTED FAILURES" >&2
       ls -la "$HOME/Library/Mobile Documents/com~apple~CloudDocs/WaveWrangler-M1-Synthetic-Trial/" > "$OUT/icloud-trial-root-after.txt" 2>&1 || true
