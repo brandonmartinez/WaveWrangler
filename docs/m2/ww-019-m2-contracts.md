@@ -36,11 +36,17 @@ tracked at milestone exit by WW-024 (#20), not here.
 | # | Item |
 | --- | --- |
 | 1 | **Audio handoff.** M2 produces internal derived assets (time-aligned, channel-consistent) for inspection/correction only — not an editable/exportable cut. First audio handoff remains cleaned-track M4. |
-| 2 | Transcription or speech analysis of any kind (M3). |
-| 3 | Public-release/participant qualification, Increase Contrast, Reduce Motion, 200% text opt-in (M5 / WW-053 per the M1 exit decisions). |
-| 4 | Any recording, model, or native asset acquisition beyond the single consented episode copy and synthetic fixtures (§7). |
-| 5 | Cross-device/provider conflict claims beyond the synthetic iCloud scope (§7); live two-Mac iCloud tests stay disabled per #146. |
-| 6 | Guaranteed support for any candidate format/codec beyond the exact evidenced envelope (WW-050). |
+| 2 | Transcription or speech analysis of any kind, filler/edit proposals and review (M3). |
+| 3 | Cleaned stems, export and the reconstructive record (M4). |
+| 4 | Mixing/mastering, pause cleanup, plugins/custom training, mandatory diarization, DAW adapters, forced source copies. |
+| 5 | Public-release/participant qualification, Increase Contrast, Reduce Motion, 200% text opt-in (M5 / WW-053 per the M1 exit decisions). |
+| 6 | Any recording, model, or native asset acquisition beyond the single consented episode copy and synthetic fixtures (§7). |
+| 7 | Cross-device/provider conflict claims beyond the synthetic iCloud scope (§7); live two-Mac iCloud tests stay disabled per #146. |
+| 8 | Guaranteed support for any candidate format/codec beyond the exact evidenced envelope (WW-050). |
+
+Verbatim from the kickoff: "Out of scope: transcription, speech analysis, filler/edit proposals and
+review (M3); cleaned stems, export and reconstructive record (M4); mixing/mastering, pause cleanup,
+plugins/custom training, mandatory diarization, DAW adapters, forced source copies."
 
 Aligned/channel-consistent assets produced in M2 are **internal derived assets** used for inspection and
 correction, not a deliverable audio product.
@@ -49,8 +55,8 @@ correction, not a deliverable audio product.
 
 | Module / unit | WW ID(s) | Owner | Status at authoring | Notes |
 | --- | --- | --- | --- | --- |
-| `WWDecode` | WW-050 (#45) | Mac | In progress (Mac lane) | Read-only content gateway + native decoder; evidence-driven envelope only, no unsupported-format claim. |
-| `WWTimeMap` | WW-015 (#10) | Alignment | In progress (Alignment lane) | Clock-epoch/coordinate contract; supported inverse ≤0.5 source frame. |
+| `WWDecode` | WW-050 (#45) | Mac | In progress (open lane) | Read-only content gateway + native decoder; evidence-driven envelope only, no unsupported-format claim. |
+| `WWTimeMap` | WW-015 (#10) | Alignment | In progress (open lane) | Clock-epoch/coordinate contract; supported inverse ≤0.5 source frame. |
 | WW-020 infra (derived-asset/job infra, versioned map persistence, C5 migration, #63 channel) | WW-020 (#19) | Mac | Planned | Builds on `WWDecode`/`WWTimeMap`; adds the explicit stated-channel value replacing the v1 index-0 placeholder. |
 | Estimator with abstention | WW-016 (#15) / WW-021 (#24) | Alignment | Planned (WW-016 candidate FAILED; see §6) | Must clear the WW-016 holdout gate (§5) before WW-021 production use. |
 | Discontinuity handling | WW-017 (#11) | Alignment | Planned | Depends on WW-015/016 residual behavior. |
@@ -99,15 +105,16 @@ fields present but inert until WW-017 populates them.
 
 ## 3. Contracts M2 adds or extends
 
-Numbered following the [WW-009 (#9)](https://github.com/brandonmartinez/WaveWrangler/issues/9) M1
-contracts pattern (`docs/m1/ww-009-m1-contracts.md`, C1–C10); M2 contracts are `M2-C1`...`M2-C7`.
+Numbered following the [WW-009 (#3)](https://github.com/brandonmartinez/WaveWrangler/issues/3) M1
+contracts pattern ([`docs/m1/ww-009-m1-contracts.md`](../m1/ww-009-m1-contracts.md), C1–C10); M2 contracts
+are `M2-C1`...`M2-C7`.
 
 | ID | Name | Contract |
 | --- | --- | --- |
-| M2-C1 | Content gateway & forbidden-API scope | All source-content reads go through `WWSources`' read-only `SourceIO` gateway (`WWDecode` extends this; it never uses `FileHandle`, `moveItem`, `write(to:)` or other mutating/content APIs directly — enforced by `ForbiddenAPITests`). Decode is evidence-driven: only the exact evidenced input envelope is claimed supported; no broader codec/format guarantee. |
-| M2-C2 | Decode descriptor + `formatInterpretationVersion` | Every decode result carries a descriptor (source reference, container/codec, sample rate, bit depth, channel count, priming/padding frame counts) plus a `formatInterpretationVersion`. A version bump invalidates every derived job keyed to the prior version (see M2-C5); descriptors are never silently reinterpreted in place. |
-| M2-C3 | Time-map conventions | `source_frame / F + epoch = group` (shared clock coordinate); `aligned = a × group + b`; `map_ppm = 10⁶ × (a − 1)`. Lag sign: a target later by positive lag needs `b = −lag / F`. Supported inverse ≤0.5 source frame (shared gate with WW-050, §5). Known restart gaps are **non-invertible** — no smoothing/interpolation across them; a gap always starts a new epoch. Capture/container metadata (e.g. stream timestamps) is **never** treated as clock proof; it is supplied input, not a discovered or verified fact. |
-| M2-C4 | Map states | Every persisted map carries one of: `clockApproved` (passed the frozen holdout gate, §5), `acousticConsistentProposal` (passed calibration but not yet an approved clock correction — acoustic delay must never be presented as a clock correction), `manual` (user-entered/corrected), or `externalEvidence` (segment metadata supplied by the user/pipeline, not discovered). Scores attached to proposals are **not probabilities** and must never be labelled or rendered as such. |
+| M2-C1 | Content gateway & forbidden-API scope (Lead decision) | **Exactly one content-capable gateway exists for M2.** It is a read-only content-gateway protocol owned by the decode module, with a single system implementation file; content-capable APIs (`AVAudioFile`, `ExtAudioFile`, `FileHandle`, …) are allowed **only** in that one implementation file. `WWSources`' `SourceIO` ([WW-009 C7](../m1/ww-009-m1-contracts.md#c7--source-reference-model-d)/[C8](../m1/ww-009-m1-contracts.md#c8--source-availability-on-default--configurable--off-d)) stays metadata-only, unchanged — it is not a second content gateway, and `WWDecode`'s native decoder is not itself called a gateway: it is the native decoder, and its single read-only content gateway is the only content-access point. The `ForbiddenAPITests` forbidden-API scan currently covers only `WWSources` ([WW-009 C8](../m1/ww-009-m1-contracts.md#c8--source-availability-on-default--configurable--off-d) "Enforcement for evidence"); extending it to `WWDecode` and every new content-capable module is **required M2 work** (the WW-050 lane is doing it), not current enforcement. |
+| M2-C2 | Decode descriptor + `formatInterpretationVersion`, metadata-only guarantee | Every decode result carries a descriptor (source reference, container/codec, sample rate, bit depth, channel count, priming/padding frame counts) plus a `formatInterpretationVersion`. A version bump invalidates every derived job keyed to the prior version (see M2-C5); descriptors are never silently reinterpreted in place. Extends [WW-009 C8](../m1/ww-009-m1-contracts.md#c8--source-availability-on-default--configurable--off-d)'s OFF/metadata-only guarantee: metadata-only and source-availability-OFF paths keep M1's **zero app content/hash/header/preview/decode/download** guarantee; decoding happens only for explicitly requested work on an available source. Per [WW-009 C7](../m1/ww-009-m1-contracts.md#c7--source-reference-model-d), bookmarks/paths remain **hints, never identity**. A recording-gateway test asserts **zero decode calls** on the OFF and metadata-only paths, mirroring WW-009 C8's recording-gateway test. |
+| M2-C3 | Time-map conventions | `source_frame / F + epoch = group` (shared clock coordinate); `aligned = a × group + b`; `map_ppm = 10⁶ × (a − 1)`. Lag sign is the **equal-origin convention** from `docs/research/foundation-spikes.md` (a target later by positive lag needs `b = −lag / F`); **lag-sign estimation itself is untested and remains open in WW-015.** Supported inverse ≤0.5 source frame (shared gate with WW-050, §5). Known restart gaps are **non-invertible** — no smoothing/interpolation across them; a gap always starts a new epoch. Capture/container metadata (e.g. stream timestamps) is **never** treated as clock proof; it is supplied input, not a discovered or verified fact. |
+| M2-C4 | Map states | Every persisted map carries one of: `clockApproved` (passed the frozen holdout gate, §5), `acousticConsistentProposal` (**acoustically consistent evidence that cannot distinguish propagation delay from a clock change; never promoted to `clockApproved` without independent clock truth**), `manual` (user-entered/corrected), or `externalEvidence` (segment metadata supplied by the user/pipeline, not discovered). Scores attached to proposals are **not probabilities** and must never be labelled or rendered as such. |
 | M2-C5 | Invalidation keys & no-stale-late-publish | Derived jobs (maps, aligned assets) are keyed on: source revision, format revision (`formatInterpretationVersion`), asset revision, epoch, occurrence, channel, map revision, recipe revision, and upstream (dependency) revisions. Any key change invalidates the derived result. A job whose key is stale by the time it completes **must not publish**; this extends M1's WW-009 C3 (publication ordering) to M2's job/derived-asset pipeline — M2 derived data publishes through the same ordering contract, not a parallel one. |
 | M2-C6 | C5 migration: explicit stated channel (#63) | Show-schema migration follows WW-009 C5 (unknown-newer refusal: an older build refuses a file whose schema is newer than it understands; non-overwriting backup before migrating). The v1 schema's index-0 "Unknown channel" placeholder is replaced by an explicit stated-channel value (`Knowledge<Int>`-shaped: Unknown until the user states it, never encoded as index 0). Migration keeps any user-stated `placement.channelLabels` and converts bare index-0 placeholders to Unknown. Tests cover a v1 file with and without stated channels. |
 | M2-C7 | Main-thread budget & essential accessibility | Decode and alignment work stay off the main thread (NSDocument I/O remains main-thread by design, unchanged from M1). Episode-switch budget: p95 95 ms measured vs. a <100 ms gate (narrow headroom — any new per-switch work on the inspection/correction UI must be profiled against this budget). Every UI PR touching M2 surfaces satisfies the essential-accessibility invariant (§8) for its changed surfaces, not milestone-deferred. |
@@ -150,6 +157,7 @@ revision per §4).
 | WW-015 / WW-050 | Supported round-trip (inverse) ≤0.5 source frame | Frozen-holdout |
 | WW-050 | Landmarks ≤1 output frame | Frozen-holdout |
 | WW-050 | 100% of supported truth cases map priming/padding/decoded-frame origin, variable rate, bit depth/channel correctly | Frozen-holdout |
+| WW-017 | Every planted discontinuity flagged/unsupported; zero silent smooth bridging; segment slopes positive/monotonic; gaps have no inverse; occurrences/epochs retained across the discontinuity | Frozen-holdout |
 | WW-018 | Documented ratio `a·Fout/Fin`; clock pitch `1/a` kept distinct from a separate time-stretch | Calibration (definitional) |
 | WW-018 | Landmarks ≤1 output frame after delay | Frozen-holdout |
 | WW-018 | Passband ±0.1 dB through 80% of lower Nyquist | Frozen-holdout |
@@ -158,18 +166,36 @@ revision per §4).
 | WW-018 | Inactive-output peak ≤ −80 dBFS on an isolated-channel −1 dBFS fixture | Frozen-holdout |
 | WW-018 | Interchannel tone phase-error metric and tolerances | Calibration, frozen before holdout (fixture-specific, no universal bound) |
 | WW-018 | Spectral/channel/listening rubric and counts | Calibration, frozen before holdout |
-| WW-018 | ≥3 consented listeners, objectionable-artifact ratings | Frozen-holdout — **NOT granted; blocked, not passed** (§6) |
+| WW-018 | ≥3 consented listeners, objectionable-artifact ratings **≤5%** | Frozen-holdout — **NOT granted; blocked, not passed** (§6) |
 | WW-018 | Family peak ≤1 GiB | Frozen-holdout |
 | WW-018 | License/notices resolved | Gate (non-numeric) |
 
 ## 6. Retained evidence and risks (carried forward, not re-litigated)
+
+### Prerequisite status (per WW unit)
+
+| WW unit | Status | Note |
+| --- | --- | --- |
+| M1 / WW-013 | **Exit pending; GUI gate open** | Any GUI-dependent M2 acceptance (XCUITest suite, exit checkpoint, essential-accessibility audits) waits until the M1 GUI gate passes. |
+| WW-014 | **PARTIAL** | Inspection/manual-correction UI spec; not yet implemented. |
+| WW-015 | **PARTIAL** | Time-map contract; in progress (open lane). |
+| WW-016 | **FAILED** | Candidate estimator holdout failed (below). |
+| WW-017 | **PARTIAL** | Discontinuity handling planned, not yet built. |
+| WW-018 | **PENDING** | Listening gate blocked (not granted); SRC/render candidate not qualified. |
+| WW-050 | **No evidence yet** | Decode module in progress (open lane); no decode evidence landed in this record. |
+
+**Drift-fallback decision (Lead):** until a frozen WW-016 holdout passes, alignment relies on manual
+epochs/anchors and the limited supported envelope already evidenced; no map becomes `clockApproved`
+automatically.
+
+### Carried evidence and risks
 
 | Item | Status | Evidence |
 | --- | --- | --- |
 | WW-016 candidate gate | **FAILED** | 4/4 positive windows met targets (worst max error 0.007505 ms), but 2/6 acoustic negatives were falsely accepted: a constant ~35 ms delay produced a ~35.0 ms max clock-error estimate, and a variable delay produced a ~44.2 ms max clock-error estimate *with stronger confidence than the true positives*. Discontinuity/unrelated/silent/periodic negatives correctly abstained (4/4). See `docs/research/waveform-clock-render-readiness.md`. |
 | SRC/render candidate | Not qualified | The 64-tap Blackman-windowed-sinc renderer is a **candidate**, not a qualified production SRC; WW-018's objective gates (§5) are not yet cleared against it. |
 | Decode envelope | Narrow, evidenced only | Exercised decode is 6-channel, 16-bit PCM WAV at 12/16 kHz only; render inputs exercised at 16 kHz only. No compressed-codec, BWF, broader-codec, or 12→48 kHz render claim exists yet. |
-| Foundation sparse maps | Synthetic/finite | Foundation-spike maps (`docs/research/foundation-spikes.md`) are synthetic and finite; they inform the timing-contract formulas (§3, M2-C3) but carry no production-scale coverage claim. |
+| Foundation sparse maps | Synthetic/finite | Foundation-spike maps (`docs/research/foundation-spikes.md`): **160 maps** (20 each of 8 strata; **80 accepted / 80 abstained**), **500 truth probes** (shared across the 80 accepted maps — not 500 independent recordings). They inform the timing-contract formulas (§3, M2-C3) but carry no production-scale coverage claim. |
 | WW-018 listening | **Blocked, never passed** | ≥3 consented listeners for the objectionable-artifact rating has **not** been granted; this must be reported as blocked, not as passed, until granted with exact scope. |
 | M1 host limits | Unchanged | Claimed host is macOS 27.0.1 / Xcode 27 / 18-core / 128 GiB only — not macOS 26 / 16 GiB. CI runs GitHub-hosted macOS 26, Xcode 26.6 / SDK 26.5, no GUI tests. |
 | Runtime constraint | Unchanged | #101: Swift 6.3 runtime constraint applies; ad-hoc signing continues. |
@@ -182,22 +208,31 @@ revision per §4).
 
 ## 7. Content consent scope and date
 
-Per the kickoff (`docs/planning/kickoffs/m2.md`, pasted 2026-10-06). This record never writes any path or
-file name of user media.
+Content consent is **user-directed, relayed 2026-10-05** (`docs/planning/kickoffs/m2.md`; distinct from the
+kickoff's own paste date, 2026-10-06). This record never writes any path or file name of user media.
 
 **Approved:**
 - The user-provided disposable local episode copy (path withheld), local only, read-only, for M2
   import/decode/time-map/group-alignment/manual-correction/channel-consistent-asset validation. The same
   copy is available at the same location on the Mac mini under the same consent.
+- Treat it as read-only: temporary copies (for anything that would modify data) and any derived assets
+  stay outside the repository and synced folders, and are removed when validation ends. Nothing is copied
+  off the Mac mini except those temporary copies.
 - No cloud/provider upload, no external service, no transcription or speech analysis (that is M3 scope).
+  Never commit, post or log its path, file names, transcript text or excerpts.
 - Automated tests/CI: synthetic fixtures only — never the consented episode copy.
 - Standing GUI consent on the Mac mini for all ongoing/future UI, VoiceOver and accessibility work
-  (ad-hoc app runs, XCUITest/accessibility audits, computer-use interaction); any temporary VoiceOver or
-  display-setting change is restored after use.
+  (ad-hoc app runs, XCUITest/accessibility audits, computer-use interaction). It **excludes the main Mac**,
+  runs under the per-host self-serve GUI lock, uses synthetic fixtures unless the media consent above
+  applies, labels results with the host they ran on, and records and restores original settings (any
+  temporary VoiceOver or display-setting change is restored after use).
 - Synthetic iCloud scope: one dedicated trial folder (an M1-named or M2-sibling synthetic trial folder),
   generated synthetic files only, deleted after each run with the deletion recorded. Multi-device
-  deliberate-conflict testing is allowed in that scope, but M2 makes no claim that needs it (live
-  two-Mac iCloud tests stay disabled per #146, §6).
+  deliberate-conflict testing is allowed in that scope, but **nothing recording-derived goes in iCloud**;
+  UI stays on the Mac mini — the main Mac's side of any multi-device test runs headless. M2 makes no claim
+  that currently needs it (live two-Mac iCloud tests stay disabled per #146, §6).
+- Runtime and asset availability stay **UNKNOWN until actually observed** (`docs/planning/kickoffs/m2.md`
+  line 93) — never assumed from in-app defaults or prior milestones.
 
 **Not authorized for M2 unless separately granted with exact scope:**
 - Model-body or native-asset provisioning.
@@ -222,13 +257,16 @@ with new wording.
   Return/Esc; AX role/label/value via the `elementDetection`, `sufficientElementDescription`, `hitRegion`
   and `action` audit types (`.contrast` only on blocked/recovery surfaces); every blocked/error/recovery
   state reachable, labelled and legible; no colour-only state and no drag-only interaction.
-- **Exit checkpoint:** one slot of at most 30 minutes at milestone exit, covering in-app 200% text plus
-  light/dark on the milestone's windows; system Increase Contrast is not part of it (moved to M5). Only a
-  finding that makes a core task impossible blocks; the rest become WW-053 follow-ups.
-- **M2 exit gate:** gated on WW-024 (#20) milestone acceptance — automated supported cases and
-  manual/disconnected/restart cases remain honest; accepted maps/render channels meet their approved
-  held-out/listening gates (§5); source/group/aligned provenance, immutable sources and accessible
-  corrections are complete. This record does not itself satisfy WW-024.
+- **Exit checkpoint (reported on its own line):** one slot of at most 30 minutes at milestone exit,
+  covering in-app 200% text plus light/dark on the milestone's windows. Only a finding that makes a core
+  task impossible blocks; the rest become WW-053 follow-ups.
+- **M2 EXIT GATE** (verbatim from the kickoff, cited in full in `docs/planning/milestone-exits/m2.md`):
+  the final `main` SHA must pass the full WaveWranglerUITests suite on the Mac mini (no filter), plus the
+  full `scripts/test.sh`, with zero unexplained failures, plus the exit checkpoint above reported on its
+  own line. The WW-007-style performance gates and the essential XCUITest audits are **HARD gates**
+  against the pinned waiver baseline. The system-visual leg (system Increase Contrast and Reduce Motion)
+  is **excluded** from the M2 gate — it moves to M5. This record does not itself satisfy WW-024 (#20); the
+  exit record and citation live in `docs/planning/milestone-exits/m2.md`, not here.
 
 ## Proposed decisions (for coordinator review; not written to `.squad/decisions.md` by this PR)
 
