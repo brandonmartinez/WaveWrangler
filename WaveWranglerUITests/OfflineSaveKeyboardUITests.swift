@@ -119,6 +119,20 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             dismissErrorSheetIfAny("T26 after the failed autosave")
             let attemptsAtFailure = seam()?.attempts ?? -1
             check(attemptsAtFailure >= 1, "an automatic attempt was made: \(attemptsAtFailure)")
+            // Another edit right away, then sampling until 25 s after the failure: before the popover audit, which
+            // can take 20 s on a loaded host and must not use up the window between attempts.
+            addEpisodeByKeyboard(window)
+            let secondEdit = Date().timeIntervalSince(firstFailure)
+            Acceptance.record(self, "T26 second edit at +\(String(format: "%.1f", secondEdit)) s after the failure")
+            check(secondEdit < 25, "the second edit happened before the next attempt was due: +\(secondEdit) s")
+            var flicker: [String] = []
+            while Date().timeIntervalSince(firstFailure) < 25 {
+                let current = value(status)
+                if !current.hasPrefix(Self.cantReach) { flicker.append(current) }
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+            check(flicker.isEmpty, "no flicker between attempts: \(Set(flicker))")
+            check(try Data(contentsOf: document) == original, "the last saved version is byte-unchanged while unreachable")
             try openSaveStatus()
             let popover = app.popovers.firstMatch
             check(popover.waitForExistence(timeout: 5), "save-status popover opened")
@@ -127,33 +141,19 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
                   "popover buttons: \(popover.buttons.allElementsBoundByIndex.map(\.title))")
             try audit("T26 popover")
             app.typeKey(.escape, modifierFlags: [])
-            check(windowSaysEdited(window), "the window says Edited while unreachable (AX_EDITING_STATE): \(editingState(window) ?? "none")")
+            check(unsavedIndicator(window) != nil, "the window shows unsaved changes while unreachable (AX_EDITING_STATE): \(editingState(window) ?? "none")")
             recordDirtyIndicators(window, "T26 while unreachable")
-            // Between attempts the value stays Can't reach (sampled), including after another edit.
-            var flicker: [String] = []
-            var edited = false
-            while Date().timeIntervalSince(firstFailure) < 25 {
-                let current = value(status)
-                if !current.hasPrefix(Self.cantReach) { flicker.append(current) }
-                if !edited, Date().timeIntervalSince(firstFailure) > 8 {
-                    addEpisodeByKeyboard(window)
-                    edited = true
-                }
-                Thread.sleep(forTimeInterval: 0.5)
-            }
-            check(flicker.isEmpty, "no flicker between attempts: \(Set(flicker))")
-            check(seam()?.attempts == attemptsAtFailure, "no further attempt within 25 s (at most every 30 s), even after an edit: \(String(describing: seam()?.attempts)) vs \(attemptsAtFailure)")
-            check(try Data(contentsOf: document) == original, "the last saved version is byte-unchanged while unreachable")
-            // Reconnect: the next automatic retry (due ~30 s after the failure) saves with no user action.
+            check(try Data(contentsOf: document) == original, "the last saved version is still byte-unchanged")
+            // Reconnect: the next automatic retry (due 30 s after the last failed attempt) saves with no user action.
             post(Self.reconnect)
-            check(Acceptance.waitFor(timeout: 20) { self.value(status).hasPrefix("Saved") }, "after reconnect → Saved with no user action: \(value(status))")
+            check(Acceptance.waitFor(timeout: 40) { self.value(status).hasPrefix("Saved") }, "after reconnect → Saved with no user action: \(value(status))")
             let times = seam()?.attemptTimes ?? []
             let gaps = zip(times.dropFirst(), times).map { $0 - $1 }
             Acceptance.record(self, "T26 attempt times (s after the first): \(times.map { String(format: "%.2f", $0 - (times.first ?? 0)) })")
             check(times.count >= 2, "an automatic retry happened: \(times.count) attempts")
-            check(gaps.allSatisfy { $0 >= 29.9 }, "automatic retries at most every 30 s: gaps \(gaps)")
+            check(gaps.allSatisfy { $0 >= 29.9 }, "automatic retries at most every 30 s, even after the edit at +\(String(format: "%.1f", secondEdit)) s: gaps \(gaps)")
             check(diskEpisodeCount(document) == 2, "both edits are on disk: \(String(describing: diskEpisodeCount(document)))")
-            let clean = Acceptance.waitFor(timeout: 3) { !self.windowSaysEdited(window) }
+            let clean = Acceptance.waitFor(timeout: 3) { self.unsavedIndicator(window) == nil }
             Acceptance.record(self, "T26 edited-state trace: \(seam()?.events ?? [])")
             check(clean, "no \"— Edited\" after the verified save (AX_EDITING_STATE \(editingState(window) ?? "none")): \(window.title)")
         }
@@ -334,8 +334,11 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
         return element.value as? String ?? element.label
     }
 
-    private func windowSaysEdited(_ window: XCUIElement) -> Bool {
-        editingState(window) == "Edited" || window.title.contains("Edited")
+    /// AppKit's unsaved-changes indicator beside the title: "Edited", or "Not Saved" after a failed autosave; nil when
+    /// the window shows none.
+    private func unsavedIndicator(_ window: XCUIElement) -> String? {
+        if let state = editingState(window), ["Edited", "Not Saved"].contains(state) { return state }
+        return window.title.contains("Edited") ? window.title : nil
     }
 
     private func seam() -> (attempts: Int, offline: Bool, attemptTimes: [Double], events: [String])? {

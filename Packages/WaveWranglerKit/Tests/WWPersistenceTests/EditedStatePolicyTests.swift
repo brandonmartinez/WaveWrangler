@@ -16,22 +16,4 @@ struct EditedStatePolicyTests {
             #expect(!EditedStatePolicy.clearsEditedState(after: operation, verified: true, publishedEqualsCurrent: true))
         }
     }
-
-    /// M1 gate (T26): re-checked after AppKit's own completion of the save. Clears only while the verified publication
-    /// is still this document's base and holds exactly the current model.
-    @Test func afterCompletionClearsOnlyWhileTheVerifiedPublicationIsCurrent() {
-        func clears(_ operation: EditedStatePolicy.Operation = .autosaveInPlace, verified: Bool = true, stillEdited: Bool = true,
-                    base: Bool = true, equal: Bool = true) -> Bool {
-            EditedStatePolicy.clearsEditedStateAfterCompletion(after: operation, verified: verified, stillEdited: stillEdited,
-                                                               baseIsThatPublication: base, publishedEqualsCurrent: equal)
-        }
-        #expect(clears(), "a retry's verified autosave of the current model, the document or its window still says Edited")
-        #expect(!clears(stillEdited: false), "neither the document nor a window says Edited: nothing to do")
-        #expect(!clears(base: false), "another save (or adoption) replaced the base since: that one decides")
-        #expect(!clears(equal: false), "edited (or undone to a different model) after the save started")
-        #expect(!clears(verified: false), "not verified")
-        for operation in [EditedStatePolicy.Operation.save, .saveAs, .saveTo, .autosaveElsewhere] {
-            #expect(!clears(operation), "\(operation)")
-        }
-    }
 }

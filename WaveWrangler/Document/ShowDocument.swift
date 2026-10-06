@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import WWCore
 import WWPersistence
 
@@ -59,9 +60,6 @@ final class ShowDocument: NSDocument {
     /// D5: the exact bytes of a publication whose acknowledgement is uncertain. Its retry first checks whether these
     /// bytes are on disk and, if so, adopts them (verified by decoding) instead of republishing against a stale base.
     private var uncertainCandidate: Data?
-    /// The verified autosave-in-place publication whose edited-state clear is re-checked after AppKit's own completion
-    /// of the save (M1 gate, T26): AppKit can mark the document edited again after our completion runs.
-    private var cleanCheck: (base: RevisionFingerprint, model: ShowDocumentModel, revision: Int, verifiedAt: Date)?
     /// ST-16 "Save a Copy Elsewhere…" in progress: set while its save panel and save run.
     private var copyElsewhere: CopyElsewhereRequest?
     /// The key of the candidate being saved when it isn't this document's current show (a copy with a new ID).
@@ -224,21 +222,17 @@ final class ShowDocument: NSDocument {
             // #87: AppKit only marks an autosave in place as "autosaved"; clear "— Edited" exactly when the verified
             // publication holds the current model. Edits made during the save keep the document (and status) edited.
             let isAutosaveInPlace = saveOperation == .autosaveInPlaceOperation
-            // M1 gate (T26): AppKit's own bookkeeping may already have cleared the document while its window still
-            // says "Edited"; both follow the verified publication.
-            if isAutosaveInPlace, isDocumentEdited || windowsShowEdited,
+            // #87 / M1 gate (T26): AppKit's own token update for an autosave in place clears the change count but keeps
+            // its "recent changes", which keep "— Edited" beside the title; only `.changeCleared` resets them (measured:
+            // `isDocumentEdited` is already false here). So clear exactly when the verified publication holds the
+            // current model, whatever `isDocumentEdited` says.
+            if isAutosaveInPlace,
                EditedStatePolicy.clearsEditedState(after: .autosaveInPlace, verified: true, publishedEqualsCurrent: store.model == candidateModel) {
-                clearEditedStateAfterVerifiedSave()
+                updateChangeCount(.changeCleared)
             }
-            if isAutosaveInPlace {
-                cleanCheck = (receipt.fingerprint, candidateModel, receipt.revision, receipt.verifiedAt)
-                #if DEBUG
-                traceEditedState("finishSave autosaveInPlace")
-                #endif
-                // After AppKit's own completion (next turn), and once more shortly after, in case it finishes later.
-                DispatchQueue.main.async { [weak self] in self?.recheckCleanAfterCompletion(final: false) }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.recheckCleanAfterCompletion(final: true) }
-            }
+            #if DEBUG
+            if isAutosaveInPlace { traceEditedState("finishSave autosaveInPlace") }
+            #endif
             if !isDocumentEdited {
                 scheduler?.cancelPending()
                 try? recovery.discardEditCheckpoints(for: documentKey)
@@ -293,26 +287,50 @@ final class ShowDocument: NSDocument {
     /// Opens the native save panel named "<Show> copy" and saves the show there as a new, separate show (new show
     /// ID, titled after the chosen name), like Save As: the window then edits the copy. The original file and its
     /// last saved version are untouched. `completion` gets whether the copy was saved.
+    ///
+    /// M1 gate (T23 D7, T28): not AppKit's Save As (`runModalSavePanel`). With autosave in place, that first autosaves
+    /// the original where it is; while that folder can't be reached it fails, presents "could not be autosaved" and
+    /// abandons the copy, and when the folder is reachable it would change the original. The panel is ours; the save
+    /// is NSDocument's own Save As publication (`save(to:ofType:for:)`), with the same verification.
     func saveACopyElsewhere(completion: ((Bool) -> Void)? = nil) {
         guard copyElsewhere == nil else { completion?(false); return }
-        copyElsewhere = CopyElsewhereRequest(originalFolder: fileURL?.deletingLastPathComponent().lastPathComponent ?? "", completion: completion)
-        runModalSavePanel(for: .saveAsOperation, delegate: self, didSave: #selector(copyElsewhereDidSave(_:didSave:contextInfo:)), contextInfo: nil)
+        let request = CopyElsewhereRequest(originalFolder: fileURL?.deletingLastPathComponent().lastPathComponent ?? "", completion: completion)
+        copyElsewhere = request
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = Self.copyName(for: showFileName)
+        if let type = fileType.flatMap({ UTType($0) }) { panel.allowedContentTypes = [type] }
+        panel.directoryURL = fileURL?.deletingLastPathComponent()
+        panel.canCreateDirectories = true
+        let window = windowForSheet
+        let chosen: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            MainActor.assumeIsolated { self?.saveChosenCopy(request, chosen: response == .OK ? panel.url : nil, window: window) }
+        }
+        if let window { panel.beginSheetModal(for: window, completionHandler: chosen) } else { chosen(panel.runModal()) }
+    }
+
+    private func saveChosenCopy(_ request: CopyElsewhereRequest, chosen url: URL?, window: NSWindow?) {
+        guard let url, let typeName = fileType else {
+            copyElsewhere = nil
+            request.completion?(false)
+            return
+        }
+        save(to: url, ofType: typeName, for: .saveAsOperation) { [weak self] error in
+            guard let self else { return request.completion?(false) ?? () }
+            self.copyElsewhere = nil
+            if let error, !((error as NSError).domain == NSCocoaErrorDomain && (error as NSError).code == NSUserCancelledError) {
+                if let window {
+                    self.presentError(error, modalFor: window, delegate: nil, didPresent: nil, contextInfo: nil)
+                } else {
+                    _ = self.presentError(error)
+                }
+            }
+            request.completion?(error == nil)
+        }
     }
 
     /// The show's name as in its file name, without the extension. `displayName` includes ".wwshow" when the Mac
     /// shows all file extensions, which must not leak into "<Show> copy" or the close sheet's wording.
     var showFileName: String { fileURL?.deletingPathExtension().lastPathComponent ?? displayName }
-
-    override func prepareSavePanel(_ savePanel: NSSavePanel) -> Bool {
-        if copyElsewhere != nil { savePanel.nameFieldStringValue = Self.copyName(for: showFileName) }
-        return super.prepareSavePanel(savePanel)
-    }
-
-    @objc private func copyElsewhereDidSave(_ document: NSDocument, didSave: Bool, contextInfo: UnsafeMutableRawPointer?) {
-        let request = copyElsewhere
-        copyElsewhere = nil
-        request?.completion?(didSave)
-    }
 
     private func saveCopy(_ request: CopyElsewhereRequest, to url: URL, ofType typeName: String, completionHandler: @escaping (Error?) -> Void) {
         let name = url.deletingPathExtension().lastPathComponent
@@ -375,40 +393,6 @@ final class ShowDocument: NSDocument {
 
     // MARK: - Automatic retry after a failed save (ST-11)
 
-    /// M1 gate (T26): after an automatic retry of a failed save, AppKit's own completion of a verified autosave in place
-    /// can leave the window saying "Edited" (its title-bar edit state, `AX_EDITING_STATE`) although the document's
-    /// change count is already clear, so no change-count update reaches the window. Clears both only while the
-    /// verified publication is still this document's base and holds exactly the current model.
-    private func recheckCleanAfterCompletion(final: Bool) {
-        guard let check = cleanCheck else { return }
-        if final { cleanCheck = nil }
-        #if DEBUG
-        traceEditedState("recheck\(final ? " final" : "")")
-        #endif
-        guard EditedStatePolicy.clearsEditedStateAfterCompletion(
-            after: .autosaveInPlace, verified: true, stillEdited: isDocumentEdited || windowsShowEdited,
-            baseIsThatPublication: onDiskBase == check.base, publishedEqualsCurrent: store.model == check.model
-        ) else { return }
-        clearEditedStateAfterVerifiedSave()
-        status.set(.saved(revision: check.revision, at: check.verifiedAt))
-        #if DEBUG
-        traceEditedState("recheck cleared")
-        #endif
-    }
-
-    /// Whether any of this document's windows shows AppKit's edit state ("Edited" beside the title).
-    private var windowsShowEdited: Bool { windowControllers.contains { $0.window?.isDocumentEdited == true } }
-
-    /// Clears the change count (when set) and makes every window's edit state follow it. Only for a verified
-    /// publication that holds exactly the current model (callers check `EditedStatePolicy`).
-    private func clearEditedStateAfterVerifiedSave() {
-        if isDocumentEdited { updateChangeCount(.changeCleared) }
-        guard !isDocumentEdited else { return }
-        for controller in windowControllers where controller.window?.isDocumentEdited == true {
-            controller.setDocumentEdited(false)
-        }
-    }
-
     #if DEBUG
     override func updateChangeCount(withToken changeCountToken: Any, for saveOperation: NSDocument.SaveOperationType) {
         super.updateChangeCount(withToken: changeCountToken, for: saveOperation)
@@ -417,7 +401,7 @@ final class ShowDocument: NSDocument {
 
     /// UI-test evidence only (F-OFFLINE seam): the edited state at each save-completion step.
     private func traceEditedState(_ step: String) {
-        (Self.debugPublicationHooks as? UITestOfflineHooks)?.note("\(step): edited \(isDocumentEdited) window \(windowsShowEdited)")
+        (Self.debugPublicationHooks as? UITestOfflineHooks)?.note("\(step): edited \(isDocumentEdited)")
     }
     #endif
 
@@ -459,7 +443,7 @@ final class ShowDocument: NSDocument {
         onDiskBase = fingerprint
         fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
         if store.model == document.payload {
-            clearEditedStateAfterVerifiedSave()
+            updateChangeCount(.changeCleared)
             scheduler?.cancelPending()
             try? recovery.discardEditCheckpoints(for: documentKey)
             status.set(.saved(revision: document.revision, at: Date()))
