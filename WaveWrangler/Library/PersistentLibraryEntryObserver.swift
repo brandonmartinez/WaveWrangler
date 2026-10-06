@@ -21,6 +21,9 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
     /// Bumped whenever an entry changes outside a check (window open, collision), so a check that started
     /// earlier can't overwrite newer state.
     @ObservationIgnored private var generations: [ShowID: Int] = [:]
+    /// Running checks per entry (launch, Rebuild Library Index, Try Again, first checks), so none is repeated.
+    @ObservationIgnored private var runningChecks: [ShowID: Int] = [:]
+    var checksInFlight: Set<ShowID> { Set(runningChecks.keys) }
     /// Store writes run one after another, in call order.
     @ObservationIgnored private var writeChain: Task<Void, Never>?
 
@@ -46,6 +49,13 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
         guard !ids.isEmpty else { return }
         for id in ids where !Self.isCollision(details[id]?.state) {
             details[id, default: LibraryEntryDetails()].state = .checking
+        }
+        for id in ids { runningChecks[id, default: 0] += 1 }
+        defer {
+            for id in ids {
+                runningChecks[id, default: 1] -= 1
+                if runningChecks[id] == 0 { runningChecks[id] = nil }
+            }
         }
         let started = Dictionary(uniqueKeysWithValues: ids.map { ($0, generations[$0, default: 0]) })
         let store = self.store

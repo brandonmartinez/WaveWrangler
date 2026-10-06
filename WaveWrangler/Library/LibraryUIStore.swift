@@ -31,11 +31,11 @@ final class LibraryUIStore {
     @ObservationIgnored private var saveChain: Task<Void, Never>?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var pendingSaves = 0
-    /// Entries whose first check has been asked for and hasn't finished yet.
-    @ObservationIgnored private var firstChecksRequested: Set<ShowID> = []
+    @ObservationIgnored private let adoption: CanonicalLibraryAdoption
 
     init(services: LibraryServices) {
         self.services = services
+        adoption = CanonicalLibraryAdoption(entries: services.entries)
         observeLibraryLevelState()
         observeCanonicalLibrary()
     }
@@ -60,29 +60,12 @@ final class LibraryUIStore {
     /// (move, Use That Library, combine, recover) clears undo in `libraryWasReplaced()`.
     func canonicalLibraryDidChange() {
         guard pendingSaves == 0, let canonical = services.persistence.currentLibrary else { return }
-        if !session.isLoaded {
+        // Routine changes (verified show saves acknowledged, recents) arrive constantly with autosave ON; undo
+        // stays valid because each step applies only its own per-ID difference.
+        if case .loaded(let changed) = adoption.adopt(canonical, into: &session, allowsEdits: allowsEdits) {
             persistenceFailure = nil
-            if session.didLoad(canonical, allowsEdits: allowsEdits) { persistFlushed() }
+            if changed { persistFlushed() }
             undoManager.removeAllActions(withTarget: self)
-        } else if canonical != session.library {
-            // Routine changes (verified show saves acknowledged, recents) arrive constantly with autosave ON;
-            // undo stays valid because each step applies only its own per-ID difference.
-            session.adoptCanonical(canonical)
-        }
-        checkNewEntries()
-    }
-
-    /// Shows the adopted library brought in that this Mac has never checked (Use That Library, Combine, another
-    /// Mac's change) get their first check, off the main thread, so they show their real status (for example
-    /// "Location unknown", listed in Unavailable) instead of staying "Checking…".
-    private func checkNewEntries() {
-        let ids = LibraryEntryRefresh.unchecked(session.library, details: services.entries.details)
-            .filter { !firstChecksRequested.contains($0) }
-        guard !ids.isEmpty else { return }
-        firstChecksRequested.formUnion(ids)
-        Task { [weak self, entries = services.entries] in
-            await entries.refresh(ids)
-            self?.firstChecksRequested.subtract(ids)
         }
     }
 

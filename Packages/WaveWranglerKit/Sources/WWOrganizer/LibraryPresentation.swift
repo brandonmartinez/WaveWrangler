@@ -344,11 +344,17 @@ public struct LibraryEntryCheckResult: Sendable, Equatable {
 }
 
 public enum LibraryEntryRefresh {
-    /// Entries this Mac has never started a check for (no details at all), in library order: shows another library
-    /// or another Mac brought in (Use That Library, Combine, a change from another Mac). Each needs one check;
-    /// otherwise it stays "Checking…" and is missing from Unavailable.
-    public static func unchecked(_ library: LibraryModel, details: [ShowID: LibraryEntryDetails]) -> [ShowID] {
-        library.entries.map(\.showID).filter { details[$0] == nil }
+    /// Library entries that still need a check on this Mac, in library order: no details at all (shows another
+    /// library or another Mac brought in: Use That Library, Combine, a change from another Mac), or details still
+    /// "Checking…" (seeded from this Mac's location records, e.g. for a show removed from the library before
+    /// launch and brought back by a combine) with no check running (`inFlight`). Otherwise they'd stay
+    /// "Checking…" and be missing from Unavailable (#193).
+    public static func unchecked(_ library: LibraryModel, details: [ShowID: LibraryEntryDetails], inFlight: Set<ShowID> = []) -> [ShowID] {
+        library.entries.map(\.showID).filter { id in
+            guard !inFlight.contains(id) else { return false }
+            guard let state = details[id]?.state else { return true }
+            return state == .checking
+        }
     }
 
     /// Applies background check results. A result is dropped when the entry changed while the check ran

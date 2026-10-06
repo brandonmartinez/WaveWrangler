@@ -26,10 +26,7 @@ protocol LibraryPersisting: AnyObject {
 
 /// Derived, device-local per-show details and the actions that need show locations. Observable.
 @MainActor
-protocol LibraryEntryObserving: AnyObject {
-    var details: [ShowID: LibraryEntryDetails] { get }
-    /// Re-observe entries (Try Again / Rebuild Library Index…). Never on the main thread's I/O path.
-    func refresh(_ ids: [ShowID]) async
+protocol LibraryEntryObserving: LibraryEntryChecking {
     func openShow(_ id: ShowID, readOnly: Bool) async throws
     func revealShowInFinder(_ id: ShowID) -> Bool
     /// Locate…/Grant Access…: lets the user pick the show file; the implementation matches by the show
@@ -162,6 +159,9 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
         stored = transform(stored)
         return stored
     }
+
+    /// Checks here finish without suspending.
+    var checksInFlight: Set<ShowID> { [] }
 
     func refresh(_ ids: [ShowID]) async {
         for id in ids where details[id]?.state == .checking || details[id] == nil {
