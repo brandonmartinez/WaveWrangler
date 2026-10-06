@@ -229,6 +229,7 @@ struct EpisodeSetupView: View {
 private struct SourcesSection: View {
     @Bindable var model: EpisodeSetupModel
     var focusedTable: FocusState<EpisodeSetupModel.FocusedTable?>.Binding
+    @Environment(\.setupTextScale) private var textScale
 
     var body: some View {
         let presentation = model.presentation
@@ -253,6 +254,12 @@ private struct SourcesSection: View {
             GeometryReader { geometry in
                 SourcesTable(model: model, rows: presentation.sourceRows, width: geometry.size.width)
                     .focused(focusedTable, equals: .sources)
+                    .onChange(of: SetupColumnPlan.columns(forWidth: geometry.size.width, scale: Double(textScale))) {
+                        SetupTableFocus.fitColumns("ww.setup.sources", in: model.window())
+                    }
+                    .onChange(of: geometry.size.width) {
+                        SetupTableFocus.fitColumns("ww.setup.sources", in: model.window())
+                    }
             }
                 .overlay {
                     if model.episode?.sources.isEmpty ?? true {

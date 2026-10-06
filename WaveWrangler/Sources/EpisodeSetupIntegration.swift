@@ -47,6 +47,33 @@ enum SetupTableFocus {
         }
     }
 
+    /// After the width plan shows or hides columns, AppKit keeps a re-shown column's old width and
+    /// doesn't re-fit, which can push Status past the table's edge (#129). Re-fit asynchronously (never
+    /// inside a layout pass) when the visible columns overflow the table.
+    ///
+    /// Can't loop: it's triggered only by the container's width or column-tier changes, which
+    /// `sizeToFit` doesn't change (it only resizes columns inside the table); it acts only while the
+    /// columns overflow, which `sizeToFit` ends; and one pending fit per table at a time.
+    static func fitColumns(_ identifier: String, in window: NSWindow?) {
+        guard !pendingFits.contains(identifier) else { return }
+        pendingFits.insert(identifier)
+        DispatchQueue.main.async {
+            defer { pendingFits.remove(identifier) }
+            guard let window, let table = find(identifier, in: window.contentView),
+                  let clip = table.enclosingScrollView?.contentView else { return }
+            let visible = table.tableColumns.filter { !$0.isHidden }
+            let total = visible.reduce(0) { $0 + $1.width } + table.intercellSpacing.width * CGFloat(visible.count)
+            let available = clip.bounds.width
+            guard available.isFinite, available > 0, total > available + 1 else { return }
+            table.sizeToFit()
+            #if DEBUG
+            SetupReturnKey.log.notice("Fit columns: \(identifier, privacy: .public) \(Double(total)) > \(Double(available))")
+            #endif
+        }
+    }
+
+    private static var pendingFits: Set<String> = []
+
     static func find(_ identifier: String, in view: NSView?) -> NSTableView? {
         guard let view else { return nil }
         if let table = view as? NSTableView, table.accessibilityIdentifier() == identifier { return table }
