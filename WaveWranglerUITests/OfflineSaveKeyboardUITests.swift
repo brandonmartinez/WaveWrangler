@@ -47,7 +47,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
     override func tearDown() async throws {
         if app != nil {
             let run = testRun
-            let outcome = run?.hasBeenSkipped == true ? "skipped" : run?.hasSucceeded == true ? "passed" : "failed"
+            let outcome = run?.hasBeenSkipped == true ? "skipped" : (run?.totalFailureCount ?? 0) == 0 ? "passed" : "failed"
             Acceptance.writeEvidence("offline-keyboard-navigation-\(name.replacingOccurrences(of: " ", with: "_"))",
                                      ["outcome": outcome, "keyboardNavigation": Self.keyboardNavigation,
                                       "notRunNeedsFullKeyboardAccess": Array(Set(needsKeyboardNavigation)).sorted()], test: self)
