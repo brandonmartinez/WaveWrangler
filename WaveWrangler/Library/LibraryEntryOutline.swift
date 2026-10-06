@@ -415,9 +415,13 @@ final class EntryCellView: NSTableCellView {
             label.stringValue = row.name
             label.setAccessibilityIdentifier(row.accessibilityIdentifier)
             toolTip = row.name
-            // #140: values of columns hidden at this width, for VoiceOver (they're also in the detail pane).
-            let extra = Self.hiddenValues(row, hidden: hidden)
-            label.setAccessibilityHelp(extra.isEmpty ? nil : extra)
+            // #140: values of columns hidden at this width go into the cell's VoiceOver value (label = name,
+            // value = the hidden facts, as Setup's HiddenColumnsValue does); they're also in the detail pane.
+            // With nothing hidden, the cell keeps its plain value (the name): a name-repeating value would
+            // read twice and fail the audit's human-readable check.
+            let summary = Self.hiddenValues(row, hidden: hidden)
+            label.setAccessibilityLabel(summary == nil ? nil : row.name)
+            label.accessibilityValueOverride = summary
         case .episodes:
             label.stringValue = row.episodesText
             label.font = NSFont.monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular)
@@ -450,17 +454,19 @@ final class EntryCellView: NSTableCellView {
         needsLayout = true
     }
 
-    /// "5 episodes. Location: iCloud Drive › Podcasts. Last opened: Sep 21, 2026 at 10:00 AM."
-    static func hiddenValues(_ row: LibraryEntryRow, hidden: Set<EntryColumn>) -> String {
+    /// The Name cell's VoiceOver value when columns are hidden, e.g. "5 episodes, location iCloud Drive ›
+    /// Podcasts, last opened Sep 21, 2026 at 10:00 AM"; an unknown episode count reads "episodes unknown"
+    /// (as the Episodes cell's "unknown"). `nil` when nothing is hidden.
+    static func hiddenValues(_ row: LibraryEntryRow, hidden: Set<EntryColumn>) -> String? {
         var parts: [String] = []
         if hidden.contains(.episodes) {
-            parts.append(row.episodeCount.map { $0 == 1 ? "1 episode" : "\($0) episodes" } ?? "Episodes unknown")
+            parts.append(row.episodeCount.map { $0 == 1 ? "1 episode" : "\($0) episodes" } ?? "episodes unknown")
         }
-        if hidden.contains(.location) { parts.append("Location: \(row.locationText)") }
+        if hidden.contains(.location) { parts.append("location \(row.locationText)") }
         if hidden.contains(.lastOpened) {
-            parts.append("Last opened: \(row.lastOpened.map { $0.formatted(dateStyle) } ?? "not yet")")
+            parts.append("last opened \(row.lastOpened.map { $0.formatted(dateStyle) } ?? "not yet")")
         }
-        return parts.map { $0 + "." }.joined(separator: " ")
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
     override func layout() {

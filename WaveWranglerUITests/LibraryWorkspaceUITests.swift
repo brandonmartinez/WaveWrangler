@@ -222,6 +222,10 @@ final class LibraryWorkspaceUITests: XCTestCase {
         }
         assertStatusVisible("default 1000×600")
         print("COLUMNS default: \(headerTitles())")
+        // Episodes and Last Opened are hidden at this width: the Name cell's VoiceOver value carries them.
+        let name = entries.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.' AND label BEGINSWITH 'Synthetic Show' AND value CONTAINS 'episode' AND value CONTAINS 'last opened'")).firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 3),
+                      "hidden column values are in the Name cell's VoiceOver value: \(entries.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.'")).firstMatch.debugDescription.prefix(300))")
 
         // Zoom the window (wider: every column fits), then back.
         let zoom = window.buttons[XCUIIdentifierZoomWindow]
@@ -542,7 +546,8 @@ final class LibraryWorkspaceUITests: XCTestCase {
         app.typeKey("l", modifierFlags: [.command, .shift])
         let entries = app.outlines["ww.library.entries"]
         waitFor(entries, timeout: 10)
-        let row = entries.outlineRows.containing(NSPredicate(format: "value == 'Relaunch Show'")).firstMatch
+        // The Name cell: label = name when columns are hidden (#140), else its value is the name.
+        let row = entries.outlineRows.containing(NSPredicate(format: "label == 'Relaunch Show' OR value == 'Relaunch Show'")).firstMatch
         waitFor(row, timeout: 10)
         let statusCell = row.staticTexts.matching(NSPredicate(format: "label == 'Status'")).firstMatch
         let available = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Available'"), object: statusCell)
