@@ -33,4 +33,24 @@ struct LibraryEntryRefreshTests {
         #expect(merged[b]?.locationDisplayName == "Fresh")
         #expect(merged[c]?.state == .needsPermission)
     }
+
+    /// #193: entries with no details (brought in by another library) or still "Checking…" (seeded from this Mac's
+    /// location records) need a check, unless one is running; checked entries don't.
+    @Test func entriesWithoutACompletedCheckNeedOneUnlessARunningCheckCoversThem() {
+        let known = ShowID(), seeded = ShowID(), running = ShowID(), broughtIn1 = ShowID(), broughtIn2 = ShowID()
+        let library = LibraryModel(entries: [known, broughtIn1, seeded, running, broughtIn2].map { LibraryShowEntry(showID: $0, lastKnownTitle: "Show") })
+        let details: [ShowID: LibraryEntryDetails] = [
+            known: LibraryEntryDetails(state: .available, locationDisplayName: "Podcasts"),
+            seeded: LibraryEntryDetails(state: .checking, locationDisplayName: "Desktop"),
+            running: LibraryEntryDetails(state: .checking),
+        ]
+        #expect(LibraryEntryRefresh.unchecked(library, details: details, inFlight: [running]) == [broughtIn1, seeded, broughtIn2], "library order")
+        // Until checked they don't count as needing attention; after the check (no record) they do.
+        #expect(LibraryPresentation.sidebar(library: library, details: details).libraryRows[2].accessibilityValue == "None")
+        let checked = LibraryEntryRefresh.apply([broughtIn1, seeded, running, broughtIn2].map {
+            .init(showID: $0, generation: 0, observation: .unknown)
+        }, to: details, currentGenerations: [:])
+        #expect(LibraryEntryRefresh.unchecked(library, details: checked).isEmpty)
+        #expect(LibraryPresentation.sidebar(library: library, details: checked).libraryRows[2].accessibilityValue == "4 items need attention")
+    }
 }

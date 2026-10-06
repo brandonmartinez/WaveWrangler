@@ -26,10 +26,7 @@ protocol LibraryPersisting: AnyObject {
 
 /// Derived, device-local per-show details and the actions that need show locations. Observable.
 @MainActor
-protocol LibraryEntryObserving: AnyObject {
-    var details: [ShowID: LibraryEntryDetails] { get }
-    /// Re-observe entries (Try Again / Rebuild Library Index…). Never on the main thread's I/O path.
-    func refresh(_ ids: [ShowID]) async
+protocol LibraryEntryObserving: LibraryEntryChecking {
     func openShow(_ id: ShowID, readOnly: Bool) async throws
     func revealShowInFinder(_ id: ShowID) -> Bool
     /// Locate…/Grant Access…: lets the user pick the show file; the implementation matches by the show
@@ -72,6 +69,8 @@ protocol LibraryLocationControlling: AnyObject {
     var quitWarning: String? { get }
     /// Outcome text for the message bar (moves, combine summaries incl. edits not carried).
     var resultMessage: String? { get }
+    /// Whether the last library-level action (`perform`) published or adopted a library (#199).
+    var lastActionPublished: Bool { get }
     /// #117: cloud-provider conflict versions of the library that WaveWrangler can't use (unreadable, or another
     /// library). Kept, never applied; the Library window says so until they're gone.
     var providerConflictNotice: String? { get }
@@ -137,6 +136,7 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
     let location = LibraryLocationChoice.inWaveWrangler
     let libraryState = LibraryLevelState.ready
     let movePhase: LibraryMovePhase? = nil
+    let lastActionPublished = false
     let isConnected = false
     let pendingEditsStatus: String? = nil
     let quitWarning: String? = nil
@@ -162,6 +162,9 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
         stored = transform(stored)
         return stored
     }
+
+    /// Checks here finish without suspending.
+    var checksInFlight: Set<ShowID> { [] }
 
     func refresh(_ ids: [ShowID]) async {
         for id in ids where details[id]?.state == .checking || details[id] == nil {
