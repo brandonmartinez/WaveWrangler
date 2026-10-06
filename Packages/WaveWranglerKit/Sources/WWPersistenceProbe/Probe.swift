@@ -144,7 +144,9 @@ struct Probe {
         case "await": return awaitFile()
         case "inspect": return inspect()
         case "lib": return await libraryOp()
-        case "lib-inspect": return libraryInspect()
+        case "lib-inspect": return await libraryInspect()
+        case "fixture-state": return fixtureState()
+        case "request-download": return requestDownload()
         case "corrupt": return corrupt()
         case "src-make": return sourceMake()
         case "src-record": return await sourceRecord()
@@ -181,6 +183,7 @@ struct Probe {
 
     func save() async -> Int32 {
         guard let session = openSession() else { return 1 }
+        let openedEpochMs = epochMs()
         if let ready = args.url("ready"), let go = args.url("go") {
             FileManager.default.createFile(atPath: ready.path, contents: Data())
             guard waitFor(go) else { emit(["result": "timeout"]); return 1 }
@@ -202,9 +205,9 @@ struct Probe {
         case let .success(receipt):
             emit(["result": "saved", "revision": receipt.revision, "title": title, "host": hostLabel(),
                   "publicationID": receipt.publication.publicationID.uuidString, "seconds": seconds(.now - start),
-                  "startedEpochMs": startedEpochMs, "publishedEpochMs": epochMs()])
+                  "startedEpochMs": startedEpochMs, "publishedEpochMs": epochMs(), "openedEpochMs": openedEpochMs])
         case let .failure(error):
-            emit(describe(error).merging(["title": title, "host": hostLabel(), "startedEpochMs": startedEpochMs, "finishedEpochMs": epochMs()]) { $1 })
+            emit(describe(error).merging(["title": title, "host": hostLabel(), "startedEpochMs": startedEpochMs, "finishedEpochMs": epochMs(), "openedEpochMs": openedEpochMs]) { $1 })
         }
         return 0
     }
@@ -264,7 +267,9 @@ struct Probe {
 
     func open() -> Int32 {
         let start = ContinuousClock.now
+        let openedEpochMs = epochMs()
         var object = describe(opener.open(file))
+        object["openedEpochMs"] = openedEpochMs
         object["seconds"] = seconds(.now - start)
         object["unresolvedConflictVersions"] = ProviderConflictReport.inspect(file).unresolvedVersionCount
         emit(object)
