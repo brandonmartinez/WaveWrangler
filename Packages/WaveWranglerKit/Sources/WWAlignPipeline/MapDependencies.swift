@@ -152,22 +152,56 @@ enum MapDependencies {
 /// (map, inputs and dependency record). Two different maps never share an identity, even when they carry the
 /// same revision number.
 struct AcceptedMapIdentity: Sendable, Hashable {
+    /// A source the map uses has no registered revision, so the identity cannot be keyed on it.
+    struct UnregisteredSource: Error {
+        let source: SourceID
+    }
+
     let revision: MapRevisionReference
     let digest: String
+    /// The registered revision of every source the map uses (its placements, including the timeline
+    /// reference's, and its inputs). A change to any of them makes the identity stale in the coordinator, which
+    /// cascades to every aligned segment keyed on it, including segments of other sources.
+    let sources: [SourceRevision]
 
-    init(revision: MapRevisionReference, version: TimeMapVersion) throws {
+    init(revision: MapRevisionReference, version: TimeMapVersion, map: AlignedTimelineMap, registered: [SourceID: String]) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let canonical = String(decoding: try encoder.encode(version), as: UTF8.self)
+        var sources: [SourceRevision] = []
+        for source in Self.usedSources(map: map, version: version) {
+            guard let token = registered[source] else { throw UnregisteredSource(source: source) }
+            sources.append(SourceRevision(source: source, token: token))
+        }
         self.revision = revision
+        self.sources = sources
         digest = DerivedAssetKey(asset: AssetSpec(kind: "ww.map-version-content", revision: 1), recipe: RecipeReference(name: canonical, revision: 1)).digest
+    }
+
+    #if DEBUG
+    /// Negative control only: the identity without its source revisions.
+    private init(revision: MapRevisionReference, digest: String) {
+        self.revision = revision
+        self.digest = digest
+        sources = []
+    }
+
+    var withoutSources: AcceptedMapIdentity { AcceptedMapIdentity(revision: revision, digest: digest) }
+    #endif
+
+    /// Every source the map uses, in a stable order: its placements (which include the timeline reference's
+    /// source, since WWTimeMap requires the reference group to place the reference occurrence) and its inputs.
+    static func usedSources(map: AlignedTimelineMap, version: TimeMapVersion) -> [SourceID] {
+        var used = Set(MapDependencies.placements(of: map).keys)
+        used.formUnion(version.inputs.sources.map(\.sourceID))
+        return used.sorted { $0.description < $1.description }
     }
 
     var recipe: RecipeReference { RecipeReference(name: "ww.accepted-map;content=\(digest)", revision: 1) }
 
     /// The coordinator key published for the active map; every aligned segment names it as an upstream.
     var key: DerivedAssetKey {
-        DerivedAssetKey(asset: AlignmentAssetKinds.acceptedMapIdentity, map: revision, recipe: recipe)
+        DerivedAssetKey(asset: AlignmentAssetKinds.acceptedMapIdentity, sources: sources, map: revision, recipe: recipe)
     }
 
     var slot: DerivedSlot { PipelineSlots.acceptedMapIdentity(revision.episode) }

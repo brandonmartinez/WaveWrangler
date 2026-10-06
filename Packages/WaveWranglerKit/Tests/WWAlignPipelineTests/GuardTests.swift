@@ -149,8 +149,10 @@ struct GuardTests {
         let rate = try #require(group.placements.first?.occurrence.nominalRate)
         let reference = MapRevisionReference(episode: fixture.episodeID, revision: revision)
         let version = try #require(fixture.model.episode(fixture.episodeID)?.alignment?.map(revision: revision))
+        let registered = await fixture.coordinator.inputs.sources
         return GroupRenderJob(
-            episode: fixture.episodeID, revision: reference, identity: try AcceptedMapIdentity(revision: reference, version: version), map: group,
+            episode: fixture.episodeID, revision: reference,
+            identity: try AcceptedMapIdentity(revision: reference, version: version, map: map, registered: registered), map: group,
             nominalOutputRate: rate, participants: [], outputFrames: 0 ..< 1, segmentFrames: 1, recipeBaseName: "guard"
         )
     }
@@ -176,13 +178,55 @@ struct GuardTests {
         let inputs = try #require(fixture.model.episode(fixture.episodeID)?.alignment?.map(revision: job.revision.revision)?.inputs)
         let (other, revision) = try fixture.model.recordingMap(map, in: fixture.episodeID, inputs: inputs.sources, recipe: RecipeReference(name: "other", revision: 1), derivedFrom: job.revision.revision)
         let version = try #require(other.episode(fixture.episodeID)?.alignment?.map(revision: revision.revision))
+        let registered = await coordinator.inputs.sources
         let impostor = GroupRenderJob(
-            episode: fixture.episodeID, revision: job.revision, identity: try AcceptedMapIdentity(revision: job.revision, version: version), map: job.map,
+            episode: fixture.episodeID, revision: job.revision,
+            identity: try AcceptedMapIdentity(revision: job.revision, version: version, map: map, registered: registered), map: job.map,
             nominalOutputRate: job.nominalOutputRate, participants: [], outputFrames: 0 ..< 1, segmentFrames: 1, recipeBaseName: "guard"
         )
         #expect(impostor.identity != job.identity)
         await #expect(throws: AlignmentWorkFailure.acceptedMapChanged) { try await AlignedAssetRun.checkCurrent(impostor, coordinator: coordinator) }
         #expect(await coordinator.inputs.acceptedMaps[fixture.episodeID] == job.revision.revision, "only the content differs")
+    }
+
+    @Test("Between segments a render stops when any source the map uses changes, not only its own")
+    func renderStopsOnOtherSourceChange() async throws {
+        let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "guard-other-source")
+        let job = try await Self.renderJob(fixture)
+        let coordinator = fixture.coordinator
+        let used = Set(job.identity.sources.map(\.source))
+        #expect(used == [fixture.id("ref"), fixture.id("tgt")], "the identity is keyed on every source the map uses")
+        await #expect(throws: Never.self) { try await AlignedAssetRun.checkCurrent(job, coordinator: coordinator) }
+        await coordinator.updateSource(SourceRevision(source: fixture.id("ref"), token: "metadata:reference-changed"))
+        await #expect(throws: AlignmentWorkFailure.acceptedMapChanged) { try await AlignedAssetRun.checkCurrent(job, coordinator: coordinator) }
+    }
+
+    @Test("The identity is keyed on the map's placements and its inputs, each independently")
+    func identityKeysPlacementsAndInputs() async throws {
+        let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "guard-used-sources")
+        let job = try await Self.renderJob(fixture)
+        let revision = job.revision.revision
+        let map = try fixture.model.timeMap(revision: revision, in: fixture.episodeID)
+        let version = try #require(fixture.model.episode(fixture.episodeID)?.alignment?.map(revision: revision))
+        let placed: Set<SourceID> = [fixture.id("ref"), fixture.id("tgt")]
+
+        // Placements alone (no inputs recorded) still key every placed source.
+        var noInputs = version
+        noInputs.inputs.sources = []
+        #expect(Set(AcceptedMapIdentity.usedSources(map: map, version: noInputs)) == placed)
+
+        // An input the map does not place is keyed too, and must be registered.
+        let extra = SourceID()
+        var extraInput = version
+        extraInput.inputs.sources.append(TimeMapSourceInput(sourceID: extra))
+        #expect(Set(AcceptedMapIdentity.usedSources(map: map, version: extraInput)) == placed.union([extra]))
+        var registered = await fixture.coordinator.inputs.sources
+        #expect(throws: AcceptedMapIdentity.UnregisteredSource.self) {
+            try AcceptedMapIdentity(revision: job.revision, version: extraInput, map: map, registered: registered)
+        }
+        registered[extra] = "metadata:extra"
+        let identity = try AcceptedMapIdentity(revision: job.revision, version: extraInput, map: map, registered: registered)
+        #expect(identity.sources.first { $0.source == extra }?.token == "metadata:extra")
     }
 
     @Test("Between segments a render stops once the coordinator has shut down")
