@@ -397,11 +397,16 @@ final class EpisodeSetupUITests: XCTestCase {
         // Ten cycles: the invariant holds every time, and any drift converges (bounded, not compounding).
         var offsets: [Double] = []
         var widths: [Double] = []
+        // Each cycle crosses a column tier (#129): at the default size Epoch and Ch are hidden (their values
+        // move into the Name cell's VoiceOver value); zoomed, every column shows again.
+        let epochInName = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND value CONTAINS 'epoch'")).firstMatch
         for cycle in 1...10 {
             menu("Window", "Zoom")  // default size
             assertFits("zoom cycle \(cycle), default size")
+            XCTAssertTrue(epochInName.waitForExistence(timeout: 2), "zoom cycle \(cycle): default size hides Epoch (tier change)")
             menu("Window", "Zoom")  // zoomed
             assertFits("zoom cycle \(cycle), zoomed")
+            XCTAssertTrue(epochInName.waitForNonExistence(timeout: 2), "zoom cycle \(cycle): zoomed shows Epoch again (tier change)")
             offsets.append(status.frame.minX - outline.frame.minX)
             widths.append(outline.frame.width)
         }

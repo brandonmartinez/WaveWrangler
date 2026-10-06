@@ -61,13 +61,12 @@ enum SetupTableFocus {
             defer { pendingFits.remove(identifier) }
             guard let window, let table = find(identifier, in: window.contentView),
                   let clip = table.enclosingScrollView?.contentView else { return }
-            let visible = table.tableColumns.filter { !$0.isHidden }
-            let total = visible.reduce(0) { $0 + $1.width } + table.intercellSpacing.width * CGFloat(visible.count)
-            let available = clip.bounds.width
-            guard available.isFinite, available > 0, total > available + 1 else { return }
+            let widths = table.tableColumns.filter { !$0.isHidden }.map { Double($0.width) }
+            let available = Double(clip.bounds.width)
+            guard SetupColumnPlan.columnsOverflow(widths: widths, spacing: Double(table.intercellSpacing.width), available: available) else { return }
             table.sizeToFit()
             #if DEBUG
-            SetupReturnKey.log.notice("Fit columns: \(identifier, privacy: .public) \(Double(total)) > \(Double(available))")
+            SetupReturnKey.log.notice("Fit columns: \(identifier, privacy: .public) \(widths.reduce(0, +)) > \(available)")
             #endif
         }
     }

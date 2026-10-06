@@ -119,6 +119,15 @@ public enum SetupColumnPlan {
     /// Ideal column widths are constants (they never depend on the table's measured width): a
     /// width-derived ideal compounds with NSTableView's column autoresizing on every resize and ran away
     /// to a NaN frame width during Window › Zoom (#129). Tiers only choose which columns show.
+    /// Whether the visible columns overflow the table's visible width, so they need re-fitting (#129).
+    /// Never true for a non-finite or empty available width (nothing sensible to fit to).
+    public static func columnsOverflow(widths: [Double], spacing: Double, available: Double) -> Bool {
+        guard available.isFinite, available > 0 else { return false }
+        let total = widths.reduce(0, +) + spacing * Double(widths.count)
+        guard total.isFinite else { return true }
+        return total > available + 1
+    }
+
     public static func idealWidth(_ column: SetupSourceColumn, scale: Double) -> Double {
         column.width(scale: scale)
     }

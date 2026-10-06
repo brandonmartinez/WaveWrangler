@@ -96,6 +96,21 @@ struct SetupDefaultLayoutTests {
         }
     }
 
+    /// #129: re-fit only when the visible columns are wider than the table.
+    @Test func overflowDecision() {
+        // A re-shown column with its old (zoomed) width pushes Status past a 512 pt table.
+        #expect(SetupColumnPlan.columnsOverflow(widths: [230, 84, 84, 130, 46, 34], spacing: 10, available: 512))
+        // The 4-column tier at its ideal widths fits.
+        #expect(!SetupColumnPlan.columnsOverflow(widths: [150, 84, 84, 130], spacing: 10, available: 512))
+        // Exactly filling (and sub-point rounding) doesn't trigger a fit.
+        #expect(!SetupColumnPlan.columnsOverflow(widths: [462], spacing: 10, available: 472))
+        #expect(!SetupColumnPlan.columnsOverflow(widths: [462.5], spacing: 10, available: 472))
+        // Nothing sensible to fit to.
+        #expect(!SetupColumnPlan.columnsOverflow(widths: [900], spacing: 10, available: .nan))
+        #expect(!SetupColumnPlan.columnsOverflow(widths: [900], spacing: 10, available: 0))
+        #expect(SetupColumnPlan.columnsOverflow(widths: [.infinity], spacing: 10, available: 512))
+    }
+
     @Test func nonFiniteWidthsChooseTheNarrowestTier() {
         #expect(SetupColumnPlan.columns(forWidth: .nan, scale: 1) == [.name, .status])
         #expect(SetupColumnPlan.columns(forWidth: .infinity, scale: 1) == [.name, .status])
