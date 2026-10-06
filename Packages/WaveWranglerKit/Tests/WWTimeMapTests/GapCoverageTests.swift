@@ -76,18 +76,59 @@ struct GapCoverageTests {
         let forward = try group.alignedTime(ofFrame: 60000, in: occurrence.id)
         #expect(forward == .unsupported(epoch: u, reason: .estimatorAbstained))
         #expect(forward.regionState == .unsupported(.estimatorAbstained))
-        // The unsupported span has no aligned image; instants between the mapped neighbours are a gap
-        // whose boundary skips the unsupported span.
-        let boundary = GapBoundary(occurrence: occurrence.id, precedingEpoch: a, precedingLastFrame: 47999, followingEpoch: b, followingFirstFrame: 96000)
-        #expect(try group.sourceFrame(at: q(3, 2), in: occurrence.id) == .gap(boundary))
+        // The unsupported span has no aligned image, but its frames may lie anywhere between the mapped
+        // neighbours: instants there are reported unsupported (same epoch and reason as the forward
+        // query), never a gap that skips the unsupported span and never inverted.
+        let region = UnsupportedInverseRegion(
+            occurrence: occurrence.id, precedingMappedEpoch: a, followingMappedEpoch: b,
+            candidates: [UnsupportedSpan(epoch: u, reason: .estimatorAbstained, startFrame: 48000, endFrame: 96000)]
+        )
+        for t in [q(3, 2), q(1) + q(1, 1 << 40), q(2) - q(1, 1 << 40)] {
+            let inverse = try group.sourceFrame(at: t, in: occurrence.id)
+            #expect(inverse == .unsupported(region))
+            #expect(inverse.regionState == forward.regionState)
+        }
+        // The mapped neighbours' own instants still invert.
+        if case .source(let s) = try group.sourceFrame(at: q(2), in: occurrence.id) { #expect(s.frame == 96000 && s.epoch == b) } else { Issue.record("following span not inverted") }
+    }
+
+    /// Unsupported spans before the first or after the last mapped span make the uncovered side
+    /// unsupported, not outside coverage; consecutive unsupported spans are all reported.
+    @Test func unsupportedSpansOutsideTheMappedHullsAreReported() throws {
+        let u1 = RecordingEpochID(), u2 = RecordingEpochID(), a = RecordingEpochID(), u3 = RecordingEpochID()
+        let occurrence = fx.occurrence(frames: 192_000)
+        let group = try fx.otherGroup(
+            epochs: [
+                EpochClockMap(epoch: u1, mapping: .unsupported(.nonlinear)), EpochClockMap(epoch: u2, mapping: .unsupported(.disconnected)),
+                mapped(a, [seg(q(0), q(1), .one, q(10))]), EpochClockMap(epoch: u3, mapping: .unsupported(.acousticOnly)),
+            ],
+            placements: [OccurrencePlacement(occurrence: occurrence, spans: [span(0, 48000, u1), span(48000, 96000, u2), span(96000, 144_000, a, e: q(-2)), span(144_000, 192_000, u3)])]
+        )
+        let before = UnsupportedInverseRegion(occurrence: occurrence.id, precedingMappedEpoch: nil, followingMappedEpoch: a, candidates: [
+            UnsupportedSpan(epoch: u1, reason: .nonlinear, startFrame: 0, endFrame: 48000),
+            UnsupportedSpan(epoch: u2, reason: .disconnected, startFrame: 48000, endFrame: 96000),
+        ])
+        let after = UnsupportedInverseRegion(occurrence: occurrence.id, precedingMappedEpoch: a, followingMappedEpoch: nil, candidates: [
+            UnsupportedSpan(epoch: u3, reason: .acousticOnly, startFrame: 144_000, endFrame: 192_000),
+        ])
+        #expect(try group.sourceFrame(at: q(-1000), in: occurrence.id) == .unsupported(before))
+        #expect(try group.sourceFrame(at: q(10) - q(1, 1 << 40), in: occurrence.id) == .unsupported(before))
+        #expect(try group.sourceFrame(at: q(10) - q(1, 1 << 40), in: occurrence.id).regionState == .unsupported(.nonlinear))
+        if case .source(let s) = try group.sourceFrame(at: q(10), in: occurrence.id) { #expect(s.frame == 96000) } else { Issue.record("first mapped instant not inverted") }
+        #expect(try group.sourceFrame(at: q(11), in: occurrence.id) == .unsupported(after))
+        #expect(try group.sourceFrame(at: q(1000), in: occurrence.id) == .unsupported(after))
+        for (frame, epoch, reason) in [(Int64(0), u1, UnsupportedReason.nonlinear), (50000, u2, .disconnected), (150_000, u3, .acousticOnly)] {
+            #expect(try group.alignedTime(ofFrame: frame, in: occurrence.id) == .unsupported(epoch: epoch, reason: reason))
+        }
     }
 
     @Test func fullyUnsupportedOccurrenceNeverInverts() throws {
         let u = RecordingEpochID(), occurrence = fx.occurrence(frames: 48000)
         let group = try fx.otherGroup(epochs: [EpochClockMap(epoch: u, mapping: .unsupported(.insufficientOverlap))], placements: [OccurrencePlacement(occurrence: occurrence, spans: [span(0, 48000, u)])])
         #expect(try group.alignedTime(ofFrame: 0, in: occurrence.id) == .unsupported(epoch: u, reason: .insufficientOverlap))
+        let region = UnsupportedInverseRegion(occurrence: occurrence.id, precedingMappedEpoch: nil, followingMappedEpoch: nil, candidates: [UnsupportedSpan(epoch: u, reason: .insufficientOverlap, startFrame: 0, endFrame: 48000)])
         for t in [q(0), q(1, 2), q(-5), q(5)] {
-            #expect(try group.sourceFrame(at: t, in: occurrence.id) == .outsideCoverage)
+            #expect(try group.sourceFrame(at: t, in: occurrence.id) == .unsupported(region))
         }
     }
 
@@ -107,3 +148,4 @@ struct GapCoverageTests {
 }
 
 private func + (lhs: ExactRational, rhs: ExactRational) -> ExactRational { try! lhs.adding(rhs) }
+private func - (lhs: ExactRational, rhs: ExactRational) -> ExactRational { try! lhs.subtracting(rhs) }

@@ -126,6 +126,8 @@ enum OracleForward: Equatable {
 enum OracleInverse: Equatable {
     case source(ExactRational, RecordingEpochID)
     case gap
+    /// Where unsupported spans could lie, with the unsupported spans between the neighbouring mapped spans.
+    case unsupported([RecordingEpochID])
     case outside
 }
 
@@ -163,9 +165,13 @@ struct SyntheticTimeline {
 
     static func oracleInverse(_ group: TruthGroup, _ occ: TruthOccurrence, at t: ExactRational) -> OracleInverse {
         var sawEarlier = false
+        var unsupported: [RecordingEpochID] = []
         for span in occ.spans {
-            guard let (lo, hi) = hull(group, occ, span), case .mapped(let segments, _) = group.epoch(span.epoch).mapping else { continue }
-            if t < lo { return sawEarlier ? .gap : .outside }
+            guard let (lo, hi) = hull(group, occ, span), case .mapped(let segments, _) = group.epoch(span.epoch).mapping else {
+                unsupported.append(span.epoch)
+                continue
+            }
+            if t < lo { return !unsupported.isEmpty ? .unsupported(unsupported) : sawEarlier ? .gap : .outside }
             if t <= hi {
                 let segment = segments.first { t >= $0.imageLo && t < $0.imageHi }!
                 let u = try! t.subtracting(segment.b).divided(by: segment.a)
@@ -173,8 +179,9 @@ struct SyntheticTimeline {
                 return .source(n, span.epoch)
             }
             sawEarlier = true
+            unsupported = []
         }
-        return .outside
+        return unsupported.isEmpty ? .outside : .unsupported(unsupported)
     }
 }
 

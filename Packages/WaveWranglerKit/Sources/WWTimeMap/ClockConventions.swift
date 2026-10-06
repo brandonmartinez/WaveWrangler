@@ -24,8 +24,11 @@ import WWCore
 // * Rounding: arithmetic is exact. The only rounding is quantising an exact source position to a frame
 //   index, HALF-UP (`floor(x + 1/2)`), so a returned frame is always within 1/2 frame of the exact inverse.
 
-/// Bounds of the supported parameter envelope. Parameters outside them are refused with a typed error;
-/// inside them each constructed map additionally proves (at construction) that its exact intermediates fit.
+/// Bounds of the supported parameter envelope. Parameters outside them are refused with a typed error.
+/// Inside them a map can still be refused with ``TimeMapError/exactArithmeticEnvelopeExceeded``: construction
+/// proves that forward mapping of every placed frame, and inversion of every hull instant whose canonical
+/// denominator is at most ``maxNominalRate`` (any `k/G` grid with `G <= 2^20`), fit `Int128` (see
+/// ``GroupTimeMap``). Inverting instants with larger denominators is exact but may throw that error.
 public enum TimeMapEnvelope {
     /// Largest nominal rate (frames per second). 2^20 = 1,048,576 Hz covers 768 kHz.
     public static let maxNominalRate: Int64 = 1 << 20

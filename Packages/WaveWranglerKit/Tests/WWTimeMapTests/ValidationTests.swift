@@ -201,4 +201,71 @@ struct ValidationTests {
         // The same epoch is fine for a span that stays in the benign first segment.
         #expect((try? fx.otherGroup(epochs: [mapped(epoch, segments)], placements: [OccurrencePlacement(occurrence: occurrence, spans: [span(0, Int64(rate), epoch, e: e)])])) != nil)
     }
+
+    /// Each term of the construction-time grid-inverse bound is necessary. These witness maps pass the
+    /// other terms, and without the named term they would be constructible while inverting the named grid
+    /// instant inside their hull overflows `Int128`. (Shown directly on the compiled piece below.)
+    @Test func everyGridInverseBoundTermIsNecessary() throws {
+        // |c|*G binds: hull within [0, 2) (H = 1) but the intercept a*e + b is about -2^30 s.
+        do {
+            let rate: Int64 = 1021, first: Int64 = 1_096_290_401_739, frames: Int64 = 1_096_290_402_760
+            let a = q128(949_592_058_470, 949_592_057_873), b = q128(-168_333_397_947_921_325_304, 156_772_693_553)
+            let occurrence = fx.occurrence(frames: frames, rate: rate), epoch = RecordingEpochID()
+            #expect(throws: TimeMapError.exactArithmeticEnvelopeExceeded) {
+                try fx.otherGroup(epochs: [mapped(epoch, [seg(q(1_073_741_823), q(1_073_741_825), a, b)])], placements: [OccurrencePlacement(occurrence: occurrence, spans: [span(first, frames, epoch)])])
+            }
+            let piece = try compiledPiece(a: a, b: b, e: .zero, rate: rate)
+            let t = q(52, 48000)
+            #expect(try piece.forward(Int128(first)) <= t && t <= piece.forward(Int128(frames - 1)))
+            #expect(throws: TimeMapError.exactArithmeticEnvelopeExceeded) { try piece.inverse(t) }
+        }
+        // p*G binds: F = 1 and frame 0 alone in a steep first segment (a ~ 2), so p ~ 2d exceeds d*H + |c|.
+        do {
+            let a1 = q128(859_439_030_096, 429_719_600_419), b1 = q128(-503_701_576, 264_781_151)
+            let a2 = q128(1_289_158_459_773, 859_439_200_838), b2 = q128(-742_622_001, 529_562_302)
+            let e = q128(370_326_455_231, 738_929_802_837)
+            let occurrence = fx.occurrence(frames: 2, rate: 1), epoch = RecordingEpochID()
+            #expect(throws: TimeMapError.exactArithmeticEnvelopeExceeded) {
+                try fx.otherGroup(epochs: [mapped(epoch, [seg(q(0), q(1), a1, b1), seg(q(1), q(3), a2, b2)])], placements: [OccurrencePlacement(occurrence: occurrence, spans: [span(0, 2, epoch, e: e)])])
+            }
+            let piece = try compiledPiece(a: a1, b: b1, e: e, rate: 1)
+            let t = q(-943_717, 1 << 20)
+            #expect(try piece.forward(0) <= t && t < a1.adding(b1))
+            #expect(throws: TimeMapError.exactArithmeticEnvelopeExceeded) { try piece.inverse(t) }
+        }
+    }
+
+    /// The compiled `t = (p*n + c)/d` form of one segment, built exactly as construction does.
+    private func compiledPiece(a: ExactRational, b: ExactRational, e: ExactRational, rate: Int64) throws -> CompiledPiece {
+        let slope = try a.divided(by: q(rate)), intercept = try a.multiplied(by: e).adding(b)
+        let g = Int128(ExactRational.gcd(slope.denominator.magnitude, intercept.denominator.magnitude))
+        let d = try ExactRational.mul(slope.denominator / g, intercept.denominator)
+        return CompiledPiece(
+            frameLo: 0, frameHi: 0, imageLo: .zero, imageHi: .zero,
+            p: try ExactRational.mul(slope.numerator, d / slope.denominator),
+            c: try ExactRational.mul(intercept.numerator, d / intercept.denominator), d: d
+        )
+    }
+
+    /// Review finding (PR #173): with hull-only checks this map was constructible, yet inverting the
+    /// 48 kHz grid instant 5686619777/48000 inside its hull overflowed Int128. Construction now proves
+    /// every instant with denominator <= 2^20 inside the hull inverts, so the map is refused instead.
+    @Test func mapWhoseGridInverseCouldOverflowIsRefusedAtConstruction() throws {
+        let frames: Int64 = 1 << 20
+        let a = q128(1_000_996_938, 999_999_937)
+        let e = q128(920_910_480_571, 1_099_511_627_689)
+        let b = q128(124_199_676_144, 1_048_571)
+        let occurrence = fx.occurrence(frames: frames, rate: 44100)
+        let epoch = RecordingEpochID()
+        let segments = [seg(q128(e.floor(), 1), q128(try e.adding(q(frames, 44100)).ceil(), 1), a, b)]
+        let placement = OccurrencePlacement(occurrence: occurrence, spans: [span(0, frames, epoch, e: e)])
+        #expect(throws: TimeMapError.exactArithmeticEnvelopeExceeded) {
+            try fx.otherGroup(epochs: [mapped(epoch, segments)], placements: [placement])
+        }
+        // The probe instant really is inside the would-be hull (so refusal, not a coverage result, is right).
+        let t = q128(5_686_619_777, 48000)
+        let lo = try a.multiplied(by: e).adding(b)
+        let hi = try a.multiplied(by: q(frames - 1, 44100).adding(e)).adding(b)
+        #expect(lo <= t && t <= hi)
+    }
 }

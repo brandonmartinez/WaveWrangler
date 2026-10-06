@@ -42,12 +42,14 @@ struct ProvenanceTests {
         #expect(throws: TimeMapError.invalidMeasurement("residualP95Milliseconds")) { try measurements(p95: .infinity, max: .infinity) }
         #expect(throws: TimeMapError.invalidMeasurement("residualMaxMilliseconds")) { try measurements(p95: 4, max: 3) }
         #expect(throws: TimeMapError.invalidMeasurement("evidenceScore")) { try AcousticConsistencyProposal(estimator: "x", evidenceScore: .nan) }
+        #expect(throws: TimeMapError.invalidMeasurement("overlapSpanFraction")) { try AcousticConsistencyMeasurements(windowCount: 1, overlapSpanFraction: 2, eligibleWindowFraction: 1, acousticResidualP95Milliseconds: 0, acousticResidualMaxMilliseconds: 0) }
+        #expect(throws: TimeMapError.invalidMeasurement("acousticResidualMaxMilliseconds")) { try AcousticConsistencyMeasurements(windowCount: 1, overlapSpanFraction: 1, eligibleWindowFraction: 1, acousticResidualP95Milliseconds: 2, acousticResidualMaxMilliseconds: 1) }
     }
 
     /// Acoustic delay must never pass as clock correction: even perfect measurements leave a proposal a
     /// proposal, and a person accepting it makes it manual, not clock-approved.
     @Test func onlyClockApprovalIsClockApproved() throws {
-        let perfect = try measurements(windows: 100, overlap: 1, eligible: 1, p95: 0, max: 0)
+        let perfect = try AcousticConsistencyMeasurements(windowCount: 100, overlapSpanFraction: 1, eligibleWindowFraction: 1, acousticResidualP95Milliseconds: 0, acousticResidualMaxMilliseconds: 0)
         let proposal = try AcousticConsistencyProposal(estimator: "synthetic", evidenceScore: 1e9, measurements: perfect, seed: CaptureMetadataSeed(kind: .embeddedTimestamp, suggestedOffset: q(12)))
         #expect(!MapProvenance.acousticConsistentProposal(proposal).kind.isClockApproved)
         #expect(!MapProvenance.manual(ManualCorrection(basis: .acceptedAcousticProposal)).kind.isClockApproved)
@@ -111,6 +113,7 @@ struct ProvenanceTests {
         names += ExternalClockEvidence.Kind.allCases.map(\.rawValue)
         names += AcousticConsistencyProposal.CodingKeys.allCases.map(\.stringValue)
         names += ClockGateMeasurements.CodingKeys.allCases.map(\.stringValue)
+        names += AcousticConsistencyMeasurements.CodingKeys.allCases.map(\.stringValue)
         names += Mirror(reflecting: try AcousticConsistencyProposal(estimator: "x", evidenceScore: 1)).children.compactMap(\.label)
         for name in names {
             #expect(!banned.contains { name.localizedCaseInsensitiveContains($0) }, "\(name)")

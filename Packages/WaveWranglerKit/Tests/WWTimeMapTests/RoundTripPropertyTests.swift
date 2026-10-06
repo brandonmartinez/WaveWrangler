@@ -13,7 +13,7 @@ struct RoundTripPropertyTests {
     struct Stats {
         var timelines = 0, groups = 0, mappedEpochs = 0, unsupportedEpochs = 0, segments = 0, occurrences = 0, spans = 0
         var frameRoundTrips = 0, forwardGap = 0, forwardUnsupported = 0, forwardOutside = 0
-        var inverseSource = 0, inverseGap = 0, inverseOutside = 0
+        var inverseSource = 0, inverseGap = 0, inverseUnsupported = 0, inverseOutside = 0
         var maxFrameCount: Int64 = 0
         var maxAbsPPM = 0.0
         /// |returned frame - exact inverse| in source frames, for every inverse that returned a source.
@@ -64,14 +64,14 @@ struct RoundTripPropertyTests {
         occurrences=\(stats.occurrences) spans=\(stats.spans) maxFrameCount=\(stats.maxFrameCount) maxAbsPPM=\(stats.maxAbsPPM)
         WW-015 probes: frameRoundTrips=\(stats.frameRoundTrips) (exact) forwardGap=\(stats.forwardGap) \
         forwardUnsupported=\(stats.forwardUnsupported) forwardOutside=\(stats.forwardOutside) \
-        inverseSource=\(stats.inverseSource) inverseGap=\(stats.inverseGap) inverseOutside=\(stats.inverseOutside)
+        inverseSource=\(stats.inverseSource) inverseGap=\(stats.inverseGap) inverseUnsupported=\(stats.inverseUnsupported) inverseOutside=\(stats.inverseOutside)
         WW-015 inverse quantisation (source frames, N=\(stats.quantisation.count)): max=\(maxQ) p95(nearest-rank)=\(p95Q)
         """)
         #expect(stats.failures.isEmpty, "\(stats.failures.joined(separator: "\n"))")
         #expect(stats.timelines == Self.timelineCount)
         #expect(maxQ <= 0.5)
         // Coverage of the generator itself (guards against a degenerate generator silently passing).
-        #expect(stats.unsupportedEpochs > 0 && stats.forwardGap > 0 && stats.inverseGap > 0 && stats.forwardUnsupported > 0)
+        #expect(stats.unsupportedEpochs > 0 && stats.forwardGap > 0 && stats.inverseGap > 0 && stats.forwardUnsupported > 0 && stats.inverseUnsupported > 0)
         #expect(stats.inverseSource > 50_000 && stats.frameRoundTrips > 50_000)
         #expect(stats.maxAbsPPM >= 1_000_000 && stats.maxFrameCount >= 1 << 36)
     }
@@ -167,6 +167,7 @@ struct RoundTripPropertyTests {
             let width = try! hi.subtracting(lo)
             for _ in 0..<2 { instants.append(try! lo.adding(width.multiplied(by: q(rng.int(0...(1 << 20)), 1 << 20)))) }
         }
+        if hulls.isEmpty { instants += [q(0), q(-1, 3), q(1 << 20)] }
         if let first = hulls.first, let last = hulls.last {
             instants += [try! first.0.subtracting(q(1, 1 << 30)), try! first.0.subtracting(q(1000)), try! last.1.adding(q(1, 1 << 30)), try! last.1.adding(q(1000))]
         }
@@ -207,8 +208,34 @@ struct RoundTripPropertyTests {
             if (drift < .zero ? drift.negated() : drift) > bound { stats.fail("aligned round trip \(drift) exceeds \(bound) at \(t)") }
             stats.inverseSource += 1
             stats.quantisation.append(absError.approximateDouble)
-        case (.gap, .gap):
+        case (.gap, .gap(let boundary)):
+            // State agreement: a gap is between ADJACENT spans (nothing unsupported in between), and the
+            // forward map of any frame strictly between them reports the same gap.
+            guard let i = occ.spans.firstIndex(where: { $0.epoch == boundary.precedingEpoch }), i + 1 < occ.spans.count,
+                  occ.spans[i + 1].epoch == boundary.followingEpoch
+            else {
+                stats.fail("inverse gap at \(t) skips a span: \(boundary)")
+                return
+            }
+            if boundary.followingFirstFrame - boundary.precedingLastFrame > 1,
+               (try? map.alignedTime(ofFrame: boundary.precedingLastFrame + 1, in: occ.occurrence.id)) != .gap(boundary) {
+                stats.fail("forward state disagrees with inverse gap \(boundary)")
+            }
             stats.inverseGap += 1
+        case (.unsupported(let epochs), .unsupported(let region)):
+            // State agreement: every candidate is an unsupported span whose frames map forward to
+            // unsupported with the same epoch and reason.
+            guard region.occurrence == occ.occurrence.id, region.candidates.map(\.epoch) == epochs else {
+                stats.fail("inverse unsupported at \(t): expected \(epochs), got \(region)")
+                return
+            }
+            for candidate in region.candidates {
+                for frame in [candidate.startFrame, candidate.endFrame - 1] where
+                    (try? map.alignedTime(ofFrame: frame, in: occ.occurrence.id)) != .unsupported(epoch: candidate.epoch, reason: candidate.reason) {
+                    stats.fail("forward state of frame \(frame) disagrees with inverse \(region)")
+                }
+            }
+            stats.inverseUnsupported += 1
         case (.outside, .outsideCoverage):
             stats.inverseOutside += 1
         default:
@@ -290,5 +317,106 @@ struct EnvelopeExtremeTests {
             let error = try q128(Int128(position.frame), 1).subtracting(exact)
             #expect(error <= q(1, 2) && error >= q(-1, 2))
         }
+    }
+}
+
+/// Review finding (PR #173): parameter denominators near 2^40 that are coprime to the 44.1/48 kHz output
+/// grids. Every such map is either refused at construction with `exactArithmeticEnvelopeExceeded`, or
+/// inverts EVERY probed grid instant k/G (G <= 2^20) inside its hull without throwing, to the rounded
+/// source frame.
+struct HostileDenominatorInverseTests {
+    static let seed: UInt64 = 0x57573031355f4744
+    static let mapCount = 1000
+
+    static func coprimeDenominator(near bits: Int, _ rng: inout SplitMix64) -> Int128 {
+        while true {
+            let d = Int128(rng.int((Int64(1) << (bits - 1))...(Int64(1) << bits) - 1)) | 1
+            if d % 3 != 0, d % 5 != 0, d % 7 != 0 { return d }
+        }
+    }
+
+    @Test func gridInstantsInvertOrTheMapIsRefused() throws {
+        var rng = SplitMix64(seed: Self.seed)
+        var accepted = 0, refused = 0, outsideEnvelope = 0, probes = 0, halfFrameVerified = 0
+        var failures: [String] = []
+        for index in 0..<Self.mapCount {
+            let rate = rng.pick([Int64(44100), 48000, 1 << 20, rng.int(8000...192_000)])
+            let frames = rng.pick([Int64(1) << 16, 1 << 20, 1 << 26, 1 << 32, TimeMapEnvelope.maxFrameCount, rng.int(2...(1 << 40))])
+            let aDen = Self.coprimeDenominator(near: rng.pick([20, 30, 36, 40]), &rng)
+            let ppm = rng.chance(50) ? rng.int(-1000...1000) : rng.int(-400_000...900_000)
+            let a = q128(aDen + Int128(ppm) * aDen / 1_000_000 + Int128(rng.int(-7...7)), aDen)
+            let eDen = Self.coprimeDenominator(near: rng.pick([20, 32, 40]), &rng)
+            let e = q128(Int128(rng.int(-(1 << 40)...(1 << 40))) * eDen / (1 << 40), eDen)
+            let bDen = Self.coprimeDenominator(near: rng.pick([20, 32, 40]), &rng)
+            let b = q128(Int128(rng.int(-1_000_000...1_000_000)) * bDen + Int128(rng.int(0...(1 << 40))) % bDen, bDen)
+            let fx = Fixture(), epoch = RecordingEpochID()
+            let occurrence = fx.occurrence(frames: frames, rate: rate)
+            guard let u1 = try? e.adding(q(frames, rate)),
+                  let segment = try? AffineClockSegment(groupClockStart: q128(e.floor(), 1), groupClockEnd: q128(u1.ceil(), 1), rateRatio: a, alignedOffset: b)
+            else {
+                outsideEnvelope += 1
+                continue
+            }
+            let map: GroupTimeMap
+            do {
+                map = try fx.otherGroup(epochs: [mapped(epoch, [segment])], placements: [OccurrencePlacement(occurrence: occurrence, spans: [span(0, frames, epoch, e: e)])])
+            } catch TimeMapError.exactArithmeticEnvelopeExceeded {
+                refused += 1
+                continue
+            } catch {
+                outsideEnvelope += 1  // Outside the documented time envelope; not this test's subject.
+                continue
+            }
+            accepted += 1
+            guard case .aligned(let first) = try map.alignedTime(ofFrame: 0, in: occurrence.id),
+                  case .aligned(let last) = try map.alignedTime(ofFrame: frames - 1, in: occurrence.id)
+            else {
+                failures.append("map \(index): hull ends unmapped")
+                continue
+            }
+            for grid in [Int128(44100), 48000, Int128(rng.int(1...(1 << 20)))] {
+                guard let kLo = try? first.instant.multiplied(by: q128(grid, 1)).ceil(),
+                      let kHi = try? last.instant.multiplied(by: q128(grid, 1)).floor(), kLo <= kHi
+                else { continue }
+                let span = kHi - kLo
+                var ks: [Int128] = [kLo, kHi, kLo + span / 2]
+                for _ in 0..<6 { ks.append(kLo + Int128(rng.next() % UInt64(1 << 62)) % (span + 1)) }
+                for k in ks {
+                    let t = q128(k, grid)
+                    probes += 1
+                    let result: InverseMapping
+                    do {
+                        result = try map.sourceFrame(at: t, in: occurrence.id)
+                    } catch {
+                        failures.append("map \(index) a=\(a) e=\(e) b=\(b) F=\(rate) N=\(frames): inverse of \(t) threw \(error)")
+                        continue
+                    }
+                    guard case .source(let position) = result, position.epoch == epoch else {
+                        failures.append("map \(index): \(t) inside the hull did not invert: \(result)")
+                        continue
+                    }
+                    // Independent bracket from the forward map (proven to fit): f-1 < exact < f+1.
+                    let f = position.frame
+                    if f > 0, case .aligned(let below) = try map.alignedTime(ofFrame: f - 1, in: occurrence.id), !(below.instant < t) {
+                        failures.append("map \(index): frame \(f) - 1 maps at or after \(t)")
+                    }
+                    if f + 1 < frames, case .aligned(let above) = try map.alignedTime(ofFrame: f + 1, in: occurrence.id), !(t < above.instant) {
+                        failures.append("map \(index): frame \(f) + 1 maps at or before \(t)")
+                    }
+                    // Half-up rounding bound, checked in aligned time when the half-frame instants are
+                    // representable: a((f -/+ 1/2)/F + e) + b brackets t as [lo, hi).
+                    let fq = q128(Int128(f), 1)
+                    if let lo = try? a.multiplied(by: fq.subtracting(q(1, 2)).divided(by: q(rate)).adding(e)).adding(b),
+                       let hi = try? a.multiplied(by: fq.adding(q(1, 2)).divided(by: q(rate)).adding(e)).adding(b) {
+                        halfFrameVerified += 1
+                        if !(lo <= t && t < hi) { failures.append("map \(index): \(t) not within half a frame of \(f)") }
+                    }
+                    if position.exactFrame.roundedHalfUp() != Int128(f) { failures.append("map \(index): frame is not exactFrame rounded half-up") }
+                }
+            }
+        }
+        print("WW015-HOSTILE-GRID seed=0x\(String(Self.seed, radix: 16)) maps=\(Self.mapCount) accepted=\(accepted) refused=\(refused) outsideEnvelope=\(outsideEnvelope) probes=\(probes) halfFrameVerified=\(halfFrameVerified) failures=\(failures.count)")
+        #expect(failures.isEmpty, "\(failures.prefix(5))")
+        #expect(accepted > 0 && refused > 0 && probes > 0 && outsideEnvelope < Self.mapCount / 20)
     }
 }

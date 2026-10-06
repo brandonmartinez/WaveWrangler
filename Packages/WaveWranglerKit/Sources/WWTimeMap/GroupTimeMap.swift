@@ -97,17 +97,47 @@ public enum ForwardMapping: Hashable, Sendable {
     }
 }
 
+/// One span of an occurrence whose epoch has no supported map.
+public struct UnsupportedSpan: Hashable, Sendable {
+    public let epoch: RecordingEpochID
+    public let reason: UnsupportedReason
+    /// First frame of the span.
+    public let startFrame: Int64
+    /// One past the last frame of the span.
+    public let endFrame: Int64
+}
+
+/// An aligned instant that the frames of one or more unsupported spans could occupy. Unsupported spans have
+/// no aligned image, so the instant cannot be inverted; it is not a known gap either, because the
+/// unsupported frames may lie there.
+public struct UnsupportedInverseRegion: Hashable, Sendable {
+    public let occurrence: SourceOccurrenceID
+    /// The nearest mapped span before the instant, if any.
+    public let precedingMappedEpoch: RecordingEpochID?
+    /// The nearest mapped span after the instant, if any.
+    public let followingMappedEpoch: RecordingEpochID?
+    /// The unsupported spans between those mapped spans, in source order. Never empty.
+    public let candidates: [UnsupportedSpan]
+}
+
 public enum InverseMapping: Hashable, Sendable {
     case source(SourcePosition)
-    /// The instant lies strictly between two mapped spans of the occurrence. Gaps have no inverse.
+    /// The instant lies strictly between two ADJACENT mapped spans of the occurrence (no unsupported span
+    /// between them). Gaps have no inverse.
     case gap(GapBoundary)
-    /// Before the first or after the last mapped frame instant of the occurrence. Never extrapolated.
+    /// The instant lies where unsupported spans of the occurrence could be: between two mapped spans with
+    /// unsupported spans between them, before the first mapped span when unsupported spans precede it,
+    /// after the last when unsupported spans follow it, or anywhere when no span is mapped. Never inverted.
+    case unsupported(UnsupportedInverseRegion)
+    /// Before the first or after the last mapped frame instant of the occurrence, with no unsupported span
+    /// on that side. Never extrapolated.
     case outsideCoverage
 
     public var regionState: TimeMapRegionState {
         switch self {
         case .source(let p): .mapped(p.provenance)
         case .gap: .gap
+        case .unsupported(let region): .unsupported(region.candidates[0].reason)
         case .outsideCoverage: .outsideCoverage
         }
     }
@@ -118,10 +148,16 @@ public enum InverseMapping: Hashable, Sendable {
 /// The validated, positive, piecewise map `source(n/F, epoch) -> group clock -> aligned` of one recorder
 /// group, relative to an explicit ``TimelineReference``.
 ///
-/// Construction validates every invariant (see ``TimeMapError``) and proves that every exact intermediate
-/// needed to map any placed frame forward fits `Int128`, so forward queries for placed frames cannot fail.
-/// Inverse queries are exact and refuse (throw) rather than approximate if an arbitrary query instant's
-/// exact arithmetic would leave the envelope.
+/// Construction validates every invariant (see ``TimeMapError``) and proves, refusing the map with
+/// ``TimeMapError/exactArithmeticEnvelopeExceeded`` otherwise, that:
+/// * every exact intermediate needed to map any placed frame forward fits `Int128`, so forward queries for
+///   placed frames cannot fail;
+/// * inverting any instant whose canonical denominator is at most ``TimeMapEnvelope/maxNominalRate``
+///   (every output-grid instant `k/G` with `G <= 2^20`) within a mapped span's hull fits `Int128`, so such
+///   inverse queries cannot fail.
+/// Inverting the exact instant of any placed frame cannot fail either: its arithmetic cancels exactly to the
+/// forward intermediates. Inverse queries at other instants (canonical denominator above 2^20) are exact
+/// and refuse (throw) rather than approximate if their arithmetic would leave the envelope.
 public struct GroupTimeMap: Sendable {
     public let group: RecorderGroupID
     public let reference: TimelineReference
@@ -162,23 +198,36 @@ public struct GroupTimeMap: Sendable {
         }
     }
 
-    /// Maps an exact aligned instant back to `occurrence`'s source frames. Known gaps and uncovered instants
-    /// are reported, never inverted, bridged or extrapolated.
+    /// Maps an exact aligned instant back to `occurrence`'s source frames. Known gaps, instants that
+    /// unsupported spans could occupy and uncovered instants are reported, never inverted, bridged or
+    /// extrapolated.
     public func sourceFrame(at instant: ExactRational, in occurrence: SourceOccurrenceID) throws(TimeMapError) -> InverseMapping {
         guard let compiled = compiled[occurrence] else { throw .unknownOccurrence(occurrence) }
-        var previous: CompiledSpan?
+        var previous: EpochSpan?
+        var unsupportedSincePrevious: [UnsupportedSpan] = []
         for span in compiled.spans {
-            guard case .mapped(let kind, let pieces, let hullLo, let hullHi) = span.state else { continue }
-            if instant < hullLo {
-                guard let previous else { return .outsideCoverage }
-                return .gap(Self.boundary(occurrence, previous.span, span.span))
+            switch span.state {
+            case .unsupported(let reason):
+                unsupportedSincePrevious.append(UnsupportedSpan(epoch: span.span.epoch, reason: reason, startFrame: span.span.startFrame, endFrame: span.span.endFrame))
+            case .mapped(let kind, let pieces, let hullLo, let hullHi):
+                if instant < hullLo {
+                    if !unsupportedSincePrevious.isEmpty {
+                        return .unsupported(UnsupportedInverseRegion(occurrence: occurrence, precedingMappedEpoch: previous?.epoch, followingMappedEpoch: span.span.epoch, candidates: unsupportedSincePrevious))
+                    }
+                    guard let previous else { return .outsideCoverage }
+                    return .gap(Self.boundary(occurrence, previous, span.span))
+                }
+                if instant <= hullHi {
+                    guard let piece = pieces.first(where: { instant >= $0.imageLo && instant < $0.imageHi }) else { return .outsideCoverage }
+                    let exact = try piece.inverse(instant)
+                    return .source(SourcePosition(occurrence: occurrence, epoch: span.span.epoch, frame: Int64(exact.roundedHalfUp()), exactFrame: exact, provenance: kind))
+                }
+                previous = span.span
+                unsupportedSincePrevious = []
             }
-            if instant <= hullHi {
-                guard let piece = pieces.first(where: { instant >= $0.imageLo && instant < $0.imageHi }) else { return .outsideCoverage }
-                let exact = try piece.inverse(instant)
-                return .source(SourcePosition(occurrence: occurrence, epoch: span.span.epoch, frame: Int64(exact.roundedHalfUp()), exactFrame: exact, provenance: kind))
-            }
-            previous = span
+        }
+        if !unsupportedSincePrevious.isEmpty {
+            return .unsupported(UnsupportedInverseRegion(occurrence: occurrence, precedingMappedEpoch: previous?.epoch, followingMappedEpoch: nil, candidates: unsupportedSincePrevious))
         }
         return .outsideCoverage
     }
@@ -211,10 +260,25 @@ struct CompiledPiece: Sendable {
         try ExactRational(numerator: ExactRational.add(ExactRational.mul(p, n), c), denominator: d)
     }
 
+    /// For `t = N/D` (canonical) the intermediates are `N*d/g` and `c*D/g` (`g = gcd(d, D)`), their sum, and
+    /// a denominator dividing `p*D`; ``proveInverseFits(instantMagnitude:maxInstantDenominator:)`` bounds them.
     func inverse(_ t: ExactRational) throws(TimeMapError) -> ExactRational {
         try t.multiplied(by: ExactRational(numerator: d, denominator: 1))
             .subtracting(ExactRational(numerator: c, denominator: 1))
             .divided(by: ExactRational(numerator: p, denominator: 1))
+    }
+
+    /// Throws unless ``inverse(_:)`` fits `Int128` for every `t = N/D` with `|t| <= instantMagnitude` and
+    /// `0 < D <= maxInstantDenominator`: then `|N| <= instantMagnitude * maxInstantDenominator`, so every
+    /// intermediate is bounded by `d*|N| + |c|*D` or `p*D`, which are checked here at their maxima.
+    func proveInverseFits(instantMagnitude: Int128, maxInstantDenominator: Int128) throws(TimeMapError) {
+        let numeratorBound = try ExactRational.mul(instantMagnitude, maxInstantDenominator)
+        _ = try ExactRational.add(
+            ExactRational.mul(d, numeratorBound),
+            // c came from a checked product, so it is never Int128.min and negation is safe.
+            ExactRational.mul(c < 0 ? -c : c, maxInstantDenominator)
+        )
+        _ = try ExactRational.mul(p, maxInstantDenominator)
     }
 }
 
@@ -362,6 +426,8 @@ extension GroupTimeMap {
                 d: d
             )
             // p*n + c is linear in n, so proving both ends fit proves every frame of the piece fits.
+            // (The grid-inverse bound below also implies this, since |p*n|, |p*n + c| <= d*H + |c|; this
+            // check keeps the forward contract independent of that proof.)
             if lo <= hi {
                 _ = try piece.forward(lo)
                 _ = try piece.forward(hi)
@@ -374,9 +440,14 @@ extension GroupTimeMap {
         }
         let hullLo = try forward(firstFrame)
         let hullHi = try forward(lastFrame)
-        // Inverting the hull ends must also be representable (round trips of placed frames never fail).
+        // Inverse queries are answered only inside [hullLo, hullHi]. Prove that every instant there whose
+        // canonical denominator is at most maxNominalRate (all k/G output-grid instants with G <= 2^20)
+        // inverts within Int128; refuse the map otherwise. (Placed-frame instants cancel exactly to the
+        // forward intermediates already checked above, whatever their denominator.)
+        let instantMagnitude = Swift.max(hullLo.floor().magnitude, hullLo.ceil().magnitude, hullHi.floor().magnitude, hullHi.ceil().magnitude)
+        guard instantMagnitude <= UInt128(Int128.max) else { throw .exactArithmeticEnvelopeExceeded }
         for piece in pieces {
-            for t in [hullLo, hullHi] where t >= piece.imageLo && t < piece.imageHi { _ = try piece.inverse(t) }
+            try piece.proveInverseFits(instantMagnitude: Int128(instantMagnitude), maxInstantDenominator: Int128(TimeMapEnvelope.maxNominalRate))
         }
         return CompiledSpan(span: span, state: .mapped(epoch.provenance.kind, pieces, hullLo: hullLo, hullHi: hullHi))
     }

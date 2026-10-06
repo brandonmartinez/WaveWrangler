@@ -9,9 +9,10 @@ struct CodingTests {
 
     private func richTimeline() throws -> AlignedTimelineMap {
         let gates = try ClockGateMeasurements(windowCount: 7, overlapSpanFraction: 0.9, eligibleWindowFraction: 0.75, residualP95Milliseconds: 1.25, residualMaxMilliseconds: 2.5)
+        let acoustic = try AcousticConsistencyMeasurements(windowCount: 7, overlapSpanFraction: 0.9, eligibleWindowFraction: 0.75, acousticResidualP95Milliseconds: 1.25, acousticResidualMaxMilliseconds: 2.5)
         let provenances: [MapProvenance] = [
             .clockApproved(try ClockApproval(evaluator: "synthetic/1", reference: IndependentClockReference(description: "anchors"), measurements: gates)),
-            .acousticConsistentProposal(try AcousticConsistencyProposal(estimator: "gcc-phat/0", evidenceScore: 3.5, measurements: gates, seed: CaptureMetadataSeed(kind: .fileModificationDate, suggestedOffset: q(-7, 3), note: "seed only"))),
+            .acousticConsistentProposal(try AcousticConsistencyProposal(estimator: "gcc-phat/0", evidenceScore: 3.5, measurements: acoustic, seed: CaptureMetadataSeed(kind: .fileModificationDate, suggestedOffset: q(-7, 3), note: "seed only"))),
             .acousticConsistentProposal(try AcousticConsistencyProposal(estimator: "bare")),
             .manual(ManualCorrection(basis: .acceptedAcousticProposal, note: "accepted")),
             .externalEvidence(try ExternalClockEvidence(kind: .sharedWordClock, description: "house sync")),
@@ -189,6 +190,35 @@ struct CodingTests {
         #expect(throws: TimeMapError.clockApprovalGateNotMet(["windowCount"])) { try decodeTimeline(data(root)) }
         // Invalid rate / frame count.
         #expect(throws: TimeMapError.invalidNominalRate(0)) { try JSONDecoder().decode(NominalRate.self, from: Data("0".utf8)) }
+    }
+
+    /// A persisted acoustic proposal cannot be relabelled as a clock approval: its payload and its
+    /// measurements have different, strictly checked shapes.
+    @Test func acousticProposalCannotBeDecodedAsClockApproval() throws {
+        let map = try richTimeline()
+        func relabel(_ edit: (inout [String: Any]) -> Void) throws -> Data {
+            var root = try object(json(map))
+            var groups = root["groups"] as! [[String: Any]]
+            var epochs = groups[2]["epochs"] as! [[String: Any]]
+            var provenance = epochs[0]["provenance"] as! [String: Any]
+            #expect(provenance["kind"] as? String == "acousticConsistentProposal")
+            edit(&provenance)
+            epochs[0]["provenance"] = provenance
+            groups[2]["epochs"] = epochs
+            root["groups"] = groups
+            return try data(root)
+        }
+        let wholePayload = try relabel { provenance in
+            provenance["kind"] = "clockApproved"
+            provenance["clockApproval"] = provenance.removeValue(forKey: "proposal")
+        }
+        #expect(throws: TimeMapDecodingError.self) { try decodeTimeline(wholePayload) }
+        let measurementsOnly = try relabel { provenance in
+            let proposal = provenance.removeValue(forKey: "proposal") as! [String: Any]
+            provenance["kind"] = "clockApproved"
+            provenance["clockApproval"] = ["evaluator": "relabelled", "reference": ["description": "acoustic events"], "measurements": proposal["measurements"]!]
+        }
+        #expect(throws: TimeMapDecodingError.unknownKeys(type: "ClockGateMeasurements", keys: ["acousticResidualMaxMilliseconds", "acousticResidualP95Milliseconds"])) { try decodeTimeline(measurementsOnly) }
     }
 
     @Test func encodedFormHasNoProbabilityVocabularyAndExactStrings() throws {
