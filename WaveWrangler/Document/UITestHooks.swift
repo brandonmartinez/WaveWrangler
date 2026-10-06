@@ -118,6 +118,8 @@ final class UITestOfflineHooks: PublicationHooks, @unchecked Sendable {
     private var offline = true
     private var attempts = 0
     private var attemptTimes: [Double] = []
+    /// Edited-state trace (T26 evidence): what the document's edited state was at each save-completion step.
+    private var events: [String] = []
     /// When set, only publications into this folder fail while offline.
     var unreachableFolder: URL?
     /// The publication about to run (set by `ShowDocument` before it publishes; saves run on the main thread).
@@ -150,9 +152,15 @@ final class UITestOfflineHooks: PublicationHooks, @unchecked Sendable {
         publish()
     }
 
+    func note(_ event: String) {
+        lock.withLock { events.append(String(format: "%.3f ", Date().timeIntervalSince1970) + event) }
+        publish()
+    }
+
     func publish() {
-        let (count, isOffline, times) = lock.withLock { (attempts, offline, attemptTimes) }
-        let json = #"{"publicationAttempts": \#(count), "offline": \#(isOffline), "attemptTimes": [\#(times.map { String($0) }.joined(separator: ", "))]}"#
+        let (count, isOffline, times, trace) = lock.withLock { (attempts, offline, attemptTimes, events) }
+        let encodedTrace = (try? JSONSerialization.data(withJSONObject: trace)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let json = #"{"publicationAttempts": \#(count), "offline": \#(isOffline), "attemptTimes": [\#(times.map { String($0) }.joined(separator: ", "))], "events": \#(encodedTrace)}"#
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 let board = NSPasteboard(name: Self.pasteboard)

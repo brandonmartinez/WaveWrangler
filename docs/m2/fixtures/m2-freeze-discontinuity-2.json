@@ -1,0 +1,140 @@
+{
+ "freezeID": "m2-freeze-discontinuity-2",
+ "date": "2026-10-06",
+ "recordedBy": "Alignment (WW-017 revision, issue #209)",
+ "status": "FROZEN at the merge commit of this revision; calibration only; HOLDOUT NOT RUN.",
+ "supersedes": "m2-freeze-discontinuity",
+ "supersessionReason": "The rev-1 holdout failed the unchanged zero-false-split gate: 3/50 near-miss negatives split (transient#6, transient#13, silenceGap#4). Its run, frozen definition and FAIL evidence are retained unchanged. Revision 2 requires temporally persistent segment evidence and uses disjoint seeds.",
+ "issues": ["https://github.com/brandonmartinez/WaveWrangler/issues/11", "https://github.com/brandonmartinez/WaveWrangler/issues/209"],
+ "registry": "docs/m2/fixtures/m2-fixture-registry.json",
+ "calibrationEvidence": "docs/m2/evidence/ww-017-discontinuities.md",
+ "previousRecord": "docs/m2/fixtures/m2-freeze-discontinuity.json",
+ "previousFailedHoldout": "docs/m2/evidence/ww-017/holdout.jsonl",
+ "scope": "The nine M2-SEG2-* registry fixtures: generator recipe, independent truth, case derivation, split/counts, scoring and unchanged gate. WWAlignSegment and WWAlignSegmentTests are pinned by tree ID. WWAlignEstimate remains frozen and is consumed through its public API.",
+ "pinnedTrees": {
+  "Sources/WWAlignSegment": "cdd2da1e2134d46221a67ced1fd9efd857ae2d40",
+  "Tests/WWAlignSegmentTests": "68ddb5e0b66a0e43c2c34fd625fca4deb70da715"
+ },
+ "dependencyTreesAtFreeze": {
+  "Sources/WWAlignEstimate": "8efd588a6b57dc56bf7eafa1ccf2c7709253f3a9",
+  "Sources/WWTimeMap": "24c7aadfbf1470c8555542061ab08eb23e37325b",
+  "Sources/WWCore": "c310389c4b41ebde80c5dabaea12fd5376f5d9ba"
+ },
+ "pinnedTreesRule": "SegmentFreezeTests computes both git tree IDs from working-tree bytes, including untracked files; the freeze takes effect on merge. Any subsequent code or fixture change requires another dated revision and a fresh holdout.",
+ "segmenter": {
+  "identifier": "ww-align-segment/2",
+  "customIdentifier": "ww-align-segment/2+custom",
+  "estimatorIdentifier": "ww-align-estimate/1",
+  "module": "WWAlignSegment",
+  "parameters": {
+   "tileSeconds": 8,
+   "slicePaddingSeconds": 0.5,
+   "splitToleranceMilliseconds": 0.5,
+   "stepToleranceFactor": 2,
+   "minimumSegmentWindows": 5,
+   "minimumSupportedSeconds": 4,
+   "proposalAgreementMilliseconds": 1
+  },
+  "algorithm": "Rev-1 dense tile/least-squares fit, conservative boundary brackets, re-estimation and overlap demotion remain; a fitted segment must additionally span at least minimumSupportedSeconds in eligible window-centre time before it can establish a boundary. Short coherent outlier runs are unresolved islands and cannot manufacture a clock step or slope change. No mapped region crosses a detected jump; unlocalisable frames remain unsupported.",
+  "outputs": "Mapped regions are acousticConsistentProposal only; unresolved, unlocalisable and untrusted regions are typed unsupported with no inverse. Epochs and occurrences are retained. Never clockApproved."
+ },
+ "generator": {
+  "kind": "synthetic-deterministic, in test code only; no actual recordings",
+  "files": ["Tests/WWAlignSegmentTests/Generator.swift", "Tests/WWAlignSegmentTests/Plan.swift"],
+  "recipe": "Identical to m2-freeze-discontinuity.generator, except disjoint master seeds and increased transient/silenceGap calibration counts. Scene, draws, clock truth, planted size ranges, rate, duration and scoring are unchanged.",
+  "seedDerivation": "SplitMix64. caseSeed(master, stratum, index) = first output of SplitMix64(seed: master XOR fnv1a64(UTF-8 stratum.rawValue) XOR (index &* 0x9E3779B97F4A7C15)); SegmentPlan.make draws from that stream. SegmentFreezeTests asserts no rev-2 calibration, sweep or holdout case seed occurs in any rev-1 split (including the failed holdout)."
+ },
+ "truth": {
+  "scoring": "Identical to m2-freeze-discontinuity.truth.scoring: independent OccurrenceTruth, never correlation peaks or the fitted map; every planted frame and inserted interval checked for bridging; residuals sampled every second plus each mapped region's last frame, nearest-rank p95 and maximum; inverse, monotonicity, retention and false splits checked by Scoring.swift.",
+  "positive strata": "dropped (5-500 ms), inserted (5-500 ms), clockStep (+/-5-500 ms), restart (0.3-1.2 s pause plus rate change), rateChange (300-400 ppm), compound (two plants at least 15 s apart).",
+  "negative strata": "clean, target-only strong transient (4-8 clicks/bursts), scene-silent or muted-target silenceGap (3-8 s); no clock change. Any detection or more than one mapped region is a false split."
+ },
+ "split": {
+  "unit": "one in-memory reference and target occurrence per case",
+  "calibration": {
+   "masterSeed": "0x57571700CA12B000",
+   "counts": {"clean": 6, "transient": 15, "silenceGap": 15, "dropped": 6, "inserted": 6, "clockStep": 6, "restart": 6, "rateChange": 6, "compound": 4},
+   "totalCases": 70, "totalPlants": 38, "negativeCases": 36,
+   "status": "calibration only, executed pre-freeze"
+  },
+  "holdout": {
+   "masterSeed": "0x57571700401D2000",
+   "counts": {"clean": 20, "transient": 15, "silenceGap": 15, "dropped": 20, "inserted": 20, "clockStep": 20, "restart": 20, "rateChange": 20, "compound": 15},
+   "totalCases": 165, "totalPlants": 130, "negativeCases": 50,
+   "status": "NOT RUN. No rev-2 holdout case is rendered or segmented in this PR; disjointness checks derive seeds only."
+  },
+  "floorSweep": {
+   "masterSeed": "0x57571700F2000000",
+   "totalCases": 30,
+   "design": "clockStep +/-0.25, 0.5, 1, 2, 5 ms and rateChange 25, 50, 100, 200, 300 ppm; two repeats each",
+   "status": "calibration only; reported, not gated"
+  }
+ },
+ "gate": {
+  "verbatim": "WW-017 (docs/m2/ww-019-m2-contracts.md §5): supported residuals meet WW-016; every planted discontinuity is flagged or unsupported, with zero silent smooth bridging; segments are positive and monotonic; gaps have no inverse; source occurrences and epochs are retained.",
+  "values": {
+   "residualP95Milliseconds": 5,
+   "residualMaxMilliseconds": 10,
+   "plantsBridgedMaximum": 0,
+   "silentBridgesMaximum": 0,
+   "maximumFalseSplitRate": 0
+  },
+  "evaluator": "SegmentRunner.gateFailures over CaseScore.hardFailures, identical to revision 1.",
+  "definition": [
+   "Plants: every planted discontinuity is flagged or unsupported; bridged plants must be 0.",
+   "Bridging: no mapped region may contain frames on both sides of a plant or any inserted frame (bridgingRegions 0); a bridging region whose truth residual is inside the WW-016 gate is a silent smooth bridge and must be 0.",
+   "Residuals: every mapped region in every case has truth residual nearest-rank p95 <= 5 ms and max <= 10 ms.",
+   "Segments positive and monotonic: every mapped segment's rateRatio is > 0, and aligned time from the compiled map strictly increases across all mapped residual-grid frames taken together in frame order. WWTimeMap itself rejects overlapping epoch images (overlappingEpochs) and non-monotonic placement, so the scorer's check is defence in depth behind the map type.",
+   "Gaps have no inverse: between consecutive mapped truth pieces whose aligned images leave a gap (dropped samples, positive steps, restarts), 5 aligned instants inside the gap (excluding 2 ms + 1 frame at each side) must not invert to any source frame; on a 0.5 s aligned grid over the truth image, every instant that does invert must land within 10 ms + 1 frame of its truth time and never in an inserted frame.",
+   "Retention: the map has exactly one placement, of the identical request occurrence; regions tile the declared span exactly and keep its declared epoch; region epochs are distinct, the declared epoch is present (kept on the first mapped region), and the placement spans equal the regions; no epoch is clockApproved; the report carries the frozen segmenter identifier.",
+   "False splits: on clean and near-miss negatives the false-split rate must be <= maximumFalseSplitRate (0)."
+  ]
+ },
+ "calibrationSummary": {
+  "host": "Apple M5 Max, macOS 27.0.1, Xcode 27, Swift 6.4, debug build",
+  "command": "WW_SEGMENT_TESTS=1 WW_SEGMENT_RECORDS_DIR=<docs/m2/evidence/ww-017> swift test --jobs 4 --no-parallel --filter 'WWAlignSegmentTests\\.(CalibrationTests|FloorSweepTests|EdgeSilenceTests)'",
+  "result": "Calibration 70 cases: 38/38 plants flagged with expected kind, 0 bridged and 0 silent bridges, 0/36 negative false splits (0/6 clean, 0/15 transient, 0/15 silenceGap), zero invariant failures, worst p95/max 1.045/1.052 ms. Edge-silence regression 6/6 flagged, 0 bridged, max 0.744 ms. The 30-case floor sweep is reported only.",
+  "recordsFile": "docs/m2/evidence/ww-017/calibration-2.jsonl",
+  "recordsSHA256": "ddf9a3232d1bac9b567321e726fc89cffbcc5ff28d5114dd1bf5eb56b2051ecc",
+  "totals": {
+   "bridgingRegions": 0, "cases": 70, "casesWithHardFailures": 0, "falseSplitRate": 0,
+   "falseSplits": 0, "invariantFailures": 0, "negatives": 36, "plants": 38, "plantsBridged": 0,
+   "plantsFlagged": 38, "plantsFlaggedWithExpectedKind": 38, "plantsUnsupported": 0,
+   "silentBridges": 0, "spuriousDetectionsOnPositives": 0,
+   "worstResidualMaxMilliseconds": 1.0516362052186423,
+   "worstResidualP95Milliseconds": 1.045140866779093
+  },
+  "floorSweepRecords": {
+   "recordsFile": "docs/m2/evidence/ww-017/floor-2.jsonl",
+   "recordsSHA256": "2d85df8701fef50a1af03fbec692ad62146024433e486cd5ffe20e541dca2bc4",
+   "totals": {
+    "bridgingRegions": 11, "cases": 30, "casesWithHardFailures": 11, "falseSplitRate": 0,
+    "falseSplits": 0, "invariantFailures": 0, "negatives": 0, "plants": 30, "plantsBridged": 11,
+    "plantsFlagged": 19, "plantsFlaggedWithExpectedKind": 15, "plantsUnsupported": 0,
+    "silentBridges": 11, "spuriousDetectionsOnPositives": 0,
+    "worstResidualMaxMilliseconds": 0.9851397671098994,
+    "worstResidualP95Milliseconds": 0.9682607524510445
+   }
+  },
+  "edgeSilenceRecords": {
+   "recordsFile": "docs/m2/evidence/ww-017/edge-silence-2.jsonl",
+   "recordsSHA256": "28cc677d486824d289ea524c82f4075064b6879afc1b74e23f5a63e4b5aa73ca",
+   "totals": {
+    "bridgingRegions": 0, "cases": 6, "casesWithHardFailures": 0, "falseSplitRate": 0,
+    "falseSplits": 0, "invariantFailures": 0, "negatives": 0, "plants": 6, "plantsBridged": 0,
+    "plantsFlagged": 6, "plantsFlaggedWithExpectedKind": 6, "plantsUnsupported": 0,
+    "silentBridges": 0, "spuriousDetectionsOnPositives": 0,
+    "worstResidualMaxMilliseconds": 0.7435717870549752,
+    "worstResidualP95Milliseconds": 0.7435717870549752
+   }
+  }
+ },
+ "holdoutProcedure": {
+  "when": "Once in a separate PR after this freeze merges, on a clean commit containing its merge commit; check pinned WWAlignSegment and WWAlignSegmentTests trees and unchanged WWAlignEstimate source.",
+  "command": "cd Packages/WaveWranglerKit && WW_SEGMENT_HOLDOUT=1 WW_SEGMENT_RECORDS_DIR=\"$PWD/../../docs/m2/evidence/ww-017\" swift test --jobs 4 --no-parallel --scratch-path ../../.build/swiftpm --filter SegmentHoldoutTests",
+  "compute": "Only heavy job; harness default four cases in flight, override may lower to 1...4.",
+  "report": "Commit SHA, host, exact source/test/dependency trees, raw per-case log and unedited canonical holdout-2.jsonl with SHA-256, full totals and unchanged gate verdict, whether PASS or FAIL.",
+  "rules": "Run the full frozen split exactly once; do not rerun, cherry-pick, relabel or lower the gate after a failure. Keep rev-1 FAIL evidence unchanged."
+ },
+ "postFreezeRule": "Changes to recipe, truth, counts, gate, source or test tree or segmenter parameters require a dated freeze revision and a fresh holdout; previous runs remain recorded."
+}

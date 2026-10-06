@@ -18,6 +18,15 @@ let package = Package(
         // Pure exact clock-epoch / coordinate maps (WW-015). No I/O, no decoding.
         .library(name: "WWTimeMap", targets: ["WWTimeMap"]),
         .library(name: "WWDecode", targets: ["WWDecode"]),
+        // Pure acoustic offset/drift PROPOSAL estimator with abstention (WW-016). Consumes decoded sample
+        // buffers; no I/O, no decoding, never approves a clock.
+        .library(name: "WWAlignEstimate", targets: ["WWAlignEstimate"]),
+        // Pure channel-consistent clock-correction renderer (WW-018/WW-023). Consumes decoded buffers through a
+        // caller-owned provider; never opens files.
+        .library(name: "WWRender", targets: ["WWRender"]),
+        // Pure discontinuity detector/segmenter (WW-017) between the frozen WW-016 estimator and WWTimeMap:
+        // splits an occurrence into epochs or leaves regions unsupported; never bridges a jump, never approves.
+        .library(name: "WWAlignSegment", targets: ["WWAlignSegment"]),
         // Headless persistence probe for multi-process and observed-provider trials (synthetic documents only).
         .executable(name: "wwpersist-probe", targets: ["WWPersistenceProbe"]),
     ],
@@ -29,6 +38,9 @@ let package = Package(
         .target(name: "WWOrganizer", dependencies: ["WWCore"]),
         .target(name: "WWTimeMap", dependencies: ["WWCore"]),
         .target(name: "WWDecode", dependencies: ["WWCore", "WWSources"]),
+        .target(name: "WWAlignEstimate", dependencies: ["WWCore", "WWTimeMap"]),
+        .target(name: "WWRender", dependencies: ["WWCore", "WWTimeMap"]),
+        .target(name: "WWAlignSegment", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
         .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
         .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore", "WWPersistenceProbe", "WWOrganizer"]),
@@ -37,6 +49,12 @@ let package = Package(
         .testTarget(name: "WWOrganizerTests", dependencies: ["WWOrganizer", "WWCore", "WWPersistence"]),
         .testTarget(name: "WWTimeMapTests", dependencies: ["WWTimeMap", "WWCore"]),
         .testTarget(name: "WWDecodeTests", dependencies: ["WWDecode", "WWSources", "WWCore"]),
+        .testTarget(name: "WWAlignEstimateTests", dependencies: ["WWAlignEstimate", "WWTimeMap", "WWCore"]),
+        .testTarget(name: "WWRenderTests", dependencies: ["WWRender", "WWTimeMap", "WWCore"]),
+        .testTarget(name: "WWAlignSegmentTests", dependencies: ["WWAlignSegment", "WWAlignEstimate", "WWTimeMap", "WWCore"]),
+        // Headless validation on a user-approved local episode copy. Skipped unless WW_LOCAL_EPISODE_DIR is
+        // set at run time (never on CI); see docs/m2/evidence/m2-local-episode-validation.md.
+        .testTarget(name: "WWLocalEpisodeValidationTests", dependencies: ["WWDecode", "WWSources", "WWAlignEstimate", "WWRender", "WWTimeMap", "WWCore"]),
     ],
     swiftLanguageModes: [.v6]
 )

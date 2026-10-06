@@ -1,0 +1,100 @@
+import CryptoKit
+import Foundation
+import Testing
+@testable import WWRender
+
+/// m2-freeze-render consistency (docs/m2/fixtures/m2-freeze-render.json). These checks render nothing and
+/// always run: they fail if the gates, recipe, versions, split counts or pinned trees drift from the committed
+/// freeze. A deliberate change is a new dated freeze revision, never a silent edit.
+@Suite("Render freeze (m2-freeze-render)")
+struct RenderFreezeTests {
+    static let repository = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+    static let freezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-render.json")
+
+    static func freeze() throws -> [String: Any] {
+        try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: freezeURL)) as? [String: Any])
+    }
+
+    @Test func frozenDefinitionMatchesTheFreezeRecord() throws {
+        let json = try Self.freeze()
+        #expect(json["freezeID"] as? String == "m2-freeze-render")
+        #expect(json["fixtureID"] as? String == RenderFixture.fixtureID)
+
+        let gates = try #require(json["gateValues"] as? [String: Double])
+        #expect(gates == [
+            "landmarkFrames": RenderGates.landmarkFrames,
+            "passbandDB": RenderGates.passbandDB,
+            "passbandFraction": RenderGates.passbandFraction,
+            "aliasDBc": RenderGates.aliasDBc,
+            "skewFrames": RenderGates.skewFrames,
+            "inactiveDBFS": RenderGates.inactiveDBFS,
+            "phaseToleranceDegrees": RenderGates.phaseToleranceDegrees,
+            "familyPeakBytes": Double(RenderGates.familyPeakBytes),
+            "maximumInversionsSwaps": 0,
+        ])
+
+        let renderer = try #require(json["renderer"] as? [String: Any])
+        #expect(renderer["RenderVersions.renderer"] as? Int == RenderVersions.renderer)
+        #expect(renderer["RenderVersions.outputAssetFormat"] as? Int == RenderVersions.outputAssetFormat)
+        #expect(renderer["RenderRecipe.currentVersion"] as? Int == RenderRecipe.currentVersion)
+        let frozenRecipe = try #require(renderer["recipeEncoding"] as? NSDictionary)
+        let actualRecipe = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(RenderRecipe.m2Candidate)) as? NSDictionary)
+        #expect(frozenRecipe == actualRecipe)
+
+        let splits = try #require(json["splits"] as? [String: [String: Any]])
+        #expect(splits["calibration"]?["cases"] as? Int == RenderFixture.calibrationCases)
+        #expect(splits["holdout"]?["cases"] as? Int == RenderFixture.holdoutCases)
+        #expect(RenderFixture.holdoutCases >= RenderFixture.calibrationCases)
+    }
+
+    /// Git tree ID of a flat directory of regular files: SHA-1 over "tree <n>\0" and the sorted
+    /// "100644 <name>\0<20-byte blob ID>" entries. Equals `git rev-parse HEAD:<dir>` for a clean checkout;
+    /// any edited or untracked file changes it.
+    static func gitTreeID(_ directory: URL) throws -> String {
+        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }
+        var body = Data()
+        for name in names {
+            let content = try Data(contentsOf: directory.appendingPathComponent(name))
+            var blob = Data("blob \(content.count)\0".utf8)
+            blob.append(content)
+            body.append(Data("100644 \(name)\0".utf8))
+            body.append(contentsOf: Insecure.SHA1.hash(data: blob))
+        }
+        var tree = Data("tree \(body.count)\0".utf8)
+        tree.append(body)
+        return Insecure.SHA1.hash(data: tree).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The renderer source and this test tree (generator, truth, gates, harness) are pinned by the freeze.
+    @Test func rendererAndHarnessTreesMatchTheFreezeRecord() throws {
+        let trees = try #require(try Self.freeze()["pinnedTrees"] as? [String: String])
+        #expect(Set(trees.keys) == ["Sources/WWRender", "Tests/WWRenderTests"])
+        let package = Self.repository.appendingPathComponent("Packages/WaveWranglerKit")
+        for (path, frozen) in trees {
+            let actual = try Self.gitTreeID(package.appendingPathComponent(path))
+            #expect(actual == frozen, "\(path) is \(actual) but m2-freeze-render pins \(frozen): a frozen tree changed; record a new freeze revision before any holdout")
+        }
+    }
+
+    /// The M2 fixture registry lists this freeze, its record and its fixture with the frozen counts.
+    @Test func fixtureRegistryListsTheFreeze() throws {
+        let url = Self.freezeURL.deletingLastPathComponent().appendingPathComponent("m2-fixture-registry.json")
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let freezes = try #require(json["freezes"] as? [[String: Any]])
+        let entry = try #require(freezes.first { $0["freezeID"] as? String == "m2-freeze-render" })
+        #expect(entry["record"] as? String == "docs/m2/fixtures/m2-freeze-render.json")
+        #expect(entry["fixtures"] as? [String] == [RenderFixture.fixtureID])
+        let counts = try #require(entry["counts"] as? [String: Int])
+        #expect(counts["calibrationCases"] == RenderFixture.calibrationCases)
+        #expect(counts["holdoutCases"] == RenderFixture.holdoutCases)
+        let fixtures = try #require(entry["fixtureEntries"] as? [[String: Any]])
+        #expect(fixtures.count == 1)
+        let split = try #require(fixtures.first?["split"] as? [String: Any])
+        #expect(fixtures.first?["id"] as? String == RenderFixture.fixtureID)
+        #expect(split["calibration"] as? Int == RenderFixture.calibrationCases)
+        #expect(split["holdout"] as? Int == RenderFixture.holdoutCases)
+    }
+}

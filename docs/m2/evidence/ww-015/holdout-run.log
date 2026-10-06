@@ -1,0 +1,15 @@
+2026-10-06T16:39:42Z timemap-holdout-start
+Building for debugging...
+[Computing dependencies]
+[1 / 5]
+Build complete! (0.94 sec)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Time-map calibration (M2-TIMEMAP-001)" started.
+◇ Test holdoutSplitMeetsEveryFrozenGate() started.
+M2-TIMEMAP-001 holdout: cases=2100 draws=3910 occurrences=9364 spans=18426 maxFrameCount=274880552223 frameRoundTrips=154558 forwardGap=25024 forwardUnsupported=18679 inverseSource=231783 inverseGap=23152 inverseUnsupported=5949 quantisation N=231783 max=0.5 p95(nearest-rank)=0.46658590084369295
+✔ Test holdoutSplitMeetsEveryFrozenGate() passed after 2.699 seconds.
+✔ Suite "Time-map calibration (M2-TIMEMAP-001)" passed after 2.699 seconds.
+✔ Test run with 1 test in 1 suite passed after 2.699 seconds.
+2026-10-06T16:39:48Z timemap-holdout-end

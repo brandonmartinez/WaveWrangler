@@ -56,6 +56,8 @@ public enum TimeMapError: Error, Equatable, Sendable {
 
     // Provenance
     case clockApprovalGateNotMet([String])
+    /// A `clockApproved` epoch whose approval was issued for a different epoch ID or different segments.
+    case clockApprovalBindingMismatch(RecordingEpochID)
     case invalidMeasurement(String)
     case emptyDescription(String)
 

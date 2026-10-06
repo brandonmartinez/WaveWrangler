@@ -284,7 +284,7 @@ final class LibraryWindowState {
             let followUp = await store.services.location.perform(action)
             switch action {
             case .combine, .useOtherMacsVersion, .recoverEarlierVersion, .grantAccess, .tryAgain:
-                await store.libraryWasReplaced()
+                await store.libraryWasReplaced(published: store.services.location.lastActionPublished)
             case .librarySettings:
                 break
             }
@@ -314,10 +314,12 @@ final class LibraryWindowState {
         }
         switch response {
         case .alertFirstButtonReturn:
+            var used = true
             if case .failed(let reason) = await store.services.location.useOfferedLibrary() {
                 actionMessage = "Couldn't use that library: \(reason)"
+                used = false
             }
-            await store.libraryWasReplaced()
+            await store.libraryWasReplaced(published: used)
         case .alertSecondButtonReturn:
             perform(.grantAccess)
         default:

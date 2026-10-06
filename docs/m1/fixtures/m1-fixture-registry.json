@@ -1,11 +1,11 @@
 {
-  "registryVersion": "m1-fixtures-v7-frozen5-ref020",
-  "date": "2026-10-05",
+  "registryVersion": "m1-fixtures-v8-frozen6-ref020",
+  "date": "2026-10-06",
   "generatedBy": "docs/m1/fixtures/generate-registry.py (do not hand-edit; regenerate)",
   "owner": "Lead (protocol); WW-003 informational owner Pipeline",
   "issue": "https://github.com/brandonmartinez/WaveWrangler/issues/5",
   "protocol": "docs/m1/ww-003-fixture-protocol.md",
-  "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and m1-freeze-4 FAILED 99/100, both retained; M1-DUR-025 deferred by user to #146, post-M4; M1-REF-020: m1-freeze-1 holdout FAILED short 16/20, retained, re-frozen unchanged as m1-freeze-5 for one run with the fixed harness) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
+  "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and m1-freeze-4 FAILED 99/100, both retained; M1-DUR-025 deferred by user to #146, post-M4; M1-REF-020: m1-freeze-1 holdout FAILED short 16/20 and m1-freeze-5 holdout FAILED 18/20 (harness detection race, 0 product failures), both retained; re-frozen unchanged as m1-freeze-6 with a harness open-panel wait and fresh holdout seeds; m1-freeze-6 holdout PASSED 20/20) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
   "freezeRule": "Each family is frozen (generator source hash, recipe, truth, counts, gate) in a dated freeze record before its first holdout case runs. Counts may increase before freeze; never decrease below a frozen gate minimum without explicit Lead/Brandon approval.",
   "freeze": {
     "freezeID": "m1-freeze-1",
@@ -142,7 +142,43 @@
         "pinNote": "git object IDs at baseCommit (verify with: git rev-parse 7311950:<path>). The three harness files above are the binding pin: the run reports their blob IDs, and any difference fails the pin unless a new dated revision is made first. The whole-directory tree ID is informational, because unrelated UI test classes may merge before the run; the run reports the tree it actually ran."
       },
       "host": "The user's Mac mini (Apple M2 Pro, 12 cores, 32 GiB, macOS 27.0.1) under grant A and the standing Mac mini UI consent: build-for-testing on this Mac, test-without-building on the mini, one GUI run under the coordinator's GUI lock. The run record labels the host (sw_vers, hardware, Xcode).",
-      "postFreezeRule": "The holdout runs ONCE, on a clean commit that contains this revision's merge, and is recorded as-is: every scenario (pass, fail, not executed, abort) with its cycle, the commit SHA, the harness tree ID, the host label and the source SHA-256 and mtime checks, in docs/m1/evidence and this registry. A harness failure or abort is a FAILED scenario (no re-run, no replacement, no exclusion). Calibration (2 scenarios) may run before the holdout and is reported separately; it never tunes truth, counts or gates. Any further change needs a new dated revision before a further run."
+      "postFreezeRule": "The holdout runs ONCE, on a clean commit that contains this revision's merge, and is recorded as-is: every scenario (pass, fail, not executed, abort) with its cycle, the commit SHA, the harness tree ID, the host label and the source SHA-256 and mtime checks, in docs/m1/evidence and this registry. A harness failure or abort is a FAILED scenario (no re-run, no replacement, no exclusion). Calibration (2 scenarios) may run before the holdout and is reported separately; it never tunes truth, counts or gates. Any further change needs a new dated revision before a further run.",
+      "result": "FAILED (retained, not re-labelled): ran once 2026-10-06 09:09-09:23 EDT at cdb56bd6e4e4b2bc6d4f1f19924dc5f7f4220db1 (tree 04fd782b31b0f0cc171fd02748b46fc6d72dc9bd; pinned blobs matched) on the Mac mini; 20/20 executed, 18 pass, 2 fail: cycle 1 grant and cycle 1 relaunch. Cause: the harness checked for the sandboxed open panel once after a fixed 2 s sleep and missed the cold library-folder panel (shown as an app window 'open-panel'; the screen recording shows it on screen), so the folder was never chosen and the relaunch location check followed. No product failure observed; zero source writes in every scenario. Reported on #151."
+    },
+    {
+      "freezeID": "m1-freeze-6",
+      "date": "2026-10-06",
+      "recordedBy": "Mac (regression runner and M1 gate lane), on the Lead decision of 2026-10-06 relayed by the M1 coordinator: record m1-freeze-5 as FAIL 18/20 permanently (no waiver, no re-run on m1-freeze-5); fix the harness's panel detection and re-freeze with fresh holdout seeds",
+      "baseCommit": "c9709e7fee4908d6d70ce5ba3349cfd1e570de1d",
+      "baseCommitNote": "main when this revision was authored. It takes effect at the merge commit of the PR that adds it, and is made before any m1-freeze-6 run of M1-REF-020.",
+      "scope": "M1-REF-020 only. Its recipe, expected truth, split (2 calibration / 20 holdout GUI scenarios = 5 cycles x grant, relaunch, regrant, relink), gate and supported-claim limits are unchanged from m1-freeze-1. Every other registry entry, freeze revision and deferral is unchanged.",
+      "trigger": "The m1-freeze-5 holdout ran once at cdb56bd and failed 18/20 on a harness detection race (cycle 1 grant and relaunch); no product failure was observed. Follow-up #151.",
+      "retainedResults": [
+        {
+          "freeze": "m1-freeze-1",
+          "result": "FAILED (short; retained): 16/20 executed at 08f62ee; grant 4/4, relaunch 4/4, regrant 2/4, relink 2/4 = 12 pass, 4 fail; 4 not executed.",
+          "evidence": "https://github.com/brandonmartinez/WaveWrangler/pull/111"
+        },
+        {
+          "freeze": "m1-freeze-5",
+          "result": "FAILED (retained): 20/20 executed at cdb56bd; grant 4/5, relaunch 4/5, regrant 5/5, relink 5/5 = 18 pass, 2 fail (cycle 1 grant and relaunch: harness open-panel detection race); 0 product failures; zero source writes.",
+          "evidence": "https://github.com/brandonmartinez/WaveWrangler/issues/151"
+        }
+      ],
+      "harnessChange": "SourceGrantHoldoutUITests.choosePath: the fixed 2 s sleep and single check are replaced by a bounded wait (20 s) for any panel host: the panel service (com.apple.appkit.xpc.openAndSavePanelService) reported running, an app window with identifier 'open-panel' (what hosted the cold panel in the m1-freeze-5 cycle 1, per its xcresult), an app sheet or an app dialog. After detection the harness waits the frozen 2 s settle (measured from detection, not from the start of the wait) before typing, so a cold panel gets the same settle as a warm one and a warm panel is driven as before. A miss records what it saw (service state, app windows, sheet and dialog counts). No assertion is loosened: source SHA-256/mtime checks, location checks and written-items checks are unchanged.",
+      "seeds": "Fresh holdout seeds (the M1-REF-020 generator's seedDerivation and seedSplit in this registry): the holdout uses seed split 'holdout-f6' (seed = sha256('ww-m1-fixture|v1|M1-REF-020|holdout-f6|' + caseIndex), first 8 bytes big-endian), so the m1-freeze-1 and m1-freeze-5 holdout cases (split 'holdout') are not reused. Calibration seeds (split 'calibration') are unchanged. The run is still selected with TEST_RUNNER_WW_FIXTURE_SPLIT=holdout; the harness maps it to the seed split.",
+      "harness": {
+        "test": "WaveWranglerUITests/SourceGrantHoldoutUITests.swift testGrantRelaunchRegrantRelink, with TEST_RUNNER_WW_FIXTURE_SPLIT=holdout, TEST_RUNNER_WW_HOLDOUT_SCENARIOS=20 and WW_PROBE set. The harness fails a holdout run whose count isn't exactly 20, and fails if fewer than 20 scenarios were executed.",
+        "pinnedAtMerge": {
+          "WaveWranglerUITests/SourceGrantHoldoutUITests.swift": "c863b305c947ecc1b45d11d3ba9a7d663cd86667",
+          "WaveWranglerUITests/AcceptanceSupport.swift": "b2d87c3e843a6b3d6c0d267acd67319439021aa1",
+          "WaveWranglerUITests/UITestIsolation.swift": "20c7ae150abaa2084a0896952f1574790c30a2ba"
+        },
+        "pinNote": "Git blob IDs of the three binding harness files as merged by the PR that adds this revision (verify with git rev-parse <merge>:<path>). The run reports their blob IDs; any difference fails the pin unless a new dated revision is made first. The WaveWranglerUITests tree ID is informational; the run reports the tree it ran."
+      },
+      "productUnderTest": "The M1 product commit cdb56bd6e4e4b2bc6d4f1f19924dc5f7f4220db1 (main after it contains M2 code). The run builds for testing from a detached tree of cdb56bd with only this revision's merged harness and registry change applied, and reports both SHAs (product base and the local tree) plus the pinned blob IDs.",
+      "host": "The user's Mac mini (Apple M2 Pro, 12 cores, 32 GiB, macOS 27.0.1) under grant A and the standing Mac mini UI consent: build-for-testing on the dev Mac, test-without-building on the mini, one GUI run under the Mac mini gui-lock. The run record labels the host (sw_vers, hardware, Xcode).",
+      "postFreezeRule": "As m1-freeze-5: the holdout runs ONCE and is recorded as-is (every scenario with its cycle and case index, both SHAs, pinned blob IDs, tree ID, host and the source SHA-256 and mtime checks). A harness failure or abort is a FAILED scenario (no re-run, no replacement, no exclusion). Calibration (2-4 scenarios, calibration seeds only) may run first and is reported separately; it never tunes truth, counts or gates. Any further change needs a new dated revision before a further run."
     }
   ],
   "userDeferrals": [
@@ -317,7 +353,8 @@
       "m1-freeze-2": 0,
       "m1-freeze-3": 0,
       "m1-freeze-4": 0,
-      "m1-freeze-5": 1,
+      "m1-freeze-5": 0,
+      "m1-freeze-6": 1,
       "m1-freeze-4, deferred by user to #146": 1
     }
   },
@@ -2224,8 +2261,12 @@
       "automated": true,
       "generator": {
         "kind": "synthetic-deterministic",
-        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
-        "recipe": "Launch the sandboxed ad-hoc-signed app; select synthetic source files, a synthetic show document and a library folder via NSOpenPanel/NSSavePanel; quit; relaunch; resolve bookmarks; reopen show from library and Save; attempt source access after revocation/move to drive regrant."
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|M1-REF-020|\" + seedSplit[split] + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64, with seedSplit = {\"calibration\": \"calibration\", \"holdout\": \"holdout-f6\"} (m1-freeze-6); the m1-freeze-1 and m1-freeze-5 holdouts used split \"holdout\" directly",
+        "recipe": "Launch the sandboxed ad-hoc-signed app; select synthetic source files, a synthetic show document and a library folder via NSOpenPanel/NSSavePanel; quit; relaunch; resolve bookmarks; reopen show from library and Save; attempt source access after revocation/move to drive regrant.",
+        "seedSplit": {
+          "calibration": "calibration",
+          "holdout": "holdout-f6"
+        }
       },
       "expectedTruth": "Panel grant -> bookmark of the correct mode (source read-only; document and library folder read-write) -> relaunch resolve -> start/stop balanced; reopen+Save succeeds; regrant path works; zero source writes.",
       "permission": {
@@ -2240,7 +2281,7 @@
         "unit": "GUI scenarios"
       },
       "supportedClaimLimits": "Single claimed host, ad-hoc signed; not Developer ID/notarized/clean-install (WW-041/052).",
-      "evidenceStatus": "frozen m1-freeze-5 (2026-10-05; definition unchanged from m1-freeze-1); the m1-freeze-1 holdout FAILED as short and is retained: 16/20 scenarios executed at 08f62ee (12 pass, 4 fail, 4 not executed; all failures and the abort were harness defects; 0 product failures; reported in PR #111, docs/m1/evidence/ww-007-accessibility-responsiveness.md section 2.3); m1-freeze-5 holdout not yet reported in this registry"
+      "evidenceStatus": "frozen m1-freeze-6 (2026-10-06; definition unchanged from m1-freeze-1; harness open-panel wait and fresh holdout seeds); retained FAILED holdouts: m1-freeze-1 short 16/20 executed at 08f62ee (12 pass, 4 fail, 4 not executed; harness defects; PR #111) and m1-freeze-5 18/20 at cdb56bd (2 fail, cycle 1 grant and relaunch; harness open-panel detection race; 0 product failures; #151); m1-freeze-6 holdout PASSED 20/20 (one run, 2026-10-06 10:44-10:57 EDT, product cdb56bd + harness fix #190 as tested tree e34b954, pinned blobs matched, Mac mini; grant, relaunch, regrant and relink 5/5 each; zero source writes; seed split holdout-f6; reported on #151)"
     },
     {
       "id": "M1-SRC-OFF-001",

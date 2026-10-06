@@ -1,0 +1,867 @@
+{
+ "registryVersion": "m2-fixtures-v5-discontinuity-revision-2",
+ "date": "2026-10-06",
+ "owner": "Alignment (WW-016/WW-021, WW-018/WW-023, WW-017), Mac (WW-050, m2-freeze-decode and m2-freeze-timemap for WW-015); protocol pattern from docs/m1/ww-003-fixture-protocol.md",
+ "issues": [
+  "https://github.com/brandonmartinez/WaveWrangler/issues/15",
+  "https://github.com/brandonmartinez/WaveWrangler/issues/24",
+  "https://github.com/brandonmartinez/WaveWrangler/issues/13",
+  "https://github.com/brandonmartinez/WaveWrangler/issues/18",
+  "https://github.com/brandonmartinez/WaveWrangler/issues/45",
+  "https://github.com/brandonmartinez/WaveWrangler/issues/10",
+  "https://github.com/brandonmartinez/WaveWrangler/issues/11",
+  "https://github.com/brandonmartinez/WaveWrangler/issues/209"
+ ],
+ "protocol": "docs/m2/ww-019-m2-contracts.md §4 (freeze plan) and §5 (gates)",
+ "status": "Estimator, render, decode and timemap freeze records remain frozen; estimator and render holdouts ran once (#184, #185); decode and timemap holdouts have NOT RUN. The m2-freeze-discontinuity rev-1 holdout FAILED (3/50 false splits) and remains recorded unchanged. m2-freeze-discontinuity-2 supersedes it with fresh calibration and a still-NOT-RUN holdout; the new freeze takes effect when its PR merges.",
+ "freezeRule": "Each family is frozen (recipe, truth, split and counts, gate, generator tree IDs) in a dated freeze record under docs/m2/fixtures/ before its first holdout case runs. Counts may increase before a freeze and never decrease after one without an explicit, dated user decision.",
+ "freezes": [
+  {
+   "freezeID": "m2-freeze-estimator",
+   "record": "docs/m2/fixtures/m2-freeze-estimator.json",
+   "fixtures": [
+    "M2-EST-POS-001",
+    "M2-EST-POS-RESTART-001",
+    "M2-EST-POS-CYCLE-001",
+    "M2-EST-NEG-CONSTDELAY-001",
+    "M2-EST-NEG-VARDELAY-001",
+    "M2-EST-NEG-DISCONT-001",
+    "M2-EST-NEG-UNRELATED-001",
+    "M2-EST-NEG-SILENT-001",
+    "M2-EST-NEG-PERIODIC-001",
+    "M2-EST-NEG-DISCONNECTED-001",
+    "M2-EST-MECH-CYCLE-001"
+   ],
+   "status": "frozen; holdout not run"
+  },
+  {
+   "freezeID": "m2-freeze-render",
+   "record": "docs/m2/fixtures/m2-freeze-render.json",
+   "fixtures": [
+    "M2-RENDER-001"
+   ],
+   "status": "frozen; holdout not run; renderer a calibrated candidate, not qualified; listening BLOCKED",
+   "counts": {
+    "fixtures": 1,
+    "calibrationCases": 16,
+    "calibrationMultiSpanCases": 1,
+    "holdoutCases": 48,
+    "holdoutMultiSpanCases": 1
+   },
+   "fixtureEntries": [
+    {
+     "id": "M2-RENDER-001",
+     "title": "Group sample-rate correction: six-channel synthetic tones, landmarks and an isolated inactive channel",
+     "family": "render",
+     "role": "objective-gates",
+     "issues": [
+      "WW-018",
+      "WW-023"
+     ],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-render.recipe.seed",
+      "recipe": "m2-freeze-render.recipe (8 rate/clock strata, stratum = index mod 8, plus one fixed multi-span MixedGroup case)"
+     },
+     "expectedTruth": "WWTimeMap forward/inverse of the case GroupTimeMap (never the render plan); every objective gate in m2-freeze-render.gateValues met.",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by test code (WWRenderTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+     },
+     "provenance": "Authored by Alignment 2026-10-06 (m2-freeze-render, PR #181).",
+     "split": {
+      "calibration": 16,
+      "holdout": 48,
+      "unit": "cases",
+      "multiSpanCasePerSplit": 1,
+      "multiSpanNote": "fixed, identical in both splits; a regression case, not held out"
+     },
+     "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). Float32 linear PCM buffers at 12/16/44.1/48/96 kHz only; no compressed-codec, BWF or real-recording claim; no listening claim (BLOCKED).",
+     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-render (2026-10-06); holdout NOT RUN"
+    }
+   ]
+  },
+  {
+   "freezeID": "m2-freeze-decode",
+   "record": "docs/m2/fixtures/m2-freeze-decode.json",
+   "fixtures": [
+    "M2-DECODE-001"
+   ],
+   "status": "frozen; holdout not run",
+   "counts": {
+    "fixtures": 1,
+    "calibrationCases": 130,
+    "holdoutCases": 520
+   },
+   "fixtureEntries": [
+    {
+     "id": "M2-DECODE-001",
+     "title": "WW-050 decode truth: priming/padding per codec, decoded-frame origin, variable rate, bit-depth/channel metadata, and planted truncated/corrupt/unsupported/changed sources",
+     "family": "decode",
+     "role": "objective-gates",
+     "issues": [
+      "WW-050"
+     ],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-decode.generator.seedDerivation",
+      "recipe": "m2-freeze-decode.recipe (13 strata, stratum = index mod 13; planted variants rotate with index / 13)"
+     },
+     "expectedTruth": "The generator's written samples, frame count, format, channel count and landmark positions (never the decoder's report); each planted case's expected typed error; every gate in m2-freeze-decode.gateValues met.",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated by test code (WWDecodeTests) as files in a per-run $TMPDIR directory and decoded through the read-only content gateway. The M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+     },
+     "provenance": "Authored by Mac 2026-10-06 (m2-freeze-decode, WW-050 part 2).",
+     "split": {
+      "calibration": 130,
+      "holdout": 520,
+      "unit": "cases"
+     },
+     "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build) for only the container/codec/sample-format combinations the m2-freeze-decode recipe exercises (WAVE/AIFF/CAF linear PCM, ALAC in CAF/M4A, AAC in M4A/CAF, FLAC, Opus in CAF); AIFC and envelope sample formats the recipe does not draw are not covered. No claim for real recordings, other OS versions or formats outside the envelope.",
+     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-decode (2026-10-06); holdout NOT RUN"
+    }
+   ]
+  },
+  {
+   "freezeID": "m2-freeze-timemap",
+   "record": "docs/m2/fixtures/m2-freeze-timemap.json",
+   "fixtures": [
+    "M2-TIMEMAP-001"
+   ],
+   "status": "frozen; holdout not run",
+   "counts": {
+    "fixtures": 1,
+    "calibrationCases": 700,
+    "holdoutCases": 2100
+   },
+   "fixtureEntries": [
+    {
+     "id": "M2-TIMEMAP-001",
+     "title": "WW-015 clock/epoch/coordinate round trips: multi-segment, gap, unsupported, extreme rate ratio, edge nominal rate and long-occurrence timelines",
+     "family": "time-map",
+     "role": "objective-gates",
+     "issues": [
+      "WW-015"
+     ],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-timemap.generator.seedDerivation",
+      "recipe": "m2-freeze-timemap.recipe (7 strata, stratum = index mod 7, rejection-sampled SyntheticTimeMapGenerator timelines)"
+     },
+     "expectedTruth": "The exact-rational oracle from the generating parameters (M2-C3), never the compiled map; every gate in m2-freeze-timemap.gateValues met.",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by test code (WWTimeMapTests). The M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+     },
+     "provenance": "Authored by Mac 2026-10-06 (m2-freeze-timemap, for WW-015).",
+     "split": {
+      "calibration": 700,
+      "holdout": 2100,
+      "unit": "cases"
+     },
+     "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build) for the WWTimeMap exact-arithmetic envelope (nominal rates 1 Hz to 2^20 Hz, rate ratios 1/2 to 2). No estimator, lag-sign or real-clock claim.",
+     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-timemap (2026-10-06); holdout NOT RUN"
+    }
+   ]
+  },
+  {
+   "freezeID": "m2-freeze-discontinuity",
+   "record": "docs/m2/fixtures/m2-freeze-discontinuity.json",
+   "fixtures": [
+    "M2-SEG-NEG-CLEAN-001",
+    "M2-SEG-NEG-TRANSIENT-001",
+    "M2-SEG-NEG-SILENCE-001",
+    "M2-SEG-DROP-001",
+    "M2-SEG-INSERT-001",
+    "M2-SEG-STEP-001",
+    "M2-SEG-RESTART-001",
+    "M2-SEG-RATE-001",
+    "M2-SEG-COMPOUND-001"
+   ],
+   "status": "superseded by m2-freeze-discontinuity-2 after failed holdout (3/50 false splits); rev-1 evidence retained",
+   "counts": {
+    "fixtures": 9,
+    "calibrationCases": 48,
+    "calibrationPlants": 38,
+    "holdoutCases": 165,
+    "holdoutPlants": 130
+   },
+   "fixtureEntries": [
+    {
+     "id": "M2-SEG-NEG-CLEAN-001",
+     "title": "Clean negative: one smooth clock (ppm -100..100, offset -0.3..0.3 s), no discontinuity",
+     "stratum": "clean",
+     "family": "discontinuity",
+     "role": "negative",
+     "issues": [
+      "WW-017"
+     ],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-discontinuity.generator.seedDerivation",
+      "recipe": "m2-freeze-discontinuity.generator and .truth (SegmentPlan.make, stratum clean)"
+     },
+     "expectedTruth": "No discontinuity: any detection or more than one mapped region is a false split; the mapped region meets the WW-016 residual gate against clock truth. Scored against OccurrenceTruth only (m2-freeze-discontinuity.truth.scoring).",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by test code (WWAlignSegmentTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+     },
+     "provenance": "Authored by Alignment 2026-10-06 (m2-freeze-discontinuity, WW-017).",
+     "split": {
+      "calibration": 6,
+      "holdout": 20,
+      "unit": "cases"
+     },
+     "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). One target group, one declared span, 8/16 kHz Float32 PCM; planted sizes only in the stated ranges (smaller steps/rate changes are below the reported detection floor). Mapped regions are acousticConsistentProposal, never clockApproved; no real-recording, codec or device claim.",
+     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-discontinuity (2026-10-06); holdout NOT RUN"
+    },
+    {
+     "id": "M2-SEG-NEG-TRANSIENT-001",
+     "title": "Near-miss negative: 4-8 loud clicks or noise bursts heard only by the target, no clock change",
+     "stratum": "transient",
+     "family": "discontinuity",
+     "role": "near-miss-negative",
+     "issues": [
+      "WW-017"
+     ],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-discontinuity.generator.seedDerivation",
+      "recipe": "m2-freeze-discontinuity.generator and .truth (SegmentPlan.make, stratum transient)"
+     },
+     "expectedTruth": "No discontinuity: transients must not cause a split; mapped regions meet the WW-016 residual gate. Scored against OccurrenceTruth only (m2-freeze-discontinuity.truth.scoring).",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by test code (WWAlignSegmentTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+     },
+     "provenance": "Authored by Alignment 2026-10-06 (m2-freeze-discontinuity, WW-017).",
+     "split": {
+      "calibration": 4,
+      "holdout": 15,
+      "unit": "cases"
+     },
+     "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). One target group, one declared span, 8/16 kHz Float32 PCM; planted sizes only in the stated ranges (smaller steps/rate changes are below the reported detection floor). Mapped regions are acousticConsistentProposal, never clockApproved; no real-recording, codec or device claim.",
+     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-discontinuity (2026-10-06); holdout NOT RUN"
+    },
+    {
+     "id": "M2-SEG-NEG-SILENCE-001",
+     "title": "Near-miss negative: 3-8 s without shared sound (scene removed or target muted), no clock change",
+     "stratum": "silenceGap",
+     "family": "discontinuity",
+     "role": "near-miss-negative",
+     "issues": [
+      "WW-017"
+     ],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-discontinuity.generator.seedDerivation",
+      "recipe": "m2-freeze-discontinuity.generator and .truth (SegmentPlan.make, stratum silenceGap)"
+     },
+     "expectedTruth": "No discontinuity: the silence may be unsupported (noEvidence) but must not be a detection or split the mapped clock into more than one region. Scored against OccurrenceTruth only (m2-freeze-discontinuity.truth.scoring).",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by test code (WWAlignSegmentTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+     },
+     "provenance": "Authored by Alignment 2026-10-06 (m2-freeze-discontinuity, WW-017).",
+     "split": {
+      "calibration": 4,
+      "holdout": 15,
+      "unit": "cases"
+     },
+     "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). One target group, one declared span, 8/16 kHz Float32 PCM; planted sizes only in the stated ranges (smaller steps/rate changes are below the reported detection floor). Mapped regions are acousticConsistentProposal, never clockApproved; no real-recording, codec or device claim.",
+     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-discontinuity (2026-10-06); holdout NOT RUN"
+    },
+    {
+     "id": "M2-SEG-DROP-001",
+     "title": "Dropped samples: 5-500 ms (log-uniform, whole frames) removed mid-file",
+     "stratum": "dropped",
+     "family": "discontinuity",
+     "role": "objective-gates",
+     "issues": [
+      "WW-017"
+     ],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-discontinuity.generator.seedDerivation",
+      "recipe": "m2-freeze-discontinuity.generator and .truth (SegmentPlan.make, stratum dropped)"
+     },
+     "expectedTruth": "One planted offset step of +a*dropped/F at the plant frame; it must be flagged or unsupported, never bridged. Scored against OccurrenceTruth only (m2-freeze-discontinuity.truth.scoring).",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by test code (WWAlignSegmentTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+     },
+     "provenance": "Authored by Alignment 2026-10-06 (m2-freeze-discontinuity, WW-017).",
+     "split": {
+      "calibration": 6,
+      "holdout": 20,
+      "unit": "cases"
+     },
+     "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). One target group, one declared span, 8/16 kHz Float32 PCM; planted sizes only in the stated ranges (smaller steps/rate changes are below the reported detection floor). Mapped regions are acousticConsistentProposal, never clockApproved; no real-recording, codec or device claim.",
+     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-discontinuity (2026-10-06); holdout NOT RUN"
+    },
+    {
+     "id": "M2-SEG-INSERT-001",
+     "title": "Inserted samples: 5-500 ms (log-uniform) of noise or a repeat of the preceding frames",
+     "stratum": "inserted",
+     "family": "discontinuity",
+     "role": "objective-gates",
+     "issues": [
+      "WW-017"
+     ],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-discontinuity.generator.seedDerivation",
+      "recipe": "m2-freeze-discontinuity.generator and .truth (SegmentPlan.make, stratum inserted)"
+     },
+     "expectedTruth": "Inserted frames have no clock truth and must never be inside a mapped region; later truth shifts by -a*count/F; flagged or unsupported, never bridged. Scored against OccurrenceTruth only (m2-freeze-discontinuity.truth.scoring).",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by test code (WWAlignSegmentTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+     },
+     "provenance": "Authored by Alignment 2026-10-06 (m2-freeze-discontinuity, WW-017).",
+     "split": {
+      "calibration": 6,
+      "holdout": 20,
+      "unit": "cases"
+     },
+     "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). One target group, one declared span, 8/16 kHz Float32 PCM; planted sizes only in the stated ranges (smaller steps/rate changes are below the reported detection floor). Mapped regions are acousticConsistentProposal, never clockApproved; no real-recording, codec or device claim.",
+     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-discontinuity (2026-10-06); holdout NOT RUN"
+    },
+    {
+     "id": "M2-SEG-STEP-001",
+     "title": "Clock step: +/-5-500 ms (log-uniform, fractional frames)",
+     "stratum": "clockStep",
+     "family": "discontinuity",
+     "role": "objective-gates",
+     "issues": [
+      "WW-017"
+     ],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-discontinuity.generator.seedDerivation",
+      "recipe": "m2-freeze-discontinuity.generator and .truth (SegmentPlan.make, stratum clockStep)"
+     },
+     "expectedTruth": "One planted offset step at the plant frame; flagged or unsupported, never bridged. Scored against OccurrenceTruth only (m2-freeze-discontinuity.truth.scoring).",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by test code (WWAlignSegmentTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+     },
+     "provenance": "Authored by Alignment 2026-10-06 (m2-freeze-discontinuity, WW-017).",
+     "split": {
+      "calibration": 6,
+      "holdout": 20,
+      "unit": "cases"
+     },
+     "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). One target group, one declared span, 8/16 kHz Float32 PCM; planted sizes only in the stated ranges (smaller steps/rate changes are below the reported detection floor). Mapped regions are acousticConsistentProposal, never clockApproved; no real-recording, codec or device claim.",
+     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-discontinuity (2026-10-06); holdout NOT RUN"
+    },
+    {
+     "id": "M2-SEG-RESTART-001",
+     "title": "Recorder restart inside one declared span: 0.3-1.2 s pause and a new rate (ppm -100..100)",
+     "stratum": "restart",
+     "family": "discontinuity",
+     "role": "objective-gates",
+     "issues": [
+      "WW-017"
+     ],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-discontinuity.generator.seedDerivation",
+      "recipe": "m2-freeze-discontinuity.generator and .truth (SegmentPlan.make, stratum restart)"
+     },
+     "expectedTruth": "A step plus a rate change at the plant frame; flagged or unsupported, never bridged; each side its own epoch. Scored against OccurrenceTruth only (m2-freeze-discontinuity.truth.scoring).",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by test code (WWAlignSegmentTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+     },
+     "provenance": "Authored by Alignment 2026-10-06 (m2-freeze-discontinuity, WW-017).",
+     "split": {
+      "calibration": 6,
+      "holdout": 20,
+      "unit": "cases"
+     },
+     "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). One target group, one declared span, 8/16 kHz Float32 PCM; planted sizes only in the stated ranges (smaller steps/rate changes are below the reported detection floor). Mapped regions are acousticConsistentProposal, never clockApproved; no real-recording, codec or device claim.",
+     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-discontinuity (2026-10-06); holdout NOT RUN"
+    },
+    {
+     "id": "M2-SEG-RATE-001",
+     "title": "Mid-file rate change of 300-400 ppm (sign opposite to the current ppm), continuous in time",
+     "stratum": "rateChange",
+     "family": "discontinuity",
+     "role": "objective-gates",
+     "issues": [
+      "WW-017"
+     ],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-discontinuity.generator.seedDerivation",
+      "recipe": "m2-freeze-discontinuity.generator and .truth (SegmentPlan.make, stratum rateChange)"
+     },
+     "expectedTruth": "A slope change at the plant frame; flagged or unsupported, never bridged by one line. Scored against OccurrenceTruth only (m2-freeze-discontinuity.truth.scoring).",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by test code (WWAlignSegmentTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+     },
+     "provenance": "Authored by Alignment 2026-10-06 (m2-freeze-discontinuity, WW-017).",
+     "split": {
+      "calibration": 6,
+      "holdout": 20,
+      "unit": "cases"
+     },
+     "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). One target group, one declared span, 8/16 kHz Float32 PCM; planted sizes only in the stated ranges (smaller steps/rate changes are below the reported detection floor). Mapped regions are acousticConsistentProposal, never clockApproved; no real-recording, codec or device claim.",
+     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-discontinuity (2026-10-06); holdout NOT RUN"
+    },
+    {
+     "id": "M2-SEG-COMPOUND-001",
+     "title": "Two random discontinuities of the five classes, >= 15 s apart",
+     "stratum": "compound",
+     "family": "discontinuity",
+     "role": "objective-gates",
+     "issues": [
+      "WW-017"
+     ],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-discontinuity.generator.seedDerivation",
+      "recipe": "m2-freeze-discontinuity.generator and .truth (SegmentPlan.make, stratum compound)"
+     },
+     "expectedTruth": "Both plants flagged or unsupported, never bridged; regions between them meet the WW-016 residual gate. Scored against OccurrenceTruth only (m2-freeze-discontinuity.truth.scoring).",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by test code (WWAlignSegmentTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+     },
+     "provenance": "Authored by Alignment 2026-10-06 (m2-freeze-discontinuity, WW-017).",
+     "split": {
+      "calibration": 4,
+      "holdout": 15,
+      "unit": "cases"
+     },
+     "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). One target group, one declared span, 8/16 kHz Float32 PCM; planted sizes only in the stated ranges (smaller steps/rate changes are below the reported detection floor). Mapped regions are acousticConsistentProposal, never clockApproved; no real-recording, codec or device claim.",
+     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-discontinuity (2026-10-06); holdout NOT RUN"
+    }
+   ]
+  },
+  {
+   "freezeID": "m2-freeze-discontinuity-2",
+   "record": "docs/m2/fixtures/m2-freeze-discontinuity-2.json",
+   "fixtures": [
+    "M2-SEG2-NEG-CLEAN-001",
+    "M2-SEG2-NEG-TRANSIENT-001",
+    "M2-SEG2-NEG-SILENCE-001",
+    "M2-SEG2-DROP-001",
+    "M2-SEG2-INSERT-001",
+    "M2-SEG2-STEP-001",
+    "M2-SEG2-RESTART-001",
+    "M2-SEG2-RATE-001",
+    "M2-SEG2-COMPOUND-001"
+   ],
+   "status": "frozen revision 2; calibration only; holdout NOT RUN; never clockApproved",
+   "counts": {
+    "fixtures": 9,
+    "calibrationCases": 70,
+    "calibrationPlants": 38,
+    "holdoutCases": 165,
+    "holdoutPlants": 130
+   },
+   "fixtureEntries": [
+    {"id": "M2-SEG2-NEG-CLEAN-001", "stratum": "clean", "split": {"calibration": 6, "holdout": 20}},
+    {"id": "M2-SEG2-NEG-TRANSIENT-001", "stratum": "transient", "split": {"calibration": 15, "holdout": 15}},
+    {"id": "M2-SEG2-NEG-SILENCE-001", "stratum": "silenceGap", "split": {"calibration": 15, "holdout": 15}},
+    {"id": "M2-SEG2-DROP-001", "stratum": "dropped", "split": {"calibration": 6, "holdout": 20}},
+    {"id": "M2-SEG2-INSERT-001", "stratum": "inserted", "split": {"calibration": 6, "holdout": 20}},
+    {"id": "M2-SEG2-STEP-001", "stratum": "clockStep", "split": {"calibration": 6, "holdout": 20}},
+    {"id": "M2-SEG2-RESTART-001", "stratum": "restart", "split": {"calibration": 6, "holdout": 20}},
+    {"id": "M2-SEG2-RATE-001", "stratum": "rateChange", "split": {"calibration": 6, "holdout": 20}},
+    {"id": "M2-SEG2-COMPOUND-001", "stratum": "compound", "split": {"calibration": 4, "holdout": 15}}
+   ]
+  }
+ ],
+ "seedDerivation": "SplitMix64. caseSeed(master, stratum, index) = first output of SplitMix64(seed: master XOR fnv1a64(UTF-8 stratum.rawValue) XOR (index &* 0x9E3779B97F4A7C15)) (SyntheticGenerator.swift). Every draw for a case comes from a SplitMix64 stream seeded with caseSeed, in the order written in CalibrationPlan.make.",
+ "counts": {
+  "fixtures": 11,
+  "calibrationCases": 37,
+  "calibrationEpochs": 43,
+  "holdoutCases": 140,
+  "holdoutEpochs": 170
+ },
+ "fixtures": [
+  {
+   "id": "M2-EST-POS-001",
+   "title": "Clock offset and drift with a small constant acoustic path",
+   "stratum": "positive",
+   "family": "estimator",
+   "role": "positive",
+   "issues": [
+    "WW-016",
+    "WW-021"
+   ],
+   "automated": true,
+   "generator": {
+    "kind": "synthetic-deterministic",
+    "seedDerivation": "m2-freeze-estimator.generator.seedDerivation with stratum name 'positive'",
+    "recipe": "Reference 8 kHz, 126 s. One target at 8 or 16 kHz, 120 s: ppm -100..100, offset -1.5..1.5 s, constant acoustic path 0..1 ms, gain 0.5..1.5, noise 0.003..0.01; overlap 3..117 s."
+   },
+   "expectedTruth": "A proposal whose clock-truth residuals meet the gate, with every window gate met.",
+   "permission": {
+    "class": "authorized-synthetic",
+    "status": "authorized",
+    "scope": "Generated in memory by test code (WWAlignEstimateTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+   },
+   "provenance": "Authored by Alignment 2026-10-06 (this registry and m2-freeze-estimator). Clock truth is drawn by the generator independently of the estimator under test.",
+   "split": {
+    "calibration": 12,
+    "holdout": 40,
+    "unit": "cases",
+    "epochsPerCase": 1
+   },
+   "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). No claim about real rooms, real recorders, compressed codecs, reverberant or moving sources, or polarity-inverted microphones (the estimator requires positive-peak polarity, so an inverted mic abstains). Residuals include the generator's 0..1 ms acoustic path, which no audio-only method can separate from offset.",
+   "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-estimator (2026-10-06); holdout NOT RUN"
+  },
+  {
+   "id": "M2-EST-POS-RESTART-001",
+   "title": "Recorder restart: two declared epochs",
+   "stratum": "positiveRestart",
+   "family": "estimator",
+   "role": "positive",
+   "issues": [
+    "WW-016",
+    "WW-021"
+   ],
+   "automated": true,
+   "generator": {
+    "kind": "synthetic-deterministic",
+    "seedDerivation": "m2-freeze-estimator.generator.seedDerivation with stratum name 'positiveRestart'",
+    "recipe": "One target group with two 58 s epochs starting at group-clock 0 and 62 s, each with its own ppm and offset; overlap 2..56 s."
+   },
+   "expectedTruth": "Each epoch is estimated independently, flagged restartedEpoch and never bridged; each meets the gate.",
+   "permission": {
+    "class": "authorized-synthetic",
+    "status": "authorized",
+    "scope": "Generated in memory by test code (WWAlignEstimateTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+   },
+   "provenance": "Authored by Alignment 2026-10-06 (this registry and m2-freeze-estimator). Clock truth is drawn by the generator independently of the estimator under test.",
+   "split": {
+    "calibration": 2,
+    "holdout": 10,
+    "unit": "cases",
+    "epochsPerCase": 2
+   },
+   "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). No claim about real rooms, real recorders, compressed codecs, reverberant or moving sources, or polarity-inverted microphones (the estimator requires positive-peak polarity, so an inverted mic abstains).",
+   "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-estimator (2026-10-06); holdout NOT RUN"
+  },
+  {
+   "id": "M2-EST-POS-CYCLE-001",
+   "title": "Three groups (cycle measured)",
+   "stratum": "positiveThreeGroup",
+   "family": "estimator",
+   "role": "positive",
+   "issues": [
+    "WW-016",
+    "WW-021"
+   ],
+   "automated": true,
+   "generator": {
+    "kind": "synthetic-deterministic",
+    "seedDerivation": "m2-freeze-estimator.generator.seedDerivation with stratum name 'positiveThreeGroup'",
+    "recipe": "Two target groups with independent truths over the same scene."
+   },
+   "expectedTruth": "Both targets propose within the gate; the (reference, i, j) cycle is measured and closes.",
+   "permission": {
+    "class": "authorized-synthetic",
+    "status": "authorized",
+    "scope": "Generated in memory by test code (WWAlignEstimateTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+   },
+   "provenance": "Authored by Alignment 2026-10-06 (this registry and m2-freeze-estimator). Clock truth is drawn by the generator independently of the estimator under test.",
+   "split": {
+    "calibration": 2,
+    "holdout": 10,
+    "unit": "cases",
+    "epochsPerCase": 2
+   },
+   "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). No claim about real rooms, real recorders, compressed codecs, reverberant or moving sources, or polarity-inverted microphones (the estimator requires positive-peak polarity, so an inverted mic abstains).",
+   "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-estimator (2026-10-06); holdout NOT RUN"
+  },
+  {
+   "id": "M2-EST-NEG-CONSTDELAY-001",
+   "title": "Constant 35 ms acoustic delay",
+   "stratum": "constantDelay",
+   "family": "estimator",
+   "role": "negative (acoustic-delay)",
+   "issues": [
+    "WW-016",
+    "WW-021"
+   ],
+   "automated": true,
+   "generator": {
+    "kind": "synthetic-deterministic",
+    "seedDerivation": "m2-freeze-estimator.generator.seedDerivation with stratum name 'constantDelay'",
+    "recipe": "As positive, but with a constant 35 ms acoustic delay instead of 0..1 ms."
+   },
+   "expectedTruth": "Only acousticConsistentProposal or an abstention; never clockApproved. Any proposal is about 35 ms clock-wrong (reported).",
+   "permission": {
+    "class": "authorized-synthetic",
+    "status": "authorized",
+    "scope": "Generated in memory by test code (WWAlignEstimateTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+   },
+   "provenance": "Authored by Alignment 2026-10-06 (this registry and m2-freeze-estimator). Clock truth is drawn by the generator independently of the estimator under test.",
+   "split": {
+    "calibration": 3,
+    "holdout": 10,
+    "unit": "cases",
+    "epochsPerCase": 1
+   },
+   "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). No claim about real rooms, real recorders, compressed codecs, reverberant or moving sources, or polarity-inverted microphones (the estimator requires positive-peak polarity, so an inverted mic abstains).",
+   "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-estimator (2026-10-06); holdout NOT RUN"
+  },
+  {
+   "id": "M2-EST-NEG-VARDELAY-001",
+   "title": "Variable acoustic delay ramping 20 to 50 ms",
+   "stratum": "variableDelay",
+   "family": "estimator",
+   "role": "negative (acoustic-delay)",
+   "issues": [
+    "WW-016",
+    "WW-021"
+   ],
+   "automated": true,
+   "generator": {
+    "kind": "synthetic-deterministic",
+    "seedDerivation": "m2-freeze-estimator.generator.seedDerivation with stratum name 'variableDelay'",
+    "recipe": "As positive, but the acoustic delay ramps from 20 to 50 ms over the target, plus a 0.3 ms wobble with a 25..45 s period."
+   },
+   "expectedTruth": "Only acousticConsistentProposal or an abstention; never clockApproved. Any proposal is 35-50 ms clock-wrong with a biased ppm (reported).",
+   "permission": {
+    "class": "authorized-synthetic",
+    "status": "authorized",
+    "scope": "Generated in memory by test code (WWAlignEstimateTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+   },
+   "provenance": "Authored by Alignment 2026-10-06 (this registry and m2-freeze-estimator). Clock truth is drawn by the generator independently of the estimator under test.",
+   "split": {
+    "calibration": 3,
+    "holdout": 10,
+    "unit": "cases",
+    "epochsPerCase": 1
+   },
+   "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). No claim about real rooms, real recorders, compressed codecs, reverberant or moving sources, or polarity-inverted microphones (the estimator requires positive-peak polarity, so an inverted mic abstains).",
+   "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-estimator (2026-10-06); holdout NOT RUN"
+  },
+  {
+   "id": "M2-EST-NEG-DISCONT-001",
+   "title": "Undeclared 40 ms clock step",
+   "stratum": "discontinuity",
+   "family": "estimator",
+   "role": "negative (abstention required)",
+   "issues": [
+    "WW-016",
+    "WW-021"
+   ],
+   "automated": true,
+   "generator": {
+    "kind": "synthetic-deterministic",
+    "seedDerivation": "m2-freeze-estimator.generator.seedDerivation with stratum name 'discontinuity'",
+    "recipe": "As positive, plus a +/-40 ms clock step at group-clock 40..80 s."
+   },
+   "expectedTruth": "Abstain (discontinuous); never a smooth map across the step.",
+   "permission": {
+    "class": "authorized-synthetic",
+    "status": "authorized",
+    "scope": "Generated in memory by test code (WWAlignEstimateTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+   },
+   "provenance": "Authored by Alignment 2026-10-06 (this registry and m2-freeze-estimator). Clock truth is drawn by the generator independently of the estimator under test.",
+   "split": {
+    "calibration": 3,
+    "holdout": 10,
+    "unit": "cases",
+    "epochsPerCase": 1
+   },
+   "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). No claim about real rooms, real recorders, compressed codecs, reverberant or moving sources, or polarity-inverted microphones (the estimator requires positive-peak polarity, so an inverted mic abstains).",
+   "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-estimator (2026-10-06); holdout NOT RUN"
+  },
+  {
+   "id": "M2-EST-NEG-UNRELATED-001",
+   "title": "Unrelated scene",
+   "stratum": "unrelated",
+   "family": "estimator",
+   "role": "negative (abstention required)",
+   "issues": [
+    "WW-016",
+    "WW-021"
+   ],
+   "automated": true,
+   "generator": {
+    "kind": "synthetic-deterministic",
+    "seedDerivation": "m2-freeze-estimator.generator.seedDerivation with stratum name 'unrelated'",
+    "recipe": "The target hears an independently drawn scene."
+   },
+   "expectedTruth": "Abstain (weak or ambiguous); no proposal.",
+   "permission": {
+    "class": "authorized-synthetic",
+    "status": "authorized",
+    "scope": "Generated in memory by test code (WWAlignEstimateTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+   },
+   "provenance": "Authored by Alignment 2026-10-06 (this registry and m2-freeze-estimator). Clock truth is drawn by the generator independently of the estimator under test.",
+   "split": {
+    "calibration": 3,
+    "holdout": 10,
+    "unit": "cases",
+    "epochsPerCase": 1
+   },
+   "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). No claim about real rooms, real recorders, compressed codecs, reverberant or moving sources, or polarity-inverted microphones (the estimator requires positive-peak polarity, so an inverted mic abstains).",
+   "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-estimator (2026-10-06); holdout NOT RUN"
+  },
+  {
+   "id": "M2-EST-NEG-SILENT-001",
+   "title": "Silent target",
+   "stratum": "silent",
+   "family": "estimator",
+   "role": "negative (abstention required)",
+   "issues": [
+    "WW-016",
+    "WW-021"
+   ],
+   "automated": true,
+   "generator": {
+    "kind": "synthetic-deterministic",
+    "seedDerivation": "m2-freeze-estimator.generator.seedDerivation with stratum name 'silent'",
+    "recipe": "The target hears nothing (noise RMS 1e-6)."
+   },
+   "expectedTruth": "Abstain (silent); no proposal.",
+   "permission": {
+    "class": "authorized-synthetic",
+    "status": "authorized",
+    "scope": "Generated in memory by test code (WWAlignEstimateTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+   },
+   "provenance": "Authored by Alignment 2026-10-06 (this registry and m2-freeze-estimator). Clock truth is drawn by the generator independently of the estimator under test.",
+   "split": {
+    "calibration": 2,
+    "holdout": 10,
+    "unit": "cases",
+    "epochsPerCase": 1
+   },
+   "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). No claim about real rooms, real recorders, compressed codecs, reverberant or moving sources, or polarity-inverted microphones (the estimator requires positive-peak polarity, so an inverted mic abstains).",
+   "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-estimator (2026-10-06); holdout NOT RUN"
+  },
+  {
+   "id": "M2-EST-NEG-PERIODIC-001",
+   "title": "Periodic scene",
+   "stratum": "periodic",
+   "family": "estimator",
+   "role": "negative (abstention required)",
+   "issues": [
+    "WW-016",
+    "WW-021"
+   ],
+   "automated": true,
+   "generator": {
+    "kind": "synthetic-deterministic",
+    "seedDerivation": "m2-freeze-estimator.generator.seedDerivation with stratum name 'periodic'",
+    "recipe": "Reference and target hear one chirp plus one event, repeated every 0.2..1.8 s."
+   },
+   "expectedTruth": "Abstain (periodic or ambiguous); no proposal.",
+   "permission": {
+    "class": "authorized-synthetic",
+    "status": "authorized",
+    "scope": "Generated in memory by test code (WWAlignEstimateTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+   },
+   "provenance": "Authored by Alignment 2026-10-06 (this registry and m2-freeze-estimator). Clock truth is drawn by the generator independently of the estimator under test.",
+   "split": {
+    "calibration": 3,
+    "holdout": 10,
+    "unit": "cases",
+    "epochsPerCase": 1
+   },
+   "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). No claim about real rooms, real recorders, compressed codecs, reverberant or moving sources, or polarity-inverted microphones (the estimator requires positive-peak polarity, so an inverted mic abstains).",
+   "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-estimator (2026-10-06); holdout NOT RUN"
+  },
+  {
+   "id": "M2-EST-NEG-DISCONNECTED-001",
+   "title": "Disconnected epoch",
+   "stratum": "disconnected",
+   "family": "estimator",
+   "role": "negative (abstention required)",
+   "issues": [
+    "WW-016",
+    "WW-021"
+   ],
+   "automated": true,
+   "generator": {
+    "kind": "synthetic-deterministic",
+    "seedDerivation": "m2-freeze-estimator.generator.seedDerivation with stratum name 'disconnected'",
+    "recipe": "The target starts at group-clock 135..200 s, after the reference ends at 126 s (search +/-2 s), and hears its own later scene."
+   },
+   "expectedTruth": "Abstain (disconnected); no proposal.",
+   "permission": {
+    "class": "authorized-synthetic",
+    "status": "authorized",
+    "scope": "Generated in memory by test code (WWAlignEstimateTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+   },
+   "provenance": "Authored by Alignment 2026-10-06 (this registry and m2-freeze-estimator). Clock truth is drawn by the generator independently of the estimator under test.",
+   "split": {
+    "calibration": 2,
+    "holdout": 10,
+    "unit": "cases",
+    "epochsPerCase": 1
+   },
+   "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). No claim about real rooms, real recorders, compressed codecs, reverberant or moving sources, or polarity-inverted microphones (the estimator requires positive-peak polarity, so an inverted mic abstains).",
+   "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-estimator (2026-10-06); holdout NOT RUN"
+  },
+  {
+   "id": "M2-EST-MECH-CYCLE-001",
+   "title": "Cycle conflict (mechanism)",
+   "stratum": "cycleConflict",
+   "family": "estimator",
+   "role": "negative (abstention required)",
+   "issues": [
+    "WW-016",
+    "WW-021"
+   ],
+   "automated": true,
+   "generator": {
+    "kind": "synthetic-deterministic",
+    "seedDerivation": "m2-freeze-estimator.generator.seedDerivation with stratum name 'cycleConflict'",
+    "recipe": "The reference hears scene S1. Targets i and j hear S1 plus a second source S2 at gain 1.6 that the reference never hears; j's S2 is delayed 20 ms. Noise 0.003."
+   },
+   "expectedTruth": "The direct i-j measurement disagrees with the reference path by about 20 ms, so both epochs abstain (cycleInconsistent).",
+   "permission": {
+    "class": "authorized-synthetic",
+    "status": "authorized",
+    "scope": "Generated in memory by test code (WWAlignEstimateTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+   },
+   "provenance": "Authored by Alignment 2026-10-06 (this registry and m2-freeze-estimator). Clock truth is drawn by the generator independently of the estimator under test.",
+   "split": {
+    "calibration": 2,
+    "holdout": 10,
+    "unit": "cases",
+    "epochsPerCase": 2
+   },
+   "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). No claim about real rooms, real recorders, compressed codecs, reverberant or moving sources, or polarity-inverted microphones (the estimator requires positive-peak polarity, so an inverted mic abstains). Mechanism check only: it shows that inconsistent pairwise solutions are caught; it cannot detect a delay common to every path.",
+   "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-estimator (2026-10-06); holdout NOT RUN"
+  }
+ ],
+ "countsScope": "Top-level counts cover m2-freeze-estimator only; other freezes carry their own counts in their freezes[] entry. fixtures[] lists estimator strata only (WWAlignEstimateTests pins that shape); other families list theirs in freezes[].fixtureEntries."
+}
