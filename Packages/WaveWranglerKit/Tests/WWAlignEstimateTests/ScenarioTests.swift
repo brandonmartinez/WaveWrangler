@@ -63,7 +63,7 @@ func proposal(_ estimate: EpochEstimate) -> AcousticProposal? {
     return nil
 }
 
-@Suite("Estimator scenarios")
+@Suite("Estimator scenarios", .enabled(if: EstimatorHeavyGate.enabled, EstimatorHeavyGate.reason))
 struct ScenarioTests {
     @Test(arguments: [8000, 16000, 44100, 48000, 96000])
     func positiveAtAnyRateMeetsClockTruth(rate: Int) throws {

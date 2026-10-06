@@ -5,8 +5,8 @@ Swift 6.4, debug build. Code measured: the PR that adds this note (`brandonmarti
 SHA in the PR), estimator `ww-align-estimate/1`. **This is calibration only; the holdout has NOT run.** The
 frozen definition is `docs/m2/fixtures/m2-freeze-estimator.json`, the registry is
 `docs/m2/fixtures/m2-fixture-registry.json`, and the holdout runs once in a separate follow-up PR. Command,
-from `Packages/WaveWranglerKit`: `swift test --scratch-path .build/swiftpm --filter CalibrationTests`
-(52.0 s), master seed `0x57571600CA11B000`. That seed gives 37 cases and 43 epochs, generated in memory by
+from `Packages/WaveWranglerKit`: `WW_ESTIMATOR_TESTS=1 swift test --scratch-path .build/swiftpm --filter CalibrationTests`
+(52.0 s; `scripts/test.sh` runs it, with the scenario suite, in a serialized estimator pass), master seed `0x57571600CA11B000`. That seed gives 37 cases and 43 epochs, generated in memory by
 `SyntheticGenerator`. Each case has a reference at 8 kHz for 126 s and targets at 8 or 16 kHz for 120 s.
 Clock truth is ppm −100…100 and offset −1.5…1.5 s, and the truth is drawn independently of the estimator.
 Residuals are |proposal(u) − clock truth(u)| on a 1 s grid over the declared overlap, and are **never** measured
@@ -69,5 +69,6 @@ or sync track, or a user-confirmed anchor) and a new freeze.
 - The strict consistency fit may over-abstain on real material.
 - Cycle checks need ≥5 shared pair windows.
 - The silence floor is a centred RMS of 1e-4.
-- Calibration runs in a debug build: 52 s alone, 73 s inside the parallel `swift test` pass of `scripts/test.sh`.
+- Calibration and the scenario suite are CPU-heavy (debug build; calibration 52 s on this host). They run only in the serialized estimator pass,
+  because in the parallel pass they starved other suites' liveness waits on the CI runner.
 - Under the frozen window rule, an abstaining positive fails the gate, so positive yield is gated as well as residuals.

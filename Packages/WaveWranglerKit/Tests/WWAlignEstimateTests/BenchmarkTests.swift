@@ -8,6 +8,14 @@ enum EstimatorTimingGate {
     static let enabled = ProcessInfo.processInfo.environment["WW_TIMING_TESTS"] == "1"
 }
 
+/// The CPU-heavy suites (scenarios and calibration) run in scripts/test.sh's serialized estimator pass, alone in
+/// their process. In the parallel `swift test` pass their synchronous signal processing would occupy the
+/// cooperative pool for minutes on a small CI runner and starve other suites' liveness waits.
+enum EstimatorHeavyGate {
+    static let enabled = ProcessInfo.processInfo.environment["WW_ESTIMATOR_TESTS"] == "1"
+    static let reason: Comment = "serialized estimator pass (WW_ESTIMATOR_TESTS=1, scripts/test.sh)"
+}
+
 /// Throughput report for the serialized timing pass (scripts/test.sh). Prints only: the estimator has no
 /// latency gate yet, and wall-clock assertions are not deterministic.
 @Suite("Estimator benchmark")

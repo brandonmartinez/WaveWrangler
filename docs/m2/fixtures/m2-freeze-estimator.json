@@ -15,7 +15,7 @@
  "scope": "Every M2-EST-* entry in the registry: stratum recipe, clock truth, calibration/holdout seeds and counts, scoring, and the gate exactly as written here. Frozen code: the WWAlignEstimate source tree and the WWAlignEstimateTests tree (generator, plan, gate evaluator and holdout harness), pinned by git tree ID.",
  "pinnedTrees": {
   "Sources/WWAlignEstimate": "1896b4656d78415af6ba2c8b3daf13d10256819e",
-  "Tests/WWAlignEstimateTests": "00024e7fa1be8e6762791322964f0b5d37a77b4b"
+  "Tests/WWAlignEstimateTests": "09d1b1653cc2c9eafb4241337a1ff3ddc9fa15ca"
  },
  "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit. HoldoutTests.estimatorAndHarnessTreesMatchTheFreezeRecord recomputes both git tree IDs from the working tree on every test run and fails on any difference. A change to either tree after the freeze is a new dated freeze revision with a fresh holdout; the earlier record is retained.",
  "dependencyTreesAtFreeze": {
@@ -132,7 +132,7 @@
  },
  "calibrationSummary": {
   "host": "Apple M5 Max, 18 cores, 128 GiB, macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, debug build",
-  "command": "cd Packages/WaveWranglerKit && swift test --scratch-path .build/swiftpm --filter CalibrationTests",
+  "command": "cd Packages/WaveWranglerKit && WW_ESTIMATOR_TESTS=1 swift test --scratch-path .build/swiftpm --filter CalibrationTests (scripts/test.sh runs it in the serialized estimator pass)",
   "result": "gate PASS on calibration: positives 20/20 epochs proposed, pooled clock residual p95 0.9659 ms / max 0.9767 ms over 2060 grid points; false accepts 0; acoustic-delay 6/6 emitted as acousticConsistentProposal only, 0 within clock gates if promoted (constantDelay max 35.0107 ms, variableDelay max 49.3176 ms).",
   "perStratum": "docs/m2/evidence/ww-016-estimator-calibration.md"
  },
