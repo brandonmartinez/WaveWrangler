@@ -25,7 +25,8 @@ struct EpisodeSetupContent: View {
         }
         .background(WindowReader { window in
             // Watch for close synchronously, before any lease is taken in the Task below.
-            if let window { SetupEngineProvider.watchClose(of: window) }
+            guard let window else { return }
+            SetupEngineProvider.watchClose(of: window)
             Task { @MainActor in connect(to: window) }
         })
         .onAppear {
@@ -78,14 +79,27 @@ private struct WindowReader: NSViewRepresentable {
 
     func updateNSView(_ view: ReaderView, context: Context) {
         view.onWindow = onWindow
-        if let window = view.window { onWindow(window) }
+        view.reportWindowIfNeeded()
     }
 
     final class ReaderView: NSView {
         var onWindow: ((NSWindow?) -> Void)?
+        private weak var reportedWindow: NSWindow?
+
+        func reportWindowIfNeeded() {
+            guard let window, window !== reportedWindow else { return }
+            reportedWindow = window
+            onWindow?(window)
+        }
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            onWindow?(window)
+            if window == nil {
+                reportedWindow = nil
+                onWindow?(nil)
+            } else {
+                reportWindowIfNeeded()
+            }
         }
     }
 }
@@ -263,10 +277,11 @@ private struct SourcesSection: View {
             GeometryReader { geometry in
                 SourcesTable(model: model, rows: presentation.sourceRows, width: geometry.size.width)
                     .focused(focusedTable, equals: .sources)
-                    .onChange(of: SetupColumnPlan.columns(forWidth: geometry.size.width, scale: Double(textScale))) {
+                    .onChange(of: textScale) {
                         SetupTableFocus.fitColumns("ww.setup.sources", in: model.window())
                     }
-                    .onChange(of: geometry.size.width) {
+                    .onChange(of: geometry.size.width) { oldWidth, _ in
+                        guard oldWidth > 0 else { return }
                         SetupTableFocus.fitColumns("ww.setup.sources", in: model.window())
                     }
             }
