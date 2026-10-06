@@ -23,6 +23,10 @@ import Foundation
 /// - `-WWUITestFailFormatUpdate YES` (#159 D15, T21 failure case): every format update fails at M3 (after the
 ///   backup is preserved and the update validated, before anything is published), so the original stays unchanged.
 ///
+/// - `-WWUITestRetainOlderCheckpoint <base64 schema 1 show>` (#159 F-OLDER-BAD): before the first show file is read,
+///   keeps those bytes as a retained recovery checkpoint of their show, located at that file, as an M1 save would
+///   have left them, so a damaged older file can offer its recovered copy.
+///
 /// Debug builds only: in Release the whole type is compiled out, so `-WWUITestHooks YES` and the
 /// distributed notifications have no effect (`PersistenceEnvironment.isUITestRun` is always `false`).
 #if DEBUG
@@ -50,6 +54,21 @@ enum UITestHooks {
             document.windowControllers.first?.window?.makeKeyAndOrderFront(nil)
         } catch {
             NSApp.presentError(error)
+        }
+    }
+
+    /// `-WWUITestRetainOlderCheckpoint`: see the type's documentation. Runs before launch, after any storage reset.
+    static func seedOlderCheckpointIfRequested() {
+        guard PersistenceEnvironment.isUITestRun,
+              let encoded = UserDefaults.standard.string(forKey: "WWUITestRetainOlderCheckpoint"),
+              let bytes = Data(base64Encoded: encoded),
+              let older = try? ShowSchemaMigration.decodeUpgradingOlder(bytes) else { return }
+        let key = DocumentKey.show(older.payload.show.id)
+        ShowDocument.debugBeforeRead = { url in
+            ShowDocument.debugBeforeRead = nil
+            let recovery = PersistenceEnvironment.recovery
+            _ = try? recovery.retainCheckpoint(bytes, for: key)
+            try? recovery.recordLocation(url, for: key)
         }
     }
 

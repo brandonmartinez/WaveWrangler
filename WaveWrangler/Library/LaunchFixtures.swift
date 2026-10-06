@@ -18,6 +18,7 @@ import WWPersistence
 /// - `-WWUITestResetStorage YES` (with `-WWUITestHooks YES`): delete the isolated UI-test storage (library,
 ///   show locations, recovery) so a test starts clean; later launches without it keep the data (relaunch).
 /// - `-WWUITestOpenWithoutShowWindows <folder/name.wwshow>`: see `UITestHooks` (restoration-equivalent open).
+/// - `-WWUITestRetainOlderCheckpoint <base64>`: see `UITestHooks` (#159 F-OLDER-BAD).
 /// - `-WWUITestOpenShow <name>` (+ `-WWUITestShowEpisodes <n>`): create a synthetic show and open it
 ///   (the Library window is then not shown at launch).
 /// - `-WWUITestAppearance aqua|darkAqua|highContrastAqua|highContrastDarkAqua`: app appearance for C04/C07
@@ -82,6 +83,8 @@ enum LaunchFixtures {
         }
         // T25 / F-LIBLOC: seed the real persistent library and put it in the requested L1–L5 state.
         LibraryLocationFixture.applyBeforeLaunch()
+        // #159 F-OLDER-BAD: an M1-era retained checkpoint for the damaged older show about to be opened.
+        UITestHooks.seedOlderCheckpointIfRequested()
         let appearances: [String: NSAppearance.Name] = [
             "aqua": .aqua, "darkAqua": .darkAqua,
             "highContrastAqua": .accessibilityHighContrastAqua, "highContrastDarkAqua": .accessibilityHighContrastDarkAqua,

@@ -416,6 +416,51 @@ struct ShowSchemaMigrationTests {
         #expect(try backups.map { try Data(contentsOf: $0) } == [damaged], "the original bytes are preserved even when they can't be migrated")
     }
 
+    static func checksumDamaged(_ golden: Golden) throws -> Data {
+        var object = try #require(try JSONSerialization.jsonObject(with: golden.bytes) as? [String: Any])
+        var payload = try #require(object["payload"] as? [String: Any])
+        var show = try #require(payload["show"] as? [String: Any])
+        show["title"] = "Edited outside WaveWrangler"
+        payload["show"] = show
+        object["payload"] = payload
+        return try JSONSerialization.data(withJSONObject: object, options: .sortedKeys)
+    }
+
+    /// #175 review: the schema check reports `.needsMigration` before the checksum is verified, so the window's
+    /// read-only view must still refuse a damaged older file as damaged and keep M1's recovered-copy offer.
+    @Test(arguments: goldens)
+    func aDamagedSchema1FileStillOffersItsRecoveredCopyWhenOpenedForViewing(_ golden: Golden) throws {
+        let rig = Rig()
+        let url = rig.url()
+        let damaged = try Self.checksumDamaged(golden)
+        try damaged.write(to: url)
+        try rig.recovery.retainCheckpoint(golden.bytes, for: golden.key)
+        try rig.recovery.recordLocation(url, for: golden.key)
+        let opener = Self.opener(rig)
+        guard case .needsMigration(1, _) = opener.outcome(for: damaged, url: url) else {
+            Issue.record("a schema 1 file is classified by schema before its checksum")
+            return
+        }
+        // As the document window asks: by location only (no key yet).
+        guard case let .damaged(error, candidates) = opener.olderShowForViewing(damaged, url: url) else {
+            Issue.record("a checksum-damaged schema 1 file must not be viewable")
+            return
+        }
+        #expect(error == .checksumMismatch)
+        #expect(candidates.map(\.document.payload) == [try ShowSchemaMigration.decodeUpgradingOlder(golden.bytes).payload])
+        #expect(candidates.first?.document.revision == golden.revision)
+        #expect(try Data(contentsOf: url) == damaged, "the damaged file is left untouched")
+        #expect(try rig.recovery.migrationBackups(for: golden.key).isEmpty, "viewing never writes a backup")
+        // A whole older file is viewable, upgraded in memory, and nothing is written.
+        try golden.bytes.write(to: url)
+        guard case let .viewable(document) = opener.olderShowForViewing(golden.bytes, url: url) else {
+            Issue.record("a valid schema 1 file is viewable")
+            return
+        }
+        #expect(document.payload == (try ShowSchemaMigration.decodeUpgradingOlder(golden.bytes).payload))
+        #expect(try Data(contentsOf: url) == golden.bytes)
+    }
+
     @Test func aMigrationThatBreaksItsExpectationsPublishesNothing() throws {
         let golden = Self.goldens[2]
         let rig = Rig()

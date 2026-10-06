@@ -143,21 +143,110 @@ final class FormatUpdateUITests: XCTestCase {
         }
     }
 
+    /// D14 fallback (#175 review): after Open Read-Only, Update… in the save-status popover asks again (focused first,
+    /// Space activates) and Return updates the show.
+    func testT21UpdateFromStatusItemAfterOpenReadOnly() throws {
+        let document = try writeOlder("Later", ShowSchema1Fixtures.statedChannels)
+        let original = try Data(contentsOf: document)
+        try task("T21-update-later") {
+            _ = try openAndExpectPrompt(document, name: "Later", original: original)
+            app.typeKey("r", modifierFlags: .command)
+            check(Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists }, "⌘R dismisses the prompt")
+            let status = element("ww.show.saveStatus")
+            // View › Show Save Status (as T27); keyboard focus starts on the popover's first action.
+            app.menuBars.menuBarItems["View"].click()
+            let showStatus = app.menuBars.menuItems["Show Save Status"]
+            check(showStatus.waitForExistence(timeout: 3), "View › Show Save Status exists")
+            showStatus.click()
+            let popover = app.popovers.firstMatch
+            check(popover.waitForExistence(timeout: 5), "the status popover opens")
+            let update = popover.buttons["Update…"]
+            check(update.exists, "Update… is offered: \(popover.buttons.allElementsBoundByIndex.map(\.title))")
+            check(update.value(forKey: "hasKeyboardFocus") as? Bool == true, "keyboard focus starts on Update…")
+            try audit("T21 status popover Update…")
+            app.typeKey(" ", modifierFlags: [])
+            let sheet = app.sheets.firstMatch
+            check(sheet.waitForExistence(timeout: 5), "Update… asks again")
+            check(texts(in: sheet).contains("Update “Later” to the current format?"), "prompt title: \(texts(in: sheet))")
+            check((try? Data(contentsOf: document)) == original, "nothing is written before Update")
+            app.typeKey(.return, modifierFlags: [])
+            check(Acceptance.waitFor(timeout: 10) { self.diskSchemaVersion(document) == 2 }, "Return updates the file to schema 2")
+            check(Acceptance.waitFor(timeout: 10) { self.value(status).hasPrefix("Saved") }, "status Saved after the update: \(value(status))")
+        }
+    }
+
+    /// Several older shows opened as tabs (#175 review; the M1→M2 upgrade path, as at a state-restored launch): each
+    /// show asks once, on its own tab, when that tab is selected; none is lost for being a background tab.
+    func testT21EachTabbedOlderShowAsksWhenSelected() throws {
+        let first = try writeOlder("First Tab", ShowSchema1Fixtures.statedChannels)
+        let second = try writeOlder("Second Tab", ShowSchema1Fixtures.mixed)
+        let originals = [first: try Data(contentsOf: first), second: try Data(contentsOf: second)]
+        try task("T21-tabs") {
+            launch(["-WWUITestAutosave", "ON", "-WWUITestResetStorage", "YES"], opening: first)
+            check(app.windows.matching(identifier: "ww.show.window").firstMatch.waitForExistence(timeout: 10), "the first show opens")
+            // Open the second before answering the first: it opens as the selected tab, the first goes to the background.
+            app.open(second)
+            var asked: [String] = []
+            for _ in 0..<6 where asked.count < 2 {
+                let sheet = app.sheets.firstMatch
+                if sheet.waitForExistence(timeout: 5) {
+                    let title = texts(in: sheet).first { $0.hasPrefix("Update “") } ?? "?"
+                    asked.append(title)
+                    app.typeKey("r", modifierFlags: .command)   // Open Read-Only: nothing is written
+                    _ = Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists }
+                } else {
+                    app.typeKey("\t", modifierFlags: .control)   // Window › Show Next Tab
+                }
+            }
+            Acceptance.record(self, "T21 tabs asked: \(asked)")
+            check(Set(asked) == ["Update “First Tab” to the current format?", "Update “Second Tab” to the current format?"]
+                  && asked.count == 2, "each tabbed show asks exactly once: \(asked)")
+            // Selecting each tab again never asks a second time.
+            app.typeKey("\t", modifierFlags: .control)
+            check(!app.sheets.firstMatch.waitForExistence(timeout: 3), "no second prompt after Open Read-Only")
+            for (url, original) in originals {
+                check((try? Data(contentsOf: url)) == original, "\(url.lastPathComponent) is byte-unchanged")
+            }
+        }
+    }
+
     /// F-OLDER-BAD: an older file whose payload doesn't match its checksum is refused as damaged, without the update
-    /// prompt, and left unchanged.
+    /// prompt, and left unchanged. Its M1-era retained checkpoint is still offered (M1 "Open Recovered Copy", #175
+    /// review): choosing it opens the last complete version, upgraded in memory, as a new unsaved copy.
     func testOlderDamagedFileIsRefusedUnchanged() throws {
         var bytes = ShowSchema1Fixtures.placeholderOnly
         let range = try XCTUnwrap(bytes.range(of: Data("Placeholder Show".utf8)))
         bytes.replaceSubrange(range, with: Data("Placeholder Shoe".utf8))
         let document = try writeOlder("Older Bad", bytes)
         try task("F-OLDER-BAD") {
-            launch(["-WWUITestAutosave", "ON", "-WWUITestResetStorage", "YES"], opening: document)
-            Thread.sleep(forTimeInterval: 3)
+            launch(["-WWUITestAutosave", "ON", "-WWUITestResetStorage", "YES",
+                    "-WWUITestRetainOlderCheckpoint", ShowSchema1Fixtures.placeholderOnly.base64EncodedString()], opening: document)
+            check(Acceptance.waitFor(timeout: 10) { self.app.dialogs.firstMatch.exists || self.app.sheets.firstMatch.exists },
+                  "a damaged-file refusal appears")
             check(!app.buttons["Update"].exists, "no update prompt for a damaged file")
-            check(app.windows.matching(identifier: "ww.show.window").count == 0, "no editable window opens")
+            check(app.windows.matching(identifier: "ww.show.window").count == 0, "no window opens the damaged file")
             Acceptance.record(self, "F-OLDER-BAD after open: windows \(app.windows.allElementsBoundByIndex.map(\.title)) texts \(app.staticTexts.allElementsBoundByIndex.prefix(20).map { "\($0.value ?? $0.label)" })")
-            if app.dialogs.firstMatch.exists || app.sheets.firstMatch.exists { try audit("F-OLDER-BAD refusal") }
-            app.typeKey(.escape, modifierFlags: [])
+            let refusal = app.dialogs.firstMatch.exists ? app.dialogs.firstMatch : app.sheets.firstMatch
+            if refusal.exists {
+                try audit("F-OLDER-BAD refusal")
+                Acceptance.record(self, "F-OLDER-BAD offer buttons: \(refusal.buttons.allElementsBoundByIndex.map(\.title))")
+                let recovered = refusal.buttons["Open Recovered Copy"]
+                check(recovered.exists, "the retained checkpoint is offered as a recovered copy")
+                if recovered.exists {
+                    // Keyboard only: the recovered copy is the default action.
+                    app.typeKey(.return, modifierFlags: [])
+                    let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
+                    check(copy.waitForExistence(timeout: 10), "the recovered copy opens")
+                    let showInfo = copy.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
+                    if showInfo.waitForExistence(timeout: 5) { showInfo.click() }
+                    let title = copy.textFields["Show title"]
+                    check(title.waitForExistence(timeout: 5) && title.value as? String == "Placeholder Show",
+                          "the last complete version opens: \(title.value ?? "nil")")
+                    check(!app.buttons["ww.formatUpdate.update"].exists, "a recovered copy is a new current-format show: no update prompt")
+                } else {
+                    app.typeKey(.escape, modifierFlags: [])
+                }
+            }
             check((try? Data(contentsOf: document)) == bytes, "the damaged file is byte-unchanged")
         }
     }
