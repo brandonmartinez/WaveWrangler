@@ -18,9 +18,10 @@ public enum EditedStatePolicy {
     }
 
     /// The same rule, checked again once AppKit has finished its own bookkeeping for the save (M1 gate, T26). After a
-    /// failed autosave, an automatic retry's verified publication can leave the window saying "Edited". The document
-    /// is clean exactly when the publication still on disk (this document's base) is the verified one, and it holds
-    /// exactly the current model. Any edit, undo or other save since then keeps the edited state.
+    /// failed autosave, an automatic retry's verified publication can leave the window saying "Edited" although the
+    /// change count is clear. `stillEdited` is whether the document *or any of its windows* still says "Edited". The
+    /// document is clean exactly when the publication still on disk (this document's base) is the verified one, and it
+    /// holds exactly the current model. Any edit, undo or other save since then keeps the edited state.
     public static func clearsEditedStateAfterCompletion(
         after operation: Operation, verified: Bool, stillEdited: Bool, baseIsThatPublication: Bool, publishedEqualsCurrent: Bool
     ) -> Bool {

@@ -392,27 +392,74 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
     /// In the save panel: checks the proposed name, goes to `folder` with ⇧⌘G, and saves with Return. As in #169 and
     /// #190: a bounded wait for the panel, a 2 s settle from detection, and keys sent to the out-of-process panel
     /// service when it hosts the panel (the sandboxed app's own snapshot stalls while the panel is up).
-    private func saveCopyThroughPanel(named name: String, into folder: URL, surface: String) throws -> URL {
-        let service = XCUIApplication(bundleIdentifier: "com.apple.appkit.xpc.openAndSavePanelService")
-        let panel = app.sheets.firstMatch
-        let shown = Acceptance.waitFor(timeout: 20) { panel.exists || service.state != .notRunning }
-        check(shown, "\(surface): native save panel shown")
-        Thread.sleep(forTimeInterval: 2)
-        if panel.exists {
-            let names = panel.textFields.allElementsBoundByIndex.compactMap { $0.value as? String }
-            check(names.contains(name), "\(surface): proposed name \"\(name)\": \(names)")
-        }
-        let target = service.state == .notRunning ? app! : service
-        Acceptance.record(self, "\(surface): panel host \(service.state == .notRunning ? "app sheet" : "panel service")")
+    /// Where the native save panel is shown, or nil while it isn't (yet). The panel is drawn by the out-of-process panel
+    /// service, but XCUITest doesn't always report that service as running for a cold panel (#151, #190); the app
+    /// then exposes it as a sheet (or window) holding the proposed name. A closing alert sheet doesn't count.
+    private func savePanelHost(_ service: XCUIApplication, name: String) -> String? {
+        if service.state != .notRunning { return "panel service" }
+        for window in ["save-panel", "open-panel"] where app.windows[window].exists { return "app window \(window)" }
+        let sheet = app.sheets.firstMatch
+        if sheet.exists, sheet.textFields.allElementsBoundByIndex.contains(where: { ($0.value as? String) == name }) { return "app sheet" }
+        return nil
+    }
+
+    /// ⇧⌘G, the folder's path, Return, then Return to save (all native save-panel keys).
+    private func typeFolderAndSave(_ folder: URL, into target: XCUIApplication) {
         target.typeKey("g", modifierFlags: [.command, .shift])
         Thread.sleep(forTimeInterval: 1)
         target.typeText(folder.path(percentEncoded: false))
+        Thread.sleep(forTimeInterval: 0.5)
         target.typeKey(.return, modifierFlags: [])
         Thread.sleep(forTimeInterval: 1.5)
         target.typeKey(.return, modifierFlags: [])
+    }
+
+    private func saveCopyThroughPanel(named name: String, into folder: URL, surface: String) throws -> URL {
+        let service = XCUIApplication(bundleIdentifier: "com.apple.appkit.xpc.openAndSavePanelService")
+        let start = Date()
+        var host: String?
+        _ = Acceptance.waitFor(timeout: 20) {
+            host = self.savePanelHost(service, name: name)
+            return host != nil
+        }
+        check(host != nil, "\(surface): native save panel shown with the proposed name \"\(name)\" (service \(service.state.rawValue), sheets \(app.sheets.count))")
+        let detectedAt = Date()
+        let names = app.sheets.firstMatch.textFields.allElementsBoundByIndex.compactMap { $0.value as? String }
+        if !names.isEmpty { check(names.contains(name), "\(surface): proposed name \"\(name)\": \(names)") }
+        // Keys go to the service whenever it is reported; a panel that has only just appeared gets a 2 s settle.
+        if host != "panel service", Acceptance.waitFor(timeout: 3, { service.state != .notRunning }) { host = "panel service" }
+        Thread.sleep(forTimeInterval: 2)
+        let first: XCUIApplication = host == "panel service" ? service : app
+        Acceptance.record(self, "\(surface): panel host \(host ?? "none"), detected after \(String(format: "%.1f", detectedAt.timeIntervalSince(start))) s")
+        typeFolderAndSave(folder, into: first)
         let copy = folder.appending(path: "\(name).wwshow")
-        check(Acceptance.waitFor(timeout: 10) { FileManager.default.fileExists(atPath: copy.path) }, "\(surface): copy written at the chosen folder")
+        var written = Acceptance.waitFor(timeout: 10) { FileManager.default.fileExists(atPath: copy.path) }
+        if !written {
+            recordPanelDiagnostics(service, folder: folder, surface: surface)
+            // The panel may have taken the keys in the other process: one more keyboard pass there, recorded.
+            if service.state != .notRunning || savePanelHost(service, name: name) != nil {
+                let second: XCUIApplication = first === service ? app : service
+                Acceptance.record(self, "\(surface): no copy after keys to \(first === service ? "the panel service" : "the app"); retrying the same keys to \(second === service ? "the panel service" : "the app")")
+                typeFolderAndSave(folder, into: second)
+                written = Acceptance.waitFor(timeout: 10) { FileManager.default.fileExists(atPath: copy.path) }
+                if !written { recordPanelDiagnostics(service, folder: folder, surface: "\(surface) (second pass)") }
+            }
+        }
+        check(written, "\(surface): copy written at the chosen folder")
         return copy
+    }
+
+    private func recordPanelDiagnostics(_ service: XCUIApplication, folder: URL, surface: String) {
+        let sheets = app.sheets.allElementsBoundByIndex.map { sheet in
+            "\(sheet.identifier)|fields \(sheet.textFields.allElementsBoundByIndex.compactMap { $0.value as? String })|buttons \(sheet.buttons.allElementsBoundByIndex.map(\.title))"
+        }
+        let windows = app.windows.allElementsBoundByIndex.map { "\($0.identifier)|\($0.title)" }
+        let listing = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        Acceptance.record(self, "\(surface) diagnostics: service \(service.state.rawValue), app sheets \(sheets), app windows \(windows), folder \(listing)")
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "panel-\(surface.replacingOccurrences(of: " ", with: "_"))"
+        shot.lifetime = .keepAlways
+        add(shot)
     }
 
     private func diskPayload(_ url: URL) -> [String: Any]? {

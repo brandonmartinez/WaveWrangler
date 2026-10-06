@@ -25,8 +25,8 @@ struct EditedStatePolicyTests {
             EditedStatePolicy.clearsEditedStateAfterCompletion(after: operation, verified: verified, stillEdited: stillEdited,
                                                                baseIsThatPublication: base, publishedEqualsCurrent: equal)
         }
-        #expect(clears(), "a retry's verified autosave of the current model, window still says Edited")
-        #expect(!clears(stillEdited: false), "already clean: nothing to do")
+        #expect(clears(), "a retry's verified autosave of the current model, the document or its window still says Edited")
+        #expect(!clears(stillEdited: false), "neither the document nor a window says Edited: nothing to do")
         #expect(!clears(base: false), "another save (or adoption) replaced the base since: that one decides")
         #expect(!clears(equal: false), "edited (or undone to a different model) after the save started")
         #expect(!clears(verified: false), "not verified")

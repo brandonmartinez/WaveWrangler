@@ -224,9 +224,11 @@ final class ShowDocument: NSDocument {
             // #87: AppKit only marks an autosave in place as "autosaved"; clear "— Edited" exactly when the verified
             // publication holds the current model. Edits made during the save keep the document (and status) edited.
             let isAutosaveInPlace = saveOperation == .autosaveInPlaceOperation
-            if isAutosaveInPlace, isDocumentEdited,
+            // M1 gate (T26): AppKit's own bookkeeping may already have cleared the document while its window still
+            // says "Edited"; both follow the verified publication.
+            if isAutosaveInPlace, isDocumentEdited || windowsShowEdited,
                EditedStatePolicy.clearsEditedState(after: .autosaveInPlace, verified: true, publishedEqualsCurrent: store.model == candidateModel) {
-                updateChangeCount(.changeCleared)
+                clearEditedStateAfterVerifiedSave()
             }
             if isAutosaveInPlace {
                 cleanCheck = (receipt.fingerprint, candidateModel, receipt.revision, receipt.verifiedAt)
@@ -373,9 +375,10 @@ final class ShowDocument: NSDocument {
 
     // MARK: - Automatic retry after a failed save (ST-11)
 
-    /// M1 gate (T26): AppKit can leave (or mark) the document edited after the completion of an autosave in place that
-    /// we verified, for example after an automatic retry of a failed save, without calling `updateChangeCount(_:)`.
-    /// Clears it only while the verified publication is still this document's base and holds exactly the current model.
+    /// M1 gate (T26): after an automatic retry of a failed save, AppKit's own completion of a verified autosave in place
+    /// can leave the window saying "Edited" (its title-bar edit state, `AX_EDITING_STATE`) although the document's
+    /// change count is already clear, so no change-count update reaches the window. Clears both only while the
+    /// verified publication is still this document's base and holds exactly the current model.
     private func recheckCleanAfterCompletion(final: Bool) {
         guard let check = cleanCheck else { return }
         if final { cleanCheck = nil }
@@ -383,14 +386,27 @@ final class ShowDocument: NSDocument {
         traceEditedState("recheck\(final ? " final" : "")")
         #endif
         guard EditedStatePolicy.clearsEditedStateAfterCompletion(
-            after: .autosaveInPlace, verified: true, stillEdited: isDocumentEdited,
+            after: .autosaveInPlace, verified: true, stillEdited: isDocumentEdited || windowsShowEdited,
             baseIsThatPublication: onDiskBase == check.base, publishedEqualsCurrent: store.model == check.model
         ) else { return }
-        updateChangeCount(.changeCleared)
+        clearEditedStateAfterVerifiedSave()
         status.set(.saved(revision: check.revision, at: check.verifiedAt))
         #if DEBUG
         traceEditedState("recheck cleared")
         #endif
+    }
+
+    /// Whether any of this document's windows shows AppKit's edit state ("Edited" beside the title).
+    private var windowsShowEdited: Bool { windowControllers.contains { $0.window?.isDocumentEdited == true } }
+
+    /// Clears the change count (when set) and makes every window's edit state follow it. Only for a verified
+    /// publication that holds exactly the current model (callers check `EditedStatePolicy`).
+    private func clearEditedStateAfterVerifiedSave() {
+        if isDocumentEdited { updateChangeCount(.changeCleared) }
+        guard !isDocumentEdited else { return }
+        for controller in windowControllers where controller.window?.isDocumentEdited == true {
+            controller.setDocumentEdited(false)
+        }
     }
 
     #if DEBUG
@@ -401,7 +417,7 @@ final class ShowDocument: NSDocument {
 
     /// UI-test evidence only (F-OFFLINE seam): the edited state at each save-completion step.
     private func traceEditedState(_ step: String) {
-        (Self.debugPublicationHooks as? UITestOfflineHooks)?.note("\(step): edited \(isDocumentEdited)")
+        (Self.debugPublicationHooks as? UITestOfflineHooks)?.note("\(step): edited \(isDocumentEdited) window \(windowsShowEdited)")
     }
     #endif
 
@@ -443,7 +459,7 @@ final class ShowDocument: NSDocument {
         onDiskBase = fingerprint
         fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
         if store.model == document.payload {
-            updateChangeCount(.changeCleared)
+            clearEditedStateAfterVerifiedSave()
             scheduler?.cancelPending()
             try? recovery.discardEditCheckpoints(for: documentKey)
             status.set(.saved(revision: document.revision, at: Date()))
