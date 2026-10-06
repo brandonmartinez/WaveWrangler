@@ -288,6 +288,8 @@ final class LibraryLocationUITests: XCTestCase {
         assertTabReachesMessageBarFirst(combine)
         press(combine, step: "Tab to Combine (Keep Everything)", alreadyFocused: true)
         XCTAssertTrue(bar.waitForNonExistence(timeout: 10), "resolved: \(texts(app.windows["Library"]))")
+        XCTAssertFalse(app.windows["Library"].staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Couldn' AND label CONTAINS 'update the library'")).firstMatch.exists,
+                       "no write failure left after Combine saved both changes: \(texts(app.windows["Library"]))")
         let names = libraryState().collectionNames
         XCTAssertTrue(names.contains("From Another Mac"), "the other Mac's change is kept: \(names)")
         XCTAssertTrue(names.contains("Made On This Mac"), "this Mac's change is kept: \(names)")
@@ -473,12 +475,12 @@ final class LibraryLocationUITests: XCTestCase {
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 5), file: file, line: line)
     }
 
-    /// ⇧⌘L, then the message bar with `heading`.
+    /// ⇧⌘L, then the message bar with `heading` (bound to that heading: other Library bars, e.g. a write failure,
+    /// share the identifier).
     private func messageBar(heading: String, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         app.typeKey("l", modifierFlags: [.command, .shift])
-        let bar = element("ww.library.messageBar")
-        XCTAssertTrue(bar.waitForExistence(timeout: 15), "library message bar", file: file, line: line)
-        XCTAssertEqual(bar.label, heading, file: file, line: line)
+        let bar = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'ww.library.messageBar' AND label == %@", heading)).firstMatch
+        XCTAssertTrue(bar.waitForExistence(timeout: 15), "library message bar “\(heading)”: \(texts(app.windows["Library"]))", file: file, line: line)
         return bar
     }
 

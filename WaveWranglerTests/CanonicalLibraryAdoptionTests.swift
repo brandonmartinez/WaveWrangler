@@ -19,7 +19,7 @@ struct CanonicalLibraryAdoptionTests {
         LibraryModel(entries: ids.map { LibraryShowEntry(showID: $0, lastKnownTitle: "Show") })
     }
 
-    @Test func adoptingAChangedLibraryChecksExactlyTheEntriesWithoutACompletedCheck() async {
+    @Test func adoptingAChangedLibraryChecksExactlyTheEntriesWithoutACompletedCheck() async throws {
         let known = ShowID(), seeded = ShowID(), running = ShowID(), broughtIn = ShowID()
         let checks = Checks()
         checks.details = [
@@ -33,10 +33,13 @@ struct CanonicalLibraryAdoptionTests {
         _ = session.didLoad(library([known]), allowsEdits: true)
 
         let combined = library([known, seeded, running, broughtIn])
-        #expect(adoption.adopt(combined, into: &session, allowsEdits: true) == .adopted)
+        let adopted = adoption.adopt(combined, session: session, allowsEdits: true)
+        #expect(adopted.outcome == .adopted)
+        session = try #require(adopted.session)
         #expect(session.library.entries.map(\.showID) == [known, seeded, running, broughtIn])
-        // The same value arriving again (another observation) before the check ran asks for nothing more.
-        #expect(adoption.adopt(combined, into: &session, allowsEdits: true) == .unchanged)
+        // The same value arriving again (another observation) before the check ran asks for nothing more, and
+        // leaves the session as it is (no reassignment of the observable store).
+        #expect(adoption.adopt(combined, session: session, allowsEdits: true) == .init(outcome: .unchanged, session: nil))
         await adoption.lastFirstCheck?.value
         #expect(checks.refreshed == [[seeded, broughtIn]], "only unchecked entries with no running check, once")
     }
@@ -45,8 +48,9 @@ struct CanonicalLibraryAdoptionTests {
         let a = ShowID(), b = ShowID()
         let checks = Checks()
         let adoption = CanonicalLibraryAdoption(entries: checks)
-        var session = LibrarySession()
-        #expect(adoption.adopt(library([a, b]), into: &session, allowsEdits: false) == .loaded(changed: false))
+        let loaded = adoption.adopt(library([a, b]), session: LibrarySession(), allowsEdits: false)
+        #expect(loaded.outcome == .loaded(changed: false))
+        #expect(loaded.session?.isLoaded == true)
         await adoption.lastFirstCheck?.value
         #expect(checks.refreshed == [[a, b]])
     }
@@ -56,8 +60,7 @@ struct CanonicalLibraryAdoptionTests {
         let checks = Checks()
         checks.details = [a: LibraryEntryDetails(state: .locationUnknown)]
         let adoption = CanonicalLibraryAdoption(entries: checks)
-        var session = LibrarySession()
-        _ = adoption.adopt(library([a]), into: &session, allowsEdits: true)
+        _ = adoption.adopt(library([a]), session: LibrarySession(), allowsEdits: true)
         #expect(adoption.lastFirstCheck == nil)
         #expect(checks.refreshed.isEmpty)
     }

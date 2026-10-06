@@ -24,6 +24,13 @@ final class CanonicalLibraryAdoption {
         case unchanged
     }
 
+    struct Result: Equatable {
+        var outcome: Outcome
+        /// The session to store; `nil` when nothing changed, so the observable store isn't reassigned (every
+        /// reassignment rebuilds the Library window's sidebar and entry snapshots).
+        var session: LibrarySession?
+    }
+
     private let entries: LibraryEntryChecking
     /// First checks asked for and not finished (they may not have reached `entries` yet).
     private var requested: Set<ShowID> = []
@@ -34,7 +41,8 @@ final class CanonicalLibraryAdoption {
         self.entries = entries
     }
 
-    func adopt(_ canonical: LibraryModel, into session: inout LibrarySession, allowsEdits: Bool) -> Outcome {
+    func adopt(_ canonical: LibraryModel, session current: LibrarySession, allowsEdits: Bool) -> Result {
+        var session = current
         let outcome: Outcome
         if !session.isLoaded {
             outcome = .loaded(changed: session.didLoad(canonical, allowsEdits: allowsEdits))
@@ -45,7 +53,7 @@ final class CanonicalLibraryAdoption {
             outcome = .unchanged
         }
         if session.isLoaded { checkUnchecked(in: session.library) }
-        return outcome
+        return Result(outcome: outcome, session: outcome == .unchanged ? nil : session)
     }
 
     private func checkUnchecked(in library: LibraryModel) {

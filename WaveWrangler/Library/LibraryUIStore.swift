@@ -62,7 +62,16 @@ final class LibraryUIStore {
         guard pendingSaves == 0, let canonical = services.persistence.currentLibrary else { return }
         // Routine changes (verified show saves acknowledged, recents) arrive constantly with autosave ON; undo
         // stays valid because each step applies only its own per-ID difference.
-        if case .loaded(let changed) = adoption.adopt(canonical, into: &session, allowsEdits: allowsEdits) {
+        adopt(canonical)
+    }
+
+    /// Every canonical value (launch load, a change from elsewhere, the result of this store's own edit, which can
+    /// carry another Mac's changes) is adopted through `CanonicalLibraryAdoption`: entries this Mac hasn't checked
+    /// get their first check, once (#193), and the session is reassigned only when it changed.
+    private func adopt(_ canonical: LibraryModel) {
+        let result = adoption.adopt(canonical, session: session, allowsEdits: allowsEdits)
+        if let updated = result.session { session = updated }
+        if case .loaded(let changed) = result.outcome {
             persistenceFailure = nil
             if changed { persistFlushed() }
             undoManager.removeAllActions(withTarget: self)
@@ -73,6 +82,9 @@ final class LibraryUIStore {
     /// library storage now reports (reloading if it had failed).
     func libraryWasReplaced() async {
         undoManager.removeAllActions(withTarget: self)
+        // A write failure reported before the replacement no longer describes the library (for example the edit
+        // that met an L4 conflict, which Combine has now saved).
+        persistenceFailure = nil
         if !session.isLoaded {
             loadTask = nil
             await load()
@@ -114,9 +126,9 @@ final class LibraryUIStore {
         let task = Task { [weak self] in
             guard let self else { return }
             do {
-                let model = try await services.persistence.loadLibrary()
-                if session.didLoad(model, allowsEdits: allowsEdits) { persistFlushed() }
-                await services.entries.refresh(session.library.entries.map(\.showID))
+                // Each entry is checked once, through the adoption (a library folder regrant doesn't change
+                // show access: shows have their own locations).
+                adopt(try await services.persistence.loadLibrary())
             } catch {
                 session.didFailLoad(reason: error.localizedDescription)
                 persistenceFailure = "Couldn't read the library: \(Self.sentence(error.localizedDescription)) Your shows aren't affected, and the library won't be changed until it can be read."
@@ -214,11 +226,11 @@ final class LibraryUIStore {
             do {
                 let canonical = try await persistence.applyEdit(transform)
                 self?.pendingSaves -= 1
-                if self?.pendingSaves == 0 { self?.session.adoptCanonical(canonical) }
+                if self?.pendingSaves == 0 { self?.adopt(canonical) }
             } catch {
                 self?.pendingSaves -= 1
                 self?.persistenceFailure = "Couldn't update the library: \(Self.sentence(error.localizedDescription)) Your shows aren't affected."
-                if self?.pendingSaves == 0, let canonical = persistence.currentLibrary { self?.session.adoptCanonical(canonical) }
+                if self?.pendingSaves == 0, let canonical = persistence.currentLibrary { self?.adopt(canonical) }
             }
         }
     }
