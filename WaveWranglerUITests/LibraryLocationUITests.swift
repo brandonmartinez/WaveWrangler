@@ -9,15 +9,28 @@ import XCTest
 /// panel by keyboard (⇧⌘G, path, Return). Each target folder is checksummed before and after where nothing may be
 /// written. Synthetic data only.
 ///
-/// Keyboard only (C01): no pointer events. The app runs with macOS keyboard navigation (the Full Keyboard Access /
-/// "Keyboard navigation" setting, `AppleKeyboardUIMode` 2) turned on **for its own process only**, through a
-/// launch argument; no system setting changes. With it, Tab reaches pop-ups and buttons and ⌃F2 reaches the menu
-/// bar. This doesn't stand in for the user's system FKA run: that C01 cell stays **Not run** until the user records
-/// it (accessibility-acceptance §6 item 3).
+/// Keyboard only (C01), with one limit. macOS Tab reaches pop-ups and buttons, and ⌃F2 reaches the menu bar, only
+/// with the system Full Keyboard Access ("Keyboard navigation") setting on. AppKit reads it only from the system: a
+/// launch argument or an app default doesn't turn it on (`-AppleKeyboardUIMode 2` was tried in #161 and had no
+/// effect). That setting isn't in the agent grant, so it is never changed here.
+/// - **Keyboard navigation on** (the user's C01 run): every step is a key event, and Tab-reachability and focus
+///   return are asserted.
+/// - **Off** (agent runs): only the steps that need it use XCUITest element/menu actions: Tab to the Library
+///   location pop-up, Tab to message bar and sheet buttons, ⌃F2 menus, and focus return. Each is recorded as
+///   **Not run (needs Full Keyboard Access)** in `t25-keyboard-navigation` evidence, so T25 is reported partial.
+///   Everything else stays keys: ⌘, ⇧⌘L, Space and type-select in the pop-up menu, ⇧⌘G and Return in the open
+///   panel, Return and Esc in sheets, and typing names.
+/// The XCUITest result never stands in for the user's FKA run; that C01 cell stays **Not run** until the user
+/// records it (accessibility-acceptance §6 item 3).
 @MainActor
 final class LibraryLocationUITests: XCTestCase {
     private var app: XCUIApplication!
     private var work: URL!
+    /// Steps not run as key events because the system keyboard navigation setting is off.
+    private var needsKeyboardNavigation: [String] = []
+
+    /// The system Full Keyboard Access / "Keyboard navigation" setting (`AppleKeyboardUIMode` bit 2, global domain).
+    private static let keyboardNavigation = UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0
 
     override func setUp() async throws {
         continueAfterFailure = false
@@ -27,6 +40,15 @@ final class LibraryLocationUITests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        // Only for a test body that ran (a skip in setUp never launches the app), with its outcome, so an empty
+        // "not run" list can't read as a clean run.
+        if app != nil {
+            let run = testRun
+            let outcome = run?.hasBeenSkipped == true ? "skipped" : run?.hasSucceeded == true ? "passed" : "failed"
+            Acceptance.writeEvidence("t25-keyboard-navigation-\(name.replacingOccurrences(of: " ", with: "_"))",
+                                     ["outcome": outcome, "keyboardNavigation": Self.keyboardNavigation,
+                                      "notRunNeedsFullKeyboardAccess": Array(Set(needsKeyboardNavigation)).sorted()], test: self)
+        }
         if let app, app.state != .notRunning { app.terminate() }
         // Leave no library location or library behind for later suites: they share the isolated UI-test
         // preferences and storage, and the folders chosen here are deleted below. One launch with storage reset
@@ -69,7 +91,7 @@ final class LibraryLocationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Moving library — checking copy…' OR value CONTAINS 'Moving library — checking copy…'")).firstMatch.waitForExistence(timeout: 10),
                       "progress: \(texts(app.windows.firstMatch))")
         waitForValue(popup, "First Library Folder", timeout: 20)
-        XCTAssertTrue(hasFocus(popup), "focus returns to the pop-up after the sheet")
+        assertFocusReturns(to: popup, "focus returns to the pop-up after the sheet")
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Your library is now stored in “First Library Folder”' OR value BEGINSWITH 'Your library is now stored in “First Library Folder”'")).firstMatch.waitForExistence(timeout: 5),
                       "outcome stated in Settings")
         let firstFile = first.appending(path: "Library.wwlibrary")
@@ -114,7 +136,7 @@ final class LibraryLocationUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 5))
         XCTAssertEqual(popup.value as? String, "In WaveWrangler", "Cancel keeps the location")
-        XCTAssertTrue(hasFocus(popup), "focus returns to the pop-up after Cancel")
+        assertFocusReturns(to: popup, "focus returns to the pop-up after Cancel")
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: empty.path), [], "nothing written on Cancel")
 
         let readOnly = folder("Read-Only Folder")
@@ -151,8 +173,7 @@ final class LibraryLocationUITests: XCTestCase {
         XCTAssertTrue(sheet.buttons["Choose Another Folder…"].exists)
         XCTAssertTrue(sheet.buttons["Cancel"].exists)
         // Keyboard: Tab to Use That Library (no default button), Space.
-        focus(use)
-        app.typeKey(" ", modifierFlags: [])
+        press(use, step: "Tab to Use That Library")
         waitForValue(popup, "Shared Library", timeout: 20)
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Combined libraries' OR value BEGINSWITH 'Combined libraries'")).firstMatch.waitForExistence(timeout: 5),
                       "ST-36 summary stated")
@@ -221,8 +242,7 @@ final class LibraryLocationUITests: XCTestCase {
         DistributedNotificationCenter.default().postNotificationName(Notification.Name("com.brandonmartinez.wavewrangler.uitest.libraryFolder.restore"),
                                                                      object: nil, userInfo: nil, deliverImmediately: true)
         Thread.sleep(forTimeInterval: 0.5)
-        focus(bar.buttons["Try Again"])
-        app.typeKey(" ", modifierFlags: [])
+        press(bar.buttons["Try Again"], step: "Tab to Try Again")
         XCTAssertTrue(bar.waitForNonExistence(timeout: 10), "library reachable again: \(texts(app.windows["Library"]))")
         XCTAssertTrue(libraryState().collectionNames.contains("Queued While Away"), "the queued edit was saved")
     }
@@ -234,7 +254,7 @@ final class LibraryLocationUITests: XCTestCase {
         let grant = bar.buttons["Grant Access…"]
         XCTAssertTrue(grant.exists)
         assertTabReachesMessageBarFirst(grant)
-        app.typeKey(" ", modifierFlags: [])
+        press(grant, step: "Tab to Grant Access…", alreadyFocused: true)
         // The panel opens at the library's folder: choose it.
         let service = XCUIApplication(bundleIdentifier: "com.apple.appkit.xpc.openAndSavePanelService")
         Thread.sleep(forTimeInterval: 2)
@@ -254,7 +274,7 @@ final class LibraryLocationUITests: XCTestCase {
         XCTAssertTrue(combine.exists)
         XCTAssertTrue(bar.buttons["Use Other Mac's Version"].exists)
         assertTabReachesMessageBarFirst(combine)
-        app.typeKey(" ", modifierFlags: [])
+        press(combine, step: "Tab to Combine (Keep Everything)", alreadyFocused: true)
         XCTAssertTrue(bar.waitForNonExistence(timeout: 10), "resolved: \(texts(app.windows["Library"]))")
         let names = libraryState().collectionNames
         XCTAssertTrue(names.contains("From Another Mac"), "the other Mac's change is kept: \(names)")
@@ -274,18 +294,15 @@ final class LibraryLocationUITests: XCTestCase {
         openMenu("File", path: [])
         XCTAssertTrue(file.menuItems["Open…"].isEnabled, "shows still open with File › Open")
         closeMenus()
-        focus(bar.buttons["Library Settings…"])
-        app.typeKey(" ", modifierFlags: [])
+        press(bar.buttons["Library Settings…"], step: "Tab to Library Settings…")
         XCTAssertTrue(app.popUpButtons["ww.settings.libraryLocation"].waitForExistence(timeout: 5), "Library Settings… opens Settings")
     }
 
     // MARK: - Helpers
 
-    /// `-AppleKeyboardUIMode 2` is the Full Keyboard Access / "Keyboard navigation" setting, applied to this app
-    /// process only (its argument domain): no system setting changes. See the type's note on C01.
     private func launch(state: String) {
         app = XCUIApplication()
-        app.launchArguments = ["-AppleKeyboardUIMode", "2", "-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetStorage", "YES",
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetStorage", "YES",
                                "-WWUITestResetPreferences", "YES", "-WWUITestCenterWindows", "YES", "-WWUITestLibraryLocation", state, "-WWUITestHoldMoveSteps", "YES"]
         app.launch()
         app.activate()
@@ -329,10 +346,31 @@ final class LibraryLocationUITests: XCTestCase {
         (element.value(forKey: "hasKeyboardFocus") as? Bool) == true
     }
 
-    /// Tab (forward) until `element` has keyboard focus.
-    private func focus(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+    /// Tab (forward) until `element` has keyboard focus. Needs the system keyboard navigation setting for pop-ups and
+    /// buttons; without it the step is recorded as not run (see the type's note).
+    private func focus(_ element: XCUIElement, step: String, file: StaticString = #filePath, line: UInt = #line) {
+        guard Self.keyboardNavigation else { needsKeyboardNavigation.append(step); return }
         for _ in 0..<25 where !hasFocus(element) { app.typeKey("\t", modifierFlags: []) }
         XCTAssertTrue(hasFocus(element), "Tab reaches \(element)", file: file, line: line)
+    }
+
+    /// Tab to `button` and press Space. Without system keyboard navigation, Tab can't reach a button: the step is
+    /// recorded as not run and the button is pressed through XCUITest instead.
+    private func press(_ button: XCUIElement, step: String, alreadyFocused: Bool = false, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(button.isEnabled, "\(button.label) enabled", file: file, line: line)
+        guard Self.keyboardNavigation else {
+            needsKeyboardNavigation.append(step)
+            button.click()
+            return
+        }
+        if !alreadyFocused { focus(button, step: step, file: file, line: line) }
+        app.typeKey(" ", modifierFlags: [])
+    }
+
+    /// Focus return after a sheet: asserted with system keyboard navigation (a pop-up can't hold focus without it).
+    private func assertFocusReturns(to element: XCUIElement, _ message: String, file: StaticString = #filePath, line: UInt = #line) {
+        guard Self.keyboardNavigation else { needsKeyboardNavigation.append(message); return }
+        XCTAssertTrue(hasFocus(element), message, file: file, line: line)
     }
 
     private func waitForValue(_ element: XCUIElement, _ expected: String, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line) {
@@ -350,13 +388,18 @@ final class LibraryLocationUITests: XCTestCase {
         let popup = app.popUpButtons["ww.settings.libraryLocation"]
         XCTAssertTrue(popup.waitForExistence(timeout: 5), "Library location pop-up")
         XCTAssertEqual(popup.label, "Library location")
-        focus(popup)
+        focus(popup, step: "Tab to Library location")
         return popup
     }
 
-    /// Space opens the pop-up; type-select the item; Return.
+    /// Space opens the pop-up (XCUITest opens it without system keyboard navigation); type-select the item; Return.
     private func select(_ title: String, in popup: XCUIElement) {
-        app.typeKey(" ", modifierFlags: [])
+        if Self.keyboardNavigation {
+            app.typeKey(" ", modifierFlags: [])
+        } else {
+            needsKeyboardNavigation.append("Space opens the Library location pop-up")
+            popup.click()
+        }
         XCTAssertTrue(popup.menuItems[title].waitForExistence(timeout: 3), "pop-up item \(title)")
         app.typeText(String(title.prefix(6)))
         app.typeKey(.return, modifierFlags: [])
@@ -406,9 +449,21 @@ final class LibraryLocationUITests: XCTestCase {
         return bar
     }
 
-    /// K26: in the Library window, Tab reaches the message bar's buttons first.
+    /// K26: in the Library window, Tab reaches the message bar's buttons first. Without system keyboard navigation the
+    /// Tab step is recorded as not run, and the order is checked in the accessibility tree instead: the message bar
+    /// comes before the entry list (commands-keyboard: "The message bar is announced before the tables"). The entry
+    /// list is absent when there is no library to list (L5 newer format shows the empty state); then the bar is
+    /// still the first of the two.
     private func assertTabReachesMessageBarFirst(_ button: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
         app.typeKey("l", modifierFlags: [.command, .shift])
+        guard Self.keyboardNavigation else {
+            needsKeyboardNavigation.append("Tab reaches the message bar buttons first (\(button.label))")
+            let order = app.windows["Library"].descendants(matching: .any)
+                .matching(NSPredicate(format: "identifier IN %@", ["ww.library.messageBar", "ww.library.entries"])).allElementsBoundByIndex
+                .map(\.identifier)
+            XCTAssertEqual(order.first, "ww.library.messageBar", "message bar present and before the entry list in AX order: \(order)", file: file, line: line)
+            return
+        }
         var reached = false
         for _ in 0..<4 {
             app.typeKey("\t", modifierFlags: [])
@@ -418,8 +473,21 @@ final class LibraryLocationUITests: XCTestCase {
     }
 
     /// ⌃F2 to the menu bar, type-select `menu` and open it with ↓, then type-select each submenu item along `path`
-    /// and enter it with →. Leaves the last menu open with its item selected.
+    /// and enter it with →. Leaves the last menu open with its item selected. Without system keyboard navigation
+    /// (⌃F2 needs it) the menus are opened through XCUITest's menu API instead, as in CoreTasksKeyboardUITests.
     private func openMenu(_ menu: String, path: [String]) {
+        guard Self.keyboardNavigation else {
+            needsKeyboardNavigation.append("⌃F2 to the menu bar (\(([menu] + path).joined(separator: " › ")))")
+            app.menuBars.menuBarItems[menu].click()
+            var parent = app.menuBars.menuBarItems[menu]
+            for item in path {
+                let next = parent.menuItems[item]
+                XCTAssertTrue(next.waitForExistence(timeout: 3), "menu item \(item)")
+                next.hover()
+                parent = next
+            }
+            return
+        }
         app.typeKey(XCUIKeyboardKey.F2.rawValue, modifierFlags: .control)
         Thread.sleep(forTimeInterval: 0.3)
         app.typeText(menu)
@@ -441,8 +509,12 @@ final class LibraryLocationUITests: XCTestCase {
     private func addCollection(_ name: String) {
         app.typeKey("l", modifierFlags: [.command, .shift])
         openMenu("File", path: ["Library"])
-        app.typeText("New Collection")
-        app.typeKey(.return, modifierFlags: [])
+        if Self.keyboardNavigation {
+            app.typeText("New Collection")
+            app.typeKey(.return, modifierFlags: [])
+        } else {
+            app.menuBars.menuBarItems["File"].menuItems["Library"].menuItems["New Collection…"].click()
+        }
         let field = element("ww.dialog.name")
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.typeText(name + "\r")

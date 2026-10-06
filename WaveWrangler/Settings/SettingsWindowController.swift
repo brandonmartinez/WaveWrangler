@@ -101,6 +101,9 @@ struct GeneralSettingsView: View {
                         Text(size.description).tag(size)
                     }
                 }
+                // The Form shows the title beside the pop-up as a linked title element; the explicit label makes the
+                // pop-up's own AX label the spec's name too.
+                .accessibilityLabel(SettingsWording.textSizeTitle)
                 .accessibilityIdentifier("ww.settings.textSize")
                 caption(SettingsWording.textSizeCaption)
             }
@@ -170,6 +173,7 @@ private struct LibraryLocationControl: View {
                 Divider()
                 Text(LibraryLocationChoice.chooseFolderTitle).tag(Selection.chooseFolder)
             }
+            .accessibilityLabel("Library location")
             .accessibilityIdentifier("ww.settings.libraryLocation")
             .onChange(of: selection) { _, choice in handleChoice(choice) }
             caption(location.caption)
