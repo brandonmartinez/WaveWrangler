@@ -8,6 +8,10 @@ import XCTest
 /// here, in the runner's temporary directory, with the persistence probe (`WW_PROBE`), and chosen in the real open
 /// panel by keyboard (⇧⌘G, path, Return). Each target folder is checksummed before and after where nothing may be
 /// written. Synthetic data only.
+///
+/// As in CoreTasksKeyboardUITests: menu-bar commands without a shortcut (File › Library › New Collection…) use
+/// XCUITest's menu API, because the keyboard path to the menu bar (⌃F2) needs Full Keyboard Access, a user-manual
+/// exit item.
 @MainActor
 final class LibraryLocationUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -54,7 +58,7 @@ final class LibraryLocationUITests: XCTestCase {
                       "progress: \(texts(app.windows.firstMatch))")
         waitForValue(popup, "First Library Folder", timeout: 20)
         XCTAssertTrue(hasFocus(popup), "focus returns to the pop-up after the sheet")
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH 'Your library is now stored in “First Library Folder”'")).firstMatch.waitForExistence(timeout: 5),
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Your library is now stored in “First Library Folder”' OR value BEGINSWITH 'Your library is now stored in “First Library Folder”'")).firstMatch.waitForExistence(timeout: 5),
                       "outcome stated in Settings")
         let firstFile = first.appending(path: "Library.wwlibrary")
         XCTAssertTrue(FileManager.default.fileExists(atPath: firstFile.path), "library written into the chosen folder")
@@ -138,12 +142,14 @@ final class LibraryLocationUITests: XCTestCase {
         focus(use)
         app.typeKey(" ", modifierFlags: [])
         waitForValue(popup, "Shared Library", timeout: 20)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH 'Combined libraries'")).firstMatch.waitForExistence(timeout: 5),
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Combined libraries' OR value BEGINSWITH 'Combined libraries'")).firstMatch.waitForExistence(timeout: 5),
                       "ST-36 summary stated")
 
         let combined = libraryState()
         XCTAssertEqual(combined.shows, "16 shows", "every entry from both libraries")
-        XCTAssertEqual(combined.unavailable, "3 items need attention", "unavailable entries kept")
+        // The 3 unavailable entries, plus the folder library's 4 shows, which this Mac has never opened (Location
+        // unknown).
+        XCTAssertEqual(combined.unavailable, "7 items need attention", "unavailable entries kept")
         XCTAssertEqual(combined.recent, "9 items", "recent items from both")
         for name in ["Alpha", "Alpha (from this Mac)", "Alpha (from this Mac 2)", "Beta", "Season 1", "Season 2", "Specials", "Archive"] {
             XCTAssertTrue(combined.collectionNames.contains(name), "collection \(name) in \(combined.collectionNames)")

@@ -114,11 +114,30 @@ enum LibraryLocationFixture {
         )
     }
 
+    /// Shows 1–9 are real synthetic show files in the app's temporary directory, with recorded locations (so the
+    /// library sees them as available); shows 10–12 have recorded locations whose files are gone (Can't find show
+    /// file). The sidebar then counts exactly the 3 unavailable entries.
+    nonisolated private static func recordShowLocations(_ entries: [LibraryShowEntry]) {
+        let folder = URL(filePath: NSTemporaryDirectory()).appending(path: "WWLibraryLocation-Shows", directoryHint: .isDirectory)
+        try? FileManager.default.removeItem(at: folder)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let locations = LibraryShowLocations(root: PersistenceEnvironment.applicationSupport("LibraryShowLocations"))
+        let publisher = DocumentPublisher(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: nil)
+        for entry in entries where entry.lastKnownTitle.hasPrefix("Location Show") {
+            let url = folder.appending(path: "\(entry.lastKnownTitle).wwshow")
+            let model = ShowDocumentModel.untitled(id: entry.showID, title: entry.lastKnownTitle)
+            _ = try? publisher.publish(model, revision: 1, key: .show(entry.showID), to: url, target: .newLocation)
+            try? locations.record(entry.showID, at: url, openedAt: Date(timeIntervalSince1970: 1_790_000_000))
+            if entry.unavailable != nil { try? FileManager.default.removeItem(at: url) }
+        }
+    }
+
     nonisolated private static func seed(state: String) async {
         let store = makeStore(bookmarks: SecurityScopedFolderBookmarks())
         let loaded = await store.load()
         let seeded = try? await store.update { library(base: $0) }
         logger.notice("F-LIBLOC seeded: load \(String(describing: loaded), privacy: .public) update \(String(describing: seeded), privacy: .public)")
+        if let entries = await store.library?.entries { recordShowLocations(entries) }
         switch state {
         case "unreachable", "permission":
             let folder = URL(filePath: NSTemporaryDirectory()).appending(path: "WWLibraryLocation-Current", directoryHint: .isDirectory)
