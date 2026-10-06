@@ -261,3 +261,7 @@
   - `m1-freeze-6` PASSED 20/20 in one run. #151 is closed.
 - **GPT models (user, 11:47):** already recorded above ("Prefer GPT models for new sessions and agents"). M1 gate reviews after 11:47 used gpt-6-sol.
 - **Closure:** the required M1 issues close with proof once the final gate on `m1-exit` passes and the M1 results PR merges.
+- **Final M1 exit gate on `m1-exit` (`21104e9`): passed** (recorded by Lead in the same results PR).
+  - **UI suite:** 73 tests, 65 pass, 4 fail, 4 skipped by design, with 0 product failures and no regressions. The 4 failures are T16 (known, #66/#125) and three intermittents that pass in isolation (#215, P2, M2).
+  - **Exit checkpoint:** 13/13. **`scripts/test.sh`:** PASS.
+  - **Verdict:** M1 is accepted for internal use on the claimed hosts, on the `m1-exit` product. The M1 coordinator closes the required issues with proof once the results PR merges.
