@@ -100,10 +100,13 @@ Refs #10. [`m2-freeze-timemap.json`](../fixtures/m2-freeze-timemap.json) (2026-1
 `RoundTripPropertyTests` now labels each failure with a category. Its regression numbers above are unchanged.
 
 **Calibration (pre-freeze), every gate PASS, first run.** Records:
-[`ww-015/calibration.jsonl`](ww-015/calibration.jsonl), SHA-256 `42bb9566…ec488a7e9e96`, byte-identical across separate processes.
+[`ww-015/calibration.jsonl`](ww-015/calibration.jsonl), SHA-256 `8f963552…02c741a96c`, byte-identical across separate processes.
+Each case record carries its raw quantisation values, so the pooled p95 can be recomputed from the file alone;
+`committedCalibrationRecordsReproduceTheReportedQuantisation` checks the hash and recomputes it on every run.
 - 700 cases: 3,104 occurrences, 6,248 spans, up to 185,522,597,535 frames.
 - 52,887 exact frame round trips.
-- 78,913 inverse round trips: quantisation **max 0.5, p95 (nearest-rank) 0.4679** source frames.
+- 78,913 inverse round trips: quantisation **max 0.5, pooled p95 (nearest-rank) 0.4679** source
+  frames (the p95 of the per-case p95s, 0.4932, is a different statistic).
 - Forward gap / unsupported / outside: 8,624 / 6,231 / 28,877. Inverse: 8,090 / 2,005 / 12,476.
 - 0 failures in every category.
 

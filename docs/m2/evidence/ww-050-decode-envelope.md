@@ -61,8 +61,9 @@ PCM.
 
 Each decision records its basis: the policy version, the configuration, and per-input interpretation and envelope
 version, fingerprint, rate, format and channel count. `invalidations(for:configuration:)` names every change:
-policy version, configuration, input added, dropped, changed or reordered. `OutputSettingsPolicyTests` covers mixed
-rates, bit depths and channel counts, the refusals and the invalidations (13 tests). Six policy mutants were each
+policy version, configuration, input added, dropped, changed or reordered, and a source listed twice with unequal
+interpretations (`conflictingInputs`, which `decide` refuses). `OutputSettingsPolicyTests` covers mixed
+rates, bit depths and channel counts, the refusals and the invalidations (14 tests). Eight policy mutants were each
 killed (see the PR).
 
 **Freeze.** [`m2-freeze-decode.json`](../fixtures/m2-freeze-decode.json) (2026-10-06, in the
@@ -80,7 +81,9 @@ killed (see the PR).
 [`ww-050/calibration.jsonl`](ww-050/calibration.jsonl), SHA-256 `f2617e4b…3b01d07f38`, byte-identical across separate
 processes.
 - 90 supported cases (2,173,299 frames) mapped with 0 failures; 48 of them were bit-exact.
-- 1,221 landmark observations: |lag| 0 ×1,197 and 1 ×24. All 24 lag-1 observations are Opus, at the gate limit.
+- 1,221 landmark observations: |lag| 0 ×1,197 and 1 ×24.
+- Opus: 60 landmark observations; all 24 at 24 kHz are lag +1 (systematic, 24/24, priming 156), all 36 at 8/16/48 kHz
+  are lag 0. Every 24 kHz Opus holdout landmark is expected at the 1-frame limit.
 - Minimum correlation: lossy 0.669, exact 0.9999995.
 - All 40 planted cases returned the expected error, with 0 mutations and 0 publications.
 - Priming observed: AAC 2112, Opus 52/104/156/312 (rate/50 frames per packet), ALAC/FLAC/PCM 0.

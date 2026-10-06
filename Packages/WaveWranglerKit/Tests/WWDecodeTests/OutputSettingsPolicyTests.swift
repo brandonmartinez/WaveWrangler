@@ -295,6 +295,29 @@ struct OutputSettingsPolicyTests {
         v = b; v.frames.primingFrames += 1; v.channelLayout = .undeclared
         #expect(decision.isCurrent(for: [a, v], configuration: .default))
     }
+
+    /// A source listed twice with unequal interpretations is refused by `decide`, so it is never current.
+    @Test func conflictingRepeatsAreNeverCurrent() throws {
+        let a = try Self.input(44100), b = try Self.input(48000, .int(16))
+        let decision = try Self.decide([a, b]).get()
+        var rate = b; rate.sourceSampleRate = 96000; rate.output.sampleRate = 96000
+        var priming = b; priming.frames.primingFrames += 1
+        var otherPriming = a; otherPriming.frames.primingFrames += 2
+        let cases: [(String, [FormatInterpretation], [OutputSettingsInvalidation])] = [
+            ("decision-relevant field", [a, b, rate], [.conflictingInputs(b.source)]),
+            ("field the decision ignores", [a, b, priming], [.conflictingInputs(b.source)]),
+            ("first listing differs", [a, priming, b], [.conflictingInputs(b.source)]),
+            ("two sources, reported once each", [a, b, otherPriming, priming, otherPriming], [.conflictingInputs(a.source), .conflictingInputs(b.source)]),
+        ]
+        for (label, inputs, expected) in cases {
+            #expect(decision.invalidations(for: inputs, configuration: .default) == expected, "\(label)")
+            #expect(!decision.isCurrent(for: inputs, configuration: .default), "\(label)")
+            guard case .failure(.conflictingInterpretations) = Self.decide(inputs) else {
+                Issue.record("\(label): decide accepted conflicting inputs")
+                continue
+            }
+        }
+    }
 }
 
 private extension OutputSettingsPolicyTests.Kind {

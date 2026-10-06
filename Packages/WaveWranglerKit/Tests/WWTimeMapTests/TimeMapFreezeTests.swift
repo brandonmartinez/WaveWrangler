@@ -120,8 +120,8 @@ struct TimeMapCaseRecord: Codable, Sendable {
     var inverseGap = 0
     var inverseUnsupported = 0
     var inverseOutside = 0
-    /// |returned frame − exact inverse| per inverse that returned a source, source frames. Gated in memory;
-    /// the records file carries its count, max and nearest-rank p95 per case.
+    /// |returned frame − exact inverse| per inverse that returned a source, source frames, in probe order.
+    /// Recorded raw so the pooled nearest-rank p95 and max can be recomputed from the records file alone.
     var quantisation: [Double] = []
     var quantisationCount = 0
     var quantisationMax: Double?
@@ -132,7 +132,7 @@ struct TimeMapCaseRecord: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case split, caseIndex, seed, stratum, draws, groups, occurrences, spans, maxFrameCount, frameRoundTrips
         case forwardGap, forwardUnsupported, forwardOutside, inverseSource, inverseGap, inverseUnsupported, inverseOutside
-        case quantisationCount, quantisationMax, quantisationP95, failureCounts, failures
+        case quantisation, quantisationCount, quantisationMax, quantisationP95, failureCounts, failures
     }
 }
 
@@ -451,5 +451,29 @@ struct TimeMapFreezeTests {
         #expect(fixtures.first?["id"] as? String == TimeMapFixture.fixtureID)
         #expect(split["calibration"] as? Int == TimeMapFixture.calibrationCases)
         #expect(split["holdout"] as? Int == TimeMapFixture.holdoutCases)
+    }
+
+    /// The committed calibration records are the ones the freeze hashed, and they alone reproduce the reported
+    /// pooled quantisation count, max and nearest-rank p95.
+    @Test func committedCalibrationRecordsReproduceTheReportedQuantisation() throws {
+        let summary = try #require(try Self.freeze()["calibrationSummary"] as? [String: Any])
+        let file = try #require(summary["recordsFile"] as? String)
+        let data = try Data(contentsOf: Self.repository.appendingPathComponent(file))
+        let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        #expect(sha == summary["recordsSHA256"] as? String)
+        let decoder = JSONDecoder()
+        let records = try data.split(separator: UInt8(ascii: "\n")).map { try decoder.decode(TimeMapCaseRecord.self, from: Data($0)) }
+        #expect(records.count == TimeMapFixture.calibrationCases)
+        #expect(records.map(\.caseIndex) == Array(0 ..< TimeMapFixture.calibrationCases))
+        for record in records {
+            #expect(record.quantisation.count == record.quantisationCount, "case \(record.caseIndex)")
+            #expect(record.quantisation.count == record.inverseSource, "case \(record.caseIndex)")
+            #expect(record.quantisation.max() == record.quantisationMax, "case \(record.caseIndex)")
+        }
+        let pooled = records.flatMap(\.quantisation)
+        let reported = try #require(summary["quantisation"] as? [String: Any])
+        #expect(reported["count"] as? Int == pooled.count)
+        #expect(reported["max"] as? Double == pooled.max())
+        #expect(reported["p95NearestRank"] as? Double == nearestRank(pooled, TimeMapGates.reportedPercentile))
     }
 }

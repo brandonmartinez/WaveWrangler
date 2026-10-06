@@ -272,6 +272,8 @@ public enum OutputSettingsInvalidation: Sendable, Codable, Hashable {
     /// A version, the fingerprint, the rate, the sample format or the channel count changed.
     case inputChanged(SourceID)
     case inputOrderChanged
+    /// The source is listed more than once with unequal interpretations, which `decide` refuses.
+    case conflictingInputs(SourceID)
 }
 
 public struct OutputSettingsDecision: Sendable, Codable, Hashable {
@@ -303,6 +305,17 @@ public struct OutputSettingsDecision: Sendable, Codable, Hashable {
         let kept = now.map(\.source).filter { recorded[$0] != nil }
         let recordedKept = basis.inputs.map(\.source).filter { currentInputs[$0] != nil }
         if kept != recordedKept { found.append(.inputOrderChanged) }
+        // Same equality as validatedInputs: a repeat must equal the first listing in full.
+        var firstListing: [SourceID: FormatInterpretation] = [:]
+        var conflicting: [SourceID] = []
+        for interpretation in interpretations {
+            guard let first = firstListing[interpretation.source] else {
+                firstListing[interpretation.source] = interpretation
+                continue
+            }
+            if first != interpretation, !conflicting.contains(interpretation.source) { conflicting.append(interpretation.source) }
+        }
+        found += conflicting.map(OutputSettingsInvalidation.conflictingInputs)
         return found
     }
 

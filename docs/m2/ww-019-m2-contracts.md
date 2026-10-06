@@ -185,7 +185,7 @@ revision per §4).
 | --- | --- | --- |
 | M1 / WW-013 | **Exit pending; GUI gate open** | Any GUI-dependent M2 acceptance (XCUITest suite, exit checkpoint, essential-accessibility audits) waits until the M1 GUI gate passes. |
 | WW-014 | **PARTIAL** | Inspection/manual-correction UI spec; not yet implemented. |
-| WW-015 | **PARTIAL**; `m2-freeze-timemap` calibrated, frozen, holdout NOT RUN | Time-map contract landed. Calibration (700 cases) met every gate pre-freeze: round trip max 0.5, p95 0.4679 source frames, 0 gap/state/oracle failures (`docs/m2/evidence/ww-015-time-maps.md`). |
+| WW-015 | **PARTIAL**; `m2-freeze-timemap` calibrated, frozen, holdout NOT RUN | Time-map contract landed. Calibration (700 cases) met every gate pre-freeze: round trip max 0.5, pooled nearest-rank p95 0.4679 source frames, 0 gap/state/oracle failures (`docs/m2/evidence/ww-015-time-maps.md`). |
 | WW-016 | **FAILED** (research candidate); new estimator calibrated, frozen, holdout NOT RUN | Research candidate holdout failed (below). `WWAlignEstimate` emits only `acousticConsistentProposal` or abstentions and never `clockApproved`; calibration: `docs/m2/evidence/ww-016-estimator-calibration.md`. |
 | WW-017 | **PARTIAL** | Discontinuity handling planned, not yet built. |
 | WW-018 | **PENDING**; `WWRender` candidate calibrated, frozen, holdout NOT RUN | Listening gate BLOCKED (not granted); SRC/render candidate not qualified. Calibration (16 cases + multi-span) met every objective gate pre-freeze: `docs/m2/evidence/ww-018-render-calibration.md`. |
