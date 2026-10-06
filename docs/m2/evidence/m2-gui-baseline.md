@@ -19,7 +19,7 @@ The Mac mini shard completed in 1,191 s; the local shard completed in 1,989 s. T
 | --- | --- | --- |
 | `CoreTasksKeyboardUITests.testT16ConflictNeverOverwrites` | Deterministic: failed in the full shard and in its only permitted isolated rerun. | Existing deferred conflict-resolution work, #66. Not a new finding. |
 | `ContrastEvidenceUITests.testLibraryTextContrastAcrossAppearances` | Flaky audit infrastructure: initial `XCUIAccessibilityAudit` contrast pass timed out (`-56`), then passed in its only isolated rerun. | Follow-up #218. No product contrast failure was observed. |
-| `ResponsivenessUITests.testInteractions` | Deterministic timing regression: episode-switch event-to-commit p95 exceeded 100 ms in the initial 100-sample run and its only isolated rerun. | P1 follow-up #220. |
+| `ResponsivenessUITests.testInteractions` | Deterministic timing regression: episode-switch event-to-commit p95 exceeded 100 ms in the initial, isolated-rerun, quiet-mini, and quiet-local 100-sample runs. | P1 follow-up #220. |
 | Setup dark 200% blocked/recovery status contrast | Unwaived measured contrast finding: 31,772 glyph pixels at p75 2.29:1. | P1 follow-up #221. |
 
 The local result bundles include expected skips for the three VoiceOver-walk tests (VoiceOver was not enabled) and the system-visual settings test. Those are user-manual/M5 scope, not passes.
@@ -32,6 +32,8 @@ The table pins every observed waiver class and its rationale at `348af457`. A la
 
 | Audit finding / surface | Audit type | Baseline | Reason | Disposition |
 | --- | --- | ---: | --- | --- |
+| T16 conflict-resolution flow | Essential keyboard / recovery | 1 deterministic failed task | The conflict sheet lacks the required Save Mine as a Copy path. | Accepted with issue #66 |
+| Contrast-only audit timeout | Essential-audit infrastructure | 1 initial timeout, isolated rerun passed | XCTest returned audit error `-56`; no product contrast finding was observed. | Accepted with issue #218 |
 | Disabled SwiftUI layout groups, import review | `sufficientElementDescription` | 39 (cap 39) | Non-interactive layout containers. | Audit artefact |
 | Disabled SwiftUI layout groups, Setup | `sufficientElementDescription` | 65 (cap 67) | Non-interactive layout containers. | Audit artefact |
 | System pop-up `AXShowMenu`, import review / Setup | `action` | 10 / 2 (caps 10 / 2) | System pop-up controls expose `AXShowMenu`; app actions remain labelled. | Audit artefact |
@@ -47,20 +49,25 @@ The table pins every observed waiver class and its rationale at `348af457`. A la
 
 ## Responsiveness baseline
 
-The M1 `Responsiveness` instrumentation recorded application event-to-committed-run-loop timing; p95 uses nearest rank. The full 100-sample run is at `~/ww-uitest-runs/m2-regression-348af45-local/responsiveness-100.xcresult`, with extracted data in `responsiveness-100.json`. The isolated required rerun is `responsiveness-rerun.xcresult` and `responsiveness-rerun.json`.
+The M1 `Responsiveness` instrumentation recorded application event-to-committed-run-loop timing; p95 uses nearest rank. The first two local runs measured 111.524 / 127.612 ms and 109.097 / 115.297 ms (p95 / max) for episode switching, but ran with concurrent heavy work and approximately 30 one-minute load. They are retained in #220 as contaminated-condition observations, not quiet-host baseline measurements.
 
-| Metric | Samples | Gate | Initial p95 / max (ms) | Rerun p95 / max (ms) | Status |
+The quiet runs below are the baseline measurements. Macsimus began at 3.69 one-minute load and ended at 4.94; this Mac began at 6.14 and ended at 6.52. Result bundles and extracted JSON remain host-local:
+
+- Mac mini: `~/ww-uitest-runs/m2-regression-348af45/responsiveness-100-mini.xcresult` and `responsiveness-100-mini.json`.
+- This Mac: `~/ww-uitest-runs/m2-regression-348af45-local/responsiveness-100-quiet-local.xcresult` and `responsiveness-100-quiet-local.json`.
+
+| Metric | Samples | Gate | Mac mini p95 / max (ms) | This Mac p95 / max (ms) | Status |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Launch to Library ready | 100 | <1000 | 616.704 / 652.827 | — | Pass |
-| First cold show open | 100 | <1000 | 450.766 / 671.463 | — | Pass |
-| Warm show open | 100 | <1000 | 231.205 / 252.756 | — | Pass |
-| Library sidebar selection | 103 | <100 | 60.205 / 79.925 | 62.383 / 82.949 | Pass |
-| Collection edit | 100 | <100 | 34.159 / 49.790 | 29.235 / 46.001 | Pass |
-| Episode switch | 100 | <100 | 111.524 / 127.612 | 109.097 / 115.297 | **Fail; #220** |
-| Metadata edit | 100 | <100 | 38.982 / 41.700 | 34.691 / 82.647 | Pass |
-| All interactions | 403 | <100 | 106.313 / 127.612 | 103.857 / 115.297 | **Fail; #220** |
+| Launch to Library ready | 100 | <1000 | 858.934 / 1056.802 | 644.244 / 707.707 | Pass |
+| First cold show open | 100 | <1000 | 829.857 / 988.083 | 458.003 / 638.957 | Pass |
+| Warm show open | 100 | <1000 | 263.699 / 291.028 | 235.978 / 254.119 | Pass |
+| Library sidebar selection | 103 | <100 | 71.070 / 86.664 | 62.152 / 76.037 | Pass |
+| Collection edit | 100 | <100 | 39.913 / 79.344 | 29.424 / 40.486 | Pass |
+| Episode switch | 100 | <100 | 107.793 / 119.962 | 106.201 / 125.829 | **Fail; #220** |
+| Metadata edit | 100 | <100 | 31.023 / 37.970 | 36.501 / 66.872 | Pass |
+| All interactions | 403 | <100 | 102.332 / 119.962 | 97.793 / 125.829 | Mini fail; local pass |
 
-The episode-switch handler-to-commit p95 remained under 100 ms in both runs (71.819 ms initial; 72.692 ms rerun); the user-visible event-to-commit interval did not. This distinction is recorded for diagnosis, not as a waiver.
+The episode-switch handler-to-commit p95 remained below 100 ms on both quiet hosts (92.522 ms on the mini; 70.084 ms locally); the user-visible event-to-commit metric did not. This distinction is recorded for diagnosis, not as a waiver.
 
 ## Baseline maintenance
 
