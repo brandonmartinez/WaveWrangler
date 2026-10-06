@@ -193,8 +193,16 @@ final class EpisodeSetupUITests: XCTestCase {
         try audit("import-review")
 
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        // Separate "Return didn't reach the sheet" from "the import didn't apply" (regression run 2).
+        if !review.waitForNonExistence(timeout: 5) {
+            attachState("import review still open after Return")
+            XCTFail("Return didn't confirm Import Review (sheet still open)")
+        }
         XCTAssertTrue(element("ww.setup.sources").waitForExistence(timeout: 3))
-        XCTAssertTrue(text("Ungrouped · 9 sources").waitForExistence(timeout: 3), "unconfirmed suggestions were not applied")
+        if !text("Ungrouped · 9 sources").waitForExistence(timeout: 5) {
+            attachState("import not applied after the review closed")
+            XCTFail("unconfirmed suggestions were not applied")
+        }
         XCTAssertTrue(app.menuBars.menuBarItems["Edit"].exists)
         app.menuBars.menuBarItems["Edit"].click()
         XCTAssertTrue(app.menuItems["Undo Import 9 Sources"].exists)
