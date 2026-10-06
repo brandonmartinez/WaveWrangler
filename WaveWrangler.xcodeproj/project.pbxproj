@@ -45,6 +45,7 @@
 			membershipExceptions = (
 				Commands/ConfirmationButtons.swift,
 				Commands/OpaqueErrorPanel.swift,
+				Sources/SetupConfirmationKind.swift,
 			);
 			target = C13E785C401E67854374EF9C /* WaveWranglerTests */;
 		};

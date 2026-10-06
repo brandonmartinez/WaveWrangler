@@ -209,18 +209,27 @@ struct EpisodeSetupView: View {
     private func confirmationButtons(_ confirmation: EpisodeSetupModel.Confirmation) -> some View {
         switch confirmation {
         case let .removeSources(ids):
-            Button("Remove", role: .destructive) { model.removeSources(ids) }
+            confirmButton("Remove", for: confirmation) { model.removeSources(ids) }
             Button("Cancel", role: .cancel) {}
         case let .deleteSpeaker(id):
-            Button("Delete", role: .destructive) { model.deleteSpeaker(id) }
+            confirmButton("Delete", for: confirmation) { model.deleteSpeaker(id) }
             Button("Cancel", role: .cancel) {}
         case let .deleteGroup(id):
-            Button("Delete", role: .destructive) { model.deleteGroup(id) }
+            confirmButton("Delete", for: confirmation) { model.deleteGroup(id) }
             Button("Cancel", role: .cancel) {}
         case let .cancelDownload(id):
-            Button("Cancel Download", role: .destructive) { model.performConfirmed(.cancel, on: id) }
+            confirmButton("Cancel Download", for: confirmation) { model.performConfirmed(.cancel, on: id) }
             Button("Keep Downloading", role: .cancel) {}
         }
+    }
+
+    /// Role and Return key both follow `isChosenDestruction`: chosen destruction (⌫ or a menu command) is
+    /// the default button without the destructive role, which on macOS clears Return (K05, A13, #114);
+    /// unchosen destruction keeps the destructive style and no default. Esc always cancels.
+    private func confirmButton(_ title: String, for confirmation: EpisodeSetupModel.Confirmation, action: @escaping () -> Void) -> some View {
+        let chosen = confirmation.isChosenDestruction
+        return Button(title, role: chosen ? nil : .destructive, action: action)
+            .keyboardShortcut(chosen ? .defaultAction : nil)
     }
 }
 
