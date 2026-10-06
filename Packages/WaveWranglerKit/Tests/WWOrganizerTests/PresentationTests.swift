@@ -159,7 +159,9 @@ struct SaveStatusTests {
     }
 
     @Test func locationUnavailableWordingDependsOnAutosave() {
-        #expect(present(.locationUnavailable, autosave: true).popoverText.hasSuffix("WaveWrangler will try again automatically."))
+        #expect(present(.locationUnavailable, autosave: true, retrying: true).popoverText.hasSuffix("WaveWrangler will try again automatically."))
+        // The promise is made only while a retry is really pending (#157 review).
+        #expect(present(.locationUnavailable, autosave: true).popoverText.hasSuffix("Choose Try Again when the folder is available."))
         let off = present(.locationUnavailable, autosave: false)
         #expect(off.popoverText.hasSuffix("Choose Try Again when the folder is available."))
         #expect(off.showsDirtyDot)
