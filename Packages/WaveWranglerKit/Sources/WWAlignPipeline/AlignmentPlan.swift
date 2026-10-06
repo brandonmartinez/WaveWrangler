@@ -105,6 +105,22 @@ struct ContentEligibility: Sendable {
         self.registered = registered
     }
 
+    /// Metadata-only inspection planning: a registered ON source may participate in the structural plan,
+    /// but no content authorization value is created and callers still cannot run a decode with this value.
+    init(metadataPlanning sources: [AlignmentSource], registered: [SourceID: String]) {
+        var locations: [SourceID: AlignmentSource] = [:]
+        for source in sources where locations[source.id] == nil { locations[source.id] = source }
+        self.locations = locations
+        authorized = Set(sources.filter { $0.availability == .on }.map(\.id))
+        // Inspection needs only the structural plan. A private sentinel makes ON locations eligible for
+        // planning without registering a source revision or creating a content-work authorization.
+        self.registered = Dictionary(
+            uniqueKeysWithValues: locations.values
+                .filter { $0.availability == .on }
+                .map { ($0.id, registered[$0.id] ?? "metadata-planning-only") }
+        )
+    }
+
     func check(_ id: SourceID) -> SourceIneligibility? {
         guard let location = locations[id] else { return .locationUnknown }
         guard location.availability == .on else { return .availabilityOff }

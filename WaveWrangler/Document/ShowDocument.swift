@@ -215,6 +215,7 @@ final class ShowDocument: NSDocument {
             completionHandler(formatUpdateSaveRefusal())
             return
         }
+
         if let request = copyElsewhere, saveOperation == .saveAsOperation {
             saveCopy(request, to: url, ofType: typeName, completionHandler: completionHandler)
             return
@@ -237,6 +238,34 @@ final class ShowDocument: NSDocument {
             self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error, url: url, candidateBytes: candidateBytes,
                             candidateModel: candidateModel, restoredAtSaveStart: restoredAtSaveStart)
             completionHandler(error)
+        }
+    }
+
+    /// Publishes `expected` through the ordinary C3 NSDocument path and reports success only after the
+    /// document's independent read-back verification has completed. A newer edit supersedes the request.
+    func persistExpectedModel(
+        _ expected: ShowDocumentModel,
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void
+    ) {
+        guard store.model == expected else {
+            completion(.failure(CocoaError(.userCancelled)))
+            return
+        }
+        guard let url = fileURL else {
+            completion(.failure(CocoaError(.fileNoSuchFile)))
+            return
+        }
+        save(to: url, ofType: fileType ?? DocumentTypes.show, for: .saveOperation) { [weak self] error in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let error {
+                    completion(.failure(error))
+                } else if self.store.model != expected || !self.status.saveStatus.state.isVerifiedOnDisk {
+                    completion(.failure(CocoaError(.userCancelled)))
+                } else {
+                    completion(.success(()))
+                }
+            }
         }
     }
 

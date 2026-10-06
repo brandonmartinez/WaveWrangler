@@ -6,13 +6,31 @@ import WWTimeMap
 
 /// One anchor of a manual map: a time in the epoch's source (seconds from the occurrence's first frame) and
 /// the aligned time the person says it belongs at.
-public struct AlignmentAnchor: Sendable, Hashable {
+public struct AlignmentAnchor: Sendable, Hashable, Codable {
     public var sourceSeconds: Double
     public var alignedSeconds: Double
 
     public init(sourceSeconds: Double, alignedSeconds: Double) {
         self.sourceSeconds = sourceSeconds
         self.alignedSeconds = alignedSeconds
+    }
+}
+
+/// Canonical transport for the exact anchor pairs behind `manual(.anchors)` while the show schema keeps
+/// manual provenance's existing free-text note. The prefix makes ordinary notes unambiguous.
+public enum AlignmentAnchorNote {
+    private static let prefix = "ww.anchors.v1:"
+
+    public static func encode(_ anchors: [AlignmentAnchor]) -> String {
+        guard let data = try? JSONEncoder().encode(anchors) else { return "" }
+        return prefix + data.base64EncodedString()
+    }
+
+    public static func decode(_ note: String) -> [AlignmentAnchor]? {
+        guard note.hasPrefix(prefix),
+              let data = Data(base64Encoded: String(note.dropFirst(prefix.count)))
+        else { return nil }
+        return try? JSONDecoder().decode([AlignmentAnchor].self, from: data)
     }
 }
 
@@ -209,7 +227,7 @@ enum MapAcceptance {
         case let .anchors(anchors, text):
             (rate, offset) = try fit(epoch, anchors: anchors)
             basis = .anchors
-            note = text
+            note = text.isEmpty ? AlignmentAnchorNote.encode(anchors) : text
         }
         guard let end else { throw .noPlaceableSource(epoch) }
         let segment: AffineClockSegment

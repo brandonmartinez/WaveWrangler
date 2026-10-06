@@ -188,13 +188,14 @@ struct SaveStatusTests {
 
 @Suite("Destinations")
 struct DestinationTests {
-    @Test func onlySetupIsAvailableAndLaterOnesExplainWhy() {
+    @Test func setupAndAlignmentAreAvailableAndLaterOnesExplainWhy() {
         #expect(ShowDestination.allCases.map(\.title) == ["Setup", "Alignment", "Review", "Export"])
         #expect(ShowDestination.setup.blockedPanel == nil)
-        #expect(ShowDestination.alignment.blockedPanel?.heading == "Alignment isn't available yet")
-        #expect(ShowDestination.alignment.blockedPanel?.body.contains("WaveWrangler hasn't read or analysed any audio.") == true)
+        #expect(ShowDestination.alignment.blockedPanel == nil)
+        #expect(ShowDestination.alignment.isAvailableInThisVersion)
+        #expect(ShowDestination.alignment.helpText == "Inspect and correct recorder alignment")
         #expect(ShowDestination.export.blockedPanel?.body.hasSuffix("Nothing has been exported.") == true)
-        for destination in ShowDestination.allCases where destination != .setup {
+        for destination in [ShowDestination.review, .export] {
             #expect(destination.unavailableValue == "Not available in this version")
             #expect(destination.blockedPanel?.buttonTitle == "Go to Setup")
         }
@@ -217,6 +218,7 @@ struct SymbolAndMenuTests {
             .newEpisode: "⇧⌘N", .importSources: "⇧⌘I", .saveAs: "⌥⇧⌘S", .library: "⇧⌘L",
             .destinationSetup: "⌘1", .destinationAlignment: "⌘2", .destinationReview: "⌘3", .destinationExport: "⌘4",
             .moveUp: "⌥⌘↑", .moveDown: "⌥⌘↓", .textBigger: "⌘+", .textSmaller: "⌘-", .textActual: "⌘0", .episodeInfo: "⌘I",
+            .auditionSelection: "⌘⏎", .stopAudition: "Esc",
         ])
         #expect(MenuCommand.duplicate.shortcut.description == "⇧⌘S")
         #expect(MenuCommand.toggleInspector.shortcut.description == "⌃⌘I")

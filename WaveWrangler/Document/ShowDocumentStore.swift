@@ -67,16 +67,38 @@ final class ShowDocumentStore {
         coalescingKey = nil
     }
 
-    private func replace(with newModel: ShowDocumentModel, actionName: String) {
+    /// Applies a complete, already-validated model and runs `afterChange` for the initial edit and every
+    /// undo/redo replacement. Alignment uses this to persist first, then activate the accepted map revision.
+    @discardableResult
+    func applyReplacement(
+        _ actionName: String,
+        model newModel: ShowDocumentModel,
+        afterChange: @escaping @MainActor (ShowDocumentModel) -> Void
+    ) -> Bool {
+        guard FormatUpdatePolicy.allowsEdits(document?.status.formatUpdate) else { return false }
+        guard newModel != model else { return true }
+        lastError = nil
+        replace(with: newModel, actionName: actionName, afterChange: afterChange)
+        Responsiveness.interaction("show.edit")
+        return true
+    }
+
+    private func replace(
+        with newModel: ShowDocumentModel,
+        actionName: String,
+        afterChange: (@MainActor (ShowDocumentModel) -> Void)? = nil
+    ) {
         let previous = model
         model = newModel
         coalescingKey = nil
-        guard let undoManager = document?.undoManager else { return }
-        undoManager.registerUndo(withTarget: self) { store in
-            MainActor.assumeIsolated {
-                store.replace(with: previous, actionName: actionName)
+        if let undoManager = document?.undoManager {
+            undoManager.registerUndo(withTarget: self) { store in
+                MainActor.assumeIsolated {
+                    store.replace(with: previous, actionName: actionName, afterChange: afterChange)
+                }
             }
+            undoManager.setActionName(actionName)
         }
-        undoManager.setActionName(actionName)
+        afterChange?(newModel)
     }
 }

@@ -8,6 +8,11 @@ public enum SymbolCatalog {
             "books.vertical", "clock", "exclamationmark.triangle", "rectangle.stack", "plus",
             // Show window
             "music.mic", "info.circle", "lock.fill", "sidebar.left", "sidebar.right", "waveform.path", "folder",
+            // Alignment states
+            "flag.checkered", "checkmark.seal", "waveform.circle", "hand.point.up.braille",
+            "antenna.radiowaves.left.and.right", "arrow.triangle.branch", "bolt.slash",
+            "questionmark.circle", "arrow.up.and.down.and.arrow.left.and.right", "xmark.octagon",
+            "arrow.right.circle",
             // Settings
             "gearshape",
         ]

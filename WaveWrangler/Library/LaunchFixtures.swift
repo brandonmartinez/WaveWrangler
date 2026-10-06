@@ -1,7 +1,9 @@
 import AppKit
+import WWAlignPipeline
 import WWCore
 import WWOrganizer
 import WWPersistence
+import WWTimeMap
 
 /// Launch-argument fixtures for XCUITests (Debug builds only). Synthetic data only: generated in memory
 /// or in the app container's temporary directory; never user recordings or folders.
@@ -21,6 +23,8 @@ import WWPersistence
 /// - `-WWUITestRetainOlderCheckpoint <base64>`: see `UITestHooks` (#159 F-OLDER-BAD).
 /// - `-WWUITestOpenShow <name>` (+ `-WWUITestShowEpisodes <n>`): create a synthetic show and open it
 ///   (the Library window is then not shown at launch).
+/// - `-WWUITestAlignmentFixture YES`: give the opened synthetic episode two recorder groups and epochs,
+///   with synthetic logical source records only. No recording exists and no source content can be read.
 /// - `-WWUITestAppearance aqua|darkAqua|highContrastAqua|highContrastDarkAqua`: app appearance for C04/C07
 ///   checks. The high-contrast names are AppKit's Increase Contrast appearances (labelled "override, not
 ///   system setting" in evidence; implements the `-WWForceIncreaseContrast` idea of the acceptance suite).
@@ -134,10 +138,118 @@ enum LaunchFixtures {
             NSApp.presentError(error)
             return
         }
-        let episodes = (0..<count).map { Episode(title: "Synthetic Episode \($0 + 1)", number: $0 + 1) }
+        let episodes = (0..<count).map { index in
+            if defaults.bool(forKey: "WWUITestAlignmentFixture") {
+                return alignmentEpisode(index: index)
+            }
+            return Episode(title: "Synthetic Episode \(index + 1)", number: index + 1)
+        }
         NewShowCommand.create(at: folder.appending(path: "\(name).wwshow"), episodes: episodes)
         #endif
     }
+
+    #if DEBUG
+    private static func alignmentEpisode(index: Int) -> Episode {
+        let referenceEpoch = RecordingEpoch(label: "Reference take")
+        let targetEpoch = RecordingEpoch(label: "Guest take")
+        let referenceGroup = RecorderGroup(name: "Studio recorder", epochs: [referenceEpoch])
+        let targetGroup = RecorderGroup(name: "Remote recorder", epochs: [targetEpoch])
+        let reference = SourceRecord(
+            displayNameHint: "synthetic-studio.wav",
+            placement: SourcePlacement(recorderGroupID: referenceGroup.id, epochID: referenceEpoch.id)
+        )
+        let target = SourceRecord(
+            displayNameHint: "synthetic-remote.wav",
+            placement: SourcePlacement(recorderGroupID: targetGroup.id, epochID: targetEpoch.id)
+        )
+        var episode = Episode(
+            title: "Synthetic Episode \(index + 1)",
+            number: index + 1,
+            recorderGroups: [referenceGroup, targetGroup],
+            sources: [reference, target]
+        )
+        let rate = try! NominalRate(48_000)
+        let frames: Int64 = 48_000 * 120
+        let referenceOccurrence = try! SourceOccurrence(
+            id: alignmentOccurrenceID(for: reference.id), source: reference.id,
+            nominalRate: rate, frameCount: frames
+        )
+        let targetOccurrence = try! SourceOccurrence(
+            id: alignmentOccurrenceID(for: target.id), source: target.id,
+            nominalRate: rate, frameCount: frames
+        )
+        let referenceID = TimelineReference(
+            group: referenceGroup.id, epoch: referenceEpoch.id,
+            occurrence: referenceOccurrence.id
+        )
+        let end = try! ExactRational(numerator: 120, denominator: 1)
+        let referenceSegment = try! AffineClockSegment(
+            groupClockStart: .zero, groupClockEnd: end,
+            rateRatio: .one, alignedOffset: .zero
+        )
+        let targetSegment = try! AffineClockSegment(
+            groupClockStart: .zero, groupClockEnd: end,
+            rateRatio: ExactRational(numerator: 1_000_012_040, denominator: 1_000_000_000),
+            alignedOffset: ExactRational(numerator: 84_200_000, denominator: 1_000_000_000)
+        )
+        let proposal = try! AcousticConsistencyProposal(
+            estimator: "Synthetic alignment fixture", evidenceScore: 7,
+            measurements: AcousticConsistencyMeasurements(
+                windowCount: 7, overlapSpanFraction: 0.86,
+                eligibleWindowFraction: 0.86,
+                acousticResidualP95Milliseconds: 3.1,
+                acousticResidualMaxMilliseconds: 4.4
+            )
+        )
+        let referenceMap = try! GroupTimeMap(
+            group: referenceGroup.id, reference: referenceID,
+            epochs: [EpochClockMap(
+                epoch: referenceEpoch.id,
+                mapping: .mapped(segments: [referenceSegment], provenance: .timelineReference)
+            )],
+            placements: [OccurrencePlacement(
+                occurrence: referenceOccurrence,
+                spans: [EpochSpan(
+                    startFrame: 0, endFrame: frames, epoch: referenceEpoch.id,
+                    groupClockOffset: .zero
+                )]
+            )]
+        )
+        let targetMap = try! GroupTimeMap(
+            group: targetGroup.id, reference: referenceID,
+            epochs: [EpochClockMap(
+                epoch: targetEpoch.id,
+                mapping: .mapped(
+                    segments: [targetSegment],
+                    provenance: .acousticConsistentProposal(proposal)
+                )
+            )],
+            placements: [OccurrencePlacement(
+                occurrence: targetOccurrence,
+                spans: [EpochSpan(
+                    startFrame: 0, endFrame: frames, epoch: targetEpoch.id,
+                    groupClockOffset: .zero
+                )]
+            )]
+        )
+        let map = try! AlignedTimelineMap(
+            reference: referenceID, groups: [referenceMap, targetMap]
+        )
+        let encoded = try! EmbeddedTimeMapCodec.encode(map)
+        episode.alignment = EpisodeAlignment(
+            maps: [TimeMapVersion(
+                revision: 1,
+                inputs: TimeMapInputs(sources: [
+                    TimeMapSourceInput(sourceID: reference.id),
+                    TimeMapSourceInput(sourceID: target.id),
+                ]),
+                map: encoded
+            )],
+            acceptedRevision: 1
+        )
+        return episode
+    }
+    #endif
 }
 
 #if DEBUG

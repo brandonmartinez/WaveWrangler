@@ -29,7 +29,7 @@ public enum ShowDestination: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
-    public var isAvailableInThisVersion: Bool { self == .setup }
+    public var isAvailableInThisVersion: Bool { self == .setup || self == .alignment }
 
     /// VoiceOver value for the segment when not selected; `nil` when nothing extra is said.
     public var unavailableValue: String? {
@@ -38,7 +38,11 @@ public enum ShowDestination: String, CaseIterable, Sendable, Identifiable {
 
     /// Help tag for blocked segments ("Later").
     public var helpText: String {
-        isAvailableInThisVersion ? "Set up sources and speakers for this episode" : "Later: not available in this version"
+        switch self {
+        case .setup: "Set up sources and speakers for this episode"
+        case .alignment: "Inspect and correct recorder alignment"
+        case .review, .export: "Later: not available in this version"
+        }
     }
 
     public var blockedPanel: BlockedPanel? {
@@ -46,10 +50,7 @@ public enum ShowDestination: String, CaseIterable, Sendable, Identifiable {
         case .setup:
             nil
         case .alignment:
-            BlockedPanel(
-                heading: "Alignment isn't available yet",
-                body: "Lining up recorder groups comes in a later version of WaveWrangler. The recorder groups, epochs, channels and speakers you set up now will carry forward. WaveWrangler hasn't read or analysed any audio."
-            )
+            nil
         case .review:
             BlockedPanel(
                 heading: "Review isn't available yet",
@@ -68,4 +69,9 @@ public struct BlockedPanel: Sendable, Equatable {
     public var heading: String
     public var body: String
     public var buttonTitle: String { "Go to Setup" }
+
+    public init(heading: String, body: String) {
+        self.heading = heading
+        self.body = body
+    }
 }

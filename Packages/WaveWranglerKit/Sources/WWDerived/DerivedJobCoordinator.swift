@@ -241,6 +241,11 @@ public actor DerivedJobCoordinator {
         slots[slot]?.state ?? .idle
     }
 
+    /// A stable query snapshot for presentation and diagnostics. Callers cannot mutate coordinator state.
+    public func states() -> [DerivedSlot: DerivedSlotState] {
+        slots.mapValues(\.state)
+    }
+
     /// Why `key` is not current; empty when it is.
     public func staleReasons(for key: DerivedAssetKey) -> Set<StaleReason> {
         var reasons = Set<StaleReason>()

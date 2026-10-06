@@ -229,7 +229,21 @@ private struct ShowDetailContent: View {
         } else if let panel = state.destination.blockedPanel {
             BlockedDestinationView(destination: state.destination, panel: panel) { state.select(.setup) }
         } else if let episode = state.selectedEpisode {
-            SetupContainerView(state: state, episode: episode)
+            if state.destination == .alignment {
+                if episode.recorderGroups.isEmpty {
+                    BlockedDestinationView(
+                        destination: .alignment,
+                        panel: BlockedPanel(
+                            heading: "Alignment isn't available yet",
+                            body: "Set up at least one recorder group in Setup first. WaveWrangler hasn't read or analysed any audio."
+                        )
+                    ) { state.select(.setup) }
+                } else {
+                    EpisodeAlignmentContent(state: state, episodeID: episode.id)
+                }
+            } else {
+                SetupContainerView(state: state, episode: episode)
+            }
         } else {
             ContentUnavailableView("No Episode Selected", systemImage: "music.mic", description: Text("Select an episode in the sidebar."))
                 .wwFont(.body)

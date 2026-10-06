@@ -189,6 +189,18 @@ enum MainMenu {
         menu.addItem(routed("Episode Info", #selector(CommandRouter.episodeInfo(_:)), .episodeInfo))
         menu.addItem(routed("Rename Episode", #selector(CommandRouter.renameEpisode(_:))))
         menu.addItem(.separator())
+        menu.addItem(routed("Analyse Available Sources", #selector(CommandRouter.analyseAlignment(_:))))
+        menu.addItem(routed("Accept Proposal as Manual", #selector(CommandRouter.acceptAlignmentProposal(_:))))
+        menu.addItem(routed("Reject Proposal", #selector(CommandRouter.rejectAlignmentProposal(_:))))
+        menu.addItem(routed("Place Anchor at Playhead", #selector(CommandRouter.placeAlignmentAnchorAtPlayhead(_:))))
+        menu.addItem(routed("Edit Epoch Timing Numerically…", #selector(CommandRouter.editAlignmentTiming(_:))))
+        menu.addItem(routed("Place Anchors…", #selector(CommandRouter.placeAlignmentAnchors(_:))))
+        menu.addItem(routed("Start New Epoch at Anchor", #selector(CommandRouter.startNewEpochAtAnchor(_:))))
+        menu.addItem(.separator())
+        menu.addItem(routed("Audition Selection", #selector(CommandRouter.auditionAlignmentSelection(_:)), .auditionSelection))
+        menu.addItem(routed("Stop Audition", #selector(CommandRouter.stopAlignmentAudition(_:)), .stopAudition))
+        menu.addItem(routed("Go to Setup", #selector(CommandRouter.goToAlignmentSetup(_:))))
+        menu.addItem(.separator())
         menu.addItem(routed("Delete Episode…", #selector(CommandRouter.deleteEpisode(_:))))
         return menu
     }

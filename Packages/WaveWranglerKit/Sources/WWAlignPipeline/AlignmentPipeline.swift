@@ -18,6 +18,17 @@ public struct AlignmentAnalysisReport: Sendable {
     public let epochFailures: [RecordingEpochID: AlignmentWorkFailure]
 }
 
+/// Metadata-only state for the Alignment workspace. Producing this value never probes, opens, hashes,
+/// decodes or analyses a source; it only combines the episode structure, registered source revisions and
+/// the accepted map. `states` therefore reports current accepted decisions or an honest pending/unsupported
+/// state until the person explicitly requests analysis.
+public struct AlignmentInspectionSnapshot: Sendable {
+    public let plan: AlignmentPlan
+    public let states: [EpochAlignmentState]
+    public let acceptedMap: AlignedTimelineMap?
+    public let acceptedRevision: Int?
+}
+
 /// Why aligned assets were not rendered at all. Nothing was opened.
 public enum AlignedAssetRefusal: Error, Sendable, Equatable {
     case episodeNotFound(EpisodeID)
@@ -91,6 +102,34 @@ public final class AlignmentPipeline: Sendable {
         return AlignmentPlanner.plan(
             episode: episode, eligibility: eligibility, preferredReference: preferredReference,
             priorReference: Self.acceptedMap(model: model, episode: episodeID).flatMap { Self.referenceSource(of: $0.map) }
+        )
+    }
+
+    /// Builds the Alignment workspace's initial state without content access. Sources whose availability is
+    /// ON are treated as eligible for planning only; no `ContentWorkAuthorization` is created and no decoder
+    /// or derived job is called.
+    public func inspect(
+        model: ShowDocumentModel,
+        episode episodeID: EpisodeID,
+        sources: [AlignmentSource],
+        preferredReference: SourceID? = nil
+    ) async -> AlignmentInspectionSnapshot? {
+        guard let episode = model.episode(episodeID) else { return nil }
+        let registered = await coordinator.inputs.sources
+        let eligibility = ContentEligibility(metadataPlanning: sources, registered: registered)
+        let accepted = Self.acceptedMap(model: model, episode: episodeID).flatMap { value -> (map: AlignedTimelineMap, revision: Int)? in
+            guard let applicability = try? episode.applicability(ofMapRevision: value.revision), applicability.isCurrent else { return nil }
+            return value
+        }
+        let plan = AlignmentPlanner.plan(
+            episode: episode, eligibility: eligibility, preferredReference: preferredReference,
+            priorReference: accepted.flatMap { Self.referenceSource(of: $0.map) }
+        )
+        let states = AlignmentStateResolver.resolve(
+            plan: plan, acceptedMap: accepted, analyses: [:], epochFailures: [:], sourceFailures: [:]
+        )
+        return AlignmentInspectionSnapshot(
+            plan: plan, states: states, acceptedMap: accepted?.map, acceptedRevision: accepted?.revision
         )
     }
 
@@ -251,6 +290,142 @@ public final class AlignmentPipeline: Sendable {
         }
     }
 
+    /// Revises the current accepted map without requiring a fresh analysis run. This is the path for manual
+    /// numeric/anchor edits, proposal rejection and edits after reopening a show. The existing occurrence
+    /// placements and all untouched epoch mappings are preserved exactly.
+    public func reviseAcceptedMap(
+        model: ShowDocumentModel,
+        episode episodeID: EpisodeID,
+        decisions: [RecordingEpochID: EpochMapDecision]
+    ) throws(AlignmentAcceptanceError) -> AcceptedAlignment {
+        guard let episode = model.episode(episodeID) else { throw .episodeNotFound(episodeID) }
+        guard let priorRevision = episode.alignment?.acceptedRevision else { throw .noReference }
+        let prior: AlignedTimelineMap
+        do throws(MapHistoryError) {
+            prior = try model.timeMap(revision: priorRevision, in: episodeID)
+        } catch {
+            throw .priorMapUnreadable(error)
+        }
+
+        let groups = try prior.groups.map { group throws(AlignmentAcceptanceError) in
+            let epochs = try group.epochs.map { epoch throws(AlignmentAcceptanceError) in
+                guard let decision = decisions[epoch.epoch] else { return epoch }
+                return EpochClockMap(
+                    epoch: epoch.epoch,
+                    mapping: try Self.revisedMapping(
+                        decision, epoch: epoch.epoch, current: epoch.mapping,
+                        range: Self.groupClockRange(epoch: epoch.epoch, placements: group.placements)
+                    )
+                )
+            }
+            do throws(TimeMapError) {
+                return try GroupTimeMap(
+                    group: group.group, reference: group.reference,
+                    epochs: epochs, placements: group.placements
+                )
+            } catch {
+                throw .invalidMap(String(describing: error))
+            }
+        }
+        let revised: AlignedTimelineMap
+        do throws(TimeMapError) {
+            revised = try AlignedTimelineMap(reference: prior.reference, groups: groups)
+        } catch {
+            throw .invalidMap(String(describing: error))
+        }
+        return try Self.record(
+            map: revised, model: model, episode: episodeID, derivedFrom: priorRevision
+        )
+    }
+
+    /// Splits one persisted occurrence placement at `frame`, starts `newEpoch`, and records the result as a
+    /// new accepted revision. The new epoch is unsupported until the person times it; the old epoch keeps
+    /// only the segment before the split.
+    public func splitAcceptedOccurrence(
+        model: ShowDocumentModel,
+        episode episodeID: EpisodeID,
+        group groupID: RecorderGroupID,
+        source sourceID: SourceID,
+        epoch epochID: RecordingEpochID,
+        frame: Int64,
+        newEpoch: RecordingEpochID
+    ) throws(AlignmentAcceptanceError) -> AcceptedAlignment {
+        guard let episode = model.episode(episodeID) else { throw .episodeNotFound(episodeID) }
+        guard let priorRevision = episode.alignment?.acceptedRevision else { throw .noReference }
+        let prior: AlignedTimelineMap
+        do throws(MapHistoryError) {
+            prior = try model.timeMap(revision: priorRevision, in: episodeID)
+        } catch {
+            throw .priorMapUnreadable(error)
+        }
+
+        var changed = false
+        let groups = try prior.groups.map { group throws(AlignmentAcceptanceError) in
+            guard group.group == groupID else { return group }
+            var placements = group.placements
+            guard let placementIndex = placements.firstIndex(where: { $0.occurrence.source == sourceID }),
+                  let spanIndex = placements[placementIndex].spans.firstIndex(where: {
+                      $0.epoch == epochID && frame > $0.startFrame && frame < $0.endFrame
+                  })
+            else { throw .invalidMap("the selected anchor is not inside the selected epoch") }
+            let placement = placements[placementIndex]
+            let span = placement.spans[spanIndex]
+            let rate = Int128(placement.occurrence.nominalRate.framesPerSecond)
+            let newOffset: ExactRational
+            do throws(TimeMapError) {
+                newOffset = try ExactRational(numerator: -Int128(frame), denominator: rate)
+            } catch {
+                throw .invalidMap(String(describing: error))
+            }
+            var spans = placement.spans
+            spans.replaceSubrange(spanIndex...spanIndex, with: [
+                EpochSpan(
+                    startFrame: span.startFrame, endFrame: frame,
+                    epoch: span.epoch, groupClockOffset: span.groupClockOffset
+                ),
+                EpochSpan(
+                    startFrame: frame, endFrame: span.endFrame,
+                    epoch: newEpoch, groupClockOffset: newOffset
+                ),
+            ])
+            placements[placementIndex] = OccurrencePlacement(
+                occurrence: placement.occurrence, spans: spans
+            )
+
+            var epochs = group.epochs
+            guard let oldIndex = epochs.firstIndex(where: { $0.epoch == epochID }) else {
+                throw .invalidMap("the selected epoch is absent from the accepted map")
+            }
+            epochs[oldIndex] = EpochClockMap(
+                epoch: epochID,
+                mapping: try Self.mapping(
+                    epochs[oldIndex].mapping,
+                    endingAt: Self.groupClockBoundary(frame: frame, span: span, rate: rate)
+                )
+            )
+            epochs.append(EpochClockMap(epoch: newEpoch, mapping: .unsupported(.notAttempted)))
+            changed = true
+            do throws(TimeMapError) {
+                return try GroupTimeMap(
+                    group: group.group, reference: group.reference,
+                    epochs: epochs, placements: placements
+                )
+            } catch {
+                throw .invalidMap(String(describing: error))
+            }
+        }
+        guard changed else { throw .invalidMap("the selected recorder group is absent from the accepted map") }
+        let revised: AlignedTimelineMap
+        do throws(TimeMapError) {
+            revised = try AlignedTimelineMap(reference: prior.reference, groups: groups)
+        } catch {
+            throw .invalidMap(String(describing: error))
+        }
+        return try Self.record(
+            map: revised, model: model, episode: episodeID, derivedFrom: priorRevision
+        )
+    }
+
     /// Makes the coordinator publish for `accepted.revision`: everything derived from any other revision
     /// becomes stale and late results for it are discarded. Call after the document is saved.
     public func activate(_ accepted: AcceptedAlignment) async throws(AlignmentAcceptanceError) {
@@ -261,6 +436,173 @@ public final class AlignmentPipeline: Sendable {
         }
         if await coordinator.isShutdown { throw .coordinatorShutDown }
         await coordinator.acceptMap(accepted.revision)
+    }
+
+    /// Reconciles the coordinator with a coherently persisted document value. This is used after undo/redo
+    /// as well as a new acceptance, so stale dependents reverse exactly with the document's accepted revision.
+    public func activate(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws(AlignmentAcceptanceError) {
+        guard let episode = model.episode(episodeID) else { throw .episodeNotFound(episodeID) }
+        if await coordinator.isShutdown { throw .coordinatorShutDown }
+        guard let revision = episode.alignment?.acceptedRevision else {
+            await coordinator.clearAcceptedMap(episode: episodeID)
+            return
+        }
+        guard let applicability = try? episode.applicability(ofMapRevision: revision), applicability.isCurrent else {
+            throw .history(.mapNotFound(revision: revision))
+        }
+        await coordinator.acceptMap(MapRevisionReference(episode: episodeID, revision: revision))
+    }
+
+    private static func record(
+        map: AlignedTimelineMap,
+        model: ShowDocumentModel,
+        episode episodeID: EpisodeID,
+        derivedFrom: Int
+    ) throws(AlignmentAcceptanceError) -> AcceptedAlignment {
+        do throws(MapHistoryError) {
+            let (recorded, revision) = try model.recordingMap(
+                map, in: episodeID, recipe: AlignmentAssetKinds.acceptanceRecipe,
+                derivedFrom: derivedFrom
+            )
+            let accepted = try recorded.acceptingMap(revision: revision.revision, in: episodeID)
+            guard let updated = accepted.episode(episodeID),
+                  try updated.applicability(ofMapRevision: revision.revision).isCurrent
+            else {
+                throw MapHistoryError.invalidMap("the episode changed while the map was revised")
+            }
+            return AcceptedAlignment(model: accepted, revision: revision, map: map)
+        } catch {
+            throw .history(error)
+        }
+    }
+
+    private static func revisedMapping(
+        _ decision: EpochMapDecision,
+        epoch: RecordingEpochID,
+        current: EpochClockMap.Mapping,
+        range: (start: ExactRational, end: ExactRational)?
+    ) throws(AlignmentAcceptanceError) -> EpochClockMap.Mapping {
+        switch decision {
+        case .unmapped:
+            return .unsupported(.notAttempted)
+        case let .acceptProposal(note):
+            guard case let .mapped(segments, .acousticConsistentProposal) = current else {
+                throw .noCurrentProposal(epoch)
+            }
+            return .mapped(
+                segments: segments,
+                provenance: .manual(ManualCorrection(basis: .acceptedAcousticProposal, note: note))
+            )
+        case let .numeric(ppm, offsetMilliseconds, note):
+            guard let range else { throw .noPlaceableSource(epoch) }
+            let (rate, offset) = try MapAcceptance.numeric(
+                epoch, ppm: ppm, offsetSeconds: offsetMilliseconds / 1_000
+            )
+            return .mapped(
+                segments: [try Self.segment(range: range, rate: rate, offset: offset)],
+                provenance: .manual(ManualCorrection(basis: .numericEntry, note: note))
+            )
+        case let .anchors(anchors, note):
+            guard let range else { throw .noPlaceableSource(epoch) }
+            let (rate, offset) = try MapAcceptance.fit(epoch, anchors: anchors)
+            return .mapped(
+                segments: [try Self.segment(range: range, rate: rate, offset: offset)],
+                provenance: .manual(ManualCorrection(
+                    basis: .anchors,
+                    note: note.isEmpty ? AlignmentAnchorNote.encode(anchors) : note
+                ))
+            )
+        }
+    }
+
+    private static func groupClockRange(
+        epoch: RecordingEpochID,
+        placements: [OccurrencePlacement]
+    ) -> (start: ExactRational, end: ExactRational)? {
+        var start: ExactRational?
+        var end: ExactRational?
+        for placement in placements {
+            let rate = Int128(placement.occurrence.nominalRate.framesPerSecond)
+            for span in placement.spans where span.epoch == epoch {
+                guard let lo = try? ExactRational(
+                    numerator: Int128(span.startFrame), denominator: rate
+                ).adding(span.groupClockOffset),
+                let hi = try? ExactRational(
+                    numerator: Int128(span.endFrame), denominator: rate
+                ).adding(span.groupClockOffset)
+                else { continue }
+                if start == nil || lo < start! { start = lo }
+                if end == nil || hi > end! { end = hi }
+            }
+        }
+        guard let start, let end, end > start else { return nil }
+        return (start, end)
+    }
+
+    private static func segment(
+        range: (start: ExactRational, end: ExactRational),
+        rate: ExactRational,
+        offset: ExactRational
+    ) throws(AlignmentAcceptanceError) -> AffineClockSegment {
+        do throws(TimeMapError) {
+            return try AffineClockSegment(
+                groupClockStart: range.start, groupClockEnd: range.end,
+                rateRatio: rate, alignedOffset: offset
+            )
+        } catch {
+            throw .invalidMap(String(describing: error))
+        }
+    }
+
+    private static func groupClockBoundary(
+        frame: Int64,
+        span: EpochSpan,
+        rate: Int128
+    ) throws(AlignmentAcceptanceError) -> ExactRational {
+        do throws(TimeMapError) {
+            return try ExactRational(
+                numerator: Int128(frame), denominator: rate
+            ).adding(span.groupClockOffset)
+        } catch {
+            throw .invalidMap(String(describing: error))
+        }
+    }
+
+    private static func mapping(
+        _ mapping: EpochClockMap.Mapping,
+        endingAt end: ExactRational
+    ) throws(AlignmentAcceptanceError) -> EpochClockMap.Mapping {
+        switch mapping {
+        case .unsupported:
+            return mapping
+        case let .mapped(segments, provenance):
+            guard let first = segments.first, end > first.groupClockStart else {
+                throw .invalidMap("the selected anchor leaves no frames in the original epoch")
+            }
+            let kept = segments.prefix { $0.groupClockStart < end }.enumerated().map { index, segment in
+                let segmentEnd = min(segment.groupClockEnd, end)
+                return (index, segment, segmentEnd)
+            }.filter { $0.2 > $0.1.groupClockStart }
+            do throws(TimeMapError) {
+                var shortened: [AffineClockSegment] = []
+                for (_, segment, segmentEnd) in kept {
+                    shortened.append(try AffineClockSegment(
+                        groupClockStart: segment.groupClockStart,
+                        groupClockEnd: segmentEnd,
+                        rateRatio: segment.rateRatio,
+                        alignedOffset: segment.alignedOffset
+                    ))
+                }
+                return .mapped(
+                    segments: shortened,
+                    provenance: provenance.kind.isClockApproved
+                        ? .manual(ManualCorrection(basis: .numericEntry, note: "Clock approval removed by epoch split."))
+                        : provenance
+                )
+            } catch {
+                throw .invalidMap(String(describing: error))
+            }
+        }
     }
 
     // MARK: Aligned assets

@@ -12,9 +12,16 @@
 		BA2A343FF9A10294D64B4715 /* WWSources in Frameworks */ = {isa = PBXBuildFile; productRef = 8503CC32FED0C1A6A832807D /* WWSources */; };
 		5E7A1C2B9D4F3E6A8B0C1D2E /* WWEpisodeSetup in Frameworks */ = {isa = PBXBuildFile; productRef = 6F8B2D3C0E5A4F7B9C1D2E3F /* WWEpisodeSetup */; };
 		7C3A1E5D9B2F4A6C8E0D1B3F /* WWOrganizer in Frameworks */ = {isa = PBXBuildFile; productRef = A1D4C7F02B5E8A3D6C9F1E4B /* WWOrganizer */; };
+		A10220000000000000000001 /* WWAlignPipeline in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000011 /* WWAlignPipeline */; };
+		A10220000000000000000002 /* WWDerived in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000012 /* WWDerived */; };
+		A10220000000000000000003 /* WWDecode in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000013 /* WWDecode */; };
+		A10220000000000000000004 /* WWTimeMap in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000014 /* WWTimeMap */; };
 		6B1E5CB5C9CA81007F6A81B8 /* WWCore in Frameworks */ = {isa = PBXBuildFile; productRef = 16B37CD1081A7D1F8BD805E3 /* WWCore */; };
 		4D283E5538B35FC08990F6D5 /* WWPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 9E46055AA9A5DEF6E328B117 /* WWPersistence */; };
 		5E8F2A71C4B39D6E0A1F7C82 /* WWOrganizer in Frameworks */ = {isa = PBXBuildFile; productRef = 9B3D6E1F2A4C7085D2E6F193 /* WWOrganizer */; };
+		A10220000000000000000021 /* WWAlignPipeline in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000011 /* WWAlignPipeline */; };
+		A10220000000000000000022 /* WWDecode in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000013 /* WWDecode */; };
+		A10220000000000000000023 /* WWTimeMap in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000014 /* WWTimeMap */; };
 		5C1A9E3B7D2F4A6E8B0C2D42 /* ShowSchema1Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1A9E3B7D2F4A6E8B0C2D41 /* ShowSchema1Fixtures.swift */; };
 /* End PBXBuildFile section */
 
@@ -48,6 +55,7 @@
 			membershipExceptions = (
 				Commands/ConfirmationButtons.swift,
 				Commands/OpaqueErrorPanel.swift,
+				Alignment/AlignmentPresentation.swift,
 				Document/FormatUpdate.swift,
 				Library/MoveStepRelay.swift,
 				Sources/SetupConfirmationKind.swift,
@@ -89,6 +97,10 @@
 				BA2A343FF9A10294D64B4715 /* WWSources in Frameworks */,
 				5E7A1C2B9D4F3E6A8B0C1D2E /* WWEpisodeSetup in Frameworks */,
 				7C3A1E5D9B2F4A6C8E0D1B3F /* WWOrganizer in Frameworks */,
+				A10220000000000000000001 /* WWAlignPipeline in Frameworks */,
+				A10220000000000000000002 /* WWDerived in Frameworks */,
+				A10220000000000000000003 /* WWDecode in Frameworks */,
+				A10220000000000000000004 /* WWTimeMap in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -99,6 +111,9 @@
 				6B1E5CB5C9CA81007F6A81B8 /* WWCore in Frameworks */,
 				4D283E5538B35FC08990F6D5 /* WWPersistence in Frameworks */,
 				5E8F2A71C4B39D6E0A1F7C82 /* WWOrganizer in Frameworks */,
+				A10220000000000000000021 /* WWAlignPipeline in Frameworks */,
+				A10220000000000000000022 /* WWDecode in Frameworks */,
+				A10220000000000000000023 /* WWTimeMap in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -166,6 +181,10 @@
 				8503CC32FED0C1A6A832807D /* WWSources */,
 				6F8B2D3C0E5A4F7B9C1D2E3F /* WWEpisodeSetup */,
 				A1D4C7F02B5E8A3D6C9F1E4B /* WWOrganizer */,
+				A10220000000000000000011 /* WWAlignPipeline */,
+				A10220000000000000000012 /* WWDerived */,
+				A10220000000000000000013 /* WWDecode */,
+				A10220000000000000000014 /* WWTimeMap */,
 			);
 			productName = WaveWrangler;
 			productReference = 2793E8D2F64EF711A331B014 /* WaveWrangler.app */;
@@ -191,6 +210,9 @@
 				16B37CD1081A7D1F8BD805E3 /* WWCore */,
 				9E46055AA9A5DEF6E328B117 /* WWPersistence */,
 				9B3D6E1F2A4C7085D2E6F193 /* WWOrganizer */,
+				A10220000000000000000011 /* WWAlignPipeline */,
+				A10220000000000000000013 /* WWDecode */,
+				A10220000000000000000014 /* WWTimeMap */,
 			);
 			productName = WaveWranglerTests;
 			productReference = 65BA5EA7D383BDC1C1B6760D /* WaveWranglerTests.xctest */;
@@ -562,6 +584,22 @@
 		9B3D6E1F2A4C7085D2E6F193 /* WWOrganizer */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = WWOrganizer;
+		};
+		A10220000000000000000011 /* WWAlignPipeline */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WWAlignPipeline;
+		};
+		A10220000000000000000012 /* WWDerived */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WWDerived;
+		};
+		A10220000000000000000013 /* WWDecode */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WWDecode;
+		};
+		A10220000000000000000014 /* WWTimeMap */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WWTimeMap;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

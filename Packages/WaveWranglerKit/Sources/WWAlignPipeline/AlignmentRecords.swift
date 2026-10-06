@@ -118,6 +118,22 @@ public struct ProposalRecord: Sendable, Codable, Equatable {
     public var acousticResidualP95Milliseconds: Double
     public var acousticResidualMaxMilliseconds: Double
     public var provenance: AcousticConsistencyProposal
+
+    public init(
+        segment: AffineClockSegment,
+        ppm: Double,
+        offsetAtCenterSeconds: Double,
+        acousticResidualP95Milliseconds: Double,
+        acousticResidualMaxMilliseconds: Double,
+        provenance: AcousticConsistencyProposal
+    ) {
+        self.segment = segment
+        self.ppm = ppm
+        self.offsetAtCenterSeconds = offsetAtCenterSeconds
+        self.acousticResidualP95Milliseconds = acousticResidualP95Milliseconds
+        self.acousticResidualMaxMilliseconds = acousticResidualMaxMilliseconds
+        self.provenance = provenance
+    }
 }
 
 public struct AbstentionRecord: Sendable, Codable, Equatable {
