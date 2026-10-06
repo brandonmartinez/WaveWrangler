@@ -79,3 +79,70 @@ abstentions only. `clockApproved` needs independent clock truth plus a new freez
 - Calibration and the scenario suite are CPU-heavy (debug build; calibration 52 s on this host). They run only in the serialized estimator pass,
   because in the parallel pass they starved other suites' liveness waits on the CI runner.
 - Under the frozen window rule, an abstaining positive fails the gate, so positive yield is gated as well as residuals.
+
+## Holdout (post-freeze, run once)
+
+Refs #15 #24. Freeze: `docs/m2/fixtures/m2-freeze-estimator.json` (`m2-freeze-estimator`, frozen 2026-10-06). Run
+commit `602edc05b79157f56c264e1db41e8e16ab752c5e` (`main`, the freeze's own merge commit — clean checkout, `git status`
+clean before the run). Pinned trees verified equal to the freeze record before running, and re-verified by
+`HoldoutTests.estimatorAndHarnessTreesMatchTheFreezeRecord` during the run:
+`Sources/WWAlignEstimate` `8efd588a6b57dc56bf7eafa1ccf2c7709253f3a9`,
+`Tests/WWAlignEstimateTests` `b65bd478d1e2dfaa664006ba66433e0011f89dd0`. Dependency trees actually run (informational,
+not pinned): `Sources/WWTimeMap` `24c7aadfbf1470c8555542061ab08eb23e37325b`, `Sources/WWCore`
+`c310389c4b41ebde80c5dabaea12fd5376f5d9ba` — both equal to `dependencyTreesAtFreeze`.
+
+Host: Apple M5 Max, 18 cores, 128 GiB, macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4 (swiftlang-6.4.0.34.1
+clang-2100.3.34.1), debug build — same host as calibration. Command, from `Packages/WaveWranglerKit`:
+`WW_ESTIMATOR_HOLDOUT=1 swift test --scratch-path .build/swiftpm --filter HoldoutTests`. Start `2026-10-06T11:42:40Z`,
+`frozenHoldout()` ran 198.348 s; wall time for the 5-test `HoldoutTests` suite (frozen-definition, split-disjointness,
+registry-match, tree-match and the holdout itself) was the same, run once, not repeated. Master seed
+`0x57571600401D0000`, estimator `ww-align-estimate/1`, 140 cases / 170 epochs — the frozen holdout counts exactly,
+no more and no fewer. Raw, unedited test output: `docs/m2/evidence/ww-016-estimator-holdout-run.log`. Every per-case
+line, machine-readable: `docs/m2/evidence/ww-016-estimator-holdout-cases.jsonl` (170 records, one per epoch).
+
+| Stratum | Cases | Epochs | Proposals | Abstentions | Clock residual p95 / max (ms) | Proposals failing clock gates |
+|---|---|---|---|---|---|---|
+| positive | 40 | 40 | 40 | — | 0.9695 / 0.9903 | 0 |
+| positiveRestart | 10 | 20 | 20 | — | 0.9499 / 0.9592 | 0 |
+| positiveThreeGroup | 10 | 20 | 20 | — | 0.9781 / 0.9883 | 0 |
+| constantDelay (35 ms) | 10 | 10 | 10 | — | 35.0032 / 35.0084 | 0 |
+| variableDelay (20→50 ms) | 10 | 10 | 8 | discontinuous=1, inconsistent=1 | 47.9480 / 49.3782 | 0 |
+| discontinuity (±40 ms step) | 10 | 10 | 0 | discontinuous=10 | — | 0 |
+| unrelated | 10 | 10 | 0 | weak=10 | — | 0 |
+| silent | 10 | 10 | 0 | silent=10 | — | 0 |
+| periodic | 10 | 10 | 0 | ambiguous=3, periodic=7 | — | 0 |
+| disconnected | 10 | 10 | 0 | disconnected=10 | — | 0 |
+| cycleConflict (mechanism) | 10 | 20 | 0 | cycleInconsistent=20 | — | 0 |
+
+**Gate (`GateEvaluation`, the frozen definition) on the holdout: PASS.**
+- Positives: 80/80 epochs proposed (an abstaining positive fails the window gate). Every positive epoch had
+  ≥14/16 eligible windows (≥87.5%, above the 60% floor) and ≥86.9% overlap span (above the 80% floor); both exceed
+  the ≥5-window floor. Pooled clock residual p95 0.9699 ms, max 0.9903 ms over 8,000 one-second grid points —
+  both comfortably inside the 5 ms / 10 ms gate.
+- False accepts: 0. Zero `clockApproved` emissions (the module has no such path). Zero proposals in any
+  abstention-required stratum (discontinuity, unrelated, silent, periodic, disconnected, cycleConflict: 70/70
+  epochs abstained). Zero acoustic-delay proposals mislabelled — all 18 proposed constantDelay/variableDelay
+  epochs carry `acousticConsistentProposal` provenance only, and 0 of them would pass the clock gates if promoted.
+- constantDelay: 10/10 proposed, clock-wrong by 35.00–35.01 ms every time (truth is a constant 35 ms propagation
+  delay, not a clock error) — consistent with calibration's 35.0 ms finding.
+- variableDelay: 8/10 proposed (1 abstained `discontinuous`, 1 abstained `inconsistent` — the strict consistency
+  fit correctly refused a windowed delay ramp that didn't fit a single offset/drift line); the 8 proposals are
+  47.9–49.4 ms clock-wrong, with fitted ppm −207 to −341 against truths of −90 to +41 ppm, matching calibration's
+  pattern that a slowly varying propagation delay reads to the estimator as drift.
+- cycleConflict: all 20 epochs (10 cases × 2 epochs) measured a cycle disagreement of 20.0–20.1 ms (tolerance
+  2.0 ms) and abstained `cycleInconsistent`; 2 epochs also carried a `coverageGap` flag with no effect on the
+  abstention.
+
+**This PASS qualifies the acoustic-proposal envelope only.** Per the frozen gate's authority note (verbatim in
+`m2-freeze-estimator.json`), a PASS means positives proposed within the clock gates and every finite negative
+either abstained or was labelled `acousticConsistentProposal` — it does **not** authorize `clockApproved`. The
+module still has no `clockApproved` path (`EstimatorPurityTests` bans the approval surface), and the holdout
+confirms rather than changes that: audio alone cannot separate a constant or slowly varying propagation delay from
+a clock offset/drift (constantDelay and variableDelay here, same as calibration's 6/6). Under M2-C4 and the
+2026-10-06 drift-fallback decision, the M2 drift fallback stays manual epochs and anchors; `clockApproved` needs
+independent clock truth (externalEvidence such as supplied timecode or word clock) plus a new dated freeze and a
+fresh holdout.
+
+**Limits, same as calibration.** Synthetic, single-host evidence; no real rooms, recorders, codecs, reverberation or
+moving sources. This is the only holdout run under this freeze revision — rerunning to seek a different result
+would violate the freeze's `postFreezeRule` and is not done here, pass or fail.
