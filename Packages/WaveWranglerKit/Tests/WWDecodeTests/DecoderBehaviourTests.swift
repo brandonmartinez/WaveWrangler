@@ -7,26 +7,21 @@ import WWSources
 
 // MARK: - Scripted content gateway (recording test double)
 
-/// Blocks a decode at a chosen point until the test opens it. Liveness-guarded: a gate that is never
-/// opened records an issue instead of hanging the run.
-final class Gate: @unchecked Sendable {
-    private let semaphore = DispatchSemaphore(value: 0)
-    private let arrivals: AsyncStream<Void>
-    private let continuation: AsyncStream<Void>.Continuation
+/// Cancels the decoding task from inside the decoder's synchronous call (a read or a sink append), so
+/// the cancellation lands at exactly that point. Nothing blocks: blocking a cooperative-pool thread to
+/// wait for the test starves the shared pool on small CI hosts.
+final class CancelProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _fired = 0
+    var fired: Int { lock.withLock { _fired } }
 
-    init() { (arrivals, continuation) = AsyncStream.makeStream(of: Void.self) }
-
-    /// Called by the blocked side.
-    func arriveAndWait() {
-        continuation.yield()
-        if semaphore.wait(timeout: .now() + 60) == .timedOut { Issue.record("liveness guard: gate never opened") }
+    func cancelCurrentTask() {
+        withUnsafeCurrentTask { task in
+            if task == nil { Issue.record("cancel probe ran outside a task") }
+            task?.cancel()
+        }
+        lock.withLock { _fired += 1 }
     }
-
-    func waitForArrival() async {
-        for await _ in arrivals { return }
-    }
-
-    func open() { semaphore.signal() }
 }
 
 /// Produces a synthetic codec stream whose sample at stream frame `s`, channel `c`, is `s + c / 4`, so
@@ -346,7 +341,7 @@ struct DecoderBehaviourTests {
         expectNothingPublished(result)
     }
 
-    /// Where the decode is blocked when it is cancelled.
+    /// Where the decode is when it is cancelled.
     enum CancelPoint: String, CaseIterable, Sendable {
         /// Inside a read, after earlier chunks were appended.
         case midRead
@@ -360,31 +355,34 @@ struct DecoderBehaviourTests {
     @Test("Cancellation at any point publishes nothing and releases everything", arguments: CancelPoint.allCases)
     func cancellation(_ point: CancelPoint) async throws {
         let source = try ScriptedSource()
-        let gate = Gate()
+        let probe = CancelProbe()
         var script = source.script()
         // 1000-frame reads of a 12288-frame stream: reads 0...12 return data, read 13 returns 0.
+        // Priming (2112 frames) fills reads 0 and 1, so appends 0, 1, 2 come from reads 2, 3, 4.
         let finalRead = Int(source.aacStreamFrames / 1000) + 1
         switch point {
-        case .midRead: script.onRead = { if $0 == 4 { gate.arriveAndWait() } }
-        case .finalRead: script.onRead = { if $0 == finalRead { gate.arriveAndWait() } }
+        case .midRead: script.onRead = { if $0 == 4 { probe.cancelCurrentTask() } }
+        case .finalRead: script.onRead = { if $0 == finalRead { probe.cancelCurrentTask() } }
         case .midAppend: break
         }
         let content = ScriptedContentIO(script)
-        let blockOnAppend = point == .midAppend
+        let cancelOnAppend = point == .midAppend
         let onAppend: @Sendable (Int) -> Void = { index in
-            if blockOnAppend, index == 2 { gate.arriveAndWait() }
+            if cancelOnAppend, index == 2 { probe.cancelCurrentTask() }
         }
-        let task = Task { await runAttempt(source.url, content: content, onAppend: onAppend) }
-        await gate.waitForArrival()
-        task.cancel()
-        gate.open()
-        let result = await task.value
+        let result = await Task { await runAttempt(source.url, content: content, onAppend: onAppend) }.value
+        #expect(probe.fired == 1)
         #expect(result.failure == .cancelled)
         #expect(result.events.contains("append"))
         expectNothingPublished(result)
         #expect(content.record.closes == 1)
         #expect(content.record.opens == 1)
-        if point == .finalRead { #expect(content.record.reads == finalRead + 1) }
+        // No read follows the one in progress (or the append in progress) when the cancellation lands.
+        #expect(content.record.reads == (point == .finalRead ? finalRead + 1 : 5))
+        // A chunk read before the cancellation was noticed is never appended after it.
+        let appends = result.events.filter { $0 == "append" }.count
+        if point == .midRead { #expect(appends == 2) }
+        if point == .midAppend { #expect(appends == 3) }
     }
 
     // MARK: Identity and staleness
