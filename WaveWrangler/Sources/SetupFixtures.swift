@@ -43,6 +43,11 @@ enum SetupFixtures {
     private static var shared: InMemorySourceSetupEngine?
 
     private static func makeStatesEngine() -> InMemorySourceSetupEngine {
+        // `-WWUITestDownloadSources OFF` (fixture mode only): start with "Download sources automatically" off
+        // (T30's Off half); `-WWUITestResetPreferences YES` restores the default on the next launch.
+        if UserDefaults.standard.string(forKey: "WWUITestDownloadSources") == "OFF" {
+            AppSettingsDownloadPreference.shared.downloadsAutomatically = false
+        }
         let created = Date(timeIntervalSince1970: 1_790_000_000)
         func details(_ name: String, _ folder: String?, size: Int64 = 1_210_000_000) -> FileDetails {
             FileDetails(name: name, size: size, created: created, modified: created, kind: "WAV audio", folderName: folder)

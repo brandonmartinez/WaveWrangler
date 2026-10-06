@@ -20,8 +20,9 @@ final class EpisodeSetupUITests: XCTestCase {
             "-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
             "-WWUITestCenterWindows", "YES", "-WWUITestOpenShow", "Setup Fixture", "-WWUITestShowEpisodes", "1",
         ]
-        // T30 Off half: "Download sources automatically" off for this launch (argument domain).
-        if name.contains("DownloadsOff") { app.launchArguments += ["-WWDownloadSourcesAutomatically", "NO"] }
+        // T30 Off half: "Download sources automatically" off for this launch. (A plain
+        // `-WWDownloadSourcesAutomatically NO` argument is a string, which the Bool preference ignores.)
+        if name.contains("DownloadsOff") { app.launchArguments += ["-WWUITestDownloadSources", "OFF"] }
         app.launch()
         app.activate()
         try openSetup()
@@ -692,7 +693,8 @@ final class EpisodeSetupUITests: XCTestCase {
 
         print("[phase] begin t30-on-reconnect \(Date().timeIntervalSince1970)")
         simulateNetwork(offline: false)
-        XCTAssertTrue(waitForStatusCount("Downloading…", 3, timeout: 3), "requested again automatically: Downloading…")
+        // Status cells expose their spoken value ("Downloading, progress unknown" for the visual "Downloading…").
+        XCTAssertTrue(waitForStatusCount("Downloading, progress unknown", 3, timeout: 3), "requested again automatically: Downloading…")
         XCTAssertEqual(statusCount("No connection"), 0)
         XCTAssertTrue(attentionCount(4), "attention count drops once (7 → 4)")
         XCTAssertTrue(waitForStatusCount("Ready", 5), "then Ready (2 + 3), with no user action")
