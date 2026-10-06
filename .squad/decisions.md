@@ -246,3 +246,32 @@
 - Applies to new child sessions and task agents; running sessions aren't interrupted. Review stays independent: a different model or session from the author.
 - Carried into routing.md and the M3 kickoff.
 
+
+### 2026-10-06: M1 exit results — host restored, m1-exit branch, REF-020 freeze-6
+
+**By:** the user (09:06), the relay (user-directed) and the M1 coordinator, recorded by Lead in the M1 results PR. Evidence lives in `docs/planning/milestone-exits/m1.md`, not here.
+
+- **Host restored (user, 09:06):** the user restored the 1Password SSH agent on the main Mac. The Mac mini runs that had been blocked since about 01:27 went ahead.
+- **m1-exit branch (relay approval, user-directed):** three M1 fix lanes were approved for the failures found by the first exit gate on `cdb56bd`. The final M1 product under test is the `m1-exit` branch: `cdb56bd` plus squash cherry-picks of #190, #192, #197, #194 and #205's code commit, with no M2 code.
+  - Every fix also merges to `main`.
+  - `main` already contains M2 code, so it gets its full-suite coverage at M2's next capped full run. This is the condition of the approval.
+- **REF-020:**
+  - `m1-freeze-5` FAILED 18/20, from a harness open-panel detection race with no product failure. That result is retained, with no waiver and no re-run on freeze-5.
+  - #190 fixed the panel detection and re-froze `M1-REF-020` unchanged as `m1-freeze-6`, with fresh `holdout-f6` seeds (WW-003 §4.7).
+  - `m1-freeze-6` PASSED 20/20 in one run. #151 is closed.
+- **GPT models (user, 11:47):** already recorded above ("Prefer GPT models for new sessions and agents"). M1 gate reviews after 11:47 used gpt-6-sol.
+- **Closure:** the required M1 issues close with proof once the final gate on `m1-exit` passes and the M1 results PR merges.
+- **Final M1 exit gate on `m1-exit` (`21104e9`): passed** (recorded by Lead in the same results PR).
+  - **UI suite:** 73 tests, 65 pass, 4 fail, 4 skipped by design, with 0 product failures and no regressions. The 4 failures are T16 (known, #66/#125) and three intermittents that pass in isolation (#215, P2, M2).
+  - **Exit checkpoint:** 13/13. **`scripts/test.sh`:** PASS.
+  - **Verdict:** M1 is accepted for internal use on the claimed hosts, on the `m1-exit` product. The M1 coordinator closes the required issues with proof once the results PR merges.
+- **Disclosure (added later the same day):** two orphaned `yes` processes (about 100% CPU each, about 12:44–15:56, then killed) ran on the dev Mac during the `m1-exit` `scripts/test.sh` run. The timing gates passed under that extra load, so the result is conservative. The Mac mini results aren't affected. Recorded in the M1 exit record, §12.
+
+### 2026-10-06: Delivery guards learned during M2
+
+**By:** M2 coordinator.
+- **Closing keywords:** GitHub auto-closed #45 ("does not close #45" in #174's body) and #16 (#171) on merge. Both were reopened with explanatory comments. Rule: write "Refs #N" unless the PR is meant to close the issue, and check `closingIssuesReferences` before merging.
+- **Stacked bases:** #208 inherited its stacked base and was squash-merged into `brandonmartinez/mac-fixing-wwsources-test-reliability` instead of main. Recovery: #203 was reopened only to carry the identical approved tree (5242eec) to main, and merged as 0084081. The reviewer-rejection lockout governs who authors a revision, not which PR carries approved bytes. Rule: pass base_branch "main" explicitly, and check baseRefName before every merge.
+- **Writer children:** one lane created a corrective writer session itself, outside the budget. It was told to stand down. Rule: writer children never spawn writers.
+- **Writer budget:** while M1 was open, M2 briefly ran 4 writers against the relay's cap of 3 (about 05:50–06:30) before the user raised the cap to 4 at 12:37. Disclosed in the M2 exit record.
+

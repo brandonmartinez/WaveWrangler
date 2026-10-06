@@ -92,6 +92,61 @@ Disclosed pre-freeze deviation: the first calibration run failed 3 bit-exact cas
 had reached a neighbouring identical burst, so the window is now `min(3000, half-gap)`. No gate changed.
 `scripts/test.sh` runs the calibration split in its own serialized pass. A split measures at most 4 cases at once (`WW_M2_FREEZE_MAX_CONCURRENCY` may lower it); the rerun under that cap gave byte-identical records.
 
-**Holdout NOT RUN.** It runs once, in its own PR after this one merges, with
-`WW_M2_DECODE_HOLDOUT=1 swift test --filter DecodeCalibrationTests/holdoutSplitMeetsEveryFrozenGate`.
-Calibration is not holdout evidence.
+## `m2-freeze-decode` holdout (frozen run)
+
+**PASS — all gates.** This is the sole 520-case frozen holdout run. Before it started, the checkout was clean,
+`HEAD` equalled `origin/main` at `7f17bfc417b52e5cc138be31cca4cd75632d24f0`, the 1-minute load was 7.19, and the
+frozen trees matched: `Sources/WWDecode` `6f81db77162b493928798332f6d4ec9648f396d0`;
+`Tests/WWDecodeTests` `383ebc0cfdc5515f78a33ad2a6dfaf3ea664e92b`; dependency trees also matched:
+`Sources/WWSources` `fc8fb0fb661f318262d54d161baa3a04b475c792` and `Sources/WWCore`
+`c310389c4b41ebde80c5dabaea12fd5376f5d9ba`. On the claimed Apple M5 Max host (macOS 27.0.1 (26A434),
+Xcode 27.0 (27A266a), Swift 6.4, 18 cores, 128 GiB), it ran with the default maximum concurrency of four:
+
+`cd Packages/WaveWranglerKit && WW_M2_DECODE_HOLDOUT=1 WW_DECODE_RECORDS_DIR=../../docs/m2/evidence/ww-050 swift test --scratch-path .build/swiftpm --filter DecodeCalibrationTests/holdoutSplitMeetsEveryFrozenGate`
+
+The full raw output, including UTC start/end lines (2026-10-06T16:38:46Z through
+2026-10-06T16:39:14Z), is [`ww-050/holdout-run.log`](ww-050/holdout-run.log). The per-case records are
+[`ww-050/holdout.jsonl`](ww-050/holdout.jsonl); SHA-256s for both artifacts are in
+[`ww-050/holdout.sha256`](ww-050/holdout.sha256).
+
+- **Supported mapping: PASS.** All 360 supported cases mapped correctly, with 0 mapping failures and 0
+  below-correlation landmarks. The mixed-input output-settings record also had 0 failures.
+- **Landmarks: PASS.** 4,179 observations: `|lag| = 0` for 4,107 and `+1` for 72; no other lag occurred.
+  All 72 `+1` observations were 24 kHz CAF Opus (30 from ten mono cases and 42 from seven stereo cases), the
+  declared expected one-output-frame limit.
+- **Planted typed errors and immutability: PASS.** All 160 planted cases returned their expected typed error;
+  `FileSnapshot` mutations were 0 and stale publications (including finish, unabandoned output, open readers, or
+  unbalanced scopes) were 0.
+
+This is frozen holdout evidence, not calibration evidence.
+
+## `m2-freeze-decode-2`: pull cursor freeze (calibration only)
+
+Refs #45. The bounded `DecodingCursor` shares the push decoder's `ChunkPump`, gateway, envelope checks and
+trimming. Owning-engineer review added a serial Dispatch worker so synchronous open/read/state/close calls do not
+block Swift cooperative-executor threads, and added a post-read cancellation check so a chunk completed after
+cancellation is discarded. The cursor retains one raw `channelCount × chunkFrames` buffer plus one returned chunk,
+closes the reader and security scope on every path, treats failures as terminal, and returns no unverified result.
+All source content still passes only through `SystemSourceContentIO`; its read-only descriptor and per-read
+dataless-materialization policy are unchanged. The internal worker factory avoids the scanner-reserved `open(`
+spelling so the always-on single-gateway enforcement remains green. Independent review then closed two
+return-publication gaps: a terminal failure is rethrown even when the first read fails before the read counter
+advances and the body catches it, and every result derived from reads receives a final unchanged-source check even
+when the body explicitly checked earlier.
+
+[`m2-freeze-decode-2.json`](../fixtures/m2-freeze-decode-2.json) supersedes revision 1 for the changed
+`Sources/WWDecode` / `Tests/WWDecodeTests` trees while leaving the revision-1 record and its sole passed holdout
+evidence unchanged. Revision 2 preserves the revision-1 recipe, truth, gate and counts verbatim, uses fixture
+`M2-DECODE-002` so all 520 holdout seeds are disjoint from revision 1, and has its own
+`WW_M2_DECODE_2_HOLDOUT` switch.
+
+**Calibration PASS; holdout NOT RUN.** The serialized 130-case calibration ran six times at maximum concurrency
+4 and produced byte-identical [`ww-050/calibration-2.jsonl`](ww-050/calibration-2.jsonl), SHA-256
+`d9b58446340222a9f92b0e4ded8047a391b2be8f6bd94e16f4071c798951b356`. All gates passed: 90 supported
+cases / 2,178,575 frames with 0 mapping failures; 1,014 landmarks (`lag 0` ×996, `lag +1` ×18, all +1 at
+24 kHz Opus), 0 below correlation; 53 exact cases bit-exact; 40 planted cases with their expected typed errors,
+0 mutations and 0 publications; output-settings failures 0. The always-on
+`committedCalibrationRecordsReproduceTheReportedCalibration` test verifies the file SHA, seeds, counts, metrics and
+all gate outcomes. The final calibration run used both pinned trees and the post-merge `WWSources` dependency tree
+after the independent review fixes for swallowed terminal failures and mandatory final source verification. No
+revision-2 holdout source was materialized or decoded; it runs once in a separate PR after this freeze merges.

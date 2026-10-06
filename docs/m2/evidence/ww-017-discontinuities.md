@@ -209,3 +209,80 @@ The holdout is a separate PR after merge.
 This PASS covers only synthetic signals with plants in the frozen size ranges. It does not qualify any real
 recording, codec or device. It authorizes no `clockApproved`. Mapped regions remain acoustic proposals, so WW-016
 holdout status and the manual-epoch fallback still govern production use.
+
+## Frozen holdout (2026-10-06): FAIL
+
+This is separate from the calibration above. The frozen `m2-freeze-discontinuity` holdout ran once, with no
+`WW_SEGMENT_MAX_CONCURRENCY` override (the frozen default is 4), on commit
+`f835948b1500a1af471c68050e085070464c712a` (Apple M5 Max, 18 cores, 128 GiB, macOS 27.0.1 (26A434), Xcode
+27.0 (27A266a), Swift 6.4). It started at 2026-10-06T17:19:40Z and finished at 2026-10-06T17:32:16Z. The frozen
+trees were `WWAlignSegment` `08bc77339aee0ccb9294e5c1610529ef5e088320`,
+`WWAlignSegmentTests` `b4d12045d3fe0e2c913f4c3545bec56f0d8f9ce0`, `WWAlignEstimate`
+`8efd588a6b57dc56bf7eafa1ccf2c7709253f3a9`, `WWTimeMap`
+`24c7aadfbf1470c8555542061ab08eb23e37325b`, and `WWCore`
+`c310389c4b41ebde80c5dabaea12fd5376f5d9ba`.
+
+- **PASS:** 130/130 planted discontinuities flagged; 0 unsupported-only, 0 bridged, 0 bridging regions, and 0 silent bridges.
+- **FAIL:** negatives false-split 3/50 (0.060) against the frozen maximum of 0; `transient#6`, `transient#13`, and `silenceGap#4`.
+- **PASS:** 0 positive/monotonic, gap-inverse, or retention failures; supported worst nearest-rank p95/max was 1.078/1.096 ms, within the WW-016 5/10 ms gate.
+
+The full verbatim run log (including every case and UTC start/end lines) is
+[`ww-017/holdout-raw.txt`](ww-017/holdout-raw.txt). The unedited canonical case records are
+[`ww-017/holdout.jsonl`](ww-017/holdout.jsonl), SHA-256
+`c26445d14e4b8c64a587c4f07c37debd75514f2113bdb227087fd60e2949e6b7`
+([`holdout.jsonl.sha256`](ww-017/holdout.jsonl.sha256)); the raw-log SHA-256 is
+`ae8dbd818d6deec418deada812e6426c9c9a050bb2f8fd9cc81b8addcaf3d812`. This failed holdout does not authorize
+`clockApproved`; mapped regions remain acoustic proposals.
+
+## Freeze revision 2 (2026-10-06): calibration PASS; HOLDOUT NOT RUN
+
+**Diagnosis.** The unchanged rev-1 holdout records above show `transient#6` produced an `unresolved` detection
+whose slope-intersection bracket expanded to the entire 58.65 s span (zero mapped regions). `transient#13` and
+`silenceGap#4` each produced one boundary near the file end, at 61.58 s of 65.58 s and 51.63 s of 53.63 s
+respectively. The records expose no individual window offsets, so the suspected mechanism is short-lived
+misleading fits after target-only activity or loss of shared sound, not a proven reconstruction of those windows.
+None of these detections alone establishes a persistent change of clock. The failed cases were diagnosed from
+the committed records only; their seeds were not rendered, replayed or used for calibration.
+
+**Revision.** `ww-align-segment/2` requires each fitted run to cover at least 4 s between its first and last
+eligible window centre before it can establish a boundary. Short coherent runs stay unresolved, not mapped as
+another clock. The existing half-window margins, conservative brackets, per-candidate estimator agreement and
+image-overlap demotion remain. The unchanged gates and the new, disjoint case seeds/counts are frozen in
+[`m2-freeze-discontinuity-2`](../fixtures/m2-freeze-discontinuity-2.json), which supersedes rev 1 without
+altering its FAIL evidence.
+
+**Rev-2 calibration** (70 fresh cases; serialized `--no-parallel`, four cases maximum in flight): 38/38 planted
+discontinuities flagged with expected kind, 0 bridged plants/regions, 0 silent bridges, 0/36 false splits (clean
+0/6; target-only transients 0/15; silence gaps 0/15), 0 positive/monotonic, inverse or retention failures;
+supported worst nearest-rank p95/max 1.045/1.052 ms versus the unchanged 5/10 ms WW-016 residual gate.
+The six edge-silence regressions flagged 6/6, bridged 0, worst max 0.744 ms. The reported-only 30-case floor
+sweep bridged 11 sub-class-threshold steps/rate changes (max residual 0.985 ms); it does not replace the planted
+class gate. Raw canonical per-case records and SHA-256 values are
+[`calibration-2.jsonl`](ww-017/calibration-2.jsonl) (`ddf9a3232d1bac9b567321e726fc89cffbcc5ff28d5114dd1bf5eb56b2051ecc`),
+[`floor-2.jsonl`](ww-017/floor-2.jsonl) (`2d85df8701fef50a1af03fbec692ad62146024433e486cd5ffe20e541dca2bc4`)
+and [`edge-silence-2.jsonl`](ww-017/edge-silence-2.jsonl)
+(`28cc677d486824d289ea524c82f4075064b6879afc1b74e23f5a63e4b5aa73ca`).
+
+### Rev-2 holdout (2026-10-06): PASS
+
+This separate, one-time run used the frozen 165-case/130-plant split on
+`d1fdd446ed2c2faab6c0365bab6ad9259d3f0bc9` (Apple M5 Max, 128 GiB, macOS 27.0.1
+(26A434), Xcode 27.0 (27A266a), Swift 6.4), from 2026-10-06T19:09:11Z to
+2026-10-06T19:22:05Z. Frozen trees matched: `WWAlignSegment`
+`cdd2da1e2134d46221a67ced1fd9efd857ae2d40`, `WWAlignSegmentTests`
+`68ddb5e0b66a0e43c2c34fd625fca4deb70da715`, `WWAlignEstimate`
+`8efd588a6b57dc56bf7eafa1ccf2c7709253f3a9`, `WWTimeMap`
+`24c7aadfbf1470c8555542061ab08eb23e37325b`, and `WWCore`
+`c310389c4b41ebde80c5dabaea12fd5376f5d9ba`.
+
+- **PASS:** 130/130 plants flagged, 0 unsupported-only, 0 bridged, 0 bridging regions, and 0 silent bridges.
+- **PASS:** negatives false-split 0/50 against the frozen maximum of 0.
+- **PASS:** 0 monotonicity, gap-inverse, retention, or residual-gate failures; supported worst nearest-rank
+  p95/max was 1.015/1.016 ms, within the unchanged WW-016 5/10 ms gate.
+
+The full verbatim dated log is [`ww-017/holdout-2-raw.txt`](ww-017/holdout-2-raw.txt), SHA-256
+`c2f45e63206819dc94dc180eb63b9e7ef9564013c090d8c41ff1aad0619e015c`. The unedited canonical records are
+[`ww-017/holdout-2.jsonl`](ww-017/holdout-2.jsonl), SHA-256
+`aabc8fe5a4b568a20d72e7c34c0c84ed0aa333d7430225413074a8d64978b3cd`
+([`holdout-2.jsonl.sha256`](ww-017/holdout-2.jsonl.sha256)). This synthetic evidence does not qualify real
+recordings; mapped regions remain acoustic proposals and no map is `clockApproved`.

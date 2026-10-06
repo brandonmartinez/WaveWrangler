@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 import WWCore
 import WWSources
@@ -6,7 +7,7 @@ import WWSources
 /// priming and remainder frames. Shared by `SourceDecoder.decode` (push into a sink) and
 /// `DecodingCursor` (pull). Not `Sendable`: it owns the reader and its buffer.
 struct ChunkPump {
-    enum Step {
+    enum Step: Sendable {
         /// One read produced frames; `nil` when every frame read was priming or remainder.
         case frames(DecodedChunk?)
         case end
@@ -80,27 +81,40 @@ struct ChunkPump {
     }
 }
 
-/// A pull-style view of one open, verified decode, for consumers that need frames on demand (streamed
-/// rendering, bounded analysis) instead of a push sink. It exists only inside
-/// `SourceDecoder.withDecodingCursor`, which owns the security scope, the read-only open and the final
-/// staleness check; once that call returns, the cursor is closed and every call throws `.cancelled`.
-///
-/// Chunks come back in source order, priming and remainder already removed, exactly as `decode` would
-/// publish them. Cancellation of the calling task is checked before every read. A consumer that derives
-/// a result from what it read must call `verifyUnchanged()` before publishing it (the enclosing call
-/// also verifies before returning, if anything was read since the last verification).
-public actor DecodingCursor {
-    public nonisolated let interpretation: FormatInterpretation
+private final class CursorCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    func cancel() { lock.withLock { cancelled = true } }
+    var isCancelled: Bool { lock.withLock { cancelled } }
+}
+
+/// Owns the non-Sendable reader and pump on a serial Dispatch queue. Synchronous AudioToolbox and file
+/// calls therefore never block a Swift cooperative-executor thread.
+fileprivate final class CursorWorker: @unchecked Sendable {
+    struct StepResult: Sendable {
+        var step: ChunkPump.Step
+        var position: Int64
+        var readCalls: Int
+    }
+
+    let interpretation: FormatInterpretation
+    private let queue: DispatchQueue
     private let url: URL
     private let io: any SourceIO
     private let before: SourceMetadata
     private var pump: ChunkPump
-    private var ended = false
     private var closed = false
-    private var failure: DecodeFailure?
-    private var verifiedAtRead = 0
 
-    init(url: URL, io: any SourceIO, before: SourceMetadata, interpretation: FormatInterpretation, pump: sending ChunkPump) {
+    private init(
+        queue: DispatchQueue,
+        url: URL,
+        io: any SourceIO,
+        before: SourceMetadata,
+        interpretation: FormatInterpretation,
+        pump: consuming ChunkPump
+    ) {
+        self.queue = queue
         self.url = url
         self.io = io
         self.before = before
@@ -108,27 +122,172 @@ public actor DecodingCursor {
         self.pump = pump
     }
 
+    static func make(
+        decoder: SourceDecoder,
+        url: URL,
+        source: SourceID
+    ) async throws(DecodeFailure) -> CursorWorker {
+        let queue = DispatchQueue(label: "com.brandonmartinez.wavewrangler.decode-cursor", qos: .userInitiated)
+        let cancellation = CursorCancellation()
+        let result: Result<CursorWorker, DecodeFailure> = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                queue.async {
+                    guard !cancellation.isCancelled else {
+                        continuation.resume(returning: .failure(.cancelled))
+                        return
+                    }
+                    do throws(DecodeFailure) {
+                        let before = try decoder.preflight(url)
+                        guard !cancellation.isCancelled else { throw .cancelled }
+                        let reader = try decoder.content.openForDecoding(url)
+                        do throws(DecodeFailure) {
+                            try SourceDecoder.verifyOpened(reader.facts.openedFile, matches: before)
+                            let interpretation = try DecodeEnvelope.interpret(
+                                reader.facts,
+                                url: url,
+                                source: source,
+                                fingerprint: before.fingerprint
+                            )
+                            guard !cancellation.isCancelled else { throw .cancelled }
+                            let pump = ChunkPump(
+                                reader: reader,
+                                interpretation: interpretation,
+                                chunkFrames: decoder.configuration.chunkFrames
+                            )
+                            continuation.resume(returning: .success(CursorWorker(
+                                queue: queue,
+                                url: url,
+                                io: decoder.access.io,
+                                before: before,
+                                interpretation: interpretation,
+                                pump: pump
+                            )))
+                        } catch {
+                            reader.close()
+                            throw error
+                        }
+                    } catch {
+                        continuation.resume(returning: .failure(error))
+                    }
+                }
+            }
+        } onCancel: {
+            cancellation.cancel()
+        }
+        return try result.get()
+    }
+
+    func step() async throws(DecodeFailure) -> StepResult {
+        let cancellation = CursorCancellation()
+        let result: Result<StepResult, DecodeFailure> = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                queue.async { [self] in
+                    guard !closed, !cancellation.isCancelled else {
+                        continuation.resume(returning: .failure(.cancelled))
+                        return
+                    }
+                    do throws(DecodeFailure) {
+                        let step = try pump.step()
+                        if case .end = step { _ = try pump.completedReport() }
+                        continuation.resume(returning: .success(StepResult(
+                            step: step,
+                            position: pump.published,
+                            readCalls: pump.reads
+                        )))
+                    } catch {
+                        continuation.resume(returning: .failure(error))
+                    }
+                }
+            }
+        } onCancel: {
+            cancellation.cancel()
+        }
+        return try result.get()
+    }
+
+    func verifyUnchanged() async throws(DecodeFailure) {
+        let cancellation = CursorCancellation()
+        let result: Result<Void, DecodeFailure> = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                queue.async { [self] in
+                    guard !closed, !cancellation.isCancelled else {
+                        continuation.resume(returning: .failure(.cancelled))
+                        return
+                    }
+                    do throws(DecodeFailure) {
+                        try SourceDecoder.verifyUnchanged(url, io: io, reader: pump.reader, before: before)
+                        continuation.resume(returning: .success(()))
+                    } catch {
+                        continuation.resume(returning: .failure(error))
+                    }
+                }
+            }
+        } onCancel: {
+            cancellation.cancel()
+        }
+        return try result.get()
+    }
+
+    func close() async {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                if !closed {
+                    closed = true
+                    pump.reader.close()
+                }
+                continuation.resume()
+            }
+        }
+    }
+}
+
+/// A pull-style view of one open, verified decode, for consumers that need frames on demand (streamed
+/// rendering, bounded analysis) instead of a push sink. It exists only inside
+/// `SourceDecoder.withDecodingCursor`, which owns the security scope, the read-only open and the final
+/// staleness check; once that call returns, the cursor is closed and every call throws `.cancelled`.
+///
+/// Chunks come back in source order, priming and remainder already removed, exactly as `decode` would
+/// publish them. Cancellation of the calling task is checked before and after every read. The body may
+/// stage derived work, but must publish it only after `withDecodingCursor` returns successfully; the
+/// enclosing call verifies any reads made since the last explicit `verifyUnchanged()`.
+public actor DecodingCursor {
+    public nonisolated let interpretation: FormatInterpretation
+    private let worker: CursorWorker
+    private var currentPosition: Int64 = 0
+    private var currentReadCalls = 0
+    private var ended = false
+    private var closed = false
+    private var failure: DecodeFailure?
+
+    fileprivate init(worker: CursorWorker) {
+        self.worker = worker
+        interpretation = worker.interpretation
+    }
+
     /// Valid frames returned so far: the source frame of the next chunk's first frame.
-    public var position: Int64 { pump.published }
+    public var position: Int64 { currentPosition }
 
     /// Reader calls made so far.
-    public var readCalls: Int { pump.reads }
+    public var readCalls: Int { currentReadCalls }
 
     /// The next decoded chunk, or `nil` at the end of the valid frames (after the frame-count check).
     /// A failure is terminal: every later call rethrows it.
-    public func next() throws(DecodeFailure) -> DecodedChunk? {
+    public func next() async throws(DecodeFailure) -> DecodedChunk? {
         try checkUsable()
         if ended { return nil }
         do throws(DecodeFailure) {
             while true {
                 try SourceDecoder.checkCancellation()
-                switch try pump.step() {
+                let result = try await worker.step()
+                currentPosition = result.position
+                currentReadCalls = result.readCalls
+                try SourceDecoder.checkCancellation()
+                switch result.step {
                 case let .frames(chunk?):
                     return chunk
                 case .frames(nil):
                     continue
                 case .end:
-                    _ = try pump.completedReport()
                     ended = true
                     return nil
                 }
@@ -140,23 +299,27 @@ public actor DecodingCursor {
     }
 
     /// The open descriptor and the path's metadata must both still match what was checked at open.
-    public func verifyUnchanged() throws(DecodeFailure) {
+    public func verifyUnchanged() async throws(DecodeFailure) {
         try checkUsable()
         do throws(DecodeFailure) {
-            try SourceDecoder.verifyUnchanged(url, io: io, reader: pump.reader, before: before)
-            verifiedAtRead = pump.reads
+            try SourceDecoder.checkCancellation()
+            try await worker.verifyUnchanged()
+            try SourceDecoder.checkCancellation()
         } catch {
             failure = error
             throw error
         }
     }
 
-    var hasUnverifiedReads: Bool { pump.reads > verifiedAtRead }
+    func verifyForReturn() async throws(DecodeFailure) {
+        try checkUsable()
+        if currentReadCalls > 0 { try await verifyUnchanged() }
+    }
 
-    func close() {
+    func close() async {
         guard !closed else { return }
         closed = true
-        pump.reader.close()
+        await worker.close()
     }
 
     private func checkUsable() throws(DecodeFailure) {
@@ -168,9 +331,10 @@ public actor DecodingCursor {
 extension SourceDecoder {
     /// Opens one source exactly as `decode` does (security scope → metadata preflight → read-only open →
     /// opened-file identity → envelope interpretation) and lends a `DecodingCursor` to `body`. After
-    /// `body` returns, any unverified reads are checked for staleness and cancellation is checked, so a
-    /// result built from the cursor is returned only if the source was unchanged. The reader is closed
-    /// and the scope released on every path.
+    /// `body` returns, any terminal cursor failure is rethrown and every result derived from reads receives
+    /// a final staleness check, even if the body explicitly checked earlier. Cancellation is also checked,
+    /// so a result built from the cursor is returned only if the source was unchanged. The reader is
+    /// closed and the scope released on every path.
     ///
     /// Opening without reading (a header probe) decodes nothing.
     @concurrent
@@ -191,24 +355,18 @@ extension SourceDecoder {
         source: SourceID,
         _ body: @Sendable (DecodingCursor) async throws -> T
     ) async throws -> T {
-        let before = try preflight(url)
-        try Self.checkCancellation()
-        let reader = try content.openForDecoding(url)
-        let interpretation: FormatInterpretation
-        do throws(DecodeFailure) {
-            try Self.verifyOpened(reader.facts.openedFile, matches: before)
-            interpretation = try DecodeEnvelope.interpret(reader.facts, url: url, source: source, fingerprint: before.fingerprint)
+        let worker = try await CursorWorker.make(decoder: self, url: url, source: source)
+        do {
             try Self.checkCancellation()
         } catch {
-            reader.close()
+            await worker.close()
             throw error
         }
-        let pump = ChunkPump(reader: reader, interpretation: interpretation, chunkFrames: configuration.chunkFrames)
-        let cursor = DecodingCursor(url: url, io: access.io, before: before, interpretation: interpretation, pump: pump)
+        let cursor = DecodingCursor(worker: worker)
         let result: T
         do {
             result = try await body(cursor)
-            if await cursor.hasUnverifiedReads { try await cursor.verifyUnchanged() }
+            try await cursor.verifyForReturn()
             try Self.checkCancellation()
         } catch {
             await cursor.close()

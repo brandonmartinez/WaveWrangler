@@ -74,6 +74,20 @@ struct SegmenterUnitTests {
         #expect(Self.segments(pieces) == [Array(0..<31) + Array(32..<60)])
     }
 
+    @Test func shortStableRunDoesNotEstablishAClockBoundary() {
+        let p = Self.points(60) { i, u in
+            0.1 + 40e-6 * u + Self.jitter(i) + ((53...59).contains(i) ? 0.003 : 0)
+        }
+        let pieces = segmentPoints(p, tolerance: 0.0005, minimumPoints: 5)
+        #expect(Self.segments(pieces).count == 2)
+        let persisted = persistentPieces(pieces, points: p, minimumSeconds: 4)
+        #expect(Self.segments(persisted) == [Array(0..<53)])
+        #expect(Self.islands(persisted) == [Array(53..<60)])
+        let realStep = Self.points(60) { i, u in 0.1 + 40e-6 * u + Self.jitter(i) + (i >= 23 ? 0.003 : 0) }
+        #expect(Self.segments(persistentPieces(segmentPoints(realStep, tolerance: 0.0005, minimumPoints: 5),
+                                                points: realStep, minimumSeconds: 4)).count == 2)
+    }
+
     @Test func tooFewPointsAreAnIsland() {
         let p = Self.points(4) { _, _ in 0.1 }
         let pieces = segmentPoints(p, tolerance: 0.0005, minimumPoints: 5)

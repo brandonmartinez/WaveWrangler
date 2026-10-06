@@ -313,7 +313,8 @@ struct MonitorTests {
 struct ForbiddenAPITests {
     /// Content-capable or mutating APIs. Only listed files may use the noted exceptions.
     static let forbidden = [
-        "Data(contentsOf", "FileHandle", "InputStream", "fopen(", "open(", "read(", "mmap",
+        "Data(contentsOf", "contentsOf", "contentsOfFile", "URLSession", "NSData", "Process(", "Bundle",
+        "FileHandle", "InputStream", "fopen(", "open(", "read(", "mmap",
         ".write(to", "write(", "moveItem", "removeItem", "trashItem", "copyItem", "replaceItem", "linkItem",
         "setAttributes", "setResourceValue", "createFile", "createDirectory", "evictUbiquitousItem",
         "startDownloadingUbiquitousItem", "NSFileCoordinator", "AVAsset", "AVAudioFile", "AudioFileOpen",
@@ -323,23 +324,41 @@ struct ForbiddenAPITests {
 
     static let exceptions: [String: Set<String>] = [
         "SystemSourceIO.swift": ["startDownloadingUbiquitousItem", "bookmarkData(", "startAccessingSecurityScopedResource", "FileManager", ".resourceValues("],
-        "DeviceAccessRecord.swift": ["Data(contentsOf", ".write(to", "write(", "createDirectory", "FileManager"],
+        "DeviceAccessRecord.swift": ["Data(contentsOf", "contentsOf", ".write(to", "write(", "createDirectory", "FileManager"],
     ]
 
-    static func violations(in source: String, fileName: String) -> [String] {
+    static func violations(in source: String, fileName: String, forbiddenTokens: [String] = forbidden) -> [String] {
         let allowed = exceptions[fileName] ?? []
         let code = source
             .split(separator: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
-        return forbidden.filter { !allowed.contains($0) && code.contains($0) }.map { "\(fileName): \($0)" }
+        return forbiddenTokens.filter { !allowed.contains($0) && code.contains($0) }.map { "\(fileName): \($0)" }
     }
 
     @Test func scannerDetectsForbiddenCalls() {
-        #expect(Self.violations(in: "let d = try Data(contentsOf: url)", fileName: "SourceImporter.swift") == ["SourceImporter.swift: Data(contentsOf"])
+        #expect(Set(Self.violations(in: "let d = try Data(contentsOf: url)", fileName: "SourceImporter.swift")) == [
+            "SourceImporter.swift: Data(contentsOf", "SourceImporter.swift: contentsOf",
+        ])
         #expect(Self.violations(in: "try FileManager.default.moveItem(at: a, to: b)", fileName: "RelinkEvaluator.swift").contains("RelinkEvaluator.swift: moveItem"))
         #expect(Self.violations(in: "// FileHandle in a comment", fileName: "X.swift").isEmpty)
         #expect(Self.violations(in: "try FileManager.default.evictUbiquitousItem(at: u)", fileName: "SystemSourceIO.swift") == ["SystemSourceIO.swift: evictUbiquitousItem"])
+
+        let requestedCases = [
+            ("contentsOf", "let text = try String(contentsOf: url)"),
+            ("contentsOfFile", "let data = NSData(contentsOfFile: path)"),
+            ("URLSession", "let session = URLSession.shared"),
+            ("NSData", "let data = NSData()"),
+            ("Process(", "let process = Process()"),
+            ("Bundle", "let resources = Bundle.main"),
+        ]
+        for (token, source) in requestedCases {
+            let expected = "MutationProbe.swift: \(token)"
+            #expect(Self.violations(in: source, fileName: "MutationProbe.swift").contains(expected), "scanner missed \(token)")
+            let mutated = Self.forbidden.filter { $0 != token }
+            #expect(!Self.violations(in: source, fileName: "MutationProbe.swift", forbiddenTokens: mutated).contains(expected),
+                    "removing \(token) did not disable its detection case")
+        }
     }
 
     @Test func wwSourcesHasNoContentOrMutationAPIsOutsideTheGateway() throws {
@@ -933,8 +952,8 @@ struct StallFollowUpTests {
         try await monitor.adopt([record])
         let states = await collector.value
         #expect(states.contains { $0.isOfflineOrUnknown }, "stall was never observed: \(states)")
-        // The monitor's event consumer runs on the main actor; give it a turn.
-        for _ in 0..<100 where monitor.observations[record.sourceID]?.transfer != .idle { await Task.yield() }
+        #expect(await waitUntilObserved(monitor, sourceID: record.sourceID, transfer: .idle),
+                "monitor never published the transfer's idle state")
         #expect(monitor.observations[record.sourceID]?.transfer == .idle)
         #expect(monitor.observations[record.sourceID]?.residency == .local)
         #expect(io.count(.downloadRequest) == 1)
@@ -1247,7 +1266,8 @@ struct TeardownOrderingTests {
         await monitor.makeAvailable(record.sourceID)
 
         #expect(await monitor.transfers.waitUntilSettled(record.key) == .idle)
-        for _ in 0..<500 where monitor.observations[record.sourceID]?.transfer != .idle { await Task.yield() }
+        #expect(await waitUntilObserved(monitor, sourceID: record.sourceID, transfer: .idle),
+                "monitor never published the transfer's idle state")
         #expect(monitor.observations[record.sourceID]?.transfer == .idle)
         #expect(monitor.observations[record.sourceID]?.residency == .local)
         #expect(await !monitor.transfers.isActive(otherRecord.key))
