@@ -56,6 +56,7 @@ struct DestinationControl: View {
 /// Never says "Saved" unless the status model reports coherent publication (D1).
 struct SaveStatusItem: View {
     @Bindable var state: ShowWindowState
+    @FocusState private var focused: Bool
 
     var body: some View {
         let presentation = state.presentation
@@ -79,6 +80,8 @@ struct SaveStatusItem: View {
         .accessibilityValue(presentation.accessibilityValue)
         .accessibilityHint(presentation.accessibilityHint)
         .accessibilityIdentifier("ww.show.saveStatus")
+        .focused($focused)
+        .onChange(of: state.saveStatusFocusRequest) { _, _ in focused = true }
         .popover(isPresented: $state.saveStatusPopoverShown, arrowEdge: .bottom) {
             SaveStatusPopover(state: state, presentation: presentation)
                 .wwAppEnvironment()
