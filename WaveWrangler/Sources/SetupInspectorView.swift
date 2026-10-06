@@ -127,6 +127,7 @@ private struct SourceInspector: View {
                 get: { statedChannel == nil },
                 set: { model.setChannel($0 ? nil : 1, for: [source.id]) }
             ))
+            .checkboxTint()
             .setupFont(.body)
             .accessibilityLabel("Channel unknown")
             .accessibilityIdentifier("ww.inspector.source.channelUnknown")

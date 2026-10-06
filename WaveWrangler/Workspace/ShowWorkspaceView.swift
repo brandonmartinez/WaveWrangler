@@ -110,6 +110,8 @@ private struct ShowSidebar: View {
             Section("Show") {
                 Label("Show Info", systemImage: "info.circle")
                     .wwFont(.body)
+                    .emphasizedSelectionForeground(selectedInFocusedList: state.episodeListFocused
+                        && state.sidebarSelection == .showInfo)
                     .tag(ShowWindowState.SidebarSelection.showInfo)
                     .accessibilityIdentifier("ww.show.sidebar.showInfo")
             }
@@ -186,6 +188,8 @@ private struct EpisodeSidebarRow: View {
                 Image(systemName: "music.mic").accessibilityHidden(true)
             }
             .wwFont(.body)
+            .emphasizedSelectionForeground(selectedInFocusedList: state.episodeListFocused
+                && state.sidebarSelection == .episode(episode.id))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(ShowSidebarPresentation.episodeRowTitle(episode))
             .accessibilityAddTraits(.isStaticText)

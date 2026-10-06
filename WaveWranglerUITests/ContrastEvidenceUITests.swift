@@ -197,7 +197,12 @@ final class ContrastEvidenceUITests: XCTestCase {
     /// (switch on, checkbox checked) must reach ≥ 3:1 against its surroundings (WCAG 1.4.11). Values recorded
     /// as `[evidence-json] accent-controls-<appearance>` with a crop per control.
     func testAccentTintedControls() throws {
-        for appearance in ["aqua", "darkAqua"] {
+        // `WW_ACCENT_APPEARANCES` (comma-separated) overrides the list; "system" passes no appearance override, so the
+        // system's own appearance and Increase Contrast apply (#138 run on the Mac mini with Increase Contrast on).
+        let appearances = Acceptance.environment["WW_ACCENT_APPEARANCES"].map { $0.split(separator: ",").map(String.init) } ?? ["aqua", "darkAqua"]
+        for appearance in appearances {
+            let appearanceArguments = appearance == "system" ? [] : ["-WWUITestAppearance", appearance]
+            Acceptance.record(self, "Accent pass \(appearance): system Increase Contrast \(NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast)")
             var rows: [[String: Any]] = []
             func textOnAccent(_ name: String, _ element: XCUIElement) {
                 guard element.exists else { rows.append(["control": name, "result": "not found"]); return }
@@ -221,7 +226,7 @@ final class ContrastEvidenceUITests: XCTestCase {
 
             app = XCUIApplication()
             app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
-                                   "-WWUITestCenterWindows", "YES", "-WWUITestLibraryFixture", "lib100", "-WWUITestAppearance", appearance]
+                                   "-WWUITestCenterWindows", "YES", "-WWUITestLibraryFixture", "lib100"] + appearanceArguments
             app.launch()
             app.activate()
             let entries = app.outlines["ww.library.entries"]
@@ -247,7 +252,7 @@ final class ContrastEvidenceUITests: XCTestCase {
             app = XCUIApplication()
             app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
                                    "-WWUITestCenterWindows", "YES", "-WWUITestOpenShow", "Synthetic Show", "-WWUITestShowEpisodes", "2",
-                                   "-WWUITestAppearance", appearance]
+                                   ] + appearanceArguments
             app.launchEnvironment["WW_SETUP_ENGINE"] = "fixture-states"
             app.launch()
             app.activate()

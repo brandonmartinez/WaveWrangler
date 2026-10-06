@@ -499,3 +499,38 @@ The slot script is now fixed for reuse:
 - it removes emptied plist files.
 
 No orphan processes remained, and the run folder on the mini was removed after the bundles were fetched.
+
+### 10.5 VoiceOver listening attempt via computer-use (this Mac, 2026-10-05 22:02–22:05)
+
+**Host:** this Mac (MacBook, macOS 27.0.1, 18-core), user-directed GUI window, consents A/B/D.
+
+**Originals, recorded first (22:00:00):**
+- `com.apple.universalaccess`: increaseContrast, reduceMotion, reduceTransparency, voiceOverOnOffKey and differentiateWithoutColor were absent.
+- FontSizeCategory.global was DEFAULT, and AppleInterfaceStyle was Dark.
+- The VoiceOver4 and VoiceOverTraining domains were absent, and VoiceOver wasn't running.
+
+**What was attempted:**
+1. Fixture: the Debug app at `0e4bad9` with `-WWUITestHooks YES -WWUITestLibraryFixture lib100` (in-memory library, no user data). The Quickstart splash was suppressed (`VoiceOverTraining doNotShowSplashScreen`).
+2. **Cmd-F5** sent with computer-use `press_key` to the app **did not** turn VoiceOver on: the system hotkey wasn't delivered.
+3. **System Settings › Accessibility › VoiceOver toggle** (`AX_VOICEOVER_ENABLED`, clicked with computer-use) **turned VoiceOver on** at 22:04:00: probe `isVoiceOverEnabled` = true, VoiceOver pid 92230.
+4. **Caption panel not readable:** `get_window_state(com.apple.VoiceOver)` returned `no_window`, and `list_apps` doesn't list VoiceOver, so computer-use can't read the caption panel's text.
+5. The first keyboard step in WaveWrangler (↓ in the sidebar) returned **interrupted**: "user input was detected". Either the user was active or VoiceOver moved focus; the cause can't be told apart. Per the coordinator's rule, the attempt stopped.
+6. VoiceOver was turned **off with the same toggle** (value 0), not killed. No VoiceOver process remained.
+
+**Restoration** (shell, after the UI workflow, 22:05:24): increaseContrast and voiceOverOnOffKey deleted; the VoiceOver4 and VoiceOverTraining domains and their plist files removed. **Every recorded key matches its original.** The probe reports all false. The fixture app was terminated; no orphans.
+
+**Result: A11Y-002 = Blocked. No announcement was captured, and none is claimed. VoiceOver listening is a user-manual exit item** (checklist §5.1).
+
+### 10.6 #138 fix verification (#139)
+
+Raw records: [`raw-139-verification.jsonl`](ww-007/raw-139-verification.jsonl). Settings snapshots and restorations: [`slot-139-verification.log`](ww-007/slot-139-verification.log). Every run snapshotted the originals, restored them exactly and re-read them; VoiceOver was off throughout.
+
+| Run | Host | Result |
+| --- | --- | --- |
+| `0e4bad9`: `backgroundProminence`-driven white | this Mac (MacBook, macOS 27.0.1, 18-core), system Increase Contrast on | **Fail.** Dark: selected sidebar rows #94B3F4 on #0B65E8, 2.48. Light: 7.22. Checked checkbox fill 2.67. The test caught the ineffective fix. |
+| Diagnostic: always-white build (not committed) | this Mac, system Increase Contrast on | #FFFFFF on #0B65E8, **5.2**. Explicit white renders non-vibrant; `backgroundProminence` never reads `.increased` in the macOS sidebar `List`. |
+| `c7ac800`: emphasis from selection + list focus + key window | Mac mini (M2 Pro), macOS 27.0.1. Overrides aqua / darkAqua / highContrastAqua / highContrastDarkAqua with Increase Contrast off, then system + aqua with it on. | **SelectionContrast Pass in every case.** Selected rows: 5.37 (light), 4.76 (dark), **5.2 (dark + Increase Contrast)**, 7.22 (light + Increase Contrast). After focus leaves the sidebar the selection stays legible: 14.73, 9.89, 5.83, 8.23. AccentTinted Pass with Increase Contrast off. With it on, one failure: the selected-row checkbox's checkmark at 2.48 on #6BA5FF. |
+| `6873b2f`: selected-row checkbox uses the accent; `CheckboxTint` on unselected rows | Mac mini, system Increase Contrast on | **AccentTinted Pass.** Sidebar and entry selections 5.2; default button 5.2 (bezel 3.21); switches 3.38; selected-row checkmark 3.25; unselected checked fill 3.84 against #363636. |
+
+**C04 (system Increase Contrast): Pass on `6873b2f`** for the selection and accent controls. The `475adf3` #138 failure (§10.2) is fixed.
+
