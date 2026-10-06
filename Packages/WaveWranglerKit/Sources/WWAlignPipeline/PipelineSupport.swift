@@ -71,6 +71,58 @@ enum PipelineSlots {
     static func alignedSegment(group: RecorderGroupID, source: SourceID, channel: Int, segment: Int64) -> DerivedSlot {
         DerivedSlot("\(AlignmentAssetKinds.alignedAudio.kind)/\(group)/\(source)/ch\(channel)/seg\(segment)")
     }
+
+    static func acceptedMapIdentity(_ episode: EpisodeID) -> DerivedSlot {
+        DerivedSlot("\(AlignmentAssetKinds.acceptedMapIdentity.kind)/\(episode)")
+    }
+}
+
+/// Work the pipeline runs outside coordinator jobs (a group render holds gateway cursors between commits).
+/// Each unit is registered before it starts, atomically with the closed check, so `close()` sees every unit
+/// that can still open a cursor; the owner cancels and awaits them all on shutdown.
+actor TrackedWork {
+    struct Entry: Sendable {
+        let cancel: @Sendable () -> Void
+        let wait: @Sendable () async -> Void
+    }
+
+    private var closed = false
+    private var nextID: UInt64 = 0
+    private var entries: [UInt64: Entry] = [:]
+
+    var isClosed: Bool { closed }
+    var count: Int { entries.count }
+
+    private func start<T: Sendable>(_ operation: @escaping @Sendable () async -> T) -> (UInt64, Task<T, Never>)? {
+        guard !closed else { return nil }
+        nextID += 1
+        let task = Task.detached(priority: .utility) { await operation() }
+        entries[nextID] = Entry(cancel: { task.cancel() }, wait: { _ = await task.value })
+        return (nextID, task)
+    }
+
+    private func finished(_ id: UInt64) {
+        entries[id] = nil
+    }
+
+    /// Runs `operation` as tracked work and returns its result; `nil` (nothing ran) once closed. Cancelling
+    /// the caller cancels the work.
+    nonisolated func run<T: Sendable>(_ operation: @escaping @Sendable () async -> T) async -> T? {
+        guard let (id, task) = await start(operation) else { return nil }
+        let value = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        await finished(id)
+        return value
+    }
+
+    /// Refuses new work and returns every unit still registered.
+    func close() -> [Entry] {
+        closed = true
+        return Array(entries.values)
+    }
 }
 
 extension DerivedJobCoordinator {

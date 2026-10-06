@@ -121,7 +121,7 @@ final class EpisodeAlignmentModel {
                 if document.store.applyReplacement(
                     UndoActionName.startNewEpochAtAnchor,
                     model: accepted.model,
-                    afterChange: persistenceCallback(document: document)
+                    afterChange: persistenceCallback(document: document, accepted: accepted)
                 ) {
                     selection = epoch.id
                     anchorSelection = nil
@@ -385,7 +385,7 @@ final class EpisodeAlignmentModel {
                 let applied = document.store.applyReplacement(
                     actionName,
                     model: accepted.model,
-                    afterChange: persistenceCallback(document: document)
+                    afterChange: persistenceCallback(document: document, accepted: accepted)
                 )
                 if applied {
                     onAccepted()
@@ -412,7 +412,8 @@ final class EpisodeAlignmentModel {
     }
 
     private func persistenceCallback(
-        document: ShowDocument
+        document: ShowDocument,
+        accepted: AcceptedAlignment
     ) -> @MainActor (ShowDocumentModel) -> Void {
         { [weak document, weak self, runtime, episodeID] model in
             guard let document else { return }
@@ -421,7 +422,11 @@ final class EpisodeAlignmentModel {
                 case .success:
                     Task {
                         do {
-                            try await runtime.activate(model: model, episode: episodeID)
+                            if model == accepted.model {
+                                try await runtime.activate(accepted)
+                            } else {
+                                try await runtime.activate(model: model, episode: episodeID)
+                            }
                             await self?.updateDependents(announce: true)
                             self?.load()
                         }

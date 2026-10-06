@@ -28,10 +28,10 @@ import WWTimeMap
 ///    in frame order; any overlapping pair is demoted.
 /// 6. Each region is a WWTimeMap span with its own epoch; the map compiles or the call throws.
 public enum DiscontinuitySegmenter {
-    /// Identifier of the frozen defaults (`m2-freeze-discontinuity`).
-    public static let identifier = "ww-align-segment/1"
+    /// Identifier of the revised defaults (`m2-freeze-discontinuity-2`).
+    public static let identifier = "ww-align-segment/2"
     /// Identifier stamped on any non-default (in-module test) parameter set.
-    public static let customIdentifier = "ww-align-segment/1+custom"
+    public static let customIdentifier = "ww-align-segment/2+custom"
 
     public static func segment(_ request: SegmentationRequest, parameters: SegmenterParameters = SegmenterParameters()) throws(SegmentError) -> SegmentationReport {
         try parameters.validate()
@@ -209,6 +209,27 @@ func segmentPoints(_ points: [Point], tolerance: Double, minimumPoints: Int) -> 
     return pieces
 }
 
+/// A fitted run must also persist over time; a burst of mutually consistent but short-lived outliers
+/// is unresolved evidence, not a second clock. Long runs on either side remain separate.
+func persistentPieces(_ pieces: [Piece], points: [Point], minimumSeconds: Double) -> [Piece] {
+    var result: [Piece] = []
+    for piece in pieces {
+        let kept: Piece
+        if case .segment(let indices) = piece,
+           points[indices.last!].u - points[indices.first!].u < minimumSeconds {
+            kept = .island(indices)
+        } else {
+            kept = piece
+        }
+        if case .island(let next) = kept, case .island(let prior)? = result.last {
+            result[result.count - 1] = .island(prior + next)
+        } else {
+            result.append(kept)
+        }
+    }
+    return result
+}
+
 private struct Candidate {
     let spanIndex: Int
     let frames: Range<Int64>
@@ -369,7 +390,9 @@ private struct Run {
             guard windows[i].status == .eligible, let y = windows[i].offsetSeconds else { return nil }
             return Point(u: windows[i].groupClockCenter, y: y, window: i)
         }.sorted { $0.u < $1.u }
-        let pieces = segmentPoints(points, tolerance: tolerance, minimumPoints: parameters.minimumSegmentWindows)
+        let pieces = persistentPieces(
+            segmentPoints(points, tolerance: tolerance, minimumPoints: parameters.minimumSegmentWindows),
+            points: points, minimumSeconds: parameters.minimumSupportedSeconds)
 
         var segments: [(indices: [Int], fit: LineFit)] = []
         var islandBefore: [Int] = []   // island points between segment k-1 and k (index k)

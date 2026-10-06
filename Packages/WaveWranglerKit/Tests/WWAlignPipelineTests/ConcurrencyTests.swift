@@ -111,7 +111,7 @@ struct ConcurrencyTests {
             }
         } else {
             #expect(published.isEmpty)
-            #expect(results.contains { $0.outcome == .discardedStale([.mapChanged(fixture.episodeID)]) })
+            #expect(results.contains { if case let .discardedStale(reasons) = $0.outcome { reasons.contains(.mapChanged(fixture.episodeID)) } else { false } })
             for result in results { #expect(fixture.store.payload(for: result.key) == nil) }
             for group in rendered.groups {
                 switch group.failure {
@@ -134,9 +134,11 @@ struct ConcurrencyTests {
         let targetEpoch = fixture.epochs[1]
         let targetPath = ProceduralContentIO.path(fixture.url("tgt"))
         let fired = Box(false)
+        let coordinator = fixture.coordinator
+        let slot = PipelineSlots.analysis(targetEpoch)
         fixture.content.setOnRead { path, index in
             guard path == targetPath, index == 1, fired.update({ let first = !$0; $0 = true; return first }) else { return }
-            cancelCurrentTask()
+            cancelSlotDuringRead(coordinator, slot)
         }
         let report = try await fixture.analyse(preferredReference: "ref")
         #expect(fired.value)

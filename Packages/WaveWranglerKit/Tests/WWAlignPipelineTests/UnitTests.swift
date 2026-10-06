@@ -89,6 +89,25 @@ struct ResourceGateTests {
 
 // MARK: - boundedMap
 
+@Suite("TrackedWork: registered before it starts; nothing starts once closed")
+struct TrackedWorkTests {
+    @Test("run returns the result and deregisters; after close it refuses and never starts the operation")
+    func refusesAfterClose() async {
+        let work = TrackedWork()
+        #expect(await work.run { 1 } == 1)
+        #expect(await work.count == 0)
+        #expect(await work.close().isEmpty)
+        #expect(await work.isClosed)
+        let ran = Box(false)
+        let value = await work.run { () -> Int in
+            ran.value = true
+            return 2
+        }
+        #expect(value == nil)
+        #expect(!ran.value)
+    }
+}
+
 @Suite("boundedMap keeps at most `limit` operations in flight and preserves order")
 struct BoundedMapTests {
     @Test("Peak in-flight never exceeds the limit", arguments: [1, 3])

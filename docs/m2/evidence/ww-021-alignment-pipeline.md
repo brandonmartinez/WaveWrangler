@@ -10,8 +10,8 @@ there was no real recording, no network and no GUI.
 |---|---|---|
 | Plan | `AlignmentPipeline.plan` | Lists every recorder group and epoch of the episode and picks one reference. A source is admitted only when its location is known, availability is ON, the user explicitly authorized content work (`ContentWorkAuthorization`) and its revision is registered. Every other source gets a typed `SourceIneligibility` and **zero decode work** (proven against the recording content gateway). |
 | Analyse | `AlignmentPipeline.analyse` | Probes admitted sources (`SourceFacts`, a derived result), then for each target epoch decodes one bounded excerpt per side through `SourceDecoder.withDecodingCursor`. It mixes channels to mono, decimates by an integer factor to ≥ 8 kHz, and runs the frozen `WWAlignEstimate` API. The result is stored as an `EpochAnalysisRecord` keyed by every M2-C5 component (sources and revisions, format revision, recipe, estimator identity, map revision of record = none, asset version). Proposals are `acousticConsistentProposal` only. Abstentions keep the estimator's evidence and resolve to WW-014 states (weak / disconnected / ambiguous / silent / periodic / discontinuous → U7/U8), each with its remedies. |
-| Accept / manual | `AlignmentPipeline.accept`, then `activate` | Accepting a current proposal (as `manual`, basis `acceptedAcousticProposal`), numeric entry (ppm/offset), anchors (≥ 2, fitted exactly) or a reject (U8 `notAttempted`) builds an `AlignedTimelineMap`. It appends it as a new revision through `MapHistory` (marking dependents stale); `activate` publishes through the unchanged C3 coordinator path. A proposal measured against another reference or source revision is refused. A prior `clockApproved` epoch is refused, never carried forward, and nothing in the module can construct `ClockApproval` or `.clockApproved` (`ForbiddenAPITests`, `AcceptanceTests`). |
-| Render | `AlignmentPipeline.renderAlignedAssets` | For the accepted, active and applicable map, streams `WWRender` output for every same-group channel, segment by segment, into `DerivedAssetStore` (app cache only), with recipe, renderer and asset versions in the key. Every group renders at one episode-wide output rate. That rate is decided by the WW-050 `OutputSettingsPolicy` over the probed `FormatInterpretation` of every renderable source: by default 48 kHz, or `matchSources` when configured. The decision and its reasons are in the report, and the policy version and rate are in each segment's recipe name. Cached assets stay binary32; the policy's sample format applies at M4 export. Each segment re-checks the accepted revision, cancellation and shutdown before it starts, and the coordinator's commit-time currency check discards late results. Export stays blocked (M4). |
+| Accept / manual | `AlignmentPipeline.accept`, then `activate` | Accepting a current proposal (as `manual`, basis `acceptedAcousticProposal`), numeric entry (ppm/offset), anchors (≥ 2, fitted exactly) or a reject (U8 `notAttempted`) builds an `AlignedTimelineMap`. It appends it as a new revision through `MapHistory` (marking dependents stale); `activate` publishes through the unchanged C3 coordinator path. An accepted proposal keeps **only its measured interval**: frames outside it stay `outsideCoverage` in both directions (no extrapolation, M2-C3), and sources wholly outside it are reported. Extending to the whole epoch is a separate explicit decision (`extendProposalToEpoch`), recorded as `manual` provenance with a note saying so. Before building, `accept` re-checks the report's plan (source → group/epoch placements, epoch membership) and probed facts (revision tokens, format/envelope revisions) against the current episode and registrations; any change is `analysisStale`, never applied. The map revision persists a dependency digest (placements, revision tokens, format) in its recipe, which `activate` and every render re-verify. Acceptance is a serialized transaction per episode: a pipeline refuses an acceptance built on a document snapshot other than the one it last activated (`staleSnapshot`), and only the latest acceptance issued on that snapshot can activate (`supersededAcceptance`). A proposal measured against another reference or source revision is refused. A prior `clockApproved` epoch is refused, never carried forward, and nothing in the module can construct `ClockApproval` or `.clockApproved` (`ForbiddenAPITests`, `AcceptanceTests`). |
+| Render | `AlignmentPipeline.renderAlignedAssets` | For the accepted, active and applicable map whose dependencies still verify (`mapStale` otherwise), streams `WWRender` output for every same-group channel, segment by segment, into `DerivedAssetStore` (app cache only), with recipe, renderer and asset versions in the key. `activate` publishes the accepted map's **content identity** (a digest of the canonical encoded map version: map, inputs and dependency record) through the coordinator, and every aligned segment names it as an upstream in its key and records it in its header, so two different maps with the same revision number never share or adopt each other's audio; a render refuses unless the coordinator is publishing that exact content (`acceptedMapContentNotActive`). The output hull covers only the placed (covered) spans, so frames outside a partial proposal are never mapped. Every group renders at one episode-wide output rate. That rate is decided by the WW-050 `OutputSettingsPolicy` over the probed `FormatInterpretation` of every renderable source: by default 48 kHz, or `matchSources` when configured. The decision and its reasons are in the report, and the policy version and rate are in each segment's recipe name. Cached assets stay binary32; the policy's sample format applies at M4 export. Each segment re-checks the accepted revision and content identity, cancellation and shutdown before it starts, and the coordinator's commit-time currency check discards late results. Each whole group render is registered as tracked work before any cursor opens; `AlignmentPipeline.shutdown()` refuses new renders, cancels the running ones and the coordinator, and returns only after every render (and so every gateway cursor) has finished. Export stays blocked (M4). |
 | Resolve | `EpochAlignmentState.resolve` | Maps plan, accepted map, records and failures to the inspection-spec states, with the accepted map as the decision of record first. |
 
 ## Resource bounds
@@ -53,7 +53,7 @@ number of groups. The estimate is conservative: the measured growth was about 29
 
 ## Tests
 
-Package suites (`swift test --filter WWAlignPipelineTests`, 46 tests in 12 suites; synthetic only):
+Package suites (`swift test --filter "WWAlignPipelineTests|ForbiddenAPITests"`, 62 tests in 14 suites; synthetic only):
 
 - **End to end:** decode → propose → accept → activate → render → map change invalidates the renders.
   Rendering the same revision again reuses every segment and opens nothing.
@@ -66,11 +66,30 @@ Package suites (`swift test --filter WWAlignPipelineTests`, 46 tests in 12 suite
   it. A source rewritten since registration is refused at the probe, and a source changed after analysis
   drops its proposal.
 - **Acceptance:** versioned revisions; numeric entry; anchors; reject → U8; undecided epochs; refusal of a
-  stale proposal and a `clockApproved` prior; `activate` refusing a revision the document does not accept;
+  stale proposal, of accepting or extending without a proposal, and of a `clockApproved` prior; `activate` refusing a revision the document does not accept;
   a source-scan check against forging approval.
 - **Concurrency:** deterministic late analysis and late render (the map changes while the job is held at
   commit) with negative controls that publish; cancel mid-decode; cancelling the caller at commit;
   shutdown during render; bounded admissions and readers; a shared gate; over-budget refusal.
+- **Map currency** (`MapCurrencyTests`, review findings F1–F4 on #210):
+  - F1: two accepts from one snapshot: the first is superseded, the second activates; a second pipeline
+    activating a different map under the same revision number re-renders everything (no segment of the first
+    map is adopted, every key differs and names only the new map's identity as upstream); a render under
+    a map whose identity is not the published one is refused before opening anything; every segment header
+    records the map content digest; `activate` refuses an acceptance carrying another version's identity or
+    another result (positive control: the genuine one activates).
+  - F2: `shutdown()` called while the first group render is held before its first commit returns only after
+    every cursor is closed; negative control: with tracking disabled (DEBUG hook) it returns while a cursor
+    is still open. `shutdown()` also cancels a render still queued for admission: it returns while the gate
+    stays held, and nothing opens.
+  - F3: moving a source to another epoch of the same group after analysis makes `accept` refuse
+    (`analysisStale`); after acceptance, render refuses (`mapStale([.sourceMoved])`); a source-revision change
+    after acceptance makes `activate` refuse and after activation makes render refuse; a map revision without
+    a dependency record is never rendered.
+  - F4: a centred 10-minute proposal on a 75-minute source places only its interval; frames outside are
+    `outsideCoverage` forward and inverse; the render hull is the interval's; the proposal is clipped to the
+    source; a source wholly outside is reported; extending to the epoch is explicit and `manual`.
+  - `GuardTests` adds the per-segment content-identity check (same revision number, different content).
 - **Output settings:** mixed 48 / 44.1 kHz sources render at the policy's 48 kHz, and the resampled 44.1 kHz
   target lands on the timeline truth (relative error < 0.02). All-44.1 kHz sources render at 48 kHz by
   default and at 44.1 kHz under `matchSources`. When nothing is renderable there is no decision and no
@@ -80,7 +99,8 @@ Package suites (`swift test --filter WWAlignPipelineTests`, 46 tests in 12 suite
   revision; `build` refusing a proposal measured on another source revision; analysis decode stopping within
   one chunk of the needed range; refusal of an inapplicable map before any open; and the per-segment
   map-revision, shutdown and cancellation checks.
-- **Units:** `ResourceGate` (cap, budget, FIFO, refusal, cancelled waiter), `boundedMap`, configuration
+- **Units:** `ResourceGate` (cap, budget, FIFO, refusal, cancelled waiter), `TrackedWork` (refuses and never
+  starts work after close), `boundedMap`, configuration
   clamps and recipe names, and the decimator (factors, frequency response, invariance to chunking).
 - **Heavy pass:** `PipelineMemoryTests` (above).
 - `ForbiddenAPITests` scans `Sources/WWAlignPipeline` with no exceptions: file, content, hashing,
@@ -95,9 +115,13 @@ deterministically that the cap is reached.
 
 Each mutation was applied alone to `Sources/WWAlignPipeline`, then the module was rebuilt and
 `swift test --filter "WWAlignPipelineTests|ForbiddenAPITests"` was run (runner: session-local `mutate.py`;
-it waits while the 1-minute load is ≥ 24; 420 s per run). Run on 2026-10-06 at the policy-integration head.
-**31 of 31 killed.** The 9 survivors of the first run (M04, M06–M09, M20, M21, M25, M27)
-are killed by `GuardTests`, which was added for them.
+it waits while the 1-minute load is ≥ 24; 420 s per run). Round 1 (M01–M31) ran on 2026-10-06 at the
+policy-integration head; every mutation was rerun later on 2026-10-06 after the review fixes (F1–F4), and M32–M62
+were added for those fixes. **61 of 62 killed; M07 is equivalent** (subsumed by the identity check; M61, which
+removes both checks, is killed). The round-1 survivors (M04, M06–M09, M20, M21, M25, M27) are killed by
+`GuardTests`. The round-2 survivors (M48, M58, M59, M60) are killed by tests added for them. The early
+`noCurrentProposal` prefilter that the old M19 removed duplicated the check where the decision is applied, so it
+was deleted; M19 and M62 now check that check.
 
 | ID | Mutation | Result | Killed by |
 |---|---|---|---|
@@ -107,7 +131,7 @@ are killed by `GuardTests`, which was added for them.
 | M04 | admitted skips check | killed (1) | `admitted` never lends a location or revision for an ineligible source, even one that is registered |
 | M05 | verify token skipped | killed (1) | A source rewritten since registration is refused at the probe and blocks its epoch until re-registered |
 | M06 | verify format revision skipped | killed (1) | A decoder interpretation from another format or envelope revision is refused, whatever the revision token |
-| M07 | render map-currency check removed | killed (1) | Between segments a render stops when the accepted map is no longer its revision |
+| M07 | render map-currency check removed | equivalent | Subsumed: a revision change also takes the identity slot out of `.ready`, so the identity check (M51) stops the render first. M61 removes both checks and is killed |
 | M08 | render cancellation check removed | killed (1) | Between segments a render stops when its task is cancelled |
 | M09 | render shutdown check removed | killed (1) | Between segments a render stops once the coordinator has shut down |
 | M10 | gate permit cap removed | killed (3) | A cancelled waiter leaves the queue without being admitted; the next waiter is still served; At most `permits` units are admitted; a release admits the next waiter; The gate is shared: a unit already admitted elsewhere leaves analysis one slot |
@@ -119,7 +143,7 @@ are killed by `GuardTests`, which was added for them.
 | M16 | budget floor removed | killed (2) | A unit whose working set exceeds the whole memory budget is refused before anything is decoded; Defaults and clamps |
 | M17 | recipe omits excerpt | killed (1) | Every result-changing parameter is part of the recipe names |
 | M18 | clockApproved prior accepted | killed (1) | A persisted clock approval is shown refused, never carried forward, and replaced only by an explicit decision |
-| M19 | early noCurrentProposal removed | killed (1) | A source that changes after analysis drops its proposal: shown pending, never accepted |
+| M19 | accept without proposal reports another refusal | killed (1) | abstains |
 | M20 | isCurrent ignored | killed (1) | `build` refuses or withholds a proposal measured on another revision of either source, even if handed it directly |
 | M21 | isCurrent ignores revision tokens | killed (1) | `build` refuses or withholds a proposal measured on another revision of either source, even if handed it directly |
 | M22 | resolver accepted-map-first skipped | killed (4) | A persisted clock approval is shown refused, never carried forward, and replaced only by an explicit decision; A synthetic episode is proposed, accepted, rendered, re-timed and re-rendered; nothing on the main thread; Every decision yields only timelineReference or manual provenance, versioned and derived from the prior revision; Undecided epoch carries its current proposal unaccepted (U3); an explicit reject returns it to U8 and stays rejected |
@@ -132,11 +156,43 @@ are killed by `GuardTests`, which was added for them.
 | M29 | render uses lowest source rate, not the policy decision | killed (2) | All-44.1 kHz sources: the default renders at 48 kHz, `.matchSources` at 44.1 kHz; the rate keys the assets; Mixed 48 / 44.1 kHz sources render at the policy's 48 kHz; the 44.1 kHz source is resampled onto the timeline |
 | M30 | policy configuration ignored | killed (1) | All-44.1 kHz sources: the default renders at 48 kHz, `.matchSources` at 44.1 kHz; the rate keys the assets |
 | M31 | recipe omits policy version | killed (1) | Mixed 48 / 44.1 kHz sources render at the policy's 48 kHz; the 44.1 kHz source is resampled onto the timeline |
+| M32 | F4 coverage lower clamp removed | killed (1) | A proposal reaching past either end of the source is clipped to the source's frames |
+| M33 | F4 coverage upper clamp removed | killed (2) | A proposal reaching past either end of the source is clipped to the source's frames; A source with no frame inside its epoch's proposal is left unplaced and reported, never stretched |
+| M34 | F4 accept extends proposal to epoch | killed (3) | A centred 10-minute proposal on a 75-minute source maps only its interval; the rest stays outsideCoverage both ways; A proposal reaching past either end of the source is clipped to the source's frames; A source with no frame inside its epoch's proposal is left unplaced and reported, never stretched |
+| M35 | F4 placement ignores coverage | killed (8) | A centred 10-minute proposal on a 75-minute source maps only its interval; the rest stays outsideCoverage both ways; A persisted clock approval is shown refused, never carried forward, and replaced only by an explicit decision; A proposal reaching past either end of the source is clipped to the source's frames; A source with no frame inside its epoch's proposal is left unplaced and reported, never stretched; A synthetic episode is proposed, accepted, rendered, re-timed and re-rendered; nothing on the main thread; Every decision yields only timelineReference or manual provenance, versioned and derived from the prior revision; Undecided epoch carries its current proposal unaccepted (U3); an explicit reject returns it to U8 and stays rejected; `build` refuses or withholds a proposal measured on another revision of either source, even if handed it directly |
+| M36 | F4 extension not recorded in note | killed (1) | Extending a proposal over the whole epoch is an explicit manual decision that says so |
+| M37 | F4 hull uses whole occurrence | killed (2) | A centred 10-minute proposal on a 75-minute source maps only its interval; the rest stays outsideCoverage both ways; A synthetic episode is proposed, accepted, rendered, re-timed and re-rendered; nothing on the main thread |
+| M38 | F3 accept ignores analysis changes | killed (2) | A source that changes after analysis drops its proposal: shown pending, never accepted; Moving a source to another epoch of its group after analysis makes accept refuse the stale plan |
+| M39 | F3 activate ignores dependency verify | killed (1) | A source revision change after acceptance refuses activation and rendering of the map |
+| M40 | F3 render ignores dependency verify | killed (3) | A map revision without this module's dependency record is never rendered; A source revision change after activation refuses rendering before opening anything; Moving a source to another epoch of its group after acceptance makes render refuse before opening anything |
+| M41 | F3 missing dependency record tolerated | killed (1) | A map revision without this module's dependency record is never rendered |
+| M42 | F3 dependency digest not compared | killed (2) | A source revision change after acceptance refuses activation and rendering of the map; A source revision change after activation refuses rendering before opening anything |
+| M43 | F3 verify ignores placements | killed (1) | Moving a source to another epoch of its group after acceptance makes render refuse before opening anything |
+| M44 | F3 placementChanges ignores epoch | killed (1) | Moving a source to another epoch of its group after acceptance makes render refuse before opening anything |
+| M45 | F3 analysisChanges ignores epoch | killed (1) | Moving a source to another epoch of its group after analysis makes accept refuse the stale plan |
+| M46 | F3 analysisChanges epoch membership ignored | killed (1) | Moving a source to another epoch of its group after analysis makes accept refuse the stale plan |
+| M47 | F3 analysisChanges ignores revision token | killed (1) | A source that changes after analysis drops its proposal: shown pending, never accepted |
+| M48 | F1 activate skips identity check | killed (1) | activate refuses an acceptance whose identity or result does not match the document's map version |
+| M49 | F1 render skips identity-active check | killed (1) | Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards |
+| M50 | F1 segment key omits identity | killed (2) | A different map under the same revision number never adopts the first map's aligned assets; Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards |
+| M51 | F1 checkCurrent skips identity | killed (1) | Between segments a render stops when the active map content is not its identity, even under the same revision number |
+| M52 | F1 identity is revision number only | killed (3) | A different map under the same revision number never adopts the first map's aligned assets; Between segments a render stops when the active map content is not its identity, even under the same revision number; Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards |
+| M53 | F1 ledger issue accepts stale snapshot | killed (2) | A persisted clock approval is shown refused, never carried forward, and replaced only by an explicit decision; Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards |
+| M54 | F1 ledger activate accepts stale snapshot | killed (1) | Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards |
+| M55 | F1 ledger superseded check removed | killed (1) | Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards |
+| M56 | F2 render not tracked | killed (1) | shutdown() returns only once every render reader is closed; untracked renders (negative control) let it return with a reader open |
+| M57 | F2 shutdown does not await renders | killed (1) | shutdown() returns only once every render reader is closed; untracked renders (negative control) let it return with a reader open |
+| M58 | F2 shutdown does not cancel renders | killed (1) | shutdown() cancels a render still waiting for admission: it returns without the gate ever being released |
+| M59 | F2 tracked work not refused after close | killed (1) | run returns the result and deregisters; after close it refuses and never starts the operation |
+| M60 | F1 segment header omits map digest | killed (1) | A different map under the same revision number never adopts the first map's aligned assets |
+| M61 | checkCurrent both map checks removed | killed (2) | Between segments a render stops when the accepted map is no longer its revision; Between segments a render stops when the active map content is not its identity, even under the same revision number |
+| M62 | extend without proposal reports another refusal | killed (1) | abstains |
 
 ## Known limits and risks
 
-- The proposal for an epoch is one affine segment, extrapolated from the analysed excerpt to the whole
-  epoch hull. Every source in an epoch is placed at group-clock 0.
+- The proposal for an epoch is one affine segment over the analysed interval only; frames outside it are
+  `outsideCoverage` (not rendered). Covering the whole epoch needs the explicit `extendProposalToEpoch`
+  decision (manual provenance). Every source in an epoch is placed at group-clock 0.
 - Each target epoch is estimated against the reference only (single pair, mono mix of one source per
   side); there is no cycle-consistency check across targets.
 - Analysis decodes sequentially from frame 0, with no seek. For a centred 600 s excerpt of a 75-minute
@@ -144,8 +200,10 @@ are killed by `GuardTests`, which was added for them.
 - Estimator CPU runs on the cooperative pool, limited only by the gate's permits.
 - Sources without probed facts are omitted from maps, and unsupported (U7/U8) epochs are not rendered.
   Epochs carrying an accepted acoustic proposal (U3) are rendered.
-- Accepting and activating are two steps. Activating an older accepted revision is allowed, and renders
-  follow the coordinator's active revision.
+- Accepting and activating are two steps. A pipeline instance only remembers what it activated: after a
+  relaunch (fresh pipeline), a saved accepted map renders only after it is accepted and activated again;
+  there is no public restore path yet. An out-of-band edit to the episode's alignment (another writer)
+  makes this pipeline refuse further acceptances (`staleSnapshot`); a new pipeline instance is needed.
 - The memory bound is measured for analysis. The aligned-asset render was exercised on short fixtures
   only; a full 75-minute render (debug ≈ 0.1 s per channel-second) is unmeasured.
 - New public WWDecode API: `SourceDecoder.withDecodingCursor` / `DecodingCursor` (the streaming path the

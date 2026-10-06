@@ -35,10 +35,12 @@ struct InspectionTests {
             report: report,
             decisions: [target: EpochMapDecision.numeric(ppm: 1, offsetMilliseconds: 2)]
         )
-        try await fixture.pipeline.activate(model: accepted.model, episode: fixture.episodeID)
+        try await fixture.pipeline.activate(accepted)
         #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == accepted.revision.revision)
         try await fixture.pipeline.activate(model: fixture.model, episode: fixture.episodeID)
         #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == nil)
+        try await fixture.pipeline.activate(accepted)
+        #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == accepted.revision.revision)
     }
 
     @Test func manualRevisionWorksFromPersistedAcceptedMapWithoutAnalysisReport() async throws {
@@ -51,7 +53,7 @@ struct InspectionTests {
         let first = try await fixture.acceptAndActivate(
             report, [target: .numeric(ppm: 1, offsetMilliseconds: 2)]
         )
-        let revised = try fixture.pipeline.reviseAcceptedMap(
+        let revised = try await fixture.pipeline.reviseAcceptedMap(
             model: first.model, episode: fixture.episodeID,
             decisions: [target: .numeric(ppm: 12.04, offsetMilliseconds: 84.2)]
         )
@@ -95,7 +97,7 @@ struct InspectionTests {
             RecordingEpoch(id: newEpoch, label: "Take 2")
         )
 
-        let split = try fixture.pipeline.splitAcceptedOccurrence(
+        let split = try await fixture.pipeline.splitAcceptedOccurrence(
             model: model, episode: fixture.episodeID, group: fixture.groups[1],
             source: fixture.id("target"), epoch: oldEpoch, frame: splitFrame,
             newEpoch: newEpoch
@@ -117,6 +119,8 @@ struct InspectionTests {
             Issue.record("new epoch must remain unsupported until timed")
             return
         }
+        try await fixture.pipeline.activate(split)
+        #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == split.revision.revision)
     }
 
     @Test func anchorRevisionPersistsExactAnchorPairs() async throws {
@@ -133,7 +137,7 @@ struct InspectionTests {
             AlignmentAnchor(sourceSeconds: 2.25, alignedSeconds: 2.5),
             AlignmentAnchor(sourceSeconds: 17.75, alignedSeconds: 18.125),
         ]
-        let revised = try fixture.pipeline.reviseAcceptedMap(
+        let revised = try await fixture.pipeline.reviseAcceptedMap(
             model: first.model, episode: fixture.episodeID,
             decisions: [target: .anchors(anchors)]
         )

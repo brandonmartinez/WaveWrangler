@@ -50,7 +50,9 @@ struct AcceptanceTests {
             let alignment = try #require(fixture.model.episode(fixture.episodeID)?.alignment)
             #expect(alignment.acceptedRevision == revision)
             #expect(alignment.acceptedMap?.derivedFrom == (revision == 1 ? nil : revision - 1))
-            #expect(alignment.acceptedMap?.inputs.recipe == AlignmentAssetKinds.acceptanceRecipe)
+            let recipe = try #require(alignment.acceptedMap?.inputs.recipe)
+            #expect(recipe.revision == AlignmentAssetKinds.acceptanceRecipeRevision)
+            #expect(recipe.name.hasPrefix(AlignmentAssetKinds.acceptanceRecipePrefix) && recipe.name.count > AlignmentAssetKinds.acceptanceRecipePrefix.count, "records its dependency digest")
             #expect(try fixture.model.timeMap(revision: revision, in: fixture.episodeID) == accepted.map, "persisted map round-trips")
             #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == revision)
 
@@ -81,7 +83,7 @@ struct AcceptanceTests {
         let carried = try #require(Self.segment(undecided.map, targetEpoch))
         #expect(carried.rateRatio == proposal.segment.rateRatio)
         #expect(carried.alignedOffset == proposal.segment.alignedOffset)
-        #expect(carried.groupClockStart == .zero)
+        #expect(carried == proposal.segment, "the proposal's own supported interval, never extended")
         let u3 = try #require(await fixture.states(report)[targetEpoch])
         #expect(u3.status == .proposedInAcceptedMap(revision: 1))
         #expect(u3.remedies == [.acceptAsManual, .reject, .editNumerically, .placeAnchors, .audition])
@@ -199,6 +201,11 @@ struct AcceptanceTests {
         let (recorded, revision) = try fixture.model.recordingMap(approved, in: fixture.episodeID, inputs: inputs.sources, recipe: inputs.recipe, derivedFrom: 1)
         fixture.model = try recorded.acceptingMap(revision: revision.revision, in: fixture.episodeID)
         await fixture.coordinator.acceptMap(revision)
+        // This pipeline never saw the out-of-band edit, so it refuses; the tampered document is opened afresh.
+        await #expect(throws: AlignmentAcceptanceError.staleSnapshot) {
+            _ = try await fixture.pipeline.accept(model: fixture.model, episode: fixture.episodeID, report: report, decisions: [targetEpoch: .acceptProposal()])
+        }
+        fixture.reopenPipeline()
 
         let state = try #require(await fixture.states(report)[targetEpoch])
         #expect(state.status == .clockApprovalRefused(revision: 2))
@@ -220,7 +227,10 @@ struct AcceptanceTests {
         let targetEpoch = fixture.epochs[1]
         let report = try await fixture.analyse(preferredReference: "ref")
         let accepted = try await fixture.pipeline.accept(model: fixture.model, episode: fixture.episodeID, report: report, decisions: [targetEpoch: .numeric(ppm: 0, offsetMilliseconds: 0)])
-        let unsaved = AcceptedAlignment(model: fixture.model, revision: accepted.revision, map: accepted.map)
+        let unsaved = AcceptedAlignment(
+            model: fixture.model, revision: accepted.revision, map: accepted.map, sourcesOutsideCoverage: [],
+            identity: accepted.identity, token: accepted.token, base: accepted.base, result: accepted.result
+        )
         await #expect(throws: AlignmentAcceptanceError.history(.mapNotFound(revision: 1))) { try await fixture.pipeline.activate(unsaved) }
         #expect(await fixture.coordinator.inputs.acceptedMaps.isEmpty)
         fixture.model = accepted.model

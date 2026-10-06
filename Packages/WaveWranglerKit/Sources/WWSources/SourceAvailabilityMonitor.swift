@@ -23,6 +23,10 @@ public final class SourceAvailabilityMonitor {
     /// change triggers its own refresh).
     @ObservationIgnored private var settingGeneration = 0
     @ObservationIgnored private var eventTask: Task<Void, Never>?
+    #if DEBUG
+    /// Test only: suspends the detached evaluator task after launch, before synchronous source I/O.
+    @ObservationIgnored package var evaluatorTaskDidStart: (@Sendable () async -> Void)?
+    #endif
 
     public init(
         showID: ShowID,
@@ -167,8 +171,14 @@ public final class SourceAvailabilityMonitor {
         let evaluator = SourceAvailabilityEvaluator(context: context)
         let evaluatedSetting = setting
         let evaluatedGeneration = settingGeneration
+        #if DEBUG
+        let evaluatorTaskDidStart = evaluatorTaskDidStart
+        #endif
         let evaluation = await Task.detached {
-            evaluator.evaluate(key: key, record: record, setting: evaluatedSetting, transfer: transferState)
+            #if DEBUG
+            if let evaluatorTaskDidStart { await evaluatorTaskDidStart() }
+            #endif
+            return evaluator.evaluate(key: key, record: record, setting: evaluatedSetting, transfer: transferState)
         }.value
         if let refreshed = evaluation.refreshedRecord {
             try? await store.save(refreshed)

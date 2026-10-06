@@ -81,7 +81,7 @@ actor AlignmentRuntime {
             return try await pipeline.accept(model: model, episode: episodeID, report: report, decisions: decisions)
         }
         if model.episode(episodeID)?.alignment?.acceptedRevision != nil {
-            return try pipeline.reviseAcceptedMap(model: model, episode: episodeID, decisions: decisions)
+            return try await pipeline.reviseAcceptedMap(model: model, episode: episodeID, decisions: decisions)
         }
         guard let report = reports[episodeID] else { throw AlignmentAcceptanceError.noReference }
         return try await pipeline.accept(model: model, episode: episodeID, report: report, decisions: decisions)
@@ -95,8 +95,8 @@ actor AlignmentRuntime {
         epoch: RecordingEpochID,
         frame: Int64,
         newEpoch: RecordingEpochID
-    ) throws -> AcceptedAlignment {
-        try pipeline.splitAcceptedOccurrence(
+    ) async throws -> AcceptedAlignment {
+        try await pipeline.splitAcceptedOccurrence(
             model: model, episode: episodeID, group: group, source: source,
             epoch: epoch, frame: frame, newEpoch: newEpoch
         )
@@ -109,6 +109,10 @@ actor AlignmentRuntime {
 
     func activate(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws {
         try await pipeline.activate(model: model, episode: episodeID)
+    }
+
+    func activate(_ accepted: AcceptedAlignment) async throws {
+        try await pipeline.activate(accepted)
     }
 
     func audition(

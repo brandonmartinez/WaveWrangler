@@ -86,6 +86,9 @@ struct AbstentionTests {
         await #expect(throws: AlignmentAcceptanceError.noCurrentProposal(targetEpoch)) {
             _ = try await fixture.pipeline.accept(model: fixture.model, episode: fixture.episodeID, report: report, decisions: [targetEpoch: .acceptProposal()])
         }
+        await #expect(throws: AlignmentAcceptanceError.noCurrentProposal(targetEpoch)) {
+            _ = try await fixture.pipeline.accept(model: fixture.model, episode: fixture.episodeID, report: report, decisions: [targetEpoch: .extendProposalToEpoch(note: "whole take")])
+        }
         let unmapped = try await fixture.pipeline.accept(model: fixture.model, episode: fixture.episodeID, report: report, decisions: [targetEpoch: .unmapped])
         let mapping = unmapped.map.groups.flatMap(\.epochs).first { $0.epoch == targetEpoch }?.mapping
         #expect(mapping == .unsupported(scenario.reason.unsupportedReason))

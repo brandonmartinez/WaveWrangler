@@ -50,6 +50,24 @@ struct MoveStepRelayTests {
         #expect(try await shownSteps(hold: .zero) == [.copying, .checking, nil])
     }
 
+    /// On a fast disk the store reports copying → checking → end before any hop runs: with a hold, "checking" is
+    /// still shown, once, and the end comes after the hold (the gate run never saw "checking").
+    @Test func checkingReportedJustBeforeTheEndIsShownForTheHold() async throws {
+        let shown = Shown()
+        let report = MoveStepRelay.handler(holdAfterChecking: .milliseconds(300), current: { shown.current }) { step in
+            shown.current = step
+            shown.steps.append(step)
+        }
+        let clock = ContinuousClock()
+        let start = clock.now
+        report(.copying)
+        report(.checking)
+        report(nil)
+        for _ in 0..<100 where shown.steps.last != .some(nil) { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(shown.steps == [.checking, nil])
+        #expect(clock.now - start >= .milliseconds(300))
+    }
+
     @Test func heldCheckingStepStaysUntilTheHoldEnds() async throws {
         let clock = ContinuousClock()
         let start = clock.now

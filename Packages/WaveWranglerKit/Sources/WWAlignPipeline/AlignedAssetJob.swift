@@ -19,6 +19,8 @@ public struct AlignedAudioSegment: Sendable, Equatable {
         public var occurrence: SourceOccurrenceID
         public var decodedChannel: Int
         public var map: MapRevisionReference
+        /// The content identity of the accepted map revision it was rendered under.
+        public var mapDigest: String
         public var outputRate: Int
         public var segmentIndex: Int64
         public var firstOutputFrame: Int64
@@ -28,7 +30,7 @@ public struct AlignedAudioSegment: Sendable, Equatable {
         public var outputAssetFormatVersion: Int
     }
 
-    public static let formatVersion = 1
+    public static let formatVersion = 2
     static let magic = Data("WWAS".utf8)
 
     public let header: Header
@@ -96,6 +98,7 @@ struct GroupRenderJob: Sendable {
 
     let episode: EpisodeID
     let revision: MapRevisionReference
+    let identity: AcceptedMapIdentity
     let map: GroupTimeMap
     let nominalOutputRate: NominalRate
     let participants: [Participant]
@@ -134,7 +137,9 @@ struct GroupRenderJob: Sendable {
             occurrence: participant.occurrence,
             channel: channel,
             map: revision,
-            recipe: recipe(ofSegment: segment)
+            recipe: recipe(ofSegment: segment),
+            // The exact accepted map content: a different map never shares (or adopts) this segment.
+            upstream: [identity.key]
         )
     }
 
@@ -161,16 +166,20 @@ struct GroupRenderJob: Sendable {
     }
 
     /// Output frames covering every mapped placed frame of the participants: `[floor(G·t_first),
-    /// ceil(G·t_last)]`. Nil when nothing is mapped.
-    static func hull(map: GroupTimeMap, occurrences: [SourceOccurrenceID], frameCounts: [Int64], outputRate: Int) throws(AlignmentWorkFailure) -> Range<Int64>? {
+    /// ceil(G·t_last)]` over each occurrence's placed spans. Frames outside the spans (outside the map's
+    /// coverage) are never mapped, so they never widen the hull. Nil when nothing is mapped.
+    static func hull(map: GroupTimeMap, occurrences: [SourceOccurrenceID], outputRate: Int) throws(AlignmentWorkFailure) -> Range<Int64>? {
         var lo: ExactRational?
         var hi: ExactRational?
         do throws(TimeMapError) {
-            for (occurrence, count) in zip(occurrences, frameCounts) where count > 0 {
-                for frame in [Int64(0), count - 1] {
-                    guard case let .aligned(position) = try map.alignedTime(ofFrame: frame, in: occurrence) else { continue }
-                    if lo.map({ position.instant < $0 }) ?? true { lo = position.instant }
-                    if hi.map({ $0 < position.instant }) ?? true { hi = position.instant }
+            for occurrence in occurrences {
+                guard let placement = map.placements.first(where: { $0.occurrence.id == occurrence }) else { continue }
+                for span in placement.spans where span.endFrame > span.startFrame {
+                    for frame in [span.startFrame, span.endFrame - 1] {
+                        guard case let .aligned(position) = try map.alignedTime(ofFrame: frame, in: occurrence) else { continue }
+                        if lo.map({ position.instant < $0 }) ?? true { lo = position.instant }
+                        if hi.map({ $0 < position.instant }) ?? true { hi = position.instant }
+                    }
                 }
             }
             guard let lo, let hi else { return nil }
@@ -315,11 +324,13 @@ enum AlignedAssetRun {
         }
     }
 
-    /// The accepted map must still be the job's revision, and the coordinator must be running.
+    /// The accepted map must still be the job's exact map (revision and content), and the coordinator must
+    /// be running.
     static func checkCurrent(_ job: GroupRenderJob, coordinator: DerivedJobCoordinator) async throws(AlignmentWorkFailure) {
         if Task.isCancelled { throw .cancelled }
         if await coordinator.isShutdown { throw .cancelled }
         guard await coordinator.inputs.acceptedMaps[job.episode] == job.revision.revision else { throw .acceptedMapChanged }
+        guard await coordinator.state(of: job.identity.slot) == .ready(job.identity.key) else { throw .acceptedMapChanged }
     }
 
     static func staleReasons(_ keys: [DerivedAssetKey], coordinator: DerivedJobCoordinator) async -> Set<StaleReason>? {
@@ -369,6 +380,9 @@ enum AlignedAssetRun {
                 throw error.asWorkFailure
             }
         }
+        #if DEBUG
+        await environment.hooks.beforeSegmentPublish?(job.map.group, segment)
+        #endif
         try await checkCurrent(job, coordinator: coordinator)
         let rendered = result.product
         let entries = job.channels.enumerated().map { index, entry in (output: index, participant: job.participants[entry.participant], channel: entry.channel) }
@@ -376,7 +390,7 @@ enum AlignedAssetRun {
         let results = await boundedMap(entries, limit: 1) { entry in
             let header = AlignedAudioSegment.Header(
                 formatVersion: AlignedAudioSegment.formatVersion, group: job.map.group, source: entry.participant.source.id,
-                occurrence: entry.participant.occurrence, decodedChannel: entry.channel, map: job.revision,
+                occurrence: entry.participant.occurrence, decodedChannel: entry.channel, map: job.revision, mapDigest: job.identity.digest,
                 outputRate: job.outputRate, segmentIndex: segment, firstOutputFrame: frames.lowerBound,
                 frameCount: frames.count, rendererVersion: result.manifest.rendererVersion,
                 renderRecipeVersion: result.manifest.recipe.version, outputAssetFormatVersion: result.manifest.outputAssetFormatVersion
