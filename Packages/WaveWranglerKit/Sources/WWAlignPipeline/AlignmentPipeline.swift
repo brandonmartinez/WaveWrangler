@@ -305,7 +305,9 @@ public final class AlignmentPipeline: Sendable {
             throw .history(error)
         }
         let identity: AcceptedMapIdentity
-        do { identity = try AcceptedMapIdentity(revision: revision, version: version) } catch { throw .invalidMap(String(describing: error)) }
+        do { identity = try mapIdentity(revision: revision, version: version, map: built.map, registered: inputs.sources) } catch {
+            throw .invalidMap(String(describing: error))
+        }
         let token = try await ledger.issue(episode: episodeID, base: base)
         return AcceptedAlignment(
             model: accepted, revision: revision, map: built.map, sourcesOutsideCoverage: built.outsideCoverage,
@@ -338,13 +340,14 @@ public final class AlignmentPipeline: Sendable {
         // The document carries exactly the map this acceptance built.
         let map: AlignedTimelineMap
         do throws(MapHistoryError) { map = try accepted.model.timeMap(revision: accepted.revision.revision, in: episodeID) } catch { throw .history(error) }
-        guard AcceptanceLedger.Snapshot(alignment: episode.alignment) == accepted.result, map == accepted.map,
-              (try? AcceptedMapIdentity(revision: accepted.revision, version: version)) == accepted.identity
-        else { throw .mapContentMismatch }
+        guard AcceptanceLedger.Snapshot(alignment: episode.alignment) == accepted.result, map == accepted.map else { throw .mapContentMismatch }
         if await coordinator.isShutdown { throw .coordinatorShutDown }
         let inputs = await coordinator.inputs
         let changes = MapDependencies.verify(version: version, map: map, episode: episode, registered: inputs.sources, format: inputs.format)
         guard changes.isEmpty else { throw .analysisStale(changes) }
+        // The same content, keyed on the same (current) source revisions it was accepted against.
+        guard (try? mapIdentity(revision: accepted.revision, version: version, map: map, registered: inputs.sources)) == accepted.identity
+        else { throw .mapContentMismatch }
         try await ledger.activate(episode: episodeID, token: accepted.token, base: accepted.base, result: accepted.result)
 
         let identity = accepted.identity
@@ -392,7 +395,9 @@ public final class AlignmentPipeline: Sendable {
         )
         guard changes.isEmpty else { throw .mapStale(changes) }
         // The coordinator must be publishing for this exact map content, not just this revision number.
-        guard let identity = try? AcceptedMapIdentity(revision: revision, version: version),
+        // Its key carries every source revision the map uses, so a change to any of them (not only the
+        // rendered sources') invalidates the identity and, through `upstream`, every segment keyed on it.
+        guard let identity = try? mapIdentity(revision: revision, version: version, map: map, registered: currentInputs.sources),
               await coordinator.state(of: identity.slot) == .ready(identity.key)
         else { throw .acceptedMapContentNotActive }
         for spec in AlignmentAssetKinds.all { await coordinator.setAssetRevision(spec) }
@@ -478,6 +483,14 @@ public final class AlignmentPipeline: Sendable {
     }
 
     // MARK: Helpers
+
+    func mapIdentity(revision: MapRevisionReference, version: TimeMapVersion, map: AlignedTimelineMap, registered: [SourceID: String]) throws -> AcceptedMapIdentity {
+        let identity = try AcceptedMapIdentity(revision: revision, version: version, map: map, registered: registered)
+        #if DEBUG
+        if !hooks.mapIdentityKeysSources { return identity.withoutSources }
+        #endif
+        return identity
+    }
 
     static func tracked<T: Sendable>(_ work: TrackedWork, environment: PipelineEnvironment, _ operation: @escaping @Sendable () async -> T) async -> T? {
         #if DEBUG

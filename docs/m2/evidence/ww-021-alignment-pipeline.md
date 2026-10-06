@@ -53,7 +53,7 @@ number of groups. The estimate is conservative: the measured growth was about 29
 
 ## Tests
 
-Package suites (`swift test --filter "WWAlignPipelineTests|ForbiddenAPITests"`, 62 tests in 14 suites; synthetic only):
+Package suites (`swift test --filter "WWAlignPipelineTests|ForbiddenAPITests"`, 65 tests in 14 suites; synthetic only):
 
 - **End to end:** decode → propose → accept → activate → render → map change invalidates the renders.
   Rendering the same revision again reuses every segment and opens nothing.
@@ -71,7 +71,7 @@ Package suites (`swift test --filter "WWAlignPipelineTests|ForbiddenAPITests"`, 
 - **Concurrency:** deterministic late analysis and late render (the map changes while the job is held at
   commit) with negative controls that publish; cancel mid-decode; cancelling the caller at commit;
   shutdown during render; bounded admissions and readers; a shared gate; over-budget refusal.
-- **Map currency** (`MapCurrencyTests`, review findings F1–F4 on #210):
+- **Map currency** (`MapCurrencyTests`, `GuardTests`, `ConcurrencyTests`; review findings F1–F5 on #210):
   - F1: two accepts from one snapshot: the first is superseded, the second activates; a second pipeline
     activating a different map under the same revision number re-renders everything (no segment of the first
     map is adopted, every key differs and names only the new map's identity as upstream); a render under
@@ -89,6 +89,15 @@ Package suites (`swift test --filter "WWAlignPipelineTests|ForbiddenAPITests"`, 
   - F4: a centred 10-minute proposal on a 75-minute source places only its interval; frames outside are
     `outsideCoverage` forward and inverse; the render hull is the interval's; the proposal is clipped to the
     source; a source wholly outside is reported; extending to the epoch is explicit and `manual`.
+  - F5: the accepted-map identity key carries the registered revision of every source the map uses (its
+    placements, including the timeline reference's, and its inputs), so a change to *any* of them makes the
+    identity stale in the coordinator, which cascades to every aligned segment, including other sources'.
+    `ConcurrencyTests` holds the target group's first segment commit, changes the reference source's
+    revision, and asserts that no target segment publishes (`discardedStale` with `upstreamChanged`, group
+    failure `acceptedMapChanged`, identity slot stale with `sourceChanged(ref)`, re-render refused as
+    `mapStale`); negative control: an identity without source revisions (DEBUG hook) lets those stale
+    segments publish. `GuardTests` checks the per-segment check stops on a reference-only change and that
+    placements and inputs are each keyed (and must be registered) independently.
   - `GuardTests` adds the per-segment content-identity check (same revision number, different content).
 - **Output settings:** mixed 48 / 44.1 kHz sources render at the policy's 48 kHz, and the resampled 44.1 kHz
   target lands on the timeline truth (relative error < 0.02). All-44.1 kHz sources render at 48 kHz by
@@ -117,9 +126,10 @@ Each mutation was applied alone to `Sources/WWAlignPipeline`, then the module wa
 `swift test --filter "WWAlignPipelineTests|ForbiddenAPITests"` was run (runner: session-local `mutate.py`;
 it waits while the 1-minute load is ≥ 24; 420 s per run). Round 1 (M01–M31) ran on 2026-10-06 at the
 policy-integration head; every mutation was rerun later on 2026-10-06 after the review fixes (F1–F4), and M32–M62
-were added for those fixes. **61 of 62 killed; M07 is equivalent** (subsumed by the identity check; M61, which
+were added for those fixes. For F5, M63–M66 were added and the identity-related M39, M48–M52, M60 and M61 were
+rerun on the F5 head (M39 and M48 retargeted at the moved activate checks). **65 of 66 killed; M07 is equivalent** (subsumed by the identity check; M61, which
 removes both checks, is killed). The round-1 survivors (M04, M06–M09, M20, M21, M25, M27) are killed by
-`GuardTests`. The round-2 survivors (M48, M58, M59, M60) are killed by tests added for them. The early
+`GuardTests`. The round-2 survivors (M48, M58, M59, M60) and F5 survivors (M64, M65: the fixtures' placements and inputs name the same sources) are killed by tests added for them. The early
 `noCurrentProposal` prefilter that the old M19 removed duplicated the check where the decision is applied, so it
 was deleted; M19 and M62 now check that check.
 
@@ -174,9 +184,9 @@ was deleted; M19 and M62 now check that check.
 | M47 | F3 analysisChanges ignores revision token | killed (1) | A source that changes after analysis drops its proposal: shown pending, never accepted |
 | M48 | F1 activate skips identity check | killed (1) | activate refuses an acceptance whose identity or result does not match the document's map version |
 | M49 | F1 render skips identity-active check | killed (1) | Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards |
-| M50 | F1 segment key omits identity | killed (2) | A different map under the same revision number never adopts the first map's aligned assets; Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards |
-| M51 | F1 checkCurrent skips identity | killed (1) | Between segments a render stops when the active map content is not its identity, even under the same revision number |
-| M52 | F1 identity is revision number only | killed (3) | A different map under the same revision number never adopts the first map's aligned assets; Between segments a render stops when the active map content is not its identity, even under the same revision number; Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards |
+| M50 | F1 segment key omits identity | killed (3) | A change to the reference source while a target segment commits discards every target segment; an identity without source revisions (negative control) would publish them; A different map under the same revision number never adopts the first map's aligned assets; Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards |
+| M51 | F1 checkCurrent skips identity | killed (2) | Between segments a render stops when any source the map uses changes, not only its own; Between segments a render stops when the active map content is not its identity, even under the same revision number |
+| M52 | F1 identity is revision number only | killed (4) | A different map under the same revision number never adopts the first map's aligned assets; Between segments a render stops when the active map content is not its identity, even under the same revision number; Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards; activate refuses an acceptance whose identity or result does not match the document's map version |
 | M53 | F1 ledger issue accepts stale snapshot | killed (2) | A persisted clock approval is shown refused, never carried forward, and replaced only by an explicit decision; Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards |
 | M54 | F1 ledger activate accepts stale snapshot | killed (1) | Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards |
 | M55 | F1 ledger superseded check removed | killed (1) | Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards |
@@ -185,8 +195,12 @@ was deleted; M19 and M62 now check that check.
 | M58 | F2 shutdown does not cancel renders | killed (1) | shutdown() cancels a render still waiting for admission: it returns without the gate ever being released |
 | M59 | F2 tracked work not refused after close | killed (1) | run returns the result and deregisters; after close it refuses and never starts the operation |
 | M60 | F1 segment header omits map digest | killed (1) | A different map under the same revision number never adopts the first map's aligned assets |
-| M61 | checkCurrent both map checks removed | killed (2) | Between segments a render stops when the accepted map is no longer its revision; Between segments a render stops when the active map content is not its identity, even under the same revision number |
+| M61 | checkCurrent both map checks removed | killed (3) | Between segments a render stops when any source the map uses changes, not only its own; Between segments a render stops when the accepted map is no longer its revision; Between segments a render stops when the active map content is not its identity, even under the same revision number |
 | M62 | extend without proposal reports another refusal | killed (1) | abstains |
+| M63 | F5 identity key omits source revisions | killed (2) | A change to the reference source while a target segment commits discards every target segment; an identity without source revisions (negative control) would publish them; Between segments a render stops when any source the map uses changes, not only its own |
+| M64 | F5 used sources omit placements | killed (1) | The identity is keyed on the map's placements and its inputs, each independently |
+| M65 | F5 used sources omit map inputs | killed (1) | The identity is keyed on the map's placements and its inputs, each independently |
+| M66 | F5 identity token is not the registered revision | killed (26) | Every test that renders an accepted map (the coordinator sees the published identity's token as a stale source revision), e.g. A synthetic episode is proposed, accepted, rendered, re-timed and re-rendered; nothing on the main thread; A change to the reference source while a target segment commits discards every target segment; an identity without source revisions (negative control) would publish them; shutdown() returns only once every render reader is closed; untracked renders (negative control) let it return with a reader open |
 
 ## Known limits and risks
 

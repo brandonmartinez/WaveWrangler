@@ -126,6 +126,83 @@ struct ConcurrencyTests {
         await #expect(throws: AlignedAssetRefusal.acceptedMapNotActive(document: 1, coordinator: 2)) { try await fixture.render() }
     }
 
+    @Test(
+        "A change to the reference source while a target segment commits discards every target segment; an identity without source revisions (negative control) would publish them",
+        arguments: [true, false]
+    )
+    func lateRenderAfterOtherSourceChange(identityKeysSources: Bool) async throws {
+        var hooks = AlignmentPipelineTestHooks()
+        hooks.mapIdentityKeysSources = identityKeysSources
+        let fixture = try await PipelineFixture(Self.short(), hooks: hooks, label: "late-render-other-source")
+        let report = try await fixture.analyse(preferredReference: "ref")
+        try await fixture.acceptAndActivate(report, [fixture.epochs[1]: Self.truth])
+        let coordinator = fixture.coordinator
+        let ref = fixture.id("ref")
+        let tgt = fixture.id("tgt")
+        let targetGroup = fixture.groups[1]
+        let identitySlot = PipelineSlots.acceptedMapIdentity(fixture.episodeID)
+        let changedToken = "metadata:reference-changed-while-target-commits"
+        let fired = Box(false)
+        let changed = Latch()
+        // The target group's first aligned commit (rendered, verified, about to publish) changes the
+        // reference source's revision; its later commits wait until it has. Only the target group is scripted:
+        // its segments key the target source alone, so only the map identity can carry the reference change.
+        fixture.script.set { slot, _ in
+            guard Self.isAligned(slot), slot.name.contains("/\(targetGroup)/") else { return }
+            if fired.update({ let first = !$0; $0 = true; return first }) {
+                await coordinator.updateSource(SourceRevision(source: ref, token: changedToken))
+                await changed.open()
+            } else {
+                await changed.wait()
+            }
+        }
+        let rendered = try await fixture.render()
+        #expect(fired.value)
+        let targetReport = try #require(rendered.groups.first { $0.group == targetGroup })
+        let targetResults = targetReport.results
+        #expect(!targetResults.isEmpty)
+        for result in targetResults { #expect(result.key.sources.map(\.source) == [tgt], "target segments key only the target source") }
+        let published = Self.published(targetResults)
+        if identityKeysSources {
+            #expect(published.isEmpty, "no target segment publishes after the reference changed")
+            for result in targetResults { #expect(fixture.store.payload(for: result.key) == nil) }
+            #expect(targetResults.contains { if case let .discardedStale(reasons) = $0.outcome { reasons.contains(.upstreamChanged) } else { false } })
+            switch targetReport.failure {
+            case let .staleInputs(reasons)?: #expect(reasons.contains(.upstreamChanged))
+            case .acceptedMapChanged?: break
+            default: Issue.record("target group ended \(String(describing: targetReport.failure))")
+            }
+            guard case let .stale(_, reasons) = await coordinator.state(of: identitySlot) else {
+                Issue.record("the map identity is still current after its reference changed")
+                return
+            }
+            #expect(reasons.contains(.sourceChanged(ref)))
+        } else {
+            // Negative control: without the source revisions in the identity, the stale target segments publish
+            // and the coordinator still considers them current.
+            #expect(!published.isEmpty, "negative control: late target segments publish")
+            for result in published {
+                #expect(fixture.store.payload(for: result.key) != nil)
+                #expect(await coordinator.staleReasons(for: result.key).isEmpty)
+            }
+            guard case .ready = await coordinator.state(of: identitySlot) else {
+                Issue.record("negative control: the identity should not see the reference change")
+                return
+            }
+        }
+        await Self.expectQuiescent(fixture)
+        // Either way the map no longer matches its sources: rendering again is refused up front.
+        do {
+            _ = try await fixture.render()
+            Issue.record("a map whose reference changed rendered again")
+        } catch {
+            guard let refusal = error as? AlignedAssetRefusal, case .mapStale = refusal else {
+                Issue.record("expected mapStale, got \(error)")
+                return
+            }
+        }
+    }
+
     // MARK: Cancellation
 
     @Test("Cancelling mid-decode stops reading, closes every reader, releases the gate, publishes nothing; a rerun succeeds")

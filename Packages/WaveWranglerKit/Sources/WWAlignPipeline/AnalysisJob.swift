@@ -24,6 +24,9 @@ struct AlignmentPipelineTestHooks: Sendable {
     var beforeSegmentPublish: (@Sendable (RecorderGroupID, Int64) async -> Void)?
     /// Negative control: `false` runs group renders untracked, so `shutdown()` neither cancels nor awaits them.
     var trackRenders = true
+    /// Negative control: `false` keys the accepted-map identity without its source revisions, so a change to
+    /// another source of the map no longer invalidates segments keyed on it.
+    var mapIdentityKeysSources = true
 }
 #endif
 

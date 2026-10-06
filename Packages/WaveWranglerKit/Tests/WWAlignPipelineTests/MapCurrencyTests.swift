@@ -103,7 +103,9 @@ struct MapCurrencyTests {
             accepted.map, in: episodeID, inputs: version.inputs.sources, recipe: RecipeReference(name: "other", revision: 1), derivedFrom: accepted.revision.revision
         )
         let otherVersion = try #require(other.episode(episodeID)?.alignment?.map(revision: otherRevision.revision))
-        let forgedIdentity = try AcceptedMapIdentity(revision: accepted.revision, version: otherVersion)
+        let forgedIdentity = try AcceptedMapIdentity(
+            revision: accepted.revision, version: otherVersion, map: accepted.map, registered: await fixture.coordinator.inputs.sources
+        )
         #expect(forgedIdentity != accepted.identity)
         let forged = AcceptedAlignment(
             model: accepted.model, revision: accepted.revision, map: accepted.map, sourcesOutsideCoverage: accepted.sourcesOutsideCoverage,
