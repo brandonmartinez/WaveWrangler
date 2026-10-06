@@ -905,9 +905,12 @@ def case_library(dev, case):
     a2, b2, presence, unresolved, clause_at_settle, byte_identical, settled = final
     if case.variant == "concurrentCombine":
         outcome_ok = converged
-    else:   # combineOnAThenB: one current byte-identical library holding both changes on both hosts + the settle clause
-        outcome_ok = (settled and byte_identical and all(p in ("current", "copy") for per in presence.values() for p in per.values()))
-    outcome_ok = outcome_ok and all(c["ok"] for c in clause_at_settle.values())
+    else:   # combineOnAThenB: truth 2 needs a completed Combine (Lead): one current byte-identical library holding
+        # both changes on both hosts, 0 unresolved versions, not in L4 when the round bounds end; backups checked below.
+        outcome_ok = (settled and byte_identical and all(p in ("current", "copy") for per in presence.values() for p in per.values())
+                      and all(l == "ready" for l in rounds[-1]["finalLevels"].values()))
+    # Both variants: the settle clause, and 0 unresolved on the raw listing at the settle sample.
+    outcome_ok = outcome_ok and all(c["ok"] and c["rawUnresolved"] == 0 for c in clause_at_settle.values())
     ok = (outcome_ok and sampling_ok and cadence_ok and all(c.get("ok") for c in summary_checks) and bool(summary_checks)
           and backups_ok and all(c["ok"] for c in load_checks) and setup_wait_order_ok(case))
     return {"verdict": "pass" if ok else "fail", "setupOutcome": "established", "variant": case.variant, "skewMs": skew, "first": first,
