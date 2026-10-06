@@ -388,8 +388,11 @@ final class EpisodeSetupUITests: XCTestCase {
         // the columns never outgrow the table: Status stays fully inside it, at least its minimum width.
         func assertFits(_ context: String) {
             assertStatusVisible(outline, context)
-            XCTAssertGreaterThanOrEqual(status.frame.width, 95, "\(context): Status keeps its minimum width (\(status.frame.width))")
-            XCTAssertLessThanOrEqual(status.frame.maxX, outline.frame.maxX + 1, "\(context): no horizontal overflow")
+            // The Status column (its row's last cell), not the status text inside it.
+            let row = outline.outlineRows.containing(NSPredicate(format: "identifier == %@", status.identifier)).firstMatch
+            let column = row.cells.allElementsBoundByIndex.last?.frame ?? .zero
+            XCTAssertGreaterThanOrEqual(column.width, 95, "\(context): Status column keeps its minimum width (\(column))")
+            XCTAssertLessThanOrEqual(column.maxX, outline.frame.maxX + 1, "\(context): no horizontal overflow (\(column) vs \(outline.frame))")
         }
         // Ten cycles: the invariant holds every time, and any drift converges (bounded, not compounding).
         var offsets: [Double] = []
