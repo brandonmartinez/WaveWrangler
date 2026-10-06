@@ -93,20 +93,24 @@ not pinned): `Sources/WWTimeMap` `24c7aadfbf1470c8555542061ab08eb23e37325b`, `So
 
 Host: Apple M5 Max, 18 cores, 128 GiB, macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4 (swiftlang-6.4.0.34.1
 clang-2100.3.34.1), debug build — same host as calibration. Command, from `Packages/WaveWranglerKit`:
-`WW_ESTIMATOR_HOLDOUT=1 swift test --scratch-path .build/swiftpm --filter HoldoutTests`. Start `2026-10-06T11:42:40Z`,
-`frozenHoldout()` ran 198.348 s; wall time for the 5-test `HoldoutTests` suite (frozen-definition, split-disjointness,
-registry-match, tree-match and the holdout itself) was the same, run once, not repeated. Master seed
-`0x57571600401D0000`, estimator `ww-align-estimate/1`, 140 cases / 170 epochs — the frozen holdout counts exactly,
-no more and no fewer. Raw, unedited test output: `docs/m2/evidence/ww-016-estimator-holdout-run.log`. Every per-case
-line, machine-readable: `docs/m2/evidence/ww-016-estimator-holdout-cases.jsonl` (170 records, one per epoch).
+`WW_ESTIMATOR_HOLDOUT=1 swift test --scratch-path .build/swiftpm --filter HoldoutTests`. `frozenHoldout()` ran
+198.348 s (printed by `swift test`); wall time for the 5-test `HoldoutTests` suite (frozen-definition,
+split-disjointness, registry-match, tree-match and the holdout itself) was the same, run once, not repeated. Start
+time `2026-10-06T11:42:40Z` is from the shell's own `date -u +"%Y-%m-%dT%H:%M:%SZ"`, run immediately before invoking
+`swift test`; `swift test` itself prints no timestamps. Master seed `0x57571600401D0000`, estimator
+`ww-align-estimate/1`, 140 cases / 170 epochs — the frozen holdout counts exactly, no more and no fewer. Raw,
+unedited test output, including the full build log and compiler warnings preceding the test run, captured verbatim
+by piping the command through `tee`: `docs/m2/evidence/ww-016-estimator-holdout-run.log`. Every per-case line,
+machine-readable: `docs/m2/evidence/ww-016-estimator-holdout-cases.jsonl` (170 records, one per epoch, parsed
+verbatim from the log's per-epoch lines).
 
 | Stratum | Cases | Epochs | Proposals | Abstentions | Clock residual p95 / max (ms) | Proposals failing clock gates |
 |---|---|---|---|---|---|---|
 | positive | 40 | 40 | 40 | — | 0.9695 / 0.9903 | 0 |
 | positiveRestart | 10 | 20 | 20 | — | 0.9499 / 0.9592 | 0 |
 | positiveThreeGroup | 10 | 20 | 20 | — | 0.9781 / 0.9883 | 0 |
-| constantDelay (35 ms) | 10 | 10 | 10 | — | 35.0032 / 35.0084 | 0 |
-| variableDelay (20→50 ms) | 10 | 10 | 8 | discontinuous=1, inconsistent=1 | 47.9480 / 49.3782 | 0 |
+| constantDelay (35 ms) | 10 | 10 | 10 | — | 35.0032 / 35.0084 | 10 |
+| variableDelay (20→50 ms) | 10 | 10 | 8 | discontinuous=1, inconsistent=1 | 47.9480 / 49.3782 | 8 |
 | discontinuity (±40 ms step) | 10 | 10 | 0 | discontinuous=10 | — | 0 |
 | unrelated | 10 | 10 | 0 | weak=10 | — | 0 |
 | silent | 10 | 10 | 0 | silent=10 | — | 0 |
@@ -127,11 +131,12 @@ line, machine-readable: `docs/m2/evidence/ww-016-estimator-holdout-cases.jsonl` 
   delay, not a clock error) — consistent with calibration's 35.0 ms finding.
 - variableDelay: 8/10 proposed (1 abstained `discontinuous`, 1 abstained `inconsistent` — the strict consistency
   fit correctly refused a windowed delay ramp that didn't fit a single offset/drift line); the 8 proposals are
-  47.9–49.4 ms clock-wrong, with fitted ppm −207 to −341 against truths of −90 to +41 ppm, matching calibration's
-  pattern that a slowly varying propagation delay reads to the estimator as drift.
+  per-epoch clock max 49.15–49.38 ms (stratum pooled p95 47.95 ms), with fitted ppm −208 to −341 against truths of
+  −90 to +41 ppm, matching calibration's pattern that a slowly varying propagation delay reads to the estimator as
+  drift.
 - cycleConflict: all 20 epochs (10 cases × 2 epochs) measured a cycle disagreement of 20.0–20.1 ms (tolerance
-  2.0 ms) and abstained `cycleInconsistent`; 2 epochs also carried a `coverageGap` flag with no effect on the
-  abstention.
+  2.0 ms) and abstained `cycleInconsistent`; 4 epochs (case indices #1, #4, #5, #6) also carried a `coverageGap`
+  flag with no effect on the abstention.
 
 **This PASS qualifies the acoustic-proposal envelope only.** Per the frozen gate's authority note (verbatim in
 `m2-freeze-estimator.json`), a PASS means positives proposed within the clock gates and every finite negative

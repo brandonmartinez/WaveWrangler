@@ -1,3 +1,192 @@
+Building for debugging...
+[Computing dependencies]
+[Pre-planning 1 / 762]
+[Planning deferred tasks]
+[151 / 358]
+[152 / 359] WWCore
+[164 / 405]
+[169 / 405]
+[171 / 405]
+[176 / 405]
+[180 / 405]
+[183 / 405]
+[185 / 405]
+[186 / 405]
+[198 / 405] WWCore
+[210 / 409] WWTimeMap
+[219 / 474]
+[226 / 474] WWTimeMap
+[238 / 474] WWSources
+[253 / 474] WWSources
+[257 / 474] WWTimeMap
+[264 / 474] WWSources
+[280 / 474] WWSources
+[293 / 474] WWOrganizer
+[300 / 474] WWOrganizer
+[320 / 479]
+[330 / 482] WWOrganizer
+[333 / 482] WWPersistenceProbe
+[351 / 536] WWPersistenceProbe
+[370 / 536] WWEpisodeSetup
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-bookish-giggle/Packages/WaveWranglerKit/Sources/WWPersistenceProbe/TwoDeviceSources.swift:149:19: [1;33mwarning: [1;39mno 'async' operations occur within 'await' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+[0;36m147 |[0;0m         }
+[0;36m148 |[0;0m         object["status"] = "\(await session.status.state)"
+[0;36m149 |[0;0m         let key = await session.key
+    [0;36m|[0;0m                   `- [1;33mwarning: [1;39mno 'async' operations occur within 'await' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+[0;36m150 |[0;0m         object["editCheckpointsKept"] = recovery?.editCheckpoints(for: key).count ?? 0
+[0;36m151 |[0;0m         emit(object)
+
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[379 / 536]
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-bookish-giggle/Packages/WaveWranglerKit/Sources/WWPersistenceProbe/TwoDeviceSources.swift:149:19: [1;33mwarning: [1;39mno 'async' operations occur within 'await' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+[0;36m147 |[0;0m         }
+[0;36m148 |[0;0m         object["status"] = "\(await session.status.state)"
+[0;36m149 |[0;0m         let key = await session.key
+    [0;36m|[0;0m                   `- [1;33mwarning: [1;39mno 'async' operations occur within 'await' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+[0;36m150 |[0;0m         object["editCheckpointsKept"] = recovery?.editCheckpoints(for: key).count ?? 0
+[0;36m151 |[0;0m         emit(object)
+
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[386 / 554] WWTimeMapTests-product
+[393 / 554] WWTimeMapTests-product
+[400 / 554]
+[411 / 554] WWSourcesTests-product
+[417 / 554] WWTimeMapTests-product
+[434 / 554] WWEpisodeSetupTests-product
+[443 / 554] WWEpisodeSetup
+[451 / 554] WWAlignEstimate
+[469 / 556]
+[469 / 556] WWDecode
+[472 / 556] WWTimeMapTests-product
+[481 / 557] WWAlignEstimateTests-product
+[490 / 569] wwpersist-probe-product
+[495 / 569] WWDecode
+[504 / 571] WWDecode-product
+[509 / 571] WWCoreTests-product
+[511 / 571] WWAlignEstimateTests-product
+[512 / 571] WWCoreTests-product
+[529 / 635] WWPersistenceTests-product
+[541 / 644]
+[542 / 644]
+[545 / 644] WWPersistenceTests-product
+[548 / 644]
+[550 / 644]
+[553 / 644]
+[560 / 644] WWPersistenceTests-product
+[562 / 644]
+[562 / 644] WWPersistenceTests-product
+[574 / 644] WWPersistenceTests-product
+[574 / 644]
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-bookish-giggle/Packages/WaveWranglerKit/Tests/WWPersistenceTests/LibraryProviderConflictTests.swift:156:22: [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m154 |[0;0m         var theirs = try rig.disk().payload
+[0;36m155 |[0;0m         theirs.collections.append(LibraryCollection(name: "Theirs"))
+[0;36m156 |[0;0m         rig.provider.add(try LibraryCoder.library.encode(theirs, revision: 3), to: rig.rig.containerFile)
+    [0;36m|[0;0m                      `- [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m157 |[0;0m         let before = try rig.disk().publication
+[0;36m158 |[0;0m         let result = try await store.update { var l = $0; l.collections.append(LibraryCollection(name: "Mine")); return l }
+
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-bookish-giggle/Packages/WaveWranglerKit/Tests/WWPersistenceTests/LibraryProviderConflictTests.swift:242:22: [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m240 |[0;0m         var theirs = disk.payload
+[0;36m241 |[0;0m         theirs.collections.removeAll()
+[0;36m242 |[0;0m         rig.provider.add(try LibraryCoder.library.encode(theirs, revision: disk.revision + 7), to: rig.rig.containerFile)
+    [0;36m|[0;0m                      `- [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m243 |[0;0m         _ = await store.reload()
+[0;36m244 |[0;0m         #expect(await store.levelState == .changedElsewhere)
+
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-bookish-giggle/Packages/WaveWranglerKit/Tests/WWPersistenceTests/LibraryProviderConflictTests.swift:284:22: [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m282 |[0;0m         theirs = LibraryReconciler.acknowledging(show, title: "Show r2", publication: r2, in: theirs)
+[0;36m283 |[0;0m         _ = try await store.update { var l = $0; l.collections.append(LibraryCollection(name: "Here")); return l }
+[0;36m284 |[0;0m         rig.provider.add(try LibraryCoder.library.encode(theirs, revision: base.revision + 1), to: rig.rig.containerFile)
+    [0;36m|[0;0m                      `- [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m285 |[0;0m         _ = await store.reload()
+[0;36m286 |[0;0m         #expect(await store.levelState == .changedElsewhere)
+
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-bookish-giggle/Packages/WaveWranglerKit/Tests/WWPersistenceTests/LibraryProviderConflictTests.swift:333:22: [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m331 |[0;0m         var theirs = disk.payload
+[0;36m332 |[0;0m         theirs.collections.append(LibraryCollection(name: "Theirs"))
+[0;36m333 |[0;0m         rig.provider.add(try LibraryCoder.library.encode(theirs, revision: disk.revision + 1), to: rig.rig.containerFile)
+    [0;36m|[0;0m                      `- [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m334 |[0;0m 
+[0;36m335 |[0;0m         let relaunched = rig.store()
+
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-bookish-giggle/Packages/WaveWranglerKit/Tests/WWPersistenceTests/LibraryProviderConflictTests.swift:356:19: [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m354 |[0;0m         let (_, theirs, _) = try await rig.concurrentCopies()
+[0;36m355 |[0;0m         let providerB = FakeProviderVersions(recovery: rig.rig.recovery)
+[0;36m356 |[0;0m         providerB.add(theirs, to: rig.rig.containerFile, from: "This Mac")
+    [0;36m|[0;0m                   `- [1;33mwarning: [1;39mresult of call to 'add(_:to:from:)' is unused[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+[0;36m357 |[0;0m         let macA = rig.store()
+[0;36m358 |[0;0m         let macB = rig.store(provider: providerB, recovery: RecoveryStore(root: rig.rig.dir.sub("RecoveryB")))
+
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+[582 / 644] WWOrganizerTests-product
+[585 / 644] WWDecodeTests-product
+[590 / 644] WWOrganizerTests-product
+[594 / 644] WWEpisodeSetupTests-product
+[603 / 644] WWEpisodeSetupTests-product
+[612 / 644] WWEpisodeSetupTests-product
+[614 / 644] WWEpisodeSetupTests-product
+macro expansion #expect:1:22: [1;33mwarning: [1;39mno calls to throwing functions occur within 'try' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+`- /Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-bookish-giggle/Packages/WaveWranglerKit/Tests/WWSourcesTests/EngineTests.swift:639:71: [1;39mnote: [1;39mexpanded code originates here[0;0m
+ [0;36m637 |[0;0m         try await copyMonitor.adopt([original])  // a record from another show is not adopted
+ [0;36m638 |[0;0m         await copyMonitor.refresh([copy.sourceID])
+ [0;36m639 |[0;0m         [4;39m#expect(try await store.record(for: original.key) == original)[0;0m
+     [0;36m|[0;0m         `- [1;39mnote: [1;39min expansion of macro 'expect' here[0;0m
+[0;36m     +--- [0;0mmacro expansion #expect [0;36m--------------------------------------[0;0m
+[0;36m     |[0;0m[0;36m1 |[0;0m Testing.__checkValue(try await store.record(for: original.key) == original,expression: .__fromSyntaxNode("try await store.record(for: original.key) == original"),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+[0;36m     |[0;0m  [0;36m|[0;0m                      `- [1;33mwarning: [1;39mno calls to throwing functions occur within 'try' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+[0;36m     +----------------------------[0;0m[0;36m--------------------------------------[0;0m
+ [0;36m640 |[0;0m         #expect(try await store.record(for: copy.key)?.bookmark != copy.bookmark)  // copy's own bookmark refreshed
+ [0;36m641 |[0;0m         guard case .moved = copyMonitor.observations[copy.sourceID]?.location else {
+
+macro expansion #expect:1:22: [1;33mwarning: [1;39mno calls to throwing functions occur within 'try' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+`- /Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-bookish-giggle/Packages/WaveWranglerKit/Tests/WWSourcesTests/EngineTests.swift:640:82: [1;39mnote: [1;39mexpanded code originates here[0;0m
+ [0;36m638 |[0;0m         await copyMonitor.refresh([copy.sourceID])
+ [0;36m639 |[0;0m         #expect(try await store.record(for: original.key) == original)
+ [0;36m640 |[0;0m         [4;39m#expect(try await store.record(for: copy.key)?.bookmark != copy.bookmark)[0;0m  // copy's own bookmark refreshed
+     [0;36m|[0;0m         `- [1;39mnote: [1;39min expansion of macro 'expect' here[0;0m
+[0;36m     +--- [0;0mmacro expansion #expect [0;36m--------------------------------------[0;0m
+[0;36m     |[0;0m[0;36m1 |[0;0m Testing.__checkValue(try await store.record(for: copy.key)?.bookmark != copy.bookmark,expression: .__fromSyntaxNode("try await store.record(for: copy.key)?.bookmark != copy.bookmark"),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+[0;36m     |[0;0m  [0;36m|[0;0m                      `- [1;33mwarning: [1;39mno calls to throwing functions occur within 'try' expression[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker\UnnecessaryEffectMarker]8;;\]
+[0;36m     +----------------------------[0;0m[0;36m--------------------------------------[0;0m
+ [0;36m641 |[0;0m         guard case .moved = copyMonitor.observations[copy.sourceID]?.location else {
+ [0;36m642 |[0;0m             Issue.record("expected moved")
+
+/Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-bookish-giggle/Packages/WaveWranglerKit/Tests/WWSourcesTests/EngineTests.swift:1036:18: [1;33mwarning: [1;39mweak variable 'weakController' was never mutated; consider changing to 'let' constant[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated\VariableNeverMutated]8;;\::]8;;https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability\WeakMutability]8;;\]
+[0;36m1034 |[0;0m         io.simulate(file, SimulatedCloudItem(script: Self.stallForever))
+[0;36m1035 |[0;0m         var monitor: SourceAvailabilityMonitor? = SourceAvailabilityMonitor(showID: testShow, store: InMemoryDeviceAccessStore(), context: context, setting: .on, transferPolicy: StallFollowUpTests.policy)
+[0;36m1036 |[0;0m         weak var weakController = monitor?.transfers
+     [0;36m|[0;0m                  `- [1;33mwarning: [1;39mweak variable 'weakController' was never mutated; consider changing to 'let' constant[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated\VariableNeverMutated]8;;\::]8;;https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability\WeakMutability]8;;\]
+[0;36m1037 |[0;0m         let collector = await eventCollector(monitor!.transfers, key: record.key) { $0.isOfflineOrUnknown }
+[0;36m1038 |[0;0m         monitor?.start()
+
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+[#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
+[618 / 644] WWOrganizerTests-product
+[618 / 644] WWEpisodeSetupTests-product
+[624 / 644] WWPersistenceTests-product
+[628 / 644] WWEpisodeSetupTests-product
+[628 / 644] WWOrganizerTests-product
+[632 / 644] WWEpisodeSetupTests-product
+[634 / 644] WWEpisodeSetupTests-product
+[634 / 644] WWOrganizerTests-product
+[638 / 644] WWEpisodeSetupTests-product
+[640 / 644] WWEpisodeSetupTests-product
+Build complete! (13.42 sec)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "M1-REF-019 Run D: SetupEditCommands + UndoManager" started.
+◇ Test runD() started.
+◇ Test refusalOracleMatchesDocumentedRules() started.
+M1-REF-019-RUN-D split=calibration episodes=10 failedEpisodes=0 groups=28 clips=100 knownChannelCounts=50 speakers=26 commands=280 appliedUndoSteps=204 noOps=51 predictedRefusals=25 refusals=25 undoSteps=204 redoSteps=204
+✔ Test runD() passed after 0.014 seconds.
+✔ Test refusalOracleMatchesDocumentedRules() passed after 0.014 seconds.
+✔ Suite "M1-REF-019 Run D: SetupEditCommands + UndoManager" passed after 0.015 seconds.
+✔ Test run with 2 tests in 1 suite passed after 0.015 seconds.
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
 ◇ Suite "Estimator freeze (m2-freeze-estimator)" started.
 ◇ Test frozenDefinitionMatchesTheFreezeRecord() started.
 ◇ Test holdoutIsDisjointFromCalibration() started.
