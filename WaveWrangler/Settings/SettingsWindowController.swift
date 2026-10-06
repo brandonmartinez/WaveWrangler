@@ -178,12 +178,13 @@ private struct LibraryLocationControl: View {
             .onChange(of: selection) { _, choice in handleChoice(choice) }
             caption(location.caption)
             if let phase = controller.movePhase {
+                // T25: the progress is its own static text ("Moving library — checking copy…") and Cancel its own
+                // button; combining them hid both behind one element.
                 HStack {
                     ProgressView().controlSize(.small).accessibilityHidden(true)
                     Text(phase.text)
                     Button("Cancel") { controller.cancelMove() }
                 }
-                .accessibilityElement(children: .combine)
             }
             if let level = LibraryLevelPresentation(controller.libraryState) {
                 Label(level.heading, systemImage: level.symbolName)

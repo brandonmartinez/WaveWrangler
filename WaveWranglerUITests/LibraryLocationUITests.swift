@@ -462,7 +462,14 @@ final class LibraryLocationUITests: XCTestCase {
         XCTAssertTrue(sheet.staticTexts["Move your library to “\(name)”?"].exists, "\(texts(sheet))", file: file, line: line)
         XCTAssertTrue(sheet.buttons["Move Library"].exists && sheet.buttons["Cancel"].exists, file: file, line: line)
         app.typeKey(.return, modifierFlags: [])
-        XCTAssertTrue(sheet.staticTexts["Move your library to “\(name)”?"].waitForNonExistence(timeout: 10), file: file, line: line)
+        let question = sheet.staticTexts["Move your library to “\(name)”?"]
+        if !question.waitForNonExistence(timeout: 5) {
+            // XCUITest sometimes fails to deliver the key right after the open panel closes ("Could not find any
+            // displays containing rect (inf, inf…)", a 10 s event-synthesis timeout); the sheet is still there, so
+            // Return hasn't been handled: press it again.
+            app.typeKey(.return, modifierFlags: [])
+        }
+        XCTAssertTrue(question.waitForNonExistence(timeout: 10), file: file, line: line)
     }
 
     private func assertBlocked(_ name: String, reason: String, file: StaticString = #filePath, line: UInt = #line) {
