@@ -162,7 +162,8 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             let expected = "You're now editing “Offline Copy copy” in Elsewhere. The original at Unreachable wasn't changed."
             check(bar.waitForExistence(timeout: 5) && texts(in: bar).contains(expected), "message bar: \(texts(in: bar))")
             try audit("T28 copy message bar")
-            Acceptance.record(self, "T28 focus after the copy: save status focused \(isFocused(status))")
+            // T28: "Focus returns to the save-status item" after the save panel closes.
+            check(Acceptance.waitFor(timeout: 3) { self.isFocused(status) }, "focus returns to the save-status item after the copy")
             check(try Data(contentsOf: document) == original, "the original is byte-unchanged")
             check(diskShowID(copy) != nil && diskShowID(copy) != diskShowID(document), "the copy is a separate show (new show ID)")
             check(diskTitle(copy) == "Offline Copy copy", "the copy is titled after its name: \(String(describing: diskTitle(copy)))")
