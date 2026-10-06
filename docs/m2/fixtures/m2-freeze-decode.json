@@ -13,8 +13,8 @@
   "baseCommitNote": "origin/main when this record was authored (merge of PR #184). The freeze takes effect at the merge commit of the PR that adds it; pinnedTrees, not a commit SHA, identify the frozen code.",
   "scope": "M2-DECODE-001: the stratum recipe, generator truth, calibration/holdout seeds and counts, measurement, the mixed-input output-settings check, and the gate exactly as written here. Frozen code: the WWDecode source tree (decoder, envelope, format interpretation, output-settings policy) and the WWDecodeTests tree (generator, plan, gate evaluator and holdout harness), pinned by git tree ID.",
   "pinnedTrees": {
-    "Sources/WWDecode": "PENDING",
-    "Tests/WWDecodeTests": "PENDING"
+    "Sources/WWDecode": "868334419dda625c5f5380de8903c09fd0b7bd75",
+    "Tests/WWDecodeTests": "68178e6b5d2224a9e6d1a73dfa7f1ad6b0f58d19"
   },
   "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit (equal to `git rev-parse <commit>:Packages/WaveWranglerKit/<path>`). DecodeFreezeTests.decoderAndHarnessTreesMatchTheFreezeRecord recomputes both tree IDs from the working tree on every test run and fails on any difference. A change to either tree after the freeze is a new dated freeze revision with a fresh holdout; the earlier record is retained.",
   "dependencyTreesAtFreeze": {

@@ -14,8 +14,8 @@
   "baseCommitNote": "origin/main when this record was authored (merge of PR #184). The freeze takes effect at the merge commit of the PR that adds it; pinnedTrees, not a commit SHA, identify the frozen code.",
   "scope": "M2-TIMEMAP-001: the stratum recipe, oracle truth, calibration/holdout seeds and counts, probes, and the gate exactly as written here. Frozen code: the WWTimeMap source tree (unchanged by this freeze; it equals the tree m2-freeze-estimator and m2-freeze-render recorded as a dependency) and the WWTimeMapTests tree (generator, oracle, probes, gate evaluator and holdout harness), pinned by git tree ID.",
   "pinnedTrees": {
-    "Sources/WWTimeMap": "PENDING",
-    "Tests/WWTimeMapTests": "PENDING"
+    "Sources/WWTimeMap": "24c7aadfbf1470c8555542061ab08eb23e37325b",
+    "Tests/WWTimeMapTests": "d27b5778920d46446f17e6470bb38c2b4f978900"
   },
   "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit (equal to `git rev-parse <commit>:Packages/WaveWranglerKit/<path>`). TimeMapFreezeTests.timeMapAndHarnessTreesMatchTheFreezeRecord recomputes both tree IDs from the working tree on every test run and fails on any difference. A change to either tree after the freeze is a new dated freeze revision with a fresh holdout; the earlier record is retained.",
   "dependencyTreesAtFreeze": {
