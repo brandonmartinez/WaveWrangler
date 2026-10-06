@@ -97,9 +97,10 @@ had reached a neighbouring identical burst, so the window is now `min(3000, half
 **PASS — all gates.** This is the sole 520-case frozen holdout run. Before it started, the checkout was clean,
 `HEAD` equalled `origin/main` at `7f17bfc417b52e5cc138be31cca4cd75632d24f0`, the 1-minute load was 7.19, and the
 frozen trees matched: `Sources/WWDecode` `6f81db77162b493928798332f6d4ec9648f396d0`;
-`Tests/WWDecodeTests` `383ebc0cfdc5515f78a33ad2a6dfaf3ea664e92b`. On the claimed Apple M5 Max host (macOS
-27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, 18 cores, 128 GiB), it ran with the default maximum
-concurrency of four:
+`Tests/WWDecodeTests` `383ebc0cfdc5515f78a33ad2a6dfaf3ea664e92b`; dependency trees also matched:
+`Sources/WWSources` `fc8fb0fb661f318262d54d161baa3a04b475c792` and `Sources/WWCore`
+`c310389c4b41ebde80c5dabaea12fd5376f5d9ba`. On the claimed Apple M5 Max host (macOS 27.0.1 (26A434),
+Xcode 27.0 (27A266a), Swift 6.4, 18 cores, 128 GiB), it ran with the default maximum concurrency of four:
 
 `cd Packages/WaveWranglerKit && WW_M2_DECODE_HOLDOUT=1 WW_DECODE_RECORDS_DIR=../../docs/m2/evidence/ww-050 swift test --scratch-path .build/swiftpm --filter DecodeCalibrationTests/holdoutSplitMeetsEveryFrozenGate`
 

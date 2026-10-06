@@ -114,13 +114,15 @@ Same host as above. `scripts/test.sh` runs the calibration split in its own seri
 
 ## `m2-freeze-timemap` holdout (frozen run)
 
-**PASS — all gates.** This is the sole 2,100-case frozen holdout run. It followed the committed decode evidence
-only; before it started the checkout was clean, `origin/main` at
-`7f17bfc417b52e5cc138be31cca4cd75632d24f0` remained an ancestor, and the code/harness trees still matched the
-freeze: `Sources/WWTimeMap` `24c7aadfbf1470c8555542061ab08eb23e37325b`;
-`Tests/WWTimeMapTests` `330f7ca81fe1626269b00ba42b5990bd3ef6c44d`. The 1-minute load was below 24. On the
-claimed Apple M5 Max host (macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, 18 cores, 128 GiB), it ran
-with the default maximum concurrency of four:
+**PASS — all gates.** This is the sole 2,100-case frozen holdout run. Before it started the checkout was clean at
+`2b1fb94760a7e4666bacc7b986b75c94b714e1c7` (committed 2026-10-06T16:39:36Z); that commit added only the
+three decode evidence artifacts and changed no source or test tree. `origin/main`
+`7f17bfc417b52e5cc138be31cca4cd75632d24f0` remained its parent. The frozen code/harness trees matched:
+`Sources/WWTimeMap` `24c7aadfbf1470c8555542061ab08eb23e37325b`;
+`Tests/WWTimeMapTests` `330f7ca81fe1626269b00ba42b5990bd3ef6c44d`; the `Sources/WWCore` dependency tree also
+matched `c310389c4b41ebde80c5dabaea12fd5376f5d9ba`. The 1-minute load was below 24. On the claimed Apple M5 Max
+host (macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, 18 cores, 128 GiB), it ran with the default
+maximum concurrency of four:
 
 `cd Packages/WaveWranglerKit && WW_M2_TIMEMAP_HOLDOUT=1 WW_TIMEMAP_RECORDS_DIR=../../docs/m2/evidence/ww-015 swift test --scratch-path .build/swiftpm --filter TimeMapCalibrationTests/holdoutSplitMeetsEveryFrozenGate`
 
