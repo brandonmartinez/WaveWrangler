@@ -9,11 +9,24 @@ import XCTest
 ///
 /// Menu commands without a shortcut (View › Show Save Status) use XCUITest's menu API, as in
 /// `CoreTasksKeyboardUITests`; everything else is key events. Each task records Pass/Fail with its findings.
+///
+/// Keyboard only (C01), with one limit (as `LibraryLocationUITests`, #169): Tab reaches popover buttons, and buttons
+/// take keyboard focus, only with the system Full Keyboard Access ("Keyboard navigation") setting on. AppKit reads it
+/// only from the system (`-AppleKeyboardUIMode` has no effect), and tests never change system settings.
+/// - **On** (the user's C01 run): Tab/Space reach and activate the popover buttons, and focus checks are asserted.
+/// - **Off** (agent runs): only those steps use XCUITest element actions, and each is recorded as **Not run (needs
+///   Full Keyboard Access)** in `offline-keyboard-navigation` evidence, so the task is reported partial. Every outcome
+///   check (status, attempts, disk, window, message bar) stays a hard check either way.
 @MainActor
 final class OfflineSaveKeyboardUITests: XCTestCase {
     private var app: XCUIApplication!
     private var workDirectory: URL!
     private var findings: [String] = []
+    /// Steps not run as key events because the system keyboard navigation setting is off.
+    private var needsKeyboardNavigation: [String] = []
+
+    /// The system Full Keyboard Access / "Keyboard navigation" setting (`AppleKeyboardUIMode` bit 2, global domain).
+    private static let keyboardNavigation = UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0
 
     private static let autosaveOff = Notification.Name("com.brandonmartinez.wavewrangler.uitest.autosave.off")
     private static let autosaveOn = Notification.Name("com.brandonmartinez.wavewrangler.uitest.autosave.on")
@@ -32,6 +45,13 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        if app != nil {
+            let run = testRun
+            let outcome = run?.hasBeenSkipped == true ? "skipped" : (run?.totalFailureCount ?? 0) == 0 ? "passed" : "failed"
+            Acceptance.writeEvidence("offline-keyboard-navigation-\(name.replacingOccurrences(of: " ", with: "_"))",
+                                     ["outcome": outcome, "keyboardNavigation": Self.keyboardNavigation,
+                                      "notRunNeedsFullKeyboardAccess": Array(Set(needsKeyboardNavigation)).sorted()], test: self)
+        }
         if let app, app.state != .notRunning { app.terminate() }
         if let workDirectory { try? FileManager.default.removeItem(at: workDirectory) }
     }
@@ -59,7 +79,11 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             check(texts(in: popover).contains { $0.contains("Choose Try Again when the folder is available.") }, "popover text: \(texts(in: popover))")
             check(popover.buttons["Try Again"].exists && popover.buttons["Save a Copy Elsewhere…"].exists,
                   "popover buttons: \(popover.buttons.allElementsBoundByIndex.map(\.title))")
-            check(isFocused(popover.buttons["Try Again"]), "keyboard focus starts on Try Again")
+            if Self.keyboardNavigation {
+                check(isFocused(popover.buttons["Try Again"]), "keyboard focus starts on Try Again")
+            } else {
+                needsKeyboardNavigation.append("T27: keyboard focus starts on Try Again")
+            }
             try audit("T27 popover")
             app.typeKey(.escape, modifierFlags: [])
             recordDirtyIndicators(window, "T27 while unreachable")
@@ -68,11 +92,11 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             check(seam()?.attempts == afterSave, "no automatic save attempt with Autosave Off: \(String(describing: seam()?.attempts)) after \(afterSave)")
             check(value(status).hasPrefix(Self.cantReach), "still Can't reach: \(value(status))")
             check(try Data(contentsOf: document) == original, "the last saved version is byte-unchanged while unreachable")
-            // Reconnect, then Try Again by keyboard (focused first in the popover; Space activates).
+            // Reconnect, then Try Again (focused first in the popover; Space activates it with keyboard navigation).
             post(Self.reconnect)
             try openSaveStatus()
             check(app.popovers.firstMatch.waitForExistence(timeout: 5), "popover reopened")
-            app.typeKey(" ", modifierFlags: [])
+            activatePopoverButton("Try Again", tabs: 0, task: "T27")
             check(Acceptance.waitFor(timeout: 10) { self.value(status).hasPrefix("Saved") }, "Try Again after reconnect → Saved: \(value(status))")
             check(diskEpisodeCount(document) == 1, "the edit is on disk after Try Again: \(String(describing: diskEpisodeCount(document)))")
             check(seam()?.attempts == afterSave + 1, "Try Again made one attempt: \(String(describing: seam()?.attempts))")
@@ -95,6 +119,24 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             dismissErrorSheetIfAny("T26 after the failed autosave")
             let attemptsAtFailure = seam()?.attempts ?? -1
             check(attemptsAtFailure >= 1, "an automatic attempt was made: \(attemptsAtFailure)")
+            // T26 contract: after the failed save the title still shows "— Edited" (AppKit's edit state).
+            check(Acceptance.waitFor(timeout: 3) { self.editingState(window) == "Edited" },
+                  "the title shows \"— Edited\" after the failed save (AX_EDITING_STATE): \(editingState(window) ?? "none")")
+            recordDirtyIndicators(window, "T26 after the first failed attempt")
+            // Another edit right away, then sampling until 25 s after the failure: before the popover audit, which
+            // can take 20 s on a loaded host and must not use up the window between attempts.
+            addEpisodeByKeyboard(window)
+            let secondEdit = Date().timeIntervalSince(firstFailure)
+            Acceptance.record(self, "T26 second edit at +\(String(format: "%.1f", secondEdit)) s after the failure")
+            check(secondEdit < 25, "the second edit happened before the next attempt was due: +\(secondEdit) s")
+            var flicker: [String] = []
+            while Date().timeIntervalSince(firstFailure) < 25 {
+                let current = value(status)
+                if !current.hasPrefix(Self.cantReach) { flicker.append(current) }
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+            check(flicker.isEmpty, "no flicker between attempts: \(Set(flicker))")
+            check(try Data(contentsOf: document) == original, "the last saved version is byte-unchanged while unreachable")
             try openSaveStatus()
             let popover = app.popovers.firstMatch
             check(popover.waitForExistence(timeout: 5), "save-status popover opened")
@@ -103,33 +145,25 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
                   "popover buttons: \(popover.buttons.allElementsBoundByIndex.map(\.title))")
             try audit("T26 popover")
             app.typeKey(.escape, modifierFlags: [])
-            check(windowSaysEdited(window), "the window says Edited while unreachable (AX_EDITING_STATE): \(editingState(window) ?? "none")")
-            recordDirtyIndicators(window, "T26 while unreachable")
-            // Between attempts the value stays Can't reach (sampled), including after another edit.
-            var flicker: [String] = []
-            var edited = false
-            while Date().timeIntervalSince(firstFailure) < 25 {
-                let current = value(status)
-                if !current.hasPrefix(Self.cantReach) { flicker.append(current) }
-                if !edited, Date().timeIntervalSince(firstFailure) > 8 {
-                    addEpisodeByKeyboard(window)
-                    edited = true
-                }
-                Thread.sleep(forTimeInterval: 0.5)
-            }
-            check(flicker.isEmpty, "no flicker between attempts: \(Set(flicker))")
-            check(seam()?.attempts == attemptsAtFailure, "no further attempt within 25 s (at most every 30 s), even after an edit: \(String(describing: seam()?.attempts)) vs \(attemptsAtFailure)")
-            check(try Data(contentsOf: document) == original, "the last saved version is byte-unchanged while unreachable")
-            // Reconnect: the next automatic retry (due ~30 s after the failure) saves with no user action.
+            // The automatic retry 30 s after the failure fails too (still unreachable). After that AppKit's own edit
+            // state reads "Not Saved" (macOS 27, mini #197 round 2), which the T26 row allows; it must still show one.
+            check(Acceptance.waitFor(timeout: 40) { (self.seam()?.attempts ?? 0) > attemptsAtFailure }, "the automatic retry ran (still unreachable)")
+            check(value(status).hasPrefix(Self.cantReach), "still Can't reach after the failed retry: \(value(status))")
+            check(unsavedIndicator(window) != nil, "the title still shows unsaved changes after the failed retry (AX_EDITING_STATE): \(editingState(window) ?? "none")")
+            recordDirtyIndicators(window, "T26 after the failed automatic retry")
+            check(try Data(contentsOf: document) == original, "the last saved version is still byte-unchanged")
+            // Reconnect: the next automatic retry (due 30 s after the last failed attempt) saves with no user action.
             post(Self.reconnect)
-            check(Acceptance.waitFor(timeout: 20) { self.value(status).hasPrefix("Saved") }, "after reconnect → Saved with no user action: \(value(status))")
+            check(Acceptance.waitFor(timeout: 40) { self.value(status).hasPrefix("Saved") }, "after reconnect → Saved with no user action: \(value(status))")
             let times = seam()?.attemptTimes ?? []
             let gaps = zip(times.dropFirst(), times).map { $0 - $1 }
             Acceptance.record(self, "T26 attempt times (s after the first): \(times.map { String(format: "%.2f", $0 - (times.first ?? 0)) })")
             check(times.count >= 2, "an automatic retry happened: \(times.count) attempts")
-            check(gaps.allSatisfy { $0 >= 29.9 }, "automatic retries at most every 30 s: gaps \(gaps)")
+            check(gaps.allSatisfy { $0 >= 29.9 }, "automatic retries at most every 30 s, even after the edit at +\(String(format: "%.1f", secondEdit)) s: gaps \(gaps)")
             check(diskEpisodeCount(document) == 2, "both edits are on disk: \(String(describing: diskEpisodeCount(document)))")
-            check(Acceptance.waitFor(timeout: 3) { !self.windowSaysEdited(window) }, "no \"— Edited\" after the verified save: \(window.title)")
+            let clean = Acceptance.waitFor(timeout: 3) { self.unsavedIndicator(window) == nil }
+            Acceptance.record(self, "T26 edited-state trace: \(seam()?.events ?? [])")
+            check(clean, "no \"— Edited\" after the verified save (AX_EDITING_STATE \(editingState(window) ?? "none")): \(window.title)")
         }
     }
 
@@ -151,9 +185,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             let popover = app.popovers.firstMatch
             check(popover.waitForExistence(timeout: 5), "save-status popover opened")
             // Try Again is focused first; Tab reaches Save a Copy Elsewhere…; Space activates it.
-            app.typeKey("\t", modifierFlags: [])
-            check(isFocused(popover.buttons["Save a Copy Elsewhere…"]), "Tab reaches Save a Copy Elsewhere…")
-            app.typeKey(" ", modifierFlags: [])
+            activatePopoverButton("Save a Copy Elsewhere…", tabs: 1, task: "T28")
             let copy = try saveCopyThroughPanel(named: "Offline Copy copy", into: elsewhere, surface: "T28 save panel")
             check(Acceptance.waitFor(timeout: 10) { self.diskEpisodeCount(copy) == 1 }, "the copy holds the edit: \(String(describing: diskEpisodeCount(copy)))")
             check(Acceptance.waitFor(timeout: 5) { window.title.hasPrefix("Offline Copy copy") }, "window title is the copy: \(window.title)")
@@ -161,11 +193,17 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             let bar = window.descendants(matching: .any).matching(identifier: "ww.show.messageBar").firstMatch
             let expected = "You're now editing “Offline Copy copy” in Elsewhere. The original at Unreachable wasn't changed."
             // The bar is one accessibility group: its label carries the heading (as for the C2b offer).
-            check(bar.waitForExistence(timeout: 5) && (bar.label == expected || texts(in: bar).contains(expected)),
-                  "message bar: \(bar.label) \(texts(in: bar))")
+            let barShown = bar.waitForExistence(timeout: 10)
+            check(barShown && (bar.label == expected || texts(in: bar).contains(expected)),
+                  "message bar: \(barShown ? "\(bar.label) \(texts(in: bar))" : "not shown")")
             try audit("T28 copy message bar")
-            // T28: "Focus returns to the save-status item" after the save panel closes.
-            check(Acceptance.waitFor(timeout: 3) { self.isFocused(status) }, "focus returns to the save-status item after the copy")
+            // T28: "Focus returns to the save-status item" after the save panel closes (a button takes keyboard focus
+            // only with keyboard navigation on).
+            if Self.keyboardNavigation {
+                check(Acceptance.waitFor(timeout: 3) { self.isFocused(status) }, "focus returns to the save-status item after the copy")
+            } else {
+                needsKeyboardNavigation.append("T28: focus returns to the save-status item")
+            }
             check(try Data(contentsOf: document) == original, "the original is byte-unchanged")
             check(diskShowID(copy) != nil && diskShowID(copy) != diskShowID(document), "the copy is a separate show (new show ID)")
             check(diskTitle(copy) == "Offline Copy copy", "the copy is titled after its name: \(String(describing: diskTitle(copy)))")
@@ -248,10 +286,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
         app = XCUIApplication()
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
                                "-WWUITestResetStorage", "YES", "-WWUITestCenterWindows", "YES",
-                               "-WWUITestAutosave", autosave ? "ON" : "OFF", "-WWUITestOffline", "YES",
-                               // Keyboard navigation (Tab reaches buttons) for this app only, via its argument domain: the
-                               // GUI host doesn't have Full Keyboard Access on, and tests never change system settings.
-                               "-AppleKeyboardUIMode", "2"]
+                               "-WWUITestAutosave", autosave ? "ON" : "OFF", "-WWUITestOffline", "YES"]
             + (retryInterval.map { ["-WWUITestSaveRetryInterval", "\($0)"] } ?? [])
             + (offlineFolder.map { ["-WWUITestOfflineFolder", $0.path(percentEncoded: false)] } ?? [])
         // One launch only: see `XCUIApplication.launchOnce(opening:)`.
@@ -307,15 +342,34 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
         return element.value as? String ?? element.label
     }
 
-    private func windowSaysEdited(_ window: XCUIElement) -> Bool {
-        editingState(window) == "Edited" || window.title.contains("Edited")
+    /// AppKit's unsaved-changes indicator beside the title: "Edited", or "Not Saved" once an automatic retry has also
+    /// failed (T26 row; observed macOS 27, mini #197 round 2); nil when the window shows none. T26 requires exactly
+    /// "Edited" after the first failure.
+    private func unsavedIndicator(_ window: XCUIElement) -> String? {
+        if let state = editingState(window), ["Edited", "Not Saved"].contains(state) { return state }
+        return window.title.contains("Edited") ? window.title : nil
     }
 
-    private func seam() -> (attempts: Int, offline: Bool, attemptTimes: [Double])? {
+    private func seam() -> (attempts: Int, offline: Bool, attemptTimes: [Double], events: [String])? {
         guard let text = NSPasteboard(name: Self.seamPasteboard).string(forType: .string),
               let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let attempts = object["publicationAttempts"] as? Int, let offline = object["offline"] as? Bool else { return nil }
-        return (attempts, offline, (object["attemptTimes"] as? [Double]) ?? [])
+        return (attempts, offline, (object["attemptTimes"] as? [Double]) ?? [], (object["events"] as? [String]) ?? [])
+    }
+
+    /// With keyboard navigation: Tab `tabs` times from the first (focused) popover button, check focus, Space. Without
+    /// it: the button is clicked, and the keyboard step is recorded as Not run (needs Full Keyboard Access).
+    private func activatePopoverButton(_ title: String, tabs: Int, task: String) {
+        let button = app.popovers.firstMatch.buttons[title]
+        if Self.keyboardNavigation {
+            for _ in 0..<tabs { app.typeKey("\t", modifierFlags: []) }
+            check(isFocused(button), "\(task): keyboard focus reaches \(title)")
+            app.typeKey(" ", modifierFlags: [])
+        } else {
+            needsKeyboardNavigation.append("\(task): Tab/Space to \(title) in the save-status popover")
+            check(button.waitForExistence(timeout: 3), "\(task): popover button \(title)")
+            button.click()
+        }
     }
 
     private func element(_ identifier: String) -> XCUIElement {
@@ -347,20 +401,77 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
         return url
     }
 
-    /// In the open save panel (sheet): checks the proposed name, goes to `folder` with ⇧⌘G, and saves with Return.
+    /// In the save panel: checks the proposed name, goes to `folder` with ⇧⌘G, and saves with Return. As in #169 and
+    /// #190: a bounded wait for the panel, a 2 s settle from detection, and keys sent to the out-of-process panel
+    /// service when it hosts the panel (the sandboxed app's own snapshot stalls while the panel is up).
+    /// Where the native save panel is shown, or nil while it isn't (yet). The panel is drawn by the out-of-process panel
+    /// service, but XCUITest doesn't always report that service as running for a cold panel (#151, #190); the app
+    /// then exposes it as a sheet (or window) holding the proposed name. A closing alert sheet doesn't count.
+    private func savePanelHost(_ service: XCUIApplication, name: String) -> String? {
+        if service.state != .notRunning { return "panel service" }
+        for window in ["save-panel", "open-panel"] where app.windows[window].exists { return "app window \(window)" }
+        let sheet = app.sheets.firstMatch
+        if sheet.exists, sheet.textFields.allElementsBoundByIndex.contains(where: { ($0.value as? String) == name }) { return "app sheet" }
+        return nil
+    }
+
+    /// ⇧⌘G, the folder's path, Return, then Return to save (all native save-panel keys).
+    private func typeFolderAndSave(_ folder: URL, into target: XCUIApplication) {
+        target.typeKey("g", modifierFlags: [.command, .shift])
+        Thread.sleep(forTimeInterval: 1)
+        target.typeText(folder.path(percentEncoded: false))
+        Thread.sleep(forTimeInterval: 0.5)
+        target.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 1.5)
+        target.typeKey(.return, modifierFlags: [])
+    }
+
     private func saveCopyThroughPanel(named name: String, into folder: URL, surface: String) throws -> URL {
-        let panel = app.sheets.firstMatch
-        check(panel.waitForExistence(timeout: 5), "\(surface): native save panel shown")
-        let names = panel.textFields.allElementsBoundByIndex.compactMap { $0.value as? String }
-        check(names.contains(name), "\(surface): proposed name \"\(name)\": \(names)")
-        app.typeKey("g", modifierFlags: [.command, .shift])
-        Thread.sleep(forTimeInterval: 0.5)
-        app.typeText(folder.path(percentEncoded: false) + "\r")
-        Thread.sleep(forTimeInterval: 0.5)
-        app.typeKey(.return, modifierFlags: [])
+        let service = XCUIApplication(bundleIdentifier: "com.apple.appkit.xpc.openAndSavePanelService")
+        let start = Date()
+        var host: String?
+        _ = Acceptance.waitFor(timeout: 20) {
+            host = self.savePanelHost(service, name: name)
+            return host != nil
+        }
+        check(host != nil, "\(surface): native save panel shown with the proposed name \"\(name)\" (service \(service.state.rawValue), sheets \(app.sheets.count))")
+        let detectedAt = Date()
+        let names = app.sheets.firstMatch.textFields.allElementsBoundByIndex.compactMap { $0.value as? String }
+        if !names.isEmpty { check(names.contains(name), "\(surface): proposed name \"\(name)\": \(names)") }
+        // Keys go to the service whenever it is reported; a panel that has only just appeared gets a 2 s settle.
+        if host != "panel service", Acceptance.waitFor(timeout: 3, { service.state != .notRunning }) { host = "panel service" }
+        Thread.sleep(forTimeInterval: 2)
+        let first: XCUIApplication = host == "panel service" ? service : app
+        Acceptance.record(self, "\(surface): panel host \(host ?? "none"), detected after \(String(format: "%.1f", detectedAt.timeIntervalSince(start))) s")
+        typeFolderAndSave(folder, into: first)
         let copy = folder.appending(path: "\(name).wwshow")
-        check(Acceptance.waitFor(timeout: 10) { FileManager.default.fileExists(atPath: copy.path) }, "\(surface): copy written at the chosen folder")
+        var written = Acceptance.waitFor(timeout: 10) { FileManager.default.fileExists(atPath: copy.path) }
+        if !written {
+            recordPanelDiagnostics(service, folder: folder, surface: surface)
+            // The panel may have taken the keys in the other process: one more keyboard pass there, recorded.
+            if service.state != .notRunning || savePanelHost(service, name: name) != nil {
+                let second: XCUIApplication = first === service ? app : service
+                Acceptance.record(self, "\(surface): no copy after keys to \(first === service ? "the panel service" : "the app"); retrying the same keys to \(second === service ? "the panel service" : "the app")")
+                typeFolderAndSave(folder, into: second)
+                written = Acceptance.waitFor(timeout: 10) { FileManager.default.fileExists(atPath: copy.path) }
+                if !written { recordPanelDiagnostics(service, folder: folder, surface: "\(surface) (second pass)") }
+            }
+        }
+        check(written, "\(surface): copy written at the chosen folder")
         return copy
+    }
+
+    private func recordPanelDiagnostics(_ service: XCUIApplication, folder: URL, surface: String) {
+        let sheets = app.sheets.allElementsBoundByIndex.map { sheet in
+            "\(sheet.identifier)|fields \(sheet.textFields.allElementsBoundByIndex.compactMap { $0.value as? String })|buttons \(sheet.buttons.allElementsBoundByIndex.map(\.title))"
+        }
+        let windows = app.windows.allElementsBoundByIndex.map { "\($0.identifier)|\($0.title)" }
+        let listing = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        Acceptance.record(self, "\(surface) diagnostics: service \(service.state.rawValue), app sheets \(sheets), app windows \(windows), folder \(listing)")
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "panel-\(surface.replacingOccurrences(of: " ", with: "_"))"
+        shot.lifetime = .keepAlways
+        add(shot)
     }
 
     private func diskPayload(_ url: URL) -> [String: Any]? {

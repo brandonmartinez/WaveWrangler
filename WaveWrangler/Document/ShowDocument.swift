@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import WWCore
 import WWPersistence
 
@@ -61,6 +62,8 @@ final class ShowDocument: NSDocument {
     private var uncertainCandidate: Data?
     /// ST-16 "Save a Copy Elsewhere…" in progress: set while its save panel and save run.
     private var copyElsewhere: CopyElsewhereRequest?
+    /// Suspends automatic saves of the original while Save a Copy Elsewhere… runs (#197 review).
+    private var copyRetryGate = CopyElsewhereRetryGate()
     /// The key of the candidate being saved when it isn't this document's current show (a copy with a new ID).
     private var pendingCandidateKey: DocumentKey?
     var documentKey: DocumentKey { .show(store.model.show.id) }
@@ -221,10 +224,17 @@ final class ShowDocument: NSDocument {
             // #87: AppKit only marks an autosave in place as "autosaved"; clear "— Edited" exactly when the verified
             // publication holds the current model. Edits made during the save keep the document (and status) edited.
             let isAutosaveInPlace = saveOperation == .autosaveInPlaceOperation
-            if isAutosaveInPlace, isDocumentEdited,
+            // #87 / M1 gate (T26): AppKit's own token update for an autosave in place clears the change count but keeps
+            // its "recent changes", which keep "— Edited" beside the title; only `.changeCleared` resets them (measured:
+            // `isDocumentEdited` is already false here). So clear exactly when the verified publication holds the
+            // current model, whatever `isDocumentEdited` says.
+            if isAutosaveInPlace,
                EditedStatePolicy.clearsEditedState(after: .autosaveInPlace, verified: true, publishedEqualsCurrent: store.model == candidateModel) {
                 updateChangeCount(.changeCleared)
             }
+            #if DEBUG
+            if isAutosaveInPlace { traceEditedState("finishSave autosaveInPlace") }
+            #endif
             if !isDocumentEdited {
                 scheduler?.cancelPending()
                 try? recovery.discardEditCheckpoints(for: documentKey)
@@ -279,26 +289,60 @@ final class ShowDocument: NSDocument {
     /// Opens the native save panel named "<Show> copy" and saves the show there as a new, separate show (new show
     /// ID, titled after the chosen name), like Save As: the window then edits the copy. The original file and its
     /// last saved version are untouched. `completion` gets whether the copy was saved.
+    ///
+    /// M1 gate (T23 D7, T28): not AppKit's Save As (`runModalSavePanel`). With autosave in place, that first autosaves
+    /// the original where it is; while that folder can't be reached it fails, presents "could not be autosaved" and
+    /// abandons the copy, and when the folder is reachable it would change the original. The panel is ours; the save
+    /// is NSDocument's own Save As publication (`save(to:ofType:for:)`), with the same verification.
     func saveACopyElsewhere(completion: ((Bool) -> Void)? = nil) {
         guard copyElsewhere == nil else { completion?(false); return }
-        copyElsewhere = CopyElsewhereRequest(originalFolder: fileURL?.deletingLastPathComponent().lastPathComponent ?? "", completion: completion)
-        runModalSavePanel(for: .saveAsOperation, delegate: self, didSave: #selector(copyElsewhereDidSave(_:didSave:contextInfo:)), contextInfo: nil)
+        let request = CopyElsewhereRequest(originalFolder: fileURL?.deletingLastPathComponent().lastPathComponent ?? "", completion: completion)
+        copyElsewhere = request
+        // The original keeps its last saved version while the copy is chosen and saved: no automatic save of it.
+        copyRetryGate.begin(retryPending: saveRetry != nil)
+        cancelSaveRetry()
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = Self.copyName(for: showFileName)
+        if let type = fileType.flatMap({ UTType($0) }) { panel.allowedContentTypes = [type] }
+        panel.directoryURL = fileURL?.deletingLastPathComponent()
+        panel.canCreateDirectories = true
+        let window = windowForSheet
+        let chosen: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            MainActor.assumeIsolated { self?.saveChosenCopy(request, chosen: response == .OK ? panel.url : nil, window: window) }
+        }
+        if let window { panel.beginSheetModal(for: window, completionHandler: chosen) } else { chosen(panel.runModal()) }
+    }
+
+    private func saveChosenCopy(_ request: CopyElsewhereRequest, chosen url: URL?, window: NSWindow?) {
+        guard let url, let typeName = fileType else {
+            copyElsewhere = nil
+            endCopyFlow(copySaved: false)
+            request.completion?(false)
+            return
+        }
+        save(to: url, ofType: typeName, for: .saveAsOperation) { [weak self] error in
+            guard let self else { return request.completion?(false) ?? () }
+            self.copyElsewhere = nil
+            self.endCopyFlow(copySaved: error == nil)
+            if let error, !((error as NSError).domain == NSCocoaErrorDomain && (error as NSError).code == NSUserCancelledError) {
+                if let window {
+                    self.presentError(error, modalFor: window, delegate: nil, didPresent: nil, contextInfo: nil)
+                } else {
+                    _ = self.presentError(error)
+                }
+            }
+            request.completion?(error == nil)
+        }
+    }
+
+    /// Re-arms a retry suspended by the copy flow (cancelled or failed copy), after a fresh interval.
+    private func endCopyFlow(copySaved: Bool) {
+        if copyRetryGate.end(copySaved: copySaved), gate.isEnabled, isDocumentEdited { scheduleSaveRetry() }
     }
 
     /// The show's name as in its file name, without the extension. `displayName` includes ".wwshow" when the Mac
     /// shows all file extensions, which must not leak into "<Show> copy" or the close sheet's wording.
     var showFileName: String { fileURL?.deletingPathExtension().lastPathComponent ?? displayName }
-
-    override func prepareSavePanel(_ savePanel: NSSavePanel) -> Bool {
-        if copyElsewhere != nil { savePanel.nameFieldStringValue = Self.copyName(for: showFileName) }
-        return super.prepareSavePanel(savePanel)
-    }
-
-    @objc private func copyElsewhereDidSave(_ document: NSDocument, didSave: Bool, contextInfo: UnsafeMutableRawPointer?) {
-        let request = copyElsewhere
-        copyElsewhere = nil
-        request?.completion?(didSave)
-    }
 
     private func saveCopy(_ request: CopyElsewhereRequest, to url: URL, ofType typeName: String, completionHandler: @escaping (Error?) -> Void) {
         let name = url.deletingPathExtension().lastPathComponent
@@ -361,8 +405,22 @@ final class ShowDocument: NSDocument {
 
     // MARK: - Automatic retry after a failed save (ST-11)
 
+    #if DEBUG
+    override func updateChangeCount(withToken changeCountToken: Any, for saveOperation: NSDocument.SaveOperationType) {
+        super.updateChangeCount(withToken: changeCountToken, for: saveOperation)
+        traceEditedState("updateChangeCount(withToken:) op \(saveOperation.rawValue)")
+    }
+
+    /// UI-test evidence only (F-OFFLINE seam): the edited state at each save-completion step.
+    private func traceEditedState(_ step: String) {
+        (Self.debugPublicationHooks as? UITestOfflineHooks)?.note("\(step): edited \(isDocumentEdited)")
+    }
+    #endif
+
     private func scheduleSaveRetry() {
         guard saveRetry == nil else { return }
+        // During Save a Copy Elsewhere… the retry waits for the copy flow to end (re-armed then, after a fresh interval).
+        guard copyRetryGate.allowsAutomaticSave else { copyRetryGate.suspendRetry(); return }
         status.setRetryingAutomatically(true)
         let retry = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.performSaveRetry() }
@@ -380,6 +438,7 @@ final class ShowDocument: NSDocument {
     private func performSaveRetry() {
         saveRetry = nil
         status.setRetryingAutomatically(false)
+        guard copyRetryGate.allowsAutomaticSave else { copyRetryGate.suspendRetry(); return }
         guard gate.isEnabled, isDocumentEdited, fileURL != nil else { return }
         // D5: if the uncertain publication did land, adopt it rather than republishing against the old base (which
         // would fail the base check and report a false conflict).
@@ -460,6 +519,11 @@ final class ShowDocument: NSDocument {
             completionHandler(CocoaError(.userCancelled))
             return
         }
+        // While Save a Copy Elsewhere… runs, the original keeps its last saved version (an honest cancellation).
+        guard copyRetryGate.allowsAutomaticSave else {
+            completionHandler(CocoaError(.userCancelled))
+            return
+        }
         // ST-11: while a retry after a failed save is pending, other automatic attempts wait for it (it saves the
         // latest edits). Close/Quit autosaves (not implicitly cancellable) still go ahead.
         if saveRetry != nil, autosavingIsImplicitlyCancellable {
@@ -471,6 +535,9 @@ final class ShowDocument: NSDocument {
 
     override func updateChangeCount(_ change: NSDocument.ChangeType) {
         super.updateChangeCount(change)
+        #if DEBUG
+        if change == .changeDone || change == .changeUndone || change == .changeRedone { traceEditedState("updateChangeCount \(change.rawValue)") }
+        #endif
         // ST-11: a visible save failure stays until the next attempt resolves it (no flicker back to "Edited").
         if isDocumentEdited, saveRetry == nil { status.set(.edited(autosaveEnabled: gate.isEnabled)) }
     }

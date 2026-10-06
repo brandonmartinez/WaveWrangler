@@ -368,9 +368,12 @@ final class DocumentLifecycleUITests: XCTestCase {
         field.typeKey(.return, modifierFlags: [])
     }
 
-    /// "— Edited" in the window title or subtitle (AppKit's edited-document suffix).
+    /// AppKit's edit state beside the title: on macOS 27 it is the `AX_EDITING_STATE` element (label "Document status",
+    /// value "Edited"), not part of the AX window title; the title and "— Edited" texts are kept as fallbacks.
     private func windowSaysEdited(_ window: XCUIElement) -> Bool {
-        window.title.contains("Edited")
+        let state = window.descendants(matching: .any).matching(identifier: "AX_EDITING_STATE").firstMatch
+        if state.exists, (state.value as? String ?? state.label) == "Edited" { return true }
+        return window.title.contains("Edited")
             || window.staticTexts.matching(NSPredicate(format: "value CONTAINS '— Edited' OR label CONTAINS '— Edited'")).count > 0
     }
 
