@@ -109,6 +109,10 @@ package struct DerivedCoordinatorTestHooks: Sendable {
 ///
 /// Any input change (`updateSource`, `setFormat`, `acceptMap`, `setRecipe`, `setAssetRevision`, re-keying a
 /// slot) marks every dependent slot stale, cancels its in-flight job, and cascades through `upstream`.
+///
+/// Lifetime: the owner calls `await shutdown()` before it releases source access (closing the show, stopping
+/// security-scoped access) and before releasing the coordinator; it returns once no job is still running.
+/// Releasing the coordinator without it still cancels every job (`deinit`), but cannot wait for them.
 public actor DerivedJobCoordinator {
     public nonisolated let store: DerivedAssetStore
     public nonisolated let changes: AsyncStream<DerivedSlotChange>
@@ -117,6 +121,9 @@ public actor DerivedJobCoordinator {
     public private(set) var inputs: DerivedInputs
     private var slots: [DerivedSlot: SlotRecord] = [:]
     private var nextJobID: UInt64 = 0
+    /// Every job that has not finished, including superseded or cancelled ones whose work is still returning.
+    private var inFlight: [UInt64: Task<DerivedJobOutcome, Never>] = [:]
+    private var hasShutDown = false
 
     #if DEBUG
     private let hooks: DerivedCoordinatorTestHooks
@@ -148,8 +155,33 @@ public actor DerivedJobCoordinator {
     #endif
 
     deinit {
+        for task in inFlight.values { task.cancel() }
         continuation.finish()
     }
+
+    /// Stops all derived work: every in-flight job is cancelled and can no longer publish, running slots become
+    /// `.cancelled`, and later submits are refused (their work never runs). Returns once every job has finished;
+    /// work should observe cancellation promptly (work that ignores it delays the return). Idempotent. Call it
+    /// before releasing source access — see the type's lifetime note.
+    public func shutdown() async {
+        hasShutDown = true
+        let jobs = inFlight.values
+        for task in jobs { task.cancel() }
+        for slot in slots.keys.sorted(by: { $0.name < $1.name }) {
+            guard var record = slots[slot] else { continue }
+            record.task = nil
+            record.currentJob = nil
+            if case let .running(key) = record.state {
+                record.state = .cancelled(key)
+                continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
+            }
+            slots[slot] = record
+        }
+        continuation.finish()
+        for task in jobs { _ = await task.value }
+    }
+
+    public var isShutdown: Bool { hasShutDown }
 
     // MARK: - Inputs
 
@@ -242,6 +274,7 @@ public actor DerivedJobCoordinator {
         key: DerivedAssetKey,
         work: @escaping @Sendable () async throws -> Data
     ) -> DerivedJob {
+        guard !hasShutDown else { return DerivedJob(slot: slot, key: key, task: Task { .cancelled }) }
         var record = slots[slot] ?? SlotRecord()
         record.task?.cancel()
         nextJobID += 1
@@ -288,6 +321,7 @@ public actor DerivedJobCoordinator {
             }
             return await self.commit(jobID, slot: slot, staged: staged)
         }
+        inFlight[jobID] = task
         record.task = task
         record.currentJob = jobID
         record.state = .running(key)
@@ -311,6 +345,7 @@ public actor DerivedJobCoordinator {
 
     /// Currency check and publication with no suspension point in between.
     private func commit(_ jobID: UInt64, slot: DerivedSlot, staged: StagedDerivedAsset) -> DerivedJobOutcome {
+        inFlight[jobID] = nil
         var skipCheck = false
         #if DEBUG
         skipCheck = hooks.skipCurrencyCheck
@@ -342,6 +377,7 @@ public actor DerivedJobCoordinator {
     }
 
     private func adoptCached(_ jobID: UInt64, slot: DerivedSlot, key: DerivedAssetKey) -> DerivedJobOutcome {
+        inFlight[jobID] = nil
         if let refusal = refusal(jobID, slot: slot, key: key) { return refusal }
         slots[slot]?.state = .ready(key)
         slots[slot]?.currentJob = nil
@@ -351,6 +387,7 @@ public actor DerivedJobCoordinator {
     }
 
     private func finishWithoutPublishing(_ jobID: UInt64, slot: DerivedSlot, key: DerivedAssetKey, failure: String?) -> DerivedJobOutcome {
+        inFlight[jobID] = nil
         if let refusal = refusal(jobID, slot: slot, key: key) { return refusal }
         let state: DerivedSlotState = failure.map { .failed(key, reason: $0) } ?? .cancelled(key)
         slots[slot]?.state = state

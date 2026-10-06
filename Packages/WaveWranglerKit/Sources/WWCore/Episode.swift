@@ -20,8 +20,8 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
     public var recorderGroups: [RecorderGroup]
     public var sources: [SourceRecord]
     public var speakerAssignments: [SpeakerAssignment]
-    /// Versioned positive maps (M2, WW-020). `nil` (omitted from the encoding) until the first map is
-    /// recorded, so shows without alignment keep their exact schema-2 bytes.
+    /// Versioned positive maps (M2, WW-020; show schema 3). `nil` (omitted from the encoding) until the first
+    /// map is recorded.
     public var alignment: EpisodeAlignment?
 
     public init(

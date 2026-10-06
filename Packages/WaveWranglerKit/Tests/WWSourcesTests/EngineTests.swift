@@ -566,7 +566,8 @@ struct ForbiddenAPITests {
     /// File and staging operations: only the derived-asset store may use them, and only on its own cache.
     static let derivedStoreTokens = ["FileOperations", "writeNew", "moveNew", "replace(", "remove(", "read(", "createDirectory", "FileManager"]
     static let derivedExceptions: [String: Set<String>] = [
-        "DerivedAssetStore.swift": Set(derivedStoreTokens),
+        // `.resourceValues(`: the cache root's own ubiquity metadata (cloud-storage refusal), never a source's.
+        "DerivedAssetStore.swift": Set(derivedStoreTokens).union([".resourceValues("]),
         "DerivedAssetKey.swift": ["CryptoKit", "SHA256"],
         "ContentDigest.swift": ["CryptoKit", "SHA256"],
     ]

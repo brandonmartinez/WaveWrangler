@@ -86,11 +86,13 @@ struct AlignmentPersistenceTests {
         if case let .invalidPayload(issues)? = error as? PersistenceError { issues.map(\.code) } else { nil }
     }
 
-    /// Schema bump discipline: WW-020 extends show schema 2 additively (an omitted optional field); the embedded
-    /// map format is WWTimeMap schema 1. Changing either requires a C5 migration and new golden fixtures.
+    /// Schema bump discipline: WW-020 is show schema 3 (`Episode.alignment`, migrated from 1 and 2 by C5); the
+    /// embedded map format is WWTimeMap schema 1, which is part of show schema 3. A time-map schema bump requires a
+    /// show schema bump (so an older build refuses the show as unknown-newer at the envelope), a C5 migration step
+    /// and frozen golden fixtures of the previous show schema — update both pins together, never one alone.
     @Test func schemaVersionsArePinned() {
-        #expect(SchemaVersion.show == 2)
-        #expect(TimeMapSchema.currentVersion == 1)
+        #expect(SchemaVersion.show == 3, "a show schema bump needs a C5 step and frozen goldens of the previous schema")
+        #expect(TimeMapSchema.currentVersion == 1, "a time-map schema bump requires a show schema bump (see this test's doc comment)")
     }
 
     @Test func mapsRoundTripThroughTheShowDocument() throws {
@@ -114,10 +116,11 @@ struct AlignmentPersistenceTests {
         #expect(restored.acceptedMap?.revision == 2)
     }
 
-    @Test func showWithoutAlignmentKeepsItsSchema2Bytes() throws {
+    @Test func showWithoutAlignmentOmitsTheField() throws {
         let model = fixture.show
         let data = try coder.encode(model, revision: 1)
         #expect(!String(decoding: data, as: UTF8.self).contains("alignment"))
+        #expect(RevisionFingerprint(of: data).schemaVersion == 3)
         #expect(try coder.decode(data).payload == model)
     }
 
@@ -128,17 +131,73 @@ struct AlignmentPersistenceTests {
         #expect(try coder.decode(try coder.encode(model, revision: 1)).payload == model)
     }
 
-    @Test func refusesAMapFromANewerTimeMapSchemaOnOpen() throws {
+    /// A show whose first map is written with a newer time-map schema, at the top level or inside a group.
+    func showWithNewerMap(nested: Bool) throws -> ShowDocumentModel {
         var version = try fixture.version(1, map: try fixture.map())
-        guard case var .object(fields) = version.map else { Issue.record("map is not an object"); return }
-        fields["timeMapSchemaVersion"] = .integer(Int64(TimeMapSchema.currentVersion + 1))
+        guard case var .object(fields) = version.map else { throw PersistenceError.malformed("map is not an object") }
+        let newer = EmbeddedJSON.integer(Int64(TimeMapSchema.currentVersion + 1))
+        if nested {
+            guard case var .array(groups)? = fields["groups"], case var .object(group)? = groups.first else {
+                throw PersistenceError.malformed("map has no group")
+            }
+            group["timeMapSchemaVersion"] = newer
+            groups[0] = .object(group)
+            fields["groups"] = .array(groups)
+        } else {
+            fields["timeMapSchemaVersion"] = newer
+        }
         version.map = .object(fields)
-        let model = fixture.show(with: EpisodeAlignment(maps: [version]))
-        let data = try unchecked.encode(model, revision: 1)
-        #expect(throws: PersistenceError.self) { try coder.decode(data) }
-        do { _ = try coder.decode(data); Issue.record("open must refuse") } catch { #expect(invalidPayloadCodes(error) == [.invalidAlignment]) }
-        // …and the same value is never published.
-        do { _ = try coder.encode(model, revision: 2); Issue.record("save must refuse") } catch { #expect(invalidPayloadCodes(error) == [.invalidAlignment]) }
+        return fixture.show(with: EpisodeAlignment(maps: [version]))
+    }
+
+    /// Review #182 (1): a newer embedded map is refused as unknown-newer — C5's refusal, which no damaged/recovery
+    /// fallback may bypass — never as damaged content.
+    @Test(arguments: [false, true])
+    func refusesAMapFromANewerTimeMapSchemaOnOpen(nested: Bool) throws {
+        let found = TimeMapSchema.currentVersion + 1, supported = TimeMapSchema.currentVersion
+        let model = try showWithNewerMap(nested: nested)
+        let data = try unchecked.encode(model, revision: 2)
+        #expect(throws: PersistenceError.unknownNewerSchema(found: found, supported: supported)) { try coder.decode(data) }
+        #expect(throws: PersistenceError.unknownNewerSchema(found: found, supported: supported)) { try ShowSchemaMigration.decodeUpgradingOlder(data) }
+
+        // Opened by the app's opener with an older recovery checkpoint available: refused, nothing offered.
+        let rig = Rig()
+        let url = rig.url()
+        try data.write(to: url)
+        let key = DocumentKey.show(model.show.id)
+        try rig.recovery.retainCheckpoint(try coder.encode(fixture.show, revision: 1), for: key)
+        try rig.recovery.recordLocation(url, for: key)
+        let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: rig.recovery)
+        guard case .refusedNewerFormat(found: found, supported: supported, _) = opener.open(url, key: key) else {
+            Issue.record("a newer embedded map must be refused as unknown-newer, got \(opener.open(url, key: key))")
+            return
+        }
+        guard case .refusedNewerFormat = opener.open(url) else {
+            Issue.record("refused when opened by location too")
+            return
+        }
+        #expect(throws: PublicationError.self) { try DocumentMigrator.show(publisher: rig.publisher).migrate(url, key: key) }
+        #expect(try Data(contentsOf: url) == data, "never migrated, repaired or downsaved")
+        // …and this build never publishes such a value.
+        do { _ = try coder.encode(model, revision: 3); Issue.record("save must refuse") } catch { #expect(invalidPayloadCodes(error) == [.invalidAlignment]) }
+    }
+
+    /// The newer-map refusal happens before the checksum, like the envelope's schema check: a newer writer's bytes
+    /// that this build's checksum disagrees with are still refused as newer, never as damaged.
+    @Test func aNewerMapIsRefusedAsNewerEvenWhenTheChecksumDisagrees() throws {
+        var object = try #require(try JSONSerialization.jsonObject(with: unchecked.encode(try showWithNewerMap(nested: false), revision: 2)) as? [String: Any])
+        object["checksum"] = "sha256:" + String(repeating: "0", count: 64)
+        let data = try JSONSerialization.data(withJSONObject: object, options: .sortedKeys)
+        #expect(throws: PersistenceError.unknownNewerSchema(found: TimeMapSchema.currentVersion + 1, supported: TimeMapSchema.currentVersion)) {
+            try coder.decode(data)
+        }
+        let rig = Rig()
+        let url = rig.url()
+        try data.write(to: url)
+        guard case .refusedNewerFormat = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: rig.recovery).open(url) else {
+            Issue.record("expected unknown-newer refusal")
+            return
+        }
     }
 
     @Test func refusesUnknownKeysInsideAMap() throws {

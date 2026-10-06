@@ -224,6 +224,14 @@ actor Latch {
     }
 }
 
+/// A boolean set from inside a job's work.
+final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value = false
+    var value: Bool { lock.withLock { _value } }
+    func set(_ value: Bool) { lock.withLock { _value = value } }
+}
+
 /// Counts invocations of a job's work closure.
 final class Counter: @unchecked Sendable {
     private let lock = NSLock()

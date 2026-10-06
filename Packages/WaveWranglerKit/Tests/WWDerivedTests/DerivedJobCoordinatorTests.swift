@@ -334,4 +334,82 @@ struct DerivedJobCoordinatorTests {
             #expect(await coordinator.readyPayload(for: DerivedSlot("ch\(channel)")) == nil)
         }
     }
+
+    // MARK: - Lifetime (review #182 finding 3)
+
+    /// A job whose work ignores cancellation until `release` opens, then records whether it was cancelled.
+    struct GatedWork {
+        let started = Latch()
+        let release = Latch()
+        let sawCancellation = Flag()
+
+        var work: @Sendable () async throws -> Data {
+            { [started, release, sawCancellation] in
+                await started.open()
+                await release.wait()
+                sawCancellation.set(Task.isCancelled)
+                return Data("late".utf8)
+            }
+        }
+    }
+
+    @Test func shutdownCancelsRunningWorkAndNothingIsStaged() async throws {
+        let directory = try TemporaryDirectory("jobs")
+        let coordinator = try coordinator(directory)
+        let key = key()
+        let gated = GatedWork()
+        let job = await coordinator.submit(slot, key: key, work: gated.work)
+        await gated.started.wait()
+
+        let shutdown = Task { await coordinator.shutdown() }
+        // Deterministic point: shutdown has cancelled every job and marked the running slot cancelled.
+        for await change in coordinator.changes where change.slot == slot && change.state == .cancelled(key) { break }
+        await gated.release.open()
+        await shutdown.value
+
+        #expect(gated.sawCancellation.value, "the running work observes cancellation")
+        #expect(await job.outcome == .cancelled)
+        #expect(await coordinator.state(of: slot) == .cancelled(key))
+        #expect(coordinator.store.payload(for: key) == nil)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: coordinator.store.stagingDirectory.path).isEmpty, "nothing staged")
+    }
+
+    @Test func aSubmitAfterShutdownNeverRuns() async throws {
+        let directory = try TemporaryDirectory("jobs")
+        let coordinator = try coordinator(directory)
+        await coordinator.shutdown()
+        await coordinator.shutdown() // idempotent
+        let runs = Counter()
+        let job = await coordinator.submit(slot, key: key()) {
+            runs.increment()
+            return Data("never".utf8)
+        }
+        #expect(await job.outcome == .cancelled)
+        #expect(runs.value == 0, "work submitted after shutdown never runs")
+        #expect(await coordinator.state(of: slot) == .idle)
+        #expect(await coordinator.isShutdown)
+    }
+
+    @Test func releasingTheCoordinatorCancelsRunningWork() async throws {
+        let directory = try TemporaryDirectory("jobs")
+        var coordinator: DerivedJobCoordinator? = try coordinator(directory)
+        let store = try #require(coordinator).store
+        let key = key()
+        let gated = GatedWork()
+        let job = await coordinator!.submit(slot, key: key, work: gated.work)
+        await gated.started.wait()
+
+        weak let released = coordinator
+        coordinator = nil
+        // Liveness guard (no wall clock): the last reference is gone, so deinit runs promptly.
+        var yields = 0
+        while released != nil, yields < 100_000 { await Task.yield(); yields += 1 }
+        #expect(released == nil, "the coordinator was released")
+        await gated.release.open()
+
+        #expect(await job.outcome == .cancelled)
+        #expect(gated.sawCancellation.value, "deinit cancels the running work")
+        #expect(store.payload(for: key) == nil)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: store.stagingDirectory.path).isEmpty, "nothing staged")
+    }
 }

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import WWCore
 import WWPersistence
@@ -5,6 +6,8 @@ import WWPersistence
 public enum DerivedAssetStoreError: Error, Sendable, Equatable {
     /// The cache root is a source's folder or inside one. Derived data never lives next to originals.
     case rootInsideSourceLocation(root: String, source: String)
+    /// The cache root is in iCloud Drive or a File Provider (cloud storage) location: derived data stays local.
+    case rootInCloudStorage(root: String)
     case rootNotAbsolute
     case notADigest(String)
     case stagingFailed(String)
@@ -36,6 +39,7 @@ public struct DerivedAssetStore: Sendable {
 
     public let root: URL
     let files: any FileOperations
+    let rootPolicy: CacheRootPolicy
 
     var assetsDirectory: URL { root.appendingPathComponent("assets", isDirectory: true) }
     var stagingDirectory: URL { root.appendingPathComponent("staging", isDirectory: true) }
@@ -51,11 +55,17 @@ public struct DerivedAssetStore: Sendable {
     /// - Parameter sourceLocations: current location hints of referenced sources; the root must not be any
     ///   source's folder (or inside one).
     public init(root: URL, sourceLocations: [URL], files: any FileOperations = LocalFileOperations()) throws(DerivedAssetStoreError) {
+        try self.init(root: root, sourceLocations: sourceLocations, files: files, rootPolicy: .system)
+    }
+
+    init(root: URL, sourceLocations: [URL], files: any FileOperations = LocalFileOperations(), rootPolicy: CacheRootPolicy) throws(DerivedAssetStoreError) {
         guard root.isFileURL, root.path.hasPrefix("/") else { throw .rootNotAbsolute }
         let resolvedRoot = Self.resolved(root)
-        try Self.checkOutside(resolvedRoot, sourceLocations: sourceLocations)
+        try Self.checkLocal(resolvedRoot, policy: rootPolicy)
+        try Self.checkOutside(resolvedRoot, sourceLocations: sourceLocations, policy: rootPolicy)
         self.root = resolvedRoot
         self.files = files
+        self.rootPolicy = rootPolicy
         do {
             try files.createDirectory(assetsDirectory)
             try files.createDirectory(stagingDirectory)
@@ -66,25 +76,59 @@ public struct DerivedAssetStore: Sendable {
 
     /// Re-checks the root against newly added sources.
     public func checkOutside(sourceLocations: [URL]) throws(DerivedAssetStoreError) {
-        try Self.checkOutside(root, sourceLocations: sourceLocations)
+        try Self.checkOutside(root, sourceLocations: sourceLocations, policy: rootPolicy)
     }
 
     /// Refuses a root that is a source's folder or lies anywhere under it (next to or among originals), and a
-    /// root that would contain a source. The one exception is the macOS `Library` folder directly under a
-    /// source's folder (e.g. a source in the home folder and the cache in `~/Library/Caches`): `Library` is
-    /// app-managed and is never a recording folder.
-    static func checkOutside(_ root: URL, sourceLocations: [URL]) throws(DerivedAssetStoreError) {
-        let rootComponents = root.pathComponents
+    /// root that would contain a source. The one exception is exactly the user's `Library` folder (e.g. a source
+    /// in the home folder and the cache in `~/Library/Caches`): it is app-managed and never a recording folder.
+    /// A `Library` folder anywhere else (`<source folder>/Library`) gets no exception.
+    ///
+    /// Paths are compared canonically: symbolic links resolved, then case- and Unicode-normalization-folded
+    /// unconditionally. macOS volumes are case-insensitive by default; on a case-sensitive volume the fold can
+    /// only refuse more, never allow a root among originals.
+    static func checkOutside(_ root: URL, sourceLocations: [URL], policy: CacheRootPolicy) throws(DerivedAssetStoreError) {
+        let rootKey = canonicalKey(root)
+        let libraries = Set(policy.userLibraries.map(canonicalKey))
         for location in sourceLocations {
-            let sourceComponents = resolved(location).pathComponents
-            let folder = Array(sourceComponents.dropLast())
-            if sourceComponents.count > rootComponents.count, Array(sourceComponents.prefix(rootComponents.count)) == rootComponents {
+            let sourceKey = canonicalKey(resolved(location))
+            let folder = Array(sourceKey.dropLast())
+            if sourceKey.count > rootKey.count, Array(sourceKey.prefix(rootKey.count)) == rootKey {
                 throw .rootInsideSourceLocation(root: root.path, source: location.path)
             }
-            guard rootComponents.count >= folder.count, Array(rootComponents.prefix(folder.count)) == folder else { continue }
-            if rootComponents.count > folder.count, rootComponents[folder.count] == "Library" { continue }
+            guard rootKey.count >= folder.count, Array(rootKey.prefix(folder.count)) == folder else { continue }
+            if rootKey.count > folder.count, libraries.contains(Array(rootKey.prefix(folder.count + 1))) { continue }
             throw .rootInsideSourceLocation(root: root.path, source: location.path)
         }
+    }
+
+    /// Refuses a root in cloud storage: under `~/Library/Mobile Documents` (iCloud Drive) or
+    /// `~/Library/CloudStorage` (File Provider), or whose nearest existing folder is a ubiquitous item. Reads
+    /// only the cache location's own metadata.
+    static func checkLocal(_ root: URL, policy: CacheRootPolicy) throws(DerivedAssetStoreError) {
+        let rootKey = canonicalKey(root)
+        for library in policy.userLibraries {
+            for cloud in ["Mobile Documents", "CloudStorage"] {
+                let cloudKey = canonicalKey(resolved(library.appendingPathComponent(cloud, isDirectory: true)))
+                if rootKey.count >= cloudKey.count, Array(rootKey.prefix(cloudKey.count)) == cloudKey {
+                    throw .rootInCloudStorage(root: root.path)
+                }
+            }
+        }
+        if policy.isUbiquitous(existingAncestor(of: root)) { throw .rootInCloudStorage(root: root.path) }
+    }
+
+    /// Path components folded for comparison (case and Unicode normalization).
+    static func canonicalKey(_ url: URL) -> [String] {
+        resolved(url).pathComponents.map { $0.decomposedStringWithCanonicalMapping.folding(options: .caseInsensitive, locale: nil) }
+    }
+
+    static func existingAncestor(of url: URL) -> URL {
+        var existing = url.standardizedFileURL
+        while !FileManager.default.fileExists(atPath: existing.path), existing.pathComponents.count > 1 {
+            existing = existing.deletingLastPathComponent()
+        }
+        return existing
     }
 
     /// Resolves symlinks in the longest existing ancestor (e.g. `/var` → `/private/var`), so containment
@@ -222,5 +266,22 @@ public struct DerivedAssetStore: Sendable {
             return nil
         }
         return payload
+    }
+}
+
+/// Where a cache root may live. `system` uses the real user `Library` (from the account database, so it is the
+/// same inside the App Sandbox) plus the process's own `Library` (the container's, when sandboxed).
+struct CacheRootPolicy: Sendable {
+    var userLibraries: [URL]
+    var isUbiquitous: @Sendable (URL) -> Bool
+
+    static var system: CacheRootPolicy {
+        var libraries = [URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).appendingPathComponent("Library", isDirectory: true)]
+        if let entry = getpwuid(getuid()), let home = entry.pointee.pw_dir {
+            libraries.append(URL(fileURLWithPath: String(cString: home), isDirectory: true).appendingPathComponent("Library", isDirectory: true))
+        }
+        return CacheRootPolicy(userLibraries: libraries) { url in
+            (try? url.resourceValues(forKeys: [.isUbiquitousItemKey]))?.isUbiquitousItem == true
+        }
     }
 }
