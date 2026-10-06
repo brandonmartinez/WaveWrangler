@@ -24,10 +24,8 @@ public final class SourceAvailabilityMonitor {
     @ObservationIgnored private var settingGeneration = 0
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     #if DEBUG
-    /// Test only: suspends a refresh after it captures the setting generation but before evaluation.
-    @ObservationIgnored package var beforeEvaluation: (@Sendable () async -> Void)?
-    /// Test only: reports each published observation so tests can await the main-actor consumer.
-    @ObservationIgnored package var observationDidChange: (@Sendable (SourceID, AvailabilityObservation) -> Void)?
+    /// Test only: suspends the detached evaluator task after launch, before synchronous source I/O.
+    @ObservationIgnored package var evaluatorTaskDidStart: (@Sendable () async -> Void)?
     #endif
 
     public init(
@@ -174,10 +172,13 @@ public final class SourceAvailabilityMonitor {
         let evaluatedSetting = setting
         let evaluatedGeneration = settingGeneration
         #if DEBUG
-        if let beforeEvaluation { await beforeEvaluation() }
+        let evaluatorTaskDidStart = evaluatorTaskDidStart
         #endif
         let evaluation = await Task.detached {
-            evaluator.evaluate(key: key, record: record, setting: evaluatedSetting, transfer: transferState)
+            #if DEBUG
+            if let evaluatorTaskDidStart { await evaluatorTaskDidStart() }
+            #endif
+            return evaluator.evaluate(key: key, record: record, setting: evaluatedSetting, transfer: transferState)
         }.value
         if let refreshed = evaluation.refreshedRecord {
             try? await store.save(refreshed)
@@ -186,9 +187,6 @@ public final class SourceAvailabilityMonitor {
         guard settingGeneration == evaluatedGeneration, !isStopped, lifecycleGeneration == generation else { return }
         resolvedURLs[sourceID] = evaluation.resolvedURL
         observations[sourceID] = evaluation.observation
-        #if DEBUG
-        observationDidChange?(sourceID, evaluation.observation)
-        #endif
 
         let needsUserRetry: Bool = switch evaluation.observation.transfer {
         case .failed, .offlineOrUnknown, .cancelled: true
@@ -211,8 +209,5 @@ public final class SourceAvailabilityMonitor {
         observation.transferEvidence = .transferController
         if event.state == .idle { observation.residency = .local }
         observations[event.key.sourceID] = observation
-        #if DEBUG
-        observationDidChange?(event.key.sourceID, observation)
-        #endif
     }
 }

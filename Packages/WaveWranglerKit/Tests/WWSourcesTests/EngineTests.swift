@@ -845,14 +845,12 @@ struct StallFollowUpTests {
         let record = try #require(try await SourceImporter(context: context).plan(selection: [file], showID: testShow).items.first?.accessRecord)
         io.simulate(file, SimulatedCloudItem(script: Array(repeating: .stall, count: 30) + [.complete]))
         let monitor = SourceAvailabilityMonitor(showID: testShow, store: InMemoryDeviceAccessStore(), context: context, setting: .on, transferPolicy: Self.policy)
-        let observations = MonitorObservationProbe()
-        monitor.observationDidChange = { observations.record($0, $1) }
         let collector = await eventCollector(monitor.transfers, key: record.key) { $0 == .idle }
         monitor.start()
         try await monitor.adopt([record])
         let states = await collector.value
         #expect(states.contains { $0.isOfflineOrUnknown }, "stall was never observed: \(states)")
-        #expect(await waitUntilObserved(observations, sourceID: record.sourceID, transfer: .idle),
+        #expect(await waitUntilObserved(monitor, sourceID: record.sourceID, transfer: .idle),
                 "monitor never published the transfer's idle state")
         #expect(monitor.observations[record.sourceID]?.transfer == .idle)
         #expect(monitor.observations[record.sourceID]?.residency == .local)
@@ -1154,8 +1152,6 @@ struct TeardownOrderingTests {
         io.simulate(file, SimulatedCloudItem(script: (1...30).map { .progress(Double($0) / 40) } + [.complete]))
         io.simulate(other, SimulatedCloudItem(script: StallLifetimeTests.stallForever))
         let monitor = SourceAvailabilityMonitor(showID: testShow, store: InMemoryDeviceAccessStore(), context: context, setting: .off, transferPolicy: StallFollowUpTests.policy)
-        let observations = MonitorObservationProbe()
-        monitor.observationDidChange = { observations.record($0, $1) }
         monitor.start()
         try await monitor.adopt(plan.accessRecords)
         if transferRunningAtStop {
@@ -1168,7 +1164,7 @@ struct TeardownOrderingTests {
         await monitor.makeAvailable(record.sourceID)
 
         #expect(await monitor.transfers.waitUntilSettled(record.key) == .idle)
-        #expect(await waitUntilObserved(observations, sourceID: record.sourceID, transfer: .idle),
+        #expect(await waitUntilObserved(monitor, sourceID: record.sourceID, transfer: .idle),
                 "monitor never published the transfer's idle state")
         #expect(monitor.observations[record.sourceID]?.transfer == .idle)
         #expect(monitor.observations[record.sourceID]?.residency == .local)
