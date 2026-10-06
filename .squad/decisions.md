@@ -132,4 +132,16 @@
 
 **T21 and T23 D4 (user decision, 2026-10-06 00:07, relayed; accepting the coordinator's recommendation):** both are recorded as Not run with reasons. M1 saves are synchronous, and there's no format migration yet. They're tracked as #158 (async saving + D4) and #159 (format-migration prompt + T21): owner persistence, P2, M2+. The rest of 23:58 (b) still blocks M1.
 
+**Self-serve GUI lock (user-directed, 2026-10-06 ~01:05, relayed; for M2 onward, replacing coordinator-relayed GUI locks):**
+- **Helper:** `~/ww-uitest-runs/gui-lock` on each GUI host, outside the repo. It's live on the Mac mini; the M1 coordinator created it 2026-10-06 ~01:04.
+- **Commands:**
+  - `acquire --lane --pr --sha --dir [--pid] [--timeout]`: an atomic `mkdir .gui.lock` with an owner file (lane, PR, SHA, dir, pid, start, host). FIFO tickets in `.gui.queue`, polled every 15 s; abandoned tickets are dropped after 4 h.
+  - `release --lane`.
+  - `status`.
+- **Staleness:** a lock is stale if its pid is dead, or after 30 min with no new files in its run dir. A stale lock is moved aside (`.gui.lock.stale-<ts>`) and logged in `gui-lock.log`.
+- **Lane duties:** lanes acquire the lock themselves, run only their affected classes (test-without-building), clean up orphans, release, and post the results on their PR. The coordinator sees results, not lock traffic, and intervenes only on stale locks.
+- **Batching:** a lane may run several of its own PRs' classes together only at one SHA. Never mix unrelated PR binaries.
+- **Multiple hosts:** one lock per GUI host (per-host lock dirs); the full-suite shards acquire both.
+- **Unchanged:** one GUI run per host at a time; orphan cleanup after every run.
+
 **Process deviations disclosed:** M1 briefly ran 5–6 writer sessions during short review-fix rounds (budget 4) and had windows with two concurrent read-only reviewer agents (budget 1); `gh pr create` was used as a fallback for several PRs (including #145 and #148) because `create_pull_request` was bound to another PR; one batched keystroke briefly listed the consented episode folder's parent's metadata in-app (nothing read, imported or committed). The M2 kickoff restates the budgets and rules.
