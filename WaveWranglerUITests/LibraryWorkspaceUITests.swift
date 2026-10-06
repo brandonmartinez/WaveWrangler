@@ -227,10 +227,17 @@ final class LibraryWorkspaceUITests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 3),
                       "hidden column values are in the Name cell's VoiceOver value: \(entries.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.'")).firstMatch.debugDescription.prefix(300))")
 
-        // Zoom the window (wider: every column fits), then back.
-        let zoom = window.buttons[XCUIIdentifierZoomWindow]
+        // Zoom the window (wider: every column fits), then back. Window › Zoom (the green title-bar button may be
+        // full screen only, depending on system settings).
+        func zoomWindow() {
+            let windowMenu = app.menuBars.menuBarItems["Window"]
+            windowMenu.click()
+            let item = windowMenu.menuItems["Zoom"].firstMatch
+            XCTAssertTrue(item.waitForExistence(timeout: 2), "Window › Zoom")
+            item.click()
+        }
         let before = window.frame
-        zoom.click()
+        zoomWindow()
         XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.frame.width > before.width + 100 }, object: nil)], timeout: 5),
                        .completed, "window zoomed: \(window.frame)")
         assertStatusVisible("zoomed")
@@ -242,7 +249,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
         let newer = entries.outlineRows.containing(NSPredicate(format: "label == 'Status' AND value == 'Needs newer WaveWrangler'")).firstMatch
         XCTAssertTrue(newer.staticTexts.matching(NSPredicate(format: "value == 'unknown'")).firstMatch.waitForExistence(timeout: 3),
                       "Episodes reads unknown: \(newer.staticTexts.allElementsBoundByIndex.map { self.value($0) })")
-        zoom.click()
+        zoomWindow()
         XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in abs(window.frame.width - before.width) < 2 }, object: nil)], timeout: 5),
                        .completed, "window back to its size: \(window.frame)")
         assertStatusVisible("unzoomed")
@@ -253,9 +260,9 @@ final class LibraryWorkspaceUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [grown], timeout: 5), .completed, "200% applied: \(statusCell().frame)")
         assertStatusVisible("200% text")
         print("COLUMNS 200%: \(headerTitles())")
-        zoom.click()
+        zoomWindow()
         assertStatusVisible("200% zoomed")
-        zoom.click()
+        zoomWindow()
         assertStatusVisible("200% unzoomed")
         XCTAssertEqual(app.state, .runningForeground, "no crash across zoom and text-size changes")
         try audit("Library window at 200% text after zoom")
