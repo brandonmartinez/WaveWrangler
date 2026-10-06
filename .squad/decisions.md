@@ -96,6 +96,7 @@
 - This supersedes the coordinator's earlier "no transfer while the user is away" closure rule.
 - Required issues blocked only by user-manual items close with proof and an explicit transfer to #147 (M1 user-manual verification items; M2 milestone for visibility, not engineering work).
 - Only a genuine data-loss, source-write, privacy, essential-accessibility or core-workflow P0 blocks exit. Essential-accessibility failures are never transferred.
+- The REF-020 holdout shortfall (16/20 executed, harness aborts, 0 product failures, recorded as Fail) transfers to #151 (M2, P2: fresh holdout with the fixed harness under a new freeze); the labelled 20/20 re-execution is supporting evidence only (coordinator).
 - M1 exit still requires the full-suite exit gate below on the final main SHA.
 - Pace lessons carried into M2: freeze once and don't re-run holdouts for provider or environment variance; classify non-P0 findings as follow-ups immediately; reviewers never run UI tests; one GUI run per host; a kickoff preflight checklist.
 
