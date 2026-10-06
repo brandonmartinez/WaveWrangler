@@ -186,6 +186,14 @@ Not caught, all six reported honestly:
 - The harness keeps at most `WW_SEGMENT_MAX_CONCURRENCY` cases in flight. The default is 4, valid values are 1–4 (it may only lower),
   and it is never derived from the processor count. `SegmentBudgetTests` asserts the default and the bound.
 - The heavy suites run in their own serialized `--no-parallel` pass, gated by `WW_SEGMENT_TESTS=1`.
+- **CI runs only the gated calibration** (coordinator decision 2026-10-06; `timeout-minutes` stays at 45).
+  - `scripts/test.sh` reads `WW_SEGMENT_SWEEPS`: `1` runs calibration, the floor sweep and edge silence; `0` runs
+    calibration only.
+  - It defaults to `1` locally and `0` when `CI=true`, and the workflow also sets `0` explicitly. The serialized pass
+    took 880 s on CI with all three suites.
+  - With the sweeps off, CI still runs the always-on cheap test `committedRecordsReproduceTheReportedCalibration`, which
+    re-checks the committed floor and edge-silence records (hashes, truth against the plan, totals, invariants).
+  - The sweeps themselves run in every local full `scripts/test.sh`, including before each handoff.
 - The holdout is gated by `WW_SEGMENT_HOLDOUT=1`.
 
 **Freeze and limits.**
