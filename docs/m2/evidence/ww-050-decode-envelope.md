@@ -129,7 +129,10 @@ cancellation is discarded. The cursor retains one raw `channelCount × chunkFram
 closes the reader and security scope on every path, treats failures as terminal, and returns no unverified result.
 All source content still passes only through `SystemSourceContentIO`; its read-only descriptor and per-read
 dataless-materialization policy are unchanged. The internal worker factory avoids the scanner-reserved `open(`
-spelling so the always-on single-gateway enforcement remains green.
+spelling so the always-on single-gateway enforcement remains green. Independent review then closed two
+return-publication gaps: a terminal failure is rethrown even when the first read fails before the read counter
+advances and the body catches it, and every result derived from reads receives a final unchanged-source check even
+when the body explicitly checked earlier.
 
 [`m2-freeze-decode-2.json`](../fixtures/m2-freeze-decode-2.json) supersedes revision 1 for the changed
 `Sources/WWDecode` / `Tests/WWDecodeTests` trees while leaving the revision-1 record and its sole passed holdout
@@ -137,13 +140,13 @@ evidence unchanged. Revision 2 preserves the revision-1 recipe, truth, gate and 
 `M2-DECODE-002` so all 520 holdout seeds are disjoint from revision 1, and has its own
 `WW_M2_DECODE_2_HOLDOUT` switch.
 
-**Calibration PASS; holdout NOT RUN.** The serialized 130-case calibration ran four times at maximum concurrency
+**Calibration PASS; holdout NOT RUN.** The serialized 130-case calibration ran five times at maximum concurrency
 4 and produced byte-identical [`ww-050/calibration-2.jsonl`](ww-050/calibration-2.jsonl), SHA-256
 `d9b58446340222a9f92b0e4ded8047a391b2be8f6bd94e16f4071c798951b356`. All gates passed: 90 supported
 cases / 2,178,575 frames with 0 mapping failures; 1,014 landmarks (`lag 0` ×996, `lag +1` ×18, all +1 at
 24 kHz Opus), 0 below correlation; 53 exact cases bit-exact; 40 planted cases with their expected typed errors,
 0 mutations and 0 publications; output-settings failures 0. The always-on
 `committedCalibrationRecordsReproduceTheReportedCalibration` test verifies the file SHA, seeds, counts, metrics and
-all gate outcomes. The final calibration run used both pinned trees after the cancellation-publication assertion was
-strengthened and the worker factory was renamed for the gateway scanner. No revision-2 holdout source was
-materialized or decoded; it runs once in a separate PR after this freeze merges.
+all gate outcomes. The final calibration run used both pinned trees after the independent review fixes for
+swallowed terminal failures and mandatory final source verification. No revision-2 holdout source was materialized
+or decoded; it runs once in a separate PR after this freeze merges.
