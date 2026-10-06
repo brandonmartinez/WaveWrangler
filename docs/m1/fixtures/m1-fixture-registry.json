@@ -2357,7 +2357,7 @@
         "status": "authorized",
         "scope": "Generated in per-run temp directories by the test harness; M1 kickoff 2026-10-04 authorizes synthetic builds/tests. No user files, recordings, provider folders or network."
       },
-      "provenance": "Authored by Lead 2026-10-04 (this registry); generator code to be written by the owning lane (Mac for WWPersistence/WWSources/app). Truth is declared here, independently of the code under test.",
+      "provenance": "Generator written by the Mac sources lane during the PR #54 review (2026-10-05); registered by Lead at freeze m1-freeze-1 (2026-10-05). Truth is declared here, independently of the code under test.",
       "split": {
         "calibration": 10,
         "holdout": 100,

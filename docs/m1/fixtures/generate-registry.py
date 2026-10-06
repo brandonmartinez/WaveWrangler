@@ -305,7 +305,8 @@ F.append(syn("M1-SRC-ON-002-REVIEW","Setting races and stale transfer states (ad
   "Four seeded interleavings (double): OFF toggled while a refresh's off-main evaluation is held by a deterministic gate; explicit Make Available during an automatic transfer, then OFF; ON download, then OFF, then eviction; a stale notRequested(.awaitingAccess) state followed by fresh evidence.",
   "OFF during a held refresh issues 0 requests; an explicit request survives OFF; after OFF + eviction the state is a fresh notRequested(.availabilityOff) with the Make Available remedy; stale states never mask fresh evidence. Zero leaked scopes, source writes and substitutions.",10,100,"interleavings",
   "Test double only. Added to the matrix during PR #54 review (2026-10-05) and to the registry at the 2026-10-05 freeze; it does not count toward the WW-006 >=1,000 reference total.",
-  extra={"trialLabel": "default-ON synthetic double"}))
+  extra={"trialLabel": "default-ON synthetic double",
+         "provenance": "Generator written by the Mac sources lane during the PR #54 review (2026-10-05); registered by Lead at freeze m1-freeze-1 (2026-10-05). Truth is declared here, independently of the code under test."}))
 F.append(syn("M1-SRC-ON-PROV-001","Real provider source availability: iCloud Drive trial folder","source/default-ON/icloud-trial","source-availability",["WW-006","WW-012"],
   "Generated synthetic source files (random bytes, never decoded) inside 'WaveWrangler-M1-Synthetic-Trial'; brctl evict to create placeholders; then OFF (metadata-only) and ON runs: observe residency/progress/offline/cancel/retry; brctl download where needed. Delete the folder afterwards.",
   "OFF: zero app content/download requests while placeholders stay placeholders as observed. ON: observed residency/progress (or 'Progress unknown')/cancel/retry; zero source writes; provider work observed separately.",
