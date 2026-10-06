@@ -113,5 +113,16 @@
 - **Scheduling:** the full run pre-empts targeted PR runs only when a batch has landed since the last full run. One GUI run at a time.
 - **Milestone exit gate:** the final main SHA passes the full UI suite on the Mac mini, plus the system-visual leg (testSystemVisualSettings with WW_EXPECT_SYSTEM_VISUAL=on, run on the Mac mini in a grant-D-style slot with system settings snapshotted and restored; without that variable the test skips, so a system Increase Contrast or Reduce Motion regression would otherwise pass silently) (added by the coordinator at M1 closeout), plus the full scripts/test.sh, with zero unexplained failures, cited in the exit record. Flaky failures are fixed or tracked with an issue, never silently re-run.
 - **Rationale:** hosted CI is macOS 26 with no XCUITests; the claimed hosts are macOS 27.
+- *Superseded for M2 and later by the user's 23:30 decision below. M1's own record keeps this policy as it ran.*
+
+**User decisions, 2026-10-05 23:30 (relayed by the coordinator):**
+1. **M1 closure:** M1 does NOT close early with transfers. The remaining evidence runs are finished first (a scope question is pending with the relay). First run: a REF-020-only frozen revision, `m1-freeze-5` (PR #153), runs the frozen M1-REF-020 holdout once with the fixed harness. No truth or count change, and the m1-freeze-1 failure (16/20) is retained. This supersedes the 23:11 closeout rule's transfers where they conflict, pending the scope answer.
+2. **UI regression policy for M2 and later (replaces the full-suite-on-merge policy above):**
+   - **Capped full runs:** the full UI suite runs every ~3 h of active merging or after 4+ merges, whichever comes first, and always on the exit SHA. It runs from one build, sharded by test class across the available GUI hosts, with the full scripts/test.sh on the same SHA.
+   - **Per-PR runs** cover only the affected UI test classes.
+   - **PRs that change no app UI or test code** skip GUI runs: CI plus scripts/test.sh only.
+   - **Failure triage, the merge freeze and the no-silent-re-run rule are unchanged.**
+3. **Hard exit gates with a baseline:** WW-007-style performance gates and the XCUITest contrast/accessibility audits are HARD gates at milestone exit, against a pinned waiver baseline. Per-PR runs fail only on NEW findings relative to that baseline. Safety invariants stay hard everywhere.
+4. **Away windows:** the user states their away windows at kickoff. During an agreed window the user keeps 1Password unlocked and Focus/DND on, on the GUI hosts. Before each window, the coordinator collects every pending user-only action into a single message.
 
 **Process deviations disclosed:** M1 briefly ran 5–6 writer sessions during short review-fix rounds (budget 4) and had windows with two concurrent read-only reviewer agents (budget 1); `gh pr create` was used as a fallback for several PRs (including #145 and #148) because `create_pull_request` was bound to another PR; one batched keystroke briefly listed the consented episode folder's parent's metadata in-app (nothing read, imported or committed). The M2 kickoff restates the budgets and rules.
