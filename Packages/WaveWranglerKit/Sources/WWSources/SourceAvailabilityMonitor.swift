@@ -116,6 +116,29 @@ public final class SourceAvailabilityMonitor {
         await makeAvailable(sourceID)
     }
 
+    /// The network came back (T30). With availability ON, every tracked transfer that failed with an
+    /// observed connectivity error is requested again automatically (`ReconnectRetry`); with OFF, and for
+    /// stalls, other failures and user cancels, nothing is requested. Returns the sources requested.
+    @discardableResult
+    public func connectivityRestored() async -> [SourceID] {
+        guard !isStopped, setting == .on else { return [] }
+        let generation = lifecycleGeneration
+        let evaluatedGeneration = settingGeneration
+        let decided = transfers.shutdownTicket()
+        let due = tracked.filter {
+            ReconnectRetry.shouldRetry(observations[$0]?.transfer, setting: setting, userCancelled: userCancelled.contains($0))
+        }
+        var requested: [SourceID] = []
+        for sourceID in due {
+            // Re-check after every await: a stop or a setting change (OFF) ends the pass.
+            guard setting == .on, settingGeneration == evaluatedGeneration, !isStopped, lifecycleGeneration == generation,
+                  let url = resolvedURLs[sourceID] else { continue }
+            await transfers.makeAvailable(key(sourceID), at: url, decidedAt: decided)
+            requested.append(sourceID)
+        }
+        return requested
+    }
+
     public func setAvailabilitySetting(_ newSetting: SourceAvailabilitySetting) async {
         guard newSetting != setting else { return }
         setting = newSetting

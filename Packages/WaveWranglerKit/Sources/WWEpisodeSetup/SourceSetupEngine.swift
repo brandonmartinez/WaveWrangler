@@ -236,7 +236,8 @@ public final class InMemorySourceSetupEngine: SourceSetupEngine, @unchecked Send
         transferOutcome = { action, current in
             var next = current
             switch action {
-            case .download, .retry: next.transfer = .queued
+            // As the real engine reports it: a request is "Downloading…" at once (`.requested`).
+            case .download, .retry: next.transfer = .downloading(fraction: nil)
             case .pause: next.transfer = .paused
             case .resume: next.transfer = .downloading(fraction: nil)
             case .cancel: next.transfer = .cancelled
@@ -254,6 +255,18 @@ public final class InMemorySourceSetupEngine: SourceSetupEngine, @unchecked Send
         lock.withLock { _statuses[id] = status }
         publish()
     }
+
+    /// Simulates several observation changes at once: one update for observers (one announcement).
+    public func setStatuses(_ updates: [SourceID: SourceStatusSnapshot]) {
+        guard !updates.isEmpty else { return }
+        lock.withLock { _statuses.merge(updates) { _, new in new } }
+        publish()
+    }
+
+    public var allStatuses: [SourceID: SourceStatusSnapshot] { lock.withLock { _statuses } }
+
+    /// Called after each `perform` was applied and published (fixtures schedule simulated follow-ups).
+    public var afterPerform: (@Sendable (TransferAction, SourceID) -> Void)?
 
     public func scanForImport(_ urls: [URL], episodeSourceIDs: [SourceID]) async throws(SourceEngineError) -> ImportScan {
         lock.withLock { _calls.append(.scan(count: urls.count)) }
@@ -345,6 +358,7 @@ public final class InMemorySourceSetupEngine: SourceSetupEngine, @unchecked Send
             _statuses[sourceID] = transferOutcome(action, _statuses[sourceID] ?? .checking)
         }
         publish()
+        afterPerform?(action, sourceID)
     }
 
     private func publish() {

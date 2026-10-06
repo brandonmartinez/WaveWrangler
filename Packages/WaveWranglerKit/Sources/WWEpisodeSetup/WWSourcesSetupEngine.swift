@@ -70,8 +70,10 @@ public enum WWSourcesStatusMapping {
         case let .inProgress(fraction): .downloading(fraction: fraction.value)
         case .cancelled: .cancelled
         case let .failed(error): .failed(reason: describe(error))
-        // Connection loss is not observed: say only what was observed.
-        case .offlineOrUnknown: .failed(reason: "no progress was reported")
+        // The provider reported a network/iCloud-server error: an observed connection failure (T29/T30).
+        case .offlineOrUnknown(.some): .noConnection
+        // A stall without any reported error: connection loss is not observed, so say only that.
+        case .offlineOrUnknown(.none): .failed(reason: "no progress was reported")
         }
     }
 
@@ -195,7 +197,9 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     /// Display names of sources in this show, for "already used for …" (set by the UI).
     public var sourceNames: (SourceID) -> String = { _ in "another source" }
 
-    public init(showID: ShowID, store: any DeviceAccessStore, context: SourceAccessContext = SourceAccessContext(), preference: (any SourceDownloadPreference)? = nil, transferPolicy: TransferPolicy = TransferPolicy()) {
+    /// `connectivity`: when given, each network reconnect retries "No connection" downloads while
+    /// downloads are on (T30); nil never retries automatically.
+    public init(showID: ShowID, store: any DeviceAccessStore, context: SourceAccessContext = SourceAccessContext(), preference: (any SourceDownloadPreference)? = nil, transferPolicy: TransferPolicy = TransferPolicy(), connectivity: (any ConnectivitySignal)? = nil) {
         self.showID = showID
         self.store = store
         self.context = context
@@ -207,6 +211,19 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
             // Settings writes "Download sources automatically" to UserDefaults; follow it live.
             defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.syncSetting() }
+            }
+        }
+        if let connectivity {
+            let reconnects = connectivity.reconnects()
+            spawn { [weak self, monitor] in
+                for await _ in reconnects {
+                    guard let self, self.isRunning else { return }
+                    // Apply the current preference first (awaited), so OFF can never be overtaken by a retry.
+                    if let preference = self.preference {
+                        await monitor.setAvailabilitySetting(SourceAvailabilitySetting(downloadSourcesAutomatically: preference.downloadsAutomatically))
+                    }
+                    await monitor.connectivityRestored()
+                }
             }
         }
     }
