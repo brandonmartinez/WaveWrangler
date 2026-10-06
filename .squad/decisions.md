@@ -10,6 +10,8 @@
 
 **Why:** WaveWrangler crosses macOS application architecture, audio synchronization and drift correction, speech processing, transcript-driven editing, privacy, and DAW interoperability. Research must retire the highest-risk assumptions before implementation choices harden.
 
+*Superseded (marker added 2026-10-06): implementation is authorized per named milestone kickoff by the 2026-10-04 "Publish operational backlog and deliver internal MVP milestone by milestone" entry below. Charters' "Initial-mode gate" lines were replaced with a "Milestone gate" line accordingly.*
+
 ### 2026-10-04T00:32:38.878-04:00: Establish domain ownership
 
 **By:** Brandon Martinez; recorded by Lead
@@ -196,3 +198,21 @@
 6. **Correction:** #154 was retracted as not a defect, and isn't counted as an accessibility-found P0.
 
 **Process deviations disclosed:** M1 briefly ran 5–6 writer sessions during short review-fix rounds (budget 4) and had windows with two concurrent read-only reviewer agents (budget 1); `gh pr create` was used as a fallback for several PRs (including #145 and #148) because `create_pull_request` was bound to another PR; one batched keystroke briefly listed the consented episode folder's parent's metadata in-app (nothing read, imported or committed). The M2 kickoff restates the budgets and rules.
+
+### 2026-10-06: M1 retrospectives applied to the Squad configuration (M2 coordinator's first PR)
+
+**By:** M2 Squad coordinator, under the user's 2026-10-05 and 2026-10-06 01:06/01:20 directives (above) and the M2 kickoff; retrospectives supplied by the relay.
+
+**What:**
+- Published the sanitized M1 retrospectives: `docs/planning/retrospectives/m1.md` (process) and `m1-accessibility.md`. Correction applied: #154 was retracted (closed not planned), so it is not a keyboard-test-found P0.
+- `routing.md` gains a "Milestone orchestration (M2 onward)" table: fresh session per PR unit with per-unit model/effort; the 4 writers + coordinator + 1 reviewer budget; reviewers never run GUI tests; self-serve per-host GUI lock; GUI timebox → Lead; a named **Regression runner** lane started fresh per capped full run; notify-once and handoff/needs_input/error-only messages; incremental issue closure with proof; essential accessibility per UI PR; evidence budget; consolidated user asks.
+- `ceremonies.md` gains Kickoff Preflight, Away-Window Ask, Window Smoke Pass (Design), Capped UI Regression Run and Exit Checkpoint (Design).
+- Charters: Lead owns GUI-timebox escalations, issue-closure proof, freeze-once and immediate follow-up classification. Design owns the essential checklist (essential before broad), design-for rules, window smoke pass, exit checkpoint, pinned audit waiver baseline, evidence budget, and treats the VoiceOver listen, Full Keyboard Access and Reduce Motion as user-manual items. Mac: UI PRs include essential checks for changed surfaces; design-for rules (semantic fonts and colours, reflowable containers, constant column ideal widths); evidence budget; Mac mini pipeline; CI macOS 26 concurrency check. Pipeline and Alignment: evidence budget; Alignment adds freeze-before-holdout and clock-truth scoring rules. Scribe owns the exit-record template. Obsolete "Initial-mode gate" lines became "Milestone gate" lines.
+- Project skills: `.squad/skills/gui-lock-mac-mini`, `kickoff-preflight`, `milestone-exit-record` (≤250-line template and closure-proof comment).
+
+**Not changed:** casting, catalogs, plugins, labels, global configuration, and every safety invariant (immutable sources, durability, no silent data loss, privacy, honest status, essential accessibility).
+
+**M2 start state (2026-10-06 ~02:30 EDT):** the user is away until morning. Preflight on the dev Mac: Xcode first launch PASS (macOS 27.0.1, Xcode 27.0); SSH to the Mac mini FAIL (1Password agent has no identities), so mini checks (first launch, Automation Mode, clean screen, GUI lock status, Full Keyboard Access state) and Computer Use are not yet checked; Full Keyboard Access on the dev Mac recorded as off (`AppleKeyboardUIMode` 0). The M1 GUI gate (REF-020 holdout, full suite on `cdb56bd`, results PR, closures) stays with the M1 coordinator. Until M1's exit reads passed: at most 3 live M2 writers + 1 reviewer, no GUI-dependent M2 acceptance work, and at most 3 native builds on the dev Mac across both coordinators.
+
+**Why:** the M1 retrospectives attribute most lost time to the single relayed GUI path, host outages only the user could fix, long-lived high-cost sessions and evidence over-production; these rules keep the safety gates and remove that overhead.
+

@@ -51,3 +51,23 @@ How to decide who handles what.
 5. **Bounded parallelism** — at most four live writer sessions plus coordinator and one reviewer, counting nested agents; fewer when no independent work. One worktree/session/branch/PR per writing unit, fresh main unless explicitly dependent.
 6. **Anticipate downstream questions.** Pair architecture options with validation criteria, risks, and uncertainty-retiring experiments.
 7. **No auto-pickup** — issue labels are informational. Work starts only within the named user-authorized milestone; stop at its exit and produce the next prompt, never auto-start it.
+
+## Milestone orchestration (M2 onward)
+
+Adopted from the [M1 retrospectives](../docs/planning/retrospectives/m1.md) and the user's 2026-10-05/06 decisions (`decisions.md`). The named milestone kickoff remains authoritative where it is more specific.
+
+| Topic | Rule |
+|---|---|
+| Unit of work | One **fresh** session per PR unit (worktree, branch, PR), ending at merge. Long-lived lanes don't pick up model or process changes, so don't keep them. `create_pull_request` from that session (never `gh pr create`). |
+| Model and effort | Chosen per unit. High-capability: durability, persistence, recovery, source immutability, concurrency, decode/time-map, clock/alignment acceptance, render-path correctness, and the reviewer of those PRs. Mid-tier (medium effort): routine UI/layout, test harness, docs, exit write-ups. Fast: running tests, collecting xcresult evidence, log/benchmark parsing, triage. Never lower review rigor for safety-critical changes. |
+| Budget | At most 4 live writer sessions + coordinator + 1 independent reviewer, counting nested agents, read-only task agents and review-fix rounds. Writer children never spawn writers. At most 3 native builds on a host, `-jobs 4` each. |
+| Review | One independent reviewer per PR, reviewing diffs, CI and the author's attached evidence. **Reviewers never run UI tests or take the GUI lock.** |
+| GUI runs | Build on the dev Mac, run on the Mac mini under the self-serve per-host lock ([skill](skills/gui-lock-mac-mini/SKILL.md)). Lanes acquire/release the lock themselves and post results on their PR; the coordinator sees results and intervenes only on stale locks. Never GUI on the user's main working Mac. |
+| GUI timebox | 3 failed GUI rounds on one PR → Lead (design decision or follow-up issue). |
+| Regression runner | A named lane, **Regression runner**, started fresh (fast model) for each capped full UI run: build once, shard by test class across GUI hosts, full `scripts/test.sh` on the same SHA, record SHA/hosts/shard map/counts/xcresults. Any failure is triaged and filed immediately; merges in that area freeze until understood. |
+| Notifications | `notify_on_idle: "once"` per child. Children message the coordinator only for handoff, needs_input or error. No "Waiting…" turns. |
+| Issue closure | Close each required issue as soon as its acceptance proof merges, with a closure-proof comment (Lead; [skill](skills/milestone-exit-record/SKILL.md)). |
+| Essential accessibility | Every UI PR checks its changed surfaces (keyboard path, AX audits without `.contrast` except on blocked/recovery surfaces, legible blocked/recovery states, no colour-only or drag-only state). A failure blocks the PR. Broad checks are M5 / WW-053. |
+| Evidence budget | One short section per gate; no screenshots or crops unless a finding cites them. |
+| User asks | One consolidated preflight ask ([skill](skills/kickoff-preflight/SKILL.md)) and one consolidated ask before each away window. |
+

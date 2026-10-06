@@ -15,6 +15,7 @@
 - `.squad/decisions.md` — the shared decision log all agents read (canonical, merged)
 - `.squad/decisions/inbox/` — decision drop-box (agents write here, I merge)
 - Cross-agent context propagation — when one agent's decision affects another
+- **The milestone exit-record template** (`.squad/skills/milestone-exit-record`): the record is written once, after the last P0 merges, at most 250 lines, with no placeholders; closure-proof comments use the same skill
 - Decision archival — **HARD GATE**: enforce two-tier ceiling on decisions.md before every merge:
   - **Tier 1 (30-day):** If >20KB, archive entries older than 30 days
   - **Tier 2 (7-day):** If still >50KB after Tier 1, archive entries older than 7 days
