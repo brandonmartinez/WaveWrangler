@@ -201,8 +201,9 @@ public enum LibraryMerge {
 
     /// User edits (`QueuedLibraryEdits.missingChanges`) plus the recorded observations a version may carry: a
     /// newer recorded show save, or an unavailable note, that `result` doesn't have.
-    static func providerChangesMissing(base: LibraryModel, version: LibraryModel, in result: LibraryModel) -> [String] {
-        var missing = QueuedLibraryEdits.missingChanges(base: base, mine: version, in: result)
+    static func providerChangesMissing(base: LibraryModel, version: LibraryModel, in result: LibraryModel,
+                                       countingCopies: Bool = false) -> [String] {
+        var missing = QueuedLibraryEdits.missingChanges(base: base, mine: version, in: result, countingCopies: countingCopies)
         let baseEntries = Dictionary(base.entries.map { ($0.showID, $0) }, uniquingKeysWith: { first, _ in first })
         let resultEntries = Dictionary(result.entries.map { ($0.showID, $0) }, uniquingKeysWith: { first, _ in first })
         for entry in version.entries {
@@ -232,9 +233,10 @@ public enum LibraryMerge {
                       let kept = combinedEntries[entry.showID], kept.alias != alias else { return nil }
                 return "“\(kept.alias ?? kept.lastKnownTitle)” is named “\(alias)” in the other copy"
             }
-            let others = providerChangesMissing(base: forkBase, version: version, in: combined)
+            // A collection Combine kept as an ST-36 copy is carried (#131); the message already says these
+            // changes come from the other copy.
+            let others = providerChangesMissing(base: forkBase, version: version, in: combined, countingCopies: true)
                 .filter { !$0.hasPrefix("the name of “") }
-                .map { "the other copy's \($0)" }
             return renames + others
         }
         var differences: [String] = []
@@ -251,6 +253,14 @@ public enum LibraryMerge {
         }
         if version.recentShowIDs.count < combined.recentShowIDs.count { differences.append("the other copy has fewer recent items") }
         return differences
+    }
+
+    /// Whether `name` is a suffixed ST-36 copy name of `original` ("<original> (from this Mac)", "… 2)", …).
+    static func isCopyName(_ name: String, of original: String) -> Bool {
+        let prefix = "\(original) (\(thisMacSuffix)"
+        guard name.hasPrefix(prefix), name.hasSuffix(")") else { return false }
+        let number = name.dropFirst(prefix.count).dropLast()
+        return number.isEmpty || (number.first == " " && Int(number.dropFirst()).map { $0 >= 2 } == true)
     }
 
     static func uniqueName(for name: String, existing: Set<String>) -> String {
@@ -366,7 +376,12 @@ public enum QueuedLibraryEdits {
 
     /// Changes `side` made since `base` that are not present in `result` (empty = every change carried).
     /// Used for both sides: this Mac's queued edits and the other Mac's publication.
-    public static func missingChanges(base: LibraryModel, mine side: LibraryModel, in result: LibraryModel) -> [String] {
+    ///
+    /// `countingCopies` (for reporting what a Combine carried, #131): a collection of `side` that `result` keeps
+    /// as an ST-36 suffixed copy with exactly its members in its order counts as carried. Deciding whether a
+    /// version is already included (`LibraryMerge.isIncluded`) leaves it off, so such a version still asks (L4).
+    public static func missingChanges(base: LibraryModel, mine side: LibraryModel, in result: LibraryModel,
+                                      countingCopies: Bool = false) -> [String] {
         var missing: [String] = []
         let baseEntries = index(base.entries, by: \.showID)
         let resultEntries = index(result.entries, by: \.showID)
@@ -383,6 +398,9 @@ public enum QueuedLibraryEdits {
         for collection in side.collections {
             let original = baseCollections[collection.id]
             guard original == nil || collection != original else { continue }
+            if countingCopies, result.collections.contains(where: {
+                $0.id != collection.id && $0.showIDs == collection.showIDs && LibraryMerge.isCopyName($0.name, of: collection.name)
+            }) { continue }
             let carried = result.collections.first { $0.id == collection.id }
                 ?? result.collections.first { $0.name.hasPrefix(collection.name) && Set($0.showIDs) == Set(collection.showIDs) }
             guard let carried else { missing.append("collection “\(collection.name)”"); continue }

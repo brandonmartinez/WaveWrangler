@@ -1,0 +1,49 @@
+{
+  "cleanup": {
+    "at": "2026-10-05T17:56:02Z",
+    "deleted": "<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025",
+    "existedBefore": true,
+    "existsAfterLocally": false
+  },
+  "clockOffsetEnd": {
+    "offsetMs": 27,
+    "rttMs": 60.9
+  },
+  "clockOffsetStart": {
+    "offsetMs": 20,
+    "rttMs": 47.5
+  },
+  "commit": "251d122dc8db378de92a4c15bc12069410864132",
+  "counts": {
+    "library": 1,
+    "recovery": 1,
+    "relink": 1,
+    "show": 1
+  },
+  "finishedAt": "2026-10-05T17:53:54Z",
+  "fixture": "M1-DUR-025",
+  "hosts": {
+    "A": {
+      "cores": "18",
+      "cpu": "Apple M5 Max",
+      "hostname": "Macatron.local",
+      "macOS": "27.0.1 (26A434)"
+    },
+    "B": {
+      "cores": "12",
+      "cpu": "Apple M2 Pro",
+      "hostname": "Macsimus.local",
+      "macOS": "27.0.1 (26A434)"
+    }
+  },
+  "label": "development smoke run (1 case/stratum), before m1-freeze-2; not calibration, not holdout",
+  "probeSha256": "aae31a13b539f443f2a3fdb2e0bcb4d3ea5e6ef2243b380cdc01c8e4db6e9c9b",
+  "split": "calibration",
+  "startedAt": "2026-10-05T17:50:33Z",
+  "trees": {
+    "Packages/WaveWranglerKit/Sources/WWPersistence": "51a6f12962ce104cfbb71c9d4745b7f4b175e82d",
+    "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "b18a940a53d070b02d845b920f73c9e7659c8c51",
+    "scripts/dur025": "HEAD:scripts/dur025"
+  },
+  "trialRoot": "<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025"
+}

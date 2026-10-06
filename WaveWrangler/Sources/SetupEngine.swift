@@ -46,6 +46,16 @@ enum SetupEngineProvider {
     }
 
     private static let store: any DeviceAccessStore = {
+        // UI-test runs keep source access records with their other isolated storage, never the user's.
+        if PersistenceEnvironment.isUITestRun {
+            let url = PersistenceEnvironment.applicationSupport("DeviceAccess").appending(path: "source-access-records.json")
+            #if DEBUG
+            // `-WWUITestResetSourceAccess YES`: start without records, as on a Mac that never granted access.
+            if UserDefaults.standard.bool(forKey: "WWUITestResetSourceAccess") { try? FileManager.default.removeItem(at: url) }
+            #endif
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            return FileDeviceAccessStore(fileURL: url)
+        }
         if let url = try? FileDeviceAccessStore.defaultFileURL() { return FileDeviceAccessStore(fileURL: url) }
         return InMemoryDeviceAccessStore()
     }()

@@ -231,6 +231,7 @@ final class LibraryWindowState {
     }
 
     func open(_ id: ShowID, readOnly: Bool = false) {
+        Responsiveness.beginShowOpen()
         Task {
             do {
                 actionMessage = nil

@@ -1,0 +1,180 @@
+{
+  "launchToLibraryReady": {
+    "n": 100,
+    "p50": 564.074,
+    "p95": 611.64,
+    "max": 659.283,
+    "min": 478.357,
+    "gateMs": 1000,
+    "gatePassed": true,
+    "overGate": 0,
+    "handlerToCommit": {
+      "n": 100,
+      "p50": 564.074,
+      "p95": 611.64,
+      "max": 659.283,
+      "min": 478.357,
+      "gateMs": 1000,
+      "gatePassed": true,
+      "overGate": 0
+    },
+    "threads": {
+      "main": 100
+    },
+    "processes": 100
+  },
+  "firstOpenCold": {
+    "n": 100,
+    "p50": 289.298,
+    "p95": 460.937,
+    "max": 529.879,
+    "min": 180.091,
+    "gateMs": 1000,
+    "gatePassed": true,
+    "overGate": 0,
+    "handlerToCommit": {
+      "n": 100,
+      "p50": 286.308,
+      "p95": 460.109,
+      "max": 529.001,
+      "min": 179.188,
+      "gateMs": 1000,
+      "gatePassed": true,
+      "overGate": 0
+    },
+    "threads": {
+      "main": 100
+    },
+    "processes": 100
+  },
+  "librarySidebarSelection": {
+    "n": 103,
+    "p50": 38.985,
+    "p95": 51.696,
+    "max": 67.454,
+    "min": 18.014,
+    "gateMs": 100,
+    "gatePassed": true,
+    "overGate": 0,
+    "handlerToCommit": {
+      "n": 103,
+      "p50": 36.494,
+      "p95": 49.333,
+      "max": 62.636,
+      "min": 16.077,
+      "gateMs": 100,
+      "gatePassed": true,
+      "overGate": 0
+    },
+    "threads": {
+      "main": 103
+    },
+    "processes": 1
+  },
+  "collectionEdit": {
+    "n": 100,
+    "p50": 13.714,
+    "p95": 17.214,
+    "max": 29.163,
+    "min": 10.65,
+    "gateMs": 100,
+    "gatePassed": true,
+    "overGate": 0,
+    "handlerToCommit": {
+      "n": 100,
+      "p50": 8.612,
+      "p95": 9.237,
+      "max": 20.78,
+      "min": 7.876,
+      "gateMs": 100,
+      "gatePassed": true,
+      "overGate": 0
+    },
+    "threads": {
+      "main": 100
+    },
+    "processes": 1
+  },
+  "episodeSwitch": {
+    "n": 100,
+    "p50": 73.983,
+    "p95": 95.274,
+    "max": 136.168,
+    "min": 43.37,
+    "gateMs": 100,
+    "gatePassed": true,
+    "overGate": 4,
+    "handlerToCommit": {
+      "n": 100,
+      "p50": 68.267,
+      "p95": 78.738,
+      "max": 114.119,
+      "min": 38.779,
+      "gateMs": 100,
+      "gatePassed": true,
+      "overGate": 2
+    },
+    "threads": {
+      "main": 100
+    },
+    "processes": 1
+  },
+  "metadataEdit": {
+    "n": 99,
+    "p50": 17.284,
+    "p95": 25.066,
+    "max": 29.076,
+    "min": 11.406,
+    "gateMs": 100,
+    "gatePassed": true,
+    "overGate": 0,
+    "handlerToCommit": {
+      "n": 99,
+      "p50": 10.58,
+      "p95": 14.89,
+      "max": 15.944,
+      "min": 8.227,
+      "gateMs": 100,
+      "gatePassed": true,
+      "overGate": 0
+    },
+    "threads": {
+      "main": 99
+    },
+    "processes": 1
+  },
+  "warmOpen": {
+    "n": 100,
+    "p50": 208.494,
+    "p95": 224.461,
+    "max": 230.302,
+    "min": 135.169,
+    "gateMs": 1000,
+    "gatePassed": true,
+    "overGate": 0,
+    "handlerToCommit": {
+      "n": 100,
+      "p50": 207.05,
+      "p95": 223.451,
+      "max": 229.399,
+      "min": 134.214,
+      "gateMs": 1000,
+      "gatePassed": true,
+      "overGate": 0
+    },
+    "threads": {
+      "main": 100
+    },
+    "processes": 1
+  },
+  "allInteractions": {
+    "n": 402,
+    "p50": 24.437,
+    "p95": 85.548,
+    "max": 136.168,
+    "min": 10.65,
+    "gateMs": 100,
+    "gatePassed": true,
+    "overGate": 4
+  }
+}
