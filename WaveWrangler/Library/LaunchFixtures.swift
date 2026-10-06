@@ -13,6 +13,8 @@ import WWPersistence
 ///   the library) generated once in the container's temporary directory and reused by later launches, so
 ///   shows open from the library (WW-007 / M1-SCALE-001 native timing).
 /// - `-WWUITestProviderConflicts n` (with `lib100`): n unusable provider conflict versions of the library (#117).
+/// - `-WWUITestLibraryLocation ready|unreachable|permission|conflict|newer`: the real persistent library seeded with
+///   F-LIBLOC in library-level state L1–L5 (T25; see `LibraryLocationFixture`).
 /// - `-WWUITestResetStorage YES` (with `-WWUITestHooks YES`): delete the isolated UI-test storage (library,
 ///   show locations, recovery) so a test starts clean; later launches without it keep the data (relaunch).
 /// - `-WWUITestOpenWithoutShowWindows <folder/name.wwshow>`: see `UITestHooks` (restoration-equivalent open).
@@ -78,6 +80,8 @@ enum LaunchFixtures {
                 defaults.removeObject(forKey: key)
             }
         }
+        // T25 / F-LIBLOC: seed the real persistent library and put it in the requested L1–L5 state.
+        LibraryLocationFixture.applyBeforeLaunch()
         let appearances: [String: NSAppearance.Name] = [
             "aqua": .aqua, "darkAqua": .darkAqua,
             "highContrastAqua": .accessibilityHighContrastAqua, "highContrastDarkAqua": .accessibilityHighContrastDarkAqua,
@@ -114,6 +118,7 @@ enum LaunchFixtures {
         // suite in UI-test runs, so a plain argument doesn't reach them). Allowed values: 1/2/5/10/30 s.
         let delay = defaults.double(forKey: "WWUITestAutosaveDelaySeconds")
         if delay > 0 { AutosavePolicyController.shared.delaySeconds = delay }
+        LibraryLocationFixture.applyAfterLaunch()
         UITestHooks.openWithoutShowWindowsIfRequested()
         guard let name = defaults.string(forKey: "WWUITestOpenShow"), !name.isEmpty else { return }
         let count = max(0, defaults.integer(forKey: "WWUITestShowEpisodes"))

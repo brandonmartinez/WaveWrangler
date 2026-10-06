@@ -115,14 +115,28 @@ public enum LibraryMoveWording {
     public static let existingLibraryCombineText =
         "WaveWrangler can combine your library with the one in this folder. All collections, recent items and library entries from both are kept, including unavailable shows. Your current library is kept as a backup."
 
+    /// Why a folder's existing library can't be used (§5.1 step 6).
+    public enum ExistingLibraryBlock: Sendable, Equatable {
+        case unreachable, needsPermission, newerFormat, damaged
+
+        public var reason: String {
+            switch self {
+            case .damaged: "The library in this folder can't be read, so this version can't add to it."
+            case .unreachable: "WaveWrangler can't reach the library in this folder right now."
+            case .needsPermission: "WaveWrangler needs permission to use the library in this folder."
+            case .newerFormat: "The library in this folder was saved by a newer version of WaveWrangler, so this version can't add to it."
+            }
+        }
+    }
+
     /// Reason shown instead of the combine text when Use That Library is disabled.
     public static func existingLibraryBlockedReason(_ state: LibraryLevelState) -> String? {
         switch state {
         case .ready, .conflict: nil
-        case .damaged: "The library in this folder can't be read, so this version can't add to it."
-        case .unreachable: "WaveWrangler can't reach the library in this folder right now."
-        case .needsPermission: "WaveWrangler needs permission to use the library in this folder."
-        case .newerFormat, .newerFormatNotViewable: "The library in this folder was saved by a newer version of WaveWrangler, so this version can't add to it."
+        case .damaged: ExistingLibraryBlock.damaged.reason
+        case .unreachable: ExistingLibraryBlock.unreachable.reason
+        case .needsPermission: ExistingLibraryBlock.needsPermission.reason
+        case .newerFormat, .newerFormatNotViewable: ExistingLibraryBlock.newerFormat.reason
         }
     }
 }
