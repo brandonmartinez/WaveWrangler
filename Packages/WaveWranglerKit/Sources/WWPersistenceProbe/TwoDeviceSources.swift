@@ -130,12 +130,15 @@ extension Probe {
     /// B holds an unpublished edit (with its C2b edit checkpoint) while the other Mac publishes; then saves.
     func holdSave() async -> Int32 {
         guard let session = openSession(), let ready = args.url("ready"), let go = args.url("go") else { return 2 }
+        let openedEpochMs = epochMs()
         let title = args["title"] ?? "Held \(getpid())"
         do { try await session.edit { try $0.renamingShow(to: title) } } catch { emit(["result": "error", "detail": "edit failed"]); return 3 }
+        let editedEpochMs = epochMs()
         let checkpointed = await session.writeEditCheckpoint()
         FileManager.default.createFile(atPath: ready.path, contents: Data())
         guard waitFor(go, timeout: 900) else { emit(["result": "timeout"]); return 1 }
-        var object: [String: Any] = ["checkpointWritten": checkpointed, "title": title, "host": hostLabel()]
+        var object: [String: Any] = ["checkpointWritten": checkpointed, "title": title, "host": hostLabel(),
+                                     "openedEpochMs": openedEpochMs, "editedEpochMs": editedEpochMs, "goEpochMs": epochMs()]
         switch await session.save() {
         case let .success(receipt):
             object.merge(["result": "saved", "revision": receipt.revision, "publicationID": receipt.publication.publicationID.uuidString]) { $1 }
@@ -154,8 +157,10 @@ extension Probe {
         guard let session = openSession() else { return 2 }
         let title = args["title"] ?? "Unsaved \(getpid())"
         do { try await session.edit { try $0.renamingShow(to: title) } } catch { emit(["result": "error", "detail": "edit failed"]); return 3 }
+        let editedEpochMs = epochMs()
         let written = await session.writeEditCheckpoint()
-        emit(["result": written ? "checkpointed" : "notCheckpointed", "title": title, "status": "\(await session.status.state)", "host": hostLabel()])
+        emit(["result": written ? "checkpointed" : "notCheckpointed", "title": title, "status": "\(await session.status.state)", "host": hostLabel(),
+              "editedEpochMs": editedEpochMs])
         return 0
     }
 

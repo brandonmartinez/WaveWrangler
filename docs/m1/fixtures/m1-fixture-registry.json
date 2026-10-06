@@ -1,11 +1,11 @@
 {
-  "registryVersion": "m1-fixtures-v6-frozen4",
+  "registryVersion": "m1-fixtures-v6-frozen4-deferral1",
   "date": "2026-10-05",
   "generatedBy": "docs/m1/fixtures/generate-registry.py (do not hand-edit; regenerate)",
   "owner": "Lead (protocol); WW-003 informational owner Pipeline",
   "issue": "https://github.com/brandonmartinez/WaveWrangler/issues/5",
   "protocol": "docs/m1/ww-003-fixture-protocol.md",
-  "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and is retained, superseded by m1-freeze-3 and its m1-freeze-4 gate-text revision before any new run) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
+  "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and m1-freeze-4 FAILED 99/100, both retained; M1-DUR-025 deferred by user to #146, post-M4) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
   "freezeRule": "Each family is frozen (generator source hash, recipe, truth, counts, gate) in a dated freeze record before its first holdout case runs. Counts may increase before freeze; never decrease below a frozen gate minimum without explicit Lead/Brandon approval.",
   "freeze": {
     "freezeID": "m1-freeze-1",
@@ -113,6 +113,17 @@
       "scope": "M1-DUR-025 only; supersedes m1-freeze-3 for exactly the fields in recipeFreeze4. Everything else in m1-freeze-3 (counts 10/100 and cells, variants, setup preconditions, 20% cap, first product operations, host labels, seeds, per-case reporting, all other truths) is unchanged. Every other registry entry is unchanged.",
       "whyFreezeNotInterpretation": "Lead judgement: the m1-freeze-3 level-sampling FAIL rule, read literally, fails correct product behaviour in a real timing window: after host A's Combine, host B can receive the combined current library before the provider propagates resolution of a version whose content it already contains, and a read-only sample cannot resolve it. Replacing that FAIL predicate with a narrower one is a change to frozen gate text, not an interpretation, so it is frozen here before any run rather than recorded as a note. The new predicate exempts only objectively decidable, provably included versions (both the product's recorded-fork-base judgement and an independent harness judgement); undecodable, different-library, base-less or not-provably-included versions are never exempt; and the literal-reading count is reported alongside. The exemption is scoped by truth1LibraryClause (in-window only; at settle every unresolved version must be resolved with a backup or surfaced) and uses an independent harness judgement that never reuses product merge code. The other six items (Combine summary check, host-B tree IDs, uncounted split names, drill mechanism, variant assignment, combineOnAThenB rounds) fill gaps in m1-freeze-3 text and are frozen in the same revision for clarity; each is equal to or stricter than m1-freeze-3.",
       "postFreezeRule": "As m1-freeze-3; a run counts only on a clean commit containing this revision's merge."
+    }
+  ],
+  "userDeferrals": [
+    {
+      "date": "2026-10-05",
+      "entry": "M1-DUR-025",
+      "decision": "User scope decision, 2026-10-05 23:10, relayed verbatim by the M1 coordinator: \"let's move finishing the icloud sync discrepancy to after M4. That's a nice feature, but for initial MVP it's overkill. Unless it's blocking, don't remove any protections that are currently in place, but let's disable the tests for them.\" Follow-up (relayed): disable only the two-Mac / live-iCloud tests; keep the fast simulated unit tests.",
+      "receivingIssue": "https://github.com/brandonmartinez/WaveWrangler/issues/146",
+      "milestone": "Future - Optional extensions (after M4)",
+      "effect": "Status and evidence only. The M1-DUR-025 definition (recipe, truth, split, gate) stays as frozen by m1-freeze-4 and is not a new freeze revision; nothing is relabelled. The m1-freeze-2 (95/100; reported in #128, docs/m1/evidence/dur025-two-device.md) and m1-freeze-4 (99/100; reported in #144, docs/m1/evidence/dur025-freeze4-holdout.md) holdout results stay recorded as FAILED. The withdrawn m1-freeze-5 proposal (PR #145, closed unmerged) never took effect. Product protections (provider-conflict detection, L4 -> Combine, backup-before-resolve, notices, honest status) stay in place; their simulated unit tests stay enabled in scripts/test.sh and CI. Any future qualification under #146 needs a new dated freeze revision before its holdout.",
+      "recordedBy": "Lead (WW-003 protocol author); Lead has not seen the user's original message"
     }
   ],
   "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
@@ -275,7 +286,8 @@
       "m1-freeze-1": 58,
       "m1-freeze-2": 0,
       "m1-freeze-3": 0,
-      "m1-freeze-4": 1
+      "m1-freeze-4": 0,
+      "m1-freeze-4, deferred by user to #146": 1
     }
   },
   "fixtures": [
@@ -1220,7 +1232,7 @@
         "unit": "cases (cells: show-conflict 3/30, library-conflict 3/30, cross-machine-relink 2/20, recovery 2/20)"
       },
       "supportedClaimLimits": "iCloud Drive with two Macs on one Apple account (host labels recorded per run), synthetic files only. Sync timing is not controlled and is reported as observed. The headless harness is unsandboxed, so the regrant is an explicit harness-supplied choice, not the powerbox panel (sandboxed grant is M1-REF-020). No OneDrive/Dropbox, network-offline, power-loss or provider-atomicity claim. Neither host is the macOS 26 / 16 GB reference.",
-      "evidenceStatus": "frozen m1-freeze-4 (2026-10-05); m1-freeze-2 holdout FAILED (95/100) and is retained; no m1-freeze-3 or m1-freeze-4 calibration or holdout has run; holdout not yet reported in this registry",
+      "evidenceStatus": "deferred by user to #146 (post-M4); definition frozen at m1-freeze-4 (unchanged); holdouts retained as FAILED: m1-freeze-2 95/100 (relink setup stalls; reported in #128, docs/m1/evidence/dur025-two-device.md), m1-freeze-4 99/100 (show case 15 exceeded the 420 s settle bound; reported in #144, docs/m1/evidence/dur025-freeze4-holdout.md); live two-Mac tests disabled, simulated unit tests kept",
       "cells": [
         {
           "cell": "show-conflict",
@@ -1287,6 +1299,15 @@
         "drill": "The forced-stall drill injects the unreachable fixture as a synthetic source file in the case folder whose name ends in '.nosync' (iCloud Drive does not sync it). It is readable on host A with the expected digest; host B waits 420 s, requests the download (any error recorded), waits 420 s more; the case is setupNotEstablished with diagnostics on both hosts and a refill from 'drill-f3-reserve'. The file is deleted with the trial folder at the end of the run.",
         "variantAssignment": "Deterministic per split: for each cell, a list with the exact variant counts (show 20 simultaneous / 10 staggered; library 20 combineOnAThenB / 10 concurrentCombine) is shuffled with seed sha256('ww-m1-fixture|v1|M1-DUR-025|' + split + '|' + cell + '|variants'). Calibration is fixed: show [simultaneous, simultaneous, staggered]; library [combineOnAThenB, combineOnAThenB, concurrentCombine]; the host-B sampling gate applies to all three calibration library cases. A refilled slot keeps its slot's variant.",
         "combineOnAThenBRounds": "In combineOnAThenB, after host A's Combine round settles, host B does a product load; if B is still in L4, B runs Combine, counted as a round, within the same limit of at most 3 rounds and a 600 s settle per round. If neither an unresolved provider version nor an app-detected L4 is observed on host B within 420 s after the race trigger, the case FAILS (the product phase has started)."
+      },
+      "userDeferral": {
+        "date": "2026-10-05",
+        "entry": "M1-DUR-025",
+        "decision": "User scope decision, 2026-10-05 23:10, relayed verbatim by the M1 coordinator: \"let's move finishing the icloud sync discrepancy to after M4. That's a nice feature, but for initial MVP it's overkill. Unless it's blocking, don't remove any protections that are currently in place, but let's disable the tests for them.\" Follow-up (relayed): disable only the two-Mac / live-iCloud tests; keep the fast simulated unit tests.",
+        "receivingIssue": "https://github.com/brandonmartinez/WaveWrangler/issues/146",
+        "milestone": "Future - Optional extensions (after M4)",
+        "effect": "Status and evidence only. The M1-DUR-025 definition (recipe, truth, split, gate) stays as frozen by m1-freeze-4 and is not a new freeze revision; nothing is relabelled. The m1-freeze-2 (95/100; reported in #128, docs/m1/evidence/dur025-two-device.md) and m1-freeze-4 (99/100; reported in #144, docs/m1/evidence/dur025-freeze4-holdout.md) holdout results stay recorded as FAILED. The withdrawn m1-freeze-5 proposal (PR #145, closed unmerged) never took effect. Product protections (provider-conflict detection, L4 -> Combine, backup-before-resolve, notices, honest status) stay in place; their simulated unit tests stay enabled in scripts/test.sh and CI. Any future qualification under #146 needs a new dated freeze revision before its holdout.",
+        "recordedBy": "Lead (WW-003 protocol author); Lead has not seen the user's original message"
       }
     },
     {

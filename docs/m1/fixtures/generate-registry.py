@@ -431,6 +431,17 @@ FREEZE3 = {
   },
   "postFreezeRule": "As m1-freeze-2: a holdout run counts only on a clean commit containing this revision's merge, runs once, and reports every case (including failures, timeouts, setupNotEstablished and reserve replacements) with complete host labels for both hosts, the commit SHA and harness tree IDs. Calibration ('calibration-f3') is reported separately and never tunes truth, counts or gates. A further change needs a new dated freeze revision; the m1-freeze-2 result stays recorded as failed.",
 }
+DEFERRED_IDS = ("M1-DUR-025",)
+DEFERRED_STATUS = "deferred by user to #146 (post-M4); definition frozen at m1-freeze-4 (unchanged); holdouts retained as FAILED: m1-freeze-2 95/100 (relink setup stalls; reported in #128, docs/m1/evidence/dur025-two-device.md), m1-freeze-4 99/100 (show case 15 exceeded the 420 s settle bound; reported in #144, docs/m1/evidence/dur025-freeze4-holdout.md); live two-Mac tests disabled, simulated unit tests kept"
+USER_DEFERRAL = {
+  "date": "2026-10-05",
+  "entry": "M1-DUR-025",
+  "decision": "User scope decision, 2026-10-05 23:10, relayed verbatim by the M1 coordinator: \"let's move finishing the icloud sync discrepancy to after M4. That's a nice feature, but for initial MVP it's overkill. Unless it's blocking, don't remove any protections that are currently in place, but let's disable the tests for them.\" Follow-up (relayed): disable only the two-Mac / live-iCloud tests; keep the fast simulated unit tests.",
+  "receivingIssue": "https://github.com/brandonmartinez/WaveWrangler/issues/146",
+  "milestone": "Future - Optional extensions (after M4)",
+  "effect": "Status and evidence only. The M1-DUR-025 definition (recipe, truth, split, gate) stays as frozen by m1-freeze-4 and is not a new freeze revision; nothing is relabelled. The m1-freeze-2 (95/100; reported in #128, docs/m1/evidence/dur025-two-device.md) and m1-freeze-4 (99/100; reported in #144, docs/m1/evidence/dur025-freeze4-holdout.md) holdout results stay recorded as FAILED. The withdrawn m1-freeze-5 proposal (PR #145, closed unmerged) never took effect. Product protections (provider-conflict detection, L4 -> Combine, backup-before-resolve, notices, honest status) stay in place; their simulated unit tests stay enabled in scripts/test.sh and CI. Any future qualification under #146 needs a new dated freeze revision before its holdout.",
+  "recordedBy": "Lead (WW-003 protocol author); Lead has not seen the user's original message",
+}
 FREEZE4 = {
   "freezeID": "m1-freeze-4",
   "date": "2026-10-05",
@@ -443,6 +454,10 @@ FREEZE4 = {
 }
 
 def build():
+    for f in F:
+        if f["id"] in DEFERRED_IDS and f["evidenceStatus"] == "not-yet-executed":
+            f["evidenceStatus"] = DEFERRED_STATUS
+            f["userDeferral"] = USER_DEFERRAL
     for f in F:
         if f["id"] in FROZEN4_IDS and f["evidenceStatus"] == "not-yet-executed":
             f["evidenceStatus"] = FROZEN4_STATUS
@@ -472,10 +487,10 @@ def build():
       "ww006LifecycleHoldout": sum(f["split"]["holdout"] for f in F if f.get("countsToward")),
       "showPublicationBoundaries": len(P), "libraryPublicationBoundaries": len(L),
       "perBoundaryHoldoutMinimum": 100,
-      "frozenEntries": sum(1 for f in F if f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS, FROZEN3_STATUS, FROZEN4_STATUS)),
-      "frozenEntriesByRevision": {"m1-freeze-1": sum(1 for f in F if f["evidenceStatus"] == FROZEN_STATUS), "m1-freeze-2": sum(1 for f in F if f["evidenceStatus"] == FROZEN2_STATUS), "m1-freeze-3": sum(1 for f in F if f["evidenceStatus"] == FROZEN3_STATUS), "m1-freeze-4": sum(1 for f in F if f["evidenceStatus"] == FROZEN4_STATUS)},
+      "frozenEntries": sum(1 for f in F if f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS, FROZEN3_STATUS, FROZEN4_STATUS, DEFERRED_STATUS)),
+      "frozenEntriesByRevision": {"m1-freeze-1": sum(1 for f in F if f["evidenceStatus"] == FROZEN_STATUS), "m1-freeze-2": sum(1 for f in F if f["evidenceStatus"] == FROZEN2_STATUS), "m1-freeze-3": sum(1 for f in F if f["evidenceStatus"] == FROZEN3_STATUS), "m1-freeze-4": sum(1 for f in F if f["evidenceStatus"] == FROZEN4_STATUS), "m1-freeze-4, deferred by user to #146": sum(1 for f in F if f["evidenceStatus"] == DEFERRED_STATUS)},
     }
-    assert all(f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS, FROZEN3_STATUS, FROZEN4_STATUS) for f in F if f["permission"]["class"] in FROZEN_CLASSES), "unfrozen authorized entry"
+    assert all(f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS, FROZEN3_STATUS, FROZEN4_STATUS, DEFERRED_STATUS) for f in F if f["permission"]["class"] in FROZEN_CLASSES), "unfrozen authorized entry"
     d25 = next(f for f in F if f["id"] == "M1-DUR-025")
     for c in d25["cells"]:
         if "variantsFreeze3" in c:
@@ -489,16 +504,17 @@ def build():
     d6 = next(f for f in F if f["id"] == "M1-DUR-006")
     assert d6["split"]["holdout"] == 100 * sum(len(b["paths"]) for b in P), "DUR-006 cells"
     return {
-     "registryVersion": "m1-fixtures-v6-frozen4",
+     "registryVersion": "m1-fixtures-v6-frozen4-deferral1",
      "date": "2026-10-05",
      "generatedBy": "docs/m1/fixtures/generate-registry.py (do not hand-edit; regenerate)",
      "owner": "Lead (protocol); WW-003 informational owner Pipeline",
      "issue": "https://github.com/brandonmartinez/WaveWrangler/issues/5",
      "protocol": "docs/m1/ww-003-fixture-protocol.md",
-     "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and is retained, superseded by m1-freeze-3 and its m1-freeze-4 gate-text revision before any new run) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
+     "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and m1-freeze-4 FAILED 99/100, both retained; M1-DUR-025 deferred by user to #146, post-M4) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
      "freezeRule": "Each family is frozen (generator source hash, recipe, truth, counts, gate) in a dated freeze record before its first holdout case runs. Counts may increase before freeze; never decrease below a frozen gate minimum without explicit Lead/Brandon approval.",
      "freeze": FREEZE,
      "freezeRevisions": [FREEZE2, FREEZE3, FREEZE4],
+     "userDeferrals": [USER_DEFERRAL],
      "seedDerivation": SEED,
      "claimedHost": "macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), 18-core Apple silicon, 128 GiB -- not the macOS 26/16 GB reference",
      "userGrants20261004": GRANT,

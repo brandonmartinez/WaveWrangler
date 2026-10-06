@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """M1-DUR-025 two-device iCloud trial (headless on both Macs; synthetic documents only).
 
-Device A = this Mac, device B = the Mac mini (same iCloud account), driven over SSH. Every operation is a
-`wwpersist-probe` command (WWPersistence code under test); this script only schedules, observes and judges.
-No GUI, no app launches, nothing outside the trial folder and the per-run device-local state folders.
+Recipe: registry M1-DUR-025 `recipeFreeze3` / `variantsFreeze3` (m1-freeze-3, protocol §4.3) with the
+level-sampling FAIL rule of `recipeFreeze4` (m1-freeze-4, protocol §4.4). Host A = this Mac, host B = the other
+Mac (same Apple account), driven over SSH. Every operation is a `wwpersist-probe` command (the WWPersistence /
+WWSources code under test); this script only schedules, observes and judges. No GUI, no app launches, nothing
+outside the trial folder and the per-run device-local state folders. Evidence names hosts only as host A / host B.
 
 Usage:
-  WW_DUR025_REMOTE=user@host scripts/dur025/run.py --split calibration|holdout [--remote user@host] [--counts show=N,library=N,relink=N,recovery=N]
-                        [--workers N] [--keep] [--cleanup-only]
+  WW_DUR025_REMOTE=user@host scripts/dur025/run.py --split calibration|holdout|drill|dev [--remote user@host]
+      [--counts show=N,library=N,relink=N,recovery=N] [--workers N] [--keep] [--cleanup-only]
 
-Seeds follow docs/m1/ww-003-fixture-protocol.md:
-  sha256("ww-m1-fixture|v1|M1-DUR-025|" + split + "|" + caseIndex), first 8 bytes big-endian.
-Results: .build/dur025/<split>/results.jsonl (one line per case) and run-record.json (commit, trees, hosts,
-clock offsets, counts, cleanup record).
+Splits: calibration → 'calibration-f3', holdout → 'holdout-f3', drill → 'drill-f3' (the forced setupNotEstablished
+drill: one relink slot with an injected unreachable '.nosync' fixture). Reserve refills use '<split>-reserve'.
+Seeds: sha256("ww-m1-fixture|v1|M1-DUR-025|" + split + "|" + caseIndex), first 8 bytes big-endian.
+Results: .build/dur025/<split>/results.jsonl (one line per case) and run-record.json.
 """
 import argparse
 import concurrent.futures as cf
@@ -39,18 +41,33 @@ SSH_CONTROL = "/tmp/ww-dur025-%C"
 SSH_OPTIONS = ["ssh", "-o", "BatchMode=yes", "-o", "ControlMaster=auto", "-o", f"ControlPath={SSH_CONTROL}",
                "-o", "ControlPersist=1800", "-o", "ServerAliveInterval=15"]
 SSH = []  # SSH_OPTIONS + [remote], set in main()
-# m1-freeze-2 cells (registry M1-DUR-025): calibration 10 / holdout 100.
+SPLITS = {"calibration": "calibration-f3", "holdout": "holdout-f3", "drill": "drill-f3",
+          "dev": "dev-f3"}   # dev: disclosed, uncounted mechanics check (Lead/coordinator ruling), never a frozen split
+# Frozen cells (registry M1-DUR-025): calibration 10 / holdout 100.
 DEFAULT_COUNTS = {"calibration": {"show": 3, "library": 3, "relink": 2, "recovery": 2},
-                  "holdout": {"show": 30, "library": 30, "relink": 20, "recovery": 20}}
+                  "holdout": {"show": 30, "library": 30, "relink": 20, "recovery": 20},
+                  "drill": {"relink": 1},
+                  "dev": {"show": 1, "library": 1, "relink": 1, "recovery": 1}}
+DEV_VARIANTS = {"show": ["staggered"], "library": ["concurrentCombine"], "relink": ["moved"], "recovery": ["aKilled"]}
 CELL_NAMES = {"show": "show-conflict", "library": "library-conflict", "relink": "cross-machine-relink", "recovery": "recovery"}
 STRATA = ["show", "library", "relink", "recovery"]
 SETTLE_TIMEOUT = 420
 AWAIT_TIMEOUT = 420
+SETUP_WAIT = 420            # per fixture wait on host B; one download-request retry of the same length
+ROUND_SETTLE = 600          # concurrentCombine / combine rounds
+MAX_ROUNDS = 3
+SAMPLE_INTERVAL = 2.0       # level samples: frozen as at least every 5 s
+SAMPLE_MAX_GAP_MS = 5000
+SNE_CAP_FRACTION = 0.2      # setupNotEstablished above 20% of a cell's frozen count → cell FAILS as incomplete
 # Shared trigger time with a small seeded skew between the two hosts (the publications race).
 RACE_SKEW_MS = [0, 0, 25, 50, 100, 250]
 LIBRARY_EDITS = ["collection", "alias", "order", "recent"]
 RELINK_VARIANTS = ["same", "moved", "replaced"]
 RECOVERY_VARIANTS = ["bSaves", "bRelaunches", "aKilled"]
+VARIANTS_FREEZE3 = {"show": {"simultaneous": 20, "staggered": 10}, "library": {"combineOnAThenB": 20, "concurrentCombine": 10}}
+CALIBRATION_VARIANTS = {"show": ["simultaneous", "simultaneous", "staggered"],
+                        "library": ["combineOnAThenB", "combineOnAThenB", "concurrentCombine"]}
+SETUP_LOCK = threading.Lock()   # setupConcurrency: at most one case per run in its setup phase
 
 
 def now_ms():
@@ -60,6 +77,32 @@ def now_ms():
 def seed_for(split, index):
     digest = hashlib.sha256(f"ww-m1-fixture|v1|{FIXTURE}|{split}|{index}".encode()).digest()
     return int.from_bytes(digest[:8], "big")
+
+
+def redact(text):
+    """Evidence privacy: no home paths (the trial folder is named by its iCloud Drive location)."""
+    return text.replace(TRIAL_ROOT, "<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025").replace(HOME, "<home>")
+
+
+def variant_plan(split, cell, count):
+    if split.startswith("dev"):
+        return DEV_VARIANTS[cell][:count]
+    if split.startswith("calibration") and cell in CALIBRATION_VARIANTS:
+        return CALIBRATION_VARIANTS[cell][:count]
+    if cell in VARIANTS_FREEZE3:
+        names = [v for v, n in VARIANTS_FREEZE3[cell].items() for _ in range(n)]
+        random.Random(seed_for(split, f"{cell}|variants")).shuffle(names)
+        return (names * (count // len(names) + 1))[:count]
+    names = RELINK_VARIANTS if cell == "relink" else RECOVERY_VARIANTS
+    return [names[i % len(names)] for i in range(count)]
+
+
+SSH_RETRIES = 4
+
+
+def ssh_connection_failed(device, out):
+    """An SSH-level failure (ssh exits 255: refused session, auth or connection), not the remote command's result."""
+    return device == "B" and out.returncode == 255 and not any(l.startswith("{") for l in out.stdout.splitlines())
 
 
 class Devices:
@@ -72,22 +115,37 @@ class Devices:
         self.offset_ms = 0  # B clock − A clock
 
     def run(self, device, args, timeout=900):
-        """Runs one probe command on device 'A' or 'B'; returns its JSON line (or a harness error dict)."""
-        cmd = [self.local_probe] + args if device == "A" else SSH + [shlex.join([self.remote_probe] + args)]
-        try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            return {"result": "harnessTimeout", "device": device, "args": args}
+        """Runs one probe command on host 'A' or 'B'; returns its JSON line (or a harness error dict)."""
+        if device == "A":
+            cmd, env = [self.local_probe] + args, dict(os.environ, WW_HOST_PSEUDONYM="A")
+        else:
+            cmd, env = SSH + ["WW_HOST_PSEUDONYM=B " + shlex.join([self.remote_probe] + args)], None
+        out, retries = None, 0
+        for retries in range(SSH_RETRIES + 1):
+            try:
+                out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+            except subprocess.TimeoutExpired:
+                return {"result": "harnessTimeout", "device": device, "args": args}
+            if not ssh_connection_failed(device, out):
+                break
+            time.sleep(2 * (retries + 1))
         lines = [l for l in out.stdout.splitlines() if l.startswith("{")]
         if not lines:
             return {"result": "noOutput", "device": device, "status": out.returncode, "stderr": out.stderr[-400:]}
         data = json.loads(lines[-1])
         data["_status"] = out.returncode
+        if retries:
+            data["_sshRetries"] = retries
         return data
 
     def shell(self, device, script, timeout=120):
         cmd = ["bash", "-c", script] if device == "A" else SSH + [script]
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        for attempt in range(SSH_RETRIES + 1):
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            if not ssh_connection_failed(device, out):
+                break
+            time.sleep(2 * (attempt + 1))
+        return out
 
     def measure_offset(self, samples=9):
         best = None
@@ -104,8 +162,126 @@ class Devices:
     def b_time(self, a_epoch_ms):
         return a_epoch_ms + self.offset_ms
 
+    def a_time(self, host, epoch_ms):
+        """A host's wall-clock ms in A's clock."""
+        if epoch_ms is None:
+            return None
+        return epoch_ms - self.offset_ms if host == "B" else epoch_ms
+
     def state(self, device, case_dir):
         return str(self.local_state / case_dir) if device == "A" else f"{self.remote_state}/{case_dir}"
+
+
+class Case:
+    """One slot (or reserve refill): its seed, variant, setup record and first product operation."""
+
+    def __init__(self, split, index, cell, variant, slot=None, reserve_index=None, inject_unreachable=False):
+        self.split, self.index, self.cell, self.variant = split, index, cell, variant
+        self.key = f"{split}-{index}"
+        self.slot = index if slot is None else slot
+        self.reserve_index = reserve_index
+        self.inject_unreachable = inject_unreachable
+        self.rng = random.Random(seed_for(split, index))
+        self.folder = f"{TRIAL_ROOT}/{split}/{cell}/case-{index}"
+        self.setup = {"fixtures": [], "waits": [], "diagnostics": [], "downloadRequests": []}
+        self.first_product_op = None
+
+    def product_starts(self, dev, host, epoch_ms, what):
+        """Records the first product operation (host clocks plus A's clock)."""
+        if self.first_product_op is None and epoch_ms is not None:
+            self.first_product_op = {"host": host, "what": what, "hostEpochMs": epoch_ms, "aClockMs": dev.a_time(host, epoch_ms)}
+
+
+# ---------------------------------------------------------------- setup establishment (m1-freeze-3)
+
+def fixture_matches(fixture, state):
+    if fixture["kind"] == "publication":
+        return state.get("publicationID") == fixture["publicationID"]
+    return state.get("sha256") == fixture["sha256"]
+
+
+def fixture_observed_on_b(dev, fixture, timeout):
+    """Bounded wait on host B for one setup fixture (show or library publication ID, or source digest). Each poll
+    also asks iCloud for the file, as in m1-freeze-2."""
+    start = now_ms()
+    while now_ms() - start < timeout * 1000:
+        dev.run("B", ["await", "--file", fixture["path"], "--exists", "1", "--timeout", "5"], timeout=60)
+        if fixture_matches(fixture, dev.run("B", ["fixture-state", "--file", fixture["path"]])):
+            return True
+        time.sleep(1)
+    return False
+
+
+def fixture_diagnostics(dev, case, fixture, attempt):
+    states = {h: dev.run(h, ["fixture-state", "--file", fixture["path"]]) for h in ("A", "B")}
+    for state in states.values():
+        state.pop("_status", None)
+    entry = {"fixture": fixture["name"], "attempt": attempt, "aClockMs": now_ms(), "A": states["A"], "B": states["B"],
+             "aSetupPublication": fixture.get("aPublication")}
+    case.setup["diagnostics"].append(entry)
+    return entry
+
+
+def classify_stall(fixture, diag):
+    """setupNotEstablished only for a fixture that has NOT ARRIVED on host B while host A holds it as expected
+    after a successful setup publication; every other setup outcome is a case FAILURE (freeze-3)."""
+    a, b = diag["A"], diag["B"]
+    for host, state in (("A", a), ("B", b)):
+        if "present" not in state:   # the observer itself failed (e.g. SSH): never classified as a setup outcome
+            return "harnessError", f"host {host} diagnostics unavailable ({state.get('result')}, status {state.get('status')})"
+    expected_ok = lambda s: fixture_matches(fixture, s)  # noqa: E731
+    a_ok = a.get("present") and not a.get("dataless") and expected_ok(a) and fixture.get("aPublicationOK", False)
+    b_not_arrived = (not b.get("present")) or bool(b.get("dataless"))
+    if b.get("present") and not b.get("dataless") and not expected_ok(b):
+        return "failure", "fixture present on host B with an unexpected digest or publication ID"
+    if not a_ok:
+        return "failure", "fixture not readable on host A as expected, or host A's setup publication did not complete"
+    if b_not_arrived:
+        return "setupNotEstablished", "fixture has not arrived on host B"
+    return "failure", "fixture present on host B but not observed as expected within the bound"
+
+
+def establish(dev, case, fixtures):
+    """Each fixture: wait ≤420 s on host B; on expiry host B requests the download and waits ≤420 s once more."""
+    for fixture in fixtures:
+        case.setup["fixtures"].append({k: v for k, v in fixture.items() if k != "aPublication"})
+        diag = None
+        for attempt in (1, 2):
+            start = now_ms()
+            observed = fixture_observed_on_b(dev, fixture, SETUP_WAIT)
+            end = now_ms()
+            case.setup["waits"].append({"fixture": fixture["name"], "attempt": attempt, "startAClockMs": start,
+                                        "startBClockMs": dev.b_time(start), "observed": observed, "endAClockMs": end, "waitedMs": end - start,
+                                        "expiryAClockMs": None if observed else end, "expiryBClockMs": None if observed else dev.b_time(end)})
+            if observed:
+                break
+            diag = fixture_diagnostics(dev, case, fixture, attempt)
+            if attempt == 1:
+                request = dev.run("B", ["request-download", "--file", fixture["path"]])
+                request.pop("_status", None)
+                case.setup["downloadRequests"].append({"fixture": fixture["name"], **request})
+        else:
+            outcome, reason = classify_stall(fixture, diag)
+            return {"outcome": outcome, "reason": reason, "fixture": fixture["name"]}
+    return {"outcome": "established"}
+
+
+def setup_wait_order_ok(case):
+    """Every setup wait's expiry strictly before the first product operation (A's clock)."""
+    first = (case.first_product_op or {}).get("aClockMs")
+    expiries = [w["expiryAClockMs"] for w in case.setup["waits"] if w["expiryAClockMs"] is not None]
+    return first is None or all(e < first for e in expiries)
+
+
+def source_writes(dev, expected):
+    """Zero source writes (truth 5): every present, materialized source on each host has A's generated digest."""
+    found = {}
+    for host in ("A", "B"):
+        for path, sha in expected.items():
+            state = dev.run(host, ["fixture-state", "--file", path])
+            if state.get("present") and not state.get("dataless"):
+                found.setdefault(host, {})[redact(path)] = state.get("sha256") == sha
+    return all(ok for per in found.values() for ok in per.values()), found
 
 
 def settle(dev, inspect_args, key, timeout=SETTLE_TIMEOUT, stable_polls=3, interval=4):
@@ -200,70 +376,6 @@ def version_counts(a, b):
                   "other": b.get("otherVersions")}}
 
 
-# ---------------------------------------------------------------- show-conflict
-
-def case_show(dev, split, index, rng):
-    """Both hosts hold revision r (synced, verified); each publishes a different seeded edit at a shared trigger
-    time; judged at the settle point under protocol §4.2.1."""
-    folder = f"{TRIAL_ROOT}/{split}/show/case-{index}"
-    path = f"{folder}/Show.wwshow"
-    os.makedirs(folder, exist_ok=True)
-    ra, rb = dev.state("A", f"show-{index}") + "/recovery", dev.state("B", f"show-{index}") + "/recovery"
-    created = dev.run("A", ["create", "--file", path, "--seed", str(rng.randrange(1, 10**6)), "--recovery", ra])
-    t_create = now_ms()
-    if created.get("result") != "saved":
-        return {"verdict": "harnessError", "step": "create", "detail": created}
-    seen = await_pub(dev, "B", path, created["publicationID"])
-    if seen.get("result") != "observed":
-        return {"verdict": "fail", "reason": "setup did not sync within the bound", "step": "awaitB", "detail": seen}
-    skew, first, t0, ta, tb = race_times(rng)
-    title = {"A": f"A edit {rng.randrange(10**6)} case-{index}", "B": f"B edit {rng.randrange(10**6)} case-{index}"}
-    with cf.ThreadPoolExecutor(2) as pool:
-        fa = pool.submit(dev.run, "A", ["save", "--file", path, "--title", title["A"], "--recovery", ra, "--at-epoch-ms", str(ta)])
-        fb = pool.submit(dev.run, "B", ["save", "--file", path, "--title", title["B"], "--recovery", rb, "--at-epoch-ms", str(dev.b_time(tb))])
-        saves = {"A": fa.result(), "B": fb.result()}
-    a, b, settle_ms, settled, surfaced = settle_tracking(
-        dev, ["inspect", "--file", path], show_key, lambda r: int(r.get("statusProviderConflicts") or 0), t0)
-    reports = {"A": a, "B": b}
-    acked = [h for h in ("A", "B") if saves[h].get("result") == "saved"]
-    cur = {h: reports[h].get("current", {}) for h in ("A", "B")}
-    # (1) one current publication, byte-identical and valid on both hosts
-    one_current = (settled and all(cur[h].get("outcome") == "editable" for h in cur)
-                   and reports["A"].get("sha256") and reports["A"].get("sha256") == reports["B"].get("sha256"))
-    winner = next((h for h in ("A", "B") if cur["A"].get("publicationID") == saves[h].get("publicationID")), None)
-    # (2) every other local ack: app-detected (conflict + candidate) or provider-surfaced (nonzero status count)
-    paths, ok2 = {}, True
-    for host in ("A", "B"):
-        result = saves[host]
-        if host == winner:
-            paths[host] = "current"
-            continue
-        if result.get("result") == "conflict":
-            candidate = dev.run(host, ["open", "--file", result.get("preservedCandidate", "-")]) if result.get("preservedCandidate") else {}
-            paths[host] = "appDetected" if candidate.get("title") == title[host] else "appDetectedCandidateMissing"
-            ok2 &= paths[host] == "appDetected"
-        elif result.get("result") == "saved":
-            in_version = any(v.get("title") == title[host] for r in reports.values() for v in r.get("unresolvedConflictVersions", []))
-            # (3) the losing host must show the conflict indication itself after settle
-            surfaced_on_loser = int(reports[host].get("statusProviderConflicts") or 0) > 0
-            paths[host] = "providerSurfaced" if in_version and surfaced_on_loser else "silentLastWriterWins" if not in_version else "providerVersionNotSurfacedOnLoser"
-            ok2 &= paths[host] == "providerSurfaced"
-        else:
-            paths[host] = f"noLocalAck:{result.get('result')}"
-            ok2 = False
-    lost = [h for h in ("A", "B") if paths.get(h) not in ("current", "appDetected", "providerSurfaced")]
-    ok = bool(one_current) and winner is not None and ok2 and not lost
-    return {"verdict": "pass" if ok else "fail", "skewMs": skew, "first": first,
-            "localAcks": acked, "saveResults": {h: saves[h].get("result") for h in saves},
-            "detectionPath": paths, "winner": winner, "oneCurrentByteIdentical": bool(one_current),
-            "settled": settled, "timeToSettleMs": settle_ms, "timeToSurfacingMs": surfaced,
-            "versionCounts": version_counts(a, b),
-            "conflictVersionComputers": sorted({v.get("savingComputer", "") for r in reports.values() for v in r.get("unresolvedConflictVersions", [])}),
-            "siblings": {h: [s.get("name") for s in reports[h].get("siblings", [])] for h in reports},
-            "propagationAtoBMs": propagation_ms(dev, t_create, seen)}
-
-
-# ---------------------------------------------------------------- library-conflict
 
 def lib_args(dev, device, index, extra):
     base = dev.state(device, f"library-{index}")
@@ -315,174 +427,10 @@ def edit_presence(model, edit):
     return "current" if edit["showID"] in model.get("recents", []) else None
 
 
-def case_library(dev, split, index, rng):
-    """Both hosts use one synthetic library in the trial folder (same libraryID, synced and verified); each makes
-    a different seeded organizing edit at a shared trigger time. §4.2.1 + truth 2: L4 → Combine on both hosts."""
-    folder = f"{TRIAL_ROOT}/{split}/library/case-{index}"
-    libfile = f"{folder}/Library.wwlibrary"
-    os.makedirs(folder, exist_ok=True)
-    moved = dev.run("A", lib_args(dev, "A", index, ["--seed-fixture", "1", "--move-to", folder]))
-    t_move = now_ms()
-    setup_report = dev.run("A", ["lib-inspect", "--file", libfile])
-    pub = setup_report.get("current", {}).get("publicationID")
-    if not pub:
-        return {"verdict": "harnessError", "step": "setupA", "detail": moved}
-    setup = setup_report["current"]["model"]
-    seen = poll_lib(dev, "B", libfile, lambda r: r.get("current", {}).get("publicationID") == pub)
-    if seen.get("result") != "observed":
-        return {"verdict": "fail", "reason": "setup did not sync within the bound", "step": "awaitB"}
-    used = dev.run("B", lib_args(dev, "B", index, ["--use", folder]))
-    pub_b = dev.run("B", ["lib-inspect", "--file", libfile]).get("current", {}).get("publicationID")
-    if pub_b != pub:
-        seen_a = poll_lib(dev, "A", libfile, lambda r: r.get("current", {}).get("publicationID") == pub_b)
-        if seen_a.get("result") != "observed":
-            return {"verdict": "fail", "reason": "setup did not sync within the bound", "step": "awaitA", "use": used.get("use")}
-    kinds = {"A": rng.choice(LIBRARY_EDITS), "B": rng.choice(LIBRARY_EDITS)}
-    args_a, edit_a = library_edit("A", kinds["A"], index, setup)
-    args_b, edit_b = library_edit("B", kinds["B"], index, setup)
-    edits = {"A": edit_a, "B": edit_b}
-    skew, first, t0, ta, tb = race_times(rng)
-    with cf.ThreadPoolExecutor(2) as pool:
-        fa = pool.submit(dev.run, "A", lib_args(dev, "A", index, args_a + ["--at-epoch-ms", str(ta)]))
-        fb = pool.submit(dev.run, "B", lib_args(dev, "B", index, args_b + ["--at-epoch-ms", str(dev.b_time(tb))]))
-        updates = {"A": fa.result(), "B": fb.result()}
-    a, b, settle_ms, settled, surfaced_versions = settle_tracking(
-        dev, ["lib-inspect", "--file", libfile], lib_key, lambda r: len(r.get("unresolvedConflictVersions", [])), t0)
-    versions_seen = version_counts_lib(a, b)
-    # Each host opens the library in turn (as the user would); a host in L4 resolves it with Combine.
-    # Truth 4 / §4.2.1(4), observed directly: a host that holds unresolved conflict versions when it opens the
-    # library must open in L4, or have every one of them resolved (backed up) or reported as unusable.
-    combine, timings, truth4 = {}, {}, {}
-    for host in ("A", "B"):
-        before = dev.run(host, ["lib-inspect", "--file", libfile])
-        held = len(before.get("unresolvedConflictVersions", []))
-        combine[host] = dev.run(host, lib_args(dev, host, index, ["--combine", "1"]))
-        timings[host] = now_ms() - t0
-        after = dev.run(host, ["lib-inspect", "--file", libfile])
-        in_l4 = combine[host].get("levelAfterLoad") == "changedElsewhere"
-        accounted = len(after.get("unresolvedConflictVersions", [])) <= int(combine[host].get("unusableProviderConflicts") or 0)
-        truth4[host] = {"heldOnOpen": held, "openedInL4": in_l4, "ok": held == 0 or in_l4 or accounted}
-        settle_tracking(dev, ["lib-inspect", "--file", libfile], lib_key, lambda r: 0, t0)
-    finals = {h: dev.run(h, lib_args(dev, h, index, [])) for h in ("A", "B")}
-    a3, b3, final_ms, settled3, _ = settle_tracking(dev, ["lib-inspect", "--file", libfile], lib_key, lambda r: 0, t0)
-    cur = {"A": a3.get("current", {}), "B": b3.get("current", {})}
-    one_current = settled3 and all(c.get("outcome") == "valid" for c in cur.values()) and cur["A"].get("sha256") == cur["B"].get("sha256")
-    presence = {h: {host: edit_presence(cur[host].get("model", {}), edits[h]) for host in ("A", "B")} for h in ("A", "B")}
-    both_present_on_both = all(all(p in ("current", "copy") for p in presence[h].values()) for h in presence)
-    app_detected = {h: str(updates[h].get("update", "")).startswith("failed") for h in ("A", "B")}
-    l4_seen = {h: combine[h].get("levelAfterLoad") == "changedElsewhere" for h in ("A", "B")}
-    provider_versions = any(r.get("unresolvedConflictVersions") for r in (a, b))
-    truth4_ok = all(t["ok"] for t in truth4.values())
-    backups = {h: combine[h].get("conflictBackups", 0) for h in ("A", "B")}
-    resolved_left = sum(len(r.get("unresolvedConflictVersions", [])) for r in (a3, b3))
-    finals_ready = all(finals[h].get("levelState") == "ready" for h in finals)
-    acked = [h for h in ("A", "B") if str(updates[h].get("update", "")).startswith("published")]
-    conflict_happened = provider_versions or any(app_detected.values()) or len(acked) > 1
-    detected = any(l4_seen.values()) or any(app_detected.values())
-    ok = (one_current and both_present_on_both and finals_ready and resolved_left == 0 and truth4_ok
-          and (not conflict_happened or detected)
-          and (not provider_versions or sum(backups.values()) > 0))
-    path = ("appDetected" if any(app_detected.values()) else "providerL4" if any(l4_seen.values()) else
-            "noConflictObserved" if not conflict_happened else "undetected")
-    return {"verdict": "pass" if ok else "fail", "skewMs": skew, "first": first, "edits": {h: edits[h]["kind"] for h in edits},
-            "localAcks": acked, "updateResults": {h: updates[h].get("update") for h in updates}, "detectionPath": path,
-            "l4OnLoad": l4_seen, "truth4": truth4, "combine": {h: combine[h].get("combine", "-") for h in combine},
-            "conflictBackups": backups, "presence": presence, "bothChangesOnBothHosts": both_present_on_both,
-            "oneCurrentByteIdentical": bool(one_current), "unresolvedLeft": resolved_left, "finalLevels": {h: finals[h].get("levelState") for h in finals},
-            "unusableProviderConflicts": {h: finals[h].get("unusableProviderConflicts") for h in finals},
-            "settled": settled and settled3, "timeToSettleMs": settle_ms, "timeToSurfacingMs": {
-                "providerVersionObserved": surfaced_versions, "l4OnLoadAt": {h: timings[h] if l4_seen[h] else None for h in timings}},
-            "versionCounts": versions_seen, "finalSettleMs": final_ms,
-            "conflictVersionComputers": sorted({v.get("savingComputer", "") for r in (a, b) for v in r.get("unresolvedConflictVersions", [])}),
-            "propagationAtoBMs": propagation_ms(dev, t_move, seen)}
-
 
 def version_counts_lib(a, b):
     return {h: {"unresolvedConflict": len(r.get("unresolvedConflictVersions", [])), "other": r.get("otherVersions")} for h, r in (("A", a), ("B", b))}
 
-
-# ---------------------------------------------------------------- cross-machine-relink
-
-def case_relink(dev, split, index, rng):
-    """Sources (random-byte files) with device access records on A only. B opens with no record (never by path or
-    name), then gets the location as an explicit choice. Variants: same files; a source moved; a source
-    replaced by a same-name different file (both before B opens). Zero source writes on both hosts."""
-    variant = RELINK_VARIANTS[index % len(RELINK_VARIANTS)]
-    folder = f"{TRIAL_ROOT}/{split}/relink/case-{index}"
-    sources = f"{folder}/sources"
-    records_a, records_b = dev.state("A", f"relink-{index}") + "/records", dev.state("B", f"relink-{index}") + "/records"
-    made = dev.run("A", ["src-make", "--file", sources, "--count", "3", "--seed", str(rng.randrange(1, 2**40))])
-    if made.get("result") != "made":
-        return {"verdict": "harnessError", "step": "src-make", "detail": made}
-    show_path = f"{folder}/Show.wwshow"
-    dev.run("A", ["create", "--file", show_path, "--seed", str(rng.randrange(1, 10**6))])
-    show_id = read_show_id(show_path)
-    source_ids = [str(uuid.UUID(int=rng.getrandbits(128))) for _ in made["files"]]
-    expected = {f["path"]: f["sha256"] for f in made["files"]}
-    for sid, f in zip(source_ids, made["files"]):
-        dev.run("A", ["src-record", "--file", records_a, "--show", show_id, "--source", sid, "--source-file", f["path"]])
-    # B sees the show and the sources.
-    for f in made["files"]:
-        if not await_digest(dev, "B", f["path"], f["sha256"]):
-            return {"verdict": "fail", "reason": "setup did not sync within the bound", "step": f"awaitB {f['path']}"}
-    target = made["files"][1]["path"]
-    supplied = target
-    if variant == "moved":
-        os.makedirs(f"{folder}/moved", exist_ok=True)
-        supplied = f"{folder}/moved/{os.path.basename(target)}"
-        os.replace(target, supplied)
-        expected[supplied] = expected.pop(target)
-        if not await_digest(dev, "B", supplied, expected[supplied]) or not await_absent(dev, "B", target):
-            return {"verdict": "fail", "reason": "move did not sync within the bound", "step": "awaitB moved"}
-    elif variant == "replaced":
-        replacement = dev.run("A", ["src-make", "--file", f"{folder}/.replacement", "--count", "1", "--seed", str(rng.randrange(1, 2**40))])
-        os.replace(replacement["files"][0]["path"], target)
-        expected[target] = replacement["files"][0]["sha256"]
-        if not await_digest(dev, "B", target, expected[target]):
-            return {"verdict": "fail", "reason": "replacement did not sync within the bound", "step": "awaitB replaced"}
-    # B, with no access record: never resolved by path or name.
-    b_eval = [dev.run("B", ["src-eval", "--file", records_b, "--show", show_id, "--source", sid]) for sid in source_ids]
-    never_by_path = all(e.get("hasRecord") is False and e.get("access") == "needsRegrant" and not e.get("resolvedPath") for e in b_eval)
-    # Explicit choice: without the user's confirmation nothing is applied; with it, B records its own baseline.
-    sid = source_ids[1]
-    unconfirmed = dev.run("B", ["src-relink", "--file", records_b, "--show", show_id, "--source", sid, "--source-file", supplied, "--confirm", "0"])
-    confirmed = dev.run("B", ["src-relink", "--file", records_b, "--show", show_id, "--source", sid, "--source-file", supplied, "--confirm", "1"])
-    b_after = dev.run("B", ["src-eval", "--file", records_b, "--show", show_id, "--source", sid])
-    # A (which holds the evidence) reports the moved / replaced source as different, never substituted.
-    a_eval = dev.run("A", ["src-eval", "--file", records_a, "--show", show_id, "--source", sid])
-    if variant == "same":
-        # Untouched source: present and matching A's recorded baseline exactly. (Calibration-1/2's date-only
-        # "changed" was the probe's own record encoding truncating dates to whole seconds — fixed by using the
-        # app's FileDeviceAccessStore — not iCloud; see the evidence document.)
-        a_ok = a_eval.get("location") == "present" and a_eval.get("identity") == "matchesRecorded"
-    elif variant == "moved":
-        a_ok = a_eval.get("location", "").startswith("moved") or a_eval.get("location", "").startswith("missing")
-    else:
-        a_ok = a_eval.get("identity", "").startswith(("mismatch", "changed")) or a_eval.get("access") in ("staleBookmark", "needsRegrant")
-    # #121 data: raw dates of the relinked source — A's recorded baseline (its access record) and what each
-    # host's file system reports now (UTC, ms), so any drift is measured rather than inferred.
-    stat_script = ("import os,sys,json,datetime as d; s=os.stat(sys.argv[1]); f=lambda t: d.datetime.fromtimestamp(t,d.timezone.utc).isoformat(timespec='milliseconds');"
-                   "print(json.dumps({'creation': f(s.st_birthtime), 'modification': f(s.st_mtime_ns/1e9), 'inode': s.st_ino}))")
-    dates = {}
-    for host in ("A", "B"):
-        out = dev.shell(host, f"python3 -c {shlex.quote(stat_script)} {shlex.quote(supplied)}")
-        try:
-            dates[host] = json.loads(out.stdout.strip().splitlines()[-1])
-        except (ValueError, IndexError):
-            dates[host] = {"error": out.stderr[-200:]}
-    dates["A recorded baseline"] = recorded_baseline(f"{records_a}/source-access-records.json", sid)
-    # Zero source writes: every source digest on both hosts is exactly what A generated.
-    digests = {h: {p: dev.run(h, ["digest", "--file", p]).get("sha256") for p in expected} for h in ("A", "B")}
-    zero_writes = all(digests[h][p] == expected[p] for h in digests for p in expected)
-    ok = (never_by_path and str(unconfirmed.get("result", "")).startswith("confirmationRequired")
-          and confirmed.get("result") == "applied" and b_after.get("access") == "granted" and a_ok and zero_writes)
-    return {"verdict": "pass" if ok else "fail", "variant": variant, "bWithoutRecord": [{k: e.get(k) for k in ("access", "location", "identity")} for e in b_eval],
-            "neverResolvedByPathOrName": never_by_path, "bUnconfirmed": unconfirmed.get("result"), "bUnconfirmedComparison": unconfirmed.get("comparison"),
-            "bConfirmed": confirmed.get("result"), "bAfterRegrant": {k: b_after.get(k) for k in ("access", "identity")},
-            "aReportsChangedSource": {k: a_eval.get(k) for k in ("location", "identity", "access")}, "aCorrect": a_ok,
-            "aUntouchedSourceDatesChangedBySync": variant == "same" and a_eval.get("identity", "").startswith("changed("),
-            "sourceDates": dates,
-            "zeroSourceWrites": zero_writes, "sourceFiles": len(expected)}
 
 
 def recorded_baseline(store_path, source_id):
@@ -522,49 +470,589 @@ def await_absent(dev, host, path, timeout=AWAIT_TIMEOUT):
     return dev.run(host, ["await", "--file", path, "--exists", "0", "--timeout", str(timeout)], timeout=timeout + 60).get("result") == "observed"
 
 
+
 def read_show_id(path):
     with open(path, "rb") as handle:
         return json.load(handle)["payload"]["show"]["id"]
 
 
+# ---------------------------------------------------------------- show-conflict
+
+def show_setup(dev, case):
+    """Setup (serialized): host A publishes revision r; host B observes it. Returns (path, created, result-or-None)."""
+    path = f"{case.folder}/Show.wwshow"
+    os.makedirs(case.folder, exist_ok=True)
+    ra = dev.state("A", f"{case.cell}-{case.key}") + "/recovery"
+    created = dev.run("A", ["create", "--file", path, "--seed", str(case.rng.randrange(1, 10**6)), "--recovery", ra])
+    a_state = dev.run("A", ["fixture-state", "--file", path])
+    fixture = {"name": "show r", "kind": "publication", "path": path, "publicationID": created.get("publicationID", "-"),
+               "sha256": a_state.get("sha256"), "aPublicationOK": created.get("result") == "saved",
+               "aPublication": {"result": created.get("result"), "acknowledged": created.get("result") == "saved"}}
+    if created.get("result") != "saved":
+        return path, created, {"verdict": "fail", "reason": "host A's setup publication did not complete", "setupOutcome": "failure"}
+    established = establish(dev, case, [fixture])
+    if established["outcome"] != "established":
+        return path, created, setup_result(established)
+    return path, created, None
+
+
+def setup_result(established):
+    if established["outcome"] == "harnessError":
+        return {"verdict": "harnessError", "setupOutcome": "harnessError", "reason": established["reason"],
+                "stalledFixture": established["fixture"]}
+    if established["outcome"] == "setupNotEstablished":
+        return {"verdict": "setupNotEstablished", "setupOutcome": "setupNotEstablished", "reason": established["reason"],
+                "stalledFixture": established["fixture"]}
+    return {"verdict": "fail", "setupOutcome": "failure", "reason": f"setup: {established['reason']}", "stalledFixture": established["fixture"]}
+
+
+def case_show(dev, case):
+    with SETUP_LOCK:
+        t_setup = now_ms()
+        path, created, stopped = show_setup(dev, case)
+        seen_ms = now_ms()
+    if stopped:
+        return stopped
+    ra, rb = dev.state("A", f"show-{case.key}") + "/recovery", dev.state("B", f"show-{case.key}") + "/recovery"
+    rng = case.rng
+    title = {"A": f"A edit {rng.randrange(10**6)} {case.key}", "B": f"B edit {rng.randrange(10**6)} {case.key}"}
+    if case.variant == "staggered":
+        return show_staggered(dev, case, path, ra, rb, title)
+    skew, first, t0, ta, tb = race_times(rng)
+    with cf.ThreadPoolExecutor(2) as pool:
+        fa = pool.submit(dev.run, "A", ["save", "--file", path, "--title", title["A"], "--recovery", ra, "--at-epoch-ms", str(ta)])
+        fb = pool.submit(dev.run, "B", ["save", "--file", path, "--title", title["B"], "--recovery", rb, "--at-epoch-ms", str(dev.b_time(tb))])
+        saves = {"A": fa.result(), "B": fb.result()}
+    for host in ("A", "B"):
+        case.product_starts(dev, host, saves[host].get("openedEpochMs"), "open of revision r")
+    opens = sorted((dev.a_time(h, saves[h].get("openedEpochMs")) or 0, h) for h in saves)
+    case.first_product_op = {"host": opens[0][1], "what": "each host's open of revision r", "aClockMs": opens[0][0],
+                             "hostEpochMs": {h: saves[h].get("openedEpochMs") for h in saves}}
+    a, b, settle_ms, settled, surfaced = settle_tracking(
+        dev, ["inspect", "--file", path], show_key, lambda r: int(r.get("statusProviderConflicts") or 0), t0)
+    reports = {"A": a, "B": b}
+    acked = [h for h in ("A", "B") if saves[h].get("result") == "saved"]
+    cur = {h: reports[h].get("current", {}) for h in ("A", "B")}
+    one_current = (settled and all(cur[h].get("outcome") == "editable" for h in cur)
+                   and reports["A"].get("sha256") and reports["A"].get("sha256") == reports["B"].get("sha256"))
+    winner = next((h for h in ("A", "B") if cur["A"].get("publicationID") == saves[h].get("publicationID")), None)
+    paths, ok2 = {}, True
+    for host in ("A", "B"):
+        result = saves[host]
+        if host == winner:
+            paths[host] = "current"
+            continue
+        if result.get("result") == "conflict":
+            candidate = dev.run(host, ["open", "--file", result.get("preservedCandidate", "-")]) if result.get("preservedCandidate") else {}
+            paths[host] = "appDetected" if candidate.get("title") == title[host] else "appDetectedCandidateMissing"
+            ok2 &= paths[host] == "appDetected"
+        elif result.get("result") == "saved":
+            in_version = any(v.get("title") == title[host] for r in reports.values() for v in r.get("unresolvedConflictVersions", []))
+            surfaced_on_loser = int(reports[host].get("statusProviderConflicts") or 0) > 0
+            paths[host] = ("providerSurfaced" if in_version and surfaced_on_loser else
+                           "silentLastWriterWins" if not in_version else "providerVersionNotSurfacedOnLoser")
+            ok2 &= paths[host] == "providerSurfaced"
+        else:
+            paths[host] = f"noLocalAck:{result.get('result')}"
+            ok2 = False
+    lost = [h for h in ("A", "B") if paths.get(h) not in ("current", "appDetected", "providerSurfaced")]
+    ok = bool(one_current) and winner is not None and ok2 and not lost and setup_wait_order_ok(case)
+    return {"verdict": "pass" if ok else "fail", "setupOutcome": "established", "skewMs": skew, "first": first,
+            "localAcks": acked, "saveResults": {h: saves[h].get("result") for h in saves},
+            "detectionPath": paths, "winner": winner, "oneCurrentByteIdentical": bool(one_current),
+            "settled": settled, "timeToSettleMs": settle_ms, "timeToSurfacingMs": surfaced,
+            "versionCounts": version_counts(a, b),
+            "conflictVersionComputers": sorted({v.get("savingComputer", "") for r in reports.values() for v in r.get("unresolvedConflictVersions", [])}),
+            "siblings": {h: [s.get("name") for s in reports[h].get("siblings", [])] for h in reports},
+            "setupPropagationMs": seen_ms - t_setup}
+
+
+def show_staggered(dev, case, path, ra, rb, title):
+    """variantsFreeze3 staggered: B opens r and holds (product phase starts); A publishes r+1; once A's r+1 is
+    observed on B (bounded; expiry = FAIL), B publishes its edit from the stale base r. Expected: C3 base-check
+    Conflict on B, B's candidate preserved, B never Saved, A's r+1 current and byte-identical on both hosts."""
+    ready, go = dev.state("B", f"show-{case.key}") + "/ready", dev.state("B", f"show-{case.key}") + "/go"
+    dev.shell("B", f"mkdir -p {shlex.quote(os.path.dirname(ready))}")
+    t0 = now_ms()
+    with cf.ThreadPoolExecutor(1) as pool:
+        held = pool.submit(dev.run, "B", ["hold-save", "--file", path, "--title", title["B"], "--recovery", rb, "--ready", ready, "--go", go])
+        while dev.shell("B", f"test -f {shlex.quote(ready)}").returncode != 0:
+            if held.done():
+                break
+            time.sleep(0.5)
+        a2 = dev.run("A", ["save", "--file", path, "--title", title["A"], "--recovery", ra])
+        arrived = await_pub(dev, "B", path, a2.get("publicationID", "-"))
+        dev.shell("B", f"touch {shlex.quote(go)}")
+        result = held.result()
+    case.product_starts(dev, "B", result.get("openedEpochMs"), "host B's open of revision r (held)")
+    if arrived.get("result") != "observed":
+        return {"verdict": "fail", "setupOutcome": "established", "reason": "A's r+1 not observed on host B within the bound (product phase)",
+                "bResult": result.get("result")}
+    candidate = dev.run("B", ["open", "--file", result.get("preservedCandidate", "-")]) if result.get("preservedCandidate") else {}
+    a, b, settle_ms, settled, surfaced = settle_tracking(
+        dev, ["inspect", "--file", path], show_key, lambda r: int(r.get("statusProviderConflicts") or 0), t0)
+    ok = (a2.get("result") == "saved" and result.get("result") == "conflict" and candidate.get("title") == title["B"]
+          and "saved" not in str(result.get("status", "")).lower()
+          and settled and a.get("sha256") and a.get("sha256") == b.get("sha256")
+          and a.get("current", {}).get("publicationID") == a2.get("publicationID") and setup_wait_order_ok(case))
+    return {"verdict": "pass" if ok else "fail", "setupOutcome": "established", "aResult": a2.get("result"),
+            "bResult": result.get("result"), "bStatus": result.get("status"), "bCandidatePreserved": candidate.get("title") == title["B"],
+            "detectionPath": {"A": "current", "B": "appDetected" if result.get("result") == "conflict" else f"other:{result.get('result')}"},
+            "localAcks": [h for h, r in (("A", a2), ("B", result)) if r.get("result") == "saved"],
+            "aRevisionCurrentByteIdentical": bool(ok), "settled": settled, "timeToSettleMs": settle_ms, "timeToSurfacingMs": surfaced,
+            "aToBArrivalMs": propagation_ms(dev, a2.get("publishedEpochMs") or t0, arrived), "versionCounts": version_counts(a, b)}
+
+
+# ---------------------------------------------------------------- library-conflict
+
+def independent_inclusion(version_entry, sampled_host, edits, current_report):
+    """independentInclusionJudgement (m1-freeze-4): only from the harness's own record of the seeded edits of the
+    host that wrote V, against the sampled current library model on that host (an ST-36 copy counts when it has
+    exactly the seeded membership and order — `edit_presence`). No product merge code, judgement or fork base."""
+    label = version_entry.get("savingComputer")
+    writer = sampled_host if label == "this host" else ({"A": "B", "B": "A"}[sampled_host] if label == "other host" else None)
+    current = current_report or {}
+    if writer is None or not edits or writer not in edits or current.get("outcome") != "valid":
+        return "undetermined", writer
+    return ("included" if edit_presence(current.get("model", {}), edits[writer]) is not None else "not included"), writer
+
+
+def judge_sample(report, host, edits):
+    """m1-freeze-4 levelSamplingFailRule, plus the literal m1-freeze-3 rule for comparison."""
+    lv = report.get("level") or {}
+    level = lv.get("level")
+    raw = len(report.get("unresolvedConflictVersions", []))
+    versions, fail = [], False
+    for v in lv.get("versions", []):
+        decoded = v.get("outcome") == "valid"
+        same = v.get("sameLibraryID") is True
+        product_included = v.get("productVerdict") == "included"
+        bases = v.get("forkBases") or []
+        judgement, writer = independent_inclusion(v, host, edits, report.get("current"))
+        harness = judgement == "included"
+        exempt = decoded and same and product_included and bool(bases) and harness
+        reason = None
+        if product_included and judgement == "not included":
+            fail, reason = True, "product included, harness not included"
+        elif level == "ready" and not exempt:
+            if (not decoded or not same) and v.get("noticeShown"):
+                reason = "undecodable/different library with #119 notice"
+            else:
+                fail, reason = True, "ready with a non-exempt unresolved version"
+        versions.append({"decode": v.get("outcome"), "sameLibraryID": v.get("sameLibraryID"), "productVerdict": v.get("productVerdict"),
+                         "forkBases": bases, "harnessJudgement": judgement, "writer": writer, "noticeShown": v.get("noticeShown"),
+                         "exempt": exempt, "disagreement": product_included != harness,
+                         "savingComputer": v.get("savingComputer"), "failReason": reason})
+    return {"level": level, "raw": raw, "versions": versions, "freeze4Fail": fail, "literalFreeze3Fail": level == "ready" and raw > 0,
+            "holding": raw > 0 or level == "changedElsewhere", "unsampled": level in (None, "unsampled"),
+            "unsampledReason": lv.get("reason")}
+
+
+class Sampler:
+    """Level samples on both hosts through the read-only load path, about every SAMPLE_INTERVAL s, for the
+    whole product phase of a library case (which covers every holding window)."""
+
+    def __init__(self, dev, case, libfile, edits):
+        self.dev, self.case, self.libfile, self.edits = dev, case, libfile, edits
+        self.samples = {"A": [], "B": []}
+        self.stop = threading.Event()
+        self.threads = [threading.Thread(target=self.loop, args=(h,), daemon=True) for h in ("A", "B")]
+        for thread in self.threads:
+            thread.start()
+
+    def loop(self, host):
+        base = self.dev.state(host, f"library-{self.case.key}")
+        args = ["lib-inspect", "--file", self.libfile, "--level-settings", f"{base}/settings.json", "--level-recovery", f"{base}/recovery"]
+        while not self.stop.is_set():
+            started = time.time()
+            report = self.dev.run(host, args, timeout=120)
+            sample = judge_sample(report, host, self.edits)
+            sample["aClockMs"] = self.dev.a_time(host, report.get("epochMs")) or now_ms()
+            self.samples[host].append(sample)
+            self.stop.wait(max(0.0, SAMPLE_INTERVAL - (time.time() - started)))
+
+    def holding(self, host):
+        return [s for s in self.samples[host] if s["holding"] and not s["unsampled"]]
+
+    def finish(self):
+        self.stop.set()
+        for thread in self.threads:
+            thread.join(timeout=180)
+
+    def summary(self):
+        out = {}
+        for host, samples in self.samples.items():
+            valid = [s for s in samples if not s["unsampled"]]
+            gaps, prev = [], None
+            for s in samples:
+                if prev is not None and (prev["holding"] or s["holding"]):
+                    gaps.append(s["aClockMs"] - prev["aClockMs"])
+                prev = s if not s["unsampled"] else prev
+            out[host] = {"samples": len(samples), "valid": len(valid), "holding": sum(1 for s in valid if s["holding"]),
+                         "freeze4Fails": sum(1 for s in valid if s["freeze4Fail"]),
+                         "literalFreeze3Fails": sum(1 for s in valid if s["literalFreeze3Fail"]),
+                         "maxGapWhileHoldingMs": max(gaps) if gaps else None,
+                         "levels": sorted({s["level"] for s in valid}),
+                         "unsampledReasons": sorted({str(s["unsampledReason"]) for s in samples if s["unsampled"]})}
+        return out
+
+    def records(self):
+        """Compact per-sample records (per version as frozen in m1-freeze-4)."""
+        return {h: [{k: s[k] for k in ("aClockMs", "level", "raw", "versions", "freeze4Fail", "literalFreeze3Fail", "holding")}
+                    for s in samples if not s["unsampled"]] for h, samples in self.samples.items()}
+
+
+def wait_holding(sampler, host, timeout):
+    """Ordering gate: ≥2 level samples on `host` while it holds the unresolved version (or app-detected L4)."""
+    deadline = now_ms() + timeout * 1000
+    while now_ms() < deadline:
+        held = sampler.holding(host)
+        if len(held) >= 2:
+            return {"observedAClockMs": held[0]["aClockMs"], "secondAClockMs": held[1]["aClockMs"],
+                    "firstWithin5s": True, "samplesHolding": len(held)}
+        time.sleep(1)
+    return None
+
+
+def edit_target(edit):
+    return {"collection": edit.get("name"), "alias": edit.get("alias"), "order": edit.get("name"), "recent": "recent"}[edit["kind"]]
+
+
+def check_summary(op, edits):
+    """combineSummaryCheck (freeze-3, item 2 of freeze-4): the Combine summary's not-carried items equal the
+    harness-computed set (an ST-36 copy counts as carried), and every summary count matches the harness."""
+    summary = op.get("combineSummary")
+    before, after = op.get("combineBeforeModel") or {}, op.get("combineAfterModel") or {}
+    if summary is None:
+        return None
+    not_carried = [e for e in edits.values() if edit_presence(after, e) is None]
+    reported = list(summary.get("entryChangesNotCarried", [])) + list(summary.get("queuedChangesNotCarried", []))
+    items_ok = len(reported) == len(not_carried) and all(any(str(edit_target(e)) in item for item in reported) for e in not_carried)
+    before_names = {c["name"] for c in before.get("collections", [])}
+    new = [c["name"] for c in after.get("collections", []) if c["name"] not in before_names]
+    copies = [n for n in new if f" ({'from this Mac'}" in n]
+    counts = {"collectionsKeptAsCopies": len(copies), "collectionsAdded": len(new) - len(copies),
+              "showsAdded": len({e["showID"] for e in after.get("entries", [])} - {e["showID"] for e in before.get("entries", [])}),
+              "recentItemsAdded": len(set(after.get("recents", [])) - set(before.get("recents", [])))}
+    counts_ok = all(summary.get(k) == v for k, v in counts.items())
+    return {"ok": items_ok and counts_ok, "summaryNotCarried": reported, "harnessNotCarried": [edit_target(e) for e in not_carried],
+            "summaryCounts": {k: summary.get(k) for k in counts}, "harnessCounts": counts,
+            "carried": [edit_target(e) for e in edits.values() if edit_presence(after, e) is not None]}
+
+
+def backups_for_resolved(op):
+    """Every provider version a product operation resolved has a backup with exactly its bytes (probe-checked)."""
+    return op.get("resolvedWithoutBackup") == 0
+
+
+def level_sample(dev, host, key, libfile, edits):
+    """A read-only level sample (lib-inspect), judged by the m1-freeze-4 rule."""
+    base = dev.state(host, f"library-{key}")
+    report = dev.run(host, ["lib-inspect", "--file", libfile, "--level-settings", f"{base}/settings.json", "--level-recovery", f"{base}/recovery"],
+                     timeout=120)
+    sample = judge_sample(report, host, edits)
+    sample["aClockMs"] = dev.a_time(host, report.get("epochMs")) or now_ms()
+    return sample
+
+
+def settle_clause(sample):
+    """truth1LibraryClause at settle (no exemption at settle): on the raw NSFileVersion listing, every version is
+    resolved (absent from the list; its backup is checked per operation) or surfaced: L4, or the #119 notice for an
+    undecodable or different-library version."""
+    if sample["unsampled"]:
+        return {"level": sample["level"], "rawUnresolved": sample["raw"], "ok": False}
+    l4 = sample["level"] == "changedElsewhere"
+    noticed = bool(sample["versions"]) and len(sample["versions"]) == sample["raw"] and all(
+        v.get("noticeShown") and (v.get("decode") != "valid" or v.get("sameLibraryID") is False) for v in sample["versions"])
+    return {"level": sample["level"], "rawUnresolved": sample["raw"], "ok": sample["raw"] == 0 or l4 or noticed}
+
+
+def wait_settle_clause(dev, key, libfile, edits, deadline_ms):
+    """A version still listed while a host shows L1 means settle has not been reached: keep polling within the
+    frozen bound; at the bound the clause is evaluated as it stands (FAIL if still unmet)."""
+    polls = 0
+    while True:
+        polls += 1
+        clause = {h: settle_clause(level_sample(dev, h, key, libfile, edits)) for h in ("A", "B")}
+        if all(c["ok"] for c in clause.values()) or now_ms() >= deadline_ms:
+            return clause, polls
+        time.sleep(3)
+
+
+def case_library(dev, case):
+    key, folder = case.key, case.folder
+    libfile = f"{folder}/Library.wwlibrary"
+    with SETUP_LOCK:
+        t_setup = now_ms()
+        os.makedirs(folder, exist_ok=True)
+        moved = dev.run("A", lib_args(dev, "A", key, ["--seed-fixture", "1", "--move-to", folder]))
+        setup_report = dev.run("A", ["lib-inspect", "--file", libfile])
+        cur = setup_report.get("current", {})
+        a_ok = cur.get("outcome") == "valid" and str(moved.get("move", "")).startswith("success")
+        fixture = {"name": "library r", "kind": "publication", "path": libfile, "publicationID": cur.get("publicationID", "-"),
+                   "sha256": cur.get("sha256"), "aPublicationOK": a_ok,
+                   "aPublication": {"seeded": str(moved.get("seeded", ""))[:80], "move": str(moved.get("move", ""))[:80]}}
+        if not a_ok:
+            return {"verdict": "fail", "setupOutcome": "failure", "reason": "host A's setup publication did not complete"}
+        established = establish(dev, case, [fixture])
+        seen_ms = now_ms()
+    if established["outcome"] != "established":
+        return setup_result(established)
+    setup = cur["model"]
+    pub = cur["publicationID"]
+    ops = []
+    used = dev.run("B", lib_args(dev, "B", key, ["--use", folder]))
+    ops.append(("B", "use", used))
+    case.product_starts(dev, "B", used.get("loadStartedEpochMs"), "first product library load (host B)")
+    pub_b = dev.run("B", ["lib-inspect", "--file", libfile]).get("current", {}).get("publicationID")
+    if pub_b != pub:
+        seen_a = poll_lib(dev, "A", libfile, lambda r: r.get("current", {}).get("publicationID") == pub_b)
+        if seen_a.get("result") != "observed":
+            return {"verdict": "fail", "setupOutcome": "established", "reason": "host B's use republished and A did not observe it (product phase)"}
+    rng = case.rng
+    kinds = {"A": rng.choice(LIBRARY_EDITS), "B": rng.choice(LIBRARY_EDITS)}
+    args_a, edit_a = library_edit("A", kinds["A"], key, setup)
+    args_b, edit_b = library_edit("B", kinds["B"], key, setup)
+    edits = {"A": edit_a, "B": edit_b}
+    skew, first, t0, ta, tb = race_times(rng)
+    sampler = Sampler(dev, case, libfile, edits)
+    at_load = []   # 'and at every load': a read-only sample right after each product load, per host
+
+    def after_load(host, label):
+        sample = level_sample(dev, host, key, libfile, edits)
+        sample.update({"host": host, "after": label})
+        at_load.append(sample)
+    try:
+        with cf.ThreadPoolExecutor(2) as pool:
+            fa = pool.submit(dev.run, "A", lib_args(dev, "A", key, args_a + ["--at-epoch-ms", str(ta)]))
+            fb = pool.submit(dev.run, "B", lib_args(dev, "B", key, args_b + ["--at-epoch-ms", str(dev.b_time(tb))]))
+            updates = {"A": fa.result(), "B": fb.result()}
+        ops += [("A", "edit", updates["A"]), ("B", "edit", updates["B"])]
+        for host in ("A", "B"):
+            after_load(host, "edit")
+        # Ordering gate: B holds the unresolved version (or app-detected L4) for ≥2 samples before A combines;
+        # in concurrentCombine, on both hosts before round 1. A must hold it too for its Combine to act.
+        gate = {"B": wait_holding(sampler, "B", AWAIT_TIMEOUT)}
+        gate["A"] = wait_holding(sampler, "A", AWAIT_TIMEOUT) if gate["B"] else None
+        if not gate["B"] or not gate["A"]:
+            sampler.finish()
+            return {"verdict": "fail", "setupOutcome": "established", "variant": case.variant,
+                    "reason": "ordering gate not met: " + ("host B" if not gate["B"] else "host A") + " never held the conflict within the bound",
+                    "levelSampling": sampler.summary(), "edits": {h: edits[h]["kind"] for h in edits},
+                    "updateResults": {h: updates[h].get("update") for h in updates}}
+        rounds, converged, final = [], False, None
+        for number in range(1, MAX_ROUNDS + 1):
+            round_started = now_ms()
+            if number == 1 and case.variant == "concurrentCombine":
+                hosts, at = ("A", "B"), now_ms() + 6000
+            elif case.variant == "combineOnAThenB" and number > 1:
+                # combineOnAThenBRounds: B combines if still in L4 (else the host still in L4), A preferred after round 2.
+                in_l4 = [h for h in ("A", "B") if (rounds[-1]["finalLevels"].get(h) == "changedElsewhere")]
+                hosts, at = (("B",) if number == 2 and "B" in in_l4 else (("A",) if "A" in in_l4 else tuple(in_l4[:1]) or ("A",))), None
+            else:
+                hosts, at = ("A",), None
+            with cf.ThreadPoolExecutor(len(hosts)) as pool:
+                futures = {h: pool.submit(dev.run, h, lib_args(dev, h, key, ["--combine", "1"] + (
+                    ["--at-epoch-ms", str(at if h == "A" else dev.b_time(at))] if at else []))) for h in hosts}
+                results = {h: f.result() for h, f in futures.items()}
+            for h, r in results.items():
+                ops.append((h, f"round{number}", r))
+                after_load(h, f"round{number}")
+            a1, b1, ms1, settled1, _ = settle_tracking(dev, ["lib-inspect", "--file", libfile], lib_key, lambda r: 0, now_ms(), timeout=ROUND_SETTLE)
+            finals = {h: dev.run(h, lib_args(dev, h, key, [])) for h in ("A", "B")}
+            for h, r in finals.items():
+                ops.append((h, f"round{number}-load", r))
+                after_load(h, f"round{number}-load")
+            a2, b2, ms2, settled2, _ = settle_tracking(dev, ["lib-inspect", "--file", libfile], lib_key, lambda r: 0, now_ms(), timeout=ROUND_SETTLE)
+            cur2 = {"A": a2.get("current", {}), "B": b2.get("current", {})}
+            presence = {h: {host: edit_presence(cur2[host].get("model", {}), edits[h]) for host in ("A", "B")} for h in ("A", "B")}
+            unresolved = {h: len(r.get("unresolvedConflictVersions", [])) for h, r in (("A", a2), ("B", b2))}
+            byte_identical = all(c.get("outcome") == "valid" for c in cur2.values()) and cur2["A"].get("sha256") == cur2["B"].get("sha256")
+            converged = (settled1 and settled2 and byte_identical and sum(unresolved.values()) == 0
+                         and all(p in ("current", "copy") for per in presence.values() for p in per.values())
+                         and all(finals[h].get("levelState") == "ready" for h in finals))
+            rounds.append({"round": number, "hosts": list(hosts), "combined": {h: "combineSummary" in r for h, r in results.items()},
+                           "levelsAtRound": {h: r.get("levelAfterLoad") for h, r in results.items()},
+                           "settleMs": ms1, "settled": settled1, "afterLoadsSettleMs": ms2, "afterLoadsSettled": settled2,
+                           "finalLevels": {h: finals[h].get("levelState") for h in finals}, "unresolved": unresolved,
+                           "byteIdentical": byte_identical, "presence": presence, "converged": converged})
+            # truth1LibraryClause at settle, per host, from a read-only sample taken at the settle point.
+            clause, clause_polls = wait_settle_clause(dev, key, libfile, edits, round_started + ROUND_SETTLE * 1000)
+            rounds[-1]["settleClause"] = clause
+            rounds[-1]["settleClausePolls"] = clause_polls
+            final = (a2, b2, presence, unresolved, clause, byte_identical, settled1 and settled2)
+            still_l4 = any(finals[h].get("levelState") == "changedElsewhere" for h in finals)
+            done = converged if case.variant == "concurrentCombine" else not still_l4
+            if done or not (settled1 and settled2):
+                break
+    finally:
+        sampler.finish()
+    combines = [(h, label, op) for h, label, op in ops if "combineSummary" in op]
+    summary_checks = [{"host": h, "op": label, **(check_summary(op, edits) or {})} for h, label, op in combines]
+    backups_ok = all(backups_for_resolved(op) for _, _, op in ops if "levelAfterLoad" in op)
+    load_checks = [{"host": s["host"], "after": s["after"], "level": s["level"], "rawUnresolved": s["raw"], "versions": s["versions"],
+                    "freeze4Fail": s["freeze4Fail"], "literalFreeze3Fail": s["literalFreeze3Fail"], "ok": not s["freeze4Fail"] and not s["unsampled"]}
+                   for s in at_load]
+    product_ops = [{"host": h, "op": label, "levelAfterLoad": op.get("levelAfterLoad"), "rawUnresolvedAfterLoad": op.get("rawUnresolvedAfterLoad"),
+                    "resolved": op.get("resolvedProviderConflicts"), "resolvedDistinct": op.get("resolvedDistinct"),
+                    "resolvedWithoutBackup": op.get("resolvedWithoutBackup"),
+                    "backupsAdded": int(op.get("conflictBackups") or 0) - int(op.get("conflictBackupsAtStart") or 0)}
+                   for h, label, op in ops if "levelAfterLoad" in op]
+    sampling = sampler.summary()
+    sampling_ok = all(s["freeze4Fails"] == 0 for s in sampling.values())
+    cadence_ok = all((s["maxGapWhileHoldingMs"] or 0) <= SAMPLE_MAX_GAP_MS for s in sampling.values())
+    l4 = {h: any(op.get("levelAfterLoad") == "changedElsewhere" for hh, _, op in ops if hh == h) for h in ("A", "B")}
+    app_detected = {h: str(updates[h].get("update", "")).startswith("failed") for h in ("A", "B")}
+    a2, b2, presence, unresolved, clause_at_settle, byte_identical, settled = final
+    if case.variant == "concurrentCombine":
+        outcome_ok = converged
+    else:   # combineOnAThenB: truth 2 needs a completed Combine (Lead): one current byte-identical library holding
+        # both changes on both hosts, 0 unresolved versions, not in L4 when the round bounds end; backups checked below.
+        outcome_ok = (settled and byte_identical and all(p in ("current", "copy") for per in presence.values() for p in per.values())
+                      and all(l == "ready" for l in rounds[-1]["finalLevels"].values()))
+    # Both variants: the settle clause, and 0 unresolved on the raw listing at the settle sample.
+    outcome_ok = outcome_ok and all(c["ok"] and c["rawUnresolved"] == 0 for c in clause_at_settle.values())
+    ok = (outcome_ok and sampling_ok and cadence_ok and all(c.get("ok") for c in summary_checks) and bool(summary_checks)
+          and backups_ok and all(c["ok"] for c in load_checks) and setup_wait_order_ok(case))
+    return {"verdict": "pass" if ok else "fail", "setupOutcome": "established", "variant": case.variant, "skewMs": skew, "first": first,
+            "edits": {h: edits[h]["kind"] for h in edits}, "localAcks": [h for h in ("A", "B") if str(updates[h].get("update", "")).startswith("published")],
+            "updateResults": {h: updates[h].get("update") for h in updates},
+            "detectionPath": "appDetected" if any(app_detected.values()) else "providerL4" if any(l4.values()) else "undetected",
+            "l4OnLoad": l4, "orderingGate": gate, "rounds": rounds, "converged": converged, "presence": presence,
+            "settleClause": clause_at_settle, "unresolvedAtSettle": unresolved,
+            "summaryChecks": summary_checks, "backupsForResolved": backups_ok, "samplesAtLoads": load_checks, "productOps": product_ops,
+            "levelSampling": sampling, "levelSamplingOk": sampling_ok, "samplingCadenceOk": cadence_ok,
+            "levelSamples": sampler.records(), "versionCounts": version_counts_lib(a2, b2),
+            "conflictBackups": {h: max([int(op.get("conflictBackups") or 0) for hh, _, op in ops if hh == h] or [0]) for h in ("A", "B")},
+            "setupPropagationMs": seen_ms - t_setup}
+
+
+# ---------------------------------------------------------------- cross-machine-relink
+
+def case_relink(dev, case):
+    """Sources (random-byte files) with device access records on A only. Setup: A makes the sources and the show;
+    the moved/replaced change is made before B opens; B observes every fixture. Product phase: B opens the show
+    with no record (never resolved by path or name), then gets the location as an explicit choice."""
+    variant, rng, folder = case.variant, case.rng, case.folder
+    sources = f"{folder}/sources"
+    records_a, records_b = dev.state("A", f"relink-{case.key}") + "/records", dev.state("B", f"relink-{case.key}") + "/records"
+    expected = {}
+    with SETUP_LOCK:
+        made = dev.run("A", ["src-make", "--file", sources, "--count", "3", "--seed", str(rng.randrange(1, 2**40))])
+        if made.get("result") != "made":
+            return {"verdict": "fail", "setupOutcome": "failure", "reason": "host A's source setup failed", "variant": variant}
+        files = [dict(f) for f in made["files"]]
+        if case.inject_unreachable:
+            # Forced setupNotEstablished drill: iCloud Drive does not sync names ending in .nosync.
+            unreachable = files[2]["path"] + ".nosync"
+            os.replace(files[2]["path"], unreachable)
+            files[2]["path"] = unreachable
+        show_path = f"{folder}/Show.wwshow"
+        created = dev.run("A", ["create", "--file", show_path, "--seed", str(rng.randrange(1, 10**6))])
+        show_id = read_show_id(show_path)
+        source_ids = [str(uuid.UUID(int=rng.getrandbits(128))) for _ in files]
+        expected = {f["path"]: f["sha256"] for f in files}
+        for sid, f in zip(source_ids, files):
+            dev.run("A", ["src-record", "--file", records_a, "--show", show_id, "--source", sid, "--source-file", f["path"]])
+        show_state = dev.run("A", ["fixture-state", "--file", show_path])
+        fixtures = [{"name": f"source-{i}", "kind": "digest", "path": f["path"], "sha256": f["sha256"], "aPublicationOK": True,
+                     "aPublication": {"result": "made"}} for i, f in enumerate(files)]
+        fixtures.append({"name": "show", "kind": "publication", "path": show_path, "publicationID": created.get("publicationID", "-"),
+                         "sha256": show_state.get("sha256"), "aPublicationOK": created.get("result") == "saved",
+                         "aPublication": {"result": created.get("result")}})
+        established = establish(dev, case, fixtures)
+        target = files[1]["path"]
+        supplied = target
+        if established["outcome"] == "established" and variant in ("moved", "replaced"):
+            if variant == "moved":
+                os.makedirs(f"{folder}/moved", exist_ok=True)
+                supplied = f"{folder}/moved/{os.path.basename(target)}"
+                os.replace(target, supplied)
+                expected[supplied] = expected.pop(target)
+                change = {"name": "moved source", "kind": "digest", "path": supplied, "sha256": expected[supplied], "aPublicationOK": True,
+                          "aPublication": {"result": "moved"}}
+            else:
+                replacement = dev.run("A", ["src-make", "--file", f"{folder}/.replacement", "--count", "1", "--seed", str(rng.randrange(1, 2**40))])
+                os.replace(replacement["files"][0]["path"], target)
+                expected[target] = replacement["files"][0]["sha256"]
+                change = {"name": "replaced source", "kind": "digest", "path": target, "sha256": expected[target], "aPublicationOK": True,
+                          "aPublication": {"result": "replaced"}}
+            established = establish(dev, case, [change])
+            if established["outcome"] == "established" and variant == "moved" and not await_absent(dev, "B", target):
+                established = {"outcome": "failure", "reason": "the moved source's old path did not disappear on host B", "fixture": "moved source"}
+    if established["outcome"] != "established":
+        result = setup_result(established)
+        writes_ok, digests = source_writes(dev, expected)
+        if not writes_ok:   # truth 5 is evaluated for setupNotEstablished too
+            result.update({"verdict": "fail", "reason": result.get("reason", "") + "; a source digest changed"})
+        result.update({"variant": variant, "zeroSourceWrites": writes_ok, "sourceDigestsOK": digests})
+        return result
+    opened = dev.run("B", ["open", "--file", show_path])
+    case.product_starts(dev, "B", opened.get("openedEpochMs"), "host B's open of the show")
+    b_eval = [dev.run("B", ["src-eval", "--file", records_b, "--show", show_id, "--source", sid]) for sid in source_ids]
+    never_by_path = all(e.get("hasRecord") is False and e.get("access") == "needsRegrant" and not e.get("resolvedPath") for e in b_eval)
+    sid = source_ids[1]
+    unconfirmed = dev.run("B", ["src-relink", "--file", records_b, "--show", show_id, "--source", sid, "--source-file", supplied, "--confirm", "0"])
+    confirmed = dev.run("B", ["src-relink", "--file", records_b, "--show", show_id, "--source", sid, "--source-file", supplied, "--confirm", "1"])
+    b_after = dev.run("B", ["src-eval", "--file", records_b, "--show", show_id, "--source", sid])
+    a_eval = dev.run("A", ["src-eval", "--file", records_a, "--show", show_id, "--source", sid])
+    if variant == "same":
+        a_ok = a_eval.get("location") == "present" and a_eval.get("identity") == "matchesRecorded"
+    elif variant == "moved":
+        a_ok = a_eval.get("location", "").startswith("moved") or a_eval.get("location", "").startswith("missing")
+    else:
+        a_ok = a_eval.get("identity", "").startswith(("mismatch", "changed")) or a_eval.get("access") in ("staleBookmark", "needsRegrant")
+    digests = {h: {p: dev.run(h, ["digest", "--file", p]).get("sha256") for p in expected} for h in ("A", "B")}
+    zero_writes = all(digests[h][p] == expected[p] for h in digests for p in expected)
+    ok = (opened.get("outcome") == "editable" and never_by_path and str(unconfirmed.get("result", "")).startswith("confirmationRequired")
+          and confirmed.get("result") == "applied" and b_after.get("access") == "granted" and a_ok and zero_writes and setup_wait_order_ok(case))
+    return {"verdict": "pass" if ok else "fail", "setupOutcome": "established", "variant": variant,
+            "bOpenedShow": opened.get("outcome"),
+            "bWithoutRecord": [{k: e.get(k) for k in ("access", "location", "identity")} for e in b_eval],
+            "neverResolvedByPathOrName": never_by_path, "bUnconfirmed": unconfirmed.get("result"),
+            "bConfirmed": confirmed.get("result"), "bAfterRegrant": {k: b_after.get(k) for k in ("access", "identity")},
+            "aReportsChangedSource": {k: redact(str(a_eval.get(k))) for k in ("location", "identity", "access")}, "aCorrect": a_ok,
+            "zeroSourceWrites": zero_writes, "sourceFiles": len(expected)}
+
+
 # ---------------------------------------------------------------- recovery
 
-def case_recovery(dev, split, index, rng):
+def case_recovery(dev, case):
     """A publishes r+1 while B holds unpublished edits on r (C2b checkpoint on B). Variants: B then saves (base
-    check); B quits and relaunches before saving; A is killed at P4 or P5 while B is idle. Truth 6: unpublished
-    work stays recoverable on its host; nothing is reported Saved that wasn't read back on that host."""
-    variant = RECOVERY_VARIANTS[index % len(RECOVERY_VARIANTS)]
-    folder = f"{TRIAL_ROOT}/{split}/recovery/case-{index}"
-    path = f"{folder}/Show.wwshow"
-    os.makedirs(folder, exist_ok=True)
-    ra, rb = dev.state("A", f"recovery-{index}") + "/recovery", dev.state("B", f"recovery-{index}") + "/recovery"
-    created = dev.run("A", ["create", "--file", path, "--seed", str(rng.randrange(1, 10**6)), "--recovery", ra])
-    seen = await_pub(dev, "B", path, created.get("publicationID", "-"))
-    if seen.get("result") != "observed":
-        return {"verdict": "fail", "reason": "setup did not sync within the bound", "step": "awaitB"}
-    b_title, a_title = f"B unpublished case-{index}", f"A r2 case-{index}"
+    check); B quits and relaunches before saving; A is killed at P4 or P5 while B is idle (B's checkpointed edit
+    made first). Truth 6: unpublished work stays recoverable on its host; nothing reported Saved unless read back."""
+    variant, rng = case.variant, case.rng
+    with SETUP_LOCK:
+        path, created, stopped = show_setup(dev, case)
+    if stopped:
+        stopped["variant"] = variant
+        return stopped
+    ra, rb = dev.state("A", f"recovery-{case.key}") + "/recovery", dev.state("B", f"recovery-{case.key}") + "/recovery"
+    b_title, a_title = f"B unpublished {case.key}", f"A r2 {case.key}"
     if variant == "bSaves":
-        ready, go = dev.state("B", f"recovery-{index}") + "/ready", dev.state("B", f"recovery-{index}") + "/go"
+        ready, go = dev.state("B", f"recovery-{case.key}") + "/ready", dev.state("B", f"recovery-{case.key}") + "/go"
         dev.shell("B", f"mkdir -p {shlex.quote(os.path.dirname(ready))}")
         with cf.ThreadPoolExecutor(1) as pool:
             held = pool.submit(dev.run, "B", ["hold-save", "--file", path, "--title", b_title, "--recovery", rb, "--ready", ready, "--go", go])
-            while dev.shell("B", f"test -f {shlex.quote(ready)}").returncode != 0:
+            while dev.shell("B", f"test -f {shlex.quote(ready)}").returncode != 0 and not held.done():
                 time.sleep(0.5)
             a2 = dev.run("A", ["save", "--file", path, "--title", a_title, "--recovery", ra])
             arrived = await_pub(dev, "B", path, a2.get("publicationID", "-"))
             dev.shell("B", f"touch {shlex.quote(go)}")
             result = held.result()
+        case.product_starts(dev, "B", result.get("editedEpochMs"), "host B's first edit on revision r")
         candidate = dev.run("B", ["open", "--file", result.get("preservedCandidate", "-")]) if result.get("preservedCandidate") else {}
         a, b, settle_ms, settled = settle(dev, ["inspect", "--file", path], show_key)
         ok = (arrived.get("result") == "observed" and result.get("checkpointWritten") is True and result.get("result") == "conflict"
               and candidate.get("title") == b_title and int(result.get("editCheckpointsKept", 0)) >= 1
               and "saved" not in str(result.get("status", "")).lower()
-              and settled and a.get("sha256") == b.get("sha256") and a.get("current", {}).get("title") == a_title)
-        return {"verdict": "pass" if ok else "fail", "variant": variant, "bResult": result.get("result"), "bStatus": result.get("status"),
-                "bCandidateTitle": candidate.get("title"), "bEditCheckpointsKept": result.get("editCheckpointsKept"),
+              and settled and a.get("sha256") == b.get("sha256") and a.get("current", {}).get("title") == a_title and setup_wait_order_ok(case))
+        return {"verdict": "pass" if ok else "fail", "setupOutcome": "established", "variant": variant, "bResult": result.get("result"),
+                "bStatus": result.get("status"), "bCandidateTitle": candidate.get("title"), "bEditCheckpointsKept": result.get("editCheckpointsKept"),
                 "currentOnBoth": a.get("current", {}).get("title"), "byteIdentical": a.get("sha256") == b.get("sha256"), "timeToSettleMs": settle_ms}
+    quit_b = dev.run("B", ["checkpoint", "--file", path, "--title", b_title, "--recovery", rb])
+    case.product_starts(dev, "B", quit_b.get("editedEpochMs"), "host B's first edit on revision r")
     if variant == "bRelaunches":
-        quit_b = dev.run("B", ["checkpoint", "--file", path, "--title", b_title, "--recovery", rb])
         a2 = dev.run("A", ["save", "--file", path, "--title", a_title, "--recovery", ra])
         arrived = await_pub(dev, "B", path, a2.get("publicationID", "-"))
         offer = dev.run("B", ["offer", "--file", path, "--recovery", rb])
@@ -572,14 +1060,14 @@ def case_recovery(dev, split, index, rng):
         ok = (quit_b.get("result") == "checkpointed" and "saved" not in str(quit_b.get("status", "")).lower()
               and arrived.get("result") == "observed" and offer.get("candidateTitle") == b_title
               and offer.get("mode") == "copyOnlyOlderRevision" and offer.get("currentTitle") == a_title
-              and settled and a.get("sha256") == b.get("sha256"))
-        return {"verdict": "pass" if ok else "fail", "variant": variant, "bQuitStatus": quit_b.get("status"),
+              and settled and a.get("sha256") == b.get("sha256") and setup_wait_order_ok(case))
+        return {"verdict": "pass" if ok else "fail", "setupOutcome": "established", "variant": variant, "bQuitStatus": quit_b.get("status"),
                 "bOfferOnRelaunch": {k: offer.get(k) for k in ("candidateTitle", "relation", "mode", "currentTitle")},
                 "byteIdentical": a.get("sha256") == b.get("sha256"), "timeToSettleMs": settle_ms}
     boundary = rng.choice(["P4", "P5"])
     a2 = dev.run("A", ["save", "--file", path, "--title", a_title, "--recovery", ra])
     arrived = await_pub(dev, "B", path, a2.get("publicationID", "-"))
-    marker = dev.state("A", f"recovery-{index}") + "/marker"
+    marker = dev.state("A", f"recovery-{case.key}") + "/marker"
     os.makedirs(os.path.dirname(marker), exist_ok=True)
     killed = dev.run("A", ["kill-at", "--file", path, "--boundary", boundary, "--recovery", ra, "--marker", marker])
     marker_ok = os.path.exists(marker) and open(marker).read() == boundary
@@ -587,52 +1075,74 @@ def case_recovery(dev, split, index, rng):
     a, b, settle_ms, settled = settle(dev, ["inspect", "--file", path], show_key)
     titles = {r.get("current", {}).get("title") for r in (a, b)}
     reopened_b = dev.run("B", ["open", "--file", path, "--recovery", rb])
-    ok = (arrived.get("result") == "observed" and marker_ok and killed.get("result") != "saved" and settled
-          and a.get("sha256") == b.get("sha256") and titles == {expected} and reopened_b.get("outcome") == "editable")
-    return {"verdict": "pass" if ok else "fail", "variant": f"aKilled{boundary}", "killedAtBoundary": marker_ok,
+    offer = dev.run("B", ["offer", "--file", path, "--recovery", rb])
+    ok = (quit_b.get("result") == "checkpointed" and arrived.get("result") == "observed" and marker_ok and killed.get("result") != "saved"
+          and settled and a.get("sha256") == b.get("sha256") and titles == {expected} and reopened_b.get("outcome") == "editable"
+          and offer.get("candidateTitle") == b_title and setup_wait_order_ok(case))
+    return {"verdict": "pass" if ok else "fail", "setupOutcome": "established", "variant": f"aKilled{boundary}", "killedAtBoundary": marker_ok,
             "aReportedSaved": killed.get("result") == "saved", "currentOnBoth": sorted(t or "" for t in titles), "expected": expected,
+            "bCheckpointStillOffered": offer.get("candidateTitle") == b_title,
             "byteIdentical": a.get("sha256") == b.get("sha256"), "timeToSettleMs": settle_ms}
 
+
+# ---------------------------------------------------------------- run
 
 CASES = {"show": case_show, "library": case_library, "relink": case_relink, "recovery": case_recovery}
 
 
-def run_case(dev, stratum, split, index, rng):
+def run_case(dev, case):
     started = now_ms()
     try:
-        result = CASES[stratum](dev, split, index, rng)
+        result = CASES[case.cell](dev, case)
     except Exception as error:  # a harness defect is recorded, never hidden
         result = {"verdict": "harnessError", "exception": repr(error)}
-    result.update({"stratum": stratum, "caseIndex": index, "seed": seed_for(split, index), "durationMs": now_ms() - started})
-    return result
+    if result["verdict"] == "harnessError":
+        # Lead's ruling under the frozen text: an SSH or harness error is not an exclusion. After the in-case SSH
+        # retries it is a case FAILURE (no refill), with its cause recorded.
+        result.update({"verdict": "fail", "harnessError": True,
+                       "reason": "harness error: " + str(result.get("reason") or result.get("exception") or "")})
+    result.setdefault("variant", case.variant)
+    result.update({"stratum": case.cell, "split": case.split, "caseIndex": case.index, "slot": case.slot,
+                   "reserveIndex": case.reserve_index, "seed": seed_for(case.split, case.index), "durationMs": now_ms() - started,
+                   "setup": case.setup, "firstProductOperation": case.first_product_op,
+                   "setupWaitsBeforeFirstProductOperation": setup_wait_order_ok(case)})
+    return json.loads(redact(json.dumps(result)))
 
 
 def git(*args):
     return subprocess.run(["git", "-C", str(REPO)] + list(args), capture_output=True, text=True).stdout.strip()
 
 
+HOST_FIELDS = ["model", "cpu", "cores", "memoryBytes", "macOS", "macOSBuild", "xcode", "sdk", "swift", "probeSha256"]
+
+
 def host_record(dev, device):
-    script = ("hostname; sw_vers -productVersion; sw_vers -buildVersion; sysctl -n machdep.cpu.brand_string; sysctl -n hw.ncpu; "
-              "xcodebuild -version 2>&1 | tr '\\n' ' '; echo; swift --version 2>&1 | head -1")
+    """hostLabels (m1-freeze-3): pseudonymous host A / host B; no hostname, computer name or account identifier."""
+    probe = dev.local_probe if device == "A" else dev.remote_probe
+    script = ("sysctl -n hw.model; sysctl -n machdep.cpu.brand_string; sysctl -n hw.ncpu; sysctl -n hw.memsize; "
+              "sw_vers -productVersion; sw_vers -buildVersion; xcodebuild -version 2>/dev/null | tr '\\n' ' '; echo; "
+              f"xcrun --show-sdk-version 2>/dev/null; swift --version 2>/dev/null | head -1; shasum -a 256 {shlex.quote(probe)} | cut -d' ' -f1")
     out = dev.shell(device, script).stdout.split("\n")
-    return {"hostname": out[0], "macOS": f"{out[1]} ({out[2]})", "cpu": out[3], "cores": out[4],
-            "xcode": out[5].strip(), "swift": out[6].strip()}
+    values = [line.strip() for line in out] + [""] * len(HOST_FIELDS)
+    return {"pseudonym": f"host {device}", **dict(zip(HOST_FIELDS, values))}
 
 
-def cleanup(dev, split=None):
-    """Deletes the trial (sub)folder (iCloud propagates the deletion to the mini) and both Macs' device-local state."""
-    target = f"{TRIAL_ROOT}/{split}" if split else TRIAL_ROOT
-    existed = os.path.exists(target)
-    shutil.rmtree(target, ignore_errors=True)
+def cleanup(dev, split):
+    """Deletes this run's trial subfolders — the split and its reserve split (refills live there) — (iCloud
+    propagates the deletion) and both hosts' device-local state."""
+    targets = [f"{TRIAL_ROOT}/{split}", f"{TRIAL_ROOT}/{split}-reserve"]
+    existed = {redact(t): os.path.exists(t) for t in targets}
+    for target in targets:
+        shutil.rmtree(target, ignore_errors=True)
     shutil.rmtree(dev.local_state, ignore_errors=True)
     subprocess.run(SSH + [f"rm -rf {shlex.quote(dev.remote_state)}"])
-    return {"deleted": target, "existedBefore": existed, "existsAfterLocally": os.path.exists(target),
-            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    return {"deleted": [redact(t) for t in targets], "existedBefore": existed,
+            "existsAfterLocally": any(os.path.exists(t) for t in targets), "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--split", choices=["calibration", "holdout"], default="calibration")
+    parser.add_argument("--split", choices=list(SPLITS), default="calibration")
     parser.add_argument("--counts", default="")
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--keep", action="store_true", help="don't delete the trial folder afterwards")
@@ -641,11 +1151,15 @@ def main():
     args = parser.parse_args()
     if not args.remote:
         sys.exit("host B is required: --remote user@host or WW_DUR025_REMOTE")
+    if args.workers > 6:
+        sys.exit("setupConcurrency: at most 6 concurrent case workers")
     SSH[:] = SSH_OPTIONS + [args.remote]
+    split = SPLITS[args.split]
+    reserve_split = f"{split}-reserve"
     sha = git("rev-parse", "--short", "HEAD")
-    dev = Devices(sha, args.split)
+    dev = Devices(sha, split)
     if args.cleanup_only:
-        print(json.dumps(cleanup(dev)))
+        print(json.dumps(cleanup(dev, split)))
         return
     counts = dict(DEFAULT_COUNTS[args.split])
     for part in filter(None, args.counts.split(",")):
@@ -654,52 +1168,77 @@ def main():
     if args.split == "holdout":
         if git("status", "--porcelain"):
             sys.exit("holdout requires a clean tree")
-        # m1-freeze-2 (ad9af5a), the §4.2.1 interpretation (ce1eb23) and the #118 merge, given by the coordinator.
+        # The coordinator's required commits: m1-freeze-3, m1-freeze-4 and the #133 merge (all on main).
         required = [c for c in os.environ.get("WW_REQUIRED_COMMITS", "").split(",") if c]
         if len(required) < 3:
-            sys.exit("holdout requires WW_REQUIRED_COMMITS=<freeze-2>,<§4.2.1>,<#118 merge>")
+            sys.exit("holdout requires WW_REQUIRED_COMMITS=<freeze-3>,<freeze-4>,<#133 merge>")
         for commit in required:
             if subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor", commit, "HEAD"]).returncode != 0:
                 sys.exit(f"holdout requires {commit} to be an ancestor of HEAD")
-    out_dir = REPO / f".build/dur025/{args.split}"
+    if os.environ.get("WW_SAME_ACCOUNT_ATTESTED") != "1":
+        sys.exit("hostLabels: set WW_SAME_ACCOUNT_ATTESTED=1 (same Apple account, operator-attested)")
+    out_dir = REPO / f".build/dur025/{split}"
     out_dir.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(dev.local_state, ignore_errors=True)
     subprocess.run(SSH + [f"mkdir -p {shlex.quote(dev.remote_dir)} && rm -rf {shlex.quote(dev.remote_state)}"], check=True)
     subprocess.run(["rsync", "-a", "-e", f"ssh -o ControlPath={SSH_CONTROL}", dev.local_probe, f"{args.remote}:{dev.remote_dir}/"], check=True)
-    local_sum = hashlib.sha256(open(dev.local_probe, "rb").read()).hexdigest()
-    remote_sum = subprocess.run(SSH + [f"shasum -a 256 {shlex.quote(dev.remote_probe)}"], capture_output=True, text=True).stdout.split()[0]
-    if local_sum != remote_sum:
-        sys.exit("the probe on the mini differs from this Mac's build")
-    record = {"fixture": FIXTURE, "split": args.split, "commit": git("rev-parse", "HEAD"), "probeSha256": local_sum,
-              "freeze": "m1-freeze-2", "interpretation": "ww-003-fixture-protocol.md §4.2.1",
+    hosts = {"A": host_record(dev, "A"), "B": host_record(dev, "B")}
+    missing = {h: [f for f in HOST_FIELDS if not hosts[h].get(f)] for h in hosts}
+    if any(missing.values()) or hosts["A"]["probeSha256"] != hosts["B"]["probeSha256"]:
+        sys.exit(f"invalid run: host labels missing {missing} or probe hashes differ")
+    trees = {p: git("rev-parse", f"HEAD:{p}") for p in ["Packages/WaveWranglerKit/Sources/WWPersistence",
+                                                        "Packages/WaveWranglerKit/Sources/WWSources",
+                                                        "Packages/WaveWranglerKit/Sources/WWPersistenceProbe", "scripts/dur025"]}
+    record = {"fixture": FIXTURE, "split": split, "reserveSplit": reserve_split, "commit": git("rev-parse", "HEAD"),
+              "freeze": "m1-freeze-3 recipe with the m1-freeze-4 level-sampling rule", "protocol": "ww-003-fixture-protocol.md §4.3, §4.4",
               "requiredCommits": os.environ.get("WW_REQUIRED_COMMITS", ""), "cells": CELL_NAMES,
-              "label": "two-host evidence (Mac + Mac mini), same Apple account, iCloud Drive, synthetic data only",
-              "hostLabels": {"A": "this Mac (MacBook, macOS 27.0.1, 18-core, 128 GiB)",
-                             "B": "Mac mini (Macsimus, Apple M2 Pro, macOS 27.0.1, 12-core/32 GiB)"},
-              "hosts": {"A": host_record(dev, "A"), "B": host_record(dev, "B")}, "clockOffsetStart": dev.measure_offset(),
-              "counts": counts, "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "trialRoot": TRIAL_ROOT,
-              "trees": {p: git("rev-parse", f"HEAD:{p}") for p in ["Packages/WaveWranglerKit/Sources/WWPersistence",
-                                                                   "Packages/WaveWranglerKit/Sources/WWPersistenceProbe", "scripts/dur025"]}}
+              "label": "two-host evidence (host A + host B), same Apple account, iCloud Drive, synthetic data only",
+              "sameAppleAccount": "operator-attested", "hosts": hosts,
+              "trees": {"A": trees, "B": {"builtFrom": trees, "attestedBy": "probe sha256 equal on both hosts"}},
+              "clockOffsetStart": dev.measure_offset(), "counts": counts,
+              "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "trialRoot": redact(TRIAL_ROOT),
+              # `git merge-base --is-ancestor` for every required and listed harness commit (WW_ANCESTRY_COMMITS).
+              "ancestry": {c: subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor", c, "HEAD"]).returncode == 0
+                           for c in filter(None, (os.environ.get("WW_REQUIRED_COMMITS", "") + "," + os.environ.get("WW_ANCESTRY_COMMITS", "")).split(","))}}
     plan, index = [], 0
-    for stratum in STRATA:
-        for _ in range(counts.get(stratum, 0)):
-            plan.append((stratum, index))
+    for cell in STRATA:
+        for variant in variant_plan(split, cell, counts.get(cell, 0)):
+            plan.append(Case(split, index, cell, variant, inject_unreachable=args.split == "drill"))
             index += 1
+    # The cap is 20% of each cell's frozen HOLDOUT count (6 show/library, 4 relink/recovery), for every split.
+    caps = {cell: int(SNE_CAP_FRACTION * DEFAULT_COUNTS["holdout"][cell]) for cell in STRATA}
+    sne = {cell: 0 for cell in STRATA}
+    incomplete = {}
+    reserve_next = 0
     results_path = out_dir / "results.jsonl"
     with open(results_path, "w") as results, cf.ThreadPoolExecutor(args.workers) as pool:
-        futures = {pool.submit(run_case, dev, s, args.split, i, random.Random(seed_for(args.split, i))): (s, i) for s, i in plan}
-        for future in cf.as_completed(futures):
-            stratum, i = futures[future]
-            line = future.result()
-            results.write(json.dumps(line, sort_keys=True) + "\n")
-            results.flush()
-            print(f"[{stratum} {i}] {line['verdict']} {line.get('mechanism', line.get('variant', ''))}", flush=True)
+        pending = {pool.submit(run_case, dev, case): case for case in plan}
+        while pending:
+            done, _ = cf.wait(pending, return_when=cf.FIRST_COMPLETED)
+            for future in done:
+                case = pending.pop(future)
+                line = future.result()
+                results.write(json.dumps(line, sort_keys=True) + "\n")
+                results.flush()
+                print(f"[{case.cell} {case.key} {case.variant}] {line['verdict']} {line.get('reason', '')}", flush=True)
+                if line["verdict"] == "setupNotEstablished":
+                    sne[case.cell] += 1
+                    if sne[case.cell] > caps[case.cell]:
+                        incomplete[case.cell] = f"setupNotEstablished {sne[case.cell]} > cap {caps[case.cell]}"
+                    elif case.cell not in incomplete:
+                        refill = Case(reserve_split, reserve_next, case.cell, case.variant, slot=case.slot, reserve_index=reserve_next)
+                        reserve_next += 1
+                        pending[pool.submit(run_case, dev, refill)] = refill
+    record["setupNotEstablished"] = sne
+    record["setupNotEstablishedCap"] = caps
+    record["cellsIncomplete"] = incomplete
+    record["reserveIndicesUsed"] = reserve_next
     record["clockOffsetEnd"] = dev.measure_offset()
     record["finishedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     if not args.keep:
-        record["cleanup"] = cleanup(dev, split=args.split)
+        record["cleanup"] = cleanup(dev, split)
     (out_dir / "run-record.json").write_text(json.dumps(record, indent=2, sort_keys=True))
-    print(json.dumps({"results": str(results_path), "record": str(out_dir / "run-record.json")}))
+    print(json.dumps({"results": redact(str(results_path)), "record": redact(str(out_dir / "run-record.json"))}))
 
 
 if __name__ == "__main__":

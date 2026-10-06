@@ -71,12 +71,12 @@ private struct LibrarySidebar: View {
         List(selection: $state.sidebarSelection) {
             Section("Library") {
                 ForEach(snapshot.libraryRows) { row in
-                    SidebarRowView(row: row).tag(row.item)
+                    SidebarRowView(row: row, emphasized: isEmphasized(row.item)).tag(row.item)
                 }
             }
             Section {
                 ForEach(snapshot.collectionRows) { row in
-                    SidebarRowView(row: row)
+                    SidebarRowView(row: row, emphasized: isEmphasized(row.item))
                         .tag(row.item)
                         .contextMenu { collectionMenu(row.item.collectionID) }
                 }
@@ -116,6 +116,11 @@ private struct LibrarySidebar: View {
         }
     }
 
+    /// #139: the row is drawn on the accent-filled (emphasized) selection.
+    private func isEmphasized(_ item: LibrarySidebarItem) -> Bool {
+        state.sidebarSelection == item && focus.wrappedValue == .sidebar
+    }
+
     @ViewBuilder
     private func collectionMenu(_ id: CollectionID?) -> some View {
         if let id {
@@ -129,6 +134,8 @@ private struct LibrarySidebar: View {
 
 private struct SidebarRowView: View {
     let row: LibrarySidebarRow
+    /// Selected while the sidebar has keyboard focus (#139).
+    let emphasized: Bool
 
     var body: some View {
         HStack {
@@ -141,6 +148,7 @@ private struct SidebarRowView: View {
                     .monospacedDigit()
             }
         }
+        .emphasizedSelectionForeground(selectedInFocusedList: emphasized)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(row.accessibilityLabel)
         .accessibilityValue(row.accessibilityValue)
