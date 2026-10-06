@@ -163,11 +163,15 @@ once at the default maximum concurrency of four:
 
 `cd Packages/WaveWranglerKit && WW_M2_DECODE_2_HOLDOUT=1 WW_DECODE_RECORDS_DIR=../../docs/m2/evidence/ww-050 swift test --scratch-path ../../.build/swiftpm --jobs 4 --filter DecodeCalibrationTests/holdoutSplitMeetsEveryFrozenGate`
 
-The test passed from 2026-10-06T20:57:16Z through 2026-10-06T20:58:02Z. The initial `tee` destination was
-resolved before the command changed directories and failed to open; the complete raw command output was retained by
-the session event record and recovered verbatim to [`ww-050/holdout-2-run.log`](ww-050/holdout-2-run.log).
-The 521 ordered case records are [`ww-050/holdout-2.jsonl`](ww-050/holdout-2.jsonl). Their SHA-256 values are in
-[`ww-050/holdout-2.sha256`](ww-050/holdout-2.sha256).
+The test passed from 2026-10-06T20:57:16Z through 2026-10-06T20:58:02Z. The intended raw stdout capture failed:
+`tee` opened a relative path before the command changed directories and returned ENOENT, so no raw log exists.
+Console output as observed by the runner session (not a `tee` capture): `tee: ../../docs/m2/evidence/ww-050/holdout-2-run.log:
+No such file or directory`; `Test holdoutSplitMeetsEveryFrozenGate() passed after 4.550 seconds`; `Test run with 1
+test in 1 suite passed after 4.550 seconds`. The 521 ordered case records are
+[`ww-050/holdout-2.jsonl`](ww-050/holdout-2.jsonl), SHA-256
+`f3879d8d95d455eaae47c657e405042fb9925ff3963b327efccd1c0543858c9e`, recorded in
+[`ww-050/holdout-2.sha256`](ww-050/holdout-2.sha256). Process lesson: use an absolute `tee` path, or create its
+directory before starting the capture.
 
 - **Supported mapping: PASS.** All 360 supported cases (8,881,086 frames) mapped with 0 mapping failures, changed
   sources, or unpublished results.
