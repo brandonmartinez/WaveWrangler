@@ -302,15 +302,28 @@ The machine-readable record is the registry's `freezeRevisions[3]`.
 - **Scope.** `M1-REF-020` only. Its recipe, expected truth, split (2 calibration / 20 holdout GUI scenarios, that is 5 cycles × grant, relaunch, regrant and relink), gate and claim limits are **unchanged** from `m1-freeze-1`. Every other entry, revision and deferral is unchanged.
 - **Retained failure.** The `m1-freeze-1` holdout ran once at `08f62ee` and stays recorded as **FAILED (short)**: 16/20 executed; grant 4/4, relaunch 4/4, regrant 2/4, relink 2/4, so 12 pass and 4 fail; cycle 5 aborted, so 4 were not executed. Every failure and the abort were harness defects, and no product failure was observed ([#111](https://github.com/brandonmartinez/WaveWrangler/pull/111), [evidence §2.3](evidence/ww-007-accessibility-responsiveness.md#23-ref-020-sandboxed-grant--relaunch--regrant--relink)).
 - **Not counted.** The later re-executions (`241396a`, `4a109aa`, `9e994b1`, and the labelled 20/20 at `550506d`) ran before this revision. They are supporting evidence only.
-- **Harness.** `WaveWranglerUITests/SourceGrantHoldoutUITests.swift`, `testGrantRelaunchRegrantRelink`, with `TEST_RUNNER_WW_HOLDOUT_SCENARIOS=20`. Its tree at the base commit `270b00b` is `669a664…` (verify with `git rev-parse 270b00b:WaveWranglerUITests`). Since the first holdout, the harness:
-  - launches once for documents (`app.launchOnce(opening:)`, [#135](https://github.com/brandonmartinez/WaveWrangler/pull/135)) instead of `launch()` + `open()`, which spawned two app processes;
-  - finds the show window by accessibility identifier (`ww.show.window`), not by its changing title;
-  - selects a source row by clicking at several horizontal offsets until the row is selected;
-  - matches Setup Name cells on label or value.
+- **Harness, finalized before this freeze.** The coordinator decided (2026-10-05) to extend the harness to cover the full frozen recipe rather than narrow the freeze. [#152](https://github.com/brandonmartinez/WaveWrangler/pull/152) did that, and merged as `8526737` before this revision was re-pinned. The test is `WaveWranglerUITests/SourceGrantHoldoutUITests.swift`, `testGrantRelaunchRegrantRelink`, run with `TEST_RUNNER_WW_FIXTURE_SPLIT=holdout` and `TEST_RUNNER_WW_HOLDOUT_SCENARIOS=20`. The harness itself fails a holdout run whose count isn't exactly 20, or that executed fewer than 20 scenarios.
+  - **Full recipe.** In each cycle, the grant scenario selects the sources (read-only) and a library folder (read-write; Settings › Library location › Choose Folder… › Move Library) through the sandboxed panels. The relaunch scenario resolves the library from that folder, reopens the show from the library, edits it, and saves it with ⌘S, reading the save back from disk.
+  - **Registry seeds.** There is one case per GUI scenario, and cycle *c* covers case indices 4*c*…4*c*+3. The show uses seed(4*c*); the two sources use seed(4*c*+1) and seed(4*c*+2).
+  - **Fixes since the first holdout:**
+    - it launches once for documents (`app.launchOnce(opening:)`, [#135](https://github.com/brandonmartinez/WaveWrangler/pull/135)) instead of `launch()` + `open()`, which spawned two app processes;
+    - it finds the show window by accessibility identifier (`ww.show.window`), not by its changing title;
+    - it selects a source row with a row predicate, clicking at several horizontal offsets;
+    - it matches Setup Name cells on label or value;
+    - UI-test storage and preferences are reset before each test class ([#166](https://github.com/brandonmartinez/WaveWrangler/pull/166)).
 
-  These change how the harness drives the GUI, not what it checks.
-- **Host.** The user's Mac mini (Apple M2 Pro, 12 cores, 32 GiB, macOS 27.0.1), under grant A and the standing Mac mini UI consent: build-for-testing on this Mac, test-without-building on the mini, one GUI run under the coordinator's GUI lock. The run record labels the host.
-- **Run rule.** The holdout runs **once**, on a clean commit that contains this revision's merge, and is recorded as-is in `docs/m1/evidence` and the registry: every scenario (pass, fail, not executed or abort) with its cycle, the commit SHA, the harness tree ID, the host label and the source SHA-256 and mtime checks.
+    These change how the harness drives the GUI and which fixture it uses, not what the frozen truth checks.
+  - **Pin at base `7311950`:**
+
+    | File | Blob ID |
+    | --- | --- |
+    | `SourceGrantHoldoutUITests.swift` | `d1bb412…` |
+    | `AcceptanceSupport.swift` | `b2d87c3…` |
+    | `UITestIsolation.swift` | `20c7ae1…` |
+
+    These three files are binding; verify with `git rev-parse 7311950:WaveWranglerUITests/<file>`. The run reports their blob IDs, and any difference needs a new dated revision first. The `WaveWranglerUITests` tree (`9afecfa…` at the base) is informational, because unrelated UI test classes may merge before the run.
+- **Host.** The user's Mac mini (Apple M2 Pro, 12 cores, 32 GiB, macOS 27.0.1), under grant A and the standing Mac mini UI consent: build-for-testing on this Mac, test-without-building on the mini, one GUI run under the Mac mini's GUI lock. The run record labels the host.
+- **Run rule.** The holdout runs **once**, on a clean commit that contains this revision's merge, and is recorded as-is in `docs/m1/evidence` and the registry: every scenario (pass, fail, not executed or abort) with its cycle and case index, the commit SHA, the pinned harness blob IDs and the tree ID it ran, the host label and the source SHA-256 and mtime checks.
   - A harness failure or abort is a **failed** scenario: no re-run, no replacement, no exclusion.
   - Calibration (2 scenarios) may run first and is reported separately. It never tunes truth, counts or gates.
   - Any further change needs a new dated revision before a further run.

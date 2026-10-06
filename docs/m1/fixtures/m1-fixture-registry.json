@@ -118,8 +118,8 @@
       "freezeID": "m1-freeze-5",
       "date": "2026-10-05",
       "recordedBy": "Lead (WW-003 protocol author), at the M1 coordinator's request after the user's decision of 2026-10-05 23:30 (relayed): finish the remaining M1 evidence runs before closing",
-      "baseCommit": "270b00b1bfe40f4bd7d27d557d95d496eff6ebca",
-      "baseCommitNote": "main when this revision was authored (the #150 merge, the final M1 code SHA). It takes effect at the merge commit of the PR that adds it, and is made before any m1-freeze-5 run of M1-REF-020.",
+      "baseCommit": "73119505883fb3a573dced19fd28c287e154da20",
+      "baseCommitNote": "main when this revision was re-pinned (the #157 merge). It contains the final REF-020 harness from PR #152 (8526737). It takes effect at the merge commit of the PR that adds it, and is made before any m1-freeze-5 run of M1-REF-020. First drafted at 270b00b, then held at the coordinator's direction until the harness was finalized; the harness was finalized before this freeze.",
       "nameNote": "The ID m1-freeze-5 was first used by a DUR-025 proposal (PR #145), which was closed unmerged and never took effect. This revision reuses the ID for M1-REF-020 only; it has no relation to DUR-025, which stays user-deferred to #146.",
       "scope": "M1-REF-020 only. Its recipe, expected truth, split (2 calibration / 20 holdout GUI scenarios = 5 cycles x grant, relaunch, regrant, relink), gate and supported-claim limits are unchanged from m1-freeze-1. Every other registry entry, freeze revision and deferral is unchanged.",
       "trigger": "The m1-freeze-1 holdout ran once at 08f62ee and executed only 16 of 20 scenarios: 12 pass and 4 fail on a harness row-selection defect, and cycle 5 aborted on a harness defect (4 not executed). No product failure was observed. Follow-up #151.",
@@ -130,12 +130,16 @@
         "laterExecutionsNotCounted": "The post-correction and Mac mini re-executions (241396a, 4a109aa, 9e994b1, and the labelled 20/20 at 550506d) ran before this revision. They are supporting evidence only and are not holdout results."
       },
       "harness": {
-        "test": "WaveWranglerUITests/SourceGrantHoldoutUITests.swift testGrantRelaunchRegrantRelink, with TEST_RUNNER_WW_HOLDOUT_SCENARIOS=20 (5 cycles) and WW_PROBE set (scripts/test.sh --ui path)",
-        "fixesSinceFirstHoldout": "launch once for documents (app.launchOnce(opening:), PR #135, ade082f) instead of launch() + open(), which spawned two app processes; the show window is found by accessibility identifier (ww.show.window), not by its changing title; source rows are selected by clicking at several horizontal offsets until the row is selected; Setup Name cells match on label or value. These change how the harness drives the GUI, not what it checks.",
-        "treeAtBase": {
-          "WaveWranglerUITests": "669a66483b49b9c1ad5b94129d248850724057ac"
+        "test": "WaveWranglerUITests/SourceGrantHoldoutUITests.swift testGrantRelaunchRegrantRelink, with TEST_RUNNER_WW_FIXTURE_SPLIT=holdout and TEST_RUNNER_WW_HOLDOUT_SCENARIOS=20 (5 cycles) and WW_PROBE set (scripts/test.sh --ui path). The harness itself fails a holdout run whose count isn't exactly 20, and fails if fewer than 20 scenarios were executed.",
+        "finalizedBeforeFreeze": "Coordinator decision (2026-10-05): extend the harness to cover the full frozen recipe rather than narrow the freeze. PR #152 (merged 8526737, before this revision) does that. Each cycle's grant scenario selects sources (read-only) and a library folder (read-write, Settings > Library location > Choose Folder... > Move Library) through the sandboxed panels. The relaunch scenario resolves the library from that folder, reopens the show from the library, edits it and saves it with Cmd-S, with a disk read-back. Fixture bytes and the show document come from the registry seed derivation, one case per GUI scenario: cycle c covers case indices 4c..4c+3; the show uses seed(4c), and the sources use seed(4c+1) and seed(4c+2).",
+        "fixesSinceFirstHoldout": "launch once for documents (app.launchOnce(opening:), PR #135, ade082f) instead of launch() + open(), which spawned two app processes; the show window found by accessibility identifier (ww.show.window), not its changing title; source rows selected by clicking at several horizontal offsets until selected, with a row predicate; Setup Name cells matched on label or value; UI-test storage and preferences reset before each test class (PR #166). These change how the harness drives the GUI and which fixture it uses, not what the frozen truth checks.",
+        "pinnedAtBase": {
+          "WaveWranglerUITests/SourceGrantHoldoutUITests.swift": "d1bb41238ca26544e9b7945b29b1eda51949d4bc",
+          "WaveWranglerUITests/AcceptanceSupport.swift": "b2d87c3e843a6b3d6c0d267acd67319439021aa1",
+          "WaveWranglerUITests/UITestIsolation.swift": "20c7ae150abaa2084a0896952f1574790c30a2ba",
+          "WaveWranglerUITests (tree)": "9afecfa4979dfc529cafd9f38b2ad3f4d85eedab"
         },
-        "treeNote": "git tree object ID at baseCommit (verify with: git rev-parse 270b00b:WaveWranglerUITests). The run reports the tree ID it actually ran; a different tree must be disclosed with its diff."
+        "pinNote": "git object IDs at baseCommit (verify with: git rev-parse 7311950:<path>). The three harness files above are the binding pin: the run reports their blob IDs, and any difference fails the pin unless a new dated revision is made first. The whole-directory tree ID is informational, because unrelated UI test classes may merge before the run; the run reports the tree it actually ran."
       },
       "host": "The user's Mac mini (Apple M2 Pro, 12 cores, 32 GiB, macOS 27.0.1) under grant A and the standing Mac mini UI consent: build-for-testing on this Mac, test-without-building on the mini, one GUI run under the coordinator's GUI lock. The run record labels the host (sw_vers, hardware, Xcode).",
       "postFreezeRule": "The holdout runs ONCE, on a clean commit that contains this revision's merge, and is recorded as-is: every scenario (pass, fail, not executed, abort) with its cycle, the commit SHA, the harness tree ID, the host label and the source SHA-256 and mtime checks, in docs/m1/evidence and this registry. A harness failure or abort is a FAILED scenario (no re-run, no replacement, no exclusion). Calibration (2 scenarios) may run before the holdout and is reported separately; it never tunes truth, counts or gates. Any further change needs a new dated revision before a further run."
