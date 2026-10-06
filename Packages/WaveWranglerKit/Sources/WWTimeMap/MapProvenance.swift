@@ -116,7 +116,9 @@ public struct IndependentClockReference: Hashable, Sendable {
 }
 
 /// A clock approval. It can only be constructed from an independent clock reference whose measurements
-/// meet every provisional gate.
+/// meet every provisional gate. Meeting these gates is necessary, not sufficient: per M2-C4
+/// (docs/m2/ww-019-m2-contracts.md) an evaluator may only issue `clockApproved` after the frozen WW-016
+/// holdout gate passes, and nothing in WWTimeMap promotes any map to `clockApproved` automatically.
 public struct ClockApproval: Hashable, Sendable {
     /// Identifier and version of the evaluator that produced the measurements.
     public let evaluator: String
