@@ -47,6 +47,8 @@
 				Commands/ConfirmationButtons.swift,
 				Commands/OpaqueErrorPanel.swift,
 				Document/CopyElsewhereRetryGate.swift,
+				Library/CanonicalLibraryAdoption.swift,
+				Library/LibraryFailureMessage.swift,
 				Library/MoveStepRelay.swift,
 				Sources/SetupConfirmationKind.swift,
 				Workspace/ShowDocumentStatusMapping.swift,

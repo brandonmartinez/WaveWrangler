@@ -666,7 +666,9 @@ public actor LibraryStore {
         await relocate(to: folder, place: { try .folder(bookmark: self.bookmarks.bookmark(for: folder), displayPath: folder.path) })
     }
 
-    /// Moves the library back into the app container (same copy-verify-switch rules).
+    /// Moves the library back into the app container (same copy-verify-switch rules). This library's own retired
+    /// copy left there by an earlier move out (`isRetiredCopy`) is kept as a dated backup and the move goes ahead;
+    /// any other library there is `.destinationHasLibrary`.
     private func moveLibraryToAppContainerUnlocked() async -> Result<LibraryMoveOutcome, PublicationError> {
         await relocate(to: containerFolder, place: { .appContainer })
     }
@@ -742,7 +744,8 @@ public actor LibraryStore {
             return .failure(.conflict(PublicationConflict(expected: base, onDisk: RevisionFingerprint(of: bytes), preservedCandidate: nil)))
         }
         let destination = folder.appending(path: settings.load().fileName)
-        let started = folder.standardizedFileURL == containerFolder.standardizedFileURL ? false : bookmarks.startAccessing(folder)
+        let isContainer = folder.standardizedFileURL == containerFolder.standardizedFileURL
+        let started = isContainer ? false : bookmarks.startAccessing(folder)
         defer { if started { bookmarks.stopAccessing(folder) } }
 
         if ops.exists(destination) {
@@ -755,13 +758,28 @@ public actor LibraryStore {
             if RevisionFingerprint.digest(existing) == base.byteDigest {
                 return await switchSetting(place: place, libraryID: current.payload.libraryID, outcome: .adoptedIdentical(destination))
             }
+            let decoded: DecodedDocument<LibraryModel>
             do {
-                let decoded = try publisher.coder.decode(existing)
-                return .success(.destinationHasLibrary(destination, revision: decoded.revision))
+                decoded = try publisher.coder.decode(existing)
             } catch let .unknownNewerSchema(found, supported) {
                 return .success(.destinationUnusable(destination, problem: .newerFormat(found: found, supported: supported)))
             } catch {
                 return .success(.destinationUnusable(destination, problem: .notALibrary))
+            }
+            guard isContainer, Self.isRetiredCopy(decoded, of: current) else {
+                return .success(.destinationHasLibrary(destination, revision: decoded.revision))
+            }
+            // Moving back into WaveWrangler: the container holds this library's own retired copy. It is kept as a
+            // dated backup next to it (never deleted, never combined), then the normal verified move follows.
+            let kept: Data
+            do {
+                kept = try preserveRetiredCopy(revision: decoded.revision, at: destination)
+            } catch {
+                return .failure(.failed(stage: .candidateValidated, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
+            }
+            // The file changed between the check and the rename: it stays kept as the backup, and nothing is moved.
+            guard RevisionFingerprint.digest(kept) == RevisionFingerprint.digest(existing) else {
+                return .failure(.conflict(PublicationConflict(expected: RevisionFingerprint(of: existing), onDisk: RevisionFingerprint(of: kept), preservedCandidate: nil)))
             }
         }
 
@@ -783,6 +801,36 @@ public actor LibraryStore {
         // (4) check the copy (read back, then loaded as the library by the switch); the previous copy stays where it was.
         moveStepHandler?(.checking)
         return await switchSetting(place: place, libraryID: current.payload.libraryID, outcome: .moved(to: destination, previousCopyKept: sourceURL))
+    }
+
+    /// Whether `found` (a library in the app container that differs from the current one) is this library's own
+    /// retired copy, left there by an earlier move out: the same real `libraryID` at a lower revision. The
+    /// container is private to this Mac and WaveWrangler never writes it again after retiring it, and revisions only
+    /// grow along one library's history, so such a file can only be an earlier copy of this library. Anything else
+    /// (another or a provisional schema 1 identity, or the same identity at an equal or higher revision, which means
+    /// the copies diverged) is a different library. User folders never qualify: another Mac may still use them.
+    static func isRetiredCopy(_ found: DecodedDocument<LibraryModel>, of current: DecodedDocument<LibraryModel>) -> Bool {
+        guard let id = real(current.payload.libraryID), found.payload.libraryID == id else { return false }
+        return found.revision < current.revision
+    }
+
+    /// Keeps this library's retired copy at `url` as a dated backup beside it ("Library (Backup r3 2026-10-06
+    /// 125607).wwlibrary"), by a same-volume rename that never overwrites, and returns the backup's bytes for the
+    /// caller to check. Throws (nothing changed) if the rename fails.
+    private func preserveRetiredCopy(revision: Int, at url: URL) throws -> Data {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HHmmss"
+        let stem = url.deletingPathExtension().lastPathComponent
+        let stamp = "r\(revision) \(formatter.string(from: Date()))"
+        let folder = url.deletingLastPathComponent()
+        var backup = folder.appending(path: "\(stem) (Backup \(stamp)).\(url.pathExtension)")
+        let ops = publisher.ops
+        if ops.exists(backup) {
+            backup = folder.appending(path: "\(stem) (Backup \(stamp) \(UUID().uuidString.prefix(8))).\(url.pathExtension)")
+        }
+        try publisher.coordination.coordinateWriting(at: url) { try ops.moveNew($0, to: backup) }
+        return try ops.read(backup)
     }
 
     private func switchSetting(place: () throws -> LibraryLocationSetting.Place, libraryID: LibraryID, outcome: LibraryMoveOutcome) async -> Result<LibraryMoveOutcome, PublicationError> {

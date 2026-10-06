@@ -112,7 +112,7 @@ struct CalibrationTests {
     @Test func calibrationAgainstPlantedTruth() async throws {
         let scores = try await SegmentRunner.runAll(SegmentPlan.cases())
         for score in scores { print("WW-017 calibration " + SegmentRunner.line(score)) }
-        try SegmentCaseRecord.write(scores.map { SegmentCaseRecord(label: SegmentCaseRecord.label($0.kase), score: $0) }, split: "calibration")
+        try SegmentCaseRecord.write(scores.map { SegmentCaseRecord(label: SegmentCaseRecord.label($0.kase), score: $0) }, split: "calibration-2")
         print("WW-017 calibration table\n" + SegmentRunner.table(scores))
         let failures = SegmentRunner.gateFailures(scores, maximumFalseSplitRate: SegmentPlan.maximumFalseSplitRate)
         #expect(failures.isEmpty, "\(failures.joined(separator: "\n"))")
@@ -131,7 +131,7 @@ struct FloorSweepTests {
     @Test func detectionFloor() async throws {
         let cases = SegmentPlan.floorCases()
         let scores = try await SegmentRunner.runAll(cases.map(\.1))
-        try SegmentCaseRecord.write(zip(cases, scores).map { SegmentCaseRecord(label: $0.0.label, score: $0.1) }, split: "floor")
+        try SegmentCaseRecord.write(zip(cases, scores).map { SegmentCaseRecord(label: $0.0.label, score: $0.1) }, split: "floor-2")
         for ((label, _), score) in zip(cases, scores) {
             print("WW-017 floor \(label): " + SegmentRunner.line(score))
             #expect(score.retentionFailures.isEmpty && score.monotonicFailures.isEmpty && score.inverseFailures.isEmpty, "\(label)")

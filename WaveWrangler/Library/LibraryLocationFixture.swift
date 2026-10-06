@@ -85,8 +85,10 @@ enum LibraryLocationFixture {
     /// `-WWUITestHoldMoveSteps YES`: how long a move's reported "checking" step stays visible after the store reports
     /// the end (it lasts milliseconds on a local disk), so a test can read "Moving library — checking copy…". Applied
     /// in the adapter's handler for the store's real step reports; nothing about the move changes. Zero otherwise.
+    /// 6 s: XCUITest's first look came 2.5 s after Return on the mini (each wait starts with a 1 s pause), so 2 s
+    /// had already ended.
     nonisolated static var moveStepHold: Duration {
-        PersistenceEnvironment.isUITestRun && UserDefaults.standard.bool(forKey: "WWUITestHoldMoveSteps") ? .seconds(2) : .zero
+        PersistenceEnvironment.isUITestRun && UserDefaults.standard.bool(forKey: "WWUITestHoldMoveSteps") ? .seconds(6) : .zero
     }
 
     /// Another writer (as another Mac would) publishes a change to the same library file.

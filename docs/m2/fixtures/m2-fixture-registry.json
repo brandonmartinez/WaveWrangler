@@ -1,5 +1,5 @@
 {
- "registryVersion": "m2-fixtures-v5-decode-revision-2-frozen",
+ "registryVersion": "m2-fixtures-v6-decode-and-discontinuity-revision-2",
  "date": "2026-10-06",
  "owner": "Alignment (WW-016/WW-021, WW-018/WW-023, WW-017), Mac (WW-050, m2-freeze-decode, m2-freeze-decode-2 and m2-freeze-timemap for WW-015); protocol pattern from docs/m1/ww-003-fixture-protocol.md",
  "issues": [
@@ -9,10 +9,11 @@
   "https://github.com/brandonmartinez/WaveWrangler/issues/18",
   "https://github.com/brandonmartinez/WaveWrangler/issues/45",
   "https://github.com/brandonmartinez/WaveWrangler/issues/10",
-  "https://github.com/brandonmartinez/WaveWrangler/issues/11"
+  "https://github.com/brandonmartinez/WaveWrangler/issues/11",
+  "https://github.com/brandonmartinez/WaveWrangler/issues/209"
  ],
  "protocol": "docs/m2/ww-019-m2-contracts.md §4 (freeze plan) and §5 (gates)",
- "status": "All listed records are frozen 2026-10-06 and effective at their merge commits. m2-freeze-decode holdout passed once in PR #202 and is retained unchanged as historical evidence; it is superseded for the pull-cursor trees by m2-freeze-decode-2, whose calibration passed and whose holdout has NOT RUN. m2-freeze-timemap holdout passed once in PR #202. Other family statuses remain on their entries and evidence notes.",
+ "status": "All listed records are frozen 2026-10-06 and effective at their merge commits. m2-freeze-decode holdout passed once in PR #202 and is retained unchanged as historical evidence; it is superseded for the pull-cursor trees by m2-freeze-decode-2, whose calibration passed and whose holdout has NOT RUN. m2-freeze-timemap holdout passed once in PR #202. Discontinuity revision status and evidence remain recorded on their entries and evidence note.",
  "freezeRule": "Each family is frozen (recipe, truth, split and counts, gate, generator tree IDs) in a dated freeze record under docs/m2/fixtures/ before its first holdout case runs. Counts may increase before a freeze and never decrease after one without an explicit, dated user decision.",
  "freezes": [
   {
@@ -230,7 +231,7 @@
     "M2-SEG-RATE-001",
     "M2-SEG-COMPOUND-001"
    ],
-   "status": "frozen; holdout not run; segmenter a calibrated candidate, never clockApproved",
+   "status": "superseded by m2-freeze-discontinuity-2 after failed holdout (3/50 false splits); rev-1 evidence retained",
    "counts": {
     "fixtures": 9,
     "calibrationCases": 48,
@@ -509,6 +510,40 @@
      "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). One target group, one declared span, 8/16 kHz Float32 PCM; planted sizes only in the stated ranges (smaller steps/rate changes are below the reported detection floor). Mapped regions are acousticConsistentProposal, never clockApproved; no real-recording, codec or device claim.",
      "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-discontinuity (2026-10-06); holdout NOT RUN"
     }
+   ]
+  },
+  {
+   "freezeID": "m2-freeze-discontinuity-2",
+   "record": "docs/m2/fixtures/m2-freeze-discontinuity-2.json",
+   "fixtures": [
+    "M2-SEG2-NEG-CLEAN-001",
+    "M2-SEG2-NEG-TRANSIENT-001",
+    "M2-SEG2-NEG-SILENCE-001",
+    "M2-SEG2-DROP-001",
+    "M2-SEG2-INSERT-001",
+    "M2-SEG2-STEP-001",
+    "M2-SEG2-RESTART-001",
+    "M2-SEG2-RATE-001",
+    "M2-SEG2-COMPOUND-001"
+   ],
+   "status": "frozen revision 2; calibration only; holdout NOT RUN; never clockApproved",
+   "counts": {
+    "fixtures": 9,
+    "calibrationCases": 70,
+    "calibrationPlants": 38,
+    "holdoutCases": 165,
+    "holdoutPlants": 130
+   },
+   "fixtureEntries": [
+    {"id": "M2-SEG2-NEG-CLEAN-001", "stratum": "clean", "split": {"calibration": 6, "holdout": 20}},
+    {"id": "M2-SEG2-NEG-TRANSIENT-001", "stratum": "transient", "split": {"calibration": 15, "holdout": 15}},
+    {"id": "M2-SEG2-NEG-SILENCE-001", "stratum": "silenceGap", "split": {"calibration": 15, "holdout": 15}},
+    {"id": "M2-SEG2-DROP-001", "stratum": "dropped", "split": {"calibration": 6, "holdout": 20}},
+    {"id": "M2-SEG2-INSERT-001", "stratum": "inserted", "split": {"calibration": 6, "holdout": 20}},
+    {"id": "M2-SEG2-STEP-001", "stratum": "clockStep", "split": {"calibration": 6, "holdout": 20}},
+    {"id": "M2-SEG2-RESTART-001", "stratum": "restart", "split": {"calibration": 6, "holdout": 20}},
+    {"id": "M2-SEG2-RATE-001", "stratum": "rateChange", "split": {"calibration": 6, "holdout": 20}},
+    {"id": "M2-SEG2-COMPOUND-001", "stratum": "compound", "split": {"calibration": 4, "holdout": 15}}
    ]
   }
  ],

@@ -5,16 +5,16 @@ import WWAlignEstimate
 import WWAlignSegment
 import WWTimeMap
 
-/// m2-freeze-discontinuity consistency (docs/m2/fixtures/m2-freeze-discontinuity.json). These checks segment
+/// m2-freeze-discontinuity-2 consistency (docs/m2/fixtures/m2-freeze-discontinuity-2.json). These checks segment
 /// nothing and always run: they fail if the segmenter parameters, identifiers, seeds, counts, gates, registry
 /// entry or pinned trees drift from the committed freeze. A deliberate change is a new dated freeze revision,
 /// never a silent edit.
-@Suite("Segment freeze (m2-freeze-discontinuity)")
+@Suite("Segment freeze (m2-freeze-discontinuity-2)")
 struct SegmentFreezeTests {
     static let repository = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
-    static let freezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-discontinuity.json")
+    static let freezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-discontinuity-2.json")
 
     static func freeze() throws -> [String: Any] {
         try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: freezeURL)) as? [String: Any])
@@ -34,7 +34,11 @@ struct SegmentFreezeTests {
 
     @Test func frozenDefinitionMatchesTheFreezeRecord() throws {
         let json = try Self.freeze()
-        #expect(json["freezeID"] as? String == "m2-freeze-discontinuity")
+        #expect(json["freezeID"] as? String == "m2-freeze-discontinuity-2")
+        #expect(json["supersedes"] as? String == "m2-freeze-discontinuity")
+        let previous = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: Self.freezeURL.deletingLastPathComponent().appendingPathComponent("m2-freeze-discontinuity.json"))) as? [String: Any])
+        #expect((json["gate"] as? [String: Any])?["verbatim"] as? String == (previous["gate"] as? [String: Any])?["verbatim"] as? String)
+        #expect((json["gate"] as? [String: Any])?["definition"] as? [String] == (previous["gate"] as? [String: Any])?["definition"] as? [String])
 
         let segmenter = try #require(json["segmenter"] as? [String: Any])
         #expect(segmenter["identifier"] as? String == DiscontinuitySegmenter.identifier)
@@ -111,7 +115,7 @@ struct SegmentFreezeTests {
         let package = Self.repository.appendingPathComponent("Packages/WaveWranglerKit")
         for (path, frozen) in trees {
             let actual = try Self.gitTreeID(package.appendingPathComponent(path))
-            #expect(actual == frozen, "\(path) is \(actual) but m2-freeze-discontinuity pins \(frozen): a frozen tree changed; record a new freeze revision before any holdout")
+            #expect(actual == frozen, "\(path) is \(actual) but m2-freeze-discontinuity-2 pins \(frozen): a frozen tree changed; record a new freeze revision before any holdout")
         }
     }
 
@@ -120,8 +124,10 @@ struct SegmentFreezeTests {
         let url = Self.freezeURL.deletingLastPathComponent().appendingPathComponent("m2-fixture-registry.json")
         let json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         let freezes = try #require(json["freezes"] as? [[String: Any]])
-        let entry = try #require(freezes.first { $0["freezeID"] as? String == "m2-freeze-discontinuity" })
-        #expect(entry["record"] as? String == "docs/m2/fixtures/m2-freeze-discontinuity.json")
+        let prior = try #require(freezes.first { $0["freezeID"] as? String == "m2-freeze-discontinuity" })
+        #expect(prior["status"] as? String == "superseded by m2-freeze-discontinuity-2 after failed holdout (3/50 false splits); rev-1 evidence retained")
+        let entry = try #require(freezes.first { $0["freezeID"] as? String == "m2-freeze-discontinuity-2" })
+        #expect(entry["record"] as? String == "docs/m2/fixtures/m2-freeze-discontinuity-2.json")
         let counts = try #require(entry["counts"] as? [String: Int])
         #expect(counts["fixtures"] == SegmentStratum.allCases.count)
         #expect(counts["calibrationCases"] == SegmentPlan.counts.reduce(0) { $0 + $1.1 })
@@ -218,21 +224,43 @@ struct SegmentFreezeTests {
         #expect(Set(calibration).isDisjoint(with: holdout))
         #expect(Set(floor).isDisjoint(with: holdout))
         #expect(Set(floor).isDisjoint(with: calibration))
+        let rev1Counts: [(SegmentStratum, Int)] = [
+            (.clean, 6), (.transient, 4), (.silenceGap, 4),
+            (.dropped, 6), (.inserted, 6), (.clockStep, 6), (.restart, 6), (.rateChange, 6), (.compound, 4),
+        ]
+        let rev1HoldoutCounts: [(SegmentStratum, Int)] = [
+            (.clean, 20), (.transient, 15), (.silenceGap, 15),
+            (.dropped, 20), (.inserted, 20), (.clockStep, 20), (.restart, 20), (.rateChange, 20), (.compound, 15),
+        ]
+        let oldFloor = (0..<20).map { SplitMix64.caseSeed(master: 0x5757_1700_F100_0000, stratum: "clockStep", index: $0) }
+            + (20..<30).map { SplitMix64.caseSeed(master: 0x5757_1700_F100_0000, stratum: "rateChange", index: $0) }
+        let rev1 = Set(SegmentPlan.seeds(master: 0x5757_1700_CA11_B000, counts: rev1Counts)
+            + SegmentPlan.seeds(master: 0x5757_1700_401D_0000, counts: rev1HoldoutCounts)
+            + oldFloor)
+        for (stratum, count) in rev1HoldoutCounts {
+            #expect((SegmentPlan.holdoutCounts.first { $0.0 == stratum }?.1 ?? 0) >= count)
+        }
+        for (stratum, count) in rev1Counts {
+            #expect((SegmentPlan.counts.first { $0.0 == stratum }?.1 ?? 0) >= count)
+        }
+        #expect(rev1.isDisjoint(with: calibration))
+        #expect(rev1.isDisjoint(with: holdout))
+        #expect(rev1.isDisjoint(with: floor))
     }
 }
 
-/// The frozen holdout. Disabled unless WW_SEGMENT_HOLDOUT=1; run once per frozen revision in its own PR
-/// (docs/m2/fixtures/m2-freeze-discontinuity.json holdoutProcedure). Never run by CI or scripts/test.sh.
-@Suite("Segment holdout (m2-freeze-discontinuity)")
+/// The rev-2 holdout. Disabled unless WW_SEGMENT_HOLDOUT=1; run once in its own PR
+/// (docs/m2/fixtures/m2-freeze-discontinuity-2.json holdoutProcedure). Never run by CI or scripts/test.sh.
+@Suite("Segment holdout (m2-freeze-discontinuity-2)")
 struct SegmentHoldoutTests {
     static let enabled = ProcessInfo.processInfo.environment["WW_SEGMENT_HOLDOUT"] == "1"
 
     @Test(.enabled(if: SegmentHoldoutTests.enabled, "frozen holdout: run once per frozen revision with WW_SEGMENT_HOLDOUT=1"))
     func frozenHoldout() async throws {
         let scores = try await SegmentRunner.runAll(SegmentPlan.cases(master: SegmentPlan.holdoutMasterSeed, counts: SegmentPlan.holdoutCounts))
-        print("WW-017 FROZEN HOLDOUT m2-freeze-discontinuity (master seed \(SegmentFreezeTests.hex(SegmentPlan.holdoutMasterSeed)), segmenter \(DiscontinuitySegmenter.identifier), estimator \(AcousticEstimator.identifier))")
+        print("WW-017 FROZEN HOLDOUT m2-freeze-discontinuity-2 (master seed \(SegmentFreezeTests.hex(SegmentPlan.holdoutMasterSeed)), segmenter \(DiscontinuitySegmenter.identifier), estimator \(AcousticEstimator.identifier))")
         for score in scores { print("WW-017 holdout " + SegmentRunner.line(score)) }
-        try SegmentCaseRecord.write(scores.map { SegmentCaseRecord(label: SegmentCaseRecord.label($0.kase), score: $0) }, split: "holdout")
+        try SegmentCaseRecord.write(scores.map { SegmentCaseRecord(label: SegmentCaseRecord.label($0.kase), score: $0) }, split: "holdout-2")
         print("WW-017 holdout table\n" + SegmentRunner.table(scores))
         let failures = SegmentRunner.gateFailures(scores, maximumFalseSplitRate: SegmentPlan.maximumFalseSplitRate)
         #expect(failures.isEmpty, "\(failures.joined(separator: "\n"))")
