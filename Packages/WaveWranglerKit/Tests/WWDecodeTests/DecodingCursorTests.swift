@@ -152,6 +152,49 @@ struct DecodingCursorTests {
         #expect(explicit == .sourceChangedDuringDecode)
     }
 
+    @Test("A final unchanged check still runs after an explicit check")
+    func finalCheckAfterExplicitCheck() async throws {
+        let source = try ScriptedSource()
+        let io = AdjustableIO { result, call in
+            if call == 2 {
+                result.modify { $0.fingerprint.fileSize = .known(($0.fingerprint.fileSize.value ?? 0) + 1) }
+            }
+        }
+        let returned = Counter()
+        let failure = await Self.failure {
+            _ = try await makeDecoder(io: io, content: ScriptedContentIO(source.script()))
+                .withDecodingCursor(source.url, source: SourceID()) { cursor in
+                    _ = try await cursor.next()
+                    try await cursor.verifyUnchanged()
+                    returned.increment()
+                    return 0
+                }
+        }
+        #expect(failure == .sourceChangedDuringDecode)
+        #expect(returned.count == 1, "the body returned; the mandatory final check refused its result")
+        #expect(io.metadataCalls == 3, "preflight, explicit check, and final check")
+    }
+
+    @Test("A first-read failure the body swallows still fails the cursor call")
+    func firstReadFailureIsTerminal() async throws {
+        let source = try ScriptedSource()
+        var script = source.script()
+        script.failure = (read: 0, error: .readFailed(errno: 5))
+        let content = ScriptedContentIO(script)
+        let seen = FailureLog()
+        let outer = await Self.failure {
+            _ = try await makeDecoder(io: AdjustableIO(), content: content)
+                .withDecodingCursor(source.url, source: SourceID()) { cursor in
+                    seen.append(await Self.failure { _ = try await cursor.next() })
+                    return 0
+                }
+        }
+        #expect(seen.values == [.readFailed(errno: 5)])
+        #expect(outer == .readFailed(errno: 5), "a swallowed first-read failure must prevent publication")
+        #expect(content.record.reads == 1)
+        #expect(content.record.closes == 1)
+    }
+
     @Test("A short stream fails at the end and the failure is terminal")
     func incompleteIsTerminal() async throws {
         let source = try ScriptedSource()

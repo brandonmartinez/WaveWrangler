@@ -258,7 +258,6 @@ public actor DecodingCursor {
     private var ended = false
     private var closed = false
     private var failure: DecodeFailure?
-    private var verifiedAtRead = 0
 
     fileprivate init(worker: CursorWorker) {
         self.worker = worker
@@ -306,14 +305,16 @@ public actor DecodingCursor {
             try SourceDecoder.checkCancellation()
             try await worker.verifyUnchanged()
             try SourceDecoder.checkCancellation()
-            verifiedAtRead = currentReadCalls
         } catch {
             failure = error
             throw error
         }
     }
 
-    var hasUnverifiedReads: Bool { currentReadCalls > verifiedAtRead }
+    func verifyForReturn() async throws(DecodeFailure) {
+        try checkUsable()
+        if currentReadCalls > 0 { try await verifyUnchanged() }
+    }
 
     func close() async {
         guard !closed else { return }
@@ -330,9 +331,10 @@ public actor DecodingCursor {
 extension SourceDecoder {
     /// Opens one source exactly as `decode` does (security scope → metadata preflight → read-only open →
     /// opened-file identity → envelope interpretation) and lends a `DecodingCursor` to `body`. After
-    /// `body` returns, any unverified reads are checked for staleness and cancellation is checked, so a
-    /// result built from the cursor is returned only if the source was unchanged. The reader is closed
-    /// and the scope released on every path.
+    /// `body` returns, any terminal cursor failure is rethrown and every result derived from reads receives
+    /// a final staleness check, even if the body explicitly checked earlier. Cancellation is also checked,
+    /// so a result built from the cursor is returned only if the source was unchanged. The reader is
+    /// closed and the scope released on every path.
     ///
     /// Opening without reading (a header probe) decodes nothing.
     @concurrent
@@ -364,7 +366,7 @@ extension SourceDecoder {
         let result: T
         do {
             result = try await body(cursor)
-            if await cursor.hasUnverifiedReads { try await cursor.verifyUnchanged() }
+            try await cursor.verifyForReturn()
             try Self.checkCancellation()
         } catch {
             await cursor.close()
