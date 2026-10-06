@@ -321,6 +321,10 @@ private struct ShowMessageBar: View {
                 symbolName: presentation.symbolName ?? "info.circle",
                 actions: bar.actions.map { action in (action.rawValue, { state.perform(action) }) }
             )
+        } else if let document = state.store.document, let notice = document.status.copyNotice {
+            // ST-16: after Save a Copy Elsewhere…, until dismissed.
+            MessageBar(heading: notice, message: "", symbolName: "doc.on.doc",
+                       actions: [("Dismiss", { document.status.setCopyNotice(nil) })])
         }
     }
 }

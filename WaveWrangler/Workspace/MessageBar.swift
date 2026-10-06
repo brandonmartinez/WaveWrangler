@@ -20,9 +20,11 @@ struct MessageBar: View {
                     .wwFont(.headline)
                     .accessibilityAddTraits(.isHeader)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(message)
-                    .wwFont(.body)
-                    .fixedSize(horizontal: false, vertical: true)
+                if !message.isEmpty {
+                    Text(message)
+                        .wwFont(.body)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !actions.isEmpty {
                     HStack {
                         ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
