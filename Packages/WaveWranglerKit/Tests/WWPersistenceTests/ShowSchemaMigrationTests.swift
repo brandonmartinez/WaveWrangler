@@ -314,6 +314,85 @@ struct ShowSchemaMigrationTests {
         #expect(RevisionFingerprint(of: try Data(contentsOf: url)).schemaVersion == 2)
     }
 
+    // MARK: - Identity: a different show's schema 1 file is never adopted or migrated (#175 review)
+
+    /// Every file under `folder` with its bytes (empty when the folder doesn't exist).
+    static func tree(_ folder: URL) throws -> [String: Data] {
+        guard let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return [:] }
+        var files: [String: Data] = [:]
+        for case let file as URL in walker where (try file.resourceValues(forKeys: [.isRegularFileKey])).isRegularFile == true {
+            files[file.resolvingSymlinksInPath().path] = try Data(contentsOf: file)
+        }
+        return files
+    }
+
+    static let otherShow = ShowID(uuid(99))
+
+    @Test func aDifferentShowsSchema1FileIsRefusedByIdentityOnOpen() throws {
+        let rig = Rig()
+        let url = rig.url()
+        let golden = Self.goldens[0]
+        try golden.bytes.write(to: url)
+        guard case let .damaged(.identityMismatch(expected, found), _) = Self.opener(rig).open(url, key: .show(Self.otherShow)) else {
+            Issue.record("a different show's schema 1 file must be refused by identity")
+            return
+        }
+        #expect(expected == DocumentKey.show(Self.otherShow).rawValue && found == golden.key.rawValue)
+        guard case .needsMigration = Self.opener(rig).open(url, key: golden.key) else {
+            Issue.record("the expected show still needs migration")
+            return
+        }
+        #expect(try Data(contentsOf: url) == golden.bytes)
+    }
+
+    @Test func aDifferentShowsSchema1FileNeedsARelinkWhenReopenedFromItsRecordedLocation() async throws {
+        let rig = Rig()
+        let url = rig.url()
+        try Self.goldens[0].bytes.write(to: url)
+        let locations = ShowLocationStore(root: rig.dir.sub("ShowLocations"))
+        try locations.record(Self.otherShow, at: url)
+        let (outcome, result) = try await locations.withReopenedShow(Self.otherShow, opener: Self.opener(rig)) { _, _, _ in
+            Issue.record("must not open a different show")
+            return true
+        }
+        guard case .relinkRequired = outcome else {
+            Issue.record("expected relinkRequired, got \(outcome)")
+            return
+        }
+        #expect(result == nil)
+    }
+
+    @Test func openVerifiedRefusesADifferentShowsSchema1File() async throws {
+        let rig = Rig()
+        let url = rig.url()
+        try Self.goldens[0].bytes.write(to: url)
+        let locations = LibraryShowLocations(root: rig.dir.sub("Device"))
+        try locations.record(Self.otherShow, at: url)
+        await #expect(throws: ShowOpenError.differentShow(folderDisplayName: url.deletingLastPathComponent().lastPathComponent)) {
+            _ = try await locations.openVerified(Self.otherShow, opener: Self.opener(rig)) { _ in Issue.record("must not adopt a different show") }
+        }
+    }
+
+    @Test(arguments: goldens)
+    func migrationRefusesADifferentShowBeforeAnyBackupOrWrite(_ golden: Golden) throws {
+        let hooks = RecordingHooks()
+        let rig = Rig(hooks: hooks)
+        let url = rig.url()
+        try golden.bytes.write(to: url)
+        let recoveryBefore = try Self.tree(rig.dir.sub("Recovery"))
+        let other = DocumentKey.show(Self.otherShow)
+        #expect(throws: PublicationError.invalidCandidate(.identityMismatch(expected: other.rawValue, found: golden.key.rawValue))) {
+            try DocumentMigrator.show(publisher: rig.publisher).migrate(url, key: other)
+        }
+        #expect(try Data(contentsOf: url) == golden.bytes, "the file is byte-for-byte unchanged")
+        #expect(try Self.tree(rig.dir.sub("Recovery")) == recoveryBefore, "no backup (or any other recovery file) was written")
+        #expect(try rig.recovery.migrationBackups(for: other).isEmpty && rig.recovery.migrationBackups(for: golden.key).isEmpty)
+        #expect(hooks.log.withLock { $0 }.isEmpty, "refused before M1")
+        // The expected show still migrates normally.
+        let receipt = try DocumentMigrator.show(publisher: rig.publisher).migrate(url, key: golden.key)
+        #expect(try Data(contentsOf: receipt.backup) == golden.bytes)
+    }
+
     // MARK: - Failure: honest error, schema 1 file and backup intact
 
     @Test func aDamagedSchema1FileFailsHonestlyAndStaysUnchanged() throws {

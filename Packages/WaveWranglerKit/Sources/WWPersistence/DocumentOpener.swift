@@ -99,6 +99,12 @@ public struct DocumentOpener<Coder: CanonicalDocumentCoding>: Sendable {
         } catch let .unknownNewerSchema(found, supported) {
             return .refusedNewerFormat(found: found, supported: supported, fingerprint: fingerprint)
         } catch let .unsupportedOlderSchema(found, _) where migratableSchemas.contains(found) {
+            // A migratable older document of a *different* identity is refused exactly like a current one, so it
+            // can't be adopted (or migrated) as the expected document. Read-only decode; nothing is written.
+            if let key, let identityOf, let recoveryDecode, let older = try? recoveryDecode(data), identityOf(older.payload) != key {
+                return .damaged(.identityMismatch(expected: key.rawValue, found: identityOf(older.payload).rawValue),
+                                recoveryCandidates: candidates(url: nil, key: key))
+            }
             return .needsMigration(fromSchema: found, fingerprint: fingerprint)
         } catch {
             return .damaged(error, recoveryCandidates: candidates(url: url, key: key))

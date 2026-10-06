@@ -194,8 +194,9 @@ public enum ShowSchemaMigration {
 
 extension DocumentMigrator where Coder == JSONEnvelopeCoder<ShowDocumentModel> {
     /// The show migrator (C5): schema 1 → current through `publisher` (which must have a recovery store for
-    /// the non-overwriting backup).
+    /// the non-overwriting backup). A different show's file at the location is refused before any write.
     public static func show(publisher: DocumentPublisher<JSONEnvelopeCoder<ShowDocumentModel>>) -> DocumentMigrator<JSONEnvelopeCoder<ShowDocumentModel>> {
-        DocumentMigrator(publisher: publisher, steps: ShowSchemaMigration.steps)
+        DocumentMigrator(publisher: publisher, steps: ShowSchemaMigration.steps,
+                         identify: { (try? ShowSchemaMigration.decodeUpgradingOlder($0)).map { .show($0.payload.show.id) } })
     }
 }
