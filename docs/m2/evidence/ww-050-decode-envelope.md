@@ -92,6 +92,30 @@ Disclosed pre-freeze deviation: the first calibration run failed 3 bit-exact cas
 had reached a neighbouring identical burst, so the window is now `min(3000, half-gap)`. No gate changed.
 `scripts/test.sh` runs the calibration split in its own serialized pass. A split measures at most 4 cases at once (`WW_M2_FREEZE_MAX_CONCURRENCY` may lower it); the rerun under that cap gave byte-identical records.
 
-**Holdout NOT RUN.** It runs once, in its own PR after this one merges, with
-`WW_M2_DECODE_HOLDOUT=1 swift test --filter DecodeCalibrationTests/holdoutSplitMeetsEveryFrozenGate`.
-Calibration is not holdout evidence.
+## `m2-freeze-decode` holdout (frozen run)
+
+**PASS — all gates.** This is the sole 520-case frozen holdout run. Before it started, the checkout was clean,
+`HEAD` equalled `origin/main` at `7f17bfc417b52e5cc138be31cca4cd75632d24f0`, the 1-minute load was 7.19, and the
+frozen trees matched: `Sources/WWDecode` `6f81db77162b493928798332f6d4ec9648f396d0`;
+`Tests/WWDecodeTests` `383ebc0cfdc5515f78a33ad2a6dfaf3ea664e92b`; dependency trees also matched:
+`Sources/WWSources` `fc8fb0fb661f318262d54d161baa3a04b475c792` and `Sources/WWCore`
+`c310389c4b41ebde80c5dabaea12fd5376f5d9ba`. On the claimed Apple M5 Max host (macOS 27.0.1 (26A434),
+Xcode 27.0 (27A266a), Swift 6.4, 18 cores, 128 GiB), it ran with the default maximum concurrency of four:
+
+`cd Packages/WaveWranglerKit && WW_M2_DECODE_HOLDOUT=1 WW_DECODE_RECORDS_DIR=../../docs/m2/evidence/ww-050 swift test --scratch-path .build/swiftpm --filter DecodeCalibrationTests/holdoutSplitMeetsEveryFrozenGate`
+
+The full raw output, including UTC start/end lines (2026-10-06T16:38:46Z through
+2026-10-06T16:39:14Z), is [`ww-050/holdout-run.log`](ww-050/holdout-run.log). The per-case records are
+[`ww-050/holdout.jsonl`](ww-050/holdout.jsonl); SHA-256s for both artifacts are in
+[`ww-050/holdout.sha256`](ww-050/holdout.sha256).
+
+- **Supported mapping: PASS.** All 360 supported cases mapped correctly, with 0 mapping failures and 0
+  below-correlation landmarks. The mixed-input output-settings record also had 0 failures.
+- **Landmarks: PASS.** 4,179 observations: `|lag| = 0` for 4,107 and `+1` for 72; no other lag occurred.
+  All 72 `+1` observations were 24 kHz CAF Opus (30 from ten mono cases and 42 from seven stereo cases), the
+  declared expected one-output-frame limit.
+- **Planted typed errors and immutability: PASS.** All 160 planted cases returned their expected typed error;
+  `FileSnapshot` mutations were 0 and stale publications (including finish, unabandoned output, open readers, or
+  unbalanced scopes) were 0.
+
+This is frozen holdout evidence, not calibration evidence.
