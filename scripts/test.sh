@@ -7,6 +7,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JOBS="${WW_JOBS:-4}"
+# Compute budget: Swift Testing runs at most this many tests at once (its default is unbounded). `--num-workers`
+# bounds XCTest only, so the width goes through Swift Testing's own environment switch.
+export SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH="${WW_TEST_WORKERS:-4}"
 DERIVED_DATA="${WW_DERIVED_DATA:-$ROOT/.build/DerivedData}"
 PACKAGE_ONLY=0
 UI=0

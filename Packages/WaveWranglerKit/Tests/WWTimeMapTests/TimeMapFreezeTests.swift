@@ -36,6 +36,16 @@ enum TimeMapFixture {
     /// The calibration split is a serialized pass of scripts/test.sh, not the parallel package run.
     static let calibrationEnabled = ProcessInfo.processInfo.environment["WW_TIMEMAP_CALIBRATION"] == "1"
     static let recordsDirectory = ProcessInfo.processInfo.environment["WW_TIMEMAP_RECORDS_DIR"]
+    /// Compute budget: a split measures at most this many cases at once (never the core count).
+    /// `WW_M2_FREEZE_MAX_CONCURRENCY` may lower it; values outside 1...4 are clamped. Records are sorted by
+    /// caseIndex, so the limit never changes a record.
+    static let defaultMaxConcurrency = 4
+    static let maxConcurrency = concurrencyLimit(from: ProcessInfo.processInfo.environment["WW_M2_FREEZE_MAX_CONCURRENCY"])
+
+    static func concurrencyLimit(from value: String?) -> Int {
+        guard let value, let requested = Int(value) else { return defaultMaxConcurrency }
+        return min(max(requested, 1), defaultMaxConcurrency)
+    }
     /// A stratum not met within this many draws is recorded as an oracle failure (never silently skipped).
     static let maximumDraws = 10_000
 
@@ -222,10 +232,20 @@ func measureTimeMapCase(split: String, index: Int) -> TimeMapCaseRecord {
 
 func runTimeMapSplit(_ split: String, cases: Int) async throws -> [TimeMapCaseRecord] {
     let records = await withTaskGroup(of: TimeMapCaseRecord.self) { group in
-        for index in 0 ..< cases {
+        var next = 0
+        func addNext() {
+            guard next < cases else { return }
+            let index = next
+            next += 1
             group.addTask { measureTimeMapCase(split: split, index: index) }
         }
-        return await group.reduce(into: []) { $0.append($1) }
+        for _ in 0 ..< TimeMapFixture.maxConcurrency { addNext() }
+        var results: [TimeMapCaseRecord] = []
+        while let result = await group.next() {
+            results.append(result)
+            addNext()
+        }
+        return results
     }.sorted { $0.caseIndex < $1.caseIndex }
     let quantisation = records.flatMap(\.quantisation)
     print("""
@@ -344,6 +364,16 @@ struct TimeMapFreezeTests {
 
     static func freeze() throws -> [String: Any] {
         try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: freezeURL)) as? [String: Any])
+    }
+
+    @Test func splitConcurrencyIsCappedAtFour() {
+        #expect(TimeMapFixture.defaultMaxConcurrency <= 4)
+        #expect((1 ... 4).contains(TimeMapFixture.maxConcurrency))
+        #expect(TimeMapFixture.concurrencyLimit(from: nil) == TimeMapFixture.defaultMaxConcurrency)
+        #expect(TimeMapFixture.concurrencyLimit(from: "not a number") == TimeMapFixture.defaultMaxConcurrency)
+        #expect(TimeMapFixture.concurrencyLimit(from: "2") == 2)
+        #expect(TimeMapFixture.concurrencyLimit(from: "0") == 1)
+        #expect(TimeMapFixture.concurrencyLimit(from: "\(ProcessInfo.processInfo.activeProcessorCount * 4)") <= 4)
     }
 
     @Test func frozenDefinitionMatchesTheFreezeRecord() throws {

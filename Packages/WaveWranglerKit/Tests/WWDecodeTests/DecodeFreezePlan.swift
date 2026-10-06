@@ -46,6 +46,16 @@ enum DecodeFixture {
     /// (scripts/test.sh) instead of the parallel package run.
     static let calibrationEnabled = ProcessInfo.processInfo.environment["WW_DECODE_CALIBRATION"] == "1"
     static let recordsDirectory = ProcessInfo.processInfo.environment["WW_DECODE_RECORDS_DIR"]
+    /// Compute budget: a split measures at most this many cases at once (never the core count).
+    /// `WW_M2_FREEZE_MAX_CONCURRENCY` may lower it; values outside 1...4 are clamped. Records are written in
+    /// caseIndex order, so the limit never changes a record.
+    static let defaultMaxConcurrency = 4
+    static let maxConcurrency = concurrencyLimit(from: ProcessInfo.processInfo.environment["WW_M2_FREEZE_MAX_CONCURRENCY"])
+
+    static func concurrencyLimit(from value: String?) -> Int {
+        guard let value, let requested = Int(value) else { return defaultMaxConcurrency }
+        return min(max(requested, 1), defaultMaxConcurrency)
+    }
 
     static func seed(split: String, index: Int) -> UInt64 {
         let digest = SHA256.hash(data: Data("ww-m2-fixture|v1|\(fixtureID)|\(split)|\(index)".utf8))
@@ -692,10 +702,20 @@ func outputSettingsRecord(split: String, interpretations: [FormatInterpretation]
 func runDecodeSplit(_ split: String, cases: Int) async throws -> [DecodeCaseRecord] {
     let directory = try FixtureDirectory("m2-freeze-decode-\(split)")
     let measured = try await withThrowingTaskGroup(of: (DecodeCaseRecord, FormatInterpretation?).self) { group in
-        for index in 0 ..< cases {
+        var next = 0
+        func addNext() {
+            guard next < cases else { return }
+            let index = next
+            next += 1
             group.addTask { try await DecodeFreezeCase(split: split, index: index).measure(in: directory) }
         }
-        return try await group.reduce(into: []) { $0.append($1) }
+        for _ in 0 ..< DecodeFixture.maxConcurrency { addNext() }
+        var results: [(DecodeCaseRecord, FormatInterpretation?)] = []
+        while let result = try await group.next() {
+            results.append(result)
+            addNext()
+        }
+        return results
     }
     let ordered = measured.sorted { $0.0.caseIndex < $1.0.caseIndex }
     var records = ordered.map(\.0)

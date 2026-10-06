@@ -146,6 +146,16 @@ struct DecodeFreezeTests {
         try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: freezeURL)) as? [String: Any])
     }
 
+    @Test func splitConcurrencyIsCappedAtFour() {
+        #expect(DecodeFixture.defaultMaxConcurrency <= 4)
+        #expect((1 ... 4).contains(DecodeFixture.maxConcurrency))
+        #expect(DecodeFixture.concurrencyLimit(from: nil) == DecodeFixture.defaultMaxConcurrency)
+        #expect(DecodeFixture.concurrencyLimit(from: "not a number") == DecodeFixture.defaultMaxConcurrency)
+        #expect(DecodeFixture.concurrencyLimit(from: "2") == 2)
+        #expect(DecodeFixture.concurrencyLimit(from: "0") == 1)
+        #expect(DecodeFixture.concurrencyLimit(from: "\(ProcessInfo.processInfo.activeProcessorCount * 4)") <= 4)
+    }
+
     @Test func frozenDefinitionMatchesTheFreezeRecord() throws {
         let json = try Self.freeze()
         #expect(json["freezeID"] as? String == "m2-freeze-decode")
