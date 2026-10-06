@@ -521,3 +521,16 @@ No orphan processes remained, and the run folder on the mini was removed after t
 
 **Result: A11Y-002 = Blocked. No announcement was captured, and none is claimed. VoiceOver listening is a user-manual exit item** (checklist §5.1).
 
+### 10.6 #138 fix verification (#139)
+
+Raw records: [`raw-139-verification.jsonl`](ww-007/raw-139-verification.jsonl). Settings snapshots and restorations: [`slot-139-verification.log`](ww-007/slot-139-verification.log). Every run snapshotted the originals, restored them exactly and re-read them; VoiceOver was off throughout.
+
+| Run | Host | Result |
+| --- | --- | --- |
+| `0e4bad9`: `backgroundProminence`-driven white | this Mac (MacBook, macOS 27.0.1, 18-core), system Increase Contrast on | **Fail.** Dark: selected sidebar rows #94B3F4 on #0B65E8, 2.48. Light: 7.22. Checked checkbox fill 2.67. The test caught the ineffective fix. |
+| Diagnostic: always-white build (not committed) | this Mac, system Increase Contrast on | #FFFFFF on #0B65E8, **5.2**. Explicit white renders non-vibrant; `backgroundProminence` never reads `.increased` in the macOS sidebar `List`. |
+| `c7ac800`: emphasis from selection + list focus + key window | Mac mini (M2 Pro), macOS 27.0.1. Overrides aqua / darkAqua / highContrastAqua / highContrastDarkAqua with Increase Contrast off, then system + aqua with it on. | **SelectionContrast Pass in every case.** Selected rows: 5.37 (light), 4.76 (dark), **5.2 (dark + Increase Contrast)**, 7.22 (light + Increase Contrast). After focus leaves the sidebar the selection stays legible: 14.73, 9.89, 5.83, 8.23. AccentTinted Pass with Increase Contrast off. With it on, one failure: the selected-row checkbox's checkmark at 2.48 on #6BA5FF. |
+| `6873b2f`: selected-row checkbox uses the accent; `CheckboxTint` on unselected rows | Mac mini, system Increase Contrast on | **AccentTinted Pass.** Sidebar and entry selections 5.2; default button 5.2 (bezel 3.21); switches 3.38; selected-row checkmark 3.25; unselected checked fill 3.84 against #363636. |
+
+**C04 (system Increase Contrast): Pass on `6873b2f`** for the selection and accent controls. The `475adf3` #138 failure (§10.2) is fixed.
+
