@@ -247,7 +247,7 @@ enum CanonicalDate {
 
 extension JSONEnvelopeCoder where Payload == ShowDocumentModel {
     public static var show: JSONEnvelopeCoder<ShowDocumentModel> {
-        JSONEnvelopeCoder(format: .show) { $0.validationIssues(expectedSchemaVersion: $1) }
+        JSONEnvelopeCoder(format: .show) { $0.validationIssues(expectedSchemaVersion: $1) + $0.embeddedMapIssues() }
     }
 }
 

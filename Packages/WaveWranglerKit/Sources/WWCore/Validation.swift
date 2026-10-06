@@ -12,6 +12,8 @@ public struct ValidationIssue: Sendable, Equatable, CustomStringConvertible {
         case duplicateAssignment
         case historyCursorOutOfRange
         case emptyTitle
+        /// A structurally inconsistent `EpisodeAlignment` (revision order, accepted/derived references, map bytes).
+        case invalidAlignment
     }
 
     public var code: Code
@@ -44,6 +46,9 @@ extension ShowDocumentModel {
         let speakerIDs = Set(speakers.map(\.id))
         for episode in episodes {
             issues += Self.issues(in: episode, speakerIDs: speakerIDs)
+            if let alignment = episode.alignment {
+                issues += alignment.structuralIssues(episode: episode.id)
+            }
         }
 
         if history.cursor < 0 || history.cursor > history.entries.count {
@@ -114,6 +119,49 @@ extension ShowDocumentModel {
         var issues: [ValidationIssue] = []
         for id in ids where !seen.insert(id).inserted {
             issues.append(.init(.duplicateID, "\(kind) \(id)"))
+        }
+        return issues
+    }
+}
+
+extension EpisodeAlignment {
+    /// Structure only. References to groups/epochs/sources that the episode no longer contains are *not*
+    /// issues (that is staleness, reported by `WWDerived`); refusing them would let an ordinary delete make a
+    /// show unopenable. The embedded map bytes are checked by WWPersistence, which knows `WWTimeMap`.
+    public func structuralIssues(episode: EpisodeID) -> [ValidationIssue] {
+        var issues: [ValidationIssue] = []
+        if maps.isEmpty {
+            // One representation of "no alignment": the field is omitted.
+            issues.append(.init(.invalidAlignment, "episode \(episode) alignment has no maps"))
+        }
+        var previous = 0
+        for version in maps {
+            if version.revision <= previous {
+                issues.append(.init(.invalidAlignment, "episode \(episode) map revision \(version.revision) after \(previous)"))
+            }
+            if let parent = version.derivedFrom, parent >= version.revision || !maps.contains(where: { $0.revision == parent }) {
+                issues.append(.init(.invalidAlignment, "episode \(episode) map \(version.revision) derived from \(parent)"))
+            }
+            var seen = Set<SourceID>()
+            for input in version.inputs.sources {
+                if !seen.insert(input.sourceID).inserted {
+                    issues.append(.init(.invalidAlignment, "episode \(episode) map \(version.revision) repeats input \(input.sourceID)"))
+                }
+                if let format = input.formatInterpretationVersion, format < 1 {
+                    issues.append(.init(.invalidAlignment, "episode \(episode) map \(version.revision) format version \(format)"))
+                }
+                if let digest = input.contentDigest, digest.isEmpty {
+                    issues.append(.init(.invalidAlignment, "episode \(episode) map \(version.revision) empty digest"))
+                }
+            }
+            if let recipe = version.inputs.recipe,
+               recipe.revision < 1 || recipe.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                issues.append(.init(.invalidAlignment, "episode \(episode) map \(version.revision) recipe"))
+            }
+            previous = max(previous, version.revision)
+        }
+        if let accepted = acceptedRevision, map(revision: accepted) == nil {
+            issues.append(.init(.invalidAlignment, "episode \(episode) accepted revision \(accepted) missing"))
         }
         return issues
     }

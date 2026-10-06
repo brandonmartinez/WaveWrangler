@@ -18,25 +18,29 @@ let package = Package(
         // Pure exact clock-epoch / coordinate maps (WW-015). No I/O, no decoding.
         .library(name: "WWTimeMap", targets: ["WWTimeMap"]),
         .library(name: "WWDecode", targets: ["WWDecode"]),
+        // Versioned-map API, consent-gated content digest and the cancellable derived-asset/job layer (WW-020).
+        .library(name: "WWDerived", targets: ["WWDerived"]),
         // Headless persistence probe for multi-process and observed-provider trials (synthetic documents only).
         .executable(name: "wwpersist-probe", targets: ["WWPersistenceProbe"]),
     ],
     targets: [
         .target(name: "WWCore"),
-        .target(name: "WWPersistence", dependencies: ["WWCore"]),
+        .target(name: "WWPersistence", dependencies: ["WWCore", "WWTimeMap"]),
         .target(name: "WWSources", dependencies: ["WWCore"]),
         .target(name: "WWEpisodeSetup", dependencies: ["WWCore", "WWSources"]),
         .target(name: "WWOrganizer", dependencies: ["WWCore"]),
         .target(name: "WWTimeMap", dependencies: ["WWCore"]),
         .target(name: "WWDecode", dependencies: ["WWCore", "WWSources"]),
+        .target(name: "WWDerived", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWPersistence"]),
         .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
-        .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore", "WWPersistenceProbe", "WWOrganizer"]),
+        .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore", "WWPersistenceProbe", "WWOrganizer", "WWTimeMap"]),
         .testTarget(name: "WWSourcesTests", dependencies: ["WWSources", "WWCore"]),
         .testTarget(name: "WWEpisodeSetupTests", dependencies: ["WWEpisodeSetup", "WWCore", "WWSources"]),
         .testTarget(name: "WWOrganizerTests", dependencies: ["WWOrganizer", "WWCore", "WWPersistence"]),
         .testTarget(name: "WWTimeMapTests", dependencies: ["WWTimeMap", "WWCore"]),
         .testTarget(name: "WWDecodeTests", dependencies: ["WWDecode", "WWSources", "WWCore"]),
+        .testTarget(name: "WWDerivedTests", dependencies: ["WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWCore"]),
     ],
     swiftLanguageModes: [.v6]
 )

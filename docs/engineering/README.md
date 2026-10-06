@@ -29,6 +29,8 @@ Packages/WaveWranglerKit/         Local Swift package linked by the app
   Sources/WWSources/              Source references: read-only gateway, access records, availability, import, relink
   Sources/WWDecode/               Read-only content gateway (the only source-content opener), native streaming decoder,
                                   format-interpretation descriptor, typed decode failures
+  Sources/WWDerived/              Versioned map history/acceptance, M2-C5 derived-asset keys, app-cache asset store,
+                                  cancellable job coordinator, consent-gated decoded-content digest (WW-020)
   Sources/WWOrganizer/            Library/workspace presentation: wording catalogs, preference keys,
                                   collection/combine operations, library session, sidebar models, menu shortcut register
   Tests/WW*Tests/                 Swift Testing suites per module
@@ -38,9 +40,8 @@ scripts/demo/                     Manual demonstration helpers: synthetic fixtur
 .github/workflows/ci.yml          Ordinary build/test CI
 ```
 
-**Planned (M2):** `WWTimeMap` (WW-015) adds its row through its own lane; a WW-020
-module (name TBD, derived-asset/job infrastructure, versioned map persistence, C5 migration) is planned.
-Each lane adds its own `Sources/<Module>/` row here when its module merges.
+**Planned (M2):** `WWTimeMap` (WW-015) adds its row through its own lane. Each lane adds its own
+`Sources/<Module>/` row here when its module merges.
 
 Because app folders are `PBXFileSystemSynchronizedRootGroup`s, adding/removing files under
 `WaveWrangler/`, `WaveWranglerTests/` or `WaveWranglerUITests/` does **not** edit `project.pbxproj`.
@@ -59,12 +60,14 @@ Parallel sessions work on disjoint folders. Cross-folder changes go through the 
 | `Library/`, `Workspace/`, `Commands/`, `Settings/` | Library UI owner | Keyboard/VoiceOver/visible focus are part of done, not polish. |
 | `Sources/`, `WWSources` | Sources owner | Access records, bookmarks, availability/download states, relink. |
 | `WWDecode` | Mac (WW-050) | Only `SystemSourceContentIO.swift` may open source content, read-only (`ForbiddenAPITests` enforces this, recursively). No writes, no dataless materialization, no partial publication on failure or cancel. Bump `formatInterpretationVersion` whenever the interpretation of the same bytes changes. Envelope evidence: [`docs/m2/evidence/ww-050-decode-envelope.md`](../m2/evidence/ww-050-decode-envelope.md). |
-| Planned (M2) | — | `WWTimeMap` (WW-015) adds its row through its own lane; a WW-020 module (name TBD) is planned. See [`docs/m2/ww-019-m2-contracts.md`](../m2/ww-019-m2-contracts.md). Each lane adds its own row here when its module merges. |
+| `WWDerived` | Mac (WW-020) | Versioned maps are append-only revisions with one accepted pointer, embedded in the show (`Episode.alignment`, strict canonical `WWTimeMap` JSON, re-validated on open and save). Derived assets live only in the app cache (`DerivedAssetStore` refuses roots in or containing a source folder), are keyed by every M2-C5 component, and publish only after a currency check in the same coordinator turn (late results are discarded). Content digests need an explicit per-source request and availability ON, and go through `SourceDecoder` only. `ForbiddenAPITests` confines file mutation to `DerivedAssetStore.swift` and hashing to `DerivedAssetKey.swift`/`ContentDigest.swift`. |
+| Planned (M2) | — | `WWTimeMap` (WW-015) adds its row through its own lane. See [`docs/m2/ww-019-m2-contracts.md`](../m2/ww-019-m2-contracts.md). Each lane adds its own row here when its module merges. |
 | `.github/workflows/ci.yml`, `scripts/` | Mac (app foundation) | Keep scripts working for every lane. |
 
 Pure domain logic belongs in the package (testable without the app); the app target holds AppKit/SwiftUI
 integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depends on `WWCore` and
-`WWSources` (scoped access); nothing depends on the app.
+`WWSources` (scoped access); `WWPersistence` also depends on `WWTimeMap` (embedded map validation);
+`WWDerived` depends on `WWCore`, `WWTimeMap`, `WWSources`, `WWDecode` and `WWPersistence`; nothing depends on the app.
 
 ## Selected M1 contracts (implemented behind swappable seams)
 
@@ -72,7 +75,8 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
   SwiftUI views (`NSHostingController`). No storyboard and no SwiftUI `DocumentGroup`.
 - **Portable show document** (`.wwshow`, UTI `com.brandonmartinez.wavewrangler.show`): one canonical
   JSON value, `ShowDocumentModel` — show, all episodes, recorder groups/epochs, logical source records,
-  speakers and per-episode assignments, edit-history skeleton.
+  speakers and per-episode assignments, edit-history skeleton, and (WW-020, additive within schema 2)
+  an optional per-episode `alignment`: append-only versioned time maps plus the accepted revision.
 - **Canonical library document** (`.wwlibrary`, UTI `com.brandonmartinez.wavewrangler.library`):
   `LibraryModel` — entries (logical show refs, aliases, last-known publication, unavailable records),
   collections/order and recents. It is user work, so it is a canonical document that may live in a

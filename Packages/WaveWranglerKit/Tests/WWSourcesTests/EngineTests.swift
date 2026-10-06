@@ -560,6 +560,58 @@ struct ForbiddenAPITests {
         }
         #expect(violations.isEmpty, "\(violations)")
     }
+
+    // MARK: - WWDerived: derived assets and content digests
+
+    /// File and staging operations: only the derived-asset store may use them, and only on its own cache.
+    static let derivedStoreTokens = ["FileOperations", "writeNew", "moveNew", "replace(", "remove(", "read(", "createDirectory", "FileManager"]
+    static let derivedExceptions: [String: Set<String>] = [
+        "DerivedAssetStore.swift": Set(derivedStoreTokens),
+        "DerivedAssetKey.swift": ["CryptoKit", "SHA256"],
+        "ContentDigest.swift": ["CryptoKit", "SHA256"],
+    ]
+    /// The store may ask FileManager only for the caches folder and whether a path exists.
+    static let derivedFileManagerCalls: Set<String> = ["url", "fileExists"]
+
+    /// `fileName` is the path relative to Sources/WWDerived. WWDerived reaches source content only through
+    /// `SourceDecoder` (the other-module scan forbids the gateway itself), hashes only in its two digest files,
+    /// and mutates files only through the store.
+    static func derivedViolations(in source: String, fileName: String) -> [String] {
+        let code = code(source)
+        let allowed = derivedExceptions[fileName] ?? []
+        var found = Array(Set(forbidden + decodeMutationTokens + derivedStoreTokens))
+            .filter { !allowed.contains($0) && code.contains($0) }
+            .sorted()
+        for call in matches(#"FileManager\.default\.\w+"#, in: code) {
+            let method = String(call.split(separator: ".").last ?? "")
+            if !derivedFileManagerCalls.contains(method) { found.append("FileManager.default.\(method)") }
+        }
+        return found.map { "\(fileName): \($0)" }
+    }
+
+    @Test func derivedScannerDetectsContentHashingAndMutation() {
+        #expect(Self.derivedViolations(in: "let d = try Data(contentsOf: source)", fileName: "DerivedAssetStore.swift") == ["DerivedAssetStore.swift: Data(contentsOf"])
+        #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "DerivedJobCoordinator.swift") == ["DerivedJobCoordinator.swift: writeNew"])
+        #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "DerivedAssetStore.swift").isEmpty)
+        #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "Sub/DerivedAssetStore.swift") == ["Sub/DerivedAssetStore.swift: writeNew"])
+        #expect(Self.derivedViolations(in: "let h = SHA256.hash(data: bytes)", fileName: "MapHistory.swift") == ["MapHistory.swift: SHA256"])
+        #expect(Self.derivedViolations(in: "let h = SHA256.hash(data: bytes)", fileName: "DerivedAssetStore.swift") == ["DerivedAssetStore.swift: SHA256"])
+        #expect(Self.derivedViolations(in: "try FileManager.default.moveItem(at: a, to: b)", fileName: "DerivedAssetStore.swift")
+            == ["DerivedAssetStore.swift: moveItem", "DerivedAssetStore.swift: FileManager.default.moveItem"])
+        #expect(Self.derivedViolations(in: "_ = FileManager.default.contents(atPath: p)", fileName: "DerivedAssetStore.swift") == ["DerivedAssetStore.swift: FileManager.default.contents"])
+        #expect(Self.derivedViolations(in: "let a = try AVAudioFile(forReading: url)", fileName: "ContentDigest.swift").contains("ContentDigest.swift: AVAudioFile"))
+        #expect(Self.derivedViolations(in: "chmod(path, 0o644)", fileName: "DerivedAssetStore.swift") == ["DerivedAssetStore.swift: chmod"])
+    }
+
+    @Test func wwDerivedHasNoContentOrMutationAPIsOutsideItsStore() throws {
+        let files = try Self.swiftFiles(under: Self.packageRoot.appendingPathComponent("Sources/WWDerived"))
+        #expect(Set(files.map(\.path)).isSuperset(of: Self.derivedExceptions.keys))
+        var violations: [String] = []
+        for file in files {
+            violations += Self.derivedViolations(in: try String(contentsOf: file.url, encoding: .utf8), fileName: file.path)
+        }
+        #expect(violations.isEmpty, "\(violations)")
+    }
 }
 
 @Suite("Duplicated shows keep separate device access")
