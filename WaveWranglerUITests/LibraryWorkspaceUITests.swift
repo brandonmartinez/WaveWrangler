@@ -242,12 +242,16 @@ final class LibraryWorkspaceUITests: XCTestCase {
                        .completed, "window zoomed: \(window.frame)")
         assertStatusVisible("zoomed")
         print("COLUMNS zoomed: \(headerTitles())")
-        // With room, Episodes is shown: an unknown count shows "—" and reads "unknown" to VoiceOver (not the dash).
+        print("ENTRIES zoomed: list \(entries.frame) window \(window.frame)")
+        // An unknown episode count reads "unknown" to VoiceOver (not the dash): in the Episodes cell when that
+        // column is shown, else in the Name cell's value ("episodes unknown, …"; the split view may give a wider
+        // window's extra width to the detail column).
         app.typeKey(.downArrow, modifierFlags: [])
         app.typeKey(.downArrow, modifierFlags: [])
         XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Unavailable (3)'"), object: entries)], timeout: 5), .completed)
         let newer = entries.outlineRows.containing(NSPredicate(format: "label == 'Status' AND value == 'Needs newer WaveWrangler'")).firstMatch
-        XCTAssertTrue(newer.staticTexts.matching(NSPredicate(format: "value == 'unknown'")).firstMatch.waitForExistence(timeout: 3),
+        let unknown = newer.staticTexts.matching(NSPredicate(format: "value == 'unknown' OR value BEGINSWITH 'episodes unknown'")).firstMatch
+        XCTAssertTrue(unknown.waitForExistence(timeout: 3),
                       "Episodes reads unknown: \(newer.staticTexts.allElementsBoundByIndex.map { self.value($0) })")
         zoomWindow()
         XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in abs(window.frame.width - before.width) < 2 }, object: nil)], timeout: 5),
