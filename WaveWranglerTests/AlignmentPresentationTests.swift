@@ -194,12 +194,20 @@ struct AlignmentPresentationTests {
                 availableFrames: 48_000 * 60
             )
         }
-        #expect(throws: AlignmentAuditionRequestError.startTooDistant(maximumSeconds: 300)) {
+        #expect(throws: AlignmentAuditionRequestError.startTooDistant(maximumSeconds: 30)) {
             _ = try AlignmentAuditionRequest.frameRange(
-                startSeconds: 300.001,
+                startSeconds: 30.001,
                 durationSeconds: 1,
                 sampleRate: 48_000,
                 availableFrames: 48_000 * 600
+            )
+        }
+        #expect(throws: AlignmentAuditionRequestError.unsupportedSampleRate(maximum: 384_000)) {
+            _ = try AlignmentAuditionRequest.frameRange(
+                startSeconds: 1,
+                durationSeconds: 1,
+                sampleRate: .greatestFiniteMagnitude,
+                availableFrames: .max
             )
         }
         #expect(throws: AlignmentAuditionRequestError.tooManyFrames(maximum: 1_500_000)) {

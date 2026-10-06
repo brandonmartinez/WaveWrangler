@@ -349,7 +349,7 @@ final class EpisodeAlignmentModel {
         else { return nil }
         let rate = Double(placement.occurrence.nominalRate.framesPerSecond)
         let frameValue = (sourceSeconds * rate).rounded(.down)
-        guard frameValue >= 0, frameValue <= Double(Int64.max),
+        guard frameValue >= 0, frameValue < Double(Int64.max),
               case let .aligned(position)? = try? map.alignedTime(
                   ofFrame: Int64(frameValue),
                   in: placement.occurrence.id

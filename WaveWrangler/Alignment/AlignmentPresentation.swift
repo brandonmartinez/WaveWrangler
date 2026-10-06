@@ -56,7 +56,7 @@ enum AlignmentRegionProjection {
         let frameValue = (sourceSeconds * sourceRate).rounded(.down)
         guard frameValue.isFinite,
               frameValue >= Double(Int64.min),
-              frameValue <= Double(Int64.max)
+              frameValue < Double(Int64.max)
         else {
             return AlignmentRegionPresentation(
                 copy: AlignmentPresentation.outsideCoverage,
@@ -159,6 +159,7 @@ enum AlignmentAuditionRequestError: Error, LocalizedError, Equatable {
     case startTooDistant(maximumSeconds: Double)
     case durationTooLong(maximumSeconds: Double)
     case outsideSource
+    case unsupportedSampleRate(maximum: Double)
     case tooManyFrames(maximum: Int64)
 
     var errorDescription: String? {
@@ -173,6 +174,8 @@ enum AlignmentAuditionRequestError: Error, LocalizedError, Equatable {
             "Audition duration is limited to \(Int(maximum)) seconds."
         case .outsideSource:
             "The requested audition starts outside this source."
+        case let .unsupportedSampleRate(maximum):
+            "Audition is limited to sources at or below \(Int(maximum)) Hz."
         case let .tooManyFrames(maximum):
             "The requested audition contains more than \(maximum) frames."
         }
@@ -180,8 +183,9 @@ enum AlignmentAuditionRequestError: Error, LocalizedError, Equatable {
 }
 
 enum AlignmentAuditionRequest {
-    static let maximumStartSeconds = 300.0
+    static let maximumStartSeconds = 30.0
     static let maximumDurationSeconds = 30.0
+    static let maximumSampleRate = 384_000.0
     static let maximumFrameCount: Int64 = 1_500_000
 
     static func frameRange(
@@ -201,12 +205,15 @@ enum AlignmentAuditionRequest {
         guard sampleRate.isFinite, sampleRate > 0, availableFrames >= 0 else {
             throw .outsideSource
         }
+        guard sampleRate <= maximumSampleRate else {
+            throw .unsupportedSampleRate(maximum: maximumSampleRate)
+        }
         let startValue = (startSeconds * sampleRate).rounded(.down)
         let durationValue = (durationSeconds * sampleRate).rounded(.up)
         guard startValue.isFinite, durationValue.isFinite,
               startValue >= 0, durationValue >= 1,
-              startValue <= Double(Int64.max),
-              durationValue <= Double(Int64.max)
+              startValue < Double(Int64.max),
+              durationValue < Double(Int64.max)
         else { throw .tooManyFrames(maximum: maximumFrameCount) }
         let start = Int64(startValue)
         let duration = Int64(durationValue)
