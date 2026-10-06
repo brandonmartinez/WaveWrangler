@@ -8,11 +8,29 @@
   "full_criteria_and_milestones_verified_at_snapshot": true,
   "metadata_verification_attribution": "Parent metadata coordinator; documentation publication does not claim independent reproduction of all API writes.",
   "user_directed_policy_date": "2026-10-04",
-  "open_issue_count": 49,
+  "amendments": [
+    {
+      "date": "2026-10-06",
+      "user_directed_at": "2026-10-06T01:20-04:00",
+      "summary": "Added milestone M5 (#7) and stable ID WW-053 (#167); WW-052 depends on WW-053; broad accessibility portions of WW-007/029 transfer to WW-053.",
+      "graph_before": {
+        "nodes": 52,
+        "edges": 203,
+        "open_issue_count": 49
+      },
+      "graph_after": {
+        "nodes": 53,
+        "edges": 207,
+        "open_issue_count": 50
+      },
+      "native_edges_note": "snapshot native_open_issue_dependency_count (180) and issue_payload_sha256 are preserved from the 2026-10-05 snapshot; the 4 new open-to-open edges (WW-053 on WW-042/007/029, WW-052 on WW-053) are tracked live on GitHub."
+    }
+  ],
+  "open_issue_count": 50,
   "completed_history_count": 3,
   "graph": {
-    "nodes": 52,
-    "edges": 203,
+    "nodes": 53,
+    "edges": 207,
     "acyclic": true,
     "topological_order": [
       "WW-001",
@@ -66,6 +84,7 @@
       "WW-039",
       "WW-041",
       "WW-047",
+      "WW-053",
       "WW-052"
     ]
   },
@@ -100,6 +119,13 @@
       "number": 4,
       "url": "https://github.com/brandonmartinez/WaveWrangler/milestone/4",
       "description": "First audio handoff and usable internal MVP: synchronized zero-origin cleaned speaker WAV stems plus editable reconstructive cut record/source recipe, demonstrated restoration and frozen-export status. No mandatory native adapter. Consented representative episode workflow; no external podcast publishing."
+    },
+    {
+      "key": "M5",
+      "title": "M5 — Accessible MVP qualification",
+      "number": 7,
+      "url": "https://github.com/brandonmartinez/WaveWrangler/milestone/7",
+      "description": "Broad accessibility qualification across all MVP windows once the UI is stable after M4 (WW-053). Sits after M4 and before Release. Entry: M4 accepted; layouts and theme final; waiver baseline pinned at the M4 exit SHA. Essential accessibility stays a per-milestone invariant in M1-M4."
     },
     {
       "key": "Release",
@@ -1139,6 +1165,25 @@
       "state": "OPEN"
     },
     {
+      "id": "WW-053",
+      "number": 167,
+      "github_database_id": 5723443276,
+      "url": "https://github.com/brandonmartinez/WaveWrangler/issues/167",
+      "title": "WW-053: Qualify broad accessibility across the MVP windows",
+      "milestone_key": "M5",
+      "milestone_number": 7,
+      "priority": "P0",
+      "type": "RESEARCH SPIKE",
+      "owner": "Design",
+      "currentstatus": "PENDING",
+      "dependencies": [
+        "WW-042",
+        "WW-007",
+        "WW-029"
+      ],
+      "state": "OPEN"
+    },
+    {
       "id": "WW-052",
       "number": 49,
       "github_database_id": 5705472738,
@@ -1157,7 +1202,8 @@
         "WW-008",
         "WW-018",
         "WW-026",
-        "WW-029"
+        "WW-029",
+        "WW-053"
       ],
       "state": "OPEN"
     }

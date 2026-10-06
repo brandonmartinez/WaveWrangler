@@ -199,12 +199,12 @@ Every scenario checks SHA-256 and mtime of every source.
 | T18 Cancel/retry download | **Pass** | `EpisodeSetupUITests` (simulated) |
 | T19 Downloads Off | **Pass** (Settings wording) + A-08 | |
 | T20 Unknown newer | **Fail** (audit, mini): alert text 2.85–2.95:1, [#126](https://github.com/brandonmartinez/WaveWrangler/issues/126). Refusal is functionally correct. Spec deviation: refused at open. | "Open it with the newer version of WaveWrangler. This version will not edit or save it…" |
-| T21 Migration | **Not run** | No older or forced-failure format fixture in the app hooks |
+| T21 Migration | **Not run** (user-accepted deferral, P2 [#159](https://github.com/brandonmartinez/WaveWrangler/issues/159)) | The show format has only schema 1 (minimum readable 1), so no older show file can exist in M1. The "Update “…”?" prompt (D14/D15) isn't built yet. The test comes with the first real format change. |
 | T22 Unavailable entries | **Pass** | `LibraryWorkspaceUITests` |
-| T23 Close/quit unsaved | **Pass** for D3 (DUR-026); **Not run** for D4/D7 (no seam to delay or fail publication in the app) | |
+| T23 Close/quit unsaved | **Pass** for D3 (DUR-026). **D7:** `OfflineSaveKeyboardUITests` (Save a Copy Elsewhere… then close; Esc = Cancel; ⌘⌫ = Don't Save), result pending its Mac mini run. **D4: Not run** (user-accepted deferral, P2 [#158](https://github.com/brandonmartinez/WaveWrangler/issues/158)) | D4 needs asynchronous saving: saves run on the main thread, so a slow publication blocks the window and "Saving…" can't be observed. |
 | T24 Two windows / named undo | **Pass** (mini, main `6e35da2`) | Passes with the #86 fix |
 | T25 Library location | **Pass** (move to a local folder and back, nothing lost); **Not run** for L1–L5 targets (F-LIBLOC) | §4.1 |
-| T26–T28 Folder unreachable | **Not run** | No F-OFFLINE seam in the app's UI-test hooks |
+| T26–T28 Folder unreachable | T26, T27: `OfflineSaveKeyboardUITests` with the F-OFFLINE seam (`-WWUITestOffline`; #157, which also fixes #156). T28: the same suite (this PR). Results pending their Mac mini runs. | T28's library assertion ("Location unavailable" for the original) isn't exercised: the seam fails publications only, so the library still reaches the original's folder. |
 | T29 No connection → Retry | **Pass** | `EpisodeSetupUITests` (simulated) |
 | T30 Auto-retry on reconnect | **Not run** | |
 
@@ -262,7 +262,8 @@ Earlier attempt on the 18-core host:
 | T23 | Autosave Off, edit, ⌘W / ⌘Q | "Do you want to save the changes you made to “…”?" with Save / Don't Save / Cancel. Esc = Cancel. |
 | T24 | New Window; edit in one window, ⌘Z in the other | Both windows titled with the show; "Undo <action>". The change is reflected in both. |
 | T25 | Settings › Library location → Choose Folder… → Move Library | Pop-up "Library location" "In WaveWrangler"; sheet "Move your library to “…”?"; "Moving library — …". Focus returns to the pop-up. |
-| T26–T30 | (no simulated-offline seam) | Record as Not run |
+| T26–T28 | Covered by the keyboard XCUITests (F-OFFLINE seam); VoiceOver listening remains a user-manual item | Announcements: "Couldn't save “…”. The folder can't be reached." once; "Saved" after reconnect |
+| T29–T30 | (no simulated-offline seam for sources) | Record as Not run |
 
 ## 6. Visual (A11Y-003, C03–C07): in-app overrides only
 

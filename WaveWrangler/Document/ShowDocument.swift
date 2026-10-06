@@ -59,6 +59,10 @@ final class ShowDocument: NSDocument {
     /// D5: the exact bytes of a publication whose acknowledgement is uncertain. Its retry first checks whether these
     /// bytes are on disk and, if so, adopts them (verified by decoding) instead of republishing against a stale base.
     private var uncertainCandidate: Data?
+    /// ST-16 "Save a Copy Elsewhere…" in progress: set while its save panel and save run.
+    private var copyElsewhere: CopyElsewhereRequest?
+    /// The key of the candidate being saved when it isn't this document's current show (a copy with a new ID).
+    private var pendingCandidateKey: DocumentKey?
     var documentKey: DocumentKey { .show(store.model.show.id) }
     private var gate: AutosaveGate { PersistenceEnvironment.autosaveGate }
     private var recovery: RecoveryStore { PersistenceEnvironment.recovery }
@@ -167,6 +171,10 @@ final class ShowDocument: NSDocument {
         // The model is already current (edits apply live); end any coalesced burst so that an edit made
         // after this save registers new undo and marks the document dirty again.
         store.endCoalescing()
+        if let request = copyElsewhere, saveOperation == .saveAsOperation {
+            saveCopy(request, to: url, ofType: typeName, completionHandler: completionHandler)
+            return
+        }
         do {
             pendingCandidate = try coder.encodeDocument(store.model, revision: revision + 1, publicationID: UUID())
         } catch {
@@ -261,6 +269,96 @@ final class ShowDocument: NSDocument {
         Task { await LibraryDocumentStore.shared.acknowledgeShowPublication(model.show.id, title: model.show.title, publication: publication) }
     }
 
+    // MARK: - Save a Copy Elsewhere… (ST-16, T28) and the failed-save close sheet (T23 D7)
+
+    struct CopyElsewhereRequest {
+        let originalFolder: String
+        let completion: ((Bool) -> Void)?
+    }
+
+    /// Opens the native save panel named "<Show> copy" and saves the show there as a new, separate show (new show
+    /// ID, titled after the chosen name), like Save As: the window then edits the copy. The original file and its
+    /// last saved version are untouched. `completion` gets whether the copy was saved.
+    func saveACopyElsewhere(completion: ((Bool) -> Void)? = nil) {
+        guard copyElsewhere == nil else { completion?(false); return }
+        copyElsewhere = CopyElsewhereRequest(originalFolder: fileURL?.deletingLastPathComponent().lastPathComponent ?? "", completion: completion)
+        runModalSavePanel(for: .saveAsOperation, delegate: self, didSave: #selector(copyElsewhereDidSave(_:didSave:contextInfo:)), contextInfo: nil)
+    }
+
+    /// The show's name as in its file name, without the extension. `displayName` includes ".wwshow" when the Mac
+    /// shows all file extensions, which must not leak into "<Show> copy" or the close sheet's wording.
+    var showFileName: String { fileURL?.deletingPathExtension().lastPathComponent ?? displayName }
+
+    override func prepareSavePanel(_ savePanel: NSSavePanel) -> Bool {
+        if copyElsewhere != nil { savePanel.nameFieldStringValue = Self.copyName(for: showFileName) }
+        return super.prepareSavePanel(savePanel)
+    }
+
+    @objc private func copyElsewhereDidSave(_ document: NSDocument, didSave: Bool, contextInfo: UnsafeMutableRawPointer?) {
+        let request = copyElsewhere
+        copyElsewhere = nil
+        request?.completion?(didSave)
+    }
+
+    private func saveCopy(_ request: CopyElsewhereRequest, to url: URL, ofType typeName: String, completionHandler: @escaping (Error?) -> Void) {
+        let name = url.deletingPathExtension().lastPathComponent
+        let copy = (try? store.model.duplicatedAsNewShow().renamingShow(to: name)) ?? store.model.duplicatedAsNewShow()
+        let originalKey = documentKey
+        do {
+            pendingCandidate = try coder.encodeDocument(copy, revision: 1, publicationID: UUID())
+        } catch {
+            status.set(.saveFailed(retainedRevision: publication?.revision, kind: .other, message: error.localizedDescription))
+            completionHandler(error)
+            return
+        }
+        pendingCandidateKey = .show(copy.show.id)
+        lastReceipt = nil
+        status.set(.saving)
+        let candidateBytes = pendingCandidate?.data
+        super.save(to: url, ofType: typeName, for: .saveAsOperation) { [weak self] error in
+            guard let self else { return completionHandler(error) }
+            self.pendingCandidateKey = nil
+            if error == nil, self.lastReceipt != nil {
+                // The window now edits the copy: a new show, so the original's undo history and edit checkpoints
+                // (whose changes the copy now holds) don't carry over.
+                self.store.replaceLoadedModel(copy)
+                self.undoManager?.removeAllActions()
+                try? self.recovery.discardEditCheckpoints(for: originalKey)
+                self.status.setCopyNotice(Self.copyMessage(copyName: name, folder: url.deletingLastPathComponent().lastPathComponent,
+                                                           originalFolder: request.originalFolder))
+            }
+            self.finishSave(saveOperation: .saveAsOperation, adopts: true, error: error, url: url, candidateBytes: candidateBytes,
+                            candidateModel: copy, restoredAtSaveStart: [])
+            completionHandler(error)
+        }
+    }
+
+    override func canClose(withDelegate delegate: Any, shouldClose shouldCloseSelector: Selector?, contextInfo: UnsafeMutableRawPointer?) {
+        // T23 D7–D9: closing while the last save failed asks how to keep the changes (never AppKit's plain review,
+        // and never closes silently). Every other state keeps AppKit's behaviour.
+        guard isDocumentEdited, let window = windowForSheet, let sheet = failedSaveCloseSheet() else {
+            super.canClose(withDelegate: delegate, shouldClose: shouldCloseSelector, contextInfo: contextInfo)
+            return
+        }
+        let reply = { (shouldClose: Bool) in
+            Self.reply(to: delegate, selector: shouldCloseSelector, document: self, shouldClose: shouldClose, contextInfo: contextInfo)
+        }
+        presentFailedSaveCloseSheet(sheet, in: window) { [weak self] choice in
+            switch choice {
+            case .saveACopyElsewhere: self?.saveACopyElsewhere(completion: reply)
+            case .dontSave: reply(true)
+            default: reply(false)
+            }
+        }
+    }
+
+    /// Calls AppKit's `document:shouldClose:contextInfo:` callback.
+    private static func reply(to delegate: Any, selector: Selector?, document: NSDocument, shouldClose: Bool, contextInfo: UnsafeMutableRawPointer?) {
+        guard let selector, let object = delegate as? NSObject, object.responds(to: selector) else { return }
+        typealias Callback = @convention(c) (NSObject, Selector, NSDocument, ObjCBool, UnsafeMutableRawPointer?) -> Void
+        unsafeBitCast(object.method(for: selector), to: Callback.self)(object, selector, document, ObjCBool(shouldClose), contextInfo)
+    }
+
     // MARK: - Automatic retry after a failed save (ST-11)
 
     private func scheduleSaveRetry() {
@@ -329,10 +427,11 @@ final class ShowDocument: NSDocument {
             var hooks: any PublicationHooks = NoPublicationHooks()
             #if DEBUG
             if let debugHooks = Self.debugPublicationHooks { hooks = debugHooks }
+            (Self.debugPublicationHooks as? UITestOfflineHooks)?.target = url
             #endif
             let publisher = DocumentPublisher(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery, hooks: hooks)
             lastReceipt = try publisher.publish(
-                encoded: candidate, key: documentKey, to: url, target: target, retainPrior: inPlace,
+                encoded: candidate, key: pendingCandidateKey ?? documentKey, to: url, target: target, retainPrior: inPlace,
                 isCancelled: { false },
                 step: .external { _, _ in
                     // Stock safe-save; it calls `data(ofType:)`, which returns exactly the candidate bytes.
