@@ -174,4 +174,31 @@ struct ValidationTests {
         let hostile = q128(Int128(1) << 100 + 1, (Int128(1) << 126) - 1)
         #expect(throws: TimeMapError.exactArithmeticEnvelopeExceeded) { try simple.sourceFrame(at: try q(1, 7).adding(hostile), in: occurrence.id) }
     }
+
+    /// Only an interior segment's frames overflow: the span's first and last frames (the hull) are in
+    /// benign segments, so the per-piece endpoint proof is the only guard. Parameters were chosen
+    /// (coprime prime denominators, aligned time near 2^127 / d) so the middle piece's
+    /// `p*n + c` crosses Int128 between its first and last frame.
+    @Test func interiorPieceOverflowIsRefusedAtConstruction() throws {
+        let rate: Int64 = 1 << 20
+        let bigE: Int128 = 1_099_511_627_689, bigU: Int128 = 1_076_896_741, bigA: Int128 = 1021
+        let e = q128(295_147_357_600_819_710_678, bigE)
+        let ub = q128(289_076_732_519_146_835, bigU)
+        let uc = try ub.adding(q128(bigA, 1))
+        let a2 = q128(bigA + 1, bigA)
+        let b2 = try ExactRational.zero.subtracting(ub.divided(by: q128(bigA, 1)))
+        let segments = [
+            seg(e, ub, .one, .zero),
+            seg(ub, uc, a2, b2),
+            seg(uc, try uc.adding(q(2)), .one, .one),
+        ]
+        let frames: Int64 = 1_072_693_249
+        let epoch = RecordingEpochID()
+        let occurrence = try SourceOccurrence(id: SourceOccurrenceID(), source: SourceID(), nominalRate: NominalRate(rate), frameCount: frames)
+        #expect(throws: TimeMapError.exactArithmeticEnvelopeExceeded) {
+            try fx.otherGroup(epochs: [mapped(epoch, segments)], placements: [OccurrencePlacement(occurrence: occurrence, spans: [span(0, frames, epoch, e: e)])])
+        }
+        // The same epoch is fine for a span that stays in the benign first segment.
+        #expect((try? fx.otherGroup(epochs: [mapped(epoch, segments)], placements: [OccurrencePlacement(occurrence: occurrence, spans: [span(0, Int64(rate), epoch, e: e)])])) != nil)
+    }
 }
