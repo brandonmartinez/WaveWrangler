@@ -79,6 +79,12 @@
 
 **iCloud and media on the Mac mini (user-directed, 2026-10-05):** synthetic iCloud Drive trials may also run on the Mac mini (the user's same Apple account), with grant-C scope: dedicated trial folder, generated synthetic files only, deleted afterwards. The disposable episode copy is at the same location on the mini, under the same M1/M2 consent. Multi-device iCloud testing (main Mac + Mac mini deliberately editing the same synthetic documents in the trial folder) is also allowed (user-directed 2026-10-05 13:37). UI stays on the Mac mini; the main Mac's side runs headless.
 
+**DUR-025 provider settle (user product decision, 2026-10-05 23:07, relayed verbatim):** "iCloud can be sporadic, so I wouldn't want to hold that too firmly."
+- Lead had ruled not to relax the 420 s settle bound without the user. This decision supersedes that ruling.
+- M1-DUR-025 is re-frozen as m1-freeze-5. Provider settle is an observation, with a 1,800 s per-case cap. A case that hits the cap is providerUnsettled (inconclusive), refilled from a frozen reserve; a cell is inconclusive above 10% (or above 25% counting setup exclusions).
+- Hard gates are unchanged: no lost edits; conflicts surfaced; L4 → Combine with backups; one current revision at settle; zero source writes; recovery; honest status while unsettled.
+- The m1-freeze-2 (95/100) and m1-freeze-4 (99/100) failures stay recorded as failed.
+
 **Full-suite-on-merge regression policy (user-directed, 2026-10-05; applies to the rest of M1 and to M2+):**
 - **After each coalesced merge batch to main:**
   - one build-for-testing from that main SHA;
