@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import Observation
 import SwiftUI
 import WWCore
@@ -260,7 +261,15 @@ final class EpisodeSetupModel {
 
     func announce(_ text: String) {
         AccessibilityNotification.Announcement(text).post()
+        #if DEBUG
+        // UI tests can't hear announcements; the runner's host counts these lines (T30 "announced once").
+        Self.announcementLog.notice("WWANNOUNCE \(text, privacy: .public)")
+        #endif
     }
+
+    #if DEBUG
+    private static let announcementLog = Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "announce")
+    #endif
 
     // MARK: Canonical edits (named undo, via SetupEditCommands)
 

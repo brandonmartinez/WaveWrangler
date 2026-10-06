@@ -403,6 +403,19 @@ enum SetupMenus {
         menu.addItem(.separator())
         menu.addItem(item("Show Source in Finder", #selector(SetupCommandActions.showSourceInFinder(_:))))
         menu.addItem(item("Remove from Episode…", #selector(SetupCommandActions.removeSourceFromEpisode(_:))))
+        #if DEBUG
+        // UI-test fixture only (F-OFFLINE, simulated): absent from Release builds and from normal runs.
+        if SetupFixtures.isActive {
+            menu.addItem(.separator())
+            for (title, key, offline) in [("Simulate Network Offline", "o", true), ("Simulate Network Reconnect", "r", false)] {
+                let simulate = NSMenuItem(title: title, action: #selector(SimulatedNetworkTarget.simulate(_:)), keyEquivalent: key)
+                simulate.keyEquivalentModifierMask = [.control, .option, .command]
+                simulate.target = SimulatedNetworkTarget.shared
+                simulate.representedObject = offline
+                menu.addItem(simulate)
+            }
+        }
+        #endif
         return menu
     }
 
@@ -505,3 +518,15 @@ final class SetupCommandProxy: NSObject, NSMenuItemValidation {
         return controller.validateMenuItem(item)
     }
 }
+
+#if DEBUG
+/// Menu target for the fixture-only network simulation items.
+@MainActor
+final class SimulatedNetworkTarget: NSObject {
+    static let shared = SimulatedNetworkTarget()
+
+    @objc func simulate(_ sender: NSMenuItem) {
+        if sender.representedObject as? Bool == true { SimulatedNetwork.goOffline() } else { SimulatedNetwork.reconnect() }
+    }
+}
+#endif

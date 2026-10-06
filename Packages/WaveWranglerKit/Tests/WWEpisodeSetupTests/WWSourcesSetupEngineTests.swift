@@ -33,6 +33,24 @@ final class FixedPreference: @MainActor SourceDownloadPreference {
     init(_ on: Bool) { downloadsAutomatically = on }
 }
 
+/// A connectivity signal the test drives (T30).
+final class ManualConnectivity: ConnectivitySignal, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuations: [AsyncStream<Void>.Continuation] = []
+
+    func reconnects() -> AsyncStream<Void> {
+        let (stream, continuation) = AsyncStream<Void>.makeStream()
+        lock.withLock { continuations.append(continuation) }
+        return stream
+    }
+
+    func reconnect() {
+        for continuation in lock.withLock({ continuations }) { continuation.yield() }
+    }
+
+    var listeners: Int { lock.withLock { continuations.count } }
+}
+
 @MainActor
 @Suite("WWSources adapter (synthetic temp files, observed file system)")
 struct WWSourcesSetupEngineTests {
@@ -336,9 +354,37 @@ struct WWSourcesSetupEngineTests {
         #expect(io.downloads == 0)
     }
 
+    /// T30 wiring: a reconnect applies the current download preference first (awaited), so a preference
+    /// switched OFF can't be overtaken by a retry; shutdown stops listening.
+    @Test(.timeLimit(.minutes(1))) func reconnectAppliesTheCurrentPreferenceFirst() async throws {
+        let preference = FixedPreference(true)
+        let signal = ManualConnectivity()
+        let io = CountingIO()
+        let engine = WWSourcesSetupEngine(showID: ShowID(), store: InMemoryDeviceAccessStore(), context: SourceAccessContext(io: io), preference: preference, connectivity: signal)
+        #expect(engine.monitor.setting == .on)
+        #expect(signal.listeners == 1)
+        preference.downloadsAutomatically = false  // no defaults notification on purpose
+        signal.reconnect()
+        for _ in 0..<1_000 where engine.monitor.setting != .off { try await Task.sleep(for: .milliseconds(2)) }
+        #expect(engine.monitor.setting == .off)
+        #expect(io.downloads == 0)
+        await engine.shutdown()
+        signal.reconnect()
+        #expect(io.downloads == 0)
+    }
+
     @Test func mappingIsHonest() {
         #expect(WWSourcesStatusMapping.transfer(.offlineOrUnknown(nil)) == .failed(reason: "no progress was reported"))
         #expect(WWSourcesStatusMapping.transfer(.offlineOrUnknown(nil)).presentation.summaryText != "No connection")
+        // An observed connectivity error (T29/T30) is "No connection"; other provider errors stay failures.
+        for code in [NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost] {
+            let observed = TransferErrorClassifier.state(for: SourceErrorDescriptor(domain: NSURLErrorDomain, code: code))
+            #expect(WWSourcesStatusMapping.transfer(observed) == .noConnection)
+        }
+        let server = TransferErrorClassifier.state(for: SourceErrorDescriptor(domain: NSCocoaErrorDomain, code: NSUbiquitousFileUbiquityServerNotAvailable))
+        #expect(WWSourcesStatusMapping.transfer(server) == .noConnection)
+        let other = TransferErrorClassifier.state(for: SourceErrorDescriptor(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError))
+        if case .failed = WWSourcesStatusMapping.transfer(other) {} else { Issue.record("other errors stay failures") }
         #expect(WWSourcesStatusMapping.transfer(.notRequested(.availabilityOff)) == .downloadsOff)
         #expect(WWSourcesStatusMapping.transfer(.notRequested(.unsupportedLocation)) == .unsupportedLocation)
         #expect(WWSourcesStatusMapping.transfer(.notRequested(.awaitingAccess)) == .idle)
