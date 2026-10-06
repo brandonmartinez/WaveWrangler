@@ -264,9 +264,12 @@ final class LibraryLocationUITests: XCTestCase {
 
     // MARK: - Helpers
 
+    /// `-AppleKeyboardUIMode 2` turns on macOS keyboard navigation (Tab reaches pop-ups and buttons) for this app
+    /// process only, through its argument domain: no system setting changes. It isn't the Full Keyboard Access toggle,
+    /// which stays a user-manual exit item (accessibility-acceptance C01).
     private func launch(state: String) {
         app = XCUIApplication()
-        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetStorage", "YES",
+        app.launchArguments = ["-AppleKeyboardUIMode", "2", "-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetStorage", "YES",
                                "-WWUITestResetPreferences", "YES", "-WWUITestCenterWindows", "YES", "-WWUITestLibraryLocation", state, "-WWUITestHoldMoveSteps", "YES"]
         app.launch()
         app.activate()
