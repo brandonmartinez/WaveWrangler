@@ -58,7 +58,8 @@ def main():
         retries = [w for w in waits if w["attempt"] == 2]
         print(f"- setup waits: {len(waits)} ({len(retries)} after a download request); first-product-operation order OK in "
               f"{sum(1 for r in cases if r.get('setupWaitsBeforeFirstProductOperation'))}/{len(cases)}")
-        print(f"- time to settle: {stats([r.get('timeToSettleMs') for r in cases])}")
+        settle = [r.get("timeToSettleMs") for r in cases] if cell != "library" else [rd.get("settleMs") for r in cases for rd in r.get("rounds", [])]
+        print(f"- time to settle{' (per Combine round)' if cell == 'library' else ''}: {stats(settle)}")
         print(f"- setup wait per fixture (until observed on host B): {stats([w.get('waitedMs') for w in waits if w.get('observed')])}")
         if cell in ("show", "library"):
             paths = collections.Counter(json.dumps(r.get("detectionPath"), sort_keys=True) for r in cases if r["verdict"] != "setupNotEstablished")

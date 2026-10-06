@@ -1194,7 +1194,10 @@ def main():
               "sameAppleAccount": "operator-attested", "hosts": hosts,
               "trees": {"A": trees, "B": {"builtFrom": trees, "attestedBy": "probe sha256 equal on both hosts"}},
               "clockOffsetStart": dev.measure_offset(), "counts": counts,
-              "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "trialRoot": redact(TRIAL_ROOT)}
+              "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "trialRoot": redact(TRIAL_ROOT),
+              # `git merge-base --is-ancestor` for every required and listed harness commit (WW_ANCESTRY_COMMITS).
+              "ancestry": {c: subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor", c, "HEAD"]).returncode == 0
+                           for c in filter(None, (os.environ.get("WW_REQUIRED_COMMITS", "") + "," + os.environ.get("WW_ANCESTRY_COMMITS", "")).split(","))}}
     plan, index = [], 0
     for cell in STRATA:
         for variant in variant_plan(split, cell, counts.get(cell, 0)):
