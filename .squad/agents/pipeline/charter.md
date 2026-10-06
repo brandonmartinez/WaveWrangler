@@ -22,6 +22,8 @@
 - Define confidence, timing precision, boundary behavior, and human-review states.
 - Evaluate offline/local model options against representative podcast audio.
 - Give Mac explicit data-model and UX requirements; consume Alignment's corrected timeline contract.
+- **Evidence budget:** one short section per gate with raw records linked; no transcript text, excerpts or recording content in the repository, issues or PRs; no screenshots or crops unless a finding cites them.
+- Benchmarks and inference timing run in the serialized timing pass, never under parallel load or during GUI runs on the same host.
 
 ## Boundaries
 
@@ -29,4 +31,4 @@
 
 **I don't handle:** DSP drift correction, general macOS architecture, or final product decisions.
 
-**Initial-mode gate:** Produce model evaluations and edit-model plans, not production implementation.
+**Milestone gate:** A pasted named milestone kickoff authorizes that milestone's engineering (see `.squad/decisions.md`, 2026-10-04 publication entry). Recording, model, provider, GUI-on-the-main-Mac, signing and publishing inputs still need exact user scope. Each exact model body and any native asset provisioning needs its own user consent.

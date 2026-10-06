@@ -84,6 +84,87 @@
 4. Record owned follow-ups with explicit completion evidence.
 
 **Coordinator integration:**
-Evaluate retrospective follow-ups at the milestone exit using the available project skills and exit evidence.
+Evaluate retrospective follow-ups at the milestone exit using the available project skills and exit evidence. Published milestone retrospectives live in `docs/planning/retrospectives/` (M1: `m1.md`, `m1-accessibility.md`); a new milestone's first Squad-config PR applies them.
 An absent machine-local log is not proof that a new worktree is overdue. Do not install missing enforcement tooling or block coding on a full-team ceremony.
 Ralph tracks resulting issues; Lead retains milestone priority and decision authority.
+
+---
+
+## Kickoff Preflight
+
+| Field | Value |
+|-------|-------|
+| **Trigger** | auto |
+| **When** | before |
+| **Condition** | a named milestone kickoff starts, or before the first GUI or remote run |
+| **Facilitator** | coordinator |
+| **Participants** | none (coordinator checks) |
+| **Time budget** | ≤15 min |
+| **Enabled** | ✅ yes |
+
+**Agenda:** run `.squad/skills/kickoff-preflight`; record PASS/FAIL per item in the coordinator's first status; send ONE consolidated user ask for user-only items; continue all work that needs neither the user nor a blocked host.
+
+---
+
+## Away-Window Ask
+
+| Field | Value |
+|-------|-------|
+| **Trigger** | auto |
+| **When** | before |
+| **Condition** | the user has stated an away window, or is known to be away |
+| **Facilitator** | coordinator |
+| **Participants** | none |
+| **Time budget** | one message |
+| **Enabled** | ✅ yes |
+
+**Agenda:** collect every pending user-only action (consents, sudo steps, unlocks, manual checks, gate questions with data) into a single message with exact scope and consequence. During the window the user keeps 1Password unlocked and Focus/Do Not Disturb on, on the GUI hosts.
+
+---
+
+## Window Smoke Pass
+
+| Field | Value |
+|-------|-------|
+| **Trigger** | auto |
+| **When** | after |
+| **Condition** | a PR adds a new window, panel or sheet |
+| **Facilitator** | design |
+| **Participants** | the authoring lane |
+| **Time budget** | ≤30 min GUI, on the Mac mini |
+| **Enabled** | ✅ yes |
+
+**Agenda:** essential accessibility checks on the new surface plus window zoom/resize (zoom found M1's only P0 crash in this area, #129); record a brief result on the window's PR. In-app 200% text runs at the exit checkpoint; Increase Contrast and Reduce Motion are M5.
+
+---
+
+## Capped UI Regression Run
+
+| Field | Value |
+|-------|-------|
+| **Trigger** | auto |
+| **When** | after |
+| **Condition** | ~3 h of active merging or 4+ merges to main since the last full run (whichever first), and always on the exit SHA |
+| **Facilitator** | coordinator (spawns the Regression runner lane) |
+| **Participants** | Regression runner |
+| **Time budget** | one build plus sharded GUI runs |
+| **Enabled** | ✅ yes |
+
+**Agenda:** one build-for-testing; the full `WaveWranglerUITests` suite (no filter) sharded by class across GUI hosts under each host's lock; full `scripts/test.sh` on the same SHA; record SHA, hosts, shard map, counts and xcresults. Any failure is a regression: triage, deduplicate, file with severity and P0/follow-up classification, freeze merges in that area until understood. Flaky failures are fixed or tracked, never silently re-run.
+
+---
+
+## Exit Checkpoint
+
+| Field | Value |
+|-------|-------|
+| **Trigger** | milestone |
+| **When** | after |
+| **Condition** | the final main SHA of a milestone |
+| **Facilitator** | design |
+| **Participants** | Regression runner |
+| **Time budget** | ≤30 min, inside the final full suite |
+| **Enabled** | ✅ yes |
+
+**Agenda:** in-app 200% text plus light and dark on the milestone's windows, reported on its own line in the exit record. Only a finding that makes a core task impossible blocks; the rest become WW-053 follow-ups. System Increase Contrast and Reduce Motion are not part of it (M5). Then write the exit record once ([skill](skills/milestone-exit-record/SKILL.md)).
+
