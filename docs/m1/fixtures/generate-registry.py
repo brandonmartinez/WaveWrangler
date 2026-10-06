@@ -452,6 +452,38 @@ FREEZE4 = {
   "whyFreezeNotInterpretation": "Lead judgement: the m1-freeze-3 level-sampling FAIL rule, read literally, fails correct product behaviour in a real timing window: after host A's Combine, host B can receive the combined current library before the provider propagates resolution of a version whose content it already contains, and a read-only sample cannot resolve it. Replacing that FAIL predicate with a narrower one is a change to frozen gate text, not an interpretation, so it is frozen here before any run rather than recorded as a note. The new predicate exempts only objectively decidable, provably included versions (both the product's recorded-fork-base judgement and an independent harness judgement); undecodable, different-library, base-less or not-provably-included versions are never exempt; and the literal-reading count is reported alongside. The exemption is scoped by truth1LibraryClause (in-window only; at settle every unresolved version must be resolved with a backup or surfaced) and uses an independent harness judgement that never reuses product merge code. The other six items (Combine summary check, host-B tree IDs, uncounted split names, drill mechanism, variant assignment, combineOnAThenB rounds) fill gaps in m1-freeze-3 text and are frozen in the same revision for clarity; each is equal to or stricter than m1-freeze-3.",
   "postFreezeRule": "As m1-freeze-3; a run counts only on a clean commit containing this revision's merge.",
 }
+FROZEN5_IDS = ("M1-REF-020",)
+FROZEN5_STATUS = "frozen m1-freeze-5 (2026-10-05; definition unchanged from m1-freeze-1); the m1-freeze-1 holdout FAILED as short and is retained: 16/20 scenarios executed at 08f62ee (12 pass, 4 fail, 4 not executed; all failures and the abort were harness defects; 0 product failures; reported in PR #111, docs/m1/evidence/ww-007-accessibility-responsiveness.md section 2.3); m1-freeze-5 holdout not yet reported in this registry"
+FREEZE5 = {
+  "freezeID": "m1-freeze-5",
+  "date": "2026-10-05",
+  "recordedBy": "Lead (WW-003 protocol author), at the M1 coordinator's request after the user's decision of 2026-10-05 23:30 (relayed): finish the remaining M1 evidence runs before closing",
+  "baseCommit": "73119505883fb3a573dced19fd28c287e154da20",
+  "baseCommitNote": "main when this revision was re-pinned (the #157 merge). It contains the final REF-020 harness from PR #152 (8526737). It takes effect at the merge commit of the PR that adds it, and is made before any m1-freeze-5 run of M1-REF-020. First drafted at 270b00b, then held at the coordinator's direction until the harness was finalized; the harness was finalized before this freeze.",
+  "nameNote": "The ID m1-freeze-5 was first used by a DUR-025 proposal (PR #145), which was closed unmerged and never took effect. This revision reuses the ID for M1-REF-020 only; it has no relation to DUR-025, which stays user-deferred to #146.",
+  "scope": "M1-REF-020 only. Its recipe, expected truth, split (2 calibration / 20 holdout GUI scenarios = 5 cycles x grant, relaunch, regrant, relink), gate and supported-claim limits are unchanged from m1-freeze-1. Every other registry entry, freeze revision and deferral is unchanged.",
+  "trigger": "The m1-freeze-1 holdout ran once at 08f62ee and executed only 16 of 20 scenarios: 12 pass and 4 fail on a harness row-selection defect, and cycle 5 aborted on a harness defect (4 not executed). No product failure was observed. Follow-up #151.",
+  "retainedResult": {
+    "freeze": "m1-freeze-1",
+    "result": "FAILED (short; retained, not re-labelled): 16/20 executed at 08f62ee; grant 4/4, relaunch 4/4, regrant 2/4, relink 2/4 = 12 pass, 4 fail; 4 not executed.",
+    "evidence": "https://github.com/brandonmartinez/WaveWrangler/pull/111 (docs/m1/evidence/ww-007-accessibility-responsiveness.md section 2.3)",
+    "laterExecutionsNotCounted": "The post-correction and Mac mini re-executions (241396a, 4a109aa, 9e994b1, and the labelled 20/20 at 550506d) ran before this revision. They are supporting evidence only and are not holdout results.",
+  },
+  "harness": {
+    "test": "WaveWranglerUITests/SourceGrantHoldoutUITests.swift testGrantRelaunchRegrantRelink, with TEST_RUNNER_WW_FIXTURE_SPLIT=holdout and TEST_RUNNER_WW_HOLDOUT_SCENARIOS=20 (5 cycles) and WW_PROBE set (scripts/test.sh --ui path). The harness itself fails a holdout run whose count isn't exactly 20, and fails if fewer than 20 scenarios were executed.",
+    "finalizedBeforeFreeze": "Coordinator decision (2026-10-05): extend the harness to cover the full frozen recipe rather than narrow the freeze. PR #152 (merged 8526737, before this revision) does that. Each cycle's grant scenario selects sources (read-only) and a library folder (read-write, Settings > Library location > Choose Folder... > Move Library) through the sandboxed panels. The relaunch scenario resolves the library from that folder, reopens the show from the library, edits it and saves it with Cmd-S, with a disk read-back. Fixture bytes and the show document come from the registry seed derivation, one case per GUI scenario: cycle c covers case indices 4c..4c+3; the show uses seed(4c), and the sources use seed(4c+1) and seed(4c+2).",
+    "fixesSinceFirstHoldout": "launch once for documents (app.launchOnce(opening:), PR #135, ade082f) instead of launch() + open(), which spawned two app processes; the show window found by accessibility identifier (ww.show.window), not its changing title; source rows selected by clicking at several horizontal offsets until selected, with a row predicate; Setup Name cells matched on label or value; UI-test storage and preferences reset before each test class (PR #166). These change how the harness drives the GUI and which fixture it uses, not what the frozen truth checks.",
+    "pinnedAtBase": {
+      "WaveWranglerUITests/SourceGrantHoldoutUITests.swift": "d1bb41238ca26544e9b7945b29b1eda51949d4bc",
+      "WaveWranglerUITests/AcceptanceSupport.swift": "b2d87c3e843a6b3d6c0d267acd67319439021aa1",
+      "WaveWranglerUITests/UITestIsolation.swift": "20c7ae150abaa2084a0896952f1574790c30a2ba",
+      "WaveWranglerUITests (tree)": "9afecfa4979dfc529cafd9f38b2ad3f4d85eedab",
+    },
+    "pinNote": "git object IDs at baseCommit (verify with: git rev-parse 7311950:<path>). The three harness files above are the binding pin: the run reports their blob IDs, and any difference fails the pin unless a new dated revision is made first. The whole-directory tree ID is informational, because unrelated UI test classes may merge before the run; the run reports the tree it actually ran.",
+  },
+  "host": "The user's Mac mini (Apple M2 Pro, 12 cores, 32 GiB, macOS 27.0.1) under grant A and the standing Mac mini UI consent: build-for-testing on this Mac, test-without-building on the mini, one GUI run under the coordinator's GUI lock. The run record labels the host (sw_vers, hardware, Xcode).",
+  "postFreezeRule": "The holdout runs ONCE, on a clean commit that contains this revision's merge, and is recorded as-is: every scenario (pass, fail, not executed, abort) with its cycle, the commit SHA, the harness tree ID, the host label and the source SHA-256 and mtime checks, in docs/m1/evidence and this registry. A harness failure or abort is a FAILED scenario (no re-run, no replacement, no exclusion). Calibration (2 scenarios) may run before the holdout and is reported separately; it never tunes truth, counts or gates. Any further change needs a new dated revision before a further run.",
+}
 
 def build():
     for f in F:
@@ -459,7 +491,9 @@ def build():
             f["evidenceStatus"] = DEFERRED_STATUS
             f["userDeferral"] = USER_DEFERRAL
     for f in F:
-        if f["id"] in FROZEN4_IDS and f["evidenceStatus"] == "not-yet-executed":
+        if f["id"] in FROZEN5_IDS and f["evidenceStatus"] == "not-yet-executed":
+            f["evidenceStatus"] = FROZEN5_STATUS
+        elif f["id"] in FROZEN4_IDS and f["evidenceStatus"] == "not-yet-executed":
             f["evidenceStatus"] = FROZEN4_STATUS
         elif f["id"] in FROZEN3_IDS and f["evidenceStatus"] == "not-yet-executed":
             f["evidenceStatus"] = FROZEN3_STATUS
@@ -487,10 +521,12 @@ def build():
       "ww006LifecycleHoldout": sum(f["split"]["holdout"] for f in F if f.get("countsToward")),
       "showPublicationBoundaries": len(P), "libraryPublicationBoundaries": len(L),
       "perBoundaryHoldoutMinimum": 100,
-      "frozenEntries": sum(1 for f in F if f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS, FROZEN3_STATUS, FROZEN4_STATUS, DEFERRED_STATUS)),
-      "frozenEntriesByRevision": {"m1-freeze-1": sum(1 for f in F if f["evidenceStatus"] == FROZEN_STATUS), "m1-freeze-2": sum(1 for f in F if f["evidenceStatus"] == FROZEN2_STATUS), "m1-freeze-3": sum(1 for f in F if f["evidenceStatus"] == FROZEN3_STATUS), "m1-freeze-4": sum(1 for f in F if f["evidenceStatus"] == FROZEN4_STATUS), "m1-freeze-4, deferred by user to #146": sum(1 for f in F if f["evidenceStatus"] == DEFERRED_STATUS)},
+      "frozenEntries": sum(1 for f in F if f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS, FROZEN3_STATUS, FROZEN4_STATUS, FROZEN5_STATUS, DEFERRED_STATUS)),
+      "frozenEntriesByRevision": {"m1-freeze-1": sum(1 for f in F if f["evidenceStatus"] == FROZEN_STATUS), "m1-freeze-2": sum(1 for f in F if f["evidenceStatus"] == FROZEN2_STATUS), "m1-freeze-3": sum(1 for f in F if f["evidenceStatus"] == FROZEN3_STATUS), "m1-freeze-4": sum(1 for f in F if f["evidenceStatus"] == FROZEN4_STATUS), "m1-freeze-5": sum(1 for f in F if f["evidenceStatus"] == FROZEN5_STATUS), "m1-freeze-4, deferred by user to #146": sum(1 for f in F if f["evidenceStatus"] == DEFERRED_STATUS)},
     }
-    assert all(f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS, FROZEN3_STATUS, FROZEN4_STATUS, DEFERRED_STATUS) for f in F if f["permission"]["class"] in FROZEN_CLASSES), "unfrozen authorized entry"
+    assert all(f["evidenceStatus"] in (FROZEN_STATUS, FROZEN2_STATUS, FROZEN3_STATUS, FROZEN4_STATUS, FROZEN5_STATUS, DEFERRED_STATUS) for f in F if f["permission"]["class"] in FROZEN_CLASSES), "unfrozen authorized entry"
+    r20 = next(f for f in F if f["id"] == "M1-REF-020")
+    assert r20["split"] == {"calibration": 2, "holdout": 20, "unit": "GUI scenarios"}, "REF-020 counts unchanged"
     d25 = next(f for f in F if f["id"] == "M1-DUR-025")
     for c in d25["cells"]:
         if "variantsFreeze3" in c:
@@ -504,16 +540,16 @@ def build():
     d6 = next(f for f in F if f["id"] == "M1-DUR-006")
     assert d6["split"]["holdout"] == 100 * sum(len(b["paths"]) for b in P), "DUR-006 cells"
     return {
-     "registryVersion": "m1-fixtures-v6-frozen4-deferral1",
+     "registryVersion": "m1-fixtures-v7-frozen5-ref020",
      "date": "2026-10-05",
      "generatedBy": "docs/m1/fixtures/generate-registry.py (do not hand-edit; regenerate)",
      "owner": "Lead (protocol); WW-003 informational owner Pipeline",
      "issue": "https://github.com/brandonmartinez/WaveWrangler/issues/5",
      "protocol": "docs/m1/ww-003-fixture-protocol.md",
-     "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and m1-freeze-4 FAILED 99/100, both retained; M1-DUR-025 deferred by user to #146, post-M4) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
+     "status": "FROZEN 2026-10-05 (m1-freeze-1, retroactive; M1-DUR-025: m1-freeze-2 FAILED 95/100 and m1-freeze-4 FAILED 99/100, both retained; M1-DUR-025 deferred by user to #146, post-M4; M1-REF-020: m1-freeze-1 holdout FAILED short 16/20, retained, re-frozen unchanged as m1-freeze-5 for one run with the fixed harness) / PRE-FREEZE RUNS DISCLOSED / POST-FREEZE HOLDOUT REPORTED IN docs/m1/evidence/",
      "freezeRule": "Each family is frozen (generator source hash, recipe, truth, counts, gate) in a dated freeze record before its first holdout case runs. Counts may increase before freeze; never decrease below a frozen gate minimum without explicit Lead/Brandon approval.",
      "freeze": FREEZE,
-     "freezeRevisions": [FREEZE2, FREEZE3, FREEZE4],
+     "freezeRevisions": [FREEZE2, FREEZE3, FREEZE4, FREEZE5],
      "userDeferrals": [USER_DEFERRAL],
      "seedDerivation": SEED,
      "claimedHost": "macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), 18-core Apple silicon, 128 GiB -- not the macOS 26/16 GB reference",
