@@ -360,6 +360,129 @@ struct ForbiddenAPITests {
         let mirror = HarnessIO.Op.allCases.map(\.rawValue)
         #expect(Set(mirror) == ["metadata", "list", "bookmarkCreate", "bookmarkResolve", "scopeStart", "scopeStop", "downloadRequest", "downloadFraction"])
     }
+
+    // MARK: - WWDecode: the read-only content gateway
+
+    static let packageRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+
+    /// The one file allowed to open source content, and only through these read-only APIs.
+    static let contentGatewayFile = "SystemSourceContentIO.swift"
+    static let contentGatewayAllowed: Set<String> = ["open(", "read(", "AudioFileOpen", "ExtAudioFile"]
+
+    /// Writing, creating, truncating, renaming or materialising APIs: forbidden in WWDecode with no exception.
+    static let decodeMutationTokens = [
+        "AudioFileCreate", "AudioFileInitialize", "AudioFileWrite", "AudioFileOptimize", "AudioFileSetUserData",
+        "AudioFileRemoveUserData", "AudioFileOpenURL", "ExtAudioFileCreate", "ExtAudioFileWrite", "ExtAudioFileOpenURL",
+        "forWriting", "forUpdating", "writePermission", "readWritePermission", "kAudioFileReadWrite",
+        "O_RDWR", "O_WRONLY", "O_CREAT", "O_TRUNC", "O_APPEND", "pwrite", "ftruncate", "openat(", "unlink(", "rename(",
+        "IOPOL_MATERIALIZE_DATALESS_FILES_ON",
+    ]
+
+    /// Decoding APIs: only WWDecode's gateway may use them; every other module and the app are scanned.
+    static let decodeTokens = ["AudioFileOpen", "ExtAudioFile", "AudioFileStream", "AudioConverter", "AVAudioFile", "AVAsset", "AVAudioConverter", "AudioQueue"]
+
+    static func code(_ source: String) -> String {
+        source.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+    }
+
+    static func matches(_ pattern: String, in text: String) -> [String] {
+        let regex = try! NSRegularExpression(pattern: pattern)
+        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { Range($0.range, in: text).map { String(text[$0]) } }
+    }
+
+    static func decodeViolations(in source: String, fileName: String) -> [String] {
+        let code = code(source)
+        let isGateway = fileName == contentGatewayFile
+        var found = (forbidden + decodeMutationTokens)
+            .filter { !(isGateway && contentGatewayAllowed.contains($0)) && code.contains($0) }
+        // ExtAudioFileSetProperty configures the reader; a raw AudioFileSetProperty could change the file.
+        if !matches("(?<!Ext)AudioFileSetProperty", in: code).isEmpty { found.append("AudioFileSetProperty") }
+        if isGateway {
+            let opens = matches(#"\bopen\([^)]*\)"#, in: code).filter { !$0.hasPrefix("open(_ url") && !$0.hasPrefix("open(url") }
+            for call in opens where !call.contains("O_RDONLY") { found.append("open without O_RDONLY: \(call)") }
+            if opens.isEmpty { found.append("no read-only open found") }
+            let audioOpens = matches(#"AudioFileOpen\w*\("#, in: code)
+            let callbackOpens = matches(#"AudioFileOpenWithCallbacks\(\s*[^,]+,\s*\w+\s*,\s*nil\s*,\s*\w+\s*,\s*nil\s*,"#, in: code)
+            if audioOpens.count != callbackOpens.count || audioOpens.isEmpty { found.append("AudioFileOpen without nil write and set-size callbacks") }
+            let wraps = matches(#"ExtAudioFileWrapAudioFileID\("#, in: code)
+            let readOnlyWraps = matches(#"ExtAudioFileWrapAudioFileID\(\s*\w+\s*,\s*false\s*,"#, in: code)
+            if wraps.count != readOnlyWraps.count { found.append("ExtAudioFileWrapAudioFileID for writing") }
+        }
+        return found.map { "\(fileName): \($0)" }
+    }
+
+    @Test func decodeScannerDetectsMutationsAndWritableOpens() {
+        let gateway = Self.contentGatewayFile
+        let readOnly = """
+            result = Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+            AudioFileOpenWithCallbacks(retained.toOpaque(), readCallback, nil, sizeCallback, nil, 0, &file)
+            ExtAudioFileWrapAudioFileID(audioFile, false, &wrapped)
+            ExtAudioFileSetProperty(ext, kExtAudioFileProperty_ClientDataFormat, size, &client)
+            """
+        #expect(Self.decodeViolations(in: readOnly, fileName: gateway).isEmpty)
+        #expect(Self.decodeViolations(in: readOnly, fileName: "SourceDecoder.swift").count == 3)
+        let mutations: [(String, String)] = [
+            ("result = Darwin.open(path, O_RDWR)", "O_RDWR"),
+            ("result = Darwin.open(path, O_CLOEXEC)", "open without O_RDONLY: open(path, O_CLOEXEC)"),
+            ("AudioFileOpenWithCallbacks(r.toOpaque(), readCallback, writeCallback, sizeCallback, nil, 0, &f)", "AudioFileOpen without nil write and set-size callbacks"),
+            ("AudioFileOpenWithCallbacks(r.toOpaque(), readCallback, nil, sizeCallback, setSizeCallback, 0, &f)", "AudioFileOpen without nil write and set-size callbacks"),
+            ("ExtAudioFileWrapAudioFileID(audioFile, true, &wrapped)", "ExtAudioFileWrapAudioFileID for writing"),
+            ("AudioFileSetProperty(file, kAudioFilePropertyChannelLayout, size, &layout)", "AudioFileSetProperty"),
+            ("ExtAudioFileWriteAsync(ext, frames, list)", "ExtAudioFileWrite"),
+            ("let file = try AVAudioFile(forWriting: url, settings: [:])", "AVAudioFile"),
+            ("pwrite(fd, buffer, count, 0)", "pwrite"),
+            ("setiopolicy_np(type, scope, IOPOL_MATERIALIZE_DATALESS_FILES_ON)", "IOPOL_MATERIALIZE_DATALESS_FILES_ON"),
+            ("try FileManager.default.removeItem(at: url)", "removeItem"),
+        ]
+        for (line, expected) in mutations {
+            let violations = Self.decodeViolations(in: readOnly + "\n" + line, fileName: gateway)
+            #expect(violations.contains("\(gateway): \(expected)"), "\(line) → \(violations)")
+        }
+        #expect(Self.decodeViolations(in: "/// AudioFileSetProperty in a doc comment", fileName: "SourceDecoder.swift").isEmpty)
+    }
+
+    @Test func wwDecodeOpensContentOnlyThroughTheReadOnlyGateway() throws {
+        let dir = Self.packageRoot.appendingPathComponent("Sources/WWDecode")
+        let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil).filter { $0.pathExtension == "swift" }
+        #expect(files.contains { $0.lastPathComponent == Self.contentGatewayFile })
+        #expect(files.count >= 6)
+        var violations: [String] = []
+        for file in files {
+            violations += Self.decodeViolations(in: try String(contentsOf: file, encoding: .utf8), fileName: file.lastPathComponent)
+        }
+        #expect(violations.isEmpty, "\(violations)")
+        // Only the gateway may even mention the content APIs it is excepted for.
+        for file in files where file.lastPathComponent != Self.contentGatewayFile {
+            let code = Self.code(try String(contentsOf: file, encoding: .utf8))
+            for token in Self.contentGatewayAllowed where code.contains(token) {
+                Issue.record("\(file.lastPathComponent) uses \(token) outside the content gateway")
+            }
+        }
+    }
+
+    @Test func noOtherModuleOrTheAppDecodes() throws {
+        let fileManager = FileManager.default
+        var roots = try fileManager.contentsOfDirectory(at: Self.packageRoot.appendingPathComponent("Sources"), includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent != "WWDecode" }
+        let app = Self.packageRoot.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("WaveWrangler")
+        if fileManager.fileExists(atPath: app.path) { roots.append(app) }
+        #expect(roots.count >= 6)
+        var scanned = 0
+        var violations: [String] = []
+        for root in roots {
+            let enumerator = try #require(fileManager.enumerator(at: root, includingPropertiesForKeys: nil))
+            for case let file as URL in enumerator where file.pathExtension == "swift" {
+                scanned += 1
+                let code = Self.code(try String(contentsOf: file, encoding: .utf8))
+                violations += Self.decodeTokens.filter { code.contains($0) }.map { "\(file.lastPathComponent): \($0)" }
+            }
+        }
+        #expect(scanned >= 30)
+        #expect(violations.isEmpty, "\(violations)")
+    }
 }
 
 @Suite("Duplicated shows keep separate device access")
