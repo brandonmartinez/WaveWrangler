@@ -112,6 +112,44 @@ Per-case records: [`holdout/results.jsonl`](dur025-freeze4/holdout/results.jsonl
 
 **Recovery:** 20/20 (bSaves ×7, bRelaunches ×7, aKilled P5 ×5, aKilled P4 ×1). In aKilled cases host B's checkpointed edit was still offered afterwards.
 
+## Provider propagation across all DUR-025 runs (observations, not attribution)
+
+Compiled from every freeze-2, freeze-3 and freeze-4 run record for Lead's remedy ruling. All times are in host A's clock, polled by the observer (so upper bounds), with nearest-rank percentiles.
+- **Settle:** trigger → settle point; for library, per Combine round.
+- **Setup:** A's setup publication → observed on host B, per fixture.
+
+**Load context:**
+- Freeze-2 runs (2026-10-05 18:04–19:53Z): the user-directed GUI pause was in effect, so no GUI lanes ran on either host. No load samples were recorded. The freeze-2 holdout's final clock sample had RTT 391 ms and offset 190 ms (53 ms / 24 ms at the start).
+- Freeze-3/4 runs (2026-10-06 00:12–02:53Z): GUI lanes ran on host B in parallel. The only load sample is host B's load average, 6.93 / 5.29 / 4.80 at 00:54:47Z; host A's load was not recorded. SSH refusals and retries: 0. Clock offset 19–23 ms, RTT 46–54 ms.
+
+| Run | Cell | Settle p50 / p95 / max | Over 300 s | Setup p50 / p95 / max |
+|---|---|---|---:|---|
+| freeze-4 holdout | show | 66.1 / 176.6 / 421.8 s | 1 | 45.7 / 101.9 / 151.6 s (case 16 excluded: about 456 s, see below) |
+| freeze-4 holdout | library | 53.0 / 109.3 / 175.1 s | 0 | 36.3 / 66.8 / 86.5 s |
+| freeze-4 holdout | recovery | 12.6 / 83.3 / 282.7 s | 0 | 71.5 / 126.5 / 270.9 s |
+| freeze-4 holdout | relink | – | – | 1.3 / 102.0 / 172.8 s |
+| calibration-f3 | show / library / recovery | max 148.4 / 88.1 / 12.7 s | 0 | max 135.0 s |
+| dev-f3 attempts 2–3, drill | all | max 93.5 s | 0 | max 105.4 s |
+| freeze-2 holdout | show | 86.1 / 97.5 / 98.5 s | 0 | 57.1 / 81.2 / 81.4 s |
+| freeze-2 holdout | library | 101.2 / 122.5 / 122.8 s | 0 | 43.6 / 75.7 / 76.2 s |
+| freeze-2 holdout | recovery | 14.8 / 56.5 / 57.0 s | 0 | – |
+| freeze-2 holdout | relink | – | – | not recorded per fixture: 15 passing cases took 40–133 s in total; 5 failed cases waited out 3 × 420 s on one source (939–1016 s) |
+| freeze-2 calibrations 1–3 and dev-calibration-1 | show / library / recovery | max 97.1 / 98.0 / 13.1 s | 0 | 35–81 s |
+
+**Shared window in the freeze-4 holdout:**
+- Show case 15's settle window (01:10:05Z to about 01:17:07Z; FAIL at the bound) and show case 16's setup stall (01:10:05–01:17:42Z; first wait expired at 424.6 s, fixture arrived 31.9 s into the download-request retry) cover the same ~7 minutes.
+- Show case 23 (settle 177 s, from 01:24:49Z) followed shortly after.
+- Outside that window, the freeze-4 show settle maximum is 119 s, and nothing exceeded 300 s in any other run.
+- The freeze-2 setup stall (relink cases 61–65) occurred with the GUI paused.
+
+These are observations only. Neither stall is attributed to a cause.
+
+**Lead ruling (2026-10-06):**
+- No freeze-5 and no further DUR-025 runs in M1, unless the user approves a changed bound.
+- An environment-only revision would not address an identified cause.
+- Raising the bound after seeing the failure needs the user's explicit approval.
+- The freeze-4 run (99/100, FAIL) stands as recorded here.
+
 ## Before the holdout: disclosed runs (none counted)
 
 | Run | Commit | Result | Notes |
