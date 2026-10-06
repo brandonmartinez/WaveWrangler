@@ -11,6 +11,12 @@ import Foundation
 /// - `-WWUITestOpenWithoutShowWindows <folder/name.wwshow>` (relative to the app's temporary directory) opens a
 ///   show the way state restoration does: read, window controllers made, window ordered front, and never
 ///   `showWindows()`. Used to test work that must run on every display path.
+/// - `-WWUITestOffline YES` (F-OFFLINE, T26–T28): every show publication fails at P1 (nothing is written) with the
+///   error a folder that can't be reached produces, until the distributed notification
+///   `com.brandonmartinez.wavewrangler.uitest.offline.off` "reconnects" (`.offline.on` disconnects again). Each
+///   publication attempt is counted; the count and the offline flag are written to the named pasteboard
+///   `com.brandonmartinez.wavewrangler.uitest` as JSON `{"publicationAttempts": n, "offline": bool}`.
+/// - `-WWUITestSaveRetryInterval <seconds>` shortens the automatic retry after a failed save (ST-11; 30 s).
 ///
 /// Debug builds only: in Release the whole type is compiled out, so `-WWUITestHooks YES` and the
 /// distributed notifications have no effect (`PersistenceEnvironment.isUITestRun` is always `false`).
@@ -54,6 +60,61 @@ enum UITestHooks {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { AutosavePolicyController.shared.isEnabled = enabled }
             })
+        }
+        if let interval = UserDefaults.standard.string(forKey: "WWUITestSaveRetryInterval").flatMap(Double.init), interval > 0 {
+            ShowDocument.saveRetryInterval = interval
+        }
+        if UserDefaults.standard.bool(forKey: "WWUITestOffline") {
+            ShowDocument.debugPublicationHooks = UITestOfflineHooks.shared
+            UITestOfflineHooks.shared.publish()
+            for (name, offline) in [(UITestOfflineHooks.onNotification, true), (UITestOfflineHooks.offNotification, false)] {
+                observers.append(center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                    UITestOfflineHooks.shared.setOffline(offline)
+                })
+            }
+        }
+    }
+}
+
+/// F-OFFLINE seam: simulates a show folder that can't be reached. Publication fails at P1, before anything is
+/// written, with the Cocoa error for a missing item (classified `.unavailable`, the same as a real unreachable
+/// folder). Counts every publication attempt, offline or not.
+final class UITestOfflineHooks: PublicationHooks, @unchecked Sendable {
+    static let shared = UITestOfflineHooks()
+    static let onNotification = Notification.Name("com.brandonmartinez.wavewrangler.uitest.offline.on")
+    static let offNotification = Notification.Name("com.brandonmartinez.wavewrangler.uitest.offline.off")
+    static let pasteboard = NSPasteboard.Name("com.brandonmartinez.wavewrangler.uitest")
+
+    private let lock = NSLock()
+    private var offline = true
+    private var attempts = 0
+
+    func reached(_ boundary: PublicationBoundary) throws {
+        guard boundary == .candidateValidated else { return }
+        let failing = lock.withLock {
+            attempts += 1
+            return offline
+        }
+        publish()
+        if failing {
+            throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedFailureReasonErrorKey: "The folder can't be reached (simulated)."])
+        }
+    }
+
+    func setOffline(_ value: Bool) {
+        lock.withLock { offline = value }
+        publish()
+    }
+
+    func publish() {
+        let (count, isOffline) = lock.withLock { (attempts, offline) }
+        let json = #"{"publicationAttempts": \#(count), "offline": \#(isOffline)}"#
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                let board = NSPasteboard(name: Self.pasteboard)
+                board.clearContents()
+                board.setString(json, forType: .string)
+            }
         }
     }
 }

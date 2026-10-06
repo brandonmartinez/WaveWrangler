@@ -51,6 +51,11 @@ final class ShowDocument: NSDocument {
     /// Debug-only replacement for the shared library acknowledgement (native holdout runner).
     static var debugLibraryAcknowledger: (@MainActor (ShowID, String, PublicationStamp) async -> Void)?
     #endif
+    /// ST-11: after a failed save with autosave ON, WaveWrangler retries automatically at most this often.
+    static var saveRetryInterval: TimeInterval = 30
+    /// The pending automatic retry after a failed save (ST-11). While it's pending, the failure state stays visible
+    /// (edits and edit checkpoints don't flip it back to "Edited") and no other automatic attempt is made.
+    private var saveRetry: DispatchWorkItem?
     var documentKey: DocumentKey { .show(store.model.show.id) }
     private var gate: AutosaveGate { PersistenceEnvironment.autosaveGate }
     private var recovery: RecoveryStore { PersistenceEnvironment.recovery }
@@ -198,6 +203,7 @@ final class ShowDocument: NSDocument {
         lastReceipt = nil
         pendingCandidate = nil
         if error == nil, adopts, let receipt {
+            cancelSaveRetry()
             publication = receipt.publication
             onDiskBase = receipt.fingerprint
             // #87: AppKit only marks an autosave in place as "autosaved"; clear "— Edited" exactly when the verified
@@ -240,7 +246,38 @@ final class ShowDocument: NSDocument {
             }
             // C2b: a failed or uncertain automatic publication still leaves an edit checkpoint (ON only).
             if saveOperation == .autosaveInPlaceOperation || saveOperation == .autosaveElsewhereOperation { writeEditCheckpoint() }
+            // ST-11: with autosave ON, a failed save is retried automatically (at most every `saveRetryInterval`).
+            if gate.isEnabled, isDocumentEdited, Self.isRetryableFailure(status.saveStatus.state) { scheduleSaveRetry() }
         }
+    }
+
+    // MARK: - Automatic retry after a failed save (ST-11)
+
+    static func isRetryableFailure(_ state: DocumentSaveState) -> Bool {
+        switch state {
+        case .saveFailed, .acknowledgementUncertain: true
+        default: false
+        }
+    }
+
+    private func scheduleSaveRetry() {
+        guard saveRetry == nil else { return }
+        let retry = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.performSaveRetry() }
+        }
+        saveRetry = retry
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.saveRetryInterval, execute: retry)
+    }
+
+    private func cancelSaveRetry() {
+        saveRetry?.cancel()
+        saveRetry = nil
+    }
+
+    private func performSaveRetry() {
+        saveRetry = nil
+        guard gate.isEnabled, isDocumentEdited, fileURL != nil else { return }
+        autosave(withImplicitCancellability: false) { _ in }
     }
 
     override func writeSafely(to url: URL, ofType typeName: String, for saveOperation: NSDocument.SaveOperationType) throws {
@@ -290,16 +327,24 @@ final class ShowDocument: NSDocument {
             completionHandler(CocoaError(.userCancelled))
             return
         }
+        // ST-11: while a retry after a failed save is pending, other automatic attempts wait for it (it saves the
+        // latest edits). Close/Quit autosaves (not implicitly cancellable) still go ahead.
+        if saveRetry != nil, autosavingIsImplicitlyCancellable {
+            completionHandler(CocoaError(.userCancelled))
+            return
+        }
         super.autosave(withImplicitCancellability: autosavingIsImplicitlyCancellable, completionHandler: completionHandler)
     }
 
     override func updateChangeCount(_ change: NSDocument.ChangeType) {
         super.updateChangeCount(change)
-        if isDocumentEdited { status.set(.edited(autosaveEnabled: gate.isEnabled)) }
+        // ST-11: a visible save failure stays until the next attempt resolves it (no flicker back to "Edited").
+        if isDocumentEdited, saveRetry == nil { status.set(.edited(autosaveEnabled: gate.isEnabled)) }
     }
 
     func autosavePolicyDidChange(wasEnabled: Bool) {
         if !gate.isEnabled {
+            cancelSaveRetry()
             scheduler?.cancelPending()
             if isDocumentEdited { status.set(.edited(autosaveEnabled: false)) }
         } else if !wasEnabled, isDocumentEdited {
@@ -339,6 +384,8 @@ final class ShowDocument: NSDocument {
                   snapshot: snapshot, base: onDiskBase, schemaVersion: coder.format.currentSchemaVersion, for: documentKey
               )
         else { return }
+        // ST-11: a visible save failure isn't replaced by the checkpoint state (which reads as "Edited").
+        guard !Self.isRetryableFailure(status.saveStatus.state) else { return }
         status.set(.recoveryCheckpoint(at: record.createdAt))
     }
 
@@ -467,6 +514,7 @@ final class ShowDocument: NSDocument {
             resolution.source?.offerCopyClosedUnsaved(Set(resolution.urls))
         }
         scheduler?.cancelPending()
+        cancelSaveRetry()
         super.close()
     }
 
