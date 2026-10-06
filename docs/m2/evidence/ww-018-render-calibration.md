@@ -96,12 +96,15 @@ renders 6 channels for 60 s at 48 kHz with a = 1.0001, through a discarding sink
 
 Debug throughput only; no Release benchmark is claimed.
 
-**Freeze record.** [`ww-018/m2-freeze-render.json`](ww-018/m2-freeze-render.json) is dated 2026-10-06. It holds
-the fixture, recipe, truth, measurement, gates, split counts, calibration summary and host:
+**Freeze record.** [`m2-freeze-render.json`](../fixtures/m2-freeze-render.json) is dated 2026-10-06 and listed in
+the [M2 fixture registry](../fixtures/m2-fixture-registry.json). It holds the fixture, recipe, truth,
+measurement, gates, split counts, calibration summary and host:
 - splits: 16 calibration and 48 holdout cases, each plus the multi-span case;
 - host: macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, M5 Max with 18 cores, 128 GiB.
 
-It also holds the generator and renderer git tree IDs: `WWRenderTests` `f0840cd7…` and `WWRender` `94604633…`.
+It also pins the generator and renderer git tree IDs: `WWRenderTests` `b5c993c8…` and `WWRender` `94604633…`.
+`RenderFreezeTests` (always on) fails if the gates, recipe, versions, split counts, registry entry or either
+pinned tree drift from the record.
 It takes effect at this PR's merge commit. Disclosed: the multi-span case is fixed, so it is the same in both
 splits and is not held out.
 
@@ -136,7 +139,9 @@ swift test --filter WWRenderTests`, and the same with `WW_RENDER_CALIBRATION=1` 
   stay killed.
 - **Manual checks:** never dropping consumed window frames fails `workingSetIsBounded`, which now renders 36,000
   frames rather than 190,000. Removing `WW_RENDER_CALIBRATION=1` from the calibration pass makes `scripts/test.sh`
-  fail rather than skip silently.
+  fail rather than skip silently. Freeze guards: changing a `RenderGates` value, the recipe's Kaiser beta, or the
+  registry's `m2-freeze-render` entry each fails `RenderFreezeTests` (and any source or test edit fails the
+  pinned-tree check).
 - **Equivalent survivors:**
   - G09/G10 (tap clamp to span end/start): needs are clipped to the span, so the window never extends past it;
     defence in depth.

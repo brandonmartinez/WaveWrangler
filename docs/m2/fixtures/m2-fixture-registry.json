@@ -1,13 +1,15 @@
 {
- "registryVersion": "m2-fixtures-v1-estimator-frozen",
+ "registryVersion": "m2-fixtures-v2-estimator-render-frozen",
  "date": "2026-10-06",
- "owner": "Alignment (WW-016/WW-021); protocol pattern from docs/m1/ww-003-fixture-protocol.md",
+ "owner": "Alignment (WW-016/WW-021, WW-018/WW-023); protocol pattern from docs/m1/ww-003-fixture-protocol.md",
  "issues": [
   "https://github.com/brandonmartinez/WaveWrangler/issues/15",
-  "https://github.com/brandonmartinez/WaveWrangler/issues/24"
+  "https://github.com/brandonmartinez/WaveWrangler/issues/24",
+  "https://github.com/brandonmartinez/WaveWrangler/issues/13",
+  "https://github.com/brandonmartinez/WaveWrangler/issues/18"
  ],
  "protocol": "docs/m2/ww-019-m2-contracts.md §4 (freeze plan) and §5 (gates)",
- "status": "m2-freeze-estimator FROZEN 2026-10-06 (effective at the merge commit of the PR adding it) / CALIBRATION REPORTED / HOLDOUT NOT RUN. Other planned M2 freezes (decode, time map, discontinuity, render) add their own entries and records.",
+ "status": "m2-freeze-estimator and m2-freeze-render FROZEN 2026-10-06 (each effective at the merge commit of the PR adding it) / CALIBRATION REPORTED / HOLDOUTS NOT RUN. Other planned M2 freezes (decode, time map, discontinuity) add their own entries and records.",
  "freezeRule": "Each family is frozen (recipe, truth, split and counts, gate, generator tree IDs) in a dated freeze record under docs/m2/fixtures/ before its first holdout case runs. Counts may increase before a freeze and never decrease after one without an explicit, dated user decision.",
  "freezes": [
   {
@@ -27,6 +29,55 @@
     "M2-EST-MECH-CYCLE-001"
    ],
    "status": "frozen; holdout not run"
+  },
+  {
+   "freezeID": "m2-freeze-render",
+   "record": "docs/m2/fixtures/m2-freeze-render.json",
+   "fixtures": [
+    "M2-RENDER-001"
+   ],
+   "status": "frozen; holdout not run; renderer a calibrated candidate, not qualified; listening BLOCKED",
+   "counts": {
+    "fixtures": 1,
+    "calibrationCases": 16,
+    "calibrationMultiSpanCases": 1,
+    "holdoutCases": 48,
+    "holdoutMultiSpanCases": 1
+   },
+   "fixtureEntries": [
+    {
+     "id": "M2-RENDER-001",
+     "title": "Group sample-rate correction: six-channel synthetic tones, landmarks and an isolated inactive channel",
+     "family": "render",
+     "role": "objective-gates",
+     "issues": [
+      "WW-018",
+      "WW-023"
+     ],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-render.recipe.seed",
+      "recipe": "m2-freeze-render.recipe (8 rate/clock strata, stratum = index mod 8, plus one fixed multi-span MixedGroup case)"
+     },
+     "expectedTruth": "WWTimeMap forward/inverse of the case GroupTimeMap (never the render plan); every objective gate in m2-freeze-render.gateValues met.",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by test code (WWRenderTests); the M2 kickoff authorizes synthetic builds and tests. No recordings, user files, network or models."
+     },
+     "provenance": "Authored by Alignment 2026-10-06 (m2-freeze-render, PR #181).",
+     "split": {
+      "calibration": 16,
+      "holdout": 48,
+      "unit": "cases",
+      "multiSpanCasePerSplit": 1,
+      "multiSpanNote": "fixed, identical in both splits; a regression case, not held out"
+     },
+     "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). Float32 linear PCM buffers at 12/16/44.1/48/96 kHz only; no compressed-codec, BWF or real-recording claim; no listening claim (BLOCKED).",
+     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-render (2026-10-06); holdout NOT RUN"
+    }
+   ]
   }
  ],
  "seedDerivation": "SplitMix64. caseSeed(master, stratum, index) = first output of SplitMix64(seed: master XOR fnv1a64(UTF-8 stratum.rawValue) XOR (index &* 0x9E3779B97F4A7C15)) (SyntheticGenerator.swift). Every draw for a case comes from a SplitMix64 stream seeded with caseSeed, in the order written in CalibrationPlan.make.",
@@ -390,5 +441,6 @@
    "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). No claim about real rooms, real recorders, compressed codecs, reverberant or moving sources, or polarity-inverted microphones (the estimator requires positive-peak polarity, so an inverted mic abstains). Mechanism check only: it shows that inconsistent pairwise solutions are caught; it cannot detect a delay common to every path.",
    "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-estimator (2026-10-06); holdout NOT RUN"
   }
- ]
+ ],
+ "countsScope": "Top-level counts cover m2-freeze-estimator only; other freezes carry their own counts in their freezes[] entry. fixtures[] lists estimator strata only (WWAlignEstimateTests pins that shape); other families list theirs in freezes[].fixtureEntries."
 }
