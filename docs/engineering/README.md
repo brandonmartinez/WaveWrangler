@@ -36,6 +36,10 @@ scripts/demo/                     Manual demonstration helpers: synthetic fixtur
 .github/workflows/ci.yml          Ordinary build/test CI
 ```
 
+**Planned (M2):** `WWDecode` (WW-050) and `WWTimeMap` (WW-015) are in progress in open lanes; a WW-020
+module (name TBD, derived-asset/job infrastructure, versioned map persistence, C5 migration) is planned.
+Each lane adds its own `Sources/<Module>/` row here when its module merges.
+
 Because app folders are `PBXFileSystemSynchronizedRootGroup`s, adding/removing files under
 `WaveWrangler/`, `WaveWranglerTests/` or `WaveWranglerUITests/` does **not** edit `project.pbxproj`.
 Only touch the project file for genuine target/build-setting changes, and coordinate those through the
@@ -52,6 +56,7 @@ Parallel sessions work on disjoint folders. Cross-folder changes go through the 
 | `Document/`, `WWPersistence` | Persistence owner | Publication, prior checkpoint, recovery, migration, autosave policy, newer-format refusal. |
 | `Library/`, `Workspace/`, `Commands/`, `Settings/` | Library UI owner | Keyboard/VoiceOver/visible focus are part of done, not polish. |
 | `Sources/`, `WWSources` | Sources owner | Access records, bookmarks, availability/download states, relink. |
+| Planned (M2) | — | `WWDecode` (WW-050) and `WWTimeMap` (WW-015) are in progress in open lanes; a WW-020 module (name TBD) is planned. See [`docs/m2/ww-019-m2-contracts.md`](../m2/ww-019-m2-contracts.md). Each lane adds its own row here when its module merges. |
 | `.github/workflows/ci.yml`, `scripts/` | Mac (app foundation) | Keep scripts working for every lane. |
 
 Pure domain logic belongs in the package (testable without the app); the app target holds AppKit/SwiftUI
