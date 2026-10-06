@@ -39,10 +39,12 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
    cd $RUN && xcodebuild test-without-building -xctestrun Products/WaveWranglerUITests_*.xctestrun \
      -destination 'platform=macOS,arch=arm64' -parallel-testing-enabled NO \
      -only-testing:WaveWranglerUITests/<Class> -resultBundlePath $RUN/result.xcresult
-   pgrep -fl 'WaveWrangler.app|xctest|WaveWranglerUITests-Runner'   # kill only PIDs from $RUN
+   # Orphan cleanup: kill only processes whose executable lives under this run's Products directory
+   for pid in $(pgrep -f "$RUN/Products/"); do kill "$pid"; done
+   pgrep -fl 'WaveWrangler|xctest' || true   # anything left that isn't ours: report it, don't kill it
    ~/ww-uitest-runs/gui-lock release --lane <lane>
    ```
-   Release even when the run fails (use a `trap`). Kill orphans by PID, never by name.
+   Release even when the run fails (use a `trap`). Kill orphans by PID, and only those launched from `$RUN`; never kill another lane's processes or kill by name. Foreign processes go in the PR's run notes (#149).
 4. **Copy the xcresult back** and analyse it here (`xcrun xcresulttool`).
 5. **Post on the PR:** SHA, host, classes, pass/fail/skip counts, xcresult location, and any new audit finding versus the pinned waiver baseline.
 
