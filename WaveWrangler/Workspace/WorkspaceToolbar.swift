@@ -122,6 +122,38 @@ private struct SaveStatusPopover: View {
         }
         .padding(14)
         .accessibilityIdentifier("ww.show.saveStatus.popover")
+        // The popover itself (AppKit's frame around this content) needs a description too (A11Y audit, #157).
+        .background(PopoverAccessibilityLabel(label: "Save status details"))
         .onAppear { focusedAction = presentation.actions.isEmpty ? nil : 0 }
+    }
+}
+
+/// Gives the AppKit popover hosting this SwiftUI content an accessibility description: SwiftUI's `.popover` has no
+/// API for it, and VoiceOver and the accessibility audit otherwise see an undescribed popover.
+private struct PopoverAccessibilityLabel: NSViewRepresentable {
+    let label: String
+
+    func makeNSView(context: Context) -> NSView { LabelView(label: label) }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class LabelView: NSView {
+        let label: String
+
+        init(label: String) {
+            self.label = label
+            super.init(frame: .zero)
+            setAccessibilityElement(false)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            window.setAccessibilityLabel(label)
+            // The popover element VoiceOver reports is the window's frame view.
+            window.contentView?.superview?.setAccessibilityLabel(label)
+        }
     }
 }

@@ -16,6 +16,8 @@ final class DocumentStatusModel {
     private(set) var editCheckpointOffer: EditCheckpointOffer<ShowDocumentModel>?
     /// Non-nil when the document is read-only (e.g. recovered copy); edits and saves are refused.
     private(set) var readOnlyReason: String?
+    /// ST-11: an automatic retry of a failed save is pending (the popover then says it will try again).
+    private(set) var retryingAutomatically = false
 
     var accessibilityDescription: String { saveStatus.accessibilityDescription }
 
@@ -29,6 +31,10 @@ final class DocumentStatusModel {
 
     func setEditCheckpointOffer(_ value: EditCheckpointOffer<ShowDocumentModel>?) {
         editCheckpointOffer = value
+    }
+
+    func setRetryingAutomatically(_ value: Bool) {
+        if retryingAutomatically != value { retryingAutomatically = value }
     }
 
     func setReadOnly(_ reason: String?) {
