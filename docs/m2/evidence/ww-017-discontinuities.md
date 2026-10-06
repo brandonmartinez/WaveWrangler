@@ -233,3 +233,35 @@ The full verbatim run log (including every case and UTC start/end lines) is
 ([`holdout.jsonl.sha256`](ww-017/holdout.jsonl.sha256)); the raw-log SHA-256 is
 `ae8dbd818d6deec418deada812e6426c9c9a050bb2f8fd9cc81b8addcaf3d812`. This failed holdout does not authorize
 `clockApproved`; mapped regions remain acoustic proposals.
+
+## Freeze revision 2 (2026-10-06): calibration PASS; HOLDOUT NOT RUN
+
+**Diagnosis.** The unchanged rev-1 holdout records above show `transient#6` produced an `unresolved` detection
+whose slope-intersection bracket expanded to the entire 58.65 s span (zero mapped regions). `transient#13` and
+`silenceGap#4` each produced one boundary near the file end, at 61.58 s of 65.58 s and 51.63 s of 53.63 s
+respectively. The records expose no individual window offsets, so the suspected mechanism is short-lived
+misleading fits after target-only activity or loss of shared sound, not a proven reconstruction of those windows.
+None of these detections alone establishes a persistent change of clock. The failed cases were diagnosed from
+the committed records only; their seeds were not rendered, replayed or used for calibration.
+
+**Revision.** `ww-align-segment/2` requires each fitted run to cover at least 4 s between its first and last
+eligible window centre before it can establish a boundary. Short coherent runs stay unresolved, not mapped as
+another clock. The existing half-window margins, conservative brackets, per-candidate estimator agreement and
+image-overlap demotion remain. The unchanged gates and the new, disjoint case seeds/counts are frozen in
+[`m2-freeze-discontinuity-2`](../fixtures/m2-freeze-discontinuity-2.json), which supersedes rev 1 without
+altering its FAIL evidence.
+
+**Rev-2 calibration** (70 fresh cases; serialized `--no-parallel`, four cases maximum in flight): 38/38 planted
+discontinuities flagged with expected kind, 0 bridged plants/regions, 0 silent bridges, 0/36 false splits (clean
+0/6; target-only transients 0/15; silence gaps 0/15), 0 positive/monotonic, inverse or retention failures;
+supported worst nearest-rank p95/max 1.045/1.052 ms versus the unchanged 5/10 ms WW-016 residual gate.
+The six edge-silence regressions flagged 6/6, bridged 0, worst max 0.744 ms. The reported-only 30-case floor
+sweep bridged 11 sub-class-threshold steps/rate changes (max residual 0.985 ms); it does not replace the planted
+class gate. Raw canonical per-case records and SHA-256 values are
+[`calibration-2.jsonl`](ww-017/calibration-2.jsonl) (`ddf9a3232d1bac9b567321e726fc89cffbcc5ff28d5114dd1bf5eb56b2051ecc`),
+[`floor-2.jsonl`](ww-017/floor-2.jsonl) (`2d85df8701fef50a1af03fbec692ad62146024433e486cd5ffe20e541dca2bc4`)
+and [`edge-silence-2.jsonl`](ww-017/edge-silence-2.jsonl)
+(`28cc677d486824d289ea524c82f4075064b6879afc1b74e23f5a63e4b5aa73ca`).
+
+**Rev-2 holdout NOT RUN.** Its fresh 165-case/130-plant split remains untouched until one post-merge run on
+the frozen trees in a separate PR. Calibration does not qualify real recordings, and no map is `clockApproved`.

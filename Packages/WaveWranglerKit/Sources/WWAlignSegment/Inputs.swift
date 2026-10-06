@@ -67,8 +67,8 @@ public struct SegmentationRequest: Sendable {
     }
 }
 
-/// Segmenter parameters. The defaults are the values frozen by `m2-freeze-discontinuity`
-/// (docs/m2/fixtures/m2-freeze-discontinuity.json); a change is a new segmenter version and needs a new
+/// Segmenter parameters. The defaults are the values frozen by `m2-freeze-discontinuity-2`
+/// (docs/m2/fixtures/m2-freeze-discontinuity-2.json); a change is a new segmenter version and needs a new
 /// freeze. Setters are internal, so public callers can only run the frozen defaults; in-module (test)
 /// variants are stamped `DiscontinuitySegmenter.customIdentifier`, never the frozen identifier.
 public struct SegmenterParameters: Sendable, Equatable {
