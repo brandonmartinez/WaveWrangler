@@ -111,7 +111,7 @@
   Record the SHA, host, pass/fail counts and xcresult location.
 - **Failures:** any failure is a regression. Triage it immediately, deduplicate and file it with severity and a P0/follow-up classification, and freeze merges in the same area until it's understood.
 - **Scheduling:** the full run pre-empts targeted PR runs only when a batch has landed since the last full run. One GUI run at a time.
-- **Milestone exit gate:** the final main SHA passes the full UI suite on the Mac mini, plus the system-visual leg (testSystemVisualSettings with WW_EXPECT_SYSTEM_VISUAL=on, run on the Mac mini in a grant-D-style slot with system settings snapshotted and restored; without that variable the test skips, so a system Increase Contrast or Reduce Motion regression would otherwise pass silently) (added by the coordinator at M1 closeout), plus the full scripts/test.sh, with zero unexplained failures, cited in the exit record. Flaky failures are fixed or tracked with an issue, never silently re-run.
+- **Milestone exit gate:** the final main SHA passes the full UI suite on the Mac mini, plus the system-visual leg (testSystemVisualSettings with WW_EXPECT_SYSTEM_VISUAL=on, run on the Mac mini in a grant-D-style slot with system settings snapshotted and restored; without that variable the test skips, so a system Increase Contrast or Reduce Motion regression would otherwise pass silently) (added by the coordinator at M1 closeout), plus the full scripts/test.sh, with zero unexplained failures, cited in the exit record. Flaky failures are fixed or tracked with an issue, never silently re-run. *Superseded by 01:20 (below): the system-visual leg is removed from milestone exit gates (M5 scope), and the exit checkpoint (in-app 200% text plus light/dark) replaces it.*
 - **Rationale:** hosted CI is macOS 26 with no XCUITests; the claimed hosts are macOS 27.
 - *Superseded for M2 and later by the user's 23:30 decision below. M1's own record keeps this policy as it ran.*
 
@@ -122,7 +122,7 @@
    - **Per-PR runs** cover only the affected UI test classes.
    - **PRs that change no app UI or test code** skip GUI runs: CI plus scripts/test.sh only.
    - **Failure triage, the merge freeze and the no-silent-re-run rule are unchanged.**
-3. **Hard exit gates with a baseline:** WW-007-style performance gates and the XCUITest contrast/accessibility audits are HARD gates at milestone exit, against a pinned waiver baseline. Per-PR runs fail only on NEW findings relative to that baseline. Safety invariants stay hard everywhere.
+3. **Hard exit gates with a baseline:** WW-007-style performance gates and the XCUITest contrast/accessibility audits are HARD gates at milestone exit, against a pinned waiver baseline. Per-PR runs fail only on NEW findings relative to that baseline. Safety invariants stay hard everywhere. *Narrowed by 01:20 (below): the hard audit gate covers the essential audit types; broad contrast moves to M5.*
 4. **Away windows:** the user states their away windows at kickoff. During an agreed window the user keeps 1Password unlocked and Focus/DND on, on the GUI hosts. Before each window, the coordinator collects every pending user-only action into a single message.
 
 **M1 closure scope (user decision, 2026-10-05 23:58, relayed by the coordinator):**
@@ -146,7 +146,7 @@
 
 **Text-size testing (user-directed, 2026-10-06 01:10, relayed verbatim):** "text size testing ... is killing cycles and could be handled at exits or broader checkpoints."
 - Text-size variants (in-app 200% text, larger/smaller text passes, render checks at scaled text) are removed from per-PR and batch UI runs and gated behind an opt-in; they're not deleted.
-- For M1, they run only at the exit gate on the final SHA, as one pass, recorded as they come out.
+- For M1, they run only at the exit gate on the final SHA, as one pass, recorded as they come out. *Superseded where it differs by the 01:20 accessibility decision (below): no opt-in PR; the exit checkpoint is the in-app 200% and light/dark tests inside the final suite.*
 - A new text-size failure that isn't a core-workflow blocker gets a tracked follow-up. One that makes a core task impossible (content unreachable or controls unusable) still blocks.
 - For M2 onward: text-size and visual-scaling checks run at milestone exits or broader checkpoints, not per PR, until the pending accessibility-testing decision (a separate accessibility retrospective is under way).
 
@@ -159,7 +159,7 @@
 - Also:
   - a single kickoff preflight with consolidated user asks, and consolidated asks before each away window;
   - an evidence budget: one short section per gate, no screenshots or crops unless a finding cites them;
-  - a UI smoke pass (200% text, Increase Contrast, Reduce Motion, zoom, keyboard-only) as each new window lands;
+  - a UI smoke pass (200% text, Increase Contrast, Reduce Motion, zoom, keyboard-only) as each new window lands; *narrowed by 01:20 (below) to the essential accessibility checks plus zoom: 200% text moves to the exit checkpoint, and Increase Contrast and Reduce Motion move to M5*;
   - provider and network latency as measurements only;
   - the self-serve per-host GUI lock.
 - **The M2 coordinator's first reviewed PR must:**
@@ -167,5 +167,32 @@
   - (b) persist these rules in .squad/routing.md, ceremonies.md, decisions.md, the relevant .squad/agents/ charters and project .squad/skills.
   - Charter owners: Lead for GUI-timebox escalations and issue-closure proof; Design for the UI smoke pass and contrast baseline; Mac/Pipeline for the evidence budget; Scribe for the exit-record template.
   - No casting/catalog regeneration, plugins, auto-dispatch labels or global config; safety invariants unchanged.
+
+**M1 exit on automated evidence (user, 2026-10-06 01:19, relayed; the user is away until morning):**
+- M1 exit = the remaining (a) and (b) items, the essential accessibility checks, the exit checkpoint (in-app 200% plus light/dark, at most 30 minutes), and the final full UI suite plus scripts/test.sh on the final SHA.
+- User-manual items stay tracked in #147 (now M5 / WW-053 #167). They're listed in the exit record as user-manual and not waited on.
+- Prioritize the handoff. Non-required work becomes tracked follow-ups, and unattended blockers are recorded in the handoff.
+- **Recorded blocker:** since about 01:27, the 1Password SSH agent on the main Mac has been unavailable, so no agent can reach the Mac mini. This blocks the REF-020 holdout (#151), the final full UI suite and the exit checkpoint until the user is back. The M1 exit record reads "M1 exit: automated GUI gate PENDING — blocked by host SSH agent (user-controlled)". It may merge in that state, with the results going into a follow-up PR. #160, #161, #162 and #166 merged on review plus CI without per-PR Mac mini runs; this is disclosed in the exit record's §12.
+
+**Accessibility decisions (user, 2026-10-06 01:20, relayed); these supersede the 23:30 item 3 and the 01:06 and 01:10 wording where they differ:**
+1. **M5 — Accessible MVP qualification** (milestone 7, after M4, before Release), with WW-053 = #167.
+   - Broad portions transfer there: from WW-007 (#8), C03–C07, the C02 VoiceOver listen and Full Keyboard Access; from WW-029 (#26), contrast, Reduce Motion and 200% text.
+   - WW-007 and WW-029 keep their essential clauses and responsiveness.
+   - WW-052 (#49) depends on WW-053.
+   - The backlog, runbook and accessibility-acceptance §6.4 edits go in a separate docs PR.
+2. **Essential accessibility is an invariant in every milestone.** Each UI PR checks its changed surfaces only:
+   - a keyboard-only path with visible focus and Return/Esc;
+   - AX role/label/value, using the audit types elementDetection, sufficientElementDescription, hitRegion and action, with `.contrast` only on blocked/recovery surfaces;
+   - every blocked/error/recovery state reachable, labelled and legible;
+   - no colour-only state and no drag-only interaction.
+3. **Exit checkpoint at every milestone exit, M1 included:** one slot of at most 30 minutes, covering in-app 200% text plus light/dark on the milestone's windows. System Increase Contrast is not part of it (it moves to M5). Only a finding that makes a core task impossible blocks; the rest become WW-053 follow-ups.
+4. **M1 specifics:**
+   - The (b) keyboard tasks still block.
+   - There is no system Increase Contrast / system-visual leg at the M1 exit; it's removed from the exit gate.
+   - The text-size opt-in PR is dropped. The exit checkpoint is satisfied by the in-app 200% and light/dark tests inside the final full-suite run, reported on their own line.
+5. **The M2 coordinator's first Squad-config PR** also updates:
+   - the Design charter: essential before broad; the evidence budget; VoiceOver, Full Keyboard Access and Reduce Motion as user-manual items;
+   - the Mac charter: UI PRs include essential accessibility checks for their changed surfaces; design-for rules (semantic fonts and colours, reflowable containers, constant column ideal widths).
+6. **Correction:** #154 was retracted as not a defect, and isn't counted as an accessibility-found P0.
 
 **Process deviations disclosed:** M1 briefly ran 5–6 writer sessions during short review-fix rounds (budget 4) and had windows with two concurrent read-only reviewer agents (budget 1); `gh pr create` was used as a fallback for several PRs (including #145 and #148) because `create_pull_request` was bound to another PR; one batched keystroke briefly listed the consented episode folder's parent's metadata in-app (nothing read, imported or committed). The M2 kickoff restates the budgets and rules.
