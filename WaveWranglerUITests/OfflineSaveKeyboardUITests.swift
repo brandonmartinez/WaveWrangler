@@ -9,11 +9,24 @@ import XCTest
 ///
 /// Menu commands without a shortcut (View › Show Save Status) use XCUITest's menu API, as in
 /// `CoreTasksKeyboardUITests`; everything else is key events. Each task records Pass/Fail with its findings.
+///
+/// Keyboard only (C01), with one limit (as `LibraryLocationUITests`, #169): Tab reaches popover buttons, and buttons
+/// take keyboard focus, only with the system Full Keyboard Access ("Keyboard navigation") setting on. AppKit reads it
+/// only from the system (`-AppleKeyboardUIMode` has no effect), and tests never change system settings.
+/// - **On** (the user's C01 run): Tab/Space reach and activate the popover buttons, and focus checks are asserted.
+/// - **Off** (agent runs): only those steps use XCUITest element actions, and each is recorded as **Not run (needs
+///   Full Keyboard Access)** in `offline-keyboard-navigation` evidence, so the task is reported partial. Every outcome
+///   check (status, attempts, disk, window, message bar) stays a hard check either way.
 @MainActor
 final class OfflineSaveKeyboardUITests: XCTestCase {
     private var app: XCUIApplication!
     private var workDirectory: URL!
     private var findings: [String] = []
+    /// Steps not run as key events because the system keyboard navigation setting is off.
+    private var needsKeyboardNavigation: [String] = []
+
+    /// The system Full Keyboard Access / "Keyboard navigation" setting (`AppleKeyboardUIMode` bit 2, global domain).
+    private static let keyboardNavigation = UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0
 
     private static let autosaveOff = Notification.Name("com.brandonmartinez.wavewrangler.uitest.autosave.off")
     private static let autosaveOn = Notification.Name("com.brandonmartinez.wavewrangler.uitest.autosave.on")
@@ -32,6 +45,13 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        if app != nil {
+            let run = testRun
+            let outcome = run?.hasBeenSkipped == true ? "skipped" : run?.hasSucceeded == true ? "passed" : "failed"
+            Acceptance.writeEvidence("offline-keyboard-navigation-\(name.replacingOccurrences(of: " ", with: "_"))",
+                                     ["outcome": outcome, "keyboardNavigation": Self.keyboardNavigation,
+                                      "notRunNeedsFullKeyboardAccess": Array(Set(needsKeyboardNavigation)).sorted()], test: self)
+        }
         if let app, app.state != .notRunning { app.terminate() }
         if let workDirectory { try? FileManager.default.removeItem(at: workDirectory) }
     }
@@ -59,7 +79,11 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             check(texts(in: popover).contains { $0.contains("Choose Try Again when the folder is available.") }, "popover text: \(texts(in: popover))")
             check(popover.buttons["Try Again"].exists && popover.buttons["Save a Copy Elsewhere…"].exists,
                   "popover buttons: \(popover.buttons.allElementsBoundByIndex.map(\.title))")
-            check(isFocused(popover.buttons["Try Again"]), "keyboard focus starts on Try Again")
+            if Self.keyboardNavigation {
+                check(isFocused(popover.buttons["Try Again"]), "keyboard focus starts on Try Again")
+            } else {
+                needsKeyboardNavigation.append("T27: keyboard focus starts on Try Again")
+            }
             try audit("T27 popover")
             app.typeKey(.escape, modifierFlags: [])
             recordDirtyIndicators(window, "T27 while unreachable")
@@ -68,11 +92,11 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             check(seam()?.attempts == afterSave, "no automatic save attempt with Autosave Off: \(String(describing: seam()?.attempts)) after \(afterSave)")
             check(value(status).hasPrefix(Self.cantReach), "still Can't reach: \(value(status))")
             check(try Data(contentsOf: document) == original, "the last saved version is byte-unchanged while unreachable")
-            // Reconnect, then Try Again by keyboard (focused first in the popover; Space activates).
+            // Reconnect, then Try Again (focused first in the popover; Space activates it with keyboard navigation).
             post(Self.reconnect)
             try openSaveStatus()
             check(app.popovers.firstMatch.waitForExistence(timeout: 5), "popover reopened")
-            app.typeKey(" ", modifierFlags: [])
+            activatePopoverButton("Try Again", tabs: 0, task: "T27")
             check(Acceptance.waitFor(timeout: 10) { self.value(status).hasPrefix("Saved") }, "Try Again after reconnect → Saved: \(value(status))")
             check(diskEpisodeCount(document) == 1, "the edit is on disk after Try Again: \(String(describing: diskEpisodeCount(document)))")
             check(seam()?.attempts == afterSave + 1, "Try Again made one attempt: \(String(describing: seam()?.attempts))")
@@ -129,7 +153,9 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             check(times.count >= 2, "an automatic retry happened: \(times.count) attempts")
             check(gaps.allSatisfy { $0 >= 29.9 }, "automatic retries at most every 30 s: gaps \(gaps)")
             check(diskEpisodeCount(document) == 2, "both edits are on disk: \(String(describing: diskEpisodeCount(document)))")
-            check(Acceptance.waitFor(timeout: 3) { !self.windowSaysEdited(window) }, "no \"— Edited\" after the verified save: \(window.title)")
+            let clean = Acceptance.waitFor(timeout: 3) { !self.windowSaysEdited(window) }
+            Acceptance.record(self, "T26 edited-state trace: \(seam()?.events ?? [])")
+            check(clean, "no \"— Edited\" after the verified save (AX_EDITING_STATE \(editingState(window) ?? "none")): \(window.title)")
         }
     }
 
@@ -151,9 +177,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             let popover = app.popovers.firstMatch
             check(popover.waitForExistence(timeout: 5), "save-status popover opened")
             // Try Again is focused first; Tab reaches Save a Copy Elsewhere…; Space activates it.
-            app.typeKey("\t", modifierFlags: [])
-            check(isFocused(popover.buttons["Save a Copy Elsewhere…"]), "Tab reaches Save a Copy Elsewhere…")
-            app.typeKey(" ", modifierFlags: [])
+            activatePopoverButton("Save a Copy Elsewhere…", tabs: 1, task: "T28")
             let copy = try saveCopyThroughPanel(named: "Offline Copy copy", into: elsewhere, surface: "T28 save panel")
             check(Acceptance.waitFor(timeout: 10) { self.diskEpisodeCount(copy) == 1 }, "the copy holds the edit: \(String(describing: diskEpisodeCount(copy)))")
             check(Acceptance.waitFor(timeout: 5) { window.title.hasPrefix("Offline Copy copy") }, "window title is the copy: \(window.title)")
@@ -161,11 +185,17 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             let bar = window.descendants(matching: .any).matching(identifier: "ww.show.messageBar").firstMatch
             let expected = "You're now editing “Offline Copy copy” in Elsewhere. The original at Unreachable wasn't changed."
             // The bar is one accessibility group: its label carries the heading (as for the C2b offer).
-            check(bar.waitForExistence(timeout: 5) && (bar.label == expected || texts(in: bar).contains(expected)),
-                  "message bar: \(bar.label) \(texts(in: bar))")
+            let barShown = bar.waitForExistence(timeout: 10)
+            check(barShown && (bar.label == expected || texts(in: bar).contains(expected)),
+                  "message bar: \(barShown ? "\(bar.label) \(texts(in: bar))" : "not shown")")
             try audit("T28 copy message bar")
-            // T28: "Focus returns to the save-status item" after the save panel closes.
-            check(Acceptance.waitFor(timeout: 3) { self.isFocused(status) }, "focus returns to the save-status item after the copy")
+            // T28: "Focus returns to the save-status item" after the save panel closes (a button takes keyboard focus
+            // only with keyboard navigation on).
+            if Self.keyboardNavigation {
+                check(Acceptance.waitFor(timeout: 3) { self.isFocused(status) }, "focus returns to the save-status item after the copy")
+            } else {
+                needsKeyboardNavigation.append("T28: focus returns to the save-status item")
+            }
             check(try Data(contentsOf: document) == original, "the original is byte-unchanged")
             check(diskShowID(copy) != nil && diskShowID(copy) != diskShowID(document), "the copy is a separate show (new show ID)")
             check(diskTitle(copy) == "Offline Copy copy", "the copy is titled after its name: \(String(describing: diskTitle(copy)))")
@@ -248,10 +278,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
         app = XCUIApplication()
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
                                "-WWUITestResetStorage", "YES", "-WWUITestCenterWindows", "YES",
-                               "-WWUITestAutosave", autosave ? "ON" : "OFF", "-WWUITestOffline", "YES",
-                               // Keyboard navigation (Tab reaches buttons) for this app only, via its argument domain: the
-                               // GUI host doesn't have Full Keyboard Access on, and tests never change system settings.
-                               "-AppleKeyboardUIMode", "2"]
+                               "-WWUITestAutosave", autosave ? "ON" : "OFF", "-WWUITestOffline", "YES"]
             + (retryInterval.map { ["-WWUITestSaveRetryInterval", "\($0)"] } ?? [])
             + (offlineFolder.map { ["-WWUITestOfflineFolder", $0.path(percentEncoded: false)] } ?? [])
         // One launch only: see `XCUIApplication.launchOnce(opening:)`.
@@ -311,11 +338,26 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
         editingState(window) == "Edited" || window.title.contains("Edited")
     }
 
-    private func seam() -> (attempts: Int, offline: Bool, attemptTimes: [Double])? {
+    private func seam() -> (attempts: Int, offline: Bool, attemptTimes: [Double], events: [String])? {
         guard let text = NSPasteboard(name: Self.seamPasteboard).string(forType: .string),
               let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let attempts = object["publicationAttempts"] as? Int, let offline = object["offline"] as? Bool else { return nil }
-        return (attempts, offline, (object["attemptTimes"] as? [Double]) ?? [])
+        return (attempts, offline, (object["attemptTimes"] as? [Double]) ?? [], (object["events"] as? [String]) ?? [])
+    }
+
+    /// With keyboard navigation: Tab `tabs` times from the first (focused) popover button, check focus, Space. Without
+    /// it: the button is clicked, and the keyboard step is recorded as Not run (needs Full Keyboard Access).
+    private func activatePopoverButton(_ title: String, tabs: Int, task: String) {
+        let button = app.popovers.firstMatch.buttons[title]
+        if Self.keyboardNavigation {
+            for _ in 0..<tabs { app.typeKey("\t", modifierFlags: []) }
+            check(isFocused(button), "\(task): keyboard focus reaches \(title)")
+            app.typeKey(" ", modifierFlags: [])
+        } else {
+            needsKeyboardNavigation.append("\(task): Tab/Space to \(title) in the save-status popover")
+            check(button.waitForExistence(timeout: 3), "\(task): popover button \(title)")
+            button.click()
+        }
     }
 
     private func element(_ identifier: String) -> XCUIElement {
@@ -347,17 +389,27 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
         return url
     }
 
-    /// In the open save panel (sheet): checks the proposed name, goes to `folder` with ⇧⌘G, and saves with Return.
+    /// In the save panel: checks the proposed name, goes to `folder` with ⇧⌘G, and saves with Return. As in #169 and
+    /// #190: a bounded wait for the panel, a 2 s settle from detection, and keys sent to the out-of-process panel
+    /// service when it hosts the panel (the sandboxed app's own snapshot stalls while the panel is up).
     private func saveCopyThroughPanel(named name: String, into folder: URL, surface: String) throws -> URL {
+        let service = XCUIApplication(bundleIdentifier: "com.apple.appkit.xpc.openAndSavePanelService")
         let panel = app.sheets.firstMatch
-        check(panel.waitForExistence(timeout: 5), "\(surface): native save panel shown")
-        let names = panel.textFields.allElementsBoundByIndex.compactMap { $0.value as? String }
-        check(names.contains(name), "\(surface): proposed name \"\(name)\": \(names)")
-        app.typeKey("g", modifierFlags: [.command, .shift])
-        Thread.sleep(forTimeInterval: 0.5)
-        app.typeText(folder.path(percentEncoded: false) + "\r")
-        Thread.sleep(forTimeInterval: 0.5)
-        app.typeKey(.return, modifierFlags: [])
+        let shown = Acceptance.waitFor(timeout: 20) { panel.exists || service.state != .notRunning }
+        check(shown, "\(surface): native save panel shown")
+        Thread.sleep(forTimeInterval: 2)
+        if panel.exists {
+            let names = panel.textFields.allElementsBoundByIndex.compactMap { $0.value as? String }
+            check(names.contains(name), "\(surface): proposed name \"\(name)\": \(names)")
+        }
+        let target = service.state == .notRunning ? app! : service
+        Acceptance.record(self, "\(surface): panel host \(service.state == .notRunning ? "app sheet" : "panel service")")
+        target.typeKey("g", modifierFlags: [.command, .shift])
+        Thread.sleep(forTimeInterval: 1)
+        target.typeText(folder.path(percentEncoded: false))
+        target.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 1.5)
+        target.typeKey(.return, modifierFlags: [])
         let copy = folder.appending(path: "\(name).wwshow")
         check(Acceptance.waitFor(timeout: 10) { FileManager.default.fileExists(atPath: copy.path) }, "\(surface): copy written at the chosen folder")
         return copy

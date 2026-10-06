@@ -59,6 +59,9 @@ final class ShowDocument: NSDocument {
     /// D5: the exact bytes of a publication whose acknowledgement is uncertain. Its retry first checks whether these
     /// bytes are on disk and, if so, adopts them (verified by decoding) instead of republishing against a stale base.
     private var uncertainCandidate: Data?
+    /// The verified autosave-in-place publication whose edited-state clear is re-checked after AppKit's own completion
+    /// of the save (M1 gate, T26): AppKit can mark the document edited again after our completion runs.
+    private var cleanCheck: (base: RevisionFingerprint, model: ShowDocumentModel, revision: Int, verifiedAt: Date)?
     /// ST-16 "Save a Copy Elsewhere…" in progress: set while its save panel and save run.
     private var copyElsewhere: CopyElsewhereRequest?
     /// The key of the candidate being saved when it isn't this document's current show (a copy with a new ID).
@@ -225,6 +228,15 @@ final class ShowDocument: NSDocument {
                EditedStatePolicy.clearsEditedState(after: .autosaveInPlace, verified: true, publishedEqualsCurrent: store.model == candidateModel) {
                 updateChangeCount(.changeCleared)
             }
+            if isAutosaveInPlace {
+                cleanCheck = (receipt.fingerprint, candidateModel, receipt.revision, receipt.verifiedAt)
+                #if DEBUG
+                traceEditedState("finishSave autosaveInPlace")
+                #endif
+                // After AppKit's own completion (next turn), and once more shortly after, in case it finishes later.
+                DispatchQueue.main.async { [weak self] in self?.recheckCleanAfterCompletion(final: false) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.recheckCleanAfterCompletion(final: true) }
+            }
             if !isDocumentEdited {
                 scheduler?.cancelPending()
                 try? recovery.discardEditCheckpoints(for: documentKey)
@@ -361,6 +373,38 @@ final class ShowDocument: NSDocument {
 
     // MARK: - Automatic retry after a failed save (ST-11)
 
+    /// M1 gate (T26): AppKit can leave (or mark) the document edited after the completion of an autosave in place that
+    /// we verified, for example after an automatic retry of a failed save, without calling `updateChangeCount(_:)`.
+    /// Clears it only while the verified publication is still this document's base and holds exactly the current model.
+    private func recheckCleanAfterCompletion(final: Bool) {
+        guard let check = cleanCheck else { return }
+        if final { cleanCheck = nil }
+        #if DEBUG
+        traceEditedState("recheck\(final ? " final" : "")")
+        #endif
+        guard EditedStatePolicy.clearsEditedStateAfterCompletion(
+            after: .autosaveInPlace, verified: true, stillEdited: isDocumentEdited,
+            baseIsThatPublication: onDiskBase == check.base, publishedEqualsCurrent: store.model == check.model
+        ) else { return }
+        updateChangeCount(.changeCleared)
+        status.set(.saved(revision: check.revision, at: check.verifiedAt))
+        #if DEBUG
+        traceEditedState("recheck cleared")
+        #endif
+    }
+
+    #if DEBUG
+    override func updateChangeCount(withToken changeCountToken: Any, for saveOperation: NSDocument.SaveOperationType) {
+        super.updateChangeCount(withToken: changeCountToken, for: saveOperation)
+        traceEditedState("updateChangeCount(withToken:) op \(saveOperation.rawValue)")
+    }
+
+    /// UI-test evidence only (F-OFFLINE seam): the edited state at each save-completion step.
+    private func traceEditedState(_ step: String) {
+        (Self.debugPublicationHooks as? UITestOfflineHooks)?.note("\(step): edited \(isDocumentEdited)")
+    }
+    #endif
+
     private func scheduleSaveRetry() {
         guard saveRetry == nil else { return }
         status.setRetryingAutomatically(true)
@@ -471,6 +515,9 @@ final class ShowDocument: NSDocument {
 
     override func updateChangeCount(_ change: NSDocument.ChangeType) {
         super.updateChangeCount(change)
+        #if DEBUG
+        if change == .changeDone || change == .changeUndone || change == .changeRedone { traceEditedState("updateChangeCount \(change.rawValue)") }
+        #endif
         // ST-11: a visible save failure stays until the next attempt resolves it (no flicker back to "Edited").
         if isDocumentEdited, saveRetry == nil { status.set(.edited(autosaveEnabled: gate.isEnabled)) }
     }

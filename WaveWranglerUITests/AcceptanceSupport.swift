@@ -242,7 +242,8 @@ enum AcceptanceAudit {
     static func run(_ app: XCUIApplication, surface: String, test: XCTestCase) throws -> [String] {
         var unwaived: [String] = []
         var waived: [[String: Any]] = []
-        let sheetFrame: CGRect? = app.sheets.firstMatch.exists ? app.sheets.firstMatch.frame : nil
+        let sheet: XCUIElement? = app.sheets.firstMatch.exists ? app.sheets.firstMatch : nil
+        let sheetFrame: CGRect? = sheet?.frame
         let inspector = app.descendants(matching: .any).matching(identifier: "ww.inspector").firstMatch
         let inspectorFrame: CGRect? = inspector.exists ? inspector.frame : nil
         // The Episode inspector (not Show Info) is showing when its Title field exists.
@@ -287,8 +288,10 @@ enum AcceptanceAudit {
             if let shot { Acceptance.attach(test, png: shot.pngRepresentation, name: crop) }
             var stats: [String: Any] = measured.map { m in ["glyphPixels": m["glyphPixels"] ?? 0, "glyphP75": m["glyphP75"] ?? 0, "max": m["ratio"] ?? 0] } ?? [:]
             stats["crop"] = crop
-            let mid = CGPoint(x: element.frame.midX, y: element.frame.midY)
-            let inSheet = sheetFrame?.contains(mid) ?? false
+            // In the sheet by AX membership, not by geometry: window content lying under the sheet's rectangle isn't
+            // the sheet's text (its screenshot shows the sheet's pixels; M1 gate cdb56bd, T23 D7). `.contrast` is
+            // enforced on the sheet's own elements, the surface being audited.
+            let inSheet = sheet.map { Self.isDescendant(element, of: $0) } ?? false
             // Occluded: the element belongs (by AX hierarchy) to a window behind another app window that overlaps
             // it (AX lists windows front to back). Its screenshot shows the front window's pixels, so nothing can be
             // measured here; recorded, and that window is audited while frontmost (as the C03 test does). An
@@ -300,7 +303,7 @@ enum AcceptanceAudit {
                 print("AUDIT WAIVED \(description) — occluded by a window in front; measured (front pixels) \(stats)")
                 continue
             }
-            if let sheetFrame, element.exists, !sheetFrame.contains(mid) {
+            if sheetFrame != nil, element.exists, !inSheet {
                 waived.append(["finding": description, "kind": "behind-modal-sheet", "measured": stats,
                                "rationale": "window content dimmed behind a modal sheet; that surface is audited without the sheet"])
                 print("AUDIT WAIVED \(description) — dimmed behind a modal sheet; measured \(stats)")
@@ -343,13 +346,23 @@ enum AcceptanceAudit {
     /// identifier (or label and value when there is none) and frame. Geometry alone is not enough: a cell partly
     /// clipped at the front window's edge can lie wholly inside a larger window behind it.
     @MainActor
-    static func owningWindowIndex(of element: XCUIElement, in windows: [XCUIElement]) -> Int? {
+    /// Whether `element` is in `container`'s AX hierarchy (same type, identifier or label and value, and frame).
+    static func isDescendant(_ element: XCUIElement, of container: XCUIElement) -> Bool {
         let frame = element.frame
-        let predicate: NSPredicate = element.identifier.isEmpty
+        return container.descendants(matching: element.elementType).matching(sameElement(element)).allElementsBoundByIndex.contains { $0.frame == frame }
+    }
+
+    /// Matches `element` by identifier, or by label and value when it has none (a fresh predicate per query).
+    static func sameElement(_ element: XCUIElement) -> NSPredicate {
+        element.identifier.isEmpty
             ? NSPredicate(format: "label == %@ AND value == %@", element.label, (element.value as? String) ?? "")
             : NSPredicate(format: "identifier == %@", element.identifier)
+    }
+
+    static func owningWindowIndex(of element: XCUIElement, in windows: [XCUIElement]) -> Int? {
+        let frame = element.frame
         for (index, window) in windows.enumerated() {
-            let candidates = window.descendants(matching: element.elementType).matching(predicate).allElementsBoundByIndex
+            let candidates = window.descendants(matching: element.elementType).matching(sameElement(element)).allElementsBoundByIndex
             if candidates.contains(where: { $0.frame == frame }) { return index }
         }
         return nil
