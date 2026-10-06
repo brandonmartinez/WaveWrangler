@@ -1,0 +1,6 @@
+holdout-f3 case 15 (show/simultaneous) — verdict FAIL (settle not reached within the frozen 420 s bound; timeToSettleMs 421806).
+Post-bound read-only observation (inspect on both hosts, no re-run), 2026-10-06T01:25:01Z (~3-7 min after the bound):
+  host A: current "A edit 331795 holdout-f3-15" r2 pub 17BFD976 sha256 a0828e4dc2d4…; unresolved conflict versions: ["B edit 142931 holdout-f3-15" saved by other host]; status count 1
+  host B: current "A edit 331795 holdout-f3-15" r2 pub 17BFD976 sha256 a0828e4dc2d4…; unresolved conflict versions: ["B edit 142931 holdout-f3-15" saved by this host]; status count 1
+=> after the bound, one current byte-identical publication and B's edit provider-surfaced on both hosts (no loss); the case still FAILS (bounded wait).
+Context: host B load average ~6.9 at 00:54:47Z (parallel GUI lanes on the mini).

@@ -1,0 +1,99 @@
+{
+  "cells": {
+    "library": "library-conflict",
+    "recovery": "recovery",
+    "relink": "cross-machine-relink",
+    "show": "show-conflict"
+  },
+  "cellsIncomplete": {},
+  "cleanup": {
+    "at": "2026-10-06T00:17:26Z",
+    "deleted": "<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025/dev-f3",
+    "existedBefore": true,
+    "existsAfterLocally": false
+  },
+  "clockOffsetEnd": {
+    "offsetMs": 19,
+    "rttMs": 45.9
+  },
+  "clockOffsetStart": {
+    "offsetMs": 22,
+    "rttMs": 48.9
+  },
+  "commit": "3a6acee815531a3e49c09089db4bc4eaab814802",
+  "counts": {
+    "library": 1,
+    "recovery": 1,
+    "relink": 1,
+    "show": 1
+  },
+  "finishedAt": "2026-10-06T00:17:26Z",
+  "fixture": "M1-DUR-025",
+  "freeze": "m1-freeze-3 recipe with the m1-freeze-4 level-sampling rule",
+  "hosts": {
+    "A": {
+      "cores": "18",
+      "cpu": "Apple M5 Max",
+      "macOS": "27.0.1",
+      "macOSBuild": "26A434",
+      "memoryBytes": "137438953472",
+      "model": "Mac17,14",
+      "probeSha256": "fecfdee3283ab0465e2a2e59756d5f125596f7987d751f23557355dd59098e0d",
+      "pseudonym": "host A",
+      "sdk": "27.0",
+      "swift": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)",
+      "xcode": "Xcode 27.0 Build version 27A266a"
+    },
+    "B": {
+      "cores": "12",
+      "cpu": "Apple M2 Pro",
+      "macOS": "27.0.1",
+      "macOSBuild": "26A434",
+      "memoryBytes": "34359738368",
+      "model": "Mac14,12",
+      "probeSha256": "fecfdee3283ab0465e2a2e59756d5f125596f7987d751f23557355dd59098e0d",
+      "pseudonym": "host B",
+      "sdk": "27.0",
+      "swift": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)",
+      "xcode": "Xcode 27.0 Build version 27A266a"
+    }
+  },
+  "label": "two-host evidence (host A + host B), same Apple account, iCloud Drive, synthetic data only",
+  "protocol": "ww-003-fixture-protocol.md \u00a74.3, \u00a74.4",
+  "requiredCommits": "",
+  "reserveIndicesUsed": 0,
+  "reserveSplit": "dev-f3-reserve",
+  "sameAppleAccount": "operator-attested",
+  "setupNotEstablished": {
+    "library": 0,
+    "recovery": 0,
+    "relink": 0,
+    "show": 0
+  },
+  "setupNotEstablishedCap": {
+    "library": 6,
+    "recovery": 4,
+    "relink": 4,
+    "show": 6
+  },
+  "split": "dev-f3",
+  "startedAt": "2026-10-06T00:12:44Z",
+  "trees": {
+    "A": {
+      "Packages/WaveWranglerKit/Sources/WWPersistence": "eefa0b96135602f5c10f9d47c3c3e39b44bab9f5",
+      "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "444af76f8232f0eb81912184b7b86878ea1864ca",
+      "Packages/WaveWranglerKit/Sources/WWSources": "deecf3e48b4beb1debe6353e24a8154b30201208",
+      "scripts/dur025": "768c3075249e28bf3ac1c30a54b2e1b43cf16e67"
+    },
+    "B": {
+      "attestedBy": "probe sha256 equal on both hosts",
+      "builtFrom": {
+        "Packages/WaveWranglerKit/Sources/WWPersistence": "eefa0b96135602f5c10f9d47c3c3e39b44bab9f5",
+        "Packages/WaveWranglerKit/Sources/WWPersistenceProbe": "444af76f8232f0eb81912184b7b86878ea1864ca",
+        "Packages/WaveWranglerKit/Sources/WWSources": "deecf3e48b4beb1debe6353e24a8154b30201208",
+        "scripts/dur025": "768c3075249e28bf3ac1c30a54b2e1b43cf16e67"
+      }
+    }
+  },
+  "trialRoot": "<iCloud Drive>/WaveWrangler-M1-Synthetic-Trial/dur025"
+}
