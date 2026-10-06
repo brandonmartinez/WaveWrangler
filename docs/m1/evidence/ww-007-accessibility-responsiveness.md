@@ -17,16 +17,15 @@ Results use only **Pass**, **Fail** (with issue), **Blocked** (with reason) and 
 - **Fail:** T17/T20 on [#126](https://github.com/brandonmartinez/WaveWrangler/issues/126) (alert contrast 2.85–2.95).
 
 Since fixed on main: #104 (#112), #109/#110 (#113). |
-| A11Y-002 VoiceOver | **Blocked** (0/1). Background computer-use can't toggle or drive VoiceOver. A Mac mini run with caption-panel capture is queued for the follow-up evidence PR (§9). The manual checklist in §5.1 is the fallback. |
-| A11Y-003 visual | **Fail** (1/1 executed, in-app overrides only).
+| A11Y-002 VoiceOver | **Blocked** (0/1). Attempted on the Mac mini (macOS 27.0.1, M2 Pro) at `475adf3` (§10.3): VoiceOver ran, but XCTest timed out snapshotting VoiceOver's caption panel at the first step of all 3 walks, so **no announcement was captured** and none is claimed. **VoiceOver listening is a user-manual exit item** (checklist §5.1). |
+| A11Y-003 visual | **Fail** (1/1 executed; in-app overrides on the 18-core host, plus re-measurement and system settings on the Mac mini (macOS 27.0.1, M2 Pro) at `475adf3`, §10).
 - C03 200% Library: Fail on `241396a` ([#109](https://github.com/brandonmartinez/WaveWrangler/issues/109), since fixed by #113; `testLibraryAt200PercentTextStaysInsideTheWindow` passes on the mini with main's placement).
-- **C03 Setup: Fail (unresolved).** Mini `479eb9e` under the scoped policy left unclassified low-p75 findings, including Setup darkAqua 200% "Access denied" status at p75 1.77 (§7.2). Re-measurement on the current head is queued.
+- **C03 Setup: Pass** on the re-measurement (`475adf3`, §10.1). Setup aqua and darkAqua 200% have no unwaived findings. The `479eb9e` "Access denied" 1.77 did not reproduce; it predates #112. The remaining 100% findings are classified with crops.
 - C06: Pass (captured surfaces).
-- **C07 light/dark: Fail (unresolved).** The accent fix is verified (§7.2). Unclassified candidates from `479eb9e` remain: Library darkAqua bottom-row cells at p75 1.93–2.16, aqua date cells at 4.23–4.42, and 200% "Recent" at 2.38 / 2.66 (§7.2). Re-measurement on the current head is queued.
-- **C04 Not run.** OS-level Increase Contrast was not exercised, and the override doesn't emulate it.
-- **C05 Not run** (static captures only).
-
-OS-level toggles are queued for a mini slot. |
+- **C07 light/dark: Pass** on the re-measurement (`475adf3`, §10.1). None of the `479eb9e` candidates reproduced. Every remaining finding is a measured artefact with a crop (§10.1).
+- **C04 Increase Contrast (system): Fail** ([#138](https://github.com/brandonmartinez/WaveWrangler/issues/138)). The selected Library sidebar row's text is 2.33:1 on the dark accent fill. One edge-slice finding is unresolved (§10.2).
+- **C05 Reduce Motion (system): Not run.** The setting was applied and observed by the test runner, and the flows completed, but motion isn't observable in static captures.
+- **Larger text (system): Not run.** `FontSizeCategory` doesn't change AppKit's fonts (body stayed 13 pt). In-app 200% is the tested path. |
 | A11Y-004 static audit | **Pass** (1/1 executed: 0 flags across 132 controls). It's heuristic: it missed the merged sidebar "+" button the GUI run found ([#110](https://github.com/brandonmartinez/WaveWrangler/issues/110)). |
 | #59 | Sidebar and inspector findings are **measured audit artefacts** (15.7–18.1:1). The entry-table blur under a Library message bar was a **real failure**; #113 brought it back on main (row 1: 4 glyph pixels). **Fixed in this PR with option (a) (coordinator decision):** the bar sits in the content column. On the Mac mini (macOS 27.0.1, M2 Pro) at `550506d`, row 1 has 1,725 px at 15.91:1 (light) and 2,086 px at 12.39:1 (dark), and ContrastEvidence now **asserts** it. Every Library suite passes with measured waivers in place of the former blanket "#59 tracked" waivers (§7). |
 | P0s | **None found.** |
@@ -61,7 +60,7 @@ From about 08:37 to 09:45 EDT every `--ui` run failed with "Timed out while enab
 | M1-REF-020 sandboxed grant | 20 | 16 executed, 4 not executed (`08f62ee`) | **Fail**: 12 Pass, 4 Fail, all harness defects (§2.3) |
 | M1-A11Y-001 keyboard full suite | 1 | 1 | **Fail** (§4) |
 | M1-A11Y-002 VoiceOver full suite | 1 | **0** | **Blocked** (§5) |
-| M1-A11Y-003 visual full suite | 1 | 1 (in-app overrides only) | **Fail** (C03 Library), C04/C05 Not run (§6) |
+| M1-A11Y-003 visual full suite | 1 | 1 (in-app overrides; system settings on the Mac mini, §10) | **Fail**: C04 [#138](https://github.com/brandonmartinez/WaveWrangler/issues/138); C05 and larger text Not run (§10) |
 | M1-A11Y-004 static audit | 1 | 1 | **Pass** (§3) |
 
 No count was lowered and nothing was relabelled.
@@ -221,6 +220,10 @@ Every scenario checks SHA-256 and mtime of every source.
 
 ## 5. VoiceOver (A11Y-002, C02): Blocked
 
+- **Mac mini attempt (`475adf3`):** see §10.3. No announcement captured. Listening is a user-manual exit item.
+
+Earlier attempt on the 18-core host:
+
 - **Original state:** VoiceOver off. No `com.apple.VoiceOver4` domain, and no `voiceOverOnOffKey` override.
 - Background computer-use can't deliver ⌘F5 ("no_viable_candidate") or VO commands. Opening VoiceOver.app through the tool started only the first-run "VoiceOver Quickstart" splash, which the tool can't see. Its three processes were stopped by PID within about 90 s.
 - **Verified afterwards:** VoiceOver off, and no VoiceOver preference domain was created.
@@ -272,12 +275,12 @@ Every scenario checks SHA-256 and mtime of every source.
 
 | Condition | Result |
 | --- | --- |
-| C03 200%, Setup (zoomed window) | **Fail (unresolved).** Under the scoped policy, mini `479eb9e` left the darkAqua "Access denied" status cell unwaived at p75 1.77 with 5,305 px. That run predates #112's Setup layout and attached no crop (§7.2). It is re-measured in the C04/C05 slot. Earlier observations: Names, statuses, units and button titles are readable. Long statuses wrap mid-word and truncate ("Downloadin g 42% +1…"). Whether the full value reaches help and VO wasn't checked here; it's covered by the lane's T13/T18 AX assertions. Screenshot: [`screens/setup-light-200-zoomed.png`](ww-007/screens/setup-light-200-zoomed.png). Audit findings on that surface are rows cut off at the scroll-view edge (pixel 1.2–1.8:1 because they're partly hidden), not colour. |
+| C03 200%, Setup (zoomed window) | **Pass** on the re-measurement (Mac mini `475adf3`, §10.1): Setup aqua and darkAqua 200% have no unwaived findings. Earlier: **Fail (unresolved).** Under the scoped policy, mini `479eb9e` left the darkAqua "Access denied" status cell unwaived at p75 1.77 with 5,305 px. That run predates #112's Setup layout and attached no crop (§7.2). It is re-measured in the C04/C05 slot. Earlier observations: Names, statuses, units and button titles are readable. Long statuses wrap mid-word and truncate ("Downloadin g 42% +1…"). Whether the full value reaches help and VO wasn't checked here; it's covered by the lane's T13/T18 AX assertions. Screenshot: [`screens/setup-light-200-zoomed.png`](ww-007/screens/setup-light-200-zoomed.png). Audit findings on that surface are rows cut off at the scroll-view edge (pixel 1.2–1.8:1 because they're partly hidden), not colour. |
 | C03 200%, Library window | **Fail** [#109](https://github.com/brandonmartinez/WaveWrangler/issues/109). Content overflows above the window: sidebar rows and the message-bar heading end up under the title bar ([`screens/library-dark-200-overflow.png`](ww-007/screens/library-dark-200-overflow.png)). This already happened before this PR (Shows row 10 pt above the window top). It's worse with the #59 fix (84 pt), because the message bar wraps in the narrower column. |
-| C04 Increase Contrast | **Not run** (OS level). The AppKit `accessibilityHighContrast*` appearance override produced pixel-identical captures, so it doesn't emulate the setting. |
-| C05 Reduce Motion | **Not evaluated.** The flows ran with `-WWForceReduceMotion YES` and completed, but static screenshots can't show motion. Needs a human check (or OS-level Reduce Motion) as part of item 2 in §9. |
+| C04 Increase Contrast | **System setting: Fail** ([#138](https://github.com/brandonmartinez/WaveWrangler/issues/138); §10.2, Mac mini `475adf3`). The earlier note follows: **Not run** (OS level) on the 18-core host. The AppKit `accessibilityHighContrast*` appearance override produced pixel-identical captures, so it doesn't emulate the setting. |
+| C05 Reduce Motion | **Not run.** On the Mac mini (`475adf3`) the system setting was applied, the test runner observed it, and the flows completed with it on. Motion itself isn't observable in static captures (§10.2). Earlier note: **Not evaluated.** The flows ran with `-WWForceReduceMotion YES` and completed, but static screenshots can't show motion. Needs a human check (or OS-level Reduce Motion) as part of item 2 in §9. |
 | C06 colour independence | **Pass for the captured surfaces.** At saturation 0 every state is carried by text plus symbol shape: "5 need attention", "Downloading 2 sources — progress unknown", "Needs permission…", "Not found", "Ready", "—" / "?" placeholders ([`screens/setup-default-size-saturation0.png`](ww-007/screens/setup-default-size-saturation0.png)). |
-| C07 light/dark | **Fail (unresolved).** The ratios in §7.1 were measured directly and pass, and the accent fix is verified. The candidates in §7.2 from `479eb9e` aren't classified yet: Library bottom-row cells, date cells, and 200% "Recent" before #113. Re-measurement is queued in the C04/C05 slot. |
+| C07 light/dark | **Pass** on the re-measurement (Mac mini `475adf3`, §10.1). None of the `479eb9e` candidates reproduced, and the remaining findings are measured artefacts with crops. The ratios in §7.1 and the accent fix are verified. |
 
 ## 7. Contrast: #59 resolution and the audit contrast policy
 
@@ -369,16 +372,16 @@ Context for the dates: `479eb9e` predates #112 (fixes #104, Setup layout) and #1
 | **T17/T20 NSAlert text** (`_NS:74`, `_NS:58`) | 6,264–10,462 · **2.85–2.95** | **Real failure**: sharp white text on translucent alert material (crops `contrast-crops/mini-de30c99-audit-crop-T17_*`, `…T20_*`) | [#126](https://github.com/brandonmartinez/WaveWrangler/issues/126) (P1, Mac). T17 and T20 audits = **Fail** |
 | T16 "Edit the show's title…" (window content around a document-modal sheet) | 1,029–18,550 · 3.15–3.85 | **Modal dim**, measured from crop `contrast-crops/mini-de30c99-audit-crop-T16_external-change_sheet-10.png` | Rule 1, recorded. T16 = Fail anyway (#66) |
 | Show sidebar episode row in C03 `testTextSize200Screenshots`, `479eb9e` | 63 · 1.69 | **Occlusion artefact**: audited after ⌘⇧L put the Library window in front. Audited while frontmost (`3b2a878`): 9,795 px, p75 9.89 | The test now audits the show window while frontmost; rule 3 |
-| Setup "Role"/"Speaker" cells "none", 12 pt wide (T03, `479eb9e`/`de30c99`) | 0–384 · 1.06–2.07 | **Clipped column** (#104 layout, predates #112) | Gone after #112 (not present at `94176b5`) |
+| Setup "Role"/"Speaker" cells "none", 12 pt wide (T03, `479eb9e`/`de30c99`) | 0–384 · 1.06–2.07 | **Clipped column** (#104 layout) | **Correction:** not present in the T03 audit at `94176b5`, but **still present at `475adf3` (after #112)** with the Episode inspector open (§10.1: 0 text pixels). **Unresolved**; re-check on #130's head, and file if it persists. |
 | Setup cells with 0 glyph pixels (scrolled) | 0 | Offscreen | Rule 2, recorded |
-| Library bottom-row cells at the window edge: "5", "Synthetic Show 017", "iCloud Drive › …", dates (y 833–845, darkAqua 100 % and 200 %, `479eb9e`) | 1,480–4,983 · **1.93–2.16** | **Candidate partly clipped edge cells** (frames extend past the window's bottom edge) | Same position as the "5" cell that `PartialClipContrast` waived on its visible part at `550506d`. These specific findings are **unresolved until re-measured** on the current head |
-| Library date cells x 1170, aqua 100 % / 200 % (`479eb9e`) | 623–1,832 · **4.23–4.42** | **Unresolved candidate.** Just under 4.5; no crop | **Re-measure queued** |
-| Library 200 % sidebar "Recent" (aqua 2.38 / dark 2.66) and entry "Synthetic Show" 3.34 (`479eb9e`) | 7,724–13,986 · **2.38–3.34** | **Candidate:** predates #113. With #109 the content overflowed under the title bar, so these rows sat in the toolbar's blurred band | **Unresolved until re-measured**; #109 is fixed on main |
-| **Setup darkAqua 200 % `ww.setup.source.<id>.status` "Access denied; …"** (`479eb9e`) | **5,305 · 1.77** (max 13.11) | **Unresolved candidate.** The text uses the default label colour (`StatusCell`). The same cell in aqua measured 812 px at p75 17.22, so the low p75 with many glyph pixels points to a background region (selection or band) inside the 88×60 frame rather than the text. No crop, and it predates #112's Setup layout | **Re-measure queued.** If it is genuinely ~1.8:1 it's a product contrast bug: I'll file it and tell the coordinator |
+| Library bottom-row cells at the window edge: "5", "Synthetic Show 017", "iCloud Drive › …", dates (y 833–845, darkAqua 100 % and 200 %, `479eb9e`) | 1,480–4,983 · **1.93–2.16** | **Candidate partly clipped edge cells** (frames extend past the window's bottom edge) | Same position as the "5" cell that `PartialClipContrast` waived on its visible part at `550506d`. **Not reproduced** on the re-measurement (`475adf3`, §10.1) |
+| Library date cells x 1170, aqua 100 % / 200 % (`479eb9e`) | 623–1,832 · **4.23–4.42** | **Unresolved candidate.** Just under 4.5; no crop | Re-measured (`475adf3`, §10.1): the cell extends under the scroller; visible text p75 15.91 / 14.92 → **measured artefact** |
+| Library 200 % sidebar "Recent" (aqua 2.38 / dark 2.66) and entry "Synthetic Show" 3.34 (`479eb9e`) | 7,724–13,986 · **2.38–3.34** | **Candidate:** predates #113. With #109 the content overflowed under the title bar, so these rows sat in the toolbar's blurred band | **Not reproduced** (`475adf3`, §10.1); it predated #113 |
+| **Setup darkAqua 200 % `ww.setup.source.<id>.status` "Access denied; …"** (`479eb9e`) | **5,305 · 1.77** (max 13.11) | **Unresolved candidate.** The text uses the default label colour (`StatusCell`). The same cell in aqua measured 812 px at p75 17.22, so the low p75 with many glyph pixels points to a background region (selection or band) inside the 88×60 frame rather than the text. No crop, and it predates #112's Setup layout | **Not reproduced** (`475adf3`, §10.1): Setup aqua and darkAqua 200% have no unwaived findings. It predated #112. **No product bug.** |
 | Unselected show sidebar rows, Library entry cells, Setup cells, title bars, "No episodes yet", "Not set", sheet message text | 114–12,000 · 6.15–17.22 | Legible system text: **measured artefact** | Rule 5, gated per instance |
-| C03 Name-cell label "tr1.wav"; C03 Library cells past the outline clip frame | — / 250–2,604 · 12.4–12.6 | Harness scope (heuristic label; table-edge match) | Fixed in the harness; re-run in the C04/C05 slot |
+| C03 Name-cell label "tr1.wav"; C03 Library cells past the outline clip frame | — / 250–2,604 · 12.4–12.6 | Harness scope (heuristic label; table-edge match) | Fixed in the harness. Re-run at `475adf3` (§10.1): the remaining file-name labels "ana-zoom.m4a" and "intro.wav" are the same heuristic |
 
-**Re-measurement on the current head.** `testVisualOverridesLightDarkReduceMotion200`, `testSaturationZeroShowWindow` and `testTextSize200Screenshots` (C03/C07, now with crops and rules 3–5) are added to the C04/C05 Mac mini slot, with the system settings at their originals for these tests. Each unresolved candidate above will be classified there, as a product fix or a measured artefact with a crop, in the follow-up evidence PR.
+**Re-measurement done** on the Mac mini at `475adf3`. Results are in §10.1 (C03/C07) and §10.2 (system Increase Contrast: [#138](https://github.com/brandonmartinez/WaveWrangler/issues/138)).
 
 ## 8. Findings and issues
 
@@ -400,13 +403,99 @@ Context for the dates: `479eb9e` predates #112 (fixes #104, Setup layout) and #1
 
 ## 9. User-only and remaining exit items
 
-1. **Not user-only (coordinator, 2026-10-05: consent covers the Mac mini).** These are queued for one Mac mini slot and a follow-up evidence PR, branch `brandonmartinez/m1-ww-007-visual-vo-evidence`:
-   - the OS-level visual pass (Increase Contrast, Reduce Motion, larger text), with originals recorded, restored and diffed (C04/C05);
-   - the C03/C07 re-measurement listed in §7.2;
-   - `VoiceOverWalkUITests` with VoiceOver on (A11Y-002, caption-panel capture).
-
-   VoiceOver *listening* becomes a user-manual item only if caption capture fails.
-2. (merged into item 1)
+1. **VoiceOver listening (A11Y-002): user-manual.** Run the §5.1 checklist with VoiceOver on. The Mac mini attempt couldn't capture announcements (§10.3).
+2. **Reduce Motion (C05): motion behaviour by eye.** The system setting is honoured in code (`MotionPolicy`) and the flows completed with it on, but motion can't be observed headlessly.
 3. Manual Full Keyboard Access run of the K-flows (spec §6).
 4. DUR-026 Dock › Quit route by hand.
 5. Main-thread source/provider I/O trace after #55. Attach `xctrace` by PID.
+
+## 10. Follow-up: Mac mini slot `475adf3` (C03/C07 re-measurement, C04/C05, VoiceOver)
+
+**Run record**
+- **Host:** Mac mini (M2 Pro), macOS 27.0.1, 12-core / 32 GiB, under the coordinator GUI lock, 2026-10-05 17:04–17:38.
+- **Build:** products built on the 18-core host at `475adf3`, whose test and harness code is identical to this PR's (rebased onto main).
+- **Driver:** [`visual-vo-slot.sh`](ww-007/visual-vo-slot.sh); its log is [`visual-vo-slot-475adf3.log`](ww-007/visual-vo-slot-475adf3.log).
+- **Raw records:** [`raw-mini-475adf3-slot.jsonl`](ww-007/raw-mini-475adf3-slot.jsonl).
+- **Reproducible measurements:** [`contrast-crops/glyphstat-475adf3.sh`](ww-007/contrast-crops/glyphstat-475adf3.sh) runs [`glyphstat.swift`](ww-007/glyphstat.swift) (now with an optional `@x,y,w,h` region) over the crops in [`contrast-crops/mini-475adf3-*`](ww-007/contrast-crops/). It lists the **exact region of every figure** (image pixels, origin top-left, 2× crops); output is [`glyphstat-results-475adf3.txt`](ww-007/contrast-crops/glyphstat-results-475adf3.txt).
+- **Consent:** the user granted temporary Increase Contrast, Reduce Motion, larger text and VoiceOver on the mini (2026-10-05). Originals were recorded first and restored afterwards (§10.4).
+
+### 10.1 C03/C07 re-measurement at the system originals
+
+Tests: `testVisualOverridesLightDarkReduceMotion200`, `testSaturationZeroShowWindow` and `testTextSize200Screenshots`. All three passed (their audits are record-only). Current rules are those of §7.0.
+
+| Earlier candidate (`479eb9e`, §7.2) | Now (`475adf3`) |
+| --- | --- |
+| Library darkAqua bottom-row cells, p75 1.93–2.16 | **Not reproduced** (no unwaived finding at those cells) |
+| Library 200% "Recent" 2.38 / 2.66, "Synthetic Show" 3.34 | **Not reproduced.** Library aqua and darkAqua 200% have no unwaived findings. These predated #113 (#109 overflow). |
+| **Setup darkAqua 200% "Access denied" status, 1.77** | **Not reproduced.** Setup aqua and darkAqua 200% have no unwaived findings. It predated #112's Setup layout. **No product bug.** |
+| Aqua date cells (x 1170), 4.23 | Still flagged at 4.23. The crop shows the cell extends under the vertical scroller and the detail column; only "Se" is visible. **Visible text: 207 px at p75 15.91 / 14.92.** → **measured artefact** (scroller pixels). The truncation itself (Last Opened cut off, Status off-screen at the default window size) is a readability issue: [#140](https://github.com/brandonmartinez/WaveWrangler/issues/140) (P2, Library lane). |
+
+Remaining findings in this run, classified from their crops:
+- **Setup selected row "intro.wav … Not found", p75 2.27** (Name, Speaker, Role and Status cells). Each cell is measured from **its own crop** (`contrast-crops/mini-475adf3-setup-selected-row-{name,speaker,role,clipped}.png`).
+  - The row is a **selected** row cut off by the Sources table's scroll edge: the top 14 px band is the accent selection; below it is the table background (#1E1E1E).
+  - In every full crop, the 2.27 "glyph" figure is the **accent fill against #1E1E1E**, not text.
+  - **Status** visible band: 297 px at p75 7.35 (#FFFFFF on #004DC4) → measured artefact (scroll-edge clip).
+  - **Name** visible band: 207 px at p75 7.35 → measured artefact (scroll-edge clip).
+  - `PartialClipContrast` handles window edges only, so the harness records these as unwaived; they are classified here.
+  - **Speaker and Role: unresolved.** Each column is 12 pt wide and its crop has **0 text pixels** (no white at all): the "none" value isn't drawn. That is the **#104 clipped-column signature, at `475adf3`, after #112.** It occurs here with the Episode inspector open, which narrows the table. #130 (fix for P0 #129) changes the Setup column mechanism (constant ideal column widths). **To re-check on #130's head once it merges; if the clipping persists, file it.**
+- **Sidebar "Synthetic Collection 3" (darkAqua), 2,753 px at p75 15.72.** Legible, but collection rows aren't in `measuredArtefact`'s scope → measured artefact.
+- **200% Library bottom-row cells (y 850, visible slice 5 pt).** Name, "1" and location: 0 glyph pixels. No text is rendered in the visible sliver (the row lies below the window edge) → clipped, not colour.
+- **Unresolved:** the date cell at {1170, 850} in the same row has **56 glyph pixels at p75 1.61** in the 5-pt visible slice. There's no crop of the slice, so its pixels can't be classified.
+- **"Label not human-readable" for fixture file names** "ana-zoom.m4a" and "intro.wav". These are the same file-name heuristic as `synthetic-N.wav` / `trN.wav`; the names are outside the harness waiver's pattern.
+
+**C03 Setup: Pass. C07: Pass.**
+
+### 10.2 C04/C05 with the system settings (Increase Contrast, Reduce Motion, larger text)
+
+- **Settings in effect.** Set at 17:24:19 and re-read at 17:24:23:
+  - `increaseContrast = 1` (boolean), `reduceMotion = 1` (boolean), `FontSizeCategory = {global = XXXL}` (dictionary);
+  - the probe reported increaseContrast=true and reduceMotion=true;
+  - the **test runner** recorded `increaseContrast: true, reduceMotion: true, reduceTransparency: false, bodyFontPointSize: 13.0`;
+  - `testSystemVisualSettings` asserts both settings and **passed**.
+- **Larger text had no effect** on AppKit's preferred body font (13 pt): `FontSizeCategory` drives only some system apps. **Larger text (system) = Not run.** In-app 200% is the tested path.
+- **#59 row 1 under system Increase Contrast:** the assertion (≥ 40 px, p75 ≥ 4.5) **passed**.
+- **Real failure: the selected Library sidebar row ("Shows").**
+  - Under Increase Contrast it draws its label in a light blue tint on the dark accent fill #0A6CF0: **1,433 px at p75 2.33** (100%), **5,393 px at p75 2.33** (200%).
+  - Without Increase Contrast the same row is white at 4.76–5.37.
+  - → [#138](https://github.com/brandonmartinez/WaveWrangler/issues/138) (P1; Design accent decision, with Mac).
+  - Crops: `contrast-crops/mini-475adf3-ic-sidebar-shows-selected-{100,200}.png`; screen: [`screens/mini-475adf3-system-increase-contrast-library.png`](ww-007/screens/mini-475adf3-system-increase-contrast-library.png).
+- **Measured artefacts under Increase Contrast** (Increase Contrast draws heavier borders and scrollers, which the crops include):
+  - date cells at x 1170, 2.86 → visible "Se" text 253 px at p75 12.08;
+  - "Library" title band, 3.69 → title text 1,129 px at p75 16.29;
+  - the Setup selected clipped row, 3.51 (the accent fill #0A6CF0 against #1E1E1E): Status visible band 282 px at p75 4.76 and Name visible band 198 px at p75 4.76 → measured artefacts. **Speaker and Role: 0 text pixels**, unresolved, the same as §10.1 (#104 signature).
+- **Unresolved, no crop.** Two bottom-row cells partly below the window edge: "5" (visible slice 10 pt, 333 px at p75 4.11) and a date cell (2.0). The visible slice probably includes Increase Contrast's window border. They stay unwaived and are not classified.
+- **C05 Reduce Motion: Not run.** The setting was in effect (the runner observed it) and the flows completed with `MotionPolicy` honouring it, but motion isn't observable in static captures. Checking motion by eye is a user item.
+- **C04: Fail (#138).**
+
+### 10.3 VoiceOver (A11Y-002)
+
+What was attempted:
+1. At 17:33:00 the script set `com.apple.VoiceOverTraining doNotShowSplashScreen` and started VoiceOver with `open -a /System/Library/CoreServices/VoiceOver.app`. VoiceOver ran as pid 21864.
+2. `VoiceOverWalkUITests` (3 walks) drove the app by keyboard and read VoiceOver's caption panel through XCTest after each step, also cropping the panel's pixels.
+3. **All 3 walks failed at the first step** (`Failed to resolve query: Timed out snapshotting 'VoiceOver', app is either unresponsive or taking too long to snapshot`). The test bundle exited 65.
+
+**Disclosure:** at the `vo-on` snapshot (17:33:08), with VoiceOver pid 21864 running, the probe read **`isVoiceOverEnabled` = false**. `voiceOverOnOffKey` wasn't snapshotted then; it read 1 only after the slot. **VoiceOver may never have been enabled during the walks.** `open -a VoiceOver.app` starts the process, but that apparently doesn't (or didn't yet) turn VoiceOver on. That is consistent with the caption panel not being snapshot-able.
+
+**No announcement was captured, and none is claimed.** **VoiceOver listening is a user-manual exit item** (checklist §5.1).
+
+### 10.4 Restoration (recorded, then diffed against the originals)
+
+| Key | Original (17:04:34) | After the slot (17:37:52) | Final (20:13–20:20, after manual steps) |
+| --- | --- | --- | --- |
+| `com.apple.universalaccess increaseContrast` | 0 (boolean) | 0 (boolean) | 0 (boolean) ✅ |
+| `… reduceMotion` | absent | absent | absent ✅ |
+| `… reduceTransparency` | 0 (boolean) | 0 (boolean) | 0 (boolean) ✅ |
+| `… FontSizeCategory` | absent | absent | absent ✅ |
+| `com.apple.VoiceOver4/default` | absent | absent | absent ✅ |
+| `com.apple.VoiceOverTraining` | absent | **present (empty plist)** | absent ✅. The coordinator authorized deleting it. `defaults delete` reports "Domain not found" for an emptied domain, so the empty 42-byte plist file (contents `{}`) was removed and re-read as absent. |
+| `com.apple.universalaccess voiceOverOnOffKey` | **not snapshotted.** Inferred off: the original probe reported `isVoiceOverEnabled` = false. An absent key and `0` can't be told apart that way. | 1 | **0 (boolean)**, restored with the coordinator's authorization at **20:19:59** (`defaults write com.apple.universalaccess voiceOverOnOffKey -bool false`, writing false rather than deleting the key). Re-read at 20:20:01: `0`, Type is boolean; probe `voiceOver=false`; no VoiceOver process. If the original was an absent key, the residual difference is "absent → 0 (false)", which is functionally off. |
+| VoiceOver process | none | none | none ✅ |
+
+Before the restore, `voiceOverOnOffKey` read 1 and the probe reported `voiceOver=true`. The key was set because the slot stopped VoiceOver with `kill` rather than quitting it through VoiceOver. This is a **slot-script gap**: the script didn't snapshot that key. False is the restored state, matching the original probe.
+
+The slot script is now fixed for reuse:
+- it snapshots `voiceOverOnOffKey`;
+- it quits VoiceOver through AppleScript before falling back to kill;
+- it removes emptied plist files.
+
+No orphan processes remained, and the run folder on the mini was removed after the bundles were fetched.
