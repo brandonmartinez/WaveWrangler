@@ -893,9 +893,9 @@ extension MatrixScenarios {
         case 0:
             let evaluationGate = AsyncGate()
             await evaluationGate.arm()
-            monitor.beforeEvaluation = { await evaluationGate.pass() }
+            monitor.evaluatorTaskDidStart = { await evaluationGate.pass() }
             let refresh = Task { await monitor.refresh([id]) }
-            env.check(await evaluationGate.waitUntilEntered(), "refresh never reached evaluation")
+            env.check(await evaluationGate.waitUntilEntered(), "detached evaluator task never started")
             await monitor.setAvailabilitySetting(.off)
             await evaluationGate.release()
             await refresh.value
@@ -948,6 +948,13 @@ extension MatrixScenarios {
 
 @Suite("WW-006 lifecycle matrix", .serialized)
 struct LifecycleMatrixTests {
+    @Test @MainActor func offSwitchWaitsForEvaluatorTaskEntry() async throws {
+        let env = try CaseEnv(family: .srcToggleRefresh, split: "calibration", index: 0)
+        defer { env.tree.cleanUp() }
+        try await MatrixScenarios.toggleDuringRefresh(env, variant: 0)
+        #expect(env.failures.isEmpty, "\(env.failures)")
+    }
+
     static func runFamily(_ family: MatrixFamily) async -> FamilyTally {
         var tally = FamilyTally(family: family.rawValue)
         for (split, count) in [("calibration", family.calibration), ("holdout", family.holdout)] {

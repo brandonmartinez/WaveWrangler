@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import Observation
 import WWCore
 @testable import WWSources
 
@@ -276,38 +277,20 @@ actor AsyncGate {
     }
 }
 
-/// Records monitor publications in an async stream so tests can await the main-actor event consumer
-/// without relying on a fixed number of scheduler yields.
-final class MonitorObservationProbe: @unchecked Sendable {
-    struct Event: Sendable {
-        var sourceID: SourceID
-        var transfer: TransferState
-    }
-
-    let events: AsyncStream<Event>
-    private let continuation: AsyncStream<Event>.Continuation
-
-    init() {
-        (events, continuation) = AsyncStream<Event>.makeStream()
-    }
-
-    func record(_ sourceID: SourceID, _ observation: AvailabilityObservation) {
-        continuation.yield(Event(sourceID: sourceID, transfer: observation.transfer))
-    }
-}
-
 /// Event-driven correctness wait with a wall-clock liveness guard so a regression fails instead of
 /// hanging the suite.
+@MainActor
 func waitUntilObserved(
-    _ probe: MonitorObservationProbe,
+    _ monitor: SourceAvailabilityMonitor,
     sourceID: SourceID,
     transfer: TransferState,
     limit: Duration = .seconds(30)
 ) async -> Bool {
-    await withTaskGroup(of: Bool.self) { group in
+    let changes = Observations { monitor.observations[sourceID]?.transfer }
+    return await withTaskGroup(of: Bool.self) { group in
         group.addTask {
-            for await event in probe.events where event.sourceID == sourceID {
-                if event.transfer == transfer { return true }
+            for await state in changes {
+                if state == transfer { return true }
             }
             return false
         }
