@@ -326,6 +326,7 @@ extension GroupTimeMap {
                     let boundary = right.groupClockStart
                     guard try left.aligned(boundary) == right.aligned(boundary) else { throw .discontinuityWithinEpoch(id) }
                 }
+                try provenance.checkClockApprovalBinding(epoch: id, segments: segments)
                 if provenance == .timelineReference {
                     guard isReferenceGroup, id == reference.epoch else { throw .misplacedTimelineReference(id) }
                 }
@@ -465,10 +466,10 @@ extension EpochClockMap: Codable {
         switch state {
         case "mapped":
             guard !c.contains(.unsupportedReason) else { throw TimeMapDecodingError.unknownKeys(type: "EpochClockMap.mapped", keys: ["unsupportedReason"]) }
-            self.init(epoch: epoch, mapping: .mapped(
-                segments: try c.decode([AffineClockSegment].self, forKey: .segments),
-                provenance: try c.decode(MapProvenance.self, forKey: .provenance)
-            ))
+            let segments = try c.decode([AffineClockSegment].self, forKey: .segments)
+            let provenance = try c.decode(MapProvenance.self, forKey: .provenance)
+            try provenance.checkClockApprovalBinding(epoch: epoch, segments: segments)
+            self.init(epoch: epoch, mapping: .mapped(segments: segments, provenance: provenance))
         case "unsupported":
             let extra = [CodingKeys.segments, .provenance].filter { c.contains($0) }.map(\.stringValue)
             guard extra.isEmpty else { throw TimeMapDecodingError.unknownKeys(type: "EpochClockMap.unsupported", keys: extra) }

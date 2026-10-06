@@ -47,6 +47,12 @@ occurrences; 11,434 spans; up to 238,955,040,683 frames; |ppm| up to 1,000,000. 
   public approval path is planned to require an opaque, holdout-qualified WW-016 evaluator token. **Residual
   risk:** decoding a persisted `MapProvenance` can still yield `clockApproved` (gated), so WW-020 must decode
   only from its own store;
+- (#177, added in the WW-016 calibration PR) a `clockApproved` epoch whose approval was issued for a different
+  epoch ID or different segments. A `ClockApproval` stores its epoch ID and an exact copy of the approved
+  segments. `GroupTimeMap` compilation and `EpochClockMap` decoding throw `clockApprovalBindingMismatch` on any
+  difference, including an exact re-split of the same function. Editing a map therefore drops its approval.
+  `ClockApprovalBindingTests` covers compile, decode and whole-timeline decode. Four mutants were all killed:
+  compile guard removed, decode guard removed, segment comparison removed, and epoch comparison removed;
 - maps that the arithmetic proof cannot cover (`exactArithmeticEnvelopeExceeded`); newer schema versions, unknown
   keys or kinds, and non-canonical rationals.
 
