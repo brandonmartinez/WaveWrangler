@@ -23,6 +23,9 @@ enum Stratum: String, CaseIterable, Sendable {
     case silent
     /// NEGATIVE: both hear the same pattern repeated every 0.2 - 1.8 s.
     case periodic
+    /// NEGATIVE: the target epoch starts 135 - 200 s into the group clock, beyond the reference plus the search
+    /// (the reference ends at 126 s), and hears activity the reference never recorded.
+    case disconnected
     /// MECHANISM: two sources; recorders i and j share a delayed second source the reference never hears,
     /// so the direct i-j measurement disagrees with the reference path by 20 ms. Proposals must abstain.
     case cycleConflict
@@ -33,13 +36,13 @@ enum Stratum: String, CaseIterable, Sendable {
         switch self {
         case .positive, .positiveRestart, .positiveThreeGroup: .clockTruthWithinGates
         case .constantDelay, .variableDelay: .acousticOnly
-        case .discontinuity, .unrelated, .silent, .periodic, .cycleConflict: .noProposal
+        case .discontinuity, .unrelated, .silent, .periodic, .disconnected, .cycleConflict: .noProposal
         }
     }
 
     var isNegative: Bool {
         switch self {
-        case .constantDelay, .variableDelay, .discontinuity, .unrelated, .silent, .periodic: true
+        case .constantDelay, .variableDelay, .discontinuity, .unrelated, .silent, .periodic, .disconnected: true
         default: false
         }
     }
@@ -61,21 +64,34 @@ struct CalibrationCase: Sendable {
 }
 
 enum CalibrationPlan {
-    /// Calibration master seed ("WW16CA11B" = WW-016 calibration). The holdout master seed is recorded in the
-    /// freeze (docs/m2/fixtures/m2-freeze-estimator.json) and is never used by this PR's tests.
+    /// Calibration master seed ("WW16CA11B" = WW-016 calibration).
     static let calibrationMasterSeed: UInt64 = 0x5757_1600_CA11_B000
     static let counts: [(Stratum, Int)] = [
         (.positive, 12), (.positiveRestart, 2), (.positiveThreeGroup, 2),
         (.constantDelay, 3), (.variableDelay, 3), (.discontinuity, 3), (.unrelated, 3), (.silent, 2), (.periodic, 3),
-        (.cycleConflict, 2),
+        (.disconnected, 2), (.cycleConflict, 2),
+    ]
+    /// FROZEN by m2-freeze-estimator (docs/m2/fixtures/m2-freeze-estimator.json): the holdout master seed
+    /// ("WW16401D" = WW-016 holdout) and counts. Only `HoldoutTests` uses them, and only when explicitly
+    /// enabled; no holdout case is rendered or estimated by calibration, unit or CI runs.
+    static let holdoutMasterSeed: UInt64 = 0x5757_1600_401D_0000
+    static let holdoutCounts: [(Stratum, Int)] = [
+        (.positive, 40), (.positiveRestart, 10), (.positiveThreeGroup, 10),
+        (.constantDelay, 10), (.variableDelay, 10), (.discontinuity, 10), (.unrelated, 10), (.silent, 10), (.periodic, 10),
+        (.disconnected, 10), (.cycleConflict, 10),
     ]
     static let referenceDuration = 126.0
     static let targetDuration = 120.0
     static let sceneRange: ClosedRange<Double> = -5...135
     static let searchDeviation = 2.0
 
-    static func cases(master: UInt64 = calibrationMasterSeed) -> [CalibrationCase] {
+    static func cases(master: UInt64 = calibrationMasterSeed, counts: [(Stratum, Int)] = counts) -> [CalibrationCase] {
         counts.flatMap { stratum, count in (0..<count).map { make(stratum, index: $0, master: master) } }
+    }
+
+    /// Case seeds only (nothing rendered), to prove the calibration and holdout sets are disjoint.
+    static func seeds(master: UInt64, counts: [(Stratum, Int)]) -> [UInt64] {
+        counts.flatMap { stratum, count in (0..<count).map { SplitMix64.caseSeed(master: master, stratum: stratum.rawValue, index: $0) } }
     }
 
     static func make(_ stratum: Stratum, index: Int, master: UInt64) -> CalibrationCase {
@@ -133,6 +149,12 @@ enum CalibrationPlan {
         case .periodic:
             let t = truth(&rng)
             targets = [TargetEpoch(groupIndex: 1, recipe: target(&rng, truth: t, hearings: [Hearing(scene: scene, gain: rng.uniform(0.5...1.5), delay: .none)]), overlapSeconds: overlap)]
+        case .disconnected:
+            let t = truth(&rng)
+            let start = rng.uniform(135...200).rounded(.down)
+            // The target hears a later stretch of activity the reference never recorded.
+            let later = Scene.random(&rng, range: (start - 5)...(start + targetDuration + 5))
+            targets = [TargetEpoch(groupIndex: 1, recipe: target(&rng, truth: t, hearings: [Hearing(scene: later, gain: rng.uniform(0.5...1.5), delay: smallDelay(&rng))], start: start), overlapSeconds: overlap)]
         case .cycleConflict:
             let second = Scene.random(&rng, range: sceneRange)
             for (group, secondDelay) in [(1, 0.0), (2, 0.020)] {

@@ -17,9 +17,9 @@ struct CalibrationTests {
         var worstPerProposal: [Double] = []
     }
 
-    static func runAll() async throws -> [ScoredEpoch] {
+    static func runAll(_ cases: [CalibrationCase] = CalibrationPlan.cases()) async throws -> [ScoredEpoch] {
         try await withThrowingTaskGroup(of: [ScoredEpoch].self) { group in
-            for c in CalibrationPlan.cases() { group.addTask { try CalibrationRunner.run(c) } }
+            for c in cases { group.addTask { try CalibrationRunner.run(c) } }
             var all: [ScoredEpoch] = []
             for try await scored in group { all += scored }
             return all.sorted { ($0.stratum.rawValue, $0.caseIndex) < ($1.stratum.rawValue, $1.caseIndex) }
@@ -62,53 +62,44 @@ struct CalibrationTests {
         return lines.joined(separator: "\n")
     }
 
+    /// One per-epoch result line (shared with the holdout report).
+    static func line(_ s: ScoredEpoch) -> String {
+        let w = s.estimate
+        let outcome: String
+        switch w.outcome {
+        case .acousticConsistentProposal(let p): outcome = String(format: "proposal ppm=%.3f clockMax=%.4fms acousticP95=%.4fms", p.ppm, s.clockResidualsMs.max() ?? -1, p.acousticResidualP95Milliseconds)
+        case .abstained(let a): outcome = "abstained \(a.reason.rawValue): \(a.detail)"
+        }
+        return "\(s.stratum.rawValue)#\(s.caseIndex) truth ppm=\(String(format: "%.3f", s.truth.ppm)) eligible=\(w.coverage.eligibleCount)/\(w.coverage.windowCount) span=\(String(format: "%.3f", w.coverage.eligibleSpanFraction)) peak=\(String(format: "%.3f", w.scores.medianPeakScore)) flags=\(w.flags.map(\.rawValue).sorted()) cycle=\(w.cycle) -> \(outcome)"
+    }
+
     @Test func calibrationAgainstClockTruth() async throws {
         let scored = try await Self.runAll()
         let summaries = Self.summarise(scored)
         print("WW-016 calibration (master seed 0x\(String(CalibrationPlan.calibrationMasterSeed, radix: 16)), estimator \(AcousticEstimator.identifier))\n" + Self.table(summaries))
-        for s in scored {
-            let w = s.estimate
-            let outcome: String
-            switch w.outcome {
-            case .acousticConsistentProposal(let p): outcome = String(format: "proposal ppm=%.3f clockMax=%.4fms acousticP95=%.4fms", p.ppm, s.clockResidualsMs.max() ?? -1, p.acousticResidualP95Milliseconds)
-            case .abstained(let a): outcome = "abstained \(a.reason.rawValue): \(a.detail)"
-            }
-            print("  \(s.stratum.rawValue)#\(s.caseIndex) truth ppm=\(String(format: "%.3f", s.truth.ppm)) eligible=\(w.coverage.eligibleCount)/\(w.coverage.windowCount) span=\(String(format: "%.3f", w.coverage.eligibleSpanFraction)) peak=\(String(format: "%.3f", w.scores.medianPeakScore)) flags=\(w.flags.map(\.rawValue).sorted()) cycle=\(w.cycle) -> \(outcome)")
-        }
+        for s in scored { print("  " + Self.line(s)) }
 
         #expect(Set(summaries.keys) == Set(Stratum.allCases))
-        // 1. No epoch map anywhere is clock-approved: the estimator has no path to one.
+        // The frozen gate definition (shared with the holdout): zero false accepts, every positive proposal meets
+        // the window gates, pooled positive clock-truth residuals meet the clock gates.
+        let gate = GateEvaluation(scored)
+        print(gate.summary)
+        #expect(gate.passed, "\(gate.failures)")
+        #expect(gate.falseAccepts.isEmpty)
         #expect(scored.allSatisfy { $0.estimate.epochClockMap.provenanceKind != .clockApproved })
-        // 2. Zero proposals on non-acoustic negatives and on the cycle-conflict mechanism stratum.
-        for s in scored where s.stratum.expectation == .noProposal {
-            if case .acousticConsistentProposal = s.estimate.outcome { Issue.record("false accept: proposal on \(s.stratum.rawValue)#\(s.caseIndex)") }
-        }
-        // 3. Positives: every epoch proposes, every proposal meets the window gates, and the pooled clock-truth
-        //    residuals meet the provisional clock gates.
-        var positiveResiduals: [Double] = []
-        for s in scored where s.stratum.expectation == .clockTruthWithinGates {
-            guard case .acousticConsistentProposal = s.estimate.outcome else { Issue.record("positive abstained: \(s.stratum.rawValue)#\(s.caseIndex)"); continue }
-            #expect(s.estimate.coverage.eligibleCount >= ProvisionalClockGates.minimumWindows)
-            #expect(s.estimate.coverage.eligibleSpanFraction >= ProvisionalClockGates.minimumOverlapSpanFraction)
-            #expect(s.estimate.coverage.eligibleWindowFraction >= ProvisionalClockGates.minimumEligibleWindowFraction)
-            positiveResiduals += s.clockResidualsMs
-        }
-        #expect(!positiveResiduals.isEmpty)
-        #expect((Percentile.nearestRank(positiveResiduals, 0.95) ?? .infinity) <= ProvisionalClockGates.maximumResidualP95Milliseconds)
-        #expect((positiveResiduals.max() ?? .infinity) <= ProvisionalClockGates.maximumResidualMaxMilliseconds)
-        // 4. Acoustic-delay negatives: whatever is emitted is only an acoustic proposal, and the clock error of
-        //    every such proposal is outside the clock gates -- which is exactly why none may be promoted.
-        for s in scored where s.stratum.expectation == .acousticOnly {
-            if case .acousticConsistentProposal = s.estimate.outcome {
-                #expect(s.estimate.epochClockMap.provenanceKind == .acousticConsistentProposal)
-                #expect((s.clockResidualsMs.max() ?? 0) > ProvisionalClockGates.maximumResidualMaxMilliseconds)
-            }
-        }
-        // 5. Restarts are flagged and never bridged; cycles are measured in three-group scenes.
+        // Calibration-only expectations (not gates): every acoustic-delay proposal is outside the clock gates --
+        // which is exactly why none may ever be promoted.
+        #expect(gate.positiveProposals == gate.positiveEpochs)
+        #expect(gate.acousticDelayWithinClockGates.isEmpty)
+        #expect(gate.acousticDelayProposals > 0)
+        // Restarts are flagged and never bridged; cycles are measured in three-group scenes.
         for s in scored where s.stratum == .positiveRestart { #expect(s.estimate.flags.contains(.restartedEpoch)) }
         for s in scored where s.stratum == .positiveThreeGroup { #expect(s.estimate.cycle != .unavailable) }
         for s in scored where s.stratum == .cycleConflict {
             if case .abstained(let a) = s.estimate.outcome { #expect(a.reason == .cycleInconsistent) }
+        }
+        for s in scored where s.stratum == .disconnected {
+            if case .abstained(let a) = s.estimate.outcome { #expect(a.reason == .disconnected) }
         }
     }
 }
