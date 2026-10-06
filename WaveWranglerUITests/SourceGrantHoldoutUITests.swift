@@ -371,11 +371,12 @@ final class SourceGrantHoldoutUITests: XCTestCase {
             failures.append("open panel shown (no panel host within \(Int(Self.openPanelTimeout)) s; saw service \(service.state.rawValue), app windows \(windows), sheets \(app.sheets.count), dialogs \(app.dialogs.count))")
             return
         }
-        // Keep at least the frozen harness's 2 s settle before typing, so a warm panel is driven as before.
-        let settle = 2.0 - Date().timeIntervalSince(start)
-        if settle > 0 { Thread.sleep(forTimeInterval: settle) }
+        let detectedAt = Date()
+        // The frozen harness's 2 s settle, measured from detection, so a cold panel gets the same settle as a warm
+        // one before ⇧⌘G (a panel that has only just appeared may not take keys yet).
+        Thread.sleep(forTimeInterval: 2.0)
         let target: XCUIApplication = host == "openAndSavePanelService" ? service : app
-        Acceptance.record(self, "REF-020 panel host: \(host) after \(String(format: "%.1f", Date().timeIntervalSince(start))) s")
+        Acceptance.record(self, "REF-020 panel host: \(host), detected after \(String(format: "%.1f", detectedAt.timeIntervalSince(start))) s")
         target.typeKey("g", modifierFlags: [.command, .shift])
         Thread.sleep(forTimeInterval: 1.0)
         target.typeText(path)

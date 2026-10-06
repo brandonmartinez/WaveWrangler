@@ -165,12 +165,12 @@
           "evidence": "https://github.com/brandonmartinez/WaveWrangler/issues/151"
         }
       ],
-      "harnessChange": "SourceGrantHoldoutUITests.choosePath: the fixed 2 s sleep and single check are replaced by a bounded wait (20 s) for any panel host: the panel service (com.apple.appkit.xpc.openAndSavePanelService) reported running, an app window with identifier 'open-panel' (what hosted the cold panel in the m1-freeze-5 cycle 1, per its xcresult), an app sheet or an app dialog. The 2 s settle before typing is kept, so a warm panel is driven as before. A miss records what it saw (service state, app windows, sheet and dialog counts). No assertion is loosened: source SHA-256/mtime checks, location checks and written-items checks are unchanged.",
-      "seeds": "Fresh holdout seeds: the holdout uses seed split 'holdout-f6' (seed = sha256('ww-m1-fixture|v1|M1-REF-020|holdout-f6|' + caseIndex), first 8 bytes big-endian), so the m1-freeze-1 and m1-freeze-5 holdout cases (split 'holdout') are not reused. Calibration seeds (split 'calibration') are unchanged. The run is still selected with TEST_RUNNER_WW_FIXTURE_SPLIT=holdout; the harness maps it to the seed split.",
+      "harnessChange": "SourceGrantHoldoutUITests.choosePath: the fixed 2 s sleep and single check are replaced by a bounded wait (20 s) for any panel host: the panel service (com.apple.appkit.xpc.openAndSavePanelService) reported running, an app window with identifier 'open-panel' (what hosted the cold panel in the m1-freeze-5 cycle 1, per its xcresult), an app sheet or an app dialog. After detection the harness waits the frozen 2 s settle (measured from detection, not from the start of the wait) before typing, so a cold panel gets the same settle as a warm one and a warm panel is driven as before. A miss records what it saw (service state, app windows, sheet and dialog counts). No assertion is loosened: source SHA-256/mtime checks, location checks and written-items checks are unchanged.",
+      "seeds": "Fresh holdout seeds (the M1-REF-020 generator's seedDerivation and seedSplit in this registry): the holdout uses seed split 'holdout-f6' (seed = sha256('ww-m1-fixture|v1|M1-REF-020|holdout-f6|' + caseIndex), first 8 bytes big-endian), so the m1-freeze-1 and m1-freeze-5 holdout cases (split 'holdout') are not reused. Calibration seeds (split 'calibration') are unchanged. The run is still selected with TEST_RUNNER_WW_FIXTURE_SPLIT=holdout; the harness maps it to the seed split.",
       "harness": {
         "test": "WaveWranglerUITests/SourceGrantHoldoutUITests.swift testGrantRelaunchRegrantRelink, with TEST_RUNNER_WW_FIXTURE_SPLIT=holdout, TEST_RUNNER_WW_HOLDOUT_SCENARIOS=20 and WW_PROBE set. The harness fails a holdout run whose count isn't exactly 20, and fails if fewer than 20 scenarios were executed.",
         "pinnedAtMerge": {
-          "WaveWranglerUITests/SourceGrantHoldoutUITests.swift": "8223e4083ed13d9c481d13016ac9b6afe661e190",
+          "WaveWranglerUITests/SourceGrantHoldoutUITests.swift": "c863b305c947ecc1b45d11d3ba9a7d663cd86667",
           "WaveWranglerUITests/AcceptanceSupport.swift": "b2d87c3e843a6b3d6c0d267acd67319439021aa1",
           "WaveWranglerUITests/UITestIsolation.swift": "20c7ae150abaa2084a0896952f1574790c30a2ba"
         },
@@ -2261,8 +2261,12 @@
       "automated": true,
       "generator": {
         "kind": "synthetic-deterministic",
-        "seedDerivation": "sha256(\"ww-m1-fixture|v1|\" + fixtureId + \"|\" + split + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64",
-        "recipe": "Launch the sandboxed ad-hoc-signed app; select synthetic source files, a synthetic show document and a library folder via NSOpenPanel/NSSavePanel; quit; relaunch; resolve bookmarks; reopen show from library and Save; attempt source access after revocation/move to drive regrant."
+        "seedDerivation": "sha256(\"ww-m1-fixture|v1|M1-REF-020|\" + seedSplit[split] + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64, with seedSplit = {\"calibration\": \"calibration\", \"holdout\": \"holdout-f6\"} (m1-freeze-6); the m1-freeze-1 and m1-freeze-5 holdouts used split \"holdout\" directly",
+        "recipe": "Launch the sandboxed ad-hoc-signed app; select synthetic source files, a synthetic show document and a library folder via NSOpenPanel/NSSavePanel; quit; relaunch; resolve bookmarks; reopen show from library and Save; attempt source access after revocation/move to drive regrant.",
+        "seedSplit": {
+          "calibration": "calibration",
+          "holdout": "holdout-f6"
+        }
       },
       "expectedTruth": "Panel grant -> bookmark of the correct mode (source read-only; document and library folder read-write) -> relaunch resolve -> start/stop balanced; reopen+Save succeeds; regrant path works; zero source writes.",
       "permission": {

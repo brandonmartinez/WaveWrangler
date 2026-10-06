@@ -487,6 +487,10 @@ FREEZE5 = {
   "result": "FAILED (retained, not re-labelled): ran once 2026-10-06 09:09-09:23 EDT at cdb56bd6e4e4b2bc6d4f1f19924dc5f7f4220db1 (tree 04fd782b31b0f0cc171fd02748b46fc6d72dc9bd; pinned blobs matched) on the Mac mini; 20/20 executed, 18 pass, 2 fail: cycle 1 grant and cycle 1 relaunch. Cause: the harness checked for the sandboxed open panel once after a fixed 2 s sleep and missed the cold library-folder panel (shown as an app window 'open-panel'; the screen recording shows it on screen), so the folder was never chosen and the relaunch location check followed. No product failure observed; zero source writes in every scenario. Reported on #151.",
 }
 FROZEN6_IDS = ("M1-REF-020",)
+# M1-REF-020's seed split from m1-freeze-6: fresh holdout seeds; calibration unchanged. Reproduces the freeze-6 cases
+# from the registry alone (the generic SEED with split "holdout" gives the m1-freeze-1/-5 holdout cases).
+REF020_SEED_SPLIT = {"calibration": "calibration", "holdout": "holdout-f6"}
+REF020_SEED = "sha256(\"ww-m1-fixture|v1|M1-REF-020|\" + seedSplit[split] + \"|\" + caseIndex) -> first 8 bytes big-endian UInt64, with seedSplit = {\"calibration\": \"calibration\", \"holdout\": \"holdout-f6\"} (m1-freeze-6); the m1-freeze-1 and m1-freeze-5 holdouts used split \"holdout\" directly"
 FROZEN6_STATUS = "frozen m1-freeze-6 (2026-10-06; definition unchanged from m1-freeze-1; harness open-panel wait and fresh holdout seeds); retained FAILED holdouts: m1-freeze-1 short 16/20 executed at 08f62ee (12 pass, 4 fail, 4 not executed; harness defects; PR #111) and m1-freeze-5 18/20 at cdb56bd (2 fail, cycle 1 grant and relaunch; harness open-panel detection race; 0 product failures; #151); m1-freeze-6 holdout not yet reported in this registry"
 FREEZE6 = {
   "freezeID": "m1-freeze-6",
@@ -500,12 +504,12 @@ FREEZE6 = {
     {"freeze": "m1-freeze-1", "result": "FAILED (short; retained): 16/20 executed at 08f62ee; grant 4/4, relaunch 4/4, regrant 2/4, relink 2/4 = 12 pass, 4 fail; 4 not executed.", "evidence": "https://github.com/brandonmartinez/WaveWrangler/pull/111"},
     {"freeze": "m1-freeze-5", "result": "FAILED (retained): 20/20 executed at cdb56bd; grant 4/5, relaunch 4/5, regrant 5/5, relink 5/5 = 18 pass, 2 fail (cycle 1 grant and relaunch: harness open-panel detection race); 0 product failures; zero source writes.", "evidence": "https://github.com/brandonmartinez/WaveWrangler/issues/151"},
   ],
-  "harnessChange": "SourceGrantHoldoutUITests.choosePath: the fixed 2 s sleep and single check are replaced by a bounded wait (20 s) for any panel host: the panel service (com.apple.appkit.xpc.openAndSavePanelService) reported running, an app window with identifier 'open-panel' (what hosted the cold panel in the m1-freeze-5 cycle 1, per its xcresult), an app sheet or an app dialog. The 2 s settle before typing is kept, so a warm panel is driven as before. A miss records what it saw (service state, app windows, sheet and dialog counts). No assertion is loosened: source SHA-256/mtime checks, location checks and written-items checks are unchanged.",
-  "seeds": "Fresh holdout seeds: the holdout uses seed split 'holdout-f6' (seed = sha256('ww-m1-fixture|v1|M1-REF-020|holdout-f6|' + caseIndex), first 8 bytes big-endian), so the m1-freeze-1 and m1-freeze-5 holdout cases (split 'holdout') are not reused. Calibration seeds (split 'calibration') are unchanged. The run is still selected with TEST_RUNNER_WW_FIXTURE_SPLIT=holdout; the harness maps it to the seed split.",
+  "harnessChange": "SourceGrantHoldoutUITests.choosePath: the fixed 2 s sleep and single check are replaced by a bounded wait (20 s) for any panel host: the panel service (com.apple.appkit.xpc.openAndSavePanelService) reported running, an app window with identifier 'open-panel' (what hosted the cold panel in the m1-freeze-5 cycle 1, per its xcresult), an app sheet or an app dialog. After detection the harness waits the frozen 2 s settle (measured from detection, not from the start of the wait) before typing, so a cold panel gets the same settle as a warm one and a warm panel is driven as before. A miss records what it saw (service state, app windows, sheet and dialog counts). No assertion is loosened: source SHA-256/mtime checks, location checks and written-items checks are unchanged.",
+  "seeds": "Fresh holdout seeds (the M1-REF-020 generator's seedDerivation and seedSplit in this registry): the holdout uses seed split 'holdout-f6' (seed = sha256('ww-m1-fixture|v1|M1-REF-020|holdout-f6|' + caseIndex), first 8 bytes big-endian), so the m1-freeze-1 and m1-freeze-5 holdout cases (split 'holdout') are not reused. Calibration seeds (split 'calibration') are unchanged. The run is still selected with TEST_RUNNER_WW_FIXTURE_SPLIT=holdout; the harness maps it to the seed split.",
   "harness": {
     "test": "WaveWranglerUITests/SourceGrantHoldoutUITests.swift testGrantRelaunchRegrantRelink, with TEST_RUNNER_WW_FIXTURE_SPLIT=holdout, TEST_RUNNER_WW_HOLDOUT_SCENARIOS=20 and WW_PROBE set. The harness fails a holdout run whose count isn't exactly 20, and fails if fewer than 20 scenarios were executed.",
     "pinnedAtMerge": {
-      "WaveWranglerUITests/SourceGrantHoldoutUITests.swift": "8223e4083ed13d9c481d13016ac9b6afe661e190",
+      "WaveWranglerUITests/SourceGrantHoldoutUITests.swift": "c863b305c947ecc1b45d11d3ba9a7d663cd86667",
       "WaveWranglerUITests/AcceptanceSupport.swift": "b2d87c3e843a6b3d6c0d267acd67319439021aa1",
       "WaveWranglerUITests/UITestIsolation.swift": "20c7ae150abaa2084a0896952f1574790c30a2ba",
     },
@@ -524,6 +528,8 @@ def build():
     for f in F:
         if f["id"] in FROZEN6_IDS and f["evidenceStatus"] == "not-yet-executed":
             f["evidenceStatus"] = FROZEN6_STATUS
+            f["generator"]["seedDerivation"] = REF020_SEED
+            f["generator"]["seedSplit"] = REF020_SEED_SPLIT
         elif f["id"] in FROZEN5_IDS and f["evidenceStatus"] == "not-yet-executed":
             f["evidenceStatus"] = FROZEN5_STATUS
         elif f["id"] in FROZEN4_IDS and f["evidenceStatus"] == "not-yet-executed":
