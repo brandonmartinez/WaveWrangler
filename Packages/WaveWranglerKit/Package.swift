@@ -51,6 +51,9 @@ let package = Package(
         .testTarget(name: "WWDerivedTests", dependencies: ["WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWCore"]),
         .testTarget(name: "WWAlignEstimateTests", dependencies: ["WWAlignEstimate", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWRenderTests", dependencies: ["WWRender", "WWTimeMap", "WWCore"]),
+        // Headless validation on a user-approved local episode copy. Skipped unless WW_LOCAL_EPISODE_DIR is
+        // set at run time (never on CI); see docs/m2/evidence/m2-local-episode-validation.md.
+        .testTarget(name: "WWLocalEpisodeValidationTests", dependencies: ["WWDecode", "WWSources", "WWAlignEstimate", "WWRender", "WWTimeMap", "WWCore"]),
     ],
     swiftLanguageModes: [.v6]
 )
