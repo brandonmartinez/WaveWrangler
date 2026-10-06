@@ -20,6 +20,9 @@ let package = Package(
         .library(name: "WWDecode", targets: ["WWDecode"]),
         // Versioned-map API, consent-gated content digest and the cancellable derived-asset/job layer (WW-020).
         .library(name: "WWDerived", targets: ["WWDerived"]),
+        // Pure acoustic offset/drift PROPOSAL estimator with abstention (WW-016). Consumes decoded sample
+        // buffers; no I/O, no decoding, never approves a clock.
+        .library(name: "WWAlignEstimate", targets: ["WWAlignEstimate"]),
         // Headless persistence probe for multi-process and observed-provider trials (synthetic documents only).
         .executable(name: "wwpersist-probe", targets: ["WWPersistenceProbe"]),
     ],
@@ -32,6 +35,7 @@ let package = Package(
         .target(name: "WWTimeMap", dependencies: ["WWCore"]),
         .target(name: "WWDecode", dependencies: ["WWCore", "WWSources"]),
         .target(name: "WWDerived", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWPersistence"]),
+        .target(name: "WWAlignEstimate", dependencies: ["WWCore", "WWTimeMap"]),
         .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
         .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore", "WWPersistenceProbe", "WWOrganizer", "WWTimeMap"]),
@@ -41,6 +45,7 @@ let package = Package(
         .testTarget(name: "WWTimeMapTests", dependencies: ["WWTimeMap", "WWCore"]),
         .testTarget(name: "WWDecodeTests", dependencies: ["WWDecode", "WWSources", "WWCore"]),
         .testTarget(name: "WWDerivedTests", dependencies: ["WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWCore"]),
+        .testTarget(name: "WWAlignEstimateTests", dependencies: ["WWAlignEstimate", "WWTimeMap", "WWCore"]),
     ],
     swiftLanguageModes: [.v6]
 )

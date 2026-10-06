@@ -14,6 +14,7 @@ struct PurityTests {
         "ExtAudioFile", "QLThumbnail", "QuickLook", "CryptoKit", "SHA256", "CC_SHA", "Insecure.",
         "bookmarkData(", "startAccessingSecurityScopedResource", "FileManager", ".resourceValues(",
         "URL(", "Date(", "DispatchQueue", "Task {", "Task.detached", "@MainActor",
+        "contentsOf", "contentsOfFile", "URLSession", "NSData", "Process(", "Bundle",
     ]
 
     /// Map arithmetic files: no floating point at all (Double is allowed only for measurement values and
@@ -42,7 +43,13 @@ struct PurityTests {
     }
 
     @Test func scannerDetectsViolations() {
-        #expect(Self.violations(in: "let d = try Data(contentsOf: url)", fileName: "X.swift") == ["X.swift: Data(contentsOf"])
+        #expect(Self.violations(in: "let d = try Data(contentsOf: url)", fileName: "X.swift") == ["X.swift: Data(contentsOf", "X.swift: contentsOf"])
+        #expect(Self.violations(in: "let s = try String(contentsOf: url, encoding: .utf8)", fileName: "X.swift") == ["X.swift: contentsOf"])
+        #expect(Self.violations(in: "let s = try String(contentsOfFile: path)", fileName: "X.swift") == ["X.swift: contentsOf", "X.swift: contentsOfFile"])
+        #expect(Self.violations(in: "let t = URLSession.shared.dataTask(with: request)", fileName: "X.swift") == ["X.swift: URLSession"])
+        #expect(Self.violations(in: "let d = NSData(bytes: p, length: n)", fileName: "X.swift") == ["X.swift: NSData"])
+        #expect(Self.violations(in: "let p = Process()", fileName: "X.swift") == ["X.swift: Process("])
+        #expect(Self.violations(in: "let b = Bundle.main", fileName: "X.swift") == ["X.swift: Bundle"])
         #expect(Self.violations(in: "import AVFoundation", fileName: "X.swift") == ["X.swift: import AVFoundation"])
         #expect(Self.violations(in: "let x: Double = 1", fileName: "GroupTimeMap.swift") == ["GroupTimeMap.swift: Double"])
         #expect(Self.violations(in: "// FileHandle in a comment\nlet a = 1 // Double here", fileName: "GroupTimeMap.swift").isEmpty)

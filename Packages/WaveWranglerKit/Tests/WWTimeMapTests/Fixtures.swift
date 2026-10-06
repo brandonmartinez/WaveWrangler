@@ -45,8 +45,28 @@ func seg(_ u0: ExactRational, _ u1: ExactRational, _ a: ExactRational, _ b: Exac
 
 let manualProvenance = MapProvenance.manual(ManualCorrection(basis: .numericEntry))
 
+/// Placeholder binding for approvals built before their epoch exists. ``mapped(_:_:_:)`` and the synthetic
+/// generator re-issue such approvals for the real epoch and segments (``bound(_:to:_:)``); the binding
+/// tests construct mismatched `EpochClockMap`s directly instead.
+let placeholderApprovalEpoch = RecordingEpochID()
+let placeholderApprovalSegments = [seg(q(0), q(1), .one, .zero)]
+
+extension ClockApproval {
+    /// Test convenience: an approval bound to the placeholder epoch and segments.
+    init(evaluator: String, reference: IndependentClockReference, measurements: ClockGateMeasurements) throws(TimeMapError) {
+        try self.init(evaluator: evaluator, reference: reference, measurements: measurements, epoch: placeholderApprovalEpoch, segments: placeholderApprovalSegments)
+    }
+}
+
+/// Re-issues a clock approval for exactly `segments` of `epoch`; other provenance is returned unchanged.
+func bound(_ provenance: MapProvenance, to epoch: RecordingEpochID, _ segments: [AffineClockSegment]) -> MapProvenance {
+    guard case .clockApproved(let a) = provenance else { return provenance }
+    return .clockApproved(try! ClockApproval(evaluator: a.evaluator, reference: a.reference, measurements: a.measurements, epoch: epoch, segments: segments))
+}
+
+/// A mapped epoch. A clock approval is re-bound to this epoch and these segments.
 func mapped(_ epoch: RecordingEpochID, _ segments: [AffineClockSegment], _ provenance: MapProvenance = manualProvenance) -> EpochClockMap {
-    EpochClockMap(epoch: epoch, mapping: .mapped(segments: segments, provenance: provenance))
+    EpochClockMap(epoch: epoch, mapping: .mapped(segments: segments, provenance: bound(provenance, to: epoch, segments)))
 }
 
 func span(_ start: Int64, _ end: Int64, _ epoch: RecordingEpochID, e: ExactRational = .zero) -> EpochSpan {

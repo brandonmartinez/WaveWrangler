@@ -153,14 +153,16 @@ struct CodingTests {
 
     @Test func invalidContentIsRefusedOnDecode() throws {
         let map = try richTimeline()
+        // groups[3] is a bare acoustic proposal, so segment edits reach validation rather than the
+        // clock-approval binding check (which ClockApprovalBindingTests covers).
         func mutateFirstSegment(_ key: String, _ value: Any) throws -> Data {
             var root = try object(json(map))
             var groups = root["groups"] as! [[String: Any]]
-            var epochs = groups[1]["epochs"] as! [[String: Any]]
+            var epochs = groups[3]["epochs"] as! [[String: Any]]
             var segments = epochs[0]["segments"] as! [[String: Any]]
             segments[1][key] = value
             epochs[0]["segments"] = segments
-            groups[1]["epochs"] = epochs
+            groups[3]["epochs"] = epochs
             root["groups"] = groups
             return try data(root)
         }
