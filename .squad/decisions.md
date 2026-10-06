@@ -67,7 +67,7 @@
 
 **Not granted in M1:** second device; OneDrive, Dropbox and other providers; real full-volume disk-image tests; the Full Keyboard Access toggle; colour filters; network disconnection. The manual Full Keyboard Access run is a user-only post-exit verification, never inferred from automated key events; any failure reopens WW-007 (#8) as P0.
 
-**Issue closure at M1 exit (coordinator, 2026-10-05):** close an issue only when every acceptance criterion is evidenced within granted consent. A criterion blocked solely by ungranted consent keeps its issue OPEN with a "Blocked — needs user" checklist; it is not transferred while the user can't approve a transfer. If any required issue stays open, the M1 milestone stays open. A narrowed WW-049 cloud claim (iCloud Drive observed on this one Mac plus local-process and simulated-provider multi-writer evidence) is PROPOSED for the user's approval, not decided.
+**Issue closure at M1 exit (coordinator, 2026-10-05):** close an issue only when every acceptance criterion is evidenced within granted consent. A criterion blocked solely by ungranted consent keeps its issue OPEN with a "Blocked — needs user" checklist; it is not transferred while the user can't approve a transfer. If any required issue stays open, the M1 milestone stays open. A narrowed WW-049 cloud claim (iCloud Drive observed on this one Mac plus local-process and simulated-provider multi-writer evidence) is PROPOSED for the user's approval, not decided. *Superseded by the user's 23:10 and 23:11 decisions below.*
 
 **Scope rulings at exit:** Unimplemented M1 UI items (#68–#76, #103) are P2 M2 follow-ups unless the acceptance pass shows a core M1 task can't be completed without one (then P0 M1). REF-019's "primary change marks dependents stale" clause is not evidenced and not claimed (no dependent derived work exists in schema v1); the registry is not revised, and stale-marking is required in M2 by WW-020/WW-022 (Lead).
 
@@ -84,6 +84,20 @@
 - M1-DUR-025 is re-frozen as m1-freeze-5. Provider settle is an observation, with a 1,800 s per-case cap. A case that hits the cap is providerUnsettled (inconclusive), refilled from a frozen reserve; a cell is inconclusive above 10% (or above 25% counting setup exclusions).
 - Hard gates are unchanged: no lost edits; conflicts surfaced; L4 → Combine with backups; one current revision at settle; zero source writes; recovery; honest status while unsettled.
 - The m1-freeze-2 (95/100) and m1-freeze-4 (99/100) failures stay recorded as failed.
+- *Superseded at 23:10 (below): m1-freeze-5 (PR #145) was closed unmerged and never run.*
+
+**Live iCloud deferral (user scope decision, 2026-10-05 23:10, relayed verbatim):** "let's move finishing the icloud sync discrepancy to after M4. That's a nice feature, but for initial MVP it's overkill. Unless it's blocking, don't remove any protections that are currently in place, but let's disable the tests for them."
+- A relayed follow-up narrows it: disable only the two-Mac / live-iCloud tests, and keep the simulated unit tests.
+- Live multi-device qualification moves to #146 (Future milestone, post-M4). M1-DUR-025 is marked user-deferred in the WW-003 registry, with its failed results retained (PR #148). The WW-049 (#44) live part transfers to #146.
+- #117 (P0) closes on its merged fix (#118, #119, #133), the simulated conflict tests and the m1-freeze-4 library cell (30/30).
+- No protection is removed. Conflict detection, L4 → Combine with backup-before-resolve, the #119 notice and honest status ship. M2 must not re-enable the live tests unless the user decides.
+
+**M1 closeout directive (user, 2026-10-05 23:11, relayed verbatim):** "We've been running for a full day now ... I'd like to get M1 wrapped up soon if possible so we can get through the next three milestones."
+- This supersedes the coordinator's earlier "no transfer while the user is away" closure rule.
+- Required issues blocked only by user-manual items close with proof and an explicit transfer to #147 (M1 user-manual verification items; M2 milestone for visibility, not engineering work).
+- Only a genuine data-loss, source-write, privacy, essential-accessibility or core-workflow P0 blocks exit. Essential-accessibility failures are never transferred.
+- M1 exit still requires the full-suite exit gate below on the final main SHA.
+- Pace lessons carried into M2: freeze once and don't re-run holdouts for provider or environment variance; classify non-P0 findings as follow-ups immediately; reviewers never run UI tests; one GUI run per host; a kickoff preflight checklist.
 
 **Full-suite-on-merge regression policy (user-directed, 2026-10-05; applies to the rest of M1 and to M2+):**
 - **After each coalesced merge batch to main:**
@@ -97,4 +111,4 @@
 - **Milestone exit gate:** the final main SHA passes the full UI suite on the Mac mini and the full scripts/test.sh with zero unexplained failures, cited in the exit record. Flaky failures are fixed or tracked with an issue, never silently re-run.
 - **Rationale:** hosted CI is macOS 26 with no XCUITests; the claimed hosts are macOS 27.
 
-**Process deviations disclosed:** M1 briefly ran 5–6 writer sessions during short review-fix rounds (budget 4) and had windows with two concurrent read-only reviewer agents (budget 1); `gh pr create` was used as a fallback for six PRs when `create_pull_request` was bound to a merged PR; one batched keystroke briefly listed the consented episode folder's parent's metadata in-app (nothing read, imported or committed). The M2 kickoff restates the budgets and rules.
+**Process deviations disclosed:** M1 briefly ran 5–6 writer sessions during short review-fix rounds (budget 4) and had windows with two concurrent read-only reviewer agents (budget 1); `gh pr create` was used as a fallback for several PRs (including #145 and #148) because `create_pull_request` was bound to another PR; one batched keystroke briefly listed the consented episode folder's parent's metadata in-app (nothing read, imported or committed). The M2 kickoff restates the budgets and rules.
