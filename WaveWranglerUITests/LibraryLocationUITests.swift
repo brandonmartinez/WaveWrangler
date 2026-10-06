@@ -46,7 +46,8 @@ final class LibraryLocationUITests: XCTestCase {
         // "not run" list can't read as a clean run.
         if app != nil {
             let run = testRun
-            let outcome = run?.hasBeenSkipped == true ? "skipped" : run?.hasSucceeded == true ? "passed" : "failed"
+            // `hasSucceeded` isn't final until the run stops (after tearDown); the failures recorded so far are.
+            let outcome = run?.hasBeenSkipped == true ? "skipped" : (run?.totalFailureCount ?? 0) == 0 ? "passed" : "failed"
             Acceptance.writeEvidence("t25-keyboard-navigation-\(name.replacingOccurrences(of: " ", with: "_"))",
                                      ["outcome": outcome, "keyboardNavigation": Self.keyboardNavigation,
                                       "notRunNeedsFullKeyboardAccess": Array(Set(needsKeyboardNavigation)).sorted(),
