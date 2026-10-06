@@ -299,13 +299,17 @@ final class CommitScript: @unchecked Sendable {
     }
 }
 
-/// Cancels the task performing the current (synchronous) gateway read, so cancellation lands at exactly that
-/// read. Never blocks.
-func cancelCurrentTask() {
-    withUnsafeCurrentTask { task in
-        if task == nil { Issue.record("cancel ran outside a task") }
-        task?.cancel()
+/// Cancels the coordinator job in `slot` from inside a synchronous gateway read, and returns only once the
+/// cancel has landed, so cancellation is observed at exactly that read. Gateway reads run on the decode
+/// cursor's private serial queue, never on a cooperative-pool thread, so waiting here starves no task.
+func cancelSlotDuringRead(_ coordinator: DerivedJobCoordinator, _ slot: DerivedSlot) {
+    if Thread.isMainThread { Issue.record("gateway read ran on the main thread") }
+    let landed = DispatchSemaphore(value: 0)
+    Task.detached {
+        await coordinator.cancel(slot)
+        landed.signal()
     }
+    landed.wait()
 }
 
 // MARK: - Fixture

@@ -134,9 +134,11 @@ struct ConcurrencyTests {
         let targetEpoch = fixture.epochs[1]
         let targetPath = ProceduralContentIO.path(fixture.url("tgt"))
         let fired = Box(false)
+        let coordinator = fixture.coordinator
+        let slot = PipelineSlots.analysis(targetEpoch)
         fixture.content.setOnRead { path, index in
             guard path == targetPath, index == 1, fired.update({ let first = !$0; $0 = true; return first }) else { return }
-            cancelCurrentTask()
+            cancelSlotDuringRead(coordinator, slot)
         }
         let report = try await fixture.analyse(preferredReference: "ref")
         #expect(fired.value)
