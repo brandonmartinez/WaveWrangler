@@ -79,6 +79,22 @@ for timing_test in editToQuiescentCheckpointLatency publicationPipelineCost hund
     --filter "$timing_test"
 done
 
+# WW-018 render calibration (M2-RENDER-001 calibration split) is CPU-bound for tens of seconds; it runs alone
+# so it cannot starve the time-limited suites of the parallel pass.
+echo "==> swift test render calibration pass"
+CALIBRATION_LOG="$(mktemp)"
+WW_RENDER_CALIBRATION=1 swift test \
+  --package-path "$ROOT/Packages/WaveWranglerKit" \
+  --scratch-path "$ROOT/.build/swiftpm" \
+  --jobs "$JOBS" \
+  --filter calibrationSplitMeetsEveryObjectiveGate 2>&1 | tee "$CALIBRATION_LOG"
+if ! grep -q 'Test calibrationSplitMeetsEveryObjectiveGate() passed' "$CALIBRATION_LOG"; then
+  echo "render calibration pass did not run and pass" >&2
+  rm -f "$CALIBRATION_LOG"
+  exit 1
+fi
+rm -f "$CALIBRATION_LOG"
+
 if [[ "$PACKAGE_ONLY" == 1 ]]; then
   exit 0
 fi

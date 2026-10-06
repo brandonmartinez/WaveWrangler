@@ -180,8 +180,8 @@ struct RenderBehaviourTests {
 
     /// The decoded window is bounded by the chunk, the ratio and the kernel, not by the render length.
     @Test func workingSetIsBounded() async throws {
-        let fixture = try SingleSpan(rate: 96000, frames: 400_000, a: q(9999, 10000))
-        let result = try await renderToArrays(fixture.request(48000, 0 ..< 190_000, channels: 2), provider: FunctionProvider { _, _, _ in 0.25 })
+        let fixture = try SingleSpan(rate: 96000, frames: 80_000, a: q(9999, 10000))
+        let result = try await renderToArrays(fixture.request(48000, 0 ..< 36_000, channels: 2), provider: FunctionProvider { _, _, _ in 0.25 })
         let manifest = result.manifest
         guard case .source(let run) = manifest.occurrences[0].runs[0].content else { Issue.record("no source run"); return }
         let step = run.sourceFramesPerOutputFrame.approximateDouble
@@ -189,7 +189,9 @@ struct RenderBehaviourTests {
         let windowBound = Int((Double(4096) * step).rounded(.up)) + 2 * halfTaps + 2
         #expect(result.report.peakWindowFrames <= windowBound)
         #expect(result.report.peakWorkingSetBytes <= 2 * windowBound * 4 + 2 * 4096 * 4 + 2 * halfTaps * 8)
-        #expect(result.report.providerFrames <= 400_000)
+        #expect(result.report.chunks == 9)
+        #expect(result.report.providerFrames > 8 * Int64(windowBound))
+        #expect(result.report.providerFrames <= 80_000)
     }
 }
 

@@ -172,7 +172,7 @@ without checking the CI image.
 ```sh
 scripts/build.sh            # xcodebuild build, Debug, ad-hoc signed, -jobs 4, DerivedData in .build/
 scripts/build.sh Release
-scripts/test.sh             # swift test (package, --jobs 4), serialized estimator and timing passes, then xcodebuild test -only-testing:WaveWranglerTests
+scripts/test.sh             # swift test (package, --jobs 4), serialized estimator, timing and render calibration passes, then xcodebuild test -only-testing:WaveWranglerTests
 scripts/test.sh --package-only
 scripts/test.sh --ui        # XCUITests only (launches the app); needs GUI permission + the coordinator's GUI lock
 ```

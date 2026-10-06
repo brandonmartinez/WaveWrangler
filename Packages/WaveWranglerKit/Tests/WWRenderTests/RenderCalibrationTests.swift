@@ -44,6 +44,9 @@ enum RenderFixture {
     static let calibrationCases = 16
     static let holdoutCases = 48
     static let holdoutEnabled = ProcessInfo.processInfo.environment["WW_M2_RENDER_HOLDOUT"] == "1"
+    /// The calibration split is CPU-bound for tens of seconds, so it runs in its own serialized pass
+    /// (scripts/test.sh) instead of starving the time-limited suites of the parallel package run.
+    static let calibrationEnabled = ProcessInfo.processInfo.environment["WW_RENDER_CALIBRATION"] == "1"
     static let recordsDirectory = ProcessInfo.processInfo.environment["WW_RENDER_RECORDS_DIR"]
 
     static func seed(split: String, index: Int) -> UInt64 {
@@ -457,7 +460,8 @@ func runSplit(_ split: String, cases: Int) async throws -> [RenderMeasurement] {
 
 @Suite("Render calibration (M2-RENDER-001)")
 struct RenderCalibrationTests {
-    @Test func calibrationSplitMeetsEveryObjectiveGate() async throws {
+    @Test(.enabled(if: RenderFixture.calibrationEnabled, "serialized calibration pass (WW_RENDER_CALIBRATION=1)"))
+    func calibrationSplitMeetsEveryObjectiveGate() async throws {
         let records = try await runSplit("calibration", cases: RenderFixture.calibrationCases)
         #expect(Set(records.map(\.stratum)).count == RenderStratum.all.count + 1)
         #expect(records.contains { $0.kind == "stopband" })

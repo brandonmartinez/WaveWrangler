@@ -61,7 +61,10 @@ epoch, and 44.1 kHz + 48 kHz occurrences with two cross-occurrence skew pairs. *
 forward/inverse, never the render plan. Gates fail on NaN or missing evidence.
 
 **Calibration** (16 cases + multi-span, 466 records, [`ww-018/calibration.jsonl`](ww-018/calibration.jsonl)).
-The records are SHA-256 `5670f81a…be98` and reproduce bit-identically on rerun. Every gate passes:
+The records are SHA-256 `5670f81a…be98` and reproduce bit-identically on rerun. The split is CPU-bound, so it
+runs alone in `scripts/test.sh` (`WW_RENDER_CALIBRATION=1`, after the parallel package pass). The script fails if
+the test is skipped. In the parallel pass it would starve the time-limited WWSources suites on CI's small runner.
+Every gate passes:
 
 | Gate (verbatim) | Limit | Worst calibration value |
 | --- | --- | --- |
@@ -98,7 +101,7 @@ the fixture, recipe, truth, measurement, gates, split counts, calibration summar
 - splits: 16 calibration and 48 holdout cases, each plus the multi-span case;
 - host: macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, M5 Max with 18 cores, 128 GiB.
 
-It also holds the generator and renderer git tree IDs: `WWRenderTests` `e708e460…` and `WWRender` `94604633…`.
+It also holds the generator and renderer git tree IDs: `WWRenderTests` `f0840cd7…` and `WWRender` `94604633…`.
 It takes effect at this PR's merge commit. Disclosed: the multi-span case is fixed, so it is the same in both
 splits and is not held out.
 
@@ -116,8 +119,8 @@ gate is reported. Nothing is tuned after the freeze.
 - provider, sink or sink-creation failure, and cancellation (the sink is abandoned);
 - a planner/map disagreement, caught by self-check.
 
-Output is chunk-size invariant across 64–65,536 frames. A strict-pool run
-(`LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test --filter WWRenderTests`) passes.
+Output is chunk-size invariant across 64–65,536 frames. Strict-pool runs pass: `LIBDISPATCH_COOPERATIVE_POOL_STRICT=1
+swift test --filter WWRenderTests`, and the same with `WW_RENDER_CALIBRATION=1` for the calibration split.
 
 **Mutation checks** (66 mutants; one source edit each; `swift test --filter WWRenderTests` or
 `noOtherModuleOrTheAppDecodes`): **60 killed, 6 survived, all 6 equivalent.**
@@ -128,6 +131,12 @@ Output is chunk-size invariant across 64–65,536 frames. A strict-pool run
   (limits, the passband fraction filter, NaN and missing evidence).
 - **Killed after a new test:** "fractional unit ratio treated as copy" survived the first pass. That exposed a test
   gap, now closed by `unitRatioWithFractionalDelayInterpolates`.
+- **Calibration-only kills:** G07 (phase offset), G08 (no anti-alias scaling) and P24 (unwidened taps) are
+  killed only by the calibration split. They were rerun with `WW_RENDER_CALIBRATION=1`, which is what CI runs, and
+  stay killed.
+- **Manual checks:** never dropping consumed window frames fails `workingSetIsBounded`, which now renders 36,000
+  frames rather than 190,000. Removing `WW_RENDER_CALIBRATION=1` from the calibration pass makes `scripts/test.sh`
+  fail rather than skip silently.
 - **Equivalent survivors:**
   - G09/G10 (tap clamp to span end/start): needs are clipped to the span, so the window never extends past it;
     defence in depth.

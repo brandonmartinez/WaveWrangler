@@ -11,7 +11,7 @@
       "Packages/WaveWranglerKit/Tests/WWRenderTests/Support.swift",
       "Packages/WaveWranglerKit/Tests/WWRenderTests/RenderPlanTests.swift (MixedGroup)"
     ],
-    "gitTreeTests": "e708e460e8234601e5578dba58c179fbafbd7a17",
+    "gitTreeTests": "f0840cd76d7c84109ba4129f5019a819a4e829df",
     "gitTreeRendererUnderTest": "94604633d6464391ade116b363f8874675381bf5",
     "treeIDCommand": "git rev-parse <commit>:Packages/WaveWranglerKit/Tests/WWRenderTests and <commit>:Packages/WaveWranglerKit/Sources/WWRender",
     "commitSHA": "the PR merge commit (a record cannot contain the SHA of the commit that adds it; the tree IDs above are content addresses of the frozen generator and renderer)"
@@ -32,7 +32,7 @@
   "truth": "WWTimeMap forward (alignedTime) and inverse (sourceFrame) of the case's GroupTimeMap, never the render plan. Tone truth x(k) is the exact inverse at the hull ends, linear between (one affine segment).",
   "measurement": "steady frames only (every tap inside the span). Tone: least-squares fit of g*A*sin(theta+psi) -> gain dB, phase error deg, residual dBc. Landmarks: parabolic peak of |y| within +-4 frames of truth, sign of the peak sample. Skew: max - min over channels of the common-impulse positions (and of phase-derived time offsets). Inactive: max |y| in dBFS. NaN or a gate with no measurements fails.",
   "splits": {
-    "calibration": {"cases": 16, "plusMultiSpan": 1, "run": true},
+    "calibration": {"cases": 16, "plusMultiSpan": 1, "run": true, "enable": "WW_RENDER_CALIBRATION=1 swift test --filter calibrationSplitMeetsEveryObjectiveGate (serialized pass in scripts/test.sh)"},
     "holdout": {"cases": 48, "plusMultiSpan": 1, "run": false, "enable": "WW_M2_RENDER_HOLDOUT=1 swift test --filter holdoutSplitMeetsEveryFrozenGate"}
   },
   "renderer": {
