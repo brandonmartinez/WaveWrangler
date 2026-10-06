@@ -26,18 +26,24 @@ public enum AlignedAssetRefusal: Error, Sendable, Equatable {
     case acceptedMapNotActive(document: Int, coordinator: Int?)
     case mapNotApplicable([MapStaleness])
     case mapUnreadable(MapHistoryError)
-    /// The map's timeline reference occurrence is not placed in it, so there is no output rate.
-    case referenceNotPlaced
+    /// The output-settings policy refused the renderable sources' interpretations.
+    case outputSettings(OutputSettingsFailure)
+    /// The policy's rate is not a valid nominal rate (unreachable for grid rates; explicit, never a guess).
+    case outputRateInvalid(Int)
     case coordinatorShutDown
 }
 
 /// What one aligned-asset run did, per recorder group.
 public struct AlignedAssetReport: Sendable, Equatable {
     public let revision: MapRevisionReference
-    public let outputRate: Int
+    /// The `OutputSettingsPolicy` decision over every renderable source of the episode (nil when no
+    /// source was renderable). Every group is rendered at its one rate.
+    public let outputSettings: OutputSettingsDecision?
     public let groups: [GroupRenderReport]
     /// Placed sources whose channels were not rendered, and why.
     public let notRendered: [SourceID: NotRenderedReason]
+
+    public var outputRate: Int? { outputSettings?.settings.sampleRate }
 
     /// Every group rendered (or reused) every segment.
     public var isComplete: Bool { groups.allSatisfy { $0.failure == nil } }
@@ -282,18 +288,13 @@ public final class AlignmentPipeline: Sendable {
             throw .mapUnreadable(error)
         }
         guard applicability.isCurrent else { throw .mapNotApplicable(applicability.staleness) }
-        guard let referenceOccurrence = map.groups.lazy.flatMap(\.placements).first(where: { $0.occurrence.id == map.reference.occurrence })?.occurrence else {
-            throw .referenceNotPlaced
-        }
         let revision = MapRevisionReference(episode: episodeID, revision: revisionNumber)
         for spec in AlignmentAssetKinds.all { await coordinator.setAssetRevision(spec) }
         let registered = await coordinator.inputs.sources
         let eligibility = ContentEligibility(sources: sources, authorizations: authorizations, registered: registered)
-        let outputRate = Int(referenceOccurrence.nominalRate.framesPerSecond)
 
-        var jobs: [GroupRenderJob] = []
         var notRendered: [SourceID: NotRenderedReason] = [:]
-        var failedGroups: [GroupRenderReport] = []
+        var renderable: [(map: GroupTimeMap, participants: [GroupRenderJob.Participant])] = []
         for group in map.groups {
             var mapped = Set<RecordingEpochID>()
             for epoch in group.epochs {
@@ -322,7 +323,27 @@ public final class AlignmentPipeline: Sendable {
                 }
                 participants.append(GroupRenderJob.Participant(source: source, facts: facts))
             }
-            guard !participants.isEmpty else { continue }
+            if !participants.isEmpty { renderable.append((group, participants)) }
+        }
+
+        // One common output rate for the whole episode, from the probed interpretations alone (WW-050).
+        let interpretations = renderable.flatMap { $0.participants.map(\.facts.interpretation) }
+        guard !interpretations.isEmpty else {
+            return AlignedAssetReport(revision: revision, outputSettings: nil, groups: [], notRendered: notRendered)
+        }
+        let decision: OutputSettingsDecision
+        do throws(OutputSettingsFailure) {
+            decision = try OutputSettingsPolicy.decide(interpretations, configuration: configuration.outputSettings)
+        } catch {
+            throw .outputSettings(error)
+        }
+        let outputRate = decision.settings.sampleRate
+        let nominalOutputRate: NominalRate
+        do throws(TimeMapError) { nominalOutputRate = try NominalRate(Int64(outputRate)) } catch { throw .outputRateInvalid(outputRate) }
+
+        var jobs: [GroupRenderJob] = []
+        var failedGroups: [GroupRenderReport] = []
+        for (group, participants) in renderable {
             let hull: Range<Int64>?
             do throws(AlignmentWorkFailure) {
                 hull = try GroupRenderJob.hull(
@@ -337,7 +358,7 @@ public final class AlignmentPipeline: Sendable {
             }
             guard let hull, !hull.isEmpty else { continue }
             jobs.append(GroupRenderJob(
-                episode: episodeID, revision: revision, map: group, nominalOutputRate: referenceOccurrence.nominalRate,
+                episode: episodeID, revision: revision, map: group, nominalOutputRate: nominalOutputRate,
                 participants: participants, outputFrames: hull,
                 segmentFrames: Int64(configuration.renderSegmentSeconds) * Int64(outputRate),
                 recipeBaseName: configuration.renderRecipeName
@@ -347,7 +368,7 @@ public final class AlignmentPipeline: Sendable {
         let reports = await boundedMap(jobs, limit: configuration.concurrency) { job in
             await AlignedAssetRun.run(job, environment: environment)
         }
-        return AlignedAssetReport(revision: revision, outputRate: outputRate, groups: failedGroups + reports, notRendered: notRendered)
+        return AlignedAssetReport(revision: revision, outputSettings: decision, groups: failedGroups + reports, notRendered: notRendered)
     }
 
     // MARK: Helpers

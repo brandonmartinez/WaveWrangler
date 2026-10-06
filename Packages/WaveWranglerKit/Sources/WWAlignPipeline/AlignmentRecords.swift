@@ -49,26 +49,24 @@ public func alignmentOccurrenceID(for source: SourceID) -> SourceOccurrenceID {
 
 // MARK: - Source facts
 
-/// What a header-only probe established about a source (no sample was read).
+/// What a header-only probe established about a source (no sample was read): the decoder's whole format
+/// interpretation (the output-settings policy decides from it) and the revision it was verified against.
 public struct SourceFacts: Sendable, Codable, Equatable {
-    public var source: SourceID
-    public var sampleRate: Int
-    public var frameCount: Int64
-    public var channelCount: Int
-    public var formatInterpretationVersion: Int
-    public var envelopeVersion: Int
+    public var interpretation: FormatInterpretation
     /// The metadata revision token the probe verified against (the coordinator's current token).
     public var revisionToken: String
 
-    public init(source: SourceID, sampleRate: Int, frameCount: Int64, channelCount: Int, formatInterpretationVersion: Int, envelopeVersion: Int, revisionToken: String) {
-        self.source = source
-        self.sampleRate = sampleRate
-        self.frameCount = frameCount
-        self.channelCount = channelCount
-        self.formatInterpretationVersion = formatInterpretationVersion
-        self.envelopeVersion = envelopeVersion
+    public init(interpretation: FormatInterpretation, revisionToken: String) {
+        self.interpretation = interpretation
         self.revisionToken = revisionToken
     }
+
+    public var source: SourceID { interpretation.source }
+    public var sampleRate: Int { interpretation.sourceSampleRate }
+    public var frameCount: Int64 { interpretation.frames.validFrames }
+    public var channelCount: Int { interpretation.channelCount }
+    public var formatInterpretationVersion: Int { interpretation.formatInterpretationVersion }
+    public var envelopeVersion: Int { interpretation.envelopeVersion }
 }
 
 // MARK: - Analysis records (persisted payload of an analysis job)

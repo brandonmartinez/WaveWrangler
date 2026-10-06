@@ -37,15 +37,7 @@ enum SourceProbe {
                 try await decoder.withDecodingCursor(source.url, source: source.id) { cursor in
                     let interpretation = cursor.interpretation
                     try verify(interpretation, source: source.id, token: token)
-                    return SourceFacts(
-                        source: source.id,
-                        sampleRate: interpretation.sourceSampleRate,
-                        frameCount: interpretation.frames.validFrames,
-                        channelCount: interpretation.channelCount,
-                        formatInterpretationVersion: interpretation.formatInterpretationVersion,
-                        envelopeVersion: interpretation.envelopeVersion,
-                        revisionToken: token
-                    )
+                    return SourceFacts(interpretation: interpretation, revisionToken: token)
                 }
             }
         } catch {

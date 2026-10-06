@@ -102,15 +102,13 @@ struct GuardTests {
         let fixture = try await PipelineFixture(TwoRecorder.groups(referenceSeconds: 6, targetSeconds: 4), chunkFrames: chunk, label: "guard-stop")
         let id = fixture.id("ref")
         let spec = try #require(fixture.specs["ref"])
-        let facts = SourceFacts(
-            source: id, sampleRate: spec.sampleRate, frameCount: spec.frames, channelCount: spec.channels,
-            formatInterpretationVersion: FormatRevision.current.interpretationVersion, envelopeVersion: FormatRevision.current.envelopeVersion,
-            revisionToken: try PipelineFixture.registration(id, fixture.url("ref")).token
-        )
+        let decoder = SourceDecoder(access: SourceAccessContext(io: fixture.metadataIO), content: fixture.content, configuration: .init(chunkFrames: chunk))
+        let interpretation = try await decoder.withDecodingCursor(fixture.url("ref"), source: id) { $0.interpretation }
+        let facts = SourceFacts(interpretation: interpretation, revisionToken: try PipelineFixture.registration(id, fixture.url("ref")).token)
+        #expect(facts.sampleRate == spec.sampleRate && facts.frameCount == spec.frames && facts.channelCount == spec.channels)
         let source = try #require(fixture.sources.first { $0.id == id })
         let range: Range<Int64> = 48_000 ..< 96_000
         let needed = try AnalysisDecimator(sourceRate: spec.sampleRate, minimumRate: 8000, range: range).neededInput
-        let decoder = SourceDecoder(access: SourceAccessContext(io: fixture.metadataIO), content: fixture.content, configuration: .init(chunkFrames: chunk))
         let samples = try await AnalysisUnit.decodeAnalysisBuffer(source, facts: facts, range: range, minimumRate: 8000, decoder: decoder)
         #expect(!samples.isEmpty)
         let furthest = fixture.content.record(fixture.url("ref")).furthestFrame

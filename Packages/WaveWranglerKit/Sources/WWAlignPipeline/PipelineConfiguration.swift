@@ -1,4 +1,5 @@
 import Foundation
+import WWDecode
 
 // WWAlignPipeline (WW-021 / WW-023 integration): the headless pipeline that turns explicitly requested,
 // decoded sources into acoustic-consistent PROPOSALS (or abstentions), turns a person's decision into a
@@ -41,6 +42,10 @@ public struct AlignmentPipelineConfiguration: Sendable, Equatable {
     public let minimumAnalysisRate: Int
     /// Output seconds rendered per aligned-asset segment (one coordinator slot per channel per segment).
     public let renderSegmentSeconds: Int
+    /// How the common output rate of aligned assets is chosen (WW-050 `OutputSettingsPolicy`): by default
+    /// 48 kHz when feasible, else derived from the sources; `.matchSources` derives it from the sources.
+    /// Cached aligned assets are float32 at that rate; `sampleFormat` applies when export lands (M4).
+    public let outputSettings: OutputSettingsConfiguration
 
     public init(
         concurrency: Int = defaultConcurrency,
@@ -49,7 +54,8 @@ public struct AlignmentPipelineConfiguration: Sendable, Equatable {
         searchDeviationSeconds: Int = 120,
         searchCenterSeconds: Int = 0,
         minimumAnalysisRate: Int = 8000,
-        renderSegmentSeconds: Int = 10
+        renderSegmentSeconds: Int = 10,
+        outputSettings: OutputSettingsConfiguration = .default
     ) {
         self.concurrency = min(max(concurrency, 1), Self.maximumConcurrency)
         self.analysisMemoryBudgetBytes = max(analysisMemoryBudgetBytes, 16 << 20)
@@ -58,6 +64,7 @@ public struct AlignmentPipelineConfiguration: Sendable, Equatable {
         self.searchCenterSeconds = searchCenterSeconds
         self.minimumAnalysisRate = min(max(minimumAnalysisRate, 8000), 48_000)
         self.renderSegmentSeconds = min(max(renderSegmentSeconds, 1), 300)
+        self.outputSettings = outputSettings
     }
 
     /// The analysis recipe: estimator identity plus every parameter that changes an analysis result.
@@ -65,8 +72,9 @@ public struct AlignmentPipelineConfiguration: Sendable, Equatable {
         "ww.alignment-analysis[est=\(AlignmentAssetKinds.estimatorIdentifier);excerpt=\(targetExcerptSeconds);dev=\(searchDeviationSeconds);center=\(searchCenterSeconds);rate>=\(minimumAnalysisRate);dec=\(AnalysisDecimator.designVersion)]"
     }
 
-    /// The render recipe name (output segmenting is part of the asset's identity).
+    /// The render recipe name (output segmenting and the output-settings policy revision are part of the
+    /// asset's identity; the chosen rate is added per segment).
     var renderRecipeName: String {
-        "ww.aligned-render[recipe=\(AlignmentAssetKinds.renderRecipeVersion);renderer=\(AlignmentAssetKinds.rendererVersion);segment=\(renderSegmentSeconds)]"
+        "ww.aligned-render[recipe=\(AlignmentAssetKinds.renderRecipeVersion);renderer=\(AlignmentAssetKinds.rendererVersion);segment=\(renderSegmentSeconds);policy=\(OutputSettingsPolicy.version)]"
     }
 }
