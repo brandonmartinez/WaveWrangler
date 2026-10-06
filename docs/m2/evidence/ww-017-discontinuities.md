@@ -81,8 +81,7 @@ segment pass of `scripts/test.sh`:
 
 `WW_SEGMENT_TESTS=1 swift test --no-parallel --filter 'WWAlignSegmentTests\.(CalibrationTests|FloorSweepTests|EdgeSilenceTests)'`
 
-Wall times were 241 s for calibration and 208 s for the floor sweep. Those timings come from the run before the
-compute cap; the cap does not change per-case results.
+With the compute cap (4 cases in flight) the wall times were 186 s for calibration, 112 s for the floor sweep and 24 s for edge silence. Every per-case line is identical to the pre-cap run.
 
 | stratum | cases | plants flagged / unsupported / bridged | false splits | spurious det. | mean coverage | worst p95 / max ms | position error median / max s |
 | --- | --- | --- | --- | --- | --- | --- | --- |
