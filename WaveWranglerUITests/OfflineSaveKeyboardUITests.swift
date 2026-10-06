@@ -148,7 +148,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             dismissErrorSheetIfAny("T28 after ⌘S")
             check(Acceptance.waitFor(timeout: 5) { self.value(status).hasPrefix(Self.cantReach) }, "Can't reach before the copy: \(value(status))")
             try openSaveStatus()
-            let popover = element("ww.show.saveStatus.popover")
+            let popover = app.popovers.firstMatch
             check(popover.waitForExistence(timeout: 5), "save-status popover opened")
             // Try Again is focused first; Tab reaches Save a Copy Elsewhere…; Space activates it.
             app.typeKey("\t", modifierFlags: [])
@@ -160,7 +160,9 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             check(Acceptance.waitFor(timeout: 5) { self.value(status).hasPrefix("Saved") }, "status Saved after the copy: \(value(status))")
             let bar = window.descendants(matching: .any).matching(identifier: "ww.show.messageBar").firstMatch
             let expected = "You're now editing “Offline Copy copy” in Elsewhere. The original at Unreachable wasn't changed."
-            check(bar.waitForExistence(timeout: 5) && texts(in: bar).contains(expected), "message bar: \(texts(in: bar))")
+            // The bar is one accessibility group: its label carries the heading (as for the C2b offer).
+            check(bar.waitForExistence(timeout: 5) && (bar.label == expected || texts(in: bar).contains(expected)),
+                  "message bar: \(bar.label) \(texts(in: bar))")
             try audit("T28 copy message bar")
             // T28: "Focus returns to the save-status item" after the save panel closes.
             check(Acceptance.waitFor(timeout: 3) { self.isFocused(status) }, "focus returns to the save-status item after the copy")
@@ -189,15 +191,16 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             check(sheet.waitForExistence(timeout: 5), "close asks how to keep the changes")
             Acceptance.record(self, "T23 D7 sheet: \(texts(in: sheet)) buttons \(sheet.buttons.allElementsBoundByIndex.map(\.title))")
             check(texts(in: sheet).contains("“Offline Close” couldn't be saved: the folder can't be reached."), "sheet message: \(texts(in: sheet))")
-            check(sheet.buttons.allElementsBoundByIndex.map(\.title) == ["Save a Copy Elsewhere…", "Cancel", "Don't Save"],
-                  "buttons, default first: \(sheet.buttons.allElementsBoundByIndex.map(\.title))")
+            // AX lists NSAlert buttons in layout order; the default (Return) is checked below by pressing Return.
+            check(Set(sheet.buttons.allElementsBoundByIndex.map(\.title)) == ["Save a Copy Elsewhere…", "Cancel", "Don't Save"],
+                  "buttons: \(sheet.buttons.allElementsBoundByIndex.map(\.title))")
             try audit("T23 D7 close sheet")
             app.typeKey(.escape, modifierFlags: [])
             check(Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists } && window.exists, "Esc = Cancel keeps the window")
             app.typeKey("w", modifierFlags: .command)
             check(app.sheets.firstMatch.waitForExistence(timeout: 5), "close sheet again")
-            app.typeKey(.return, modifierFlags: [])
-            let copy = try saveCopyThroughPanel(named: "Offline Close copy", into: elsewhere, surface: "T23 D7 save panel")
+            app.typeKey(.return, modifierFlags: [])   // the default: Save a Copy Elsewhere…
+            let copy = try saveCopyThroughPanel(named: "Offline Close copy", into: elsewhere, surface: "T23 D7 save panel (Return = default)")
             check(Acceptance.waitFor(timeout: 10) { !window.exists }, "the window closes once the copy is saved")
             check(diskEpisodeCount(copy) == 1, "the copy holds the edit: \(String(describing: diskEpisodeCount(copy)))")
             check(try Data(contentsOf: document) == original, "the original is byte-unchanged")

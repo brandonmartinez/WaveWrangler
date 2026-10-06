@@ -285,8 +285,12 @@ final class ShowDocument: NSDocument {
         runModalSavePanel(for: .saveAsOperation, delegate: self, didSave: #selector(copyElsewhereDidSave(_:didSave:contextInfo:)), contextInfo: nil)
     }
 
+    /// The show's name as in its file name, without the extension. `displayName` includes ".wwshow" when the Mac
+    /// shows all file extensions, which must not leak into "<Show> copy" or the close sheet's wording.
+    var showFileName: String { fileURL?.deletingPathExtension().lastPathComponent ?? displayName }
+
     override func prepareSavePanel(_ savePanel: NSSavePanel) -> Bool {
-        if copyElsewhere != nil { savePanel.nameFieldStringValue = Self.copyName(for: displayName) }
+        if copyElsewhere != nil { savePanel.nameFieldStringValue = Self.copyName(for: showFileName) }
         return super.prepareSavePanel(savePanel)
     }
 

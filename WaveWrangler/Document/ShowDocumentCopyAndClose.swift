@@ -28,7 +28,7 @@ extension ShowDocument: DocumentStatusActionHandling {
             status.saveStatus.state, readOnlyReason: nil, autosaveEnabled: autosave,
             folderDisplayName: fileURL?.deletingLastPathComponent().lastPathComponent
         )
-        guard case let .sheet(sheet) = CloseDecision(state: mapped.state, autosaveEnabled: autosave, showName: displayName),
+        guard case let .sheet(sheet) = CloseDecision(state: mapped.state, autosaveEnabled: autosave, showName: showFileName),
               sheet.buttons.contains(.saveACopyElsewhere) else { return nil }
         return sheet
     }
