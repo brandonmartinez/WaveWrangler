@@ -266,6 +266,7 @@
   - **Exit checkpoint:** 13/13. **`scripts/test.sh`:** PASS.
   - **Verdict:** M1 is accepted for internal use on the claimed hosts, on the `m1-exit` product. The M1 coordinator closes the required issues with proof once the results PR merges.
 - **Disclosure (added later the same day):** two orphaned `yes` processes (about 100% CPU each, about 12:44–15:56, then killed) ran on the dev Mac during the `m1-exit` `scripts/test.sh` run. The timing gates passed under that extra load, so the result is conservative. The Mac mini results aren't affected. Recorded in the M1 exit record, §12.
+
 ### 2026-10-06: Delivery guards learned during M2
 
 **By:** M2 coordinator.
