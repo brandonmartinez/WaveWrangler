@@ -19,7 +19,9 @@ jobs:
     # Newest GitHub-hosted macOS image (Apple silicon). It ships Xcode 26.x with the macOS 26 SDK, while
     # local development uses Xcode 27; the package tools-version (6.2) and project format support both.
     runs-on: macos-26
-    timeout-minutes: 45
+    # The serialized passes (estimator, segment calibration, WW-021 pipeline memory bound, timing) take ~40 min
+    # on a busy hosted runner; 60 leaves headroom so runner variance does not cancel a passing run.
+    timeout-minutes: 60
     env:
       WW_JOBS: "4"
       # WW-017: CI runs only the segment calibration; the floor and edge-silence sweeps run locally (scripts/test.sh).
