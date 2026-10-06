@@ -13,6 +13,41 @@ struct MoveStepRelayTests {
         var current: LibraryMoveStep?
     }
 
+    private actor LivenessGate {
+        private struct Timeout: Error, CustomStringConvertible {
+            let label: String
+            var description: String { "timed out waiting for \(label)" }
+        }
+
+        private var finished = false
+        private var waiter: CheckedContinuation<Void, any Error>?
+
+        func open() {
+            guard !finished else { return }
+            finished = true
+            waiter?.resume()
+            waiter = nil
+        }
+
+        func wait(for label: String) async throws {
+            if finished { return }
+            let timeout = Task {
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled else { return }
+                self.fail(Timeout(label: label))
+            }
+            defer { timeout.cancel() }
+            try await withCheckedThrowingContinuation { waiter = $0 }
+        }
+
+        private func fail(_ error: any Error) {
+            guard !finished else { return }
+            finished = true
+            waiter?.resume(throwing: error)
+            waiter = nil
+        }
+    }
+
     private func store(_ root: URL) -> LibraryStore {
         LibraryStore(
             containerFolder: root.appending(path: "Container", directoryHint: .isDirectory),
@@ -23,21 +58,28 @@ struct MoveStepRelayTests {
         )
     }
 
-    private func shownSteps(hold: Duration) async throws -> [LibraryMoveStep?] {
+    private func shownSteps(
+        hold: Duration,
+        shown: Shown = Shown(),
+        sleep: @escaping MoveStepRelay.Sleeper = { try? await Task.sleep(for: $0) }
+    ) async throws -> [LibraryMoveStep?] {
         let root = FileManager.default.temporaryDirectory.appending(path: "MoveStepRelay-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
         let library = store(root)
         try await Self.seed(library)
-        let shown = Shown()
-        await library.onMoveStep(MoveStepRelay.handler(holdAfterChecking: hold, current: { shown.current }) { step in
+        let finished = LivenessGate()
+        await library.onMoveStep(MoveStepRelay.handler(holdAfterChecking: hold, sleep: sleep, current: { shown.current }) { step in
             shown.current = step
             shown.steps.append(step)
+            if step == nil {
+                Task { await finished.open() }
+            }
         })
         guard case .success(.moved) = await library.moveLibrary(to: root.appending(path: "Destination", directoryHint: .isDirectory)) else {
             Issue.record("move")
             return []
         }
-        for _ in 0..<100 where shown.steps.last != .some(nil) { try await Task.sleep(for: .milliseconds(20)) }
+        try await finished.wait(for: "the move relay to report its end")
         return shown.steps
     }
 
@@ -50,30 +92,55 @@ struct MoveStepRelayTests {
         #expect(try await shownSteps(hold: .zero) == [.copying, .checking, nil])
     }
 
-    /// On a fast disk the store reports copying → checking → end before any hop runs: with a hold, "checking" is
-    /// still shown, once, and the end comes after the hold (the gate run never saw "checking").
     @Test func checkingReportedJustBeforeTheEndIsShownForTheHold() async throws {
         let shown = Shown()
-        let report = MoveStepRelay.handler(holdAfterChecking: .milliseconds(300), current: { shown.current }) { step in
+        let sleepStarted = LivenessGate()
+        let releaseSleep = LivenessGate()
+        let finished = LivenessGate()
+        let report = MoveStepRelay.handler(holdAfterChecking: .milliseconds(300), sleep: { duration in
+            #expect(duration == .milliseconds(300))
+            await sleepStarted.open()
+            do {
+                try await releaseSleep.wait(for: "the checking hold to be released")
+            } catch {
+                Issue.record(error)
+            }
+        }, current: { shown.current }) { step in
             shown.current = step
             shown.steps.append(step)
+            if step == nil {
+                Task { await finished.open() }
+            }
         }
-        let clock = ContinuousClock()
-        let start = clock.now
         report(.copying)
         report(.checking)
         report(nil)
-        for _ in 0..<100 where shown.steps.last != .some(nil) { try await Task.sleep(for: .milliseconds(20)) }
-        #expect(shown.steps == [.checking, nil])
-        #expect(clock.now - start >= .milliseconds(300))
+        try await sleepStarted.wait(for: "the checking hold to start")
+        #expect(shown.steps == [.copying, .checking])
+        await releaseSleep.open()
+        try await finished.wait(for: "the held end report")
+        #expect(shown.steps == [.copying, .checking, nil])
     }
 
     @Test func heldCheckingStepStaysUntilTheHoldEnds() async throws {
-        let clock = ContinuousClock()
-        let start = clock.now
-        let steps = try await shownSteps(hold: .milliseconds(300))
-        #expect(steps == [.copying, .checking, nil])
-        #expect(clock.now - start >= .milliseconds(300), "the end is shown only after the hold")
+        let shown = Shown()
+        let sleepStarted = LivenessGate()
+        let releaseSleep = LivenessGate()
+        let move = Task {
+            try await shownSteps(hold: .milliseconds(300), shown: shown) { duration in
+                #expect(duration == .milliseconds(300))
+                await sleepStarted.open()
+                do {
+                    try await releaseSleep.wait(for: "the real move hold to be released")
+                } catch {
+                    Issue.record(error)
+                }
+            }
+        }
+        try await sleepStarted.wait(for: "the real move checking hold to start")
+        #expect(shown.steps == [.copying, .checking])
+        await releaseSleep.open()
+        #expect(try await move.value == [.copying, .checking, nil])
     }
 }
 
