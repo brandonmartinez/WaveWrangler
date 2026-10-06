@@ -229,6 +229,9 @@ enum AcceptanceAudit {
         if inSheet, id.hasPrefix("_NS:") {
             return "AppKit sheet message text (mini 479eb9e: 9.75:1)"
         }
+        if id == "ww.show.saveStatus.popover" {
+            return "save-status popover text, system text (mini #197 round 3, 0d99329: p75 9.14:1, max 9.47:1)"
+        }
         return nil
     }
 

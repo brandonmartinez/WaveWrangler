@@ -62,6 +62,8 @@ final class ShowDocument: NSDocument {
     private var uncertainCandidate: Data?
     /// ST-16 "Save a Copy Elsewhere…" in progress: set while its save panel and save run.
     private var copyElsewhere: CopyElsewhereRequest?
+    /// Suspends automatic saves of the original while Save a Copy Elsewhere… runs (#197 review).
+    private var copyRetryGate = CopyElsewhereRetryGate()
     /// The key of the candidate being saved when it isn't this document's current show (a copy with a new ID).
     private var pendingCandidateKey: DocumentKey?
     var documentKey: DocumentKey { .show(store.model.show.id) }
@@ -296,6 +298,9 @@ final class ShowDocument: NSDocument {
         guard copyElsewhere == nil else { completion?(false); return }
         let request = CopyElsewhereRequest(originalFolder: fileURL?.deletingLastPathComponent().lastPathComponent ?? "", completion: completion)
         copyElsewhere = request
+        // The original keeps its last saved version while the copy is chosen and saved: no automatic save of it.
+        copyRetryGate.begin(retryPending: saveRetry != nil)
+        cancelSaveRetry()
         let panel = NSSavePanel()
         panel.nameFieldStringValue = Self.copyName(for: showFileName)
         if let type = fileType.flatMap({ UTType($0) }) { panel.allowedContentTypes = [type] }
@@ -311,12 +316,14 @@ final class ShowDocument: NSDocument {
     private func saveChosenCopy(_ request: CopyElsewhereRequest, chosen url: URL?, window: NSWindow?) {
         guard let url, let typeName = fileType else {
             copyElsewhere = nil
+            endCopyFlow(copySaved: false)
             request.completion?(false)
             return
         }
         save(to: url, ofType: typeName, for: .saveAsOperation) { [weak self] error in
             guard let self else { return request.completion?(false) ?? () }
             self.copyElsewhere = nil
+            self.endCopyFlow(copySaved: error == nil)
             if let error, !((error as NSError).domain == NSCocoaErrorDomain && (error as NSError).code == NSUserCancelledError) {
                 if let window {
                     self.presentError(error, modalFor: window, delegate: nil, didPresent: nil, contextInfo: nil)
@@ -326,6 +333,11 @@ final class ShowDocument: NSDocument {
             }
             request.completion?(error == nil)
         }
+    }
+
+    /// Re-arms a retry suspended by the copy flow (cancelled or failed copy), after a fresh interval.
+    private func endCopyFlow(copySaved: Bool) {
+        if copyRetryGate.end(copySaved: copySaved), gate.isEnabled, isDocumentEdited { scheduleSaveRetry() }
     }
 
     /// The show's name as in its file name, without the extension. `displayName` includes ".wwshow" when the Mac
@@ -407,6 +419,8 @@ final class ShowDocument: NSDocument {
 
     private func scheduleSaveRetry() {
         guard saveRetry == nil else { return }
+        // During Save a Copy Elsewhere… the retry waits for the copy flow to end (re-armed then, after a fresh interval).
+        guard copyRetryGate.allowsAutomaticSave else { copyRetryGate.suspendRetry(); return }
         status.setRetryingAutomatically(true)
         let retry = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.performSaveRetry() }
@@ -424,6 +438,7 @@ final class ShowDocument: NSDocument {
     private func performSaveRetry() {
         saveRetry = nil
         status.setRetryingAutomatically(false)
+        guard copyRetryGate.allowsAutomaticSave else { copyRetryGate.suspendRetry(); return }
         guard gate.isEnabled, isDocumentEdited, fileURL != nil else { return }
         // D5: if the uncertain publication did land, adopt it rather than republishing against the old base (which
         // would fail the base check and report a false conflict).
@@ -501,6 +516,11 @@ final class ShowDocument: NSDocument {
         // Every automatic entry (our scheduler, window/app deactivation, Close/Quit while ON) re-checks the flag.
         guard gate.isEnabled else {
             noteAutosaveSkipped()
+            completionHandler(CocoaError(.userCancelled))
+            return
+        }
+        // While Save a Copy Elsewhere… runs, the original keeps its last saved version (an honest cancellation).
+        guard copyRetryGate.allowsAutomaticSave else {
             completionHandler(CocoaError(.userCancelled))
             return
         }

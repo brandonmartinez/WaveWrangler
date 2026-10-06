@@ -119,6 +119,10 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             dismissErrorSheetIfAny("T26 after the failed autosave")
             let attemptsAtFailure = seam()?.attempts ?? -1
             check(attemptsAtFailure >= 1, "an automatic attempt was made: \(attemptsAtFailure)")
+            // T26 contract: after the failed save the title still shows "— Edited" (AppKit's edit state).
+            check(Acceptance.waitFor(timeout: 3) { self.editingState(window) == "Edited" },
+                  "the title shows \"— Edited\" after the failed save (AX_EDITING_STATE): \(editingState(window) ?? "none")")
+            recordDirtyIndicators(window, "T26 after the first failed attempt")
             // Another edit right away, then sampling until 25 s after the failure: before the popover audit, which
             // can take 20 s on a loaded host and must not use up the window between attempts.
             addEpisodeByKeyboard(window)
@@ -141,8 +145,12 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
                   "popover buttons: \(popover.buttons.allElementsBoundByIndex.map(\.title))")
             try audit("T26 popover")
             app.typeKey(.escape, modifierFlags: [])
-            check(unsavedIndicator(window) != nil, "the window shows unsaved changes while unreachable (AX_EDITING_STATE): \(editingState(window) ?? "none")")
-            recordDirtyIndicators(window, "T26 while unreachable")
+            // The automatic retry 30 s after the failure fails too (still unreachable). After that AppKit's own edit
+            // state reads "Not Saved" (macOS 27, mini #197 round 2), which the T26 row allows; it must still show one.
+            check(Acceptance.waitFor(timeout: 40) { (self.seam()?.attempts ?? 0) > attemptsAtFailure }, "the automatic retry ran (still unreachable)")
+            check(value(status).hasPrefix(Self.cantReach), "still Can't reach after the failed retry: \(value(status))")
+            check(unsavedIndicator(window) != nil, "the title still shows unsaved changes after the failed retry (AX_EDITING_STATE): \(editingState(window) ?? "none")")
+            recordDirtyIndicators(window, "T26 after the failed automatic retry")
             check(try Data(contentsOf: document) == original, "the last saved version is still byte-unchanged")
             // Reconnect: the next automatic retry (due 30 s after the last failed attempt) saves with no user action.
             post(Self.reconnect)
@@ -334,8 +342,9 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
         return element.value as? String ?? element.label
     }
 
-    /// AppKit's unsaved-changes indicator beside the title: "Edited", or "Not Saved" after a failed autosave; nil when
-    /// the window shows none.
+    /// AppKit's unsaved-changes indicator beside the title: "Edited", or "Not Saved" once an automatic retry has also
+    /// failed (T26 row; observed macOS 27, mini #197 round 2); nil when the window shows none. T26 requires exactly
+    /// "Edited" after the first failure.
     private func unsavedIndicator(_ window: XCUIElement) -> String? {
         if let state = editingState(window), ["Edited", "Not Saved"].contains(state) { return state }
         return window.title.contains("Edited") ? window.title : nil
