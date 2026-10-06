@@ -15,7 +15,7 @@
   "scope": "M2-TIMEMAP-001: the stratum recipe, oracle truth, calibration/holdout seeds and counts, probes, and the gate exactly as written here. Frozen code: the WWTimeMap source tree (unchanged by this freeze; it equals the tree m2-freeze-estimator and m2-freeze-render recorded as a dependency) and the WWTimeMapTests tree (generator, oracle, probes, gate evaluator and holdout harness), pinned by git tree ID.",
   "pinnedTrees": {
     "Sources/WWTimeMap": "24c7aadfbf1470c8555542061ab08eb23e37325b",
-    "Tests/WWTimeMapTests": "f0e76efcb2b915813f59627b998ca6ecba85b02b"
+    "Tests/WWTimeMapTests": "330f7ca81fe1626269b00ba42b5990bd3ef6c44d"
   },
   "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit (equal to `git rev-parse <commit>:Packages/WaveWranglerKit/<path>`). TimeMapFreezeTests.timeMapAndHarnessTreesMatchTheFreezeRecord recomputes both tree IDs from the working tree on every test run and fails on any difference. A change to either tree after the freeze is a new dated freeze revision with a fresh holdout; the earlier record is retained.",
   "dependencyTreesAtFreeze": {
@@ -154,9 +154,15 @@
     "command": "cd Packages/WaveWranglerKit && WW_TIMEMAP_CALIBRATION=1 WW_TIMEMAP_RECORDS_DIR=<dir> swift test --scratch-path .build/swiftpm --filter TimeMapCalibrationTests/calibrationSplitMeetsEveryGate",
     "records": 700,
     "recordsFile": "docs/m2/evidence/ww-015/calibration.jsonl",
-    "recordsSHA256": "42bb956624f7fd167741eb4492f96ffb393215f4be18d982c06cec488a7e9e96",
-    "recordsOrder": "caseIndex order; JSON keys sorted; per-case quantisation count/max/p95 (the raw values are gated in memory); byte-identical across separate processes",
-    "result": "every gate PASS: 700 cases, 1298 draws, 3104 occurrences, 6248 spans, max frameCount 185522597535; 52887 exact frame round trips; 78913 inverse sources, quantisation max 0.5, p95 (nearest-rank) 0.4679; forward gap 8624 / unsupported 6231 / outside 28877; inverse gap 8090 / unsupported 2005 / outside 12476; 0 failures in every category.",
+    "recordsSHA256": "8f96355286c769177106649fb4f2be311903f7f9ec4b449e0b0e1e02c741a96c",
+    "recordsOrder": "caseIndex order; JSON keys sorted; each case carries its raw quantisation values in probe order plus their count/max/nearest-rank p95; byte-identical across separate processes",
+    "quantisation": {
+      "count": 78913,
+      "max": 0.5,
+      "p95NearestRank": 0.46793827112451236,
+      "recompute": "pool every record's quantisation array, sort ascending, take the value at rank ceil(0.95 n) (1-based). The p95 of the per-case quantisationP95 values is a different statistic and is not reported. TimeMapFreezeTests.committedCalibrationRecordsReproduceTheReportedQuantisation recomputes count, max and p95 and the file SHA-256 on every run."
+    },
+    "result": "every gate PASS: 700 cases, 1298 draws, 3104 occurrences, 6248 spans, max frameCount 185522597535; 52887 exact frame round trips; 78913 inverse sources, quantisation max 0.5, pooled p95 (nearest-rank) 0.4679; forward gap 8624 / unsupported 6231 / outside 28877; inverse gap 8090 / unsupported 2005 / outside 12476; 0 failures in every category.",
     "allGatesPassed": true
   },
   "host": {
@@ -178,6 +184,10 @@
     {
       "what": "Compute budget (user-directed): the split now measures at most TimeMapFixture.maxConcurrency cases at once (default 4; WW_M2_FREEZE_MAX_CONCURRENCY may lower it, clamped to 1...4; splitConcurrencyIsCappedAtFour) instead of all cases at once. Calibration rerun with the cap: every gate PASS, records byte-identical to calibration.jsonl. No recipe, truth, seed, count, probe or gate changed.",
       "where": "this PR, before the freeze"
+    },
+    {
+      "what": "Independent review: the records file now carries each case's raw quantisation values (previously gated in memory only), so the pooled nearest-rank p95 can be recomputed from calibration.jsonl alone; committedCalibrationRecordsReproduceTheReportedQuantisation checks the file hash and recomputes count, max and p95 on every run. Calibration rerun twice in separate processes: every gate PASS, byte-identical records; every other field and every gate value unchanged.",
+      "where": "this PR, before the freeze"
     }
   ],
   "holdoutProcedure": {
@@ -186,6 +196,6 @@
     "report": "Commit SHA, host (sw_vers, xcodebuild -version, swift --version, cores, memory), the tree IDs it ran, every case record (the harness writes ww-015-holdout.jsonl; commit it as docs/m2/evidence/ww-015/holdout.jsonl) and every gate with its worst value, the nearest-rank p95 and the max; never a subset. Gates, truth, recipe, counts and the map code are not tuned after this freeze."
   },
   "gateChanges": "None. The gate is the WW-015 gate from docs/m2/ww-019-m2-contracts.md §4/§5 (and M2-C3) as given in the kickoff, reproduced verbatim above.",
-  "deviation": "Pre-freeze only: the split concurrency cap (preFreezeExecutions; records byte-identical). Nothing ran on the holdout split.",
+  "deviation": "Pre-freeze only: the split concurrency cap (records byte-identical) and the raw quantisation values added to the records file (no gate value or other field changed) (preFreezeExecutions). Nothing ran on the holdout split.",
   "postFreezeRule": "A run counts as post-freeze holdout only when it executes on a commit containing this record's merge commit, with both pinnedTrees unchanged, and is reported in full (commit, host, tree IDs, every case and gate). Counts may exceed the frozen holdout counts, never fall below them. A change to a frozen recipe, truth, count, gate or pinned tree requires a new dated freeze revision and a fresh holdout; the earlier run is retained. Pre-freeze runs are calibration only."
 }
