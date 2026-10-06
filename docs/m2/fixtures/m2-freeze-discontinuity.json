@@ -8,12 +8,12 @@
  ],
  "registry": "docs/m2/fixtures/m2-fixture-registry.json",
  "calibrationEvidence": "docs/m2/evidence/ww-017-discontinuities.md",
- "baseCommit": "c9709e7fee4908d6d70ce5ba3349cfd1e570de1d",
- "baseCommitNote": "origin/main when this record was authored (merge of PR #184). The freeze takes effect at the merge commit of the PR that adds it; pinnedTrees, not a commit SHA, identify the frozen code.",
+ "baseCommit": "54ae8e3574322d8e02d4c170f8bdf9b57e3e41bf",
+ "baseCommitNote": "origin/main when this record was authored (merge of PR #186). The freeze takes effect at the merge commit of the PR that adds it; pinnedTrees, not a commit SHA, identify the frozen code.",
  "scope": "Every M2-SEG-* entry in the registry: stratum recipe, planted truth, calibration/holdout seeds and counts, scoring, and the gate exactly as written here. Frozen code: the WWAlignSegment source tree and the WWAlignSegmentTests tree (generator, plan, scoring, gate checks, edge-silence regression and holdout harness), pinned by git tree ID. The segmenter consumes the frozen WW-016 estimator (m2-freeze-estimator) through its public API only.",
  "pinnedTrees": {
-  "Sources/WWAlignSegment": "PENDING",
-  "Tests/WWAlignSegmentTests": "PENDING"
+  "Sources/WWAlignSegment": "08bc77339aee0ccb9294e5c1610529ef5e088320",
+  "Tests/WWAlignSegmentTests": "3ee2e028bca8fa9e47caf3d34482772293d888fc"
  },
  "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit. SegmentFreezeTests.segmenterAndHarnessTreesMatchTheFreezeRecord recomputes both git tree IDs from the working tree on every test run and fails on any difference (including an untracked file). A change to either tree after the freeze is a new dated freeze revision with a fresh holdout; the earlier record is retained.",
  "dependencyTreesAtFreeze": {
