@@ -59,9 +59,7 @@ struct ChunkPump {
         let samples = [Float](unsafeUninitializedCapacity: count * channels) { destination, initialized in
             for channel in 0..<channels {
                 let source = buffer.channel(channel)
-                for frame in 0..<count {
-                    (destination.baseAddress! + channel * count + frame).initialize(to: source[offset + frame])
-                }
+                (destination.baseAddress! + channel * count).initialize(from: source.baseAddress! + offset, count: count)
             }
             initialized = count * channels
         }

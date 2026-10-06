@@ -35,6 +35,8 @@ Packages/WaveWranglerKit/         Local Swift package linked by the app
                                   cancellable job coordinator, consent-gated decoded-content digest (WW-020)
   Sources/WWRender/               Pure group renderer (WW-018 candidate SRC): one GroupTimeMap transform for every
                                   same-group channel, exact plan + Kaiser-windowed sinc, bounded chunks; never opens files
+  Sources/WWAlignPipeline/        Headless alignment pipeline (WW-021/WW-023): consent-gated bounded analysis, proposals and
+                                  abstentions as derived results, accept/manual map revisions, aligned-asset render job
   Sources/WWOrganizer/            Library/workspace presentation: wording catalogs, preference keys,
                                   collection/combine operations, library session, sidebar models, menu shortcut register
   Tests/WW*Tests/                 Swift Testing suites per module
@@ -67,6 +69,7 @@ Parallel sessions work on disjoint folders. Cross-folder changes go through the 
 | `WWAlignEstimate` | Alignment (WW-016/WW-021) | Pure: imports only Foundation, WWCore and WWTimeMap; no file/content/decode APIs, no Accelerate, and no clock-approval surface (`EstimatorPurityTests`). Emits only `acousticConsistentProposal` or a typed abstention; audio alone cannot tell propagation delay from clock change, so it never produces `clockApproved`. Scores are not probabilities, and the vocabulary scan bans such wording. Calibration and the frozen holdout definition: [`docs/m2/evidence/ww-016-estimator-calibration.md`](../m2/evidence/ww-016-estimator-calibration.md), [`docs/m2/fixtures/m2-freeze-estimator.json`](../m2/fixtures/m2-freeze-estimator.json). |
 | `WWDerived` | Mac (WW-020) | Versioned maps are append-only revisions with one accepted pointer, embedded in the show (`Episode.alignment`, strict canonical `WWTimeMap` JSON, re-validated on open and save). Derived assets live only in the app cache: `DerivedAssetStore` refuses roots in or containing a source folder (canonical, case-folded paths; only exactly the user `~/Library` is exempt) and roots in iCloud Drive, `~/Library/CloudStorage` or any ubiquitous location. Assets are keyed by every M2-C5 component, and publish only after a currency check in the same coordinator turn (late results are discarded). The owner calls `DerivedJobCoordinator.shutdown()` before releasing source access: it cancels every job, refuses later submits and returns once no job runs; releasing the coordinator also cancels its jobs. Content digests need an explicit per-source request and availability ON, and go through `SourceDecoder` only. `ForbiddenAPITests` confines file mutation to `DerivedAssetStore.swift` and hashing to `DerivedAssetKey.swift`/`ContentDigest.swift`. |
 | `WWRender` | Alignment (WW-018) | Pure: imports only Foundation, `WWCore` and `WWTimeMap` (`RenderPurityTests` plus the repo-wide `ForbiddenAPITests` scan). Consumes plain decoded buffers through `RenderSampleProvider`; applies no gain, mix, proxy or stretch. It plans from `GroupTimeMap` inverses and never redefines their conventions. Bump `RenderVersions.renderer` (or `RenderRecipe.currentVersion` / `RenderVersions.outputAssetFormat`) whenever the same inputs would render or lay out differently. The SRC is a calibrated **candidate**, not qualified. Listening is blocked. Calibration and the frozen holdout definition: [`docs/m2/evidence/ww-018-render-calibration.md`](../m2/evidence/ww-018-render-calibration.md), [`docs/m2/fixtures/m2-freeze-render.json`](../m2/fixtures/m2-freeze-render.json). |
+| `WWAlignPipeline` | Alignment (WW-021/WW-023) | Headless; no UI. Reads content only through `SourceDecoder` (consent-gated, availability ON, registered sources only; metadata-only/OFF paths do zero decode work) and writes only through `DerivedJobCoordinator`, so every result is keyed by every M2-C5 component and publishes only after the coordinator's currency check. The estimator's output stays `acousticConsistentProposal`; accepting it records `manual` with basis `acceptedAcousticProposal`, and no path here can construct or carry forward `clockApproved` (`ForbiddenAPITests` scans the module with no exceptions; an approved prior map is refused). Concurrency is `PipelineConfiguration.concurrency` (1…4, default 2; never sized from the processor count) and one shared `ResourceGate` admits analysis and render units against a byte budget (default 512 MiB). Analysis decodes one decimated mono stream per side (≥8 kHz, bounded excerpt); bump `AnalysisDecimator.designVersion` or the recipe names in `PipelineConfiguration` whenever results would change. Export stays blocked (M4). Evidence: [`docs/m2/evidence/ww-021-alignment-pipeline.md`](../m2/evidence/ww-021-alignment-pipeline.md). |
 | Planned (M2) | — | `WWTimeMap` (WW-015) adds its row through its own lane. See [`docs/m2/ww-019-m2-contracts.md`](../m2/ww-019-m2-contracts.md). Each lane adds its own row here when its module merges. |
 | `.github/workflows/ci.yml`, `scripts/` | Mac (app foundation) | Keep scripts working for every lane. |
 
@@ -74,7 +77,8 @@ Pure domain logic belongs in the package (testable without the app); the app tar
 integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depends on `WWCore` and
 `WWSources` (scoped access); `WWPersistence` also depends on `WWTimeMap` (embedded map validation);
 `WWAlignEstimate` and `WWRender` depend on `WWCore` and `WWTimeMap`;
-`WWDerived` depends on `WWCore`, `WWTimeMap`, `WWSources`, `WWDecode` and `WWPersistence`; nothing depends on the app.
+`WWDerived` depends on `WWCore`, `WWTimeMap`, `WWSources`, `WWDecode` and `WWPersistence`;
+`WWAlignPipeline` depends on those plus `WWAlignEstimate` and `WWRender`; nothing depends on the app.
 
 ## Selected M1 contracts (implemented behind swappable seams)
 
@@ -179,7 +183,7 @@ without checking the CI image.
 ```sh
 scripts/build.sh            # xcodebuild build, Debug, ad-hoc signed, -jobs 4, DerivedData in .build/
 scripts/build.sh Release
-scripts/test.sh             # swift test (package, --jobs 4), serialized estimator, timing and render calibration passes, then xcodebuild test -only-testing:WaveWranglerTests
+scripts/test.sh             # swift test (package, --jobs 4), serialized estimator, timing, render calibration and pipeline memory passes, then xcodebuild test -only-testing:WaveWranglerTests
 scripts/test.sh --package-only
 scripts/test.sh --ui        # XCUITests only (launches the app); needs GUI permission + the coordinator's GUI lock
 ```
