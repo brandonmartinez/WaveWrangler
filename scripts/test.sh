@@ -70,6 +70,47 @@ WW_ESTIMATOR_TESTS=1 swift test \
   --jobs "$JOBS" \
   --filter 'WWAlignEstimateTests\.(ScenarioTests|CalibrationTests)'
 
+# WW-017 discontinuity segmentation (calibration against planted truth, detection-floor sweep, steps beside
+# target silence) is CPU-heavy for minutes; it runs alone for the same reason, its suites one after another
+# (--no-parallel), each with at most WW_SEGMENT_MAX_CONCURRENCY (default 4) cases in flight. The log check fails
+# the script if the selected suites were skipped.
+# On CI (CI=true) WW_SEGMENT_SWEEPS defaults to 0: only the gated calibration runs, keeping the job well inside its
+# timeout. The floor and edge-silence sweeps are skipped there, but the always-on cheap test
+# committedRecordsReproduceTheReportedCalibration still re-checks their committed records. Locally the default is 1
+# (all three suites).
+if [[ "${CI:-}" == true ]]; then SEGMENT_SWEEPS="${WW_SEGMENT_SWEEPS:-0}"; else SEGMENT_SWEEPS="${WW_SEGMENT_SWEEPS:-1}"; fi
+case "$SEGMENT_SWEEPS" in
+  0)
+    SEGMENT_FILTER='WWAlignSegmentTests\.CalibrationTests'
+    SEGMENT_REQUIRED=(calibrationAgainstPlantedTruth)
+    echo "==> swift test segment pass: CalibrationTests (WW_SEGMENT_SWEEPS=0: floor and edge-silence sweeps skipped)"
+    ;;
+  1)
+    SEGMENT_FILTER='WWAlignSegmentTests\.(CalibrationTests|FloorSweepTests|EdgeSilenceTests)'
+    SEGMENT_REQUIRED=(calibrationAgainstPlantedTruth detectionFloor silenceBesideAJumpNeverBridgesIt)
+    echo "==> swift test segment pass: CalibrationTests, FloorSweepTests, EdgeSilenceTests"
+    ;;
+  *)
+    echo "WW_SEGMENT_SWEEPS must be 0 or 1 (got '$SEGMENT_SWEEPS')" >&2
+    exit 2
+    ;;
+esac
+SEGMENT_LOG="$(mktemp)"
+WW_SEGMENT_TESTS=1 swift test \
+  --package-path "$ROOT/Packages/WaveWranglerKit" \
+  --scratch-path "$ROOT/.build/swiftpm" \
+  --jobs "$JOBS" \
+  --no-parallel \
+  --filter "$SEGMENT_FILTER" 2>&1 | tee "$SEGMENT_LOG"
+for segment_test in "${SEGMENT_REQUIRED[@]}"; do
+  if ! grep -q "Test $segment_test() passed" "$SEGMENT_LOG"; then
+    echo "segment pass: $segment_test did not run and pass" >&2
+    rm -f "$SEGMENT_LOG"
+    exit 1
+  fi
+done
+rm -f "$SEGMENT_LOG"
+
 # Timing gates (WW-005 ≤2 s edit-to-quiescent checkpoint, publication cost, library scale p95), the WW-016
 # estimator throughput report and the WW-018 render family peak run one at a time after the parallel suite, so
 # the fault harness's own I/O does not distort the measurements.
