@@ -67,10 +67,10 @@ WW_ESTIMATOR_TESTS=1 swift test \
   --jobs "$JOBS" \
   --filter 'WWAlignEstimateTests\.(ScenarioTests|CalibrationTests)'
 
-# Timing gates (WW-005 ≤2 s edit-to-quiescent checkpoint, publication cost, library scale p95) and the
-# WW-016 estimator throughput report run one at a time after the parallel suite, so the fault harness's own
-# I/O does not distort the measurements.
-for timing_test in editToQuiescentCheckpointLatency publicationPipelineCost hundredShowsThousandSourceRefs estimatorThroughputBenchmark; do
+# Timing gates (WW-005 ≤2 s edit-to-quiescent checkpoint, publication cost, library scale p95), the WW-016
+# estimator throughput report and the WW-018 render family peak run one at a time after the parallel suite, so
+# the fault harness's own I/O does not distort the measurements.
+for timing_test in editToQuiescentCheckpointLatency publicationPipelineCost hundredShowsThousandSourceRefs estimatorThroughputBenchmark renderFamilyPeakAndThroughput; do
   echo "==> swift test timing pass: $timing_test"
   WW_TIMING_TESTS=1 swift test \
     --package-path "$ROOT/Packages/WaveWranglerKit" \

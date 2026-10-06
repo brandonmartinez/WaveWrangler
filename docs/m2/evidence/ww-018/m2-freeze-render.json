@@ -1,0 +1,83 @@
+{
+  "freeze": "m2-freeze-render",
+  "date": "2026-10-06",
+  "status": "FROZEN at the merge commit of the PR that adds this file. Holdout NOT run.",
+  "fixtureID": "M2-RENDER-001",
+  "registryVersion": "none (no M2 fixture registry exists yet; the fixture is defined by the generator tree below)",
+  "generator": {
+    "owner": "Alignment (WW-018)",
+    "files": [
+      "Packages/WaveWranglerKit/Tests/WWRenderTests/RenderCalibrationTests.swift",
+      "Packages/WaveWranglerKit/Tests/WWRenderTests/Support.swift",
+      "Packages/WaveWranglerKit/Tests/WWRenderTests/RenderPlanTests.swift (MixedGroup)"
+    ],
+    "gitTreeTests": "e708e460e8234601e5578dba58c179fbafbd7a17",
+    "gitTreeRendererUnderTest": "94604633d6464391ade116b363f8874675381bf5",
+    "treeIDCommand": "git rev-parse <commit>:Packages/WaveWranglerKit/Tests/WWRenderTests and <commit>:Packages/WaveWranglerKit/Sources/WWRender",
+    "commitSHA": "the PR merge commit (a record cannot contain the SHA of the commit that adds it; the tree IDs above are content addresses of the frozen generator and renderer)"
+  },
+  "recipe": {
+    "seed": "first 8 bytes, big-endian, of SHA-256(\"ww-m2-fixture|v1|M2-RENDER-001|<split>|<index>\")",
+    "case": "one group, one 6-channel occurrence on one affine epoch; stratum = index mod 8",
+    "strata": ["48k->48k", "44.1k->48k", "16k->48k", "48k->16k", "96k->48k", "12k->48k", "48k->44.1k a~1.02", "44.1k->48k a~0.98"],
+    "clock": "a = (1e6 + basePPM + U{-1000..1000}) / 1e6 (basePPM 0, +20000 or -20000); b = U{0..20000}/999983 s; e = (U{0..10000} - 5000)/1000003 s",
+    "frames": "max(Fin/4, 3000) source frames",
+    "outputFrames": "[ceil(t(0)*Fout) - 64, floor(t(N-1)*Fout) + 65)",
+    "tones": "channel c: amplitude 0.5 at fraction r_c * (1 - 0.02 u) of the lower Nyquist, r = [0.02, 0.15, 0.3, 0.5, 0.7, 0.8], seeded phase",
+    "stopband": "only when 0.98 * (Fin/(a Fout)) > 1.01: six tones from the output Nyquist to 0.98 of the input Nyquist (normalised)",
+    "landmarks": "0.9-amplitude impulse at N/8 on every channel (seeded sign) and at N/4 + c*N/12 on channel c only (seeded sign)",
+    "inactive": "channel (index mod 6) carries -1 dBFS seeded uniform noise; all others exact zero",
+    "multiSpan": "one fixed MixedGroup case per split (segment kink, gap restart, unsupported epoch, 44.1 kHz + 48 kHz occurrences); 12 landmarks, 2 cross-occurrence skew pairs. Not seeded: identical in calibration and holdout (disclosed; it is a regression case, not held out)."
+  },
+  "truth": "WWTimeMap forward (alignedTime) and inverse (sourceFrame) of the case's GroupTimeMap, never the render plan. Tone truth x(k) is the exact inverse at the hull ends, linear between (one affine segment).",
+  "measurement": "steady frames only (every tap inside the span). Tone: least-squares fit of g*A*sin(theta+psi) -> gain dB, phase error deg, residual dBc. Landmarks: parabolic peak of |y| within +-4 frames of truth, sign of the peak sample. Skew: max - min over channels of the common-impulse positions (and of phase-derived time offsets). Inactive: max |y| in dBFS. NaN or a gate with no measurements fails.",
+  "splits": {
+    "calibration": {"cases": 16, "plusMultiSpan": 1, "run": true},
+    "holdout": {"cases": 48, "plusMultiSpan": 1, "run": false, "enable": "WW_M2_RENDER_HOLDOUT=1 swift test --filter holdoutSplitMeetsEveryFrozenGate"}
+  },
+  "renderer": {
+    "module": "WWRender",
+    "RenderVersions.renderer": 1,
+    "RenderVersions.outputAssetFormat": 1,
+    "RenderRecipe.currentVersion": 1,
+    "recipe": "m2Candidate: Kaiser-windowed sinc, halfWidth 32 taps per side, passband edge 0.8, stopband edge 1.0, beta 9.6, 2048 table phases, chunk 4096 output frames, maximum decimation 64",
+    "status": "CANDIDATE, not qualified"
+  },
+  "gates": [
+    {"gate": "landmarks", "limit": "<= 1 output frame (after explicit delay)", "kind": "frozen-holdout"},
+    {"gate": "passband", "limit": "+-0.1 dB through 80% of the lower Nyquist", "kind": "frozen-holdout"},
+    {"gate": "alias", "limit": "<= -80 dBc (in-band residual of every passband tone and every stopband tone)", "kind": "frozen-holdout (provisional value per ww-019 section 5)"},
+    {"gate": "skew", "limit": "<= 1 output frame (landmark and phase-derived)", "kind": "frozen-holdout"},
+    {"gate": "inversions-swaps", "limit": "0", "kind": "frozen-holdout"},
+    {"gate": "inactive", "limit": "<= -80 dBFS next to an isolated -1 dBFS channel", "kind": "frozen-holdout"},
+    {"gate": "phase", "limit": "<= 0.001 degrees passband tone phase error vs map truth", "kind": "calibrated here, frozen", "derivation": "max(10 x worst calibration 2.76e-6 deg, 0.001 floor), 1-2-5 series; the floor absorbs Float32 output quantisation (0.001 deg at 0.4 cycles/frame = 7e-6 output frames)"},
+    {"gate": "familyPeak", "limit": "<= 1 GiB resident (ru_maxrss), WW_TIMING_TESTS pass renderFamilyPeakAndThroughput", "kind": "frozen-holdout"},
+    {"gate": "license", "limit": "native or self-written code only", "kind": "non-numeric"},
+    {"gate": "listening", "limit": ">= 3 consented listeners, objectionable-artifact ratings <= 5%", "kind": "BLOCKED: not granted, no rubric frozen, never reported as passed"}
+  ],
+  "calibrationSummary": {
+    "records": 466,
+    "recordsFile": "docs/m2/evidence/ww-018/calibration.jsonl",
+    "recordsSHA256": "5670f81a436a77b52fc041cf977f79271ea1e93cd017f75d3bfe34199e32be98",
+    "worst": {
+      "landmarksFrames": 0.1687,
+      "passbandAbsDB": 0.000146,
+      "aliasDBc": -92.97,
+      "inBandResidualDBc": -109.24,
+      "skewFrames": 0.0537,
+      "inversionsSwaps": 0,
+      "inactiveDBFS": "-inf (exact zero)",
+      "phaseDegrees": 2.76e-6,
+      "familyPeakMiB": 38.4
+    },
+    "allGatesPassed": true
+  },
+  "host": {
+    "sw_vers": "macOS 27.0.1 (26A434)",
+    "xcodebuild": "Xcode 27.0 (27A266a)",
+    "swift": "Apple Swift 6.4 (swiftlang-6.4.0.34.1)",
+    "cpu": "Apple M5 Max, 18 cores",
+    "memoryBytes": 137438953472
+  },
+  "holdoutProtocol": "Run once on a clean commit at or after the merge commit, with WW_RENDER_RECORDS_DIR set; report every case and every gate (never a subset). Gates, truth, recipe and renderer are not tuned after this freeze; any change needs a new dated freeze revision before another holdout."
+}
