@@ -15,7 +15,8 @@ import Foundation
 ///   error a folder that can't be reached produces, until the distributed notification
 ///   `com.brandonmartinez.wavewrangler.uitest.offline.off` "reconnects" (`.offline.on` disconnects again). Each
 ///   publication attempt is counted; the count and the offline flag are written to the named pasteboard
-///   `com.brandonmartinez.wavewrangler.uitest` as JSON `{"publicationAttempts": n, "offline": bool}`.
+///   `com.brandonmartinez.wavewrangler.uitest` as JSON `{"publicationAttempts": n, "offline": bool, "attemptTimes": [s]}`
+///   (attempt times are seconds since 1970, the same clock as the test runner's).
 /// - `-WWUITestSaveRetryInterval <seconds>` shortens the automatic retry after a failed save (ST-11; 30 s).
 ///
 /// Debug builds only: in Release the whole type is compiled out, so `-WWUITestHooks YES` and the
@@ -88,11 +89,13 @@ final class UITestOfflineHooks: PublicationHooks, @unchecked Sendable {
     private let lock = NSLock()
     private var offline = true
     private var attempts = 0
+    private var attemptTimes: [Double] = []
 
     func reached(_ boundary: PublicationBoundary) throws {
         guard boundary == .candidateValidated else { return }
         let failing = lock.withLock {
             attempts += 1
+            attemptTimes.append(Date().timeIntervalSince1970)
             return offline
         }
         publish()
@@ -107,8 +110,8 @@ final class UITestOfflineHooks: PublicationHooks, @unchecked Sendable {
     }
 
     func publish() {
-        let (count, isOffline) = lock.withLock { (attempts, offline) }
-        let json = #"{"publicationAttempts": \#(count), "offline": \#(isOffline)}"#
+        let (count, isOffline, times) = lock.withLock { (attempts, offline, attemptTimes) }
+        let json = #"{"publicationAttempts": \#(count), "offline": \#(isOffline), "attemptTimes": [\#(times.map { String($0) }.joined(separator: ", "))]}"#
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 let board = NSPasteboard(name: Self.pasteboard)

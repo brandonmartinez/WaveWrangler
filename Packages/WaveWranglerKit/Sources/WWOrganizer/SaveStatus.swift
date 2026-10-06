@@ -220,7 +220,8 @@ public struct SaveStatusPresentation: Sendable, Equatable {
             symbol = "icloud.slash"
             tint = .attention
             popover = "WaveWrangler can't reach the folder where this show is saved. Your changes are still open in this window, and the last saved version hasn't been changed. "
-                + (status.autosaveEnabled ? "WaveWrangler will try again automatically." : "Choose Try Again when the folder is available.")
+                + (status.retryingAutomatically && status.autosaveEnabled
+                    ? "WaveWrangler will try again automatically." : "Choose Try Again when the folder is available.")
             actions = [.tryAgain, .saveACopyElsewhere]
         case .diskFull(let volume):
             text = "Not saved"

@@ -14,6 +14,7 @@
 		7C3A1E5D9B2F4A6C8E0D1B3F /* WWOrganizer in Frameworks */ = {isa = PBXBuildFile; productRef = A1D4C7F02B5E8A3D6C9F1E4B /* WWOrganizer */; };
 		6B1E5CB5C9CA81007F6A81B8 /* WWCore in Frameworks */ = {isa = PBXBuildFile; productRef = 16B37CD1081A7D1F8BD805E3 /* WWCore */; };
 		4D283E5538B35FC08990F6D5 /* WWPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 9E46055AA9A5DEF6E328B117 /* WWPersistence */; };
+		5E8F2A71C4B39D6E0A1F7C82 /* WWOrganizer in Frameworks */ = {isa = PBXBuildFile; productRef = 9B3D6E1F2A4C7085D2E6F193 /* WWOrganizer */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -46,6 +47,7 @@
 				Commands/ConfirmationButtons.swift,
 				Commands/OpaqueErrorPanel.swift,
 				Sources/SetupConfirmationKind.swift,
+				Workspace/ShowDocumentStatusMapping.swift,
 			);
 			target = C13E785C401E67854374EF9C /* WaveWranglerTests */;
 		};
@@ -92,6 +94,7 @@
 			files = (
 				6B1E5CB5C9CA81007F6A81B8 /* WWCore in Frameworks */,
 				4D283E5538B35FC08990F6D5 /* WWPersistence in Frameworks */,
+				5E8F2A71C4B39D6E0A1F7C82 /* WWOrganizer in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -174,6 +177,7 @@
 			packageProductDependencies = (
 				16B37CD1081A7D1F8BD805E3 /* WWCore */,
 				9E46055AA9A5DEF6E328B117 /* WWPersistence */,
+				9B3D6E1F2A4C7085D2E6F193 /* WWOrganizer */,
 			);
 			productName = WaveWranglerTests;
 			productReference = 65BA5EA7D383BDC1C1B6760D /* WaveWranglerTests.xctest */;
@@ -536,6 +540,10 @@
 			productName = WWPersistence;
 		};
 		A1D4C7F02B5E8A3D6C9F1E4B /* WWOrganizer */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WWOrganizer;
+		};
+		9B3D6E1F2A4C7085D2E6F193 /* WWOrganizer */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = WWOrganizer;
 		};

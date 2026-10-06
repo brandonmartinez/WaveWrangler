@@ -60,6 +60,16 @@ public enum DocumentSaveState: Sendable, Equatable {
         }
     }
 
+    /// ST-11: whether this failed save is retried automatically while autosave is on. D5 (acknowledgement uncertain)
+    /// and the D7–D9 failures are; a cancelled save (D10), a conflict (D6) and every non-failure state are not.
+    public var isAutomaticallyRetryable: Bool {
+        switch self {
+        case .acknowledgementUncertain: true
+        case let .saveFailed(_, kind, _): kind != .cancelled
+        default: false
+        }
+    }
+
     /// Whether unsaved work may exist (drives "unsaved" indicators; never cleared by skipped/failed saves).
     public var hasUnsavedWork: Bool {
         switch self {

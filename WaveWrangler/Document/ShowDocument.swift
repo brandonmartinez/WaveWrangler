@@ -56,6 +56,9 @@ final class ShowDocument: NSDocument {
     /// The pending automatic retry after a failed save (ST-11). While it's pending, the failure state stays visible
     /// (edits and edit checkpoints don't flip it back to "Edited") and no other automatic attempt is made.
     private var saveRetry: DispatchWorkItem?
+    /// D5: the exact bytes of a publication whose acknowledgement is uncertain. Its retry first checks whether these
+    /// bytes are on disk and, if so, adopts them (verified by decoding) instead of republishing against a stale base.
+    private var uncertainCandidate: Data?
     var documentKey: DocumentKey { .show(store.model.show.id) }
     private var gate: AutosaveGate { PersistenceEnvironment.autosaveGate }
     private var recovery: RecoveryStore { PersistenceEnvironment.recovery }
@@ -204,6 +207,7 @@ final class ShowDocument: NSDocument {
         pendingCandidate = nil
         if error == nil, adopts, let receipt {
             cancelSaveRetry()
+            uncertainCandidate = nil
             publication = receipt.publication
             onDiskBase = receipt.fingerprint
             // #87: AppKit only marks an autosave in place as "autosaved"; clear "— Edited" exactly when the verified
@@ -225,14 +229,7 @@ final class ShowDocument: NSDocument {
             } else {
                 status.set(.saved(revision: receipt.revision, at: receipt.verifiedAt))
             }
-            let model = store.model
-            #if DEBUG
-            if let acknowledge = Self.debugLibraryAcknowledger {
-                Task { await acknowledge(model.show.id, model.show.title, receipt.publication) }
-                return
-            }
-            #endif
-            Task { await LibraryDocumentStore.shared.acknowledgeShowPublication(model.show.id, title: model.show.title, publication: receipt.publication) }
+            acknowledgeToLibrary(receipt.publication)
         } else if let error {
             if let publicationError = error as? PublicationError {
                 status.set(DocumentSaveState.from(publicationError, retainedRevision: publication?.revision))
@@ -246,22 +243,29 @@ final class ShowDocument: NSDocument {
             }
             // C2b: a failed or uncertain automatic publication still leaves an edit checkpoint (ON only).
             if saveOperation == .autosaveInPlaceOperation || saveOperation == .autosaveElsewhereOperation { writeEditCheckpoint() }
+            if case .acknowledgementUncertain = status.saveStatus.state { uncertainCandidate = candidateBytes }
             // ST-11: with autosave ON, a failed save is retried automatically (at most every `saveRetryInterval`).
-            if gate.isEnabled, isDocumentEdited, Self.isRetryableFailure(status.saveStatus.state) { scheduleSaveRetry() }
+            if gate.isEnabled, isDocumentEdited, status.saveStatus.state.isAutomaticallyRetryable { scheduleSaveRetry() }
         }
+    }
+
+    /// P7: the library learns of a verified publication (only after coherent disk truth).
+    private func acknowledgeToLibrary(_ publication: PublicationStamp) {
+        let model = store.model
+        #if DEBUG
+        if let acknowledge = Self.debugLibraryAcknowledger {
+            Task { await acknowledge(model.show.id, model.show.title, publication) }
+            return
+        }
+        #endif
+        Task { await LibraryDocumentStore.shared.acknowledgeShowPublication(model.show.id, title: model.show.title, publication: publication) }
     }
 
     // MARK: - Automatic retry after a failed save (ST-11)
 
-    static func isRetryableFailure(_ state: DocumentSaveState) -> Bool {
-        switch state {
-        case .saveFailed, .acknowledgementUncertain: true
-        default: false
-        }
-    }
-
     private func scheduleSaveRetry() {
         guard saveRetry == nil else { return }
+        status.setRetryingAutomatically(true)
         let retry = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.performSaveRetry() }
         }
@@ -272,12 +276,42 @@ final class ShowDocument: NSDocument {
     private func cancelSaveRetry() {
         saveRetry?.cancel()
         saveRetry = nil
+        status.setRetryingAutomatically(false)
     }
 
     private func performSaveRetry() {
         saveRetry = nil
+        status.setRetryingAutomatically(false)
         guard gate.isEnabled, isDocumentEdited, fileURL != nil else { return }
+        // D5: if the uncertain publication did land, adopt it rather than republishing against the old base (which
+        // would fail the base check and report a false conflict).
+        if case .acknowledgementUncertain = status.saveStatus.state, adoptUncertainPublication() { return }
         autosave(withImplicitCancellability: false) { _ in }
+    }
+
+    /// Adopts the uncertain candidate when exactly its bytes are on disk and decode as a valid show: this document's
+    /// on-disk base, publication and modification date become that revision. Returns `false` (nothing changed)
+    /// otherwise; the caller then saves normally, and the base check stays honest.
+    private func adoptUncertainPublication() -> Bool {
+        guard let candidate = uncertainCandidate, let url = fileURL, let data = try? Data(contentsOf: url), data == candidate else { return false }
+        let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery)
+        guard case let .editable(document, fingerprint) = opener.outcome(for: data, url: url) else { return false }
+        uncertainCandidate = nil
+        publication = document.publication
+        onDiskBase = fingerprint
+        fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        if store.model == document.payload {
+            updateChangeCount(.changeCleared)
+            scheduler?.cancelPending()
+            try? recovery.discardEditCheckpoints(for: documentKey)
+            status.set(.saved(revision: document.revision, at: Date()))
+        } else {
+            // Edits made since that save are still unsaved: publish them normally against the adopted base.
+            status.set(.edited(autosaveEnabled: gate.isEnabled))
+            scheduler?.reschedulePending()
+        }
+        acknowledgeToLibrary(document.publication)
+        return true
     }
 
     override func writeSafely(to url: URL, ofType typeName: String, for saveOperation: NSDocument.SaveOperationType) throws {
@@ -385,7 +419,7 @@ final class ShowDocument: NSDocument {
               )
         else { return }
         // ST-11: a visible save failure isn't replaced by the checkpoint state (which reads as "Edited").
-        guard !Self.isRetryableFailure(status.saveStatus.state) else { return }
+        guard !status.saveStatus.state.isAutomaticallyRetryable else { return }
         status.set(.recoveryCheckpoint(at: record.createdAt))
     }
 

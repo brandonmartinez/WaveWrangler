@@ -90,8 +90,9 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             addEpisodeByKeyboard(window)
             let status = element("ww.show.saveStatus")
             check(Acceptance.waitFor(timeout: 8) { self.value(status).hasPrefix(Self.cantReach) }, "autosave failure shows Can't reach: \(value(status))")
+            // The baseline is the first attempt's own time (seam), not when the test noticed it.
+            let firstFailure = seam()?.attemptTimes.first.map { Date(timeIntervalSince1970: $0) } ?? Date()
             dismissErrorSheetIfAny("T26 after the failed autosave")
-            let firstFailure = Date()
             let attemptsAtFailure = seam()?.attempts ?? -1
             check(attemptsAtFailure >= 1, "an automatic attempt was made: \(attemptsAtFailure)")
             try openSaveStatus()
@@ -122,9 +123,11 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             // Reconnect: the next automatic retry (due ~30 s after the failure) saves with no user action.
             post(Self.reconnect)
             check(Acceptance.waitFor(timeout: 20) { self.value(status).hasPrefix("Saved") }, "after reconnect → Saved with no user action: \(value(status))")
-            let elapsed = Date().timeIntervalSince(firstFailure)
-            Acceptance.record(self, "T26 saved \(String(format: "%.1f", elapsed)) s after the first failure; attempts \(String(describing: seam()?.attempts))")
-            check(elapsed >= 29, "the retry came no sooner than 30 s after the failure: \(elapsed)")
+            let times = seam()?.attemptTimes ?? []
+            let gaps = zip(times.dropFirst(), times).map { $0 - $1 }
+            Acceptance.record(self, "T26 attempt times (s after the first): \(times.map { String(format: "%.2f", $0 - (times.first ?? 0)) })")
+            check(times.count >= 2, "an automatic retry happened: \(times.count) attempts")
+            check(gaps.allSatisfy { $0 >= 29.9 }, "automatic retries at most every 30 s: gaps \(gaps)")
             check(diskEpisodeCount(document) == 2, "both edits are on disk: \(String(describing: diskEpisodeCount(document)))")
             check(Acceptance.waitFor(timeout: 3) { !self.windowSaysEdited(window) }, "no \"— Edited\" after the verified save: \(window.title)")
         }
@@ -203,11 +206,11 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             || window.staticTexts.matching(NSPredicate(format: "value CONTAINS '— Edited' OR label CONTAINS '— Edited'")).count > 0
     }
 
-    private func seam() -> (attempts: Int, offline: Bool)? {
+    private func seam() -> (attempts: Int, offline: Bool, attemptTimes: [Double])? {
         guard let text = NSPasteboard(name: Self.seamPasteboard).string(forType: .string),
               let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let attempts = object["publicationAttempts"] as? Int, let offline = object["offline"] as? Bool else { return nil }
-        return (attempts, offline)
+        return (attempts, offline, (object["attemptTimes"] as? [Double]) ?? [])
     }
 
     private func element(_ identifier: String) -> XCUIElement {
