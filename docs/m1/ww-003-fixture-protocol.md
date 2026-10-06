@@ -461,7 +461,7 @@ User-provided local disposable episode copy — **path, file names and content w
 | Show / library publication boundaries | 7 / 6 |
 | Minimum holdout per boundary (per applicable path / location stratum) | 100 |
 | Not-authorized entries (+ variants) | 3 (+1) |
-| Frozen entries (`m1-freeze-1` / `-4`, deferred) | 58 / 1 (DUR-025: frozen at `m1-freeze-4`, deferred by the user to #146) |
+| Frozen entries (`m1-freeze-1` / `-5` / `-4`, deferred) | 57 / 1 / 1 (REF-020: re-frozen unchanged at `m1-freeze-5`, §4.6; DUR-025: frozen at `m1-freeze-4`, deferred by the user to #146) |
 
 Denominators overlap across claims (e.g., REF-018 audits REF/SRC/DUR-029 cases); totals are **not additive evidence**.
 
