@@ -15,6 +15,8 @@ let package = Package(
         .library(name: "WWSources", targets: ["WWSources"]),
         .library(name: "WWEpisodeSetup", targets: ["WWEpisodeSetup"]),
         .library(name: "WWOrganizer", targets: ["WWOrganizer"]),
+        // Pure exact clock-epoch / coordinate maps (WW-015). No I/O, no decoding.
+        .library(name: "WWTimeMap", targets: ["WWTimeMap"]),
         // Headless persistence probe for multi-process and observed-provider trials (synthetic documents only).
         .executable(name: "wwpersist-probe", targets: ["WWPersistenceProbe"]),
     ],
@@ -24,12 +26,14 @@ let package = Package(
         .target(name: "WWSources", dependencies: ["WWCore"]),
         .target(name: "WWEpisodeSetup", dependencies: ["WWCore", "WWSources"]),
         .target(name: "WWOrganizer", dependencies: ["WWCore"]),
+        .target(name: "WWTimeMap", dependencies: ["WWCore"]),
         .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
         .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore", "WWPersistenceProbe", "WWOrganizer"]),
         .testTarget(name: "WWSourcesTests", dependencies: ["WWSources", "WWCore"]),
         .testTarget(name: "WWEpisodeSetupTests", dependencies: ["WWEpisodeSetup", "WWCore", "WWSources"]),
         .testTarget(name: "WWOrganizerTests", dependencies: ["WWOrganizer", "WWCore", "WWPersistence"]),
+        .testTarget(name: "WWTimeMapTests", dependencies: ["WWTimeMap", "WWCore"]),
     ],
     swiftLanguageModes: [.v6]
 )

@@ -1,0 +1,177 @@
+import Foundation
+import Testing
+import WWCore
+@testable import WWTimeMap
+
+/// Every constructor refusal is a typed error; nothing invalid is silently repaired.
+@Suite("Validation")
+struct ValidationTests {
+    let fx = Fixture()
+
+    // MARK: Segments
+
+    @Test func segmentParametersAreChecked() {
+        #expect(throws: TimeMapError.nonPositiveRateRatio) { try AffineClockSegment(groupClockStart: q(0), groupClockEnd: q(1), rateRatio: .zero, alignedOffset: .zero) }
+        #expect(throws: TimeMapError.nonPositiveRateRatio) { try AffineClockSegment(groupClockStart: q(0), groupClockEnd: q(1), rateRatio: q(-1), alignedOffset: .zero) }
+        #expect(throws: TimeMapError.rateRatioOutsideEnvelope) { try AffineClockSegment(groupClockStart: q(0), groupClockEnd: q(1), rateRatio: q(3), alignedOffset: .zero) }
+        #expect(throws: TimeMapError.rateRatioOutsideEnvelope) { try AffineClockSegment(groupClockStart: q(0), groupClockEnd: q(1), rateRatio: q(1, 3), alignedOffset: .zero) }
+        #expect(throws: TimeMapError.rateRatioOutsideEnvelope) { try AffineClockSegment(groupClockStart: q(0), groupClockEnd: q(1), rateRatio: q128((Int128(1) << 41) + 1, Int128(1) << 41), alignedOffset: .zero) }
+        #expect(throws: TimeMapError.nonPositiveSegmentLength) { try AffineClockSegment(groupClockStart: q(1), groupClockEnd: q(1), rateRatio: .one, alignedOffset: .zero) }
+        #expect(throws: TimeMapError.nonPositiveSegmentLength) { try AffineClockSegment(groupClockStart: q(2), groupClockEnd: q(1), rateRatio: .one, alignedOffset: .zero) }
+        #expect(throws: TimeMapError.parameterOutsideEnvelope("alignedOffset")) { try AffineClockSegment(groupClockStart: q(0), groupClockEnd: q(1), rateRatio: .one, alignedOffset: q((1 << 31) + 1)) }
+        #expect(throws: TimeMapError.parameterOutsideEnvelope("alignedOffset")) { try AffineClockSegment(groupClockStart: q(0), groupClockEnd: q(1), rateRatio: .one, alignedOffset: q128(1, (Int128(1) << 40) + 1)) }
+        #expect(throws: TimeMapError.parameterOutsideEnvelope("groupClockEnd")) { try AffineClockSegment(groupClockStart: q(0), groupClockEnd: q((1 << 31) + 1), rateRatio: .one, alignedOffset: .zero) }
+        // Envelope edges are accepted.
+        #expect((try? AffineClockSegment(groupClockStart: q(-(1 << 31)), groupClockEnd: q(1 << 31), rateRatio: q(2), alignedOffset: q(1, 1 << 40))) != nil)
+        #expect((try? AffineClockSegment(groupClockStart: q(0), groupClockEnd: q(1), rateRatio: q(1, 2), alignedOffset: .zero)) != nil)
+    }
+
+    private func group(_ segments: [AffineClockSegment]) throws(TimeMapError) -> GroupTimeMap {
+        let epoch = RecordingEpochID()
+        return try fx.otherGroup(epochs: [mapped(epoch, segments)], placements: [OccurrencePlacement(occurrence: fx.occurrence(frames: 48000), spans: [span(0, 48000, epoch)])])
+    }
+
+    @Test func epochSegmentsMustBeOrderedContiguousAndContinuous() throws {
+        let epoch = RecordingEpochID()
+        #expect(throws: TimeMapError.emptyEpochMap(epoch)) { try fx.otherGroup(epochs: [mapped(epoch, [])], placements: []) }
+        let outOfOrder = [seg(q(5), q(10), .one, .zero), seg(q(0), q(5), .one, .zero)]
+        #expect(throws: TimeMapError.segmentsOutOfOrder(epoch)) { try fx.otherGroup(epochs: [mapped(epoch, outOfOrder)], placements: []) }
+        let overlapping = [seg(q(0), q(5), .one, .zero), seg(q(4), q(10), .one, .zero)]
+        #expect(throws: TimeMapError.overlappingSegments(epoch)) { try fx.otherGroup(epochs: [mapped(epoch, overlapping)], placements: []) }
+        let holed = [seg(q(0), q(5), .one, .zero), seg(q(6), q(10), .one, .zero)]
+        #expect(throws: TimeMapError.segmentsNotContiguous(epoch)) { try fx.otherGroup(epochs: [mapped(epoch, holed)], placements: []) }
+        // A jump inside one epoch is a discontinuity: it must be a new epoch, never a bridged segment.
+        let jump = [seg(q(0), q(5), .one, .zero), seg(q(5), q(10), .one, q(1, 1000))]
+        #expect(throws: TimeMapError.discontinuityWithinEpoch(epoch)) { try fx.otherGroup(epochs: [mapped(epoch, jump)], placements: []) }
+        // A continuous rate change is a valid piecewise map: 1*5 = 1.0001*5 + b  =>  b = -1/2000.
+        let rateChange = [seg(q(0), q(5), .one, .zero), seg(q(5), q(10), q(10_001, 10_000), q(-1, 2000))]
+        #expect((try? fx.otherGroup(epochs: [mapped(epoch, rateChange)], placements: [])) != nil)
+    }
+
+    @Test func epochsMustBeUniqueAndNonOverlapping() {
+        let a = RecordingEpochID(), b = RecordingEpochID()
+        #expect(throws: TimeMapError.duplicateEpoch(a)) { try fx.otherGroup(epochs: [mapped(a, [seg(q(0), q(1), .one, .zero)]), EpochClockMap(epoch: a, mapping: .unsupported(.notAttempted))], placements: []) }
+        let overlap = [mapped(a, [seg(q(0), q(2), .one, .zero)]), mapped(b, [seg(q(0), q(1), .one, q(1))])]
+        #expect(throws: TimeMapError.overlappingEpochs(a, b)) { try fx.otherGroup(epochs: overlap, placements: []) }
+        // Touching images [0, 1) and [1, 2) are fine.
+        let touching = [mapped(a, [seg(q(0), q(1), .one, .zero)]), mapped(b, [seg(q(0), q(1), .one, q(1))])]
+        #expect((try? fx.otherGroup(epochs: touching, placements: [])) != nil)
+    }
+
+    // MARK: Placements
+
+    @Test func placementsAreValidated() {
+        let a = RecordingEpochID(), b = RecordingEpochID(), c = RecordingEpochID()
+        let epochs = [
+            mapped(a, [seg(q(0), q(10), .one, .zero)]),
+            mapped(b, [seg(q(0), q(10), .one, q(20))]),
+            mapped(c, [seg(q(0), q(10), .one, q(40))]),
+        ]
+        let occurrence = fx.occurrence(frames: 480_000)
+        let id = occurrence.id
+        func check(_ expected: TimeMapError, _ spans: [EpochSpan], sourceLocation: SourceLocation = #_sourceLocation) {
+            #expect(throws: expected, sourceLocation: sourceLocation) {
+                try fx.otherGroup(epochs: epochs, placements: [OccurrencePlacement(occurrence: occurrence, spans: spans)])
+            }
+        }
+        check(.emptyPlacement(id), [])
+        check(.nonPositiveSpanLength(id), [span(10, 10, a)])
+        check(.nonPositiveSpanLength(id), [span(10, 5, a)])
+        check(.spanOutsideSource(id), [span(-1, 10, a)])
+        check(.spanOutsideSource(id), [span(0, 480_001, a)])
+        check(.spansOutOfOrder(id), [span(100, 200, a), span(0, 50, b)])
+        check(.overlappingSpans(id), [span(0, 200, a), span(100, 300, b)])
+        // A gap (or any span boundary) inside one occurrence restarts the epoch.
+        check(.gapMustRestartEpoch(id, a), [span(0, 100, a), span(200, 300, a)])
+        check(.gapMustRestartEpoch(id, a), [span(0, 100, a), span(100, 300, a)])
+        check(.epochReusedWithinOccurrence(id, a), [span(0, 100, a), span(100, 200, b), span(200, 300, a)])
+        let unknown = RecordingEpochID()
+        check(.unknownEpoch(unknown), [span(0, 100, unknown)])
+        check(.placementNotCoveredByEpochMap(id, a), [span(0, 480_000, a, e: q(1))]) // u reaches 11 s > 10 s
+        check(.placementNotCoveredByEpochMap(id, a), [span(0, 100, a, e: q(-1))]) // u starts before 0
+        // The last frame's instant must be strictly inside the segment domain [u0, u1).
+        check(.placementNotCoveredByEpochMap(id, a), [span(0, 480_000, a, e: q(1, 48000))])
+        // Monotonic placement: later spans of an occurrence must land later on the aligned timeline.
+        check(.nonMonotonicPlacement(id), [span(0, 100, b), span(200, 300, a)])
+        check(.parameterOutsideEnvelope("groupClockOffset"), [span(0, 100, a, e: q128(1, (Int128(1) << 40) + 1))])
+        let duplicate = OccurrencePlacement(occurrence: occurrence, spans: [span(0, 100, a)])
+        #expect(throws: TimeMapError.duplicateOccurrence(id)) { try fx.otherGroup(epochs: epochs, placements: [duplicate, duplicate]) }
+        // Valid: three epochs in increasing aligned order with gaps between them.
+        #expect((try? fx.otherGroup(epochs: epochs, placements: [OccurrencePlacement(occurrence: occurrence, spans: [span(0, 100, a), span(200, 300, b), span(400, 500, c)])])) != nil)
+    }
+
+    // MARK: Reference identity
+
+    @Test func referenceGroupMustAnchorTheTimeline() {
+        let other = RecordingEpochID()
+        let otherMap = mapped(other, [seg(q(100), q(110), .one, .zero)])
+        // Reference epoch missing or unsupported.
+        #expect(throws: TimeMapError.referenceEpochMissing(fx.refEpoch)) {
+            try GroupTimeMap(group: fx.group, reference: fx.reference, epochs: [otherMap], placements: [])
+        }
+        #expect(throws: TimeMapError.referenceEpochMissing(fx.refEpoch)) {
+            try GroupTimeMap(group: fx.group, reference: fx.reference, epochs: [EpochClockMap(epoch: fx.refEpoch, mapping: .unsupported(.notAttempted))], placements: [])
+        }
+        // Reference epoch with a non-identity formula or non-reference provenance.
+        for (segments, provenance) in [
+            ([seg(q(0), q(10), q(10_001, 10_000), .zero)], MapProvenance.timelineReference),
+            ([seg(q(0), q(10), .one, q(1, 48000))], .timelineReference),
+            ([seg(q(0), q(10), .one, .zero)], manualProvenance),
+        ] {
+            #expect(throws: TimeMapError.referenceEpochNotIdentity(fx.refEpoch)) {
+                try GroupTimeMap(group: fx.group, reference: fx.reference, epochs: [EpochClockMap(epoch: fx.refEpoch, mapping: .mapped(segments: segments, provenance: provenance))], placements: [fx.referencePlacement])
+            }
+        }
+        // Reference occurrence offset or absent.
+        let shifted = OccurrencePlacement(occurrence: fx.occurrence(fx.refOccurrence, frames: fx.refFrames), spans: [span(0, 100, fx.refEpoch, e: q(1))])
+        #expect(throws: TimeMapError.referenceOccurrenceNotAnchored(fx.refOccurrence)) {
+            try GroupTimeMap(group: fx.group, reference: fx.reference, epochs: [fx.referenceEpochMap], placements: [shifted])
+        }
+        #expect(throws: TimeMapError.referenceOccurrenceNotAnchored(fx.refOccurrence)) {
+            try GroupTimeMap(group: fx.group, reference: fx.reference, epochs: [fx.referenceEpochMap], placements: [])
+        }
+        // `.timelineReference` provenance anywhere else is refused (in the reference group or another).
+        let misplaced = EpochClockMap(epoch: other, mapping: .mapped(segments: [seg(q(100), q(110), .one, .zero)], provenance: .timelineReference))
+        #expect(throws: TimeMapError.misplacedTimelineReference(other)) { try fx.referenceGroup(extraEpochs: [misplaced]) }
+        #expect(throws: TimeMapError.misplacedTimelineReference(other)) { try fx.otherGroup(epochs: [misplaced], placements: []) }
+        #expect((try? fx.referenceGroup(extraEpochs: [otherMap])) != nil)
+    }
+
+    @Test func alignedTimelineOwnershipIsExclusive() throws {
+        let reference = try fx.referenceGroup()
+        let epoch = RecordingEpochID(), occurrence = fx.occurrence(frames: 48000)
+        let otherID = RecorderGroupID()
+        let other = try fx.otherGroup(otherID, epochs: [mapped(epoch, [seg(q(0), q(1), .one, .zero)])], placements: [OccurrencePlacement(occurrence: occurrence, spans: [span(0, 48000, epoch)])])
+        #expect((try? AlignedTimelineMap(reference: fx.reference, groups: [reference, other])) != nil)
+        #expect(throws: TimeMapError.missingReferenceGroup(fx.group)) { try AlignedTimelineMap(reference: fx.reference, groups: [other]) }
+        #expect(throws: TimeMapError.duplicateGroup(otherID)) { try AlignedTimelineMap(reference: fx.reference, groups: [reference, other, other]) }
+        let sameEpoch = try fx.otherGroup(epochs: [mapped(epoch, [seg(q(0), q(1), .one, .zero)])], placements: [])
+        #expect(throws: TimeMapError.epochInMultipleGroups(epoch)) { try AlignedTimelineMap(reference: fx.reference, groups: [reference, other, sameEpoch]) }
+        let epoch2 = RecordingEpochID()
+        let sameOccurrence = try fx.otherGroup(epochs: [mapped(epoch2, [seg(q(0), q(1), .one, .zero)])], placements: [OccurrencePlacement(occurrence: occurrence, spans: [span(0, 48000, epoch2)])])
+        #expect(throws: TimeMapError.occurrenceInMultipleGroups(occurrence.id)) { try AlignedTimelineMap(reference: fx.reference, groups: [reference, other, sameOccurrence]) }
+        let foreignReference = TimelineReference(group: fx.group, epoch: RecordingEpochID(), occurrence: fx.refOccurrence)
+        let foreign = try GroupTimeMap(group: RecorderGroupID(), reference: foreignReference, epochs: [], placements: [])
+        #expect(throws: TimeMapError.referenceMismatch(foreign.group)) { try AlignedTimelineMap(reference: fx.reference, groups: [reference, foreign]) }
+        let map = try AlignedTimelineMap(reference: fx.reference, groups: [reference, other])
+        let stranger = SourceOccurrenceID()
+        #expect(throws: TimeMapError.unknownOccurrence(stranger)) { try map.alignedTime(ofFrame: 0, in: stranger) }
+        #expect(throws: TimeMapError.unknownOccurrence(stranger)) { try map.sourceFrame(at: .zero, in: stranger) }
+    }
+
+    // MARK: Exact-arithmetic envelope
+
+    /// Pathological coprime denominators are refused at construction rather than trapping at query time.
+    @Test func pathologicalDenominatorsAreRefusedNotTrapped() throws {
+        let p40 = Int128(1) << 40
+        let epoch = RecordingEpochID(), occurrence = fx.occurrence(frames: 48000)
+        let segment = try AffineClockSegment(groupClockStart: q(-1), groupClockEnd: q(2), rateRatio: q128(p40, p40 - 1), alignedOffset: q128(1, p40 - 3))
+        #expect(throws: TimeMapError.exactArithmeticEnvelopeExceeded) {
+            try fx.otherGroup(epochs: [mapped(epoch, [segment])], placements: [OccurrencePlacement(occurrence: occurrence, spans: [span(0, 48000, epoch, e: q128(1, p40 - 2))])])
+        }
+        // A query whose exact inverse cannot be represented throws instead of trapping or rounding.
+        let simple = try fx.otherGroup(epochs: [mapped(epoch, [seg(q(0), q(1), q(10_001, 10_000), q(1, 7))])], placements: [OccurrencePlacement(occurrence: occurrence, spans: [span(0, 48000, epoch)])])
+        let hostile = q128(Int128(1) << 100 + 1, (Int128(1) << 126) - 1)
+        #expect(throws: TimeMapError.exactArithmeticEnvelopeExceeded) { try simple.sourceFrame(at: try q(1, 7).adding(hostile), in: occurrence.id) }
+    }
+}
