@@ -22,6 +22,8 @@ jobs:
     timeout-minutes: 45
     env:
       WW_JOBS: "4"
+      # WW-017: CI runs only the segment calibration; the floor and edge-silence sweeps run locally (scripts/test.sh).
+      WW_SEGMENT_SWEEPS: "0"
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

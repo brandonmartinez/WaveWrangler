@@ -235,3 +235,14 @@
 - Keep this Mac's total compiler and test work within ~3 concurrent `-jobs 4` jobs, counting the M1 coordinator's lanes. Check `uptime` before heavy work and wait while the load is above ~24.
 - Carried into routing.md (Milestone orchestration) and the M3 kickoff.
 
+### 2026-10-06: Prefer GPT models for new sessions and agents
+
+**By:** the user (11:47, relayed verbatim: "can we prefer GPT models instead of Claude/Sonnet? we get better spend rates on those."), recorded by the M2 coordinator. Amends the 2026-10-05 model-and-effort tiers: tiers are unchanged, the default family changes.
+
+- **High-capability** (safety-critical code; durability, source immutability, concurrency; alignment estimators and false-accept risk; independent reviewers of those): gpt-6-sol or gpt-5.6-sol, high/xhigh effort.
+- **Mid-tier** (UI work, test harness, docs, exit write-ups): gpt-5.6-terra or gpt-6-luna, medium effort.
+- **Fast** (running/collecting tests, xcresult/log parsing, triage, rote checks): gpt-5.4-mini or gpt-5-mini.
+- A Claude model is used only with a recorded reason (for example, a GPT model failed the same unit twice), logged in the PR or here.
+- Applies to new child sessions and task agents; running sessions aren't interrupted. Review stays independent: a different model or session from the author.
+- Carried into routing.md and the M3 kickoff.
+
