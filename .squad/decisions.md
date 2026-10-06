@@ -144,4 +144,28 @@
 - **Multiple hosts:** one lock per GUI host (per-host lock dirs); the full-suite shards acquire both.
 - **Unchanged:** one GUI run per host at a time; orphan cleanup after every run.
 
+**Text-size testing (user-directed, 2026-10-06 01:10, relayed verbatim):** "text size testing ... is killing cycles and could be handled at exits or broader checkpoints."
+- Text-size variants (in-app 200% text, larger/smaller text passes, render checks at scaled text) are removed from per-PR and batch UI runs and gated behind an opt-in; they're not deleted.
+- For M1, they run only at the exit gate on the final SHA, as one pass, recorded as they come out.
+- A new text-size failure that isn't a core-workflow blocker gets a tracked follow-up. One that makes a core task impossible (content unreachable or controls unusable) still blocks.
+- For M2 onward: text-size and visual-scaling checks run at milestone exits or broader checkpoints, not per PR, until the pending accessibility-testing decision (a separate accessibility retrospective is under way).
+
+**M2 process rules (user-directed, 2026-10-06 01:06, relayed; M1's closeout is unchanged):**
+- Close each required issue as soon as its acceptance proof merges, with a closure-proof comment (SHA, host, checks, evidence link).
+- One fresh session per PR unit, ending at merge, with the model and effort chosen per unit; long-lived lanes don't pick up tiering changes.
+- GUI timebox: a PR failing 3 GUI rounds goes to Lead for a design decision or a follow-up issue.
+- Less notification noise: notify_on_idle "once" per child, plus handoff/needs_input/error messages only; no "Waiting…" turns.
+- The exit record is written once, after the last P0 merges, from a template of at most 250 lines.
+- Also:
+  - a single kickoff preflight with consolidated user asks, and consolidated asks before each away window;
+  - an evidence budget: one short section per gate, no screenshots or crops unless a finding cites them;
+  - a UI smoke pass (200% text, Increase Contrast, Reduce Motion, zoom, keyboard-only) as each new window lands;
+  - provider and network latency as measurements only;
+  - the self-serve per-host GUI lock.
+- **The M2 coordinator's first reviewed PR must:**
+  - (a) commit the M1 retrospective (supplied by the relay) as docs/planning/retrospectives/m1.md, sanitized, with no media paths or content;
+  - (b) persist these rules in .squad/routing.md, ceremonies.md, decisions.md, the relevant .squad/agents/ charters and project .squad/skills.
+  - Charter owners: Lead for GUI-timebox escalations and issue-closure proof; Design for the UI smoke pass and contrast baseline; Mac/Pipeline for the evidence budget; Scribe for the exit-record template.
+  - No casting/catalog regeneration, plugins, auto-dispatch labels or global config; safety invariants unchanged.
+
 **Process deviations disclosed:** M1 briefly ran 5–6 writer sessions during short review-fix rounds (budget 4) and had windows with two concurrent read-only reviewer agents (budget 1); `gh pr create` was used as a fallback for several PRs (including #145 and #148) because `create_pull_request` was bound to another PR; one batched keystroke briefly listed the consented episode folder's parent's metadata in-app (nothing read, imported or committed). The M2 kickoff restates the budgets and rules.
