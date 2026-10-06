@@ -125,6 +125,13 @@ public actor LibraryStore {
     /// "<n> library changes not saved yet".
     public var pendingEditCount: Int { pendingEdits?.editCount ?? 0 }
 
+    /// Reports a move's steps as they happen (`nil` when it ends); for progress shown while it runs.
+    private var moveStepHandler: (@Sendable (LibraryMoveStep?) -> Void)?
+
+    public func onMoveStep(_ handler: (@Sendable (LibraryMoveStep?) -> Void)?) {
+        moveStepHandler = handler
+    }
+
     public init(
         containerFolder: URL,
         settings: any LibraryLocationSettingsStoring,
@@ -739,19 +746,28 @@ public actor LibraryStore {
         defer { if started { bookmarks.stopAccessing(folder) } }
 
         if ops.exists(destination) {
-            guard let existing = try? publisher.coordination.coordinateReading(at: destination, { try ops.read($0) }) else {
-                return .success(.destinationUnusable(destination, reason: "The existing file could not be read."))
+            let existing: Data
+            do {
+                existing = try publisher.coordination.coordinateReading(at: destination) { try ops.read($0) }
+            } catch {
+                return .success(.destinationUnusable(destination, problem: Self.isPermissionError(error) ? .needsPermission : .unreadable))
             }
             if RevisionFingerprint.digest(existing) == base.byteDigest {
                 return await switchSetting(place: place, libraryID: current.payload.libraryID, outcome: .adoptedIdentical(destination))
             }
-            if let decoded = try? publisher.coder.decode(existing) {
+            do {
+                let decoded = try publisher.coder.decode(existing)
                 return .success(.destinationHasLibrary(destination, revision: decoded.revision))
+            } catch let .unknownNewerSchema(found, supported) {
+                return .success(.destinationUnusable(destination, problem: .newerFormat(found: found, supported: supported)))
+            } catch {
+                return .success(.destinationUnusable(destination, problem: .notALibrary))
             }
-            return .success(.destinationUnusable(destination, reason: "A file that is not a readable library is already there."))
         }
 
         // (2) coordinated copy of the exact bytes, (3) independent read-back inside the publisher.
+        moveStepHandler?(.copying)
+        defer { moveStepHandler?(nil) }
         do {
             try ops.createDirectory(folder)
             _ = try recovery.retainCheckpoint(bytes, for: .library)
@@ -764,7 +780,8 @@ public actor LibraryStore {
         } catch {
             return .failure(.failed(stage: .candidateValidated, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
         }
-        // (4) switch; the previous copy stays where it was.
+        // (4) check the copy (read back, then loaded as the library by the switch); the previous copy stays where it was.
+        moveStepHandler?(.checking)
         return await switchSetting(place: place, libraryID: current.payload.libraryID, outcome: .moved(to: destination, previousCopyKept: sourceURL))
     }
 
@@ -1078,6 +1095,19 @@ public actor LibraryStore {
                 return nil
             }
         }
+    }
+
+    /// Permission refusals (sandbox or POSIX), as distinct from a file that can't be reached or read right now.
+    static func isPermissionError(_ error: Error) -> Bool {
+        var current: NSError? = error as NSError
+        while let error = current {
+            if error.domain == NSCocoaErrorDomain, error.code == CocoaError.fileReadNoPermission.rawValue || error.code == CocoaError.fileWriteNoPermission.rawValue {
+                return true
+            }
+            if error.domain == NSPOSIXErrorDomain, error.code == Int(EACCES) || error.code == Int(EPERM) { return true }
+            current = error.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
     }
 
     private func stopFolderAccess() {

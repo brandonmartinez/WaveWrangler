@@ -59,12 +59,22 @@ final class LibraryDocumentStore {
             settings: UserDefaultsLibraryLocationSettings(
                 suiteName: PersistenceEnvironment.isUITestRun ? "com.brandonmartinez.wavewrangler.uitest-preferences" : nil
             ),
+            bookmarks: Self.folderBookmarks,
             recovery: PersistenceEnvironment.recovery,
             indexCache: LibraryIndexCache(url: PersistenceEnvironment.caches("LibraryIndex/index.json"))
         )
         #if DEBUG
         NativeHoldoutRunner.scheduleIfRequested()
         #endif
+    }
+
+    /// Security-scoped folder bookmarks; in Debug UI-test runs that ask for it (T25), the same with injectable
+    /// L2/L3 faults (`LibraryFolderFaults`).
+    private static var folderBookmarks: any FolderBookmarking {
+        #if DEBUG
+        if LibraryFolderFaults.isRequested { return LibraryFolderFaults.shared }
+        #endif
+        return SecurityScopedFolderBookmarks()
     }
 
     @discardableResult

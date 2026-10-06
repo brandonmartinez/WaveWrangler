@@ -110,11 +110,41 @@ public enum LibraryMoveOutcome: Sendable, Equatable {
     /// The destination holds a different library. Nothing was overwritten; offer "Use That Library"
     /// (`useLibrary(in:)`, which combines) or cancel.
     case destinationHasLibrary(URL, revision: Int?)
-    /// The destination holds something that is not a readable library. Nothing was changed.
-    case destinationUnusable(URL, reason: String)
+    /// The destination holds a library this version can't use, or something that isn't a library. Nothing was
+    /// changed or written.
+    case destinationUnusable(URL, problem: LibraryDestinationProblem)
     /// This Mac's library was combined into the destination library, which is now in use. The previous
     /// location was kept as a backup.
     case combined(into: URL, previousCopyKept: URL?, summary: LibraryMergeSummary)
+}
+
+/// The step a library move is in (ST-33 step 3): copying to the new location, then checking the copy (reading it
+/// back and loading it as the library) before switching to it.
+public enum LibraryMoveStep: Sendable, Equatable {
+    case copying
+    case checking
+}
+
+/// Why a destination folder's existing file can't be used (states-and-recovery §5.1 step 6).
+public enum LibraryDestinationProblem: Sendable, Equatable {
+    /// The file is there but WaveWrangler isn't allowed to read it (L3 for that library).
+    case needsPermission
+    /// The file is there but can't be read right now (L2 for that library).
+    case unreadable
+    /// Saved by a newer WaveWrangler (L5): adding to it would be a down-save.
+    case newerFormat(found: Int, supported: Int)
+    /// Not a readable WaveWrangler library (another format, or damaged).
+    case notALibrary
+
+    /// Developer-facing description (logs, probe output); the UI maps the case to its own wording.
+    public var reason: String {
+        switch self {
+        case .needsPermission: "The existing file can't be read without permission."
+        case .unreadable: "The existing file could not be read."
+        case let .newerFormat(found, supported): "The library there was saved by a newer version (format \(found); this version supports \(supported))."
+        case .notALibrary: "A file that is not a readable library is already there."
+        }
+    }
 }
 
 /// Library-level states (Design L1–L5) for the Library window message bar and Settings.
