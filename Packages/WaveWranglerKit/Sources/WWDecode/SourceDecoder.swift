@@ -144,72 +144,31 @@ public struct SourceDecoder: Sendable {
         _ interpretation: FormatInterpretation,
         into sink: inout Sink
     ) async throws(DecodeFailure) -> DecodeReport {
-        let channels = interpretation.channelCount
-        let capacity = configuration.chunkFrames
-        let buffer = RawDecodeBuffer(channelCount: channels, capacityFrames: capacity)
-        let priming = interpretation.frames.primingFrames
-        let valid = interpretation.frames.validFrames
-        let validEnd = priming + valid
-        let declaredStreamEnd = validEnd + interpretation.frames.remainderFrames
-        // One packet of slack: codecs may emit up to a packet beyond the declared remainder.
-        let streamLimit = declaredStreamEnd + Int64(interpretation.packets.framesPerPacket)
-        var streamPosition: Int64 = 0
-        var published: Int64 = 0
-        var reads = 0
-
+        var pump = ChunkPump(reader: reader, interpretation: interpretation, chunkFrames: configuration.chunkFrames)
         while true {
             try Self.checkCancellation()
-            let got = try reader.readRawFrames(into: buffer)
-            reads += 1
-            guard got >= 0, got <= capacity else { throw .inconsistentStream(.readerOverran(requested: capacity, returned: got)) }
-            if got == 0 { break }
-            let start = streamPosition
-            streamPosition += Int64(got)
-            guard streamPosition <= streamLimit else {
-                throw .inconsistentStream(.streamExceedsDeclaredLength(declaredStreamFrames: declaredStreamEnd, observedAtLeast: streamPosition))
-            }
-            let low = max(start, priming)
-            let high = min(streamPosition, validEnd)
-            if high > low {
-                let count = Int(high - low)
-                let offset = Int(low - start)
-                let samples = [Float](unsafeUninitializedCapacity: count * channels) { destination, initialized in
-                    for channel in 0..<channels {
-                        let source = buffer.channel(channel)
-                        for frame in 0..<count {
-                            (destination.baseAddress! + channel * count + frame).initialize(to: source[offset + frame])
-                        }
-                    }
-                    initialized = count * channels
-                }
+            guard case let .frames(chunk) = try pump.step() else { break }
+            if let chunk {
                 try Self.checkCancellation()
                 do {
-                    try sink.append(DecodedChunk(firstSourceFrame: low - priming, frameCount: count, channelCount: channels, samples: samples))
+                    try sink.append(chunk)
                 } catch {
                     throw .sinkFailed(String(describing: error))
                 }
-                published += Int64(count)
             }
             await Task.yield()
         }
-        guard published == valid else { throw .incompleteContent(expectedFrames: valid, decodedFrames: published) }
-        return DecodeReport(
-            codecStreamFramesRead: streamPosition,
-            leadingStreamFramesDiscarded: priming,
-            trailingStreamFramesDiscarded: streamPosition - validEnd,
-            readCalls: reads,
-            chunkCapacityFrames: capacity
-        )
+        return try pump.completedReport()
     }
 
     // MARK: - Checks
 
-    private static func checkCancellation() throws(DecodeFailure) {
+    static func checkCancellation() throws(DecodeFailure) {
         if Task.isCancelled { throw .cancelled }
     }
 
     /// Metadata only (WWSources gateway). Refuses anything not proven to be a local regular file.
-    private func preflight(_ url: URL) throws(DecodeFailure) -> SourceMetadata {
+    func preflight(_ url: URL) throws(DecodeFailure) -> SourceMetadata {
         let metadata: SourceMetadata
         switch access.io.metadata(at: url) {
         case .failure(.notFound): throw .notFound
@@ -236,7 +195,7 @@ public struct SourceDecoder: Sendable {
     }
 
     /// The descriptor that was opened must be the file the preflight checked.
-    private static func verifyOpened(_ opened: OpenedFileState, matches before: SourceMetadata) throws(DecodeFailure) {
+    static func verifyOpened(_ opened: OpenedFileState, matches before: SourceMetadata) throws(DecodeFailure) {
         let fingerprint = before.fingerprint
         guard opened.sizeBytes == fingerprint.fileSize.value else { throw .sourceIdentityMismatch }
         if let identifier = fingerprint.fileIdentifier.value, identifier != opened.fileNumber { throw .sourceIdentityMismatch }
@@ -248,8 +207,12 @@ public struct SourceDecoder: Sendable {
 
     /// After the last frame: the open descriptor and the path's metadata must both be unchanged.
     private func verifyUnchanged(_ url: URL, reader: any DecodingContentReader, before: SourceMetadata) throws(DecodeFailure) {
+        try Self.verifyUnchanged(url, io: access.io, reader: reader, before: before)
+    }
+
+    static func verifyUnchanged(_ url: URL, io: any SourceIO, reader: any DecodingContentReader, before: SourceMetadata) throws(DecodeFailure) {
         guard try reader.currentOpenedFileState() == reader.facts.openedFile else { throw .sourceChangedDuringDecode }
-        guard case let .success(after) = access.io.metadata(at: url) else { throw .sourceChangedDuringDecode }
+        guard case let .success(after) = io.metadata(at: url) else { throw .sourceChangedDuringDecode }
         let baseline = before.fingerprint.compare(to: before.fingerprint)
         switch before.fingerprint.compare(to: after.fingerprint) {
         case .matches:
