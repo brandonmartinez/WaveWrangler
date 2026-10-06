@@ -378,6 +378,59 @@ final class EpisodeSetupUITests: XCTestCase {
         XCTAssertGreaterThan(status.frame.width, 20, "\(context): status has width", file: file, line: line)
     }
 
+    /// #129: repeated Window › Zoom out/in must not grow the columns (a width-derived Name ideal used to
+    /// compound with column autoresizing until Status scrolled off and the frame width became NaN).
+    func testColumnsStayStableAcrossRepeatedZoom() {
+        importFixture()
+        let outline = app.outlines["ww.setup.sources"]
+        let status = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status'")).firstMatch
+        // AppKit's column autoresizing may re-spread width a little between cycles; what must hold is that
+        // the columns never outgrow the table: Status stays fully inside it, at least its minimum width.
+        func assertFits(_ context: String) {
+            assertStatusVisible(outline, context)
+            // The Status column (its row's last cell), not the status text inside it.
+            let row = outline.outlineRows.containing(NSPredicate(format: "identifier == %@", status.identifier)).firstMatch
+            let column = row.cells.allElementsBoundByIndex.last?.frame ?? .zero
+            XCTAssertGreaterThanOrEqual(column.width, 95, "\(context): Status column keeps its minimum width (\(column))")
+            XCTAssertLessThanOrEqual(column.maxX, outline.frame.maxX + 1, "\(context): no horizontal overflow (\(column) vs \(outline.frame))")
+        }
+        // Ten cycles: the invariant holds every time, and any drift converges (bounded, not compounding).
+        var offsets: [Double] = []
+        var widths: [Double] = []
+        // Each cycle crosses a column tier (#129): at the default size Epoch and Ch are hidden (their values
+        // move into the Name cell's VoiceOver value); zoomed, every column shows again.
+        let epochInName = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND value CONTAINS 'epoch'")).firstMatch
+        for cycle in 1...10 {
+            menu("Window", "Zoom")  // default size
+            assertFits("zoom cycle \(cycle), default size")
+            XCTAssertTrue(epochInName.waitForExistence(timeout: 2), "zoom cycle \(cycle): default size hides Epoch (tier change)")
+            menu("Window", "Zoom")  // zoomed
+            assertFits("zoom cycle \(cycle), zoomed")
+            XCTAssertTrue(epochInName.waitForNonExistence(timeout: 2), "zoom cycle \(cycle): zoomed shows Epoch again (tier change)")
+            offsets.append(status.frame.minX - outline.frame.minX)
+            widths.append(outline.frame.width)
+        }
+        let record = zip(offsets, widths).enumerated().map { "cycle \($0.offset + 1): Status x \($0.element.0), table \($0.element.1)" }
+        print("ZOOM \(record.joined(separator: "; "))")
+        let summary = XCTAttachment(string: record.joined(separator: "\n"))
+        summary.name = "zoom cycles"
+        summary.lifetime = .keepAlways
+        add(summary)
+        func spread(_ values: ArraySlice<Double>) -> Double { values.max()! - values.min()! }
+        XCTAssertLessThanOrEqual(spread(offsets.suffix(3)), spread(offsets.prefix(3)) + 20, "drift converges: \(offsets)")
+        select("tr2.wav")
+
+        // #104: columns follow the width plan only; the header offers no show/hide/reorder menu.
+        outline.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 60, dy: -10)).rightClick()
+        // Only on-screen menu items count: the menu bar's View › Sort By also has Name/Epoch/Speaker/Status
+        // items, with zero-size frames while closed.
+        Thread.sleep(forTimeInterval: 1)
+        let shown = app.menuItems.allElementsBoundByIndex.filter { $0.frame.width > 0 && $0.frame.height > 0 }
+        let columnItems = shown.filter { ["Epoch", "Ch", "Speaker", "Role", "Status", "Name"].contains($0.title) }
+        XCTAssertTrue(columnItems.isEmpty, "no header menu to show/hide columns: \(columnItems.map(\.title))")
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+    }
+
     /// At the default show-window size Sources shows several rows with Status readable (no horizontal
     /// scrolling), Speakers stays usable, details collapse to a bar, and 200% text still shows Status.
     func testDefaultWindowShowsSeveralSourceRowsWithStatus() {
