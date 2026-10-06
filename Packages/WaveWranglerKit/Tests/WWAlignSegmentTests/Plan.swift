@@ -42,22 +42,22 @@ enum PlantOverride: Sendable {
 }
 
 enum SegmentPlan {
-    /// Calibration master seed ("WW17CA11B" = WW-017 calibration).
-    static let calibrationMasterSeed: UInt64 = 0x5757_1700_CA11_B000
+    /// Revision-2 calibration master seed, disjoint from the failed revision-1 holdout.
+    static let calibrationMasterSeed: UInt64 = 0x5757_1700_CA12_B000
     static let counts: [(SegmentStratum, Int)] = [
-        (.clean, 6), (.transient, 4), (.silenceGap, 4),
+        (.clean, 6), (.transient, 15), (.silenceGap, 15),
         (.dropped, 6), (.inserted, 6), (.clockStep, 6), (.restart, 6), (.rateChange, 6), (.compound, 4),
     ]
-    /// FROZEN by m2-freeze-discontinuity (docs/m2/fixtures/m2-freeze-discontinuity.json): the holdout master
+    /// FROZEN by m2-freeze-discontinuity-2 (docs/m2/fixtures/m2-freeze-discontinuity-2.json): the holdout master
     /// seed ("WW17401D" = WW-017 holdout) and counts. Only `HoldoutTests` uses them, and only when explicitly
     /// enabled; no holdout case is rendered or segmented by calibration, unit or CI runs.
-    static let holdoutMasterSeed: UInt64 = 0x5757_1700_401D_0000
+    static let holdoutMasterSeed: UInt64 = 0x5757_1700_401D_2000
     static let holdoutCounts: [(SegmentStratum, Int)] = [
         (.clean, 20), (.transient, 15), (.silenceGap, 15),
         (.dropped, 20), (.inserted, 20), (.clockStep, 20), (.restart, 20), (.rateChange, 20), (.compound, 15),
     ]
-    /// Floor-sweep master seed ("WW17F100R"); disjoint from calibration and holdout.
-    static let floorMasterSeed: UInt64 = 0x5757_1700_F100_0000
+    /// Revision-2 floor-sweep master seed; disjoint from calibration and both holdouts.
+    static let floorMasterSeed: UInt64 = 0x5757_1700_F200_0000
     static let floorSteps: [Double] = [0.00025, 0.0005, 0.001, 0.002, 0.005]
     static let floorPPM: [Double] = [25, 50, 100, 200, 300]
     static let floorRepeats = 2
