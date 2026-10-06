@@ -205,6 +205,19 @@ struct OpaqueErrorPanelTests {
         #expect(panel.messageField.stringValue.contains("newer"))
     }
 
+    /// Mini run 1 (f7729e1): the XCUITest audit flagged a decorative icon as an unlabelled image. Every image
+    /// and every control in the panel must be described, so the panel has no images at all.
+    @Test func panelHasNoUnlabelledImagesOrControls() {
+        for error in [Self.recoveryOffer(attempter: Attempter()) as Error, Self.refusal] {
+            let panel = OpaqueErrorPanel(error: error)
+            var views: [NSView] = []
+            func walk(_ view: NSView) { views.append(view); view.subviews.forEach(walk) }
+            walk(panel.contentView!)
+            #expect(!views.contains { $0 is NSImageView })
+            for button in views.compactMap({ $0 as? NSButton }) { #expect(!button.title.isEmpty) }
+        }
+    }
+
     @Test(arguments: [NSAppearance.Name.aqua, .darkAqua])
     func textOnTheBackgroundMeetsFourPointFiveToOne(_ name: NSAppearance.Name) throws {
         let appearance = try #require(NSAppearance(named: name))

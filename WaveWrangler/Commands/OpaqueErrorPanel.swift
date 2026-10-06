@@ -82,12 +82,8 @@ final class OpaqueErrorPanel: NSPanel {
     private func buildContent() {
         let background = OpaqueBackgroundView()
 
-        let icon = NSImageView(image: NSApp?.applicationIconImage ?? NSImage(named: NSImage.applicationIconName) ?? NSImage())
-        icon.imageScaling = .scaleProportionallyUpOrDown
-        icon.setAccessibilityElement(false)
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([icon.widthAnchor.constraint(equalToConstant: 64), icon.heightAnchor.constraint(equalToConstant: 64)])
-
+        // No icon: the mini's XCUITest audit flagged a decorative app icon (unlabelled image, "potentially
+        // inaccessible text") even with `setAccessibilityElement(false)`. The message carries the meaning.
         messageField = Self.label(content.message, font: .boldSystemFont(ofSize: NSFont.systemFontSize), identifier: "ww.app.errorDialog.message")
         informativeField = Self.label(content.informative, font: .systemFont(ofSize: NSFont.systemFontSize), identifier: "ww.app.errorDialog.informative")
         informativeField.isHidden = content.informative.isEmpty
@@ -96,11 +92,6 @@ final class OpaqueErrorPanel: NSPanel {
         texts.orientation = .vertical
         texts.alignment = .leading
         texts.spacing = 8
-
-        let top = NSStackView(views: [icon, texts])
-        top.orientation = .horizontal
-        top.alignment = .top
-        top.spacing = 16
 
         optionButtons = content.options.enumerated().map { index, title in
             let button = NSButton(title: title, target: self, action: #selector(chooseOption(_:)))
@@ -115,7 +106,7 @@ final class OpaqueErrorPanel: NSPanel {
         buttonRow.orientation = .horizontal
         buttonRow.spacing = 12
 
-        let column = NSStackView(views: [top, buttonRow])
+        let column = NSStackView(views: [texts, buttonRow])
         column.orientation = .vertical
         column.alignment = .trailing
         column.spacing = 20
@@ -128,8 +119,7 @@ final class OpaqueErrorPanel: NSPanel {
             column.trailingAnchor.constraint(equalTo: background.trailingAnchor),
             column.topAnchor.constraint(equalTo: background.topAnchor),
             column.bottomAnchor.constraint(equalTo: background.bottomAnchor),
-            top.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -40),
-            texts.widthAnchor.constraint(equalToConstant: 340),
+            texts.widthAnchor.constraint(equalToConstant: 400),
         ])
         contentView = background
         setContentSize(background.fittingSize)
@@ -142,7 +132,7 @@ final class OpaqueErrorPanel: NSPanel {
         field.textColor = .labelColor
         field.drawsBackground = false
         field.isSelectable = true
-        field.preferredMaxLayoutWidth = 340
+        field.preferredMaxLayoutWidth = 400
         field.setAccessibilityIdentifier(identifier)
         return field
     }
