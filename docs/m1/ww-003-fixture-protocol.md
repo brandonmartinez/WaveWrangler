@@ -288,7 +288,7 @@ The machine-readable record is the registry's `userDeferrals[0]` and `M1-DUR-025
 **Effect.** This changes status and evidence only:
 - **Moved:** `M1-DUR-025` (live two-Mac iCloud qualification) moves to [#146](https://github.com/brandonmartinez/WaveWrangler/issues/146), in milestone Future — Optional extensions, after M4.
 - **Unchanged:** its definition (recipe, truth, split, gate) stays as frozen by `m1-freeze-4`.
-- **Kept as failed:** the `m1-freeze-2` (95/100) and `m1-freeze-4` (99/100) holdouts stay recorded as **failed** and are never relabelled.
+- **Kept as failed:** the `m1-freeze-2` (95/100) and `m1-freeze-4` (99/100) holdouts stay recorded as **failed** and are never relabelled. They are reported in [#128](https://github.com/brandonmartinez/WaveWrangler/pull/128) ([evidence](evidence/dur025-two-device.md)) and [#144](https://github.com/brandonmartinez/WaveWrangler/pull/144) (`docs/m1/evidence/dur025-freeze4-holdout.md`, which lands with #144 before this PR merges).
 - **Withdrawn:** the `m1-freeze-5` proposal ([#145](https://github.com/brandonmartinez/WaveWrangler/pull/145), closed unmerged) never took effect.
 - **Protections kept:** provider-conflict detection, L4 → Combine, backup before resolve, notices and honest status all stay in place. Their simulated unit tests stay enabled in `scripts/test.sh` and CI.
 - **Future work:** any qualification under #146 needs a new dated freeze revision before its holdout.
