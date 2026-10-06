@@ -310,8 +310,14 @@ struct FileSnapshot: Equatable {
     let size: Int64
     let modificationSeconds: Int
     let modificationNanoseconds: Int
+    /// Status change time: moves on any metadata write (mode, owner, flags, xattrs, links, renames).
+    let statusChangeSeconds: Int
+    let statusChangeNanoseconds: Int
     let inode: UInt64
     let mode: UInt16
+    let flags: UInt32
+    /// Extended attributes, sorted by name, with their values.
+    let extendedAttributes: [String: Data]
 
     init(_ url: URL) throws {
         let data = try Data(contentsOf: url)
@@ -321,8 +327,33 @@ struct FileSnapshot: Equatable {
         size = Int64(info.st_size)
         modificationSeconds = info.st_mtimespec.tv_sec
         modificationNanoseconds = info.st_mtimespec.tv_nsec
+        statusChangeSeconds = info.st_ctimespec.tv_sec
+        statusChangeNanoseconds = info.st_ctimespec.tv_nsec
         inode = UInt64(info.st_ino)
         mode = info.st_mode
+        flags = info.st_flags
+        extendedAttributes = try Self.extendedAttributes(url)
+    }
+
+    static func extendedAttributes(_ url: URL) throws -> [String: Data] {
+        let path = url.path
+        let length = listxattr(path, nil, 0, XATTR_NOFOLLOW)
+        guard length >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        guard length > 0 else { return [:] }
+        var names = [CChar](repeating: 0, count: length)
+        guard listxattr(path, &names, length, XATTR_NOFOLLOW) == length else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        var attributes: [String: Data] = [:]
+        for name in names.split(separator: 0).map({ String(decoding: $0.map { UInt8(bitPattern: $0) }, as: UTF8.self) }).sorted() {
+            let size = getxattr(path, name, nil, 0, 0, XATTR_NOFOLLOW)
+            guard size >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            var value = Data(count: size)
+            if size > 0 {
+                let got = value.withUnsafeMutableBytes { getxattr(path, name, $0.baseAddress, size, 0, XATTR_NOFOLLOW) }
+                guard got == size else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            }
+            attributes[name] = value
+        }
+        return attributes
     }
 }
 

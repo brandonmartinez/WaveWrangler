@@ -77,10 +77,16 @@ public struct SourceDecoder: Sendable {
     }
 
     public let access: SourceAccessContext
-    public let content: any SourceContentIO
+    /// The content gateway. Production decodes always use `SystemSourceContentIO`; only package code
+    /// (tests) may substitute a double.
+    package let content: any SourceContentIO
     public let configuration: Configuration
 
-    public init(access: SourceAccessContext, content: any SourceContentIO = SystemSourceContentIO(), configuration: Configuration = Configuration()) {
+    public init(access: SourceAccessContext, configuration: Configuration = Configuration()) {
+        self.init(access: access, content: SystemSourceContentIO(), configuration: configuration)
+    }
+
+    package init(access: SourceAccessContext, content: any SourceContentIO, configuration: Configuration = Configuration()) {
         self.access = access
         self.content = content
         self.configuration = configuration

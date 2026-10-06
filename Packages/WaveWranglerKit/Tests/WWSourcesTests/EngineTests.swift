@@ -366,21 +366,33 @@ struct ForbiddenAPITests {
     static let packageRoot = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 
-    /// The one file allowed to open source content, and only through these read-only APIs.
+    /// The one file allowed to open source content, and only through these read-only APIs. Matched by
+    /// its path relative to Sources/WWDecode, so a same-named file in a subdirectory is not excepted.
     static let contentGatewayFile = "SystemSourceContentIO.swift"
     static let contentGatewayAllowed: Set<String> = ["open(", "read(", "AudioFileOpen", "ExtAudioFile"]
+    /// The only flags the gateway's `open(` may pass. `O_RDONLY` is 0, so anything else (even a bare
+    /// `2`) could make the descriptor writable; the gateway also checks `fcntl(F_GETFL)` at run time.
+    static let readOnlyOpenFlags: Set<String> = ["O_RDONLY", "O_CLOEXEC", "O_NOFOLLOW", "O_NONBLOCK"]
 
-    /// Writing, creating, truncating, renaming or materialising APIs: forbidden in WWDecode with no exception.
+    /// Writing, creating, truncating, renaming, metadata-changing or materialising APIs: forbidden in
+    /// WWDecode with no exception.
     static let decodeMutationTokens = [
         "AudioFileCreate", "AudioFileInitialize", "AudioFileWrite", "AudioFileOptimize", "AudioFileSetUserData",
         "AudioFileRemoveUserData", "AudioFileOpenURL", "ExtAudioFileCreate", "ExtAudioFileWrite", "ExtAudioFileOpenURL",
         "forWriting", "forUpdating", "writePermission", "readWritePermission", "kAudioFileReadWrite",
-        "O_RDWR", "O_WRONLY", "O_CREAT", "O_TRUNC", "O_APPEND", "pwrite", "ftruncate", "openat(", "unlink(", "rename(",
+        "O_RDWR", "O_WRONLY", "O_CREAT", "O_TRUNC", "O_APPEND", "pwrite", "truncate(", "openat(", "unlink(", "unlinkat(",
+        "remove(", "rename(", "renameat", "renamex_np", "exchangedata", "copyfile", "clonefile",
+        "setxattr", "removexattr", "futimens", "utimes", "chmod", "chown", "chflags", "fchflags",
         "IOPOL_MATERIALIZE_DATALESS_FILES_ON",
     ]
 
-    /// Decoding APIs: only WWDecode's gateway may use them; every other module and the app are scanned.
-    static let decodeTokens = ["AudioFileOpen", "ExtAudioFile", "AudioFileStream", "AudioConverter", "AVAudioFile", "AVAsset", "AVAudioConverter", "AudioQueue"]
+    /// Decoding and playback APIs: only WWDecode's gateway may use them; every other module and the app are scanned.
+    static let decodeTokens = [
+        "AudioFileOpen", "ExtAudioFile", "AudioFileStream", "AudioConverter", "AVAudioFile", "AVAsset", "AVURLAsset",
+        "AVAudioConverter", "AudioQueue", "AVPlayer", "AVAudioPlayer", "NSSound",
+    ]
+    /// WWDecode's package-access content gateway: no module but WWDecode may name it or its entry points.
+    static let contentGatewayAPITokens = ["SystemSourceContentIO", "openForDecoding", "readRawFrames"]
 
     static func code(_ source: String) -> String {
         source.split(separator: "\n", omittingEmptySubsequences: false)
@@ -393,6 +405,20 @@ struct ForbiddenAPITests {
         return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { Range($0.range, in: text).map { String(text[$0]) } }
     }
 
+    /// Every Swift file under `root`, recursively, with its path relative to `root`.
+    static func swiftFiles(under root: URL) throws -> [(path: String, url: URL)] {
+        let root = root.standardizedFileURL.resolvingSymlinksInPath()
+        let enumerator = try #require(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
+        var files: [(path: String, url: URL)] = []
+        for case let file as URL in enumerator where file.pathExtension == "swift" {
+            let resolved = file.standardizedFileURL.resolvingSymlinksInPath().path
+            let path = String(resolved.dropFirst(root.path.count + 1))
+            files.append((path, file))
+        }
+        return files
+    }
+
+    /// `fileName` is the path relative to Sources/WWDecode.
     static func decodeViolations(in source: String, fileName: String) -> [String] {
         let code = code(source)
         let isGateway = fileName == contentGatewayFile
@@ -401,9 +427,17 @@ struct ForbiddenAPITests {
         // ExtAudioFileSetProperty configures the reader; a raw AudioFileSetProperty could change the file.
         if !matches("(?<!Ext)AudioFileSetProperty", in: code).isEmpty { found.append("AudioFileSetProperty") }
         if isGateway {
-            let opens = matches(#"\bopen\([^)]*\)"#, in: code).filter { !$0.hasPrefix("open(_ url") && !$0.hasPrefix("open(url") }
-            for call in opens where !call.contains("O_RDONLY") { found.append("open without O_RDONLY: \(call)") }
-            if opens.isEmpty { found.append("no read-only open found") }
+            let opens = matches(#"\bopen\("#, in: code)
+            let calls = matches(#"\bopen\([^,()]+,[^)]*\)"#, in: code)
+            if opens.count != calls.count { found.append("open with unchecked arguments") }
+            for call in calls {
+                let flags = String(call.drop { $0 != "," }.dropFirst().dropLast())
+                    .split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+                if !flags.contains("O_RDONLY") || !flags.allSatisfy(readOnlyOpenFlags.contains) {
+                    found.append("open with flags other than read-only: \(call)")
+                }
+            }
+            if calls.isEmpty { found.append("no read-only open found") }
             let audioOpens = matches(#"AudioFileOpen\w*\("#, in: code)
             let callbackOpens = matches(#"AudioFileOpenWithCallbacks\(\s*[^,]+,\s*\w+\s*,\s*nil\s*,\s*\w+\s*,\s*nil\s*,"#, in: code)
             if audioOpens.count != callbackOpens.count || audioOpens.isEmpty { found.append("AudioFileOpen without nil write and set-size callbacks") }
@@ -412,6 +446,15 @@ struct ForbiddenAPITests {
             if wraps.count != readOnlyWraps.count { found.append("ExtAudioFileWrapAudioFileID for writing") }
         }
         return found.map { "\(fileName): \($0)" }
+    }
+
+    /// `path` is relative to the package's Sources directory, or starts with `WaveWrangler/` for the app.
+    static func otherModuleViolations(in source: String, path: String) -> [String] {
+        if path == "WWDecode/\(contentGatewayFile)" { return [] }
+        let code = code(source)
+        var tokens = decodeTokens
+        if !path.hasPrefix("WWDecode/") { tokens += contentGatewayAPITokens }
+        return tokens.filter { code.contains($0) }.map { "\(path): \($0)" }
     }
 
     @Test func decodeScannerDetectsMutationsAndWritableOpens() {
@@ -424,9 +467,15 @@ struct ForbiddenAPITests {
             """
         #expect(Self.decodeViolations(in: readOnly, fileName: gateway).isEmpty)
         #expect(Self.decodeViolations(in: readOnly, fileName: "SourceDecoder.swift").count == 3)
+        #expect(Self.decodeViolations(in: readOnly, fileName: "Internal/\(gateway)").count == 3, "a same-named file in a subdirectory is not the gateway")
         let mutations: [(String, String)] = [
             ("result = Darwin.open(path, O_RDWR)", "O_RDWR"),
-            ("result = Darwin.open(path, O_CLOEXEC)", "open without O_RDONLY: open(path, O_CLOEXEC)"),
+            ("result = Darwin.open(path, O_CLOEXEC)", "open with flags other than read-only: open(path, O_CLOEXEC)"),
+            ("result = Darwin.open(path, O_RDONLY | 2)", "open with flags other than read-only: open(path, O_RDONLY | 2)"),
+            ("result = Darwin.open(path, O_RDONLY | O_EXLOCK)", "open with flags other than read-only: open(path, O_RDONLY | O_EXLOCK)"),
+            ("result = Darwin.open(url.path, 2)", "open with flags other than read-only: open(url.path, 2)"),
+            ("result = Darwin.open(url.path(percentEncoded: false), 2)", "open with unchecked arguments"),
+            ("static func open(url: URL) { }", "open with unchecked arguments"),
             ("AudioFileOpenWithCallbacks(r.toOpaque(), readCallback, writeCallback, sizeCallback, nil, 0, &f)", "AudioFileOpen without nil write and set-size callbacks"),
             ("AudioFileOpenWithCallbacks(r.toOpaque(), readCallback, nil, sizeCallback, setSizeCallback, 0, &f)", "AudioFileOpen without nil write and set-size callbacks"),
             ("ExtAudioFileWrapAudioFileID(audioFile, true, &wrapped)", "ExtAudioFileWrapAudioFileID for writing"),
@@ -437,50 +486,78 @@ struct ForbiddenAPITests {
             ("setiopolicy_np(type, scope, IOPOL_MATERIALIZE_DATALESS_FILES_ON)", "IOPOL_MATERIALIZE_DATALESS_FILES_ON"),
             ("try FileManager.default.removeItem(at: url)", "removeItem"),
         ]
-        for (line, expected) in mutations {
+        let tokenCalls: [(String, String)] = [
+            ("ftruncate(fd, 0)", "truncate("), ("truncate(path, 0)", "truncate("), ("Darwin.remove(path)", "remove("),
+            ("unlinkat(AT_FDCWD, path, 0)", "unlinkat("), ("renameat(AT_FDCWD, a, AT_FDCWD, b)", "renameat"),
+            ("renamex_np(a, b, UInt32(RENAME_SWAP))", "renamex_np"), ("exchangedata(a, b, 0)", "exchangedata"),
+            ("copyfile(a, b, nil, copyfile_flags_t(COPYFILE_ALL))", "copyfile"), ("clonefile(a, b, 0)", "clonefile"),
+            ("setxattr(path, name, value, size, 0, 0)", "setxattr"), ("fsetxattr(fd, name, value, size, 0, 0)", "setxattr"),
+            ("removexattr(path, name, 0)", "removexattr"), ("fremovexattr(fd, name, 0)", "removexattr"),
+            ("futimens(fd, &times)", "futimens"), ("utimes(path, &times)", "utimes"), ("lutimes(path, &times)", "utimes"),
+            ("chmod(path, 0o644)", "chmod"), ("fchmod(fd, 0o644)", "chmod"), ("fchown(fd, 0, 0)", "chown"),
+            ("chflags(path, 0)", "chflags"), ("fchflags(fd, 0)", "fchflags"),
+        ]
+        for (line, expected) in mutations + tokenCalls {
             let violations = Self.decodeViolations(in: readOnly + "\n" + line, fileName: gateway)
             #expect(violations.contains("\(gateway): \(expected)"), "\(line) → \(violations)")
         }
         #expect(Self.decodeViolations(in: "/// AudioFileSetProperty in a doc comment", fileName: "SourceDecoder.swift").isEmpty)
     }
 
+    @Test func otherModuleScannerDetectsDecodingPlaybackAndGatewayUse() {
+        #expect(Self.otherModuleViolations(in: "let s = NSSound(contentsOf: url, byReference: true)", path: "WaveWrangler/App/Preview.swift") == ["WaveWrangler/App/Preview.swift: NSSound"])
+        #expect(Self.otherModuleViolations(in: "let a = AVURLAsset(url: url)", path: "WWWaveform/Peaks.swift").contains("WWWaveform/Peaks.swift: AVURLAsset"))
+        #expect(Self.otherModuleViolations(in: "let p = try AVAudioPlayer(contentsOf: url)", path: "WWDecode/Playback/Preview.swift").contains("WWDecode/Playback/Preview.swift: AVAudioPlayer"))
+        #expect(Self.otherModuleViolations(in: "let r = try SystemSourceContentIO().openForDecoding(url)", path: "WWShow/Probe.swift") == ["WWShow/Probe.swift: SystemSourceContentIO", "WWShow/Probe.swift: openForDecoding"])
+        #expect(Self.otherModuleViolations(in: "try reader.readRawFrames(into: list, frames: 4)", path: "WaveWrangler/Probe.swift") == ["WaveWrangler/Probe.swift: readRawFrames"])
+        #expect(Self.otherModuleViolations(in: "content.openForDecoding(url)", path: "WWDecode/SourceDecoder.swift").isEmpty, "WWDecode itself may use its gateway")
+        #expect(Self.otherModuleViolations(in: "ExtAudioFileRead(ext, &frames, list)", path: "WWDecode/\(Self.contentGatewayFile)").isEmpty)
+        #expect(Self.otherModuleViolations(in: "ExtAudioFileRead(ext, &frames, list)", path: "WWDecode/Sub/\(Self.contentGatewayFile)") == ["WWDecode/Sub/\(Self.contentGatewayFile): ExtAudioFile"])
+    }
+
+    @Test func swiftFileEnumerationIsRecursiveAndRelative() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ww-scan-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("Nested/Deeper"), withIntermediateDirectories: true)
+        for path in ["Top.swift", "Nested/\(Self.contentGatewayFile)", "Nested/Deeper/Leaf.swift", "Nested/notes.md"] {
+            try Data("ExtAudioFileRead(x)".utf8).write(to: root.appendingPathComponent(path))
+        }
+        let paths = try Self.swiftFiles(under: root).map(\.path).sorted()
+        #expect(paths == ["Nested/Deeper/Leaf.swift", "Nested/\(Self.contentGatewayFile)", "Top.swift"])
+    }
+
     @Test func wwDecodeOpensContentOnlyThroughTheReadOnlyGateway() throws {
-        let dir = Self.packageRoot.appendingPathComponent("Sources/WWDecode")
-        let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil).filter { $0.pathExtension == "swift" }
-        #expect(files.contains { $0.lastPathComponent == Self.contentGatewayFile })
+        let files = try Self.swiftFiles(under: Self.packageRoot.appendingPathComponent("Sources/WWDecode"))
+        #expect(files.contains { $0.path == Self.contentGatewayFile })
         #expect(files.count >= 6)
         var violations: [String] = []
         for file in files {
-            violations += Self.decodeViolations(in: try String(contentsOf: file, encoding: .utf8), fileName: file.lastPathComponent)
+            violations += Self.decodeViolations(in: try String(contentsOf: file.url, encoding: .utf8), fileName: file.path)
         }
         #expect(violations.isEmpty, "\(violations)")
         // Only the gateway may even mention the content APIs it is excepted for.
-        for file in files where file.lastPathComponent != Self.contentGatewayFile {
-            let code = Self.code(try String(contentsOf: file, encoding: .utf8))
+        for file in files where file.path != Self.contentGatewayFile {
+            let code = Self.code(try String(contentsOf: file.url, encoding: .utf8))
             for token in Self.contentGatewayAllowed where code.contains(token) {
-                Issue.record("\(file.lastPathComponent) uses \(token) outside the content gateway")
+                Issue.record("\(file.path) uses \(token) outside the content gateway")
             }
         }
     }
 
     @Test func noOtherModuleOrTheAppDecodes() throws {
-        let fileManager = FileManager.default
-        var roots = try fileManager.contentsOfDirectory(at: Self.packageRoot.appendingPathComponent("Sources"), includingPropertiesForKeys: nil)
-            .filter { $0.lastPathComponent != "WWDecode" }
+        let sources = Self.packageRoot.appendingPathComponent("Sources")
+        var files = try Self.swiftFiles(under: sources)
         let app = Self.packageRoot.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("WaveWrangler")
-        if fileManager.fileExists(atPath: app.path) { roots.append(app) }
-        #expect(roots.count >= 6)
-        var scanned = 0
-        var violations: [String] = []
-        for root in roots {
-            let enumerator = try #require(fileManager.enumerator(at: root, includingPropertiesForKeys: nil))
-            for case let file as URL in enumerator where file.pathExtension == "swift" {
-                scanned += 1
-                let code = Self.code(try String(contentsOf: file, encoding: .utf8))
-                violations += Self.decodeTokens.filter { code.contains($0) }.map { "\(file.lastPathComponent): \($0)" }
-            }
+        if FileManager.default.fileExists(atPath: app.path) {
+            files += try Self.swiftFiles(under: app).map { ("WaveWrangler/\($0.path)", $0.url) }
         }
-        #expect(scanned >= 30)
+        #expect(Set(files.map { $0.path.split(separator: "/").first.map(String.init) ?? "" }).count >= 7)
+        #expect(files.contains { $0.path == "WWDecode/\(Self.contentGatewayFile)" })
+        #expect(files.count >= 30)
+        var violations: [String] = []
+        for file in files {
+            violations += Self.otherModuleViolations(in: try String(contentsOf: file.url, encoding: .utf8), path: file.path)
+        }
         #expect(violations.isEmpty, "\(violations)")
     }
 }

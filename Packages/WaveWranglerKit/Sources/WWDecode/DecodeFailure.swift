@@ -10,6 +10,8 @@ public enum DecodeFailure: Error, Sendable, Equatable, Hashable {
     case permissionDenied
     /// A directory, package, symbolic link or other non-regular item.
     case notARegularFile
+    /// The opened descriptor's access mode was not read-only. The gateway closes it without reading.
+    case notOpenedReadOnly
     /// The file system or provider reports the content is not local (dataless, placeholder or still
     /// downloading). The decoder never requests or triggers a download.
     case notMaterialized

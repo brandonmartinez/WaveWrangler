@@ -5,20 +5,34 @@ import Foundation
 /// The production `SourceContentIO`. This is the only file in the codebase allowed to open source
 /// content, and it opens it read-only:
 ///
-/// - The file is opened once with `O_RDONLY | O_NOFOLLOW | O_NONBLOCK`. There is no write path.
+/// - The file is opened once with `O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK`, and `fcntl(F_GETFL)` then
+///   confirms the descriptor's access mode is read-only before anything else uses it. There is no
+///   write path.
 /// - AudioFile reads through callbacks that only `pread` that descriptor. The write and set-size
 ///   callbacks are `nil`, so AudioFile cannot write even if asked to.
 /// - ExtAudioFile wraps that AudioFile for reading only (`forWriting: false`). Its property setters
 ///   configure the in-memory reader (client format, packet-table handling), never the file.
 /// - Before any content is read, `fstat` on the descriptor rejects dataless (not materialized) files.
-///   Each blocking call also runs with this thread's dataless-file materialization turned off
-///   (`IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES`), so a race can't trigger a provider download.
-///   That policy is defence in depth; it has not been exercised against a real provider.
-public struct SystemSourceContentIO: SourceContentIO {
-    public init() {}
+///   The open and every content read (`ReadOnlyDescriptor.readFully`, through which all AudioFile,
+///   ExtAudioFile and container-header reads go) also run with this thread's dataless-file
+///   materialization turned off (`IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES`), so a race can't trigger
+///   a provider download. That policy is defence in depth; it has not been exercised against a real
+///   provider.
+///
+/// Package access: apps decode through `SourceDecoder`, which adds the scope, preflight, identity and
+/// staleness checks this gateway relies on.
+package struct SystemSourceContentIO: SourceContentIO {
+    package init() {}
 
-    public func openForDecoding(_ url: URL) throws(DecodeFailure) -> any DecodingContentReader {
-        try SystemDecodingReader.open(url)
+    #if DEBUG
+    /// Test only: called at every content read with this thread's dataless-materialization policy.
+    package var readPolicyObserver: (@Sendable (Int32) -> Void)?
+    /// Test only: replaces the descriptor open so the read-only access-mode check can be exercised.
+    package var descriptorOpener: (@Sendable (UnsafePointer<CChar>) -> Int32)?
+    #endif
+
+    package func openForDecoding(_ url: URL) throws(DecodeFailure) -> any DecodingContentReader {
+        try SystemDecodingReader.make(url, gateway: self)
     }
 }
 
@@ -29,10 +43,16 @@ private final class ReadOnlyDescriptor {
     let sizeBytes: Int64
     /// The `errno` of the most recent failed read, reported instead of the decoder's generic status.
     var lastErrno: Int32 = 0
+    #if DEBUG
+    let readPolicyObserver: (@Sendable (Int32) -> Void)?
+    #endif
 
-    init(descriptor: Int32, sizeBytes: Int64) {
+    init(descriptor: Int32, sizeBytes: Int64, gateway: SystemSourceContentIO) {
         self.descriptor = descriptor
         self.sizeBytes = sizeBytes
+        #if DEBUG
+        readPolicyObserver = gateway.readPolicyObserver
+        #endif
     }
 
     /// Reads up to `count` bytes at `offset`; returns fewer only at end of file.
@@ -44,20 +64,27 @@ private final class ReadOnlyDescriptor {
         return result
     }
 
+    /// The only place source bytes are read. Every read runs with dataless materialization off, whoever
+    /// calls it (AudioFile, ExtAudioFile or the container-length check).
     func readFully(into buffer: UnsafeMutableRawPointer, count: Int, at offset: Int64) -> Int? {
-        var total = 0
-        while total < count {
-            let got = pread(descriptor, buffer + total, count - total, off_t(offset) + off_t(total))
-            if got > 0 {
-                total += got
-            } else if got == 0 {
-                break
-            } else if errno != EINTR {
-                lastErrno = errno
-                return nil
+        withoutMaterializingDataless {
+            #if DEBUG
+            readPolicyObserver?(getiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD))
+            #endif
+            var total = 0
+            while total < count {
+                let got = pread(descriptor, buffer + total, count - total, off_t(offset) + off_t(total))
+                if got > 0 {
+                    total += got
+                } else if got == 0 {
+                    break
+                } else if errno != EINTR {
+                    lastErrno = errno
+                    return nil
+                }
             }
+            return total
         }
-        return total
     }
 }
 
@@ -86,7 +113,7 @@ private func sizeCallback(_ client: UnsafeMutableRawPointer) -> Int64 {
 }
 
 /// Runs `body` with this thread's dataless-file materialization off, then restores the previous policy.
-private func withoutMaterializingDataless<T, E: Error>(_ body: () throws(E) -> T) throws(E) -> T {
+func withoutMaterializingDataless<T, E: Error>(_ body: () throws(E) -> T) throws(E) -> T {
     let previous = getiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD)
     let changed = setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD, IOPOL_MATERIALIZE_DATALESS_FILES_OFF) == 0
     defer {
@@ -145,19 +172,32 @@ private final class SystemDecodingReader: DecodingContentReader {
 
     deinit { close() }
 
-    static func open(_ url: URL) throws(DecodeFailure) -> SystemDecodingReader {
+    static func make(_ url: URL, gateway: SystemSourceContentIO) throws(DecodeFailure) -> SystemDecodingReader {
         guard url.isFileURL else { throw .notFound }
         let (descriptor, openErrno): (Int32, Int32) = withoutMaterializingDataless {
             url.withUnsafeFileSystemRepresentation { path -> (Int32, Int32) in
                 guard let path else { return (-1, ENOENT) }
                 var result: Int32
                 repeat {
+                    #if DEBUG
+                    if let opener = gateway.descriptorOpener {
+                        result = opener(path)
+                        continue
+                    }
+                    #endif
                     result = Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
                 } while result < 0 && errno == EINTR
                 return (result, result < 0 ? errno : 0)
             }
         }
         guard descriptor >= 0 else { throw failure(forErrno: openErrno) }
+
+        // O_RDONLY is 0, so the open flags alone can't prove read-only access; the descriptor can.
+        let statusFlags = fcntl(descriptor, F_GETFL)
+        guard statusFlags >= 0, statusFlags & O_ACCMODE == O_RDONLY else {
+            Darwin.close(descriptor)
+            throw .notOpenedReadOnly
+        }
 
         var info = stat()
         guard fstat(descriptor, &info) == 0 else {
@@ -178,7 +218,7 @@ private final class SystemDecodingReader: DecodingContentReader {
             throw .emptyFile
         }
 
-        let file = ReadOnlyDescriptor(descriptor: descriptor, sizeBytes: Int64(info.st_size))
+        let file = ReadOnlyDescriptor(descriptor: descriptor, sizeBytes: Int64(info.st_size), gateway: gateway)
         let retained = Unmanaged.passRetained(file)
         var openedAudioFile: AudioFileID?
         let openStatus = withoutMaterializingDataless {
