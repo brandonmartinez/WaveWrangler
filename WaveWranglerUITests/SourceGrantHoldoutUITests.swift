@@ -6,20 +6,48 @@ import XCTest
 /// extensions; M1 never reads their content).
 ///
 /// One cycle = 4 GUI scenarios on fresh files and a fresh show:
-///   1. **grant**: File › Import Sources… → sandboxed NSOpenPanel (powerbox) → folder → Import Review → Import.
-///   2. **relaunch**: quit, relaunch, reopen: the device-local bookmark resolves (no "Needs permission").
+///   1. **grant**: File › Import Sources… → sandboxed NSOpenPanel (powerbox) → folder → Import Review → Import
+///      (sources, read-only); then Settings › Library location › Choose Folder… → panel → Move Library (library
+///      folder, read-write; the library is written there).
+///   2. **relaunch**: quit, relaunch without a document, ⌘⇧L: the library resolves from the chosen folder; reopen
+///      the show from the library (Open Show), its source bookmarks resolve (no "Needs permission"); edit and ⌘S:
+///      the show saves through the resolved location (disk read back); the library location is still the folder.
 ///   3. **regrant**: relaunch with `-WWUITestResetSourceAccess YES` (no device-local records, as on another
 ///      Mac) → "Needs permission" → Source › Grant Access… → panel → identity comparison → Ready.
 ///   4. **relink**: the file is moved by the harness → status recorded → Source › Relink Source… → panel →
 ///      comparison → confirm → Ready.
 /// Every scenario checks the sources are byte- and mtime-unchanged (zero source writes).
 /// `TEST_RUNNER_WW_HOLDOUT_SCENARIOS` / 4 cycles run (default 1 cycle = calibration; 20 = 5 cycles).
+/// `TEST_RUNNER_WW_FIXTURE_SPLIT=holdout` selects the registry's holdout seeds (see `fixtureSeed`).
 @MainActor
 final class SourceGrantHoldoutUITests: XCTestCase {
     private var app: XCUIApplication!
     private var workDirectory: URL!
     private var failures: [String] = []
     private var records: [[String: Any]] = []
+    private var cycleSeeds: [UInt64] = []
+    /// Registry split: `WW_FIXTURE_SPLIT` = holdout | calibration (default calibration; anything else fails the test).
+    private var split: String { Acceptance.environment["WW_FIXTURE_SPLIT"] ?? "calibration" }
+
+    static func fixtureSeed(split: String, caseIndex: Int) -> UInt64 {
+        let digest = SHA256.hash(data: Data("ww-m1-fixture|v1|M1-REF-020|\(split)|\(caseIndex)".utf8))
+        return digest.prefix(8).reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+    }
+
+    /// 4,096 synthetic placeholder bytes (SplitMix64 stream from `seed`); never audio, never read by M1.
+    static func sourceBytes(seed: UInt64) -> Data {
+        var state = seed
+        var bytes = [UInt8](); bytes.reserveCapacity(4096)
+        while bytes.count < 4096 {
+            state &+= 0x9E37_79B9_7F4A_7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            z ^= z >> 31
+            withUnsafeBytes(of: z.bigEndian) { bytes.append(contentsOf: $0) }
+        }
+        return Data(bytes.prefix(4096))
+    }
 
     override func setUp() async throws {
         continueAfterFailure = true
@@ -36,8 +64,23 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         if let workDirectory { try? FileManager.default.removeItem(at: workDirectory) }
     }
 
+    /// The registry's frozen holdout count for M1-REF-020 (m1-fixture-registry.json split.holdout).
+    static let registryHoldoutScenarios = 20
+
     func testGrantRelaunchRegrantRelink() throws {
-        let scenarios = Acceptance.count("WW_HOLDOUT_SCENARIOS", default: 4)
+        guard ["holdout", "calibration"].contains(split) else {
+            XCTFail("WW_FIXTURE_SPLIT must be holdout or calibration, not '\(split)'")
+            return
+        }
+        let requested = Acceptance.environment["WW_HOLDOUT_SCENARIOS"].flatMap(Int.init)
+        if split == "holdout" {
+            // A holdout never runs on a default or mistyped count: it must be exactly the registry's 20.
+            guard requested == Self.registryHoldoutScenarios else {
+                XCTFail("holdout split requires WW_HOLDOUT_SCENARIOS=\(Self.registryHoldoutScenarios), got \(Acceptance.environment["WW_HOLDOUT_SCENARIOS"] ?? "unset")")
+                return
+            }
+        }
+        let scenarios = requested ?? 4
         let cycles = max(1, (scenarios + 3) / 4)
         for cycle in 0..<cycles {
             do { try runCycle(cycle) } catch { record(cycle, "cycle", ["threw \(error)"]) }
@@ -45,8 +88,12 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         }
         let passed = records.filter { $0["passed"] as? Bool == true }.count
         Acceptance.writeEvidence("ref020-native-grant", [
-            "revision": Acceptance.revision(), "scenarios": records, "executed": records.count, "passed": passed,
+            "revision": Acceptance.revision(), "split": split, "scenarios": records, "executed": records.count, "passed": passed,
         ], test: self)
+        if split == "holdout" {
+            XCTAssertEqual(records.count, Self.registryHoldoutScenarios,
+                           "holdout executed \(records.count) of \(Self.registryHoldoutScenarios) scenarios (an aborted cycle records fewer)")
+        }
         for record in records where record["passed"] as? Bool != true {
             XCTFail("REF-020 \(record["cycle"] ?? "?") \(record["scenario"] ?? ""): \(record["failures"] ?? "")")
         }
@@ -58,16 +105,21 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         let folder = workDirectory.appending(path: "Recorder\(cycle)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let names = ["ref020-\(cycle)-a.wav", "ref020-\(cycle)-b.wav"]
+        // Registry generator (m1-fixture-registry.json, M1-REF-020): one seed per GUI scenario,
+        // sha256("ww-m1-fixture|v1|M1-REF-020|<split>|<caseIndex>") → first 8 bytes big-endian. Cycle c covers case
+        // indices 4c…4c+3: the show document uses seed(4c); source a and b bytes come from seed(4c+1) and seed(4c+2).
+        let seeds = (0..<4).map { Self.fixtureSeed(split: split, caseIndex: cycle * 4 + $0) }
+        cycleSeeds = seeds
         for (index, name) in names.enumerated() {
-            try Data((0..<4096).map { UInt8(truncatingIfNeeded: $0 &* (index + 7)) }).write(to: folder.appending(path: name))
+            try Self.sourceBytes(seed: seeds[index + 1]).write(to: folder.appending(path: name))
         }
         let document = workDirectory.appending(path: "Grant \(cycle).wwshow")
-        try probe(["create", "--file", document.path, "--seed", "\(cycle + 1)"])
+        try probe(["create", "--file", document.path, "--seed", "\(seeds[0])"])
         var fingerprints = try fingerprint(folder)
 
-        // 1. Grant through the sandboxed open panel.
+        // 1. Grant through the sandboxed panels: sources (read-only) and the library folder (read-write).
         failures = []
-        try launchAndOpen(document, extra: [])
+        try launchAndOpen(document, extra: ["-WWUITestResetStorage", "YES"])
         app.typeKey("i", modifierFlags: [.command, .shift])
         choosePath(folder.path, confirm: true)
         let review = element("ww.import.review")
@@ -76,17 +128,57 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         if review.exists { app.typeKey(.return, modifierFlags: []) }
         check(Acceptance.waitFor(timeout: 10) { self.statuses(names).count == names.count }, "imported rows present: \(statuses(names))")
         check(Acceptance.waitFor(timeout: 10) { self.statuses(names).values.allSatisfy { $0.hasPrefix("Ready") } }, "granted sources Ready: \(statuses(names))")
+        // Library folder through Settings › Library location › Choose Folder… (sandboxed panel, read-write).
+        let libraryFolder = workDirectory.appending(path: "Library \(cycle)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: libraryFolder, withIntermediateDirectories: true)
+        if chooseLibraryLocation("Choose Folder…") {
+            choosePath(libraryFolder.path, confirm: true)
+            confirmMove()
+        }
+        let location = app.popUpButtons["ww.settings.libraryLocation"]
+        check(Acceptance.waitFor(timeout: 20) { (location.value as? String) == libraryFolder.lastPathComponent },
+              "library location is the chosen folder: \(location.value ?? "nil")")
+        let libraryFiles = (try? FileManager.default.contentsOfDirectory(atPath: libraryFolder.path)) ?? []
+        check(!libraryFiles.isEmpty, "library written into the chosen folder (read-write grant): \(libraryFiles.count) item(s)")
+        closeSettings()
         check(try fingerprint(folder) == fingerprints, "zero source writes")
         record(cycle, "grant", failures, statuses(names))
 
-        // 2. Relaunch: bookmarks resolve.
+        // 2. Relaunch: the library folder and source bookmarks resolve; reopen the show from the library and Save.
         failures = []
         app.typeKey("q", modifierFlags: .command)
         if app.sheets.firstMatch.waitForExistence(timeout: 2) { app.sheets.firstMatch.buttons["Save"].click() }
         check(app.wait(for: .notRunning, timeout: 10), "quit")
-        try launchAndOpen(document, extra: [])
-        check(Acceptance.waitFor(timeout: 10) { self.statuses(names).values.allSatisfy { $0.hasPrefix("Ready") } && self.statuses(names).count == names.count },
-              "after relaunch the bookmarks resolve: \(statuses(names))")
+        let title = diskTitle(document) ?? ""
+        launchWithoutDocument()
+        app.typeKey("l", modifierFlags: [.command, .shift])
+        let entries = app.outlines["ww.library.entries"]
+        check(entries.waitForExistence(timeout: 10), "Library window")
+        // At the default Library width the Name cell's value is the hidden-columns summary (#140); its label is the
+        // show name. Match either (as LibraryWorkspaceUITests does).
+        let row = entries.outlineRows.containing(NSPredicate(format: "label == %@ OR value == %@", title, title)).firstMatch
+        check(row.waitForExistence(timeout: 10), "the show is in the library after relaunch: \(title)")
+        if row.exists {
+            row.cells.firstMatch.click()
+            let open = element("ww.library.detail.open")
+            if open.waitForExistence(timeout: 5) { open.click() } else { failures.append("Open Show button") }
+        }
+        let window = app.windows.matching(identifier: "ww.show.window").firstMatch
+        check(window.waitForExistence(timeout: 15), "show reopened from the library")
+        if window.exists {
+            window.typeKey("1", modifierFlags: .command)
+            check(Acceptance.waitFor(timeout: 10) { self.statuses(names).values.allSatisfy { $0.hasPrefix("Ready") } && self.statuses(names).count == names.count },
+                  "after relaunch the source bookmarks resolve: \(statuses(names))")
+            let saved = "REF-020 Saved \(cycle + 1)"
+            editShowTitle(window, saved)
+            window.typeKey("s", modifierFlags: .command)
+            check(Acceptance.waitFor(timeout: 10) { self.diskTitle(document) == saved },
+                  "reopened show saved through the library-resolved location: \(diskTitle(document) ?? "nil")")
+        }
+        let relaunchedLocation = app.popUpButtons["ww.settings.libraryLocation"]
+        check(chooseLibraryLocation(nil) && (relaunchedLocation.value as? String) == libraryFolder.lastPathComponent,
+              "library location still the chosen folder after relaunch: \(relaunchedLocation.value ?? "nil")")
+        closeSettings()
         check(try fingerprint(folder) == fingerprints, "zero source writes")
         record(cycle, "relaunch", failures, statuses(names))
 
@@ -144,7 +236,12 @@ final class SourceGrantHoldoutUITests: XCTestCase {
     // MARK: - Helpers
 
     private func record(_ cycle: Int, _ scenario: String, _ failures: [String], _ statuses: [String: String] = [:]) {
-        records.append(["cycle": cycle + 1, "scenario": scenario, "passed": failures.isEmpty, "failures": failures, "statuses": statuses])
+        let offset = ["grant": 0, "relaunch": 1, "regrant": 2].first { scenario.hasPrefix($0.key) }?.value
+            ?? (scenario.hasPrefix("relink") ? 3 : nil)
+        var entry: [String: Any] = ["cycle": cycle + 1, "scenario": scenario, "passed": failures.isEmpty, "failures": failures,
+                                    "statuses": statuses, "split": split, "cycleSeeds": cycleSeeds.map { "\($0)" }]
+        if let offset { entry["caseIndex"] = cycle * 4 + offset }
+        records.append(entry)
         Acceptance.record(self, "REF-020 cycle \(cycle + 1) \(scenario): \(failures.isEmpty ? "PASS" : "FAIL \(failures)") \(statuses)")
     }
 
@@ -170,6 +267,69 @@ final class SourceGrantHoldoutUITests: XCTestCase {
         check(seconds <= 10, "show window opened within 10 s (took \(String(format: "%.1f", seconds)) s)")
         window.typeKey("1", modifierFlags: .command)
         _ = element("ww.setup.sources").waitForExistence(timeout: 10)
+    }
+
+    private func launchWithoutDocument() {
+        app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestAutosave", "ON",
+                               "-WWUITestCenterWindows", "YES"]
+        app.launch()
+        app.activate()
+    }
+
+    /// Opens Settings › General. With `item`, picks it from the Library location pop-up; returns false if missing.
+    @discardableResult
+    private func chooseLibraryLocation(_ item: String?) -> Bool {
+        app.typeKey(",", modifierFlags: .command)
+        if app.toolbars.buttons["General"].waitForExistence(timeout: 3) { app.toolbars.buttons["General"].click() }
+        let popup = app.popUpButtons["ww.settings.libraryLocation"]
+        guard popup.waitForExistence(timeout: 5) else { failures.append("library location pop-up"); return false }
+        guard let item else { return true }
+        popup.click()
+        let menuItem = popup.menuItems[item]
+        guard menuItem.waitForExistence(timeout: 3) else {
+            failures.append("library location item \(item)")
+            app.typeKey(.escape, modifierFlags: [])
+            return false
+        }
+        menuItem.click()
+        return true
+    }
+
+    private func closeSettings() {
+        let settings = app.windows.matching(NSPredicate(format: "title IN %@", ["General", "Sources", "Settings"])).firstMatch
+        if settings.exists { settings.typeKey("w", modifierFlags: .command) }
+    }
+
+    private func confirmMove() {
+        let sheet = app.sheets.firstMatch
+        if sheet.waitForExistence(timeout: 10), sheet.buttons["Move Library"].exists {
+            Acceptance.record(self, "REF-020 move sheet: \(sheet.staticTexts.allElementsBoundByIndex.map { $0.value ?? $0.label })")
+            sheet.buttons["Move Library"].click()
+            return
+        }
+        let dialog = app.dialogs.firstMatch
+        if dialog.exists, dialog.buttons["Move Library"].exists { dialog.buttons["Move Library"].click(); return }
+        failures.append("Move Library confirmation")
+    }
+
+    private func editShowTitle(_ window: XCUIElement, _ title: String) {
+        let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
+        if showInfo.waitForExistence(timeout: 5) { showInfo.click() }
+        let field = window.textFields["Show title"]
+        guard field.waitForExistence(timeout: 5) else { failures.append("Show title field"); return }
+        field.click()
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText(title)
+        field.typeKey(.return, modifierFlags: [])
+    }
+
+    /// The show title as written on disk (independent of the app).
+    private func diskTitle(_ url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let payload = object["payload"] as? [String: Any] else { return nil }
+        return (payload["show"] as? [String: Any])?["title"] as? String
     }
 
     /// In the open panel (a sheet): Go to Folder (⇧⌘G), type the path, Return; then Return to confirm.
