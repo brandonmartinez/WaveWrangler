@@ -41,7 +41,9 @@ func describe(_ metadata: MetadataResult) -> String {
 
 @Suite("iCloud Drive provider trial (opt-in, observed)", .serialized)
 struct ProviderTrialTests {
-    static let enabled = ProcessInfo.processInfo.environment["WW_ICLOUD_TRIAL"] == "1"
+    /// Live-provider tests (real iCloud Drive, `brctl`): opt-in only, WW_LIVE_PROVIDER_TESTS=1 (#146).
+    static let enabled = ProcessInfo.processInfo.environment["WW_LIVE_PROVIDER_TESTS"] == "1"
+    static let skipMessage: Comment = "Live iCloud/two-device test: skipped by default; set WW_LIVE_PROVIDER_TESTS=1 to opt in (#146)"
     static let trialRoot = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs/WaveWrangler-M1-Synthetic-Trial", isDirectory: true)
 
@@ -85,7 +87,7 @@ struct ProviderTrialTests {
         return nil
     }
 
-    @Test(.enabled(if: enabled), .timeLimit(.minutes(20)))
+    @Test(.enabled(if: enabled, skipMessage), .timeLimit(.minutes(20)))
     func observedICloudTrial() async throws {
         let log = TrialLog()
         let sources = Self.trialRoot.appendingPathComponent("sources", isDirectory: true)
@@ -294,7 +296,7 @@ struct ProviderCycleRecord: Codable, Sendable {
 }
 
 extension ProviderTrialTests {
-    static let holdoutEnabled = ProcessInfo.processInfo.environment["WW_ICLOUD_TRIAL"] == "1"
+    static let holdoutEnabled = enabled
         && ProcessInfo.processInfo.environment["WW_ICLOUD_HOLDOUT"] == "1"
     static let provFixtureID = "M1-SRC-ON-PROV-001"
     static let frozenOffCycles = 50
@@ -365,7 +367,7 @@ extension ProviderTrialTests {
         }
     }
 
-    @Test(.enabled(if: holdoutEnabled), .timeLimit(.minutes(60)))
+    @Test(.enabled(if: holdoutEnabled, skipMessage), .timeLimit(.minutes(60)))
     func frozenHoldoutCycles() async throws {
         let log = TrialLog()
         let fm = FileManager.default

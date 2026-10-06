@@ -171,6 +171,24 @@ runtime, ad-hoc signing (`CODE_SIGN_IDENTITY=-`, no team). There is no network e
 `WaveWranglerTests` is an **unhosted** bundle: it links the package products and reads the app's
 `Info.plist`/entitlements from the source tree, so running it never launches the app.
 
+### Live-provider (iCloud / two-device) tests are opt-in
+
+Tests that need a real file provider (live iCloud Drive, `brctl`, or a second Mac) are **skipped by
+default** in `scripts/test.sh`, the UI suite and CI. Opt in with `WW_LIVE_PROVIDER_TESTS=1` (#146):
+
+| Test | Also needs |
+|---|---|
+| `ProviderTrialTests` (WWSources: `observedICloudTrial`, `frozenHoldoutCycles`) | — |
+| `HoldoutICloudTrialTests` (WWPersistence, M1-DUR-024) | `WW_HOLDOUT=1 WW_ICLOUD_TRIAL=1`, or `scripts/holdout.sh --icloud` |
+| `scripts/dur025/run.py` (M1-DUR-025 two-device harness) | `WW_DUR025_REMOTE=user@host`, `WW_SAME_ACCOUNT_ATTESTED=1`, a second Mac on the same Apple account |
+
+Without the flag, each one skips with a message naming the flag. Opt in only with the user's grant
+for live iCloud trials (synthetic data in `WaveWrangler-M1-Synthetic-Trial/` only). The deterministic,
+simulated provider tests always run by default: simulated NSFileVersion conflict versions
+(`LibraryProviderConflictTests`), the source identity and timestamp tolerance tests, and the
+simulated iCloud download paths. The product's provider protections are unchanged; only the live
+tests are gated.
+
 ### Concurrency limits
 
 - At most one `xcodebuild` per session and at most three concurrently on the host, each `-jobs 4`
