@@ -81,11 +81,11 @@ final class LibraryUIStore {
 
     /// After a move, Use That Library, combine, recovery or regrant: drop library undo and pick up the
     /// library storage now reports (reloading if it had failed).
-    /// `succeeded`: the caller's own outcome where it has one (Use That Library); level-state actions are judged by
-    /// the state they leave (a failed Combine stays L4).
-    func libraryWasReplaced(succeeded: Bool = true) async {
+    /// `published`: the replacement published or adopted a library (a failed Combine or a refused replay didn't).
+    func libraryWasReplaced(published: Bool) async {
         undoManager.removeAllActions(withTarget: self)
-        failure.libraryReplaced(succeeded: succeeded, libraryState: services.location.libraryState)
+        failure.libraryReplaced(published: published, libraryState: services.location.libraryState,
+                                editsWaiting: services.location.pendingEditsStatus != nil)
         if !session.isLoaded {
             loadTask = nil
             await load()

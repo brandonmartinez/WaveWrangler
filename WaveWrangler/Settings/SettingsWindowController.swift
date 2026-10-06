@@ -247,7 +247,7 @@ private struct LibraryLocationControl: View {
         switch result {
         case .moved:
             moveError = nil
-            Task { await LibraryUIStore.shared.libraryWasReplaced() }
+            Task { await LibraryUIStore.shared.libraryWasReplaced(published: true) }
         case .failed(let reason):
             moveError = "Couldn't move your library: \(reason)"
         case .destinationHasLibrary(let folder, let blockedReason):

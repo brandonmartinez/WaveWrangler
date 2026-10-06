@@ -466,7 +466,8 @@ final class LibraryLocationUITests: XCTestCase {
         if !question.waitForNonExistence(timeout: 5) {
             // XCUITest sometimes fails to deliver the key right after the open panel closes ("Could not find any
             // displays containing rect (inf, inf…)", a 10 s event-synthesis timeout); the sheet is still there, so
-            // Return hasn't been handled: press it again.
+            // Return hasn't been handled: press it again. "Return confirms" is then not verified for this move.
+            notVerified.append("First Return confirms the move to “\(name)”: the sheet stayed, a second Return was pressed")
             app.typeKey(.return, modifierFlags: [])
         }
         XCTAssertTrue(question.waitForNonExistence(timeout: 10), file: file, line: line)

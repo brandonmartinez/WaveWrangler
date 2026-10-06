@@ -69,6 +69,8 @@ protocol LibraryLocationControlling: AnyObject {
     var quitWarning: String? { get }
     /// Outcome text for the message bar (moves, combine summaries incl. edits not carried).
     var resultMessage: String? { get }
+    /// Whether the last library-level action (`perform`) published or adopted a library (#199).
+    var lastActionPublished: Bool { get }
     /// #117: cloud-provider conflict versions of the library that WaveWrangler can't use (unreadable, or another
     /// library). Kept, never applied; the Library window says so until they're gone.
     var providerConflictNotice: String? { get }
@@ -134,6 +136,7 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
     let location = LibraryLocationChoice.inWaveWrangler
     let libraryState = LibraryLevelState.ready
     let movePhase: LibraryMovePhase? = nil
+    let lastActionPublished = false
     let isConnected = false
     let pendingEditsStatus: String? = nil
     let quitWarning: String? = nil
