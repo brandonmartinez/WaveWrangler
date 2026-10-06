@@ -7,6 +7,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JOBS="${WW_JOBS:-4}"
+# Compute budget: Swift Testing runs at most this many tests at once (its default is unbounded). `--num-workers`
+# bounds XCTest only, so the width goes through Swift Testing's own environment switch.
+export SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH="${WW_TEST_WORKERS:-4}"
 DERIVED_DATA="${WW_DERIVED_DATA:-$ROOT/.build/DerivedData}"
 PACKAGE_ONLY=0
 UI=0
@@ -94,6 +97,25 @@ if ! grep -q 'Test calibrationSplitMeetsEveryObjectiveGate() passed' "$CALIBRATI
   exit 1
 fi
 rm -f "$CALIBRATION_LOG"
+
+# WW-050 decode (M2-DECODE-001) and WW-015 time-map (M2-TIMEMAP-001) calibration splits run alone, one after the
+# other: the decode split decodes real files and the time-map split runs hundreds of thousands of exact round trips.
+for freeze_pass in "WW_DECODE_CALIBRATION DecodeCalibrationTests" "WW_TIMEMAP_CALIBRATION TimeMapCalibrationTests"; do
+  read -r switch suite <<<"$freeze_pass"
+  echo "==> swift test calibration pass: $suite"
+  CALIBRATION_LOG="$(mktemp)"
+  env "$switch=1" swift test \
+    --package-path "$ROOT/Packages/WaveWranglerKit" \
+    --scratch-path "$ROOT/.build/swiftpm" \
+    --jobs "$JOBS" \
+    --filter "$suite/calibrationSplitMeetsEveryGate" 2>&1 | tee "$CALIBRATION_LOG"
+  if ! grep -q 'Test calibrationSplitMeetsEveryGate() passed' "$CALIBRATION_LOG"; then
+    echo "$suite calibration pass did not run and pass" >&2
+    rm -f "$CALIBRATION_LOG"
+    exit 1
+  fi
+  rm -f "$CALIBRATION_LOG"
+done
 
 if [[ "$PACKAGE_ONLY" == 1 ]]; then
   exit 0
