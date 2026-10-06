@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 /// M1-A11Y-002 VoiceOver walk (grant B: temporary VoiceOver). Requires VoiceOver to be ON (the harness turns
@@ -121,7 +122,17 @@ final class VoiceOverWalkUITests: XCTestCase {
     private func capture(_ task: String, _ action: String) {
         Thread.sleep(forTimeInterval: 2.0)
         let caption = captionText()
-        transcript.append(["task": task, "action": action, "spoken": caption, "changed": caption == lastCaption ? "no" : "yes"])
+        // The caption panel's own pixels too (what a sighted reviewer would see), cropped to VoiceOver's windows.
+        let panel = voiceOver.windows.allElementsBoundByIndex.map(\.frame).filter { !$0.isEmpty }.reduce(CGRect.null) { $0.union($1) }
+        let shotName = "vo-\(transcript.count)-\(task).png"
+        if !panel.isNull, let cg = XCUIScreen.main.screenshot().image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            let scale = CGFloat(cg.width) / XCUIScreen.main.screenshot().image.size.width
+            let rect = CGRect(x: panel.minX * scale, y: panel.minY * scale, width: panel.width * scale, height: panel.height * scale).integral
+            if let crop = cg.cropping(to: rect), let png = NSBitmapImageRep(cgImage: crop).representation(using: .png, properties: [:]) {
+                Acceptance.attach(self, png: png, name: shotName)
+            }
+        }
+        transcript.append(["task": task, "action": action, "spoken": caption, "changed": caption == lastCaption ? "no" : "yes", "captionCrop": shotName])
         print("[vo] \(task) | \(action) | \(caption)")
         lastCaption = caption
     }
