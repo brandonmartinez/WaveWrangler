@@ -597,7 +597,9 @@ struct ForbiddenAPITests {
     /// `SourceDecoder` (the other-module scan forbids the gateway itself), hashes only in its two digest files,
     /// and mutates files only through the store.
     static func derivedViolations(in source: String, fileName: String) -> [String] {
-        let code = code(source)
+        var code = maskingInMemoryContentsOf(code(source))
+        // The store lists its own staging and asset folders through its file-operations abstraction.
+        if fileName == "DerivedAssetStore.swift" { code = code.replacingOccurrences(of: "files.contentsOfDirectory(", with: "files.listDirectory(") }
         let allowed = derivedExceptions[fileName] ?? []
         var found = Array(Set(forbidden + decodeMutationTokens + derivedStoreTokens))
             .filter { !allowed.contains($0) && code.contains($0) }
@@ -609,8 +611,18 @@ struct ForbiddenAPITests {
         return found.map { "\(fileName): \($0)" }
     }
 
+    /// `Array.append(contentsOf:)` / `Data.append(contentsOf:)` copy in-memory collections; every other
+    /// `contentsOf` (`String(contentsOf:)`, `NSSound(contentsOf:)`, …) stays forbidden.
+    static func maskingInMemoryContentsOf(_ code: String) -> String {
+        code.replacingOccurrences(of: ".append(contentsOf:", with: ".append(")
+    }
+
     @Test func derivedScannerDetectsContentHashingAndMutation() {
-        #expect(Self.derivedViolations(in: "let d = try Data(contentsOf: source)", fileName: "DerivedAssetStore.swift") == ["DerivedAssetStore.swift: Data(contentsOf"])
+        #expect(Self.derivedViolations(in: "let d = try Data(contentsOf: source)", fileName: "DerivedAssetStore.swift") == ["DerivedAssetStore.swift: Data(contentsOf", "DerivedAssetStore.swift: contentsOf"])
+        #expect(Self.derivedViolations(in: "let t = try String(contentsOf: source)", fileName: "MapHistory.swift") == ["MapHistory.swift: contentsOf"])
+        #expect(Self.derivedViolations(in: "bytes.append(contentsOf: header)", fileName: "MapHistory.swift").isEmpty)
+        #expect(Self.derivedViolations(in: "let names = try files.contentsOfDirectory(root)", fileName: "DerivedAssetStore.swift").isEmpty)
+        #expect(Self.derivedViolations(in: "let names = try files.contentsOfDirectory(root)", fileName: "DerivedJobCoordinator.swift").contains("DerivedJobCoordinator.swift: contentsOf"))
         #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "DerivedJobCoordinator.swift") == ["DerivedJobCoordinator.swift: writeNew"])
         #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "DerivedAssetStore.swift").isEmpty)
         #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "Sub/DerivedAssetStore.swift") == ["Sub/DerivedAssetStore.swift: writeNew"])
@@ -645,7 +657,7 @@ struct ForbiddenAPITests {
     /// WWAlignPipeline reaches source content only through `SourceDecoder` and writes only through the
     /// WWDerived coordinator: no file in it may use any of these, with no exceptions.
     static func pipelineViolations(in source: String, fileName: String) -> [String] {
-        let code = code(source)
+        let code = maskingInMemoryContentsOf(code(source))
         let tokens = Set(forbidden + decodeMutationTokens + derivedStoreTokens + decodeTokens + contentGatewayAPITokens + pipelineTokens)
         return tokens.filter { code.contains($0) }.sorted().map { "\(fileName): \($0)" }
     }
@@ -653,6 +665,8 @@ struct ForbiddenAPITests {
     @Test func pipelineScannerDetectsFilesContentHooksAndThreads() {
         let samples: [(String, String)] = [
             ("let d = try Data(contentsOf: url)", "Data(contentsOf"),
+            ("let t = try String(contentsOf: url)", "contentsOf"),
+            ("let names = try files.contentsOfDirectory(root)", "contentsOf"),
             ("let r = try content.openForDecoding(url)", "openForDecoding"),
             ("try files.writeNew(bytes, to: url)", "writeNew"),
             ("let h = SHA256.hash(data: bytes)", "SHA256"),
@@ -668,6 +682,7 @@ struct ForbiddenAPITests {
             #expect(Self.pipelineViolations(in: line, fileName: "AnalysisJob.swift").contains("AnalysisJob.swift: \(token)"), "\(line)")
         }
         #expect(Self.pipelineViolations(in: "/// FileManager, Thread and activeProcessorCount in a doc comment", fileName: "AnalysisJob.swift").isEmpty)
+        #expect(Self.pipelineViolations(in: "samples.append(contentsOf: chunk)", fileName: "AnalysisJob.swift").isEmpty)
         #expect(Self.pipelineViolations(in: "let samples = try await decoder.withDecodingCursor(url, source: id) { try await $0.next() }", fileName: "AnalysisJob.swift").isEmpty)
     }
 
