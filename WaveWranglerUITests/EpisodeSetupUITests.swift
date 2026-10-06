@@ -1,7 +1,7 @@
 import AppKit
 import XCTest
 
-/// Setup destination keyboard/VoiceOver-structure tasks (accessibility-acceptance T07–T13, T18, T29) run
+/// Setup destination keyboard/VoiceOver-structure tasks (accessibility-acceptance T07–T13, T18, T29, T30) run
 /// against the scripted fixture engine (`WW_SETUP_ENGINE=fixture-states`). Every provider state here is a
 /// **simulated provider state**; no user media, folders or network are touched.
 ///
@@ -20,6 +20,8 @@ final class EpisodeSetupUITests: XCTestCase {
             "-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
             "-WWUITestCenterWindows", "YES", "-WWUITestOpenShow", "Setup Fixture", "-WWUITestShowEpisodes", "1",
         ]
+        // T30 Off half: "Download sources automatically" off for this launch (argument domain).
+        if name.contains("DownloadsOff") { app.launchArguments += ["-WWDownloadSourcesAutomatically", "NO"] }
         app.launch()
         app.activate()
         try openSetup()
@@ -616,5 +618,109 @@ final class EpisodeSetupUITests: XCTestCase {
         XCTAssertEqual(value("ww.inspector.transfer"), "Can't download — no network connection. Checked \(checkedTime())")
         menu("Source", "Retry Download")
         XCTAssertTrue(waitForValue("ww.inspector.transfer", beginsWith: "Waiting to download"))
+    }
+
+    // MARK: T30 — automatic retry on reconnect (simulated offline, F-OFFLINE)
+
+    /// Status cells (one per source row) whose value begins with `prefix`.
+    private func statusCount(_ prefix: String) -> Int {
+        app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status' AND value BEGINSWITH %@", prefix)).count
+    }
+
+    private func waitForStatusCount(_ prefix: String, _ count: Int, timeout: TimeInterval = 6) -> Bool {
+        let done = expectation(for: NSPredicate { _, _ in self.statusCount(prefix) == count }, evaluatedWith: nil)
+        return XCTWaiter().wait(for: [done], timeout: timeout) == .completed
+    }
+
+    private func attentionCount(_ count: Int, timeout: TimeInterval = 4) -> Bool {
+        let text = count == 1 ? "1 needs attention" : "\(count) need attention"
+        return app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'ww.setup.attentionFilter' AND label == %@", text)).firstMatch.waitForExistence(timeout: timeout)
+    }
+
+    private var inspectorName: String {
+        let name = element("ww.inspector.source.name")
+        return "\(name.label)|\(name.value as? String ?? "")"
+    }
+
+    /// Keyboard only: from the imported multi-selection, ↓ selects one row, then ↑ until the details show
+    /// `name`.
+    private func selectWithKeys(_ name: String) {
+        app.typeKey(XCUIKeyboardKey.downArrow.rawValue, modifierFlags: [])
+        XCTAssertTrue(waitForOutline("1 selected"), "↓ selects one row")
+        for _ in 0..<12 where !inspectorName.contains(name) {
+            app.typeKey(XCUIKeyboardKey.upArrow.rawValue, modifierFlags: [])
+        }
+        XCTAssertTrue(inspectorName.contains(name), "selected \(name) with the keyboard (details show \(inspectorName))")
+    }
+
+    /// Simulated network (DEBUG fixture only): ⌃⌥⌘O drops it, ⌃⌥⌘R brings it back.
+    private func simulateNetwork(offline: Bool) {
+        app.typeKey(offline ? "o" : "r", modifierFlags: [.control, .option, .command])
+    }
+
+    /// Downloads On: after a simulated reconnect the "No connection" rows go Waiting → Downloading… → Ready
+    /// with no user action, the attention count drops once, and keyboard focus and selection stay put.
+    func testT30AutomaticRetryOnReconnectDownloadsOn() {
+        print("[phase] begin t30-on \(Date().timeIntervalSince1970)")
+        importFixture()
+        selectWithKeys("denied.wav")  // an unaffected source holds focus throughout
+        let focused = inspectorName
+        XCTAssertTrue(attentionCount(5), "baseline: 5 need attention")
+        XCTAssertEqual(statusCount("Ready"), 2)
+
+        simulateNetwork(offline: true)
+        XCTAssertTrue(waitForStatusCount("No connection", 3), "the two active downloads fail with No connection (plus offline.wav)")
+        XCTAssertTrue(attentionCount(7))
+
+        print("[phase] begin t30-on-reconnect \(Date().timeIntervalSince1970)")
+        simulateNetwork(offline: false)
+        XCTAssertTrue(waitForStatusCount("Waiting", 3, timeout: 3), "requeued automatically: Waiting")
+        XCTAssertEqual(statusCount("No connection"), 0)
+        XCTAssertTrue(attentionCount(4), "attention count drops once (7 → 4)")
+        XCTAssertTrue(waitForStatusCount("Downloading…", 3), "then Downloading…")
+        XCTAssertTrue(waitForStatusCount("Ready", 5), "then Ready (2 + 3), with no user action")
+        XCTAssertTrue(attentionCount(4), "Downloading/Ready don't change the count again")
+        print("[phase] end t30-on-reconnect \(Date().timeIntervalSince1970)")
+
+        // No focus change: the same row is selected, and the keyboard still drives the Sources table.
+        XCTAssertTrue(waitForOutline("1 selected"))
+        XCTAssertEqual(inspectorName, focused, "selection unchanged")
+        app.typeKey(XCUIKeyboardKey.upArrow.rawValue, modifierFlags: [])
+        let moved = expectation(for: NSPredicate { _, _ in self.inspectorName != focused }, evaluatedWith: nil)
+        wait(for: [moved], timeout: 3)
+        print("[phase] end t30-on \(Date().timeIntervalSince1970)")
+    }
+
+    /// Downloads Off: a failed explicit download is not retried on reconnect (stays "Can't download — no
+    /// network connection" until Retry) and nothing else is requested; Retry then completes it.
+    func testT30NoAutomaticRetryDownloadsOff() {
+        print("[phase] begin t30-off \(Date().timeIntervalSince1970)")
+        importFixture()
+        simulateNetwork(offline: true)
+        XCTAssertTrue(waitForStatusCount("No connection", 3))
+        XCTAssertTrue(attentionCount(7))
+        selectWithKeys("offline.wav")
+        XCTAssertTrue(waitForValue("ww.inspector.transfer", beginsWith: "Can't download — no network connection"))
+
+        print("[phase] begin t30-off-reconnect \(Date().timeIntervalSince1970)")
+        simulateNetwork(offline: false)
+        // Longer than a full simulated transfer (2 × 1.5 s): nothing moves.
+        Thread.sleep(forTimeInterval: 4)
+        XCTAssertEqual(statusCount("No connection"), 3, "not retried automatically")
+        XCTAssertEqual(statusCount("Waiting"), 0, "no other source requested")
+        XCTAssertEqual(statusCount("Ready"), 2)
+        XCTAssertTrue(attentionCount(7, timeout: 1))
+        XCTAssertTrue(value("ww.inspector.transfer")?.hasPrefix("Can't download — no network connection") == true, "stays until Retry")
+        print("[phase] end t30-off-reconnect \(Date().timeIntervalSince1970)")
+
+        // Retry (K28) is the way back: only this source moves.
+        menu("Source", "Retry Download")
+        XCTAssertTrue(waitForValue("ww.inspector.transfer", beginsWith: "Waiting to download", timeout: 2))
+        XCTAssertTrue(waitForValue("ww.inspector.transfer", beginsWith: "Downloading — progress unknown"))
+        XCTAssertTrue(waitForStatusCount("Ready", 3), "the retried source is Ready")
+        XCTAssertEqual(statusCount("No connection"), 2, "the others still wait for Retry")
+        XCTAssertTrue(waitForOutline("1 selected"))
+        XCTAssertTrue(inspectorName.contains("offline.wav"), "focus stayed on the retried source")
+        print("[phase] end t30-off \(Date().timeIntervalSince1970)")
     }
 }

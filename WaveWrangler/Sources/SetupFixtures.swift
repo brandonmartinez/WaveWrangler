@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import WWCore
 import WWEpisodeSetup
 
 /// Synthetic UI-test fixtures (F-MESSY import tree and F-STATES simulated provider states). Selected only
@@ -82,6 +83,9 @@ enum SetupFixtures {
             "offline.wav": with { $0.residency = .cloudOnly; $0.transfer = .noConnection },
         ]
         engine.candidateDetails = [URL(filePath: "/WaveWranglerFixture/ZOOM0001/tr2.wav"): details("tr2.wav", "ZOOM0001", size: 1_210_000_001)]
+        engine.afterPerform = { action, id in
+            Task { @MainActor in SimulatedNetwork.performed(action, on: id) }
+        }
         engine.transferOutcome = { action, current in
             var next = current
             switch action {
@@ -96,6 +100,78 @@ enum SetupFixtures {
     }
     #endif
 }
+
+#if DEBUG
+/// F-OFFLINE sources (simulated, T29/T30): network loss and reconnect for the fixture engine. Driven only by
+/// the DEBUG Source › "Simulate Network Offline/Reconnect" items, which exist only in fixture mode; until
+/// one is used the fixture's states stay static (other tests are unaffected). Every state is a simulated
+/// provider state; nothing touches the file system or the network.
+@MainActor
+enum SimulatedNetwork {
+    private(set) static var engaged = false
+    private(set) static var online = true
+    /// Time per simulated transfer step (Waiting → Downloading… → Ready).
+    static let step: Duration = .milliseconds(1500)
+
+    /// The network drops: every active download fails with "No connection", in one update.
+    static func goOffline() {
+        guard let engine = SetupFixtures.statesEngine() else { return }
+        engaged = true
+        online = false
+        engine.setStatuses(engine.allStatuses.filter { $0.value.transfer.isActive }.mapValues { status in
+            var next = status
+            next.transfer = .noConnection
+            return next
+        })
+    }
+
+    /// The network returns. With downloads on, "No connection" downloads are requeued automatically (the
+    /// fixture stand-in for WWSources' `ReconnectRetry`, which is unit-tested on the real engine); with
+    /// downloads off nothing is requested.
+    static func reconnect() {
+        guard let engine = SetupFixtures.statesEngine() else { return }
+        engaged = true
+        online = true
+        guard AppSettingsDownloadPreference.shared.downloadsAutomatically else { return }
+        transfer(Set(engine.allStatuses.filter { $0.value.transfer == .noConnection }.keys), in: engine)
+    }
+
+    /// Download/Retry once the simulation is engaged: proceeds when online, fails "No connection" offline.
+    static func performed(_ action: TransferAction, on id: SourceID) {
+        guard engaged, action == .download || action == .retry, let engine = SetupFixtures.statesEngine() else { return }
+        transfer([id], in: engine)
+    }
+
+    /// Waiting → Downloading… → Ready (or → No connection while offline), one batched update per step, so
+    /// the attention count changes once per step and no row is announced on its own.
+    private static func transfer(_ ids: Set<SourceID>, in engine: InMemorySourceSetupEngine) {
+        guard !ids.isEmpty else { return }
+        apply(ids, engine, from: [.noConnection, .queued, .cancelled]) { $0.transfer = .queued }
+        Task { @MainActor in
+            try? await Task.sleep(for: step)
+            guard online else { return apply(ids, engine, from: [.queued]) { $0.transfer = .noConnection } }
+            apply(ids, engine, from: [.queued]) { $0.transfer = .downloading(fraction: nil) }
+            try? await Task.sleep(for: step)
+            guard online else { return apply(ids, engine, from: [.downloading(fraction: nil)]) { $0.transfer = .noConnection } }
+            apply(ids, engine, from: [.downloading(fraction: nil)]) {
+                $0.transfer = .idle
+                $0.residency = .local
+            }
+        }
+    }
+
+    /// Changes only sources still in one of `states` (a cancel or another action meanwhile wins).
+    private static func apply(_ ids: Set<SourceID>, _ engine: InMemorySourceSetupEngine, from states: [TransferStatus], _ change: (inout SourceStatusSnapshot) -> Void) {
+        var updates: [SourceID: SourceStatusSnapshot] = [:]
+        for (id, status) in engine.allStatuses where ids.contains(id) && states.contains(status.transfer) {
+            var next = status
+            change(&next)
+            updates[id] = next
+        }
+        engine.setStatuses(updates)
+    }
+}
+#endif
 
 // MARK: - In-app text size (CMD-20)
 
