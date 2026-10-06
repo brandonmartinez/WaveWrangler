@@ -478,7 +478,7 @@ private struct LibraryMessageBar: View {
                     heading: "Couldn't update the library",
                     message: failure,
                     symbolName: "exclamationmark.triangle",
-                    actions: [("Dismiss", { state.store.persistenceFailure = nil })],
+                    actions: [("Dismiss", { state.store.failure.dismiss() })],
                     identifier: "ww.library.messageBar"
                 )
             }

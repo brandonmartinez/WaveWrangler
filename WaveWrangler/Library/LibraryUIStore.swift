@@ -17,7 +17,8 @@ final class LibraryUIStore {
 
     private(set) var session = LibrarySession()
     /// ST-32: a library read/write failure; shown in the Library window's message bar until dismissed.
-    var persistenceFailure: String?
+    var failure = LibraryFailureMessage()
+    var persistenceFailure: String? { failure.text }
     /// The most recent refused operation, explained inline.
     private(set) var lastError: String?
 
@@ -72,7 +73,7 @@ final class LibraryUIStore {
         let result = adoption.adopt(canonical, session: session, allowsEdits: allowsEdits)
         if let updated = result.session { session = updated }
         if case .loaded(let changed) = result.outcome {
-            persistenceFailure = nil
+            failure.libraryLoaded()
             if changed { persistFlushed() }
             undoManager.removeAllActions(withTarget: self)
         }
@@ -80,11 +81,11 @@ final class LibraryUIStore {
 
     /// After a move, Use That Library, combine, recovery or regrant: drop library undo and pick up the
     /// library storage now reports (reloading if it had failed).
-    func libraryWasReplaced() async {
+    /// `succeeded`: the caller's own outcome where it has one (Use That Library); level-state actions are judged by
+    /// the state they leave (a failed Combine stays L4).
+    func libraryWasReplaced(succeeded: Bool = true) async {
         undoManager.removeAllActions(withTarget: self)
-        // A write failure reported before the replacement no longer describes the library (for example the edit
-        // that met an L4 conflict, which Combine has now saved).
-        persistenceFailure = nil
+        failure.libraryReplaced(succeeded: succeeded, libraryState: services.location.libraryState)
         if !session.isLoaded {
             loadTask = nil
             await load()
@@ -131,7 +132,7 @@ final class LibraryUIStore {
                 adopt(try await services.persistence.loadLibrary())
             } catch {
                 session.didFailLoad(reason: error.localizedDescription)
-                persistenceFailure = "Couldn't read the library: \(Self.sentence(error.localizedDescription)) Your shows aren't affected, and the library won't be changed until it can be read."
+                failure.readFailed(error.localizedDescription)
             }
         }
         loadTask = task
@@ -229,18 +230,14 @@ final class LibraryUIStore {
                 if self?.pendingSaves == 0 { self?.adopt(canonical) }
             } catch {
                 self?.pendingSaves -= 1
-                self?.persistenceFailure = "Couldn't update the library: \(Self.sentence(error.localizedDescription)) Your shows aren't affected."
+                self?.failure.writeFailed(error.localizedDescription)
                 if self?.pendingSaves == 0, let canonical = persistence.currentLibrary { self?.adopt(canonical) }
             }
         }
     }
 
     /// Ends `text` with exactly one period.
-    static func sentence(_ text: String) -> String {
-        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        while trimmed.hasSuffix(".") { trimmed.removeLast() }
-        return trimmed + "."
-    }
+    static func sentence(_ text: String) -> String { LibraryFailureMessage.sentence(text) }
 
     static func message(for refusal: LibrarySession.EditRefusal) -> String {
         switch refusal {

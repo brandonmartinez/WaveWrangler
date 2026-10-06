@@ -314,10 +314,12 @@ final class LibraryWindowState {
         }
         switch response {
         case .alertFirstButtonReturn:
+            var used = true
             if case .failed(let reason) = await store.services.location.useOfferedLibrary() {
                 actionMessage = "Couldn't use that library: \(reason)"
+                used = false
             }
-            await store.libraryWasReplaced()
+            await store.libraryWasReplaced(succeeded: used)
         case .alertSecondButtonReturn:
             perform(.grantAccess)
         default:
