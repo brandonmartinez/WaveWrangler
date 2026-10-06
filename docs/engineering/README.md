@@ -29,6 +29,9 @@ Packages/WaveWranglerKit/         Local Swift package linked by the app
   Sources/WWSources/              Source references: read-only gateway, access records, availability, import, relink
   Sources/WWOrganizer/            Library/workspace presentation: wording catalogs, preference keys,
                                   collection/combine operations, library session, sidebar models, menu shortcut register
+  Sources/WWDecode/               Read-only content gateway + native decoder for the M2 import envelope (WW-050; building now)
+  Sources/WWTimeMap/              Clock-epoch/coordinate time-map contract and supported inverse (WW-015; building now)
+  Sources/WWDerivedAssets/        Planned: derived-asset/job infrastructure, versioned map persistence, C5 migration (WW-020)
   Tests/WW*Tests/                 Swift Testing suites per module
 scripts/build.sh, scripts/test.sh Established build/test commands (CI runs the same scripts)
 scripts/demo/                     Manual demonstration helpers: synthetic fixture generator, metadata-only fs manifest
@@ -52,6 +55,9 @@ Parallel sessions work on disjoint folders. Cross-folder changes go through the 
 | `Document/`, `WWPersistence` | Persistence owner | Publication, prior checkpoint, recovery, migration, autosave policy, newer-format refusal. |
 | `Library/`, `Workspace/`, `Commands/`, `Settings/` | Library UI owner | Keyboard/VoiceOver/visible focus are part of done, not polish. |
 | `Sources/`, `WWSources` | Sources owner | Access records, bookmarks, availability/download states, relink. |
+| `WWDecode` | Mac | Content gateway + native decoder; evidence-driven envelope only (WW-050; building now). See [`docs/m2/ww-019-m2-contracts.md`](../m2/ww-019-m2-contracts.md). |
+| `WWTimeMap` | Alignment | Clock-epoch/coordinate contract, supported inverse (WW-015; building now). See [`docs/m2/ww-019-m2-contracts.md`](../m2/ww-019-m2-contracts.md). |
+| `WWDerivedAssets` (planned) | Mac | Derived-asset/job infrastructure, versioned map persistence, C5 migration, explicit stated channel #63 (WW-020). |
 | `.github/workflows/ci.yml`, `scripts/` | Mac (app foundation) | Keep scripts working for every lane. |
 
 Pure domain logic belongs in the package (testable without the app); the app target holds AppKit/SwiftUI
