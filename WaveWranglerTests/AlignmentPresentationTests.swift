@@ -248,6 +248,12 @@ struct AlignmentPresentationTests {
             rateRatio: .one,
             alignedOffset: .zero
         )
+        let shifted = try AffineClockSegment(
+            groupClockStart: .zero,
+            groupClockEnd: spanEnd,
+            rateRatio: .one,
+            alignedOffset: try ExactRational(numerator: 3, denominator: 1)
+        )
         let group = try GroupTimeMap(
             group: groupID,
             reference: reference,
@@ -259,7 +265,7 @@ struct AlignmentPresentationTests {
                 EpochClockMap(
                     epoch: secondEpoch,
                     mapping: .mapped(
-                        segments: [identity],
+                        segments: [shifted],
                         provenance: .manual(ManualCorrection(basis: .numericEntry))
                     )
                 ),
