@@ -141,6 +141,7 @@ private struct SidebarRowView: View {
                     .monospacedDigit()
             }
         }
+        .emphasizedSelectionForeground()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(row.accessibilityLabel)
         .accessibilityValue(row.accessibilityValue)
