@@ -103,7 +103,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
                   "popover buttons: \(popover.buttons.allElementsBoundByIndex.map(\.title))")
             try audit("T26 popover")
             app.typeKey(.escape, modifierFlags: [])
-            // "— Edited" isn't part of the AX window title on macOS 27; recorded, not asserted.
+            check(windowSaysEdited(window), "the window says Edited while unreachable (AX_EDITING_STATE): \(editingState(window) ?? "none")")
             recordDirtyIndicators(window, "T26 while unreachable")
             // Between attempts the value stays Can't reach (sampled), including after another edit.
             var flicker: [String] = []
@@ -201,12 +201,19 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
     /// assert on reliably, so their AX values are recorded for the evidence.
     private func recordDirtyIndicators(_ window: XCUIElement, _ context: String) {
         let close = window.buttons[XCUIIdentifierCloseWindow]
-        Acceptance.record(self, "\(context): title \(window.title) | close button value \(String(describing: close.value)) | edited \(windowSaysEdited(window))")
+        Acceptance.record(self, "\(context): title \(window.title) | AX_EDITING_STATE \(editingState(window) ?? "none") | close button value \(String(describing: close.value))")
+    }
+
+    /// AppKit's document edit state ("— Edited" beside the title) is the `AX_EDITING_STATE` element, label "Document
+    /// status", value "Edited" (mini audit records 479eb9e); it isn't part of the AX window title on macOS 27.
+    private func editingState(_ window: XCUIElement) -> String? {
+        let element = window.descendants(matching: .any).matching(identifier: "AX_EDITING_STATE").firstMatch
+        guard element.exists else { return nil }
+        return element.value as? String ?? element.label
     }
 
     private func windowSaysEdited(_ window: XCUIElement) -> Bool {
-        window.title.contains("Edited")
-            || window.staticTexts.matching(NSPredicate(format: "value CONTAINS '— Edited' OR label CONTAINS '— Edited'")).count > 0
+        editingState(window) == "Edited" || window.title.contains("Edited")
     }
 
     private func seam() -> (attempts: Int, offline: Bool, attemptTimes: [Double])? {
