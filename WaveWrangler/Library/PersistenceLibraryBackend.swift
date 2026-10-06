@@ -14,10 +14,19 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
     @ObservationIgnored let store: LibraryDocumentStore
     @ObservationIgnored let controller: LibraryLocationController
     private(set) var resultMessage: String?
+    /// The running move's step, reported by the store (ST-33 step 3).
+    private var moveStep: LibraryMoveStep?
 
     init(store: LibraryDocumentStore = .shared, controller: LibraryLocationController = .shared) {
         self.store = store
         self.controller = controller
+        let libraryStore = store.store
+        let sink = MoveStepSink(self)
+        Task {
+            await libraryStore.onMoveStep { step in
+                Task { @MainActor in sink.backend?.moveStep = step }
+            }
+        }
     }
 
     enum AdapterError: LocalizedError {
@@ -95,7 +104,13 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
         }
     }
 
-    var movePhase: LibraryMovePhase? { controller.isWorking ? .copying : nil }
+    var movePhase: LibraryMovePhase? {
+        switch moveStep {
+        case .checking?: .checking
+        case .copying?: .copying
+        case nil: controller.isWorking ? .copying : nil
+        }
+    }
     var isConnected: Bool { true }
     var pendingEditsStatus: String? { store.pendingEditsStatus }
     var providerConflictNotice: String? { store.providerConflictNotice }
@@ -118,6 +133,11 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
         } else {
             await controller.moveToThisMac()
         }
+        #if DEBUG
+        if case .success(.moved)? = controller.lastOutcome {
+            await LibraryLocationFixture.holdFinishedMoveSteps { self.moveStep = $0 }
+        }
+        #endif
         return result(previous: previous)
     }
 
@@ -140,10 +160,10 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
             return .moved(message: message)
         case .success(.destinationHasLibrary(let url, _)):
             return .destinationHasLibrary(folder: Self.folder(url), blockedReason: nil)
-        case .success(.destinationUnusable(let url, let reason)):
-            // The folder has a library this version can't use (unreachable, needs permission, newer format,
-            // damaged): offer the sheet with Use That Library disabled and the reason (ST-33 step 6).
-            return .destinationHasLibrary(folder: Self.folder(url), blockedReason: LibraryUIStore.sentence(reason) + " Nothing was written to the folder, and your current library is still in use.")
+        case .success(.destinationUnusable(let url, let problem)):
+            // The folder has a library this version can't use: offer the sheet with Use That Library disabled
+            // and the §5.1 step 6 reason for its state; nothing is written (ST-33 step 6).
+            return .destinationHasLibrary(folder: Self.folder(url), blockedReason: Self.blockedReason(problem))
         case .success(.combined(_, _, let summary)):
             let message = Self.combineMessage(summary)
             resultMessage = message
@@ -155,6 +175,16 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
         @unknown default:
             return .failed(reason: "the move didn't complete. WaveWrangler is still using your library in \(previous); nothing was changed.")
         }
+    }
+
+    /// §5.1 step 6: the reason for a folder's library this version can't use, then what didn't happen.
+    static func blockedReason(_ problem: LibraryDestinationProblem) -> String {
+        let block: LibraryMoveWording.ExistingLibraryBlock = switch problem {
+        case .unreadable: .unreachable
+        case .newerFormat: .newerFormat
+        case .notALibrary: .damaged
+        }
+        return block.reason + " Nothing was written to the folder, and your current library is still in use."
     }
 
     /// The single place persistence's library *file* URLs (move/regrant outcomes, always
@@ -252,4 +282,11 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
             return .cannotVerify(reason: "the result wasn't recognized")
         }
     }
+}
+
+/// Weak, main-actor reference from the store's move-step callback to the adapter.
+@MainActor
+private final class MoveStepSink: Sendable {
+    weak var backend: PersistenceLibraryBackend?
+    init(_ backend: PersistenceLibraryBackend) { self.backend = backend }
 }

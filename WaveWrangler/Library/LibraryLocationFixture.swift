@@ -21,9 +21,9 @@ import WWPersistence
 /// - `newer` (L5): the library file's schema version is raised to 99 (a newer WaveWrangler's format).
 @MainActor
 enum LibraryLocationFixture {
-    static let argument = "WWUITestLibraryLocation"
+    nonisolated static let argument = "WWUITestLibraryLocation"
     static let restoreNotification = Notification.Name("com.brandonmartinez.wavewrangler.uitest.libraryFolder.restore")
-    private static let logger = Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "UITestLibraryLocation")
+    nonisolated private static let logger = Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "UITestLibraryLocation")
     private static var observer: NSObjectProtocol?
 
     static var requestedState: String? {
@@ -32,7 +32,7 @@ enum LibraryLocationFixture {
     }
 
     /// The F-LIBLOC library (deterministic names; fresh identities).
-    static func library(base: LibraryModel) -> LibraryModel {
+    nonisolated static func library(base: LibraryModel) -> LibraryModel {
         var library = base
         let shows = (1...12).map { _ in ShowID() }
         for (index, id) in shows.enumerated() {
@@ -78,15 +78,30 @@ enum LibraryLocationFixture {
             for _ in 0..<100 where LibraryDocumentStore.shared.library == nil {
                 try? await Task.sleep(for: .milliseconds(100))
             }
-            let other = makeStore(bookmarks: SecurityScopedFolderBookmarks())
-            _ = await other.load()
-            let result = try? await other.update { library in
-                var library = library
-                library.collections.append(LibraryCollection(name: "From Another Mac"))
-                return library
-            }
-            logger.notice("L4 external change: \(String(describing: result), privacy: .public)")
+            await publishExternalChange()
         }
+    }
+
+    /// `-WWUITestHoldMoveSteps YES`: after a move, show its steps for a moment each (they last milliseconds on a
+    /// local disk), so a test can read "Moving library — checking copy…". The move has already finished; this
+    /// only holds the progress the store reported.
+    static func holdFinishedMoveSteps(_ show: (LibraryMoveStep?) -> Void) async {
+        guard PersistenceEnvironment.isUITestRun, UserDefaults.standard.bool(forKey: "WWUITestHoldMoveSteps") else { return }
+        show(.checking)
+        try? await Task.sleep(for: .seconds(2))
+        show(nil)
+    }
+
+    /// Another writer (as another Mac would) publishes a change to the same library file.
+    nonisolated private static func publishExternalChange() async {
+        let other = makeStore(bookmarks: SecurityScopedFolderBookmarks())
+        _ = await other.load()
+        let result = try? await other.update { library in
+            var library = library
+            library.collections.append(LibraryCollection(name: "From Another Mac"))
+            return library
+        }
+        logger.notice("L4 external change: \(String(describing: result), privacy: .public)")
     }
 
     nonisolated private static func makeStore(bookmarks: any FolderBookmarking) -> LibraryStore {

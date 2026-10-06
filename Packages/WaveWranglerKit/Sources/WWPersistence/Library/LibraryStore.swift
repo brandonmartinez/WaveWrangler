@@ -125,6 +125,13 @@ public actor LibraryStore {
     /// "<n> library changes not saved yet".
     public var pendingEditCount: Int { pendingEdits?.editCount ?? 0 }
 
+    /// Reports a move's steps as they happen (`nil` when it ends); for progress shown while it runs.
+    private var moveStepHandler: (@Sendable (LibraryMoveStep?) -> Void)?
+
+    public func onMoveStep(_ handler: (@Sendable (LibraryMoveStep?) -> Void)?) {
+        moveStepHandler = handler
+    }
+
     public init(
         containerFolder: URL,
         settings: any LibraryLocationSettingsStoring,
@@ -740,18 +747,24 @@ public actor LibraryStore {
 
         if ops.exists(destination) {
             guard let existing = try? publisher.coordination.coordinateReading(at: destination, { try ops.read($0) }) else {
-                return .success(.destinationUnusable(destination, reason: "The existing file could not be read."))
+                return .success(.destinationUnusable(destination, problem: .unreadable))
             }
             if RevisionFingerprint.digest(existing) == base.byteDigest {
                 return await switchSetting(place: place, libraryID: current.payload.libraryID, outcome: .adoptedIdentical(destination))
             }
-            if let decoded = try? publisher.coder.decode(existing) {
+            do {
+                let decoded = try publisher.coder.decode(existing)
                 return .success(.destinationHasLibrary(destination, revision: decoded.revision))
+            } catch let .unknownNewerSchema(found, supported) {
+                return .success(.destinationUnusable(destination, problem: .newerFormat(found: found, supported: supported)))
+            } catch {
+                return .success(.destinationUnusable(destination, problem: .notALibrary))
             }
-            return .success(.destinationUnusable(destination, reason: "A file that is not a readable library is already there."))
         }
 
         // (2) coordinated copy of the exact bytes, (3) independent read-back inside the publisher.
+        moveStepHandler?(.copying)
+        defer { moveStepHandler?(nil) }
         do {
             try ops.createDirectory(folder)
             _ = try recovery.retainCheckpoint(bytes, for: .library)
@@ -764,7 +777,8 @@ public actor LibraryStore {
         } catch {
             return .failure(.failed(stage: .candidateValidated, kind: WriteFailureKind(classifying: error), detail: "\(error)"))
         }
-        // (4) switch; the previous copy stays where it was.
+        // (4) check the copy (read back, then loaded as the library by the switch); the previous copy stays where it was.
+        moveStepHandler?(.checking)
         return await switchSetting(place: place, libraryID: current.payload.libraryID, outcome: .moved(to: destination, previousCopyKept: sourceURL))
     }
 
