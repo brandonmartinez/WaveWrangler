@@ -161,11 +161,11 @@ final class ShowDocument: NSDocument {
         case let .needsMigration(_, fingerprint):
             // #159 D14: view the whole older show upgraded in memory (the same decode the migration stages), read-only.
             // An older file that can't be decoded and verified whole is refused as damaged, unchanged.
+            // (A `Result` rather than a typed `catch`: Swift 6.2's ownership verifier crashes on the latter here.)
             let upgraded: DecodedDocument<ShowDocumentModel>
-            do {
-                upgraded = try ShowSchemaMigration.decodeUpgradingOlder(data)
-            } catch let error as PersistenceError {
-                throw DocumentRecoveryOffer.error(for: error, candidates: [])
+            switch Result(catching: { () throws(PersistenceError) in try ShowSchemaMigration.decodeUpgradingOlder(data) }) {
+            case let .success(document): upgraded = document
+            case let .failure(error): throw DocumentRecoveryOffer.error(for: error, candidates: [])
             }
             store.replaceLoadedModel(upgraded.payload)
             publication = upgraded.publication
