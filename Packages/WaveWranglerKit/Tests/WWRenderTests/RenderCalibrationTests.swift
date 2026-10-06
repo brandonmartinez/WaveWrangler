@@ -431,7 +431,8 @@ func measureMultiSpan(split: String) async throws -> [RenderMeasurement] {
         records.append(m)
         positions[Int64((truth * 16).rounded()), default: []].append(found.position)
     }
-    for (_, group) in positions where group.count > 1 {
+    // Sorted, never Dictionary order: hash iteration order is randomized per process.
+    for (_, group) in positions.sorted(by: { $0.key < $1.key }) where group.count > 1 {
         var m = RenderMeasurement(split: split, caseIndex: -1, stratum: "multi-span (kink, gap, unsupported, 44.1k+48k)", inputRate: 0, outputRate: 48000, rateRatio: "piecewise", sourceFramesPerOutputFrame: .nan, kind: "skew-landmark")
         m.skewFrames = group.max()! - group.min()!
         records.append(m)
@@ -448,15 +449,24 @@ func runSplit(_ split: String, cases: Int) async throws -> [RenderMeasurement] {
         return try await group.reduce(into: []) { $0 += $1 }
     }
     records += try await measureMultiSpan(split: split)
-    records.sort { ($0.caseIndex, $0.kind, $0.channel ?? -1) < ($1.caseIndex, $1.kind, $1.channel ?? -1) }
+    let ordered = try canonicalRecordLines(records)
     if let directory = RenderFixture.recordsDirectory {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        encoder.nonConformingFloatEncodingStrategy = .convertToString(positiveInfinity: "+inf", negativeInfinity: "-inf", nan: "nan")
-        let lines = try records.map { String(decoding: try encoder.encode($0), as: UTF8.self) }
-        try (lines.joined(separator: "\n") + "\n").write(toFile: "\(directory)/ww-018-\(split).jsonl", atomically: true, encoding: .utf8)
+        try (ordered.map(\.line).joined(separator: "\n") + "\n").write(toFile: "\(directory)/ww-018-\(split).jsonl", atomically: true, encoding: .utf8)
     }
-    return records
+    return ordered.map(\.record)
+}
+
+/// The records in their canonical file order with their JSON lines. The order is total -- (case, kind,
+/// channel) and then the encoded line itself -- so it never depends on task completion order, Dictionary
+/// order or sort stability; identical lines are interchangeable.
+func canonicalRecordLines(_ records: [RenderMeasurement]) throws -> [(record: RenderMeasurement, line: String)] {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    encoder.nonConformingFloatEncodingStrategy = .convertToString(positiveInfinity: "+inf", negativeInfinity: "-inf", nan: "nan")
+    let encoded = try records.map { (record: $0, line: String(decoding: try encoder.encode($0), as: UTF8.self)) }
+    return encoded.sorted {
+        ($0.record.caseIndex, $0.record.kind, $0.record.channel ?? -1, $0.line) < ($1.record.caseIndex, $1.record.kind, $1.record.channel ?? -1, $1.line)
+    }
 }
 
 @Suite("Render calibration (M2-RENDER-001)")
@@ -521,6 +531,27 @@ struct RenderCalibrationTests {
         for kind in ["passband", "landmark-unique", "skew-landmark", "inactive"] {
             let missing = RenderGateEvaluation.evaluate(good.filter { $0.kind != kind })
             #expect(missing.contains { !$0.passed }, "missing \(kind) passed")
+        }
+    }
+
+    /// The records file is byte-reproducible: the multi-span measurement emits the same sequence on every run,
+    /// and the canonical order does not depend on the order records arrive in (task completion order,
+    /// Dictionary order) -- including records whose (case, kind, channel) keys tie, such as the two
+    /// multi-span skew-landmark records.
+    @Test func recordOrderIsDeterministic() async throws {
+        let first = try await measureMultiSpan(split: "calibration")
+        let second = try await measureMultiSpan(split: "calibration")
+        #expect(try canonicalRecordLines(first).map(\.line) == canonicalRecordLines(second).map(\.line))
+        let rawLines = { (records: [RenderMeasurement]) in try records.map { try canonicalRecordLines([$0])[0].line } }
+        #expect(try rawLines(first) == rawLines(second))
+
+        let skew = first.filter { $0.kind == "skew-landmark" }
+        #expect(skew.count == 2 && skew[0].skewFrames != skew[1].skewFrames)
+        let canonical = try canonicalRecordLines(first).map(\.line)
+        #expect(try canonicalRecordLines(first.reversed()).map(\.line) == canonical)
+        var generator = RenderRNG(state: 0x5EED_0018)
+        for _ in 0 ..< 8 {
+            #expect(try canonicalRecordLines(first.shuffled(using: &generator)).map(\.line) == canonical)
         }
     }
 

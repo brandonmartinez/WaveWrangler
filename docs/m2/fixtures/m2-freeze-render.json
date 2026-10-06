@@ -14,7 +14,7 @@
   "baseCommitNote": "origin/main when this record was authored (merge of PR #179). The freeze takes effect at the merge commit of the PR that adds it; pinnedTrees, not a commit SHA, identify the frozen code.",
   "pinnedTrees": {
     "Sources/WWRender": "94604633d6464391ade116b363f8874675381bf5",
-    "Tests/WWRenderTests": "b5c993c8c7c9f44dcc100a6c245031a780b32884"
+    "Tests/WWRenderTests": "ef0617bdeb96cc718d5985ba5da618b4f4e4a62e"
   },
   "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit (equal to `git rev-parse <commit>:Packages/WaveWranglerKit/<path>`). RenderFreezeTests.rendererAndHarnessTreesMatchTheFreezeRecord recomputes both tree IDs from the working tree on every test run and fails on any difference. A change to either tree after the freeze is a new dated freeze revision with a fresh holdout; the earlier record is retained.",
   "dependencyTreesAtFreeze": {
@@ -157,7 +157,8 @@
   "calibrationSummary": {
     "records": 466,
     "recordsFile": "docs/m2/evidence/ww-018/calibration.jsonl",
-    "recordsSHA256": "5670f81a436a77b52fc041cf977f79271ea1e93cd017f75d3bfe34199e32be98",
+    "recordsSHA256": "f8a1ee31900ba9526879242f5e0d218e7aaf16e1155890ad17ba351092d27889",
+    "recordsOrder": "canonical total order: (caseIndex, kind, channel, encoded JSON line); byte-identical across separate processes",
     "worst": {
       "landmarksFrames": 0.1687,
       "passbandAbsDB": 0.000146,

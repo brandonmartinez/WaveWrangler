@@ -61,7 +61,10 @@ epoch, and 44.1 kHz + 48 kHz occurrences with two cross-occurrence skew pairs. *
 forward/inverse, never the render plan. Gates fail on NaN or missing evidence.
 
 **Calibration** (16 cases + multi-span, 466 records, [`ww-018/calibration.jsonl`](ww-018/calibration.jsonl)).
-The records are SHA-256 `5670f81a…be98` and reproduce bit-identically on rerun. The split is CPU-bound, so it
+The records are SHA-256 `f8a1ee31…7889`, byte-identical across three separate test processes. File order is
+canonical and total (case, kind, channel, then the encoded line), so task completion order and Dictionary order
+cannot change it; `recordOrderIsDeterministic` guards this. (The first committed file, `5670f81a…be98`, held the
+same 466 records, but the two multi-span skew records could swap between processes.) The split is CPU-bound, so it
 runs alone in `scripts/test.sh` (`WW_RENDER_CALIBRATION=1`, after the parallel package pass). The script fails if
 the test is skipped. In the parallel pass it would starve the time-limited WWSources suites on CI's small runner.
 Every gate passes:
@@ -69,7 +72,7 @@ Every gate passes:
 | Gate (verbatim) | Limit | Worst calibration value |
 | --- | --- | --- |
 | Landmarks | ≤1 output frame | 0.169 frames (204 landmarks) |
-| Passband | ±0.1 dB to 80% of lower Nyquist | 0.000146 dB (96 tones; worst 48k→44.1k a≈0.98) |
+| Passband | ±0.1 dB to 80% of lower Nyquist | 0.000146 dB (96 tones; worst 44.1k→48k a≈0.98) |
 | Alias | ≤−80 dBc | −92.97 dBc stopband (36 tones, 48k→44.1k a≈1.02); in-band residual −109.24 dBc |
 | Interchannel skew | ≤1 output frame | 0.0537 frames (multi-span); single-span ≤2.8e-6 |
 | Inversions/swaps | 0 | 0 |
@@ -102,7 +105,7 @@ measurement, gates, split counts, calibration summary and host:
 - splits: 16 calibration and 48 holdout cases, each plus the multi-span case;
 - host: macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, M5 Max with 18 cores, 128 GiB.
 
-It also pins the generator and renderer git tree IDs: `WWRenderTests` `b5c993c8…` and `WWRender` `94604633…`.
+It also pins the generator and renderer git tree IDs: `WWRenderTests` `ef0617bd…` and `WWRender` `94604633…`.
 `RenderFreezeTests` (always on) fails if the gates, recipe, versions, split counts, registry entry or either
 pinned tree drift from the record.
 It takes effect at this PR's merge commit. Disclosed: the multi-span case is fixed, so it is the same in both
@@ -141,7 +144,11 @@ swift test --filter WWRenderTests`, and the same with `WW_RENDER_CALIBRATION=1` 
   frames rather than 190,000. Removing `WW_RENDER_CALIBRATION=1` from the calibration pass makes `scripts/test.sh`
   fail rather than skip silently. Freeze guards: changing a `RenderGates` value, the recipe's Kaiser beta, or the
   registry's `m2-freeze-render` entry each fails `RenderFreezeTests` (and any source or test edit fails the
-  pinned-tree check).
+  pinned-tree check). Dropping the encoded-line tiebreaker from the canonical record order fails
+  `recordOrderIsDeterministic` (reversed and shuffled inputs). Reverting the multi-span skew loop to Dictionary
+  iteration survives in-process (one process sees one hash order); for the records file it is equivalent, because
+  the canonical order is total. The sorted loop stays as defence in depth, and the cross-process hash check above
+  covers it.
 - **Equivalent survivors:**
   - G09/G10 (tap clamp to span end/start): needs are clipped to the span, so the window never extends past it;
     defence in depth.
