@@ -111,6 +111,10 @@ final class ShowDocument: NSDocument {
         let interval = OpenSignposts.begin("document.makeWindowControllers")
         defer { OpenSignposts.end(interval) }
         let hosting = NSHostingController(rootView: ShowWorkspaceView(store: store))
+        // The complete show window owns its minimum size. SwiftUI's preferred content size includes
+        // the sidebar and inspector and would otherwise expand (or re-enter constraint updates for)
+        // the window instead of laying those columns out inside the permitted 760 pt content width.
+        hosting.sizingOptions = []
         let window = NSWindow(contentViewController: hosting)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         #if DEBUG

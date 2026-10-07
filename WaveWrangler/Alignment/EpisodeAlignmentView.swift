@@ -66,7 +66,7 @@ private struct AlignmentContentHost: NSViewRepresentable {
         init(model: EpisodeAlignmentModel) {
             hostingView = NSHostingView(rootView: AlignmentWorkspace(model: model))
             hostingView.sizingOptions = []
-            hostingView.setAccessibilityLabel("Alignment controls for recorder groups, anchors, corrections and audition")
+            hostingView.setAccessibilityElement(false)
             super.init(frame: .zero)
             hostingView.frame = bounds
             hostingView.autoresizingMask = [.width, .height]
@@ -252,9 +252,6 @@ private struct AlignmentWorkspace: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Alignment controls for recorder groups, anchors, corrections and audition")
-        .accessibilityHint("Scroll to reach every Alignment control.")
         .accessibilityIdentifier("ww.alignment.workspace")
         .onAppear {
             AlignmentKeyHandler.install()

@@ -296,7 +296,11 @@ final class AlignmentInspectionUITests: XCTestCase {
     ) {
         let scroll = app.scrollViews["ww.alignment.workspace"]
         for _ in 0..<12 where !element.exists || !element.isHittable {
-            scroll.swipeUp()
+            if element.exists, element.frame.midY < scroll.frame.minY {
+                scroll.swipeDown()
+            } else {
+                scroll.swipeUp()
+            }
         }
         XCTAssertTrue(element.exists, "\(element.identifier) exists after scrolling", file: file, line: line)
         XCTAssertTrue(element.isHittable, "\(element.identifier) is hittable after scrolling", file: file, line: line)
