@@ -12,6 +12,7 @@ DEFAULT_LEASE_MINUTES=30
 MAX_LEASE_MINUTES=45
 WARN_SECONDS=1800
 ACQUIRING_GRACE_SECONDS=120
+GUARD_TTL_SECONDS="${GUI_LOCK_GUARD_TTL_SECONDS:-10}"
 CLASSES="required pr full perf"
 
 mkdir -p "$ROOT" "$QUEUE"
@@ -71,9 +72,42 @@ first_ticket() {
 
 owner_file() { printf '%s/owner\n' "$1"; }
 acquire_guard() {
-  while ! mkdir "$GUARD" 2>/dev/null; do sleep 1; done
+  while :; do
+    if mkdir "$GUARD" 2>/dev/null; then
+      {
+        printf 'pid=%s\n' "$$"
+        printf 'created=%s\n' "$(now)"
+      } | atomic_write "$GUARD/owner"
+      GUARD_HELD=1
+      if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ -n "${GUI_LOCK_TEST_GUARD_HOLD_SECONDS:-}" ]; then
+        sleep "$GUI_LOCK_TEST_GUARD_HOLD_SECONDS"
+      fi
+      return 0
+    fi
+    guard_pid=$(field "$GUARD/owner" pid)
+    guard_created=$(field "$GUARD/owner" created)
+    guard_age=$(( $(now) - ${guard_created:-0} ))
+    if [ -z "$guard_pid" ] || ! kill -0 "$guard_pid" 2>/dev/null || [ "$guard_age" -ge "$GUARD_TTL_SECONDS" ]; then
+      stale_guard="$ROOT/.gui.lock.guard.stale-$(now)-$$"
+      if mv "$GUARD" "$stale_guard" 2>/dev/null; then
+        log "reclaimed guard pid=${guard_pid:-missing} age=${guard_age}s"
+        rm -rf "$stale_guard"
+        continue
+      fi
+    fi
+    sleep 1
+  done
 }
-release_guard() { rmdir "$GUARD" 2>/dev/null || true; }
+release_guard() {
+  [ "${GUARD_HELD:-0}" = 1 ] || return 0
+  [ "$(field "$GUARD/owner" pid)" = "$$" ] || {
+    GUARD_HELD=0
+    return 0
+  }
+  rm -f "$GUARD/owner"
+  rmdir "$GUARD" 2>/dev/null || true
+  GUARD_HELD=0
+}
 
 owner_is_stale() {
   [ -d "$LOCK" ] || return 1
@@ -207,13 +241,25 @@ record_run_pids() {
 }
 
 release_owned_lease() {
-  still_owner || return 0
+  if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ -n "${GUI_LOCK_TEST_RELEASE_PRE_GUARD_SECONDS:-}" ]; then
+    [ -n "${GUI_LOCK_TEST_RELEASE_MARKER:-}" ] && : > "$GUI_LOCK_TEST_RELEASE_MARKER"
+    sleep "$GUI_LOCK_TEST_RELEASE_PRE_GUARD_SECONDS"
+  fi
+  acquire_guard
+  owner="$(owner_file "$LOCK")"
+  if [ ! -f "$owner" ] || [ "$(field "$owner" token)" != "$TOKEN" ]; then
+    release_guard
+    return 0
+  fi
   releasing="$ROOT/.gui.lock.releasing-$TOKEN"
   if mv "$LOCK" "$releasing" 2>/dev/null; then
+    release_guard
     log "released lane=$LANE class=$CLASS sha=$SHA"
     rm -rf "$releasing"
     printf 'RELEASED lane=%s\n' "$LANE"
+    return 0
   fi
+  release_guard
 }
 
 restore_settings() {
@@ -230,6 +276,7 @@ restore_settings() {
 
 cleanup_run() {
   trap - EXIT INT TERM
+  release_guard
   [ -n "${TICKET:-}" ] && [ -d "$TICKET" ] && rm -rf "$TICKET"
   [ -n "${PIDS_FILE:-}" ] && [ -f "$PIDS_FILE" ] && kill_recorded_pids "$PIDS_FILE"
   [ -n "${DIR:-}" ] && restore_settings
@@ -298,6 +345,7 @@ acquire_for_run() {
       if mkdir "$LOCK" 2>/dev/null; then
         TOKEN="$(now)-$$-$sequence"
         mkdir -p "$DIR"
+        PIDS_FILE="$DIR/gui-lock-pids.$TOKEN"
         ACQUIRED=$(now)
         HEARTBEAT="$ACQUIRED"
         EXPIRES=$((HEARTBEAT + LEASE_SECONDS))
@@ -325,15 +373,18 @@ validate_command() {
   command_name=$(basename "$1")
   if [ "$command_name" = timeout ]; then
     shift
-    found_xcodebuild=0
-    for argument in "$@"; do
-      [ "$argument" = -c ] && return 1
-      if [ "$(basename "$argument")" = xcodebuild ]; then
-        found_xcodebuild=1
-        break
-      fi
+    duration=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -k|--kill-after|-s|--signal) [ $# -ge 2 ] || return 1; shift 2;;
+        --kill-after=*|--signal=*|--preserve-status|--foreground|--verbose) shift;;
+        --) shift; break;;
+        -*) return 1;;
+        *) duration="$1"; shift; break;;
+      esac
     done
-    [ "$found_xcodebuild" = 1 ] || return 1
+    case "${duration:-}" in ""|*[!0-9smhd.]*) return 1;; esac
+    [ $# -gt 0 ] && [ "$(basename "$1")" = xcodebuild ] || return 1
   elif [ "$command_name" != xcodebuild ]; then
     return 1
   fi
@@ -495,5 +546,6 @@ COMMAND_PID=""
 WRAPPER_PID="$$"
 OWN_OWNER_FILE=""
 ACQUIRED_OWNERSHIP=0
+GUARD_HELD=0
 
 run_one "$@"

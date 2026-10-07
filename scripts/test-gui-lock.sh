@@ -14,7 +14,8 @@ assert_contains() {
   grep -F "$text" "$file" >/dev/null || fail "$file does not contain: $text"
 }
 reset_state() {
-  rm -rf "$ROOT/.gui.lock" "$ROOT/.gui.queue" "$ROOT"/*.xcresult "$ROOT"/run-*
+  rm -rf "$ROOT/.gui.lock" "$ROOT/.gui.lock.guard" "$ROOT/.gui.lock.guard.stale-"* \
+    "$ROOT/.gui.queue" "$ROOT"/*.xcresult "$ROOT"/run-*
   mkdir -p "$ROOT/.gui.queue/required" "$ROOT/.gui.queue/pr" "$ROOT/.gui.queue/full" "$ROOT/.gui.queue/perf"
   : > "$ROOT/gui-lock.log"
   : > "$ROOT/order"
@@ -27,6 +28,13 @@ run_lane() {
     bash -c 'sleep "$1"; echo "$2" >> "$3"; mkdir -p "$4"; echo completed' _ \
       "$seconds" "$lane" "$ROOT/order" "$dir/result.xcresult"
 }
+run_lane_in_dir() {
+  lane="$1"; class="$2"; seconds="$3"; dir="$4"; queue_timeout="${5:-10}"
+  "$SCRIPT" run --lane "$lane" --class "$class" --pr 1 --sha test --dir "$dir" \
+    --lease-minutes 1 --queue-timeout "$queue_timeout" --result "$dir/result-$lane.xcresult" -- \
+    bash -c 'sleep "$1"; echo "$2" >> "$3"; mkdir -p "$4"; echo completed' _ \
+      "$seconds" "$lane" "$ROOT/order" "$dir/result-$lane.xcresult"
+}
 wait_for_holder() {
   lane="$1"
   for attempt in $(seq 1 20); do
@@ -38,8 +46,10 @@ wait_for_holder() {
 wait_for_run() {
   lane="$1"
   for attempt in $(seq 1 20); do
-    grep -F "lane=$lane" "$ROOT/.gui.lock/owner" > /dev/null 2>&1 &&
-      grep -E '^pid=[0-9]+' "$ROOT/.gui.lock/owner" > /dev/null 2>&1 && return 0
+    owner="$ROOT/.gui.lock/owner"
+    pids_file=$(sed -n 's/^pids_file=//p' "$owner" 2>/dev/null || true)
+    grep -F "lane=$lane" "$owner" > /dev/null 2>&1 &&
+      [ -n "$pids_file" ] && [ -s "$pids_file" ] && return 0
     sleep 1
   done
   fail "run $lane did not start"
@@ -155,11 +165,14 @@ echo "test: queue timeout retains position"
 reset_state
 run_lane timeout-holder pr 4 > "$ROOT/timeout-holder.out" 2>&1 &
 timeout_holder_pid=$!
-sleep 1
+wait_for_run timeout-holder
 run_lane timeout-waiter pr 0 1 > "$ROOT/timeout-waiter.out" 2>&1 &
 timeout_waiter_pid=$!
-sleep 2
-"$SCRIPT" status > "$ROOT/timeout-status.out"
+for attempt in $(seq 1 20); do
+  "$SCRIPT" status > "$ROOT/timeout-status.out"
+  grep -F "QUEUE position=1 class=pr lane=timeout-waiter" "$ROOT/timeout-status.out" > /dev/null && break
+  sleep 1
+done
 assert_contains "$ROOT/timeout-status.out" "QUEUE position=1 class=pr lane=timeout-waiter"
 wait "$timeout_holder_pid" "$timeout_waiter_pid"
 assert_contains "$ROOT/timeout-waiter.out" "WAIT queue timeout; ticket retained in place"
@@ -202,6 +215,61 @@ wait "$old_pid" || true
 wait "$new_pid"
 assert_contains "$ROOT/new.out" "RELEASED lane=new"
 
+echo "test: interrupted guard owner is reclaimed"
+reset_state
+export GUI_LOCK_TEST_GUARD_HOLD_SECONDS=20
+run_lane guard-victim pr 0 > "$ROOT/guard-victim.out" 2>&1 &
+guard_victim_pid=$!
+for attempt in $(seq 1 20); do
+  [ -f "$ROOT/.gui.lock.guard/owner" ] && break
+  sleep 1
+done
+[ -f "$ROOT/.gui.lock.guard/owner" ] || fail "guard victim never acquired the guard"
+kill -9 "$guard_victim_pid" 2>/dev/null || true
+wait "$guard_victim_pid" 2>/dev/null || true
+rm -rf "$ROOT/.gui.queue/pr/"*guard-victim
+unset GUI_LOCK_TEST_GUARD_HOLD_SECONDS
+run_lane guard-reclaimer pr 0 > "$ROOT/guard-reclaimer.out"
+assert_contains "$ROOT/guard-reclaimer.out" "RELEASED lane=guard-reclaimer"
+assert_contains "$ROOT/gui-lock.log" "reclaimed guard"
+
+echo "test: reused run directory keeps PID cleanup token-specific"
+reset_state
+shared_dir="$ROOT/run-reused"
+run_lane_in_dir reused-old pr 20 "$shared_dir" > "$ROOT/reused-old.out" 2>&1 &
+reused_old_pid=$!
+wait_for_run reused-old
+old_pids_file=$(sed -n 's/^pids_file=//p' "$ROOT/.gui.lock/owner")
+expire_current_lease
+run_lane_in_dir reused-new pr 2 "$shared_dir" > "$ROOT/reused-new.out" 2>&1 &
+reused_new_pid=$!
+wait_for_run reused-new
+new_pids_file=$(sed -n 's/^pids_file=//p' "$ROOT/.gui.lock/owner")
+[ "$old_pids_file" != "$new_pids_file" ] || fail "reused directory shared one PID file"
+wait "$reused_old_pid" || true
+wait "$reused_new_pid"
+assert_contains "$ROOT/reused-new.out" "RELEASED lane=reused-new"
+
+echo "test: stale release cannot rename a successor lease"
+reset_state
+export GUI_LOCK_TEST_RELEASE_PRE_GUARD_SECONDS=5
+export GUI_LOCK_TEST_RELEASE_MARKER="$ROOT/release-entered"
+run_lane release-old pr 0 > "$ROOT/release-old.out" 2>&1 &
+release_old_pid=$!
+for attempt in $(seq 1 20); do
+  [ -f "$ROOT/release-entered" ] && break
+  sleep 1
+done
+[ -f "$ROOT/release-entered" ] || fail "old release did not enter its race window"
+expire_current_lease
+unset GUI_LOCK_TEST_RELEASE_PRE_GUARD_SECONDS GUI_LOCK_TEST_RELEASE_MARKER
+run_lane release-new pr 2 > "$ROOT/release-new.out" 2>&1 &
+release_new_pid=$!
+wait_for_run release-new
+wait "$release_old_pid" || true
+wait "$release_new_pid"
+assert_contains "$ROOT/release-new.out" "RELEASED lane=release-new"
+
 echo "test: renewing holder wins its waiter race"
 reset_state
 renew_dir="$ROOT/run-renew"
@@ -216,6 +284,22 @@ waiter_pid=$!
 wait "$renew_pid" "$waiter_pid"
 if grep -F "reclaimed lane=renew" "$ROOT/gui-lock.log" > /dev/null; then
   fail "waiter reclaimed a renewing holder"
+fi
+
+echo "test: timeout wrapper requires immediate xcodebuild"
+if (
+  unset GUI_LOCK_TEST_MODE
+  "$SCRIPT" run --lane invalid-timeout-shell --class pr --sha test --dir "$ROOT/invalid-timeout-shell" -- \
+    timeout --kill-after=30 180 bash -lc 'xcodebuild test-without-building' xcodebuild test-without-building
+) > /dev/null 2>&1; then
+  fail "timeout accepted bash -lc before xcodebuild"
+fi
+if (
+  unset GUI_LOCK_TEST_MODE
+  "$SCRIPT" run --lane invalid-bash --class pr --sha test --dir "$ROOT/invalid-bash" -- \
+    bash -c 'xcodebuild test-without-building'
+) > /dev/null 2>&1; then
+  fail "direct bash -c wrapper was accepted"
 fi
 
 echo "PASS: gui-lock lease tests"
