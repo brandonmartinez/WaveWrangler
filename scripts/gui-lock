@@ -4,6 +4,7 @@ set -u
 
 ROOT="${GUI_LOCK_ROOT:-$HOME/ww-uitest-runs}"
 LOCK="$ROOT/.gui.lock"
+GUARD="$ROOT/.gui.lock.guard"
 QUEUE="$ROOT/.gui.queue"
 LOG="$ROOT/gui-lock.log"
 POLL="${GUI_LOCK_POLL_SECONDS:-15}"
@@ -68,6 +69,11 @@ first_ticket() {
 }
 
 owner_file() { printf '%s/owner\n' "$1"; }
+acquire_guard() {
+  while ! mkdir "$GUARD" 2>/dev/null; do sleep 1; done
+}
+release_guard() { rmdir "$GUARD" 2>/dev/null || true; }
+
 owner_is_stale() {
   [ -d "$LOCK" ] || return 1
   owner=$(owner_file "$LOCK")
@@ -89,15 +95,13 @@ owner_is_stale() {
 }
 
 kill_recorded_pids() {
-  state_dir="$1"
-  owner=$(owner_file "$state_dir")
-  pids_file=$(field "$owner" pids_file)
+  pids_file="$1"
   [ -n "$pids_file" ] && [ -f "$pids_file" ] || return 0
   for pid in $(cat "$pids_file"); do
     case "$pid" in *[!0-9]*|"") continue;; esac
     if kill -0 "$pid" 2>/dev/null; then
       kill "$pid" 2>/dev/null || true
-      log "cleanup pid=$pid state=$state_dir"
+      log "cleanup pid=$pid pids_file=$pids_file"
     fi
   done
   sleep 1
@@ -108,21 +112,33 @@ kill_recorded_pids() {
 }
 
 reclaim_if_stale() {
-  owner_is_stale || return 1
+  acquire_guard
+  if ! owner_is_stale; then
+    release_guard
+    return 1
+  fi
+  old_token=$(field "$(owner_file "$LOCK")" token)
+  [ -n "$old_token" ] && [ "$(field "$(owner_file "$LOCK")" token)" = "$old_token" ] || {
+    release_guard
+    return 1
+  }
   reclaimed="$ROOT/.gui.lock.reclaimed-$(now)-$$"
   if mv "$LOCK" "$reclaimed" 2>/dev/null; then
     lane=$(field "$(owner_file "$reclaimed")" lane)
     log "reclaimed lane=$lane reason=$STALE_REASON"
     printf 'RECLAIMED lane=%s reason=%s\n' "$lane" "$STALE_REASON"
-    kill_recorded_pids "$reclaimed"
+    pids_file=$(field "$(owner_file "$reclaimed")" pids_file)
+    release_guard
+    kill_recorded_pids "$pids_file"
     rm -rf "$reclaimed"
     return 0
   fi
+  release_guard
   return 1
 }
 
-write_owner() {
-  owner=$(owner_file "$LOCK")
+write_owner_file() {
+  owner="$1"
   {
     printf 'token=%s\n' "$TOKEN"
     printf 'lane=%s\n' "$LANE"
@@ -143,16 +159,41 @@ write_owner() {
   } | atomic_write "$owner"
 }
 
+write_owner() {
+  write_owner_file "$OWN_OWNER_FILE"
+  if [ "$ACQUIRED_OWNERSHIP" = 0 ] || still_owner; then
+    cat "$OWN_OWNER_FILE" | atomic_write "$(owner_file "$LOCK")"
+  fi
+}
+
 still_owner() {
   [ -f "$(owner_file "$LOCK")" ] && [ "$(field "$(owner_file "$LOCK")" token)" = "$TOKEN" ]
+}
+
+renew_lease_if_owned() {
+  acquire_guard
+  if ! still_owner; then
+    release_guard
+    return 1
+  fi
+  HEARTBEAT=$(now)
+  EXPIRES=$((HEARTBEAT + LEASE_SECONDS))
+  write_owner
+  release_guard
+}
+
+record_descendants() {
+  parent="$1"
+  for child in $(pgrep -P "$parent" 2>/dev/null || true); do
+    printf '%s\n' "$child"
+    record_descendants "$child"
+  done
 }
 
 record_run_pids() {
   {
     [ -n "$COMMAND_PID" ] && printf '%s\n' "$COMMAND_PID"
-    ps -axo pid=,command= | while read -r pid command; do
-      case "$command" in *"$DIR/Products/"*) printf '%s\n' "$pid";; esac
-    done
+    [ -n "$COMMAND_PID" ] && record_descendants "$COMMAND_PID"
   } | sort -u | atomic_write "$PIDS_FILE"
 }
 
@@ -180,12 +221,10 @@ restore_settings() {
 
 cleanup_run() {
   trap - EXIT INT TERM
-  if [ -n "${COMMAND_PID:-}" ] && kill -0 "$COMMAND_PID" 2>/dev/null; then
-    kill "$COMMAND_PID" 2>/dev/null || true
-  fi
-  [ -n "${PIDS_FILE:-}" ] && [ -f "$PIDS_FILE" ] && kill_recorded_pids "$LOCK"
+  [ -n "${TICKET:-}" ] && [ -d "$TICKET" ] && rm -rf "$TICKET"
+  [ -n "${PIDS_FILE:-}" ] && [ -f "$PIDS_FILE" ] && kill_recorded_pids "$PIDS_FILE"
   [ -n "${DIR:-}" ] && restore_settings
-  release_owned_lease
+  [ "${ACQUIRED_OWNERSHIP:-0}" = 1 ] && release_owned_lease
 }
 
 status() {
@@ -241,9 +280,6 @@ acquire_for_run() {
     printf 'lease_seconds=%s\n' "$LEASE_SECONDS"
   } | atomic_write "$TICKET/ticket"
   log "ticket lane=$LANE class=$CLASS pr=$PR sha=$SHA ticket=$(basename "$TICKET")"
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
-  trap 'rm -rf "$TICKET"' EXIT
   deadline=$(( $(now) + QUEUE_TIMEOUT ))
 
   while :; do
@@ -252,13 +288,15 @@ acquire_for_run() {
       reclaim_if_stale || true
       if mkdir "$LOCK" 2>/dev/null; then
         TOKEN="$(now)-$$-$sequence"
+        mkdir -p "$DIR"
         ACQUIRED=$(now)
         HEARTBEAT="$ACQUIRED"
         EXPIRES=$((HEARTBEAT + LEASE_SECONDS))
         COMMAND_PID=""
+        OWN_OWNER_FILE="$DIR/gui-lock-owner-$TOKEN"
         write_owner
+        ACQUIRED_OWNERSHIP=1
         rm -rf "$TICKET"
-        trap - EXIT INT TERM
         log "acquired lane=$LANE class=$CLASS pr=$PR sha=$SHA lease=${LEASE_SECONDS}s"
         printf 'ACQUIRED lane=%s class=%s lease=%s\n' "$LANE" "$CLASS" "$(format_duration "$LEASE_SECONDS")"
         return 0
@@ -273,12 +311,36 @@ acquire_for_run() {
   done
 }
 
+validate_command() {
+  [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && return 0
+  command_name=$(basename "$1")
+  if [ "$command_name" = timeout ]; then
+    shift
+    found_xcodebuild=0
+    for argument in "$@"; do
+      [ "$argument" = -c ] && return 1
+      if [ "$(basename "$argument")" = xcodebuild ]; then
+        found_xcodebuild=1
+        break
+      fi
+    done
+    [ "$found_xcodebuild" = 1 ] || return 1
+  elif [ "$command_name" != xcodebuild ]; then
+    return 1
+  fi
+  count=0
+  for argument in "$@"; do
+    [ "$argument" = -c ] && return 1
+    [ "$argument" = test-without-building ] && count=$((count + 1))
+  done
+  [ "$count" = 1 ]
+}
+
 run_one() {
-  acquire_for_run
   trap cleanup_run EXIT
   trap 'cleanup_run; exit 130' INT
   trap 'cleanup_run; exit 143' TERM
-  mkdir -p "$DIR"
+  acquire_for_run
   : > "$OUTPUT"
   : > "$PIDS_FILE"
   printf 'START host=%s sha=%s lane=%s class=%s load=%s\n' \
@@ -299,10 +361,21 @@ run_one() {
       return 75
     fi
     record_run_pids
+    current=$(now)
+    if [ "$current" -ge "$EXPIRES" ]; then
+      log "WARN lease expired while command ran lane=$LANE pid=$COMMAND_PID"
+      kill_recorded_pids "$PIDS_FILE"
+      wait "$COMMAND_PID" 2>/dev/null || true
+      return 75
+    fi
     current_mtime=$(stat_mtime "$OUTPUT")
     if [ "$current_mtime" -gt "$last_mtime" ]; then
-      HEARTBEAT=$(now)
-      EXPIRES=$((HEARTBEAT + LEASE_SECONDS))
+      if ! renew_lease_if_owned; then
+        log "WARN lease lost while renewing lane=$LANE pid=$COMMAND_PID"
+        kill_recorded_pids "$PIDS_FILE"
+        wait "$COMMAND_PID" 2>/dev/null || true
+        return 75
+      fi
       last_mtime="$current_mtime"
       write_owner
     fi
@@ -383,6 +456,10 @@ done
   echo "run requires --lane, --sha, --dir, and a command after --" >&2
   exit 2
 }
+validate_command "$@" || {
+  echo "run requires one direct xcodebuild test-without-building command (set GUI_LOCK_TEST_MODE=1 for tests)" >&2
+  exit 2
+}
 valid_class "$CLASS" || { echo "invalid class: $CLASS" >&2; exit 2; }
 case "$LEASE_MINUTES" in *[!0-9]*|"") echo "lease minutes must be an integer" >&2; exit 2;; esac
 [ "$LEASE_MINUTES" -ge 1 ] && [ "$LEASE_MINUTES" -le "$MAX_LEASE_MINUTES" ] || {
@@ -393,6 +470,10 @@ case "$QUEUE_TIMEOUT" in *[!0-9]*|"") echo "queue timeout must be an integer" >&
 [ "$QUEUE_TIMEOUT" -ge 1 ] || { echo "queue timeout must be positive" >&2; exit 2; }
 
 LEASE_SECONDS=$((LEASE_MINUTES * 60))
+if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ -n "${GUI_LOCK_TEST_LEASE_SECONDS:-}" ]; then
+  case "$GUI_LOCK_TEST_LEASE_SECONDS" in *[!0-9]*|"") echo "test lease seconds must be an integer" >&2; exit 2;; esac
+  LEASE_SECONDS="$GUI_LOCK_TEST_LEASE_SECONDS"
+fi
 OUTPUT="${OUTPUT:-$DIR/gui-lock-run.log}"
 RESULT="${RESULT:-$DIR/result.xcresult}"
 PIDS_FILE="$DIR/gui-lock-pids"
@@ -402,5 +483,7 @@ ACQUIRED=0
 HEARTBEAT=0
 EXPIRES=0
 COMMAND_PID=""
+OWN_OWNER_FILE=""
+ACQUIRED_OWNERSHIP=0
 
 run_one "$@"

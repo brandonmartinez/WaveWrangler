@@ -5,6 +5,7 @@ ROOT=$(mktemp -d "${TMPDIR:-/tmp}/gui-lock-tests.XXXXXX")
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/gui-lock"
 export GUI_LOCK_ROOT="$ROOT"
 export GUI_LOCK_POLL_SECONDS=1
+export GUI_LOCK_TEST_MODE=1
 trap 'rm -rf "$ROOT"' EXIT INT TERM
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -25,6 +26,28 @@ run_lane() {
     --lease-minutes 1 --queue-timeout "$queue_timeout" --result "$dir/result.xcresult" -- \
     bash -c 'sleep "$1"; echo "$2" >> "$3"; mkdir -p "$4"; echo completed' _ \
       "$seconds" "$lane" "$ROOT/order" "$dir/result.xcresult"
+}
+wait_for_holder() {
+  lane="$1"
+  for attempt in $(seq 1 20); do
+    grep -F "lane=$lane" "$ROOT/.gui.lock/owner" > /dev/null 2>&1 && return 0
+    sleep 1
+  done
+  fail "holder $lane was not acquired"
+}
+wait_for_run() {
+  lane="$1"
+  for attempt in $(seq 1 20); do
+    grep -F "lane=$lane" "$ROOT/.gui.lock/owner" > /dev/null 2>&1 &&
+      grep -E '^pid=[0-9]+' "$ROOT/.gui.lock/owner" > /dev/null 2>&1 && return 0
+    sleep 1
+  done
+  fail "run $lane did not start"
+}
+expire_current_lease() {
+  owner="$ROOT/.gui.lock/owner"
+  sed 's/^expires=.*/expires=0/' "$owner" > "$owner.expired"
+  mv "$owner.expired" "$owner"
 }
 
 echo "test: one run and result collection"
@@ -127,6 +150,54 @@ assert_contains "$ROOT/gui-lock.log" "requeued in place"
 echo "test: hard lease maximum"
 if "$SCRIPT" run --lane invalid --class pr --sha test --dir "$ROOT/invalid" --lease-minutes 46 -- true > /dev/null 2>&1; then
   fail "46-minute lease was accepted"
+fi
+
+echo "test: Products argument never targets the wrapper"
+reset_state
+products_arg="$ROOT/run-products/Products/WaveWranglerUITests.xctestrun"
+mkdir -p "$(dirname "$products_arg")"
+"$SCRIPT" run --lane products --class pr --pr 1 --sha test --dir "$ROOT/run-products" \
+  --lease-minutes 1 --result "$ROOT/run-products/result.xcresult" -- \
+  bash -c 'sleep 1; mkdir -p "$2"; echo completed' _ "$products_arg" "$ROOT/run-products/result.xcresult" > "$ROOT/products.out"
+assert_contains "$ROOT/products.out" "RELEASED lane=products"
+
+echo "test: expired silent run is terminated without renewal"
+reset_state
+export GUI_LOCK_TEST_LEASE_SECONDS=2
+run_lane silent pr 20 > "$ROOT/silent.out" 2>&1 &
+silent_pid=$!
+wait_for_run silent
+wait "$silent_pid" || true
+unset GUI_LOCK_TEST_LEASE_SECONDS
+assert_contains "$ROOT/gui-lock.log" "lease expired while command ran lane=silent"
+[ ! -d "$ROOT/.gui.lock" ] || fail "expired silent run retained its lease"
+
+echo "test: reclaimed wrapper cannot kill the new holder"
+reset_state
+run_lane old pr 20 > "$ROOT/old.out" 2>&1 &
+old_pid=$!
+wait_for_run old
+expire_current_lease
+run_lane new pr 2 > "$ROOT/new.out" 2>&1 &
+new_pid=$!
+wait "$old_pid" || true
+wait "$new_pid"
+assert_contains "$ROOT/new.out" "RELEASED lane=new"
+
+echo "test: renewing holder wins its waiter race"
+reset_state
+renew_dir="$ROOT/run-renew"
+"$SCRIPT" run --lane renew --class pr --pr 1 --sha test --dir "$renew_dir" --lease-minutes 1 \
+  --result "$renew_dir/result.xcresult" -- \
+  bash -c 'for tick in 1 2 3; do echo heartbeat; sleep 1; done; mkdir -p "$1"; echo completed' _ \
+    "$renew_dir/result.xcresult" > "$ROOT/renew.out" 2>&1 &
+renew_pid=$!
+wait_for_holder renew
+run_lane renewal-waiter pr 0 > "$ROOT/renewal-waiter.out" 2>&1 &
+waiter_pid=$!
+wait "$renew_pid" "$waiter_pid"
+if grep -F "reclaimed lane=renew" "$ROOT/gui-lock.log" > /dev/null; then
+  fail "waiter reclaimed a renewing holder"
 fi
 
 echo "PASS: gui-lock lease tests"
