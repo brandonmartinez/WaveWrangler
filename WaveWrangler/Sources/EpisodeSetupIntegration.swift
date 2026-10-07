@@ -47,6 +47,18 @@ enum SetupTableFocus {
         }
     }
 
+    /// Gives a programmatic multi-selection the same keyboard anchor as a click on its first row, without
+    /// changing the selected rows. This makes the next ↓ select the following imported source (#196).
+    static func anchorSelection(_ identifier: String, in window: NSWindow?) {
+        DispatchQueue.main.async {
+            guard let window, let table = find(identifier, in: window.contentView),
+                  let anchor = table.selectedRowIndexes.first else { return }
+            let selection = table.selectedRowIndexes
+            table.selectRowIndexes(IndexSet(integer: anchor), byExtendingSelection: false)
+            table.selectRowIndexes(selection, byExtendingSelection: true)
+        }
+    }
+
     /// After the width plan shows or hides columns, AppKit keeps a re-shown column's old width and
     /// doesn't re-fit, which can push Status past the table's edge (#129). Re-fit asynchronously (never
     /// inside a layout pass) when the visible columns overflow the table.

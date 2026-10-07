@@ -169,6 +169,17 @@ final class EpisodeSetupUITests: XCTestCase {
 
     // MARK: T07 — Import a messy folder
 
+    /// IA-16 keeps every imported row selected; ↓ then starts at the first imported source, so its next
+    /// row (tr2.wav) becomes the sole selection rather than clearing the programmatic selection (#196).
+    func testImportSelectionMovesWithFirstDownArrow() {
+        importFixture()
+        app.typeKey(XCUIKeyboardKey.downArrow.rawValue, modifierFlags: [])
+        XCTAssertTrue(waitForOutline("1 selected"), "first ↓ reduces the imported selection to one row")
+        let name = element("ww.inspector.source.name")
+        XCTAssertTrue(name.waitForExistence(timeout: 3))
+        XCTAssertTrue("\(name.label)|\(name.value as? String ?? "")".contains("tr2.wav"), "first ↓ moves past the first imported source")
+    }
+
     func testT07ImportReviewKeyboard() throws {
         app.typeKey("i", modifierFlags: [.command, .shift])
         let review = element("ww.import.review")
@@ -652,13 +663,9 @@ final class EpisodeSetupUITests: XCTestCase {
         return "\(name.label)|\(name.value as? String ?? "")"
     }
 
-    /// Keyboard only: from the imported multi-selection, ↓ selects one row, then ↑ until the details show
-    /// `name`.
-    /// Gives the Sources table keyboard focus with one click on its first source row (the import's
-    /// programmatic multi-selection has no keyboard anchor, so a first ↓ clears it instead of moving), then
-    /// moves with real ↓ key events until the details show `name`, one row selected after every key.
+    /// Keyboard only: starts on the imported multi-selection, then moves with real ↓ key events until the
+    /// details show `name`, one row selected after every key.
     private func selectWithKeys(_ name: String) {
-        select("tr1.wav")
         for _ in 0..<12 where !inspectorName.contains(name) {
             app.typeKey(XCUIKeyboardKey.downArrow.rawValue, modifierFlags: [])
             XCTAssertTrue(waitForOutline("1 selected"), "↓ keeps one row selected")

@@ -430,6 +430,7 @@ final class EpisodeSetupModel {
         Task { @MainActor in
             await Task.yield()
             self.selection = imported
+            SetupTableFocus.anchorSelection("ww.setup.sources", in: self.window())
         }
         announce("Imported \(items.count == 1 ? "1 source" : "\(items.count) sources")")
         let accepted = Dictionary(uniqueKeysWithValues: pairs.map { ($0.candidateID, $0.item.source.id) })
