@@ -51,6 +51,41 @@ Under the default budget, two 75-minute analysis units (≈ 420 MiB estimated ea
 so heavy units run one at a time, with a probe alongside. Analysis wall time therefore scales with the
 number of groups. The estimate is conservative: the measured growth was about 290 MiB.
 
+### Full-length aligned-asset measurement (serialized local gate)
+
+`PipelineRender75Tests` closes the prior measurement gap with synthetic inputs through the real
+`AlignmentPipeline.renderAlignedAssets` → `AlignedAssetRun` → `GroupRenderer` → `DerivedAssetStore` path.
+The mapped field group is three 75-minute recorders, two channels each, at 48/44.1/48 kHz. All six channels
+share one planted transform (+100 ppm, +1.25 s), render at the policy's common 48 kHz output rate, and publish
+in 180-second segments. Pipeline concurrency is 2 (below the hard maximum 4).
+
+The gate is `WW_PIPELINE_RENDER75=1`, serialized in `scripts/test.sh`. It runs in an optimized testable build
+(`--configuration release -Xswiftc -enable-testing -Xswiftc -DDEBUG`) because the Debug renderer cannot fit
+the CI job's 60-minute budget. CI skips only this full-length pass; its always-on short aligned-asset tests and
+the other heavy/calibration passes remain unchanged.
+
+Run on 2026-10-07 at implementation commit `21ed0c2` (working tree differed only by this evidence update),
+Apple M5 Max Mac Studio (Mac17,14, 18 cores, 128 GB), macOS 27.0.1 (26A434), Xcode 27.0 (27A266a),
+Swift 6.4. Initial load average was 13.29/14.44/14.69. The command was run alone under
+`timeout --kill-after=30 3600` with SwiftPM `--jobs 4 --no-parallel`.
+
+| Measure | Result | Bound asserted |
+|---|---|---|
+| Render wall time | 375.145 s (392.092 s whole two-test suite) | recorded |
+| Process peak resident (`ru_maxrss`) | 745 MiB (53 MiB baseline) | ≤ 1 GiB |
+| Sampled peak physical footprint | 709 MiB (16 MiB baseline) | ≤ 1 GiB |
+| Renderer-reported working set | 195,968 bytes | < 64 MiB |
+| Output | 216,021,600 frames/channel × 6 channels, 26 segments | exact map hull; every mapped channel present |
+| Truth error | 0.0022533 maximum absolute sample error at three interior timeline points/channel | < 0.02 |
+| Interchannel alignment | 0.0010851 maximum normalized spread across all six channels | < 0.02 |
+| Same-group transform | one accepted-map digest across every segment/channel | exactly 1 |
+| Mid-render cancellation | shutdown returned in 0.00235 s; source stopped before its 216,000,000th frame | < 5 s; incomplete render publishes no successful report |
+
+The final suite passed both tests. A preceding exploratory run with the configuration maximum of 300-second
+segments rendered successfully in 361.536 s but peaked at 1,042 MiB, correctly failing the 1 GiB gate.
+The committed 180-second envelope therefore leaves about 279 MiB of resident headroom; callers must not infer
+that every allowed segment size stays under 1 GiB for this channel count.
+
 ## Tests
 
 Package suites (`swift test --filter "WWAlignPipelineTests|ForbiddenAPITests"`, 65 tests in 14 suites; synthetic only):
@@ -218,8 +253,9 @@ was deleted; M19 and M62 now check that check.
   relaunch (fresh pipeline), a saved accepted map renders only after it is accepted and activated again;
   there is no public restore path yet. An out-of-band edit to the episode's alignment (another writer)
   makes this pipeline refuse further acceptances (`staleSnapshot`); a new pipeline instance is needed.
-- The memory bound is measured for analysis. The aligned-asset render was exercised on short fixtures
-  only; a full 75-minute render (debug ≈ 0.1 s per channel-second) is unmeasured.
+- The full-length aligned-asset bound is measured locally in an optimized testable build for one mixed-rate,
+  six-channel group at 180-second segments. It is intentionally not a Debug or CI throughput claim, and the
+  300-second configuration maximum exceeded the 1 GiB family bound for this fixture.
 - The pipeline streams through the WWDecode pull cursor, `SourceDecoder.withDecodingCursor` /
   `DecodingCursor`. WWRender's provider pulls samples, while the frozen decoder pushes them into a
   synchronous sink, so a bridge would either buffer whole sources or block a cooperative thread. The
