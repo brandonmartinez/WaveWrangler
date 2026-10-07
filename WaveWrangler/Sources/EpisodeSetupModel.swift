@@ -76,6 +76,7 @@ final class EpisodeSetupModel {
     var selection: Set<SetupRowID> = [] {
         didSet { if selection != oldValue { pendingInspectorFocus = false } }
     }
+    var isAnchoringSelection = false
     var speakerSelection: Set<SpeakerID> = [] {
         didSet { if speakerSelection != oldValue { pendingInspectorFocus = false } }
     }
@@ -430,7 +431,10 @@ final class EpisodeSetupModel {
         Task { @MainActor in
             await Task.yield()
             self.selection = imported
-            SetupTableFocus.anchorSelection("ww.setup.sources", in: self.window())
+            self.isAnchoringSelection = true
+            SetupTableFocus.anchorSelection("ww.setup.sources", in: self.window()) {
+                self.isAnchoringSelection = false
+            }
         }
         announce("Imported \(items.count == 1 ? "1 source" : "\(items.count) sources")")
         let accepted = Dictionary(uniqueKeysWithValues: pairs.map { ($0.candidateID, $0.item.source.id) })

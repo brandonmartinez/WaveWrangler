@@ -49,13 +49,17 @@ enum SetupTableFocus {
 
     /// Gives a programmatic multi-selection the same keyboard anchor as a click on its first row, without
     /// changing the selected rows. This makes the next ↓ select the following imported source (#196).
-    static func anchorSelection(_ identifier: String, in window: NSWindow?) {
+    static func anchorSelection(_ identifier: String, in window: NSWindow?, completion: @escaping () -> Void) {
         DispatchQueue.main.async {
             guard let window, let table = find(identifier, in: window.contentView),
-                  !table.selectedRowIndexes.isEmpty else { return }
-            // Extending the existing selection establishes AppKit's anchor without emitting the interim
-            // single-row selection that a replace-then-extend sequence sends back through SwiftUI.
-            table.selectRowIndexes(table.selectedRowIndexes, byExtendingSelection: true)
+                  let anchor = table.selectedRowIndexes.first else {
+                completion()
+                return
+            }
+            let selection = table.selectedRowIndexes
+            table.selectRowIndexes(IndexSet(integer: anchor), byExtendingSelection: false)
+            table.selectRowIndexes(selection, byExtendingSelection: true)
+            completion()
         }
     }
 

@@ -382,7 +382,12 @@ private struct SourcesTable: View {
         let hidden = Set(SetupSourceColumn.allCases).subtracting(shown)
         // Visibility comes only from the width plan (users can't show or hide columns), so the VoiceOver
         // summary of hidden values always matches what is hidden and Status is never pushed out.
-        Table(of: SetupSourceRow.self, selection: $model.selection, columnCustomization: planned(shown)) {
+        Table(of: SetupSourceRow.self, selection: Binding(
+            get: { model.selection },
+            set: { selection in
+                if !model.isAnchoringSelection { model.selection = selection }
+            }
+        ), columnCustomization: planned(shown)) {
             TableColumn("Name") { row in
                 NameCell(row: row, hidden: hidden)
             }
