@@ -1,0 +1,406 @@
+#!/bin/bash
+# Lease-based, priority FIFO wrapper for one WaveWrangler GUI test invocation.
+set -u
+
+ROOT="${GUI_LOCK_ROOT:-$HOME/ww-uitest-runs}"
+LOCK="$ROOT/.gui.lock"
+QUEUE="$ROOT/.gui.queue"
+LOG="$ROOT/gui-lock.log"
+POLL="${GUI_LOCK_POLL_SECONDS:-15}"
+DEFAULT_LEASE_MINUTES=30
+MAX_LEASE_MINUTES=45
+WARN_SECONDS=1800
+CLASSES="required pr full perf"
+
+mkdir -p "$ROOT" "$QUEUE"
+for priority in $CLASSES; do mkdir -p "$QUEUE/$priority"; done
+
+now() { date +%s; }
+timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+log() { printf '%s %s\n' "$(timestamp)" "$*" >> "$LOG"; }
+field() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -1; }
+stat_mtime() {
+  [ -e "$1" ] || { echo 0; return; }
+  /usr/bin/stat -f %m "$1" 2>/dev/null || /usr/bin/stat -c %Y "$1" 2>/dev/null || echo 0
+}
+atomic_write() {
+  target="$1"
+  temp="$target.tmp.$$"
+  cat > "$temp"
+  mv "$temp" "$target"
+}
+valid_class() {
+  for candidate in $CLASSES; do [ "$candidate" = "$1" ] && return 0; done
+  return 1
+}
+format_duration() {
+  seconds="$1"
+  [ "$seconds" -lt 0 ] && seconds=0
+  printf '%dm%02ds' $((seconds / 60)) $((seconds % 60))
+}
+
+next_sequence() {
+  sequence_lock="$ROOT/.gui.sequence.lock"
+  while ! mkdir "$sequence_lock" 2>/dev/null; do sleep 1; done
+  trap 'rmdir "$sequence_lock" 2>/dev/null || true' INT TERM
+  sequence=0
+  [ -f "$ROOT/.gui.sequence" ] && sequence=$(cat "$ROOT/.gui.sequence")
+  sequence=$((sequence + 1))
+  printf '%s\n' "$sequence" | atomic_write "$ROOT/.gui.sequence"
+  rmdir "$sequence_lock"
+  trap - INT TERM
+  printf '%012d\n' "$sequence"
+}
+
+tickets_in_order() {
+  find "$QUEUE/required" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort
+  find "$QUEUE/pr" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort
+  {
+    find "$QUEUE/full" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null
+    find "$QUEUE/perf" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null
+  } | while read -r ticket; do
+    [ -n "$ticket" ] && printf '%s\t%s\n' "$(basename "$ticket")" "$ticket"
+  done | sort | cut -f2-
+}
+
+first_ticket() {
+  tickets_in_order | head -1
+}
+
+owner_file() { printf '%s/owner\n' "$1"; }
+owner_is_stale() {
+  [ -d "$LOCK" ] || return 1
+  owner=$(owner_file "$LOCK")
+  current=$(now)
+  expires=$(field "$owner" expires)
+  pid=$(field "$owner" pid)
+  wrapper_pid=$(field "$owner" wrapper_pid)
+  if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+    if [ -z "$wrapper_pid" ] || ! kill -0 "$wrapper_pid" 2>/dev/null; then
+      STALE_REASON="recorded pid $pid is dead"
+      return 0
+    fi
+  fi
+  if [ -n "$expires" ] && [ "$current" -ge "$expires" ]; then
+    STALE_REASON="lease expired $((current - expires)) s ago"
+    return 0
+  fi
+  return 1
+}
+
+kill_recorded_pids() {
+  state_dir="$1"
+  owner=$(owner_file "$state_dir")
+  pids_file=$(field "$owner" pids_file)
+  [ -n "$pids_file" ] && [ -f "$pids_file" ] || return 0
+  for pid in $(cat "$pids_file"); do
+    case "$pid" in *[!0-9]*|"") continue;; esac
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      log "cleanup pid=$pid state=$state_dir"
+    fi
+  done
+  sleep 1
+  for pid in $(cat "$pids_file"); do
+    case "$pid" in *[!0-9]*|"") continue;; esac
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+  done
+}
+
+reclaim_if_stale() {
+  owner_is_stale || return 1
+  reclaimed="$ROOT/.gui.lock.reclaimed-$(now)-$$"
+  if mv "$LOCK" "$reclaimed" 2>/dev/null; then
+    lane=$(field "$(owner_file "$reclaimed")" lane)
+    log "reclaimed lane=$lane reason=$STALE_REASON"
+    printf 'RECLAIMED lane=%s reason=%s\n' "$lane" "$STALE_REASON"
+    kill_recorded_pids "$reclaimed"
+    rm -rf "$reclaimed"
+    return 0
+  fi
+  return 1
+}
+
+write_owner() {
+  owner=$(owner_file "$LOCK")
+  {
+    printf 'token=%s\n' "$TOKEN"
+    printf 'lane=%s\n' "$LANE"
+    printf 'class=%s\n' "$CLASS"
+    printf 'pr=%s\n' "$PR"
+    printf 'sha=%s\n' "$SHA"
+    printf 'dir=%s\n' "$DIR"
+    printf 'pid=%s\n' "$COMMAND_PID"
+    printf 'wrapper_pid=%s\n' "$$"
+    printf 'pids_file=%s\n' "$PIDS_FILE"
+    printf 'output=%s\n' "$OUTPUT"
+    printf 'result=%s\n' "$RESULT"
+    printf 'host=%s\n' "$(hostname -s)"
+    printf 'acquired=%s\n' "$ACQUIRED"
+    printf 'heartbeat=%s\n' "$HEARTBEAT"
+    printf 'expires=%s\n' "$EXPIRES"
+    printf 'lease_seconds=%s\n' "$LEASE_SECONDS"
+  } | atomic_write "$owner"
+}
+
+still_owner() {
+  [ -f "$(owner_file "$LOCK")" ] && [ "$(field "$(owner_file "$LOCK")" token)" = "$TOKEN" ]
+}
+
+record_run_pids() {
+  {
+    [ -n "$COMMAND_PID" ] && printf '%s\n' "$COMMAND_PID"
+    ps -axo pid=,command= | while read -r pid command; do
+      case "$command" in *"$DIR/Products/"*) printf '%s\n' "$pid";; esac
+    done
+  } | sort -u | atomic_write "$PIDS_FILE"
+}
+
+release_owned_lease() {
+  still_owner || return 0
+  releasing="$ROOT/.gui.lock.releasing-$TOKEN"
+  if mv "$LOCK" "$releasing" 2>/dev/null; then
+    log "released lane=$LANE class=$CLASS sha=$SHA"
+    rm -rf "$releasing"
+    printf 'RELEASED lane=%s\n' "$LANE"
+  fi
+}
+
+restore_settings() {
+  script="$RESTORE_SCRIPT"
+  if [ -z "$script" ] && [ -x "$DIR/restore-settings.sh" ]; then script="$DIR/restore-settings.sh"; fi
+  if [ -n "$script" ]; then
+    if [ -x "$script" ]; then
+      "$script" >> "$OUTPUT" 2>&1 || log "WARN settings restore failed lane=$LANE script=$script"
+    else
+      log "WARN settings restore script is not executable lane=$LANE script=$script"
+    fi
+  fi
+}
+
+cleanup_run() {
+  trap - EXIT INT TERM
+  if [ -n "${COMMAND_PID:-}" ] && kill -0 "$COMMAND_PID" 2>/dev/null; then
+    kill "$COMMAND_PID" 2>/dev/null || true
+  fi
+  [ -n "${PIDS_FILE:-}" ] && [ -f "$PIDS_FILE" ] && kill_recorded_pids "$LOCK"
+  [ -n "${DIR:-}" ] && restore_settings
+  release_owned_lease
+}
+
+status() {
+  current=$(now)
+  remaining=0
+  if [ -d "$LOCK" ] && [ -f "$(owner_file "$LOCK")" ]; then
+    owner=$(owner_file "$LOCK")
+    acquired=$(field "$owner" acquired)
+    expires=$(field "$owner" expires)
+    age=$((current - acquired))
+    remaining=$((expires - current))
+    [ "$remaining" -lt 0 ] && remaining=0
+    printf 'HOLDER lane=%s class=%s pr=%s sha=%s pid=%s wrapper_pid=%s age=%s lease_remaining=%s dir=%s\n' \
+      "$(field "$owner" lane)" "$(field "$owner" class)" "$(field "$owner" pr)" \
+      "$(field "$owner" sha)" "$(field "$owner" pid)" "$(field "$owner" wrapper_pid)" "$(format_duration "$age")" \
+      "$(format_duration "$remaining")" "$(field "$owner" dir)"
+    if [ "$age" -gt "$WARN_SECONDS" ]; then
+      warning="WARN hold exceeds 30 min lane=$(field "$owner" lane) age=$(format_duration "$age")"
+      printf '%s\n' "$warning"
+      log "$warning"
+    fi
+    if owner_is_stale; then printf 'STALE reason=%s\n' "$STALE_REASON"; fi
+  else
+    printf 'HOLDER none\n'
+  fi
+
+  position=0
+  eta="$remaining"
+  for ticket in $(tickets_in_order); do
+    position=$((position + 1))
+    metadata="$ticket/ticket"
+    created=$(field "$metadata" created)
+    lease=$(field "$metadata" lease_seconds)
+    printf 'QUEUE position=%s class=%s lane=%s pr=%s sha=%s age=%s eta=%s ticket=%s\n' \
+      "$position" "$(field "$metadata" class)" "$(field "$metadata" lane)" "$(field "$metadata" pr)" \
+      "$(field "$metadata" sha)" "$(format_duration $((current - created)))" \
+      "$(format_duration "$eta")" "$(basename "$ticket")"
+    eta=$((eta + lease))
+  done
+}
+
+acquire_for_run() {
+  sequence=$(next_sequence)
+  TICKET="$QUEUE/$CLASS/$sequence-$LANE"
+  mkdir "$TICKET"
+  {
+    printf 'lane=%s\n' "$LANE"
+    printf 'class=%s\n' "$CLASS"
+    printf 'pr=%s\n' "$PR"
+    printf 'sha=%s\n' "$SHA"
+    printf 'dir=%s\n' "$DIR"
+    printf 'created=%s\n' "$(now)"
+    printf 'lease_seconds=%s\n' "$LEASE_SECONDS"
+  } | atomic_write "$TICKET/ticket"
+  log "ticket lane=$LANE class=$CLASS pr=$PR sha=$SHA ticket=$(basename "$TICKET")"
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'rm -rf "$TICKET"' EXIT
+  deadline=$(( $(now) + QUEUE_TIMEOUT ))
+
+  while :; do
+    first=$(first_ticket)
+    if [ "$first" = "$TICKET" ]; then
+      reclaim_if_stale || true
+      if mkdir "$LOCK" 2>/dev/null; then
+        TOKEN="$(now)-$$-$sequence"
+        ACQUIRED=$(now)
+        HEARTBEAT="$ACQUIRED"
+        EXPIRES=$((HEARTBEAT + LEASE_SECONDS))
+        COMMAND_PID=""
+        write_owner
+        rm -rf "$TICKET"
+        trap - EXIT INT TERM
+        log "acquired lane=$LANE class=$CLASS pr=$PR sha=$SHA lease=${LEASE_SECONDS}s"
+        printf 'ACQUIRED lane=%s class=%s lease=%s\n' "$LANE" "$CLASS" "$(format_duration "$LEASE_SECONDS")"
+        return 0
+      fi
+    fi
+    if [ "$(now)" -ge "$deadline" ]; then
+      log "WARN queue timeout lane=$LANE class=$CLASS ticket=$(basename "$TICKET") requeued in place"
+      printf 'WAIT queue timeout; ticket retained in place lane=%s class=%s\n' "$LANE" "$CLASS"
+      deadline=$(( $(now) + QUEUE_TIMEOUT ))
+    fi
+    sleep "$POLL"
+  done
+}
+
+run_one() {
+  acquire_for_run
+  trap cleanup_run EXIT
+  trap 'cleanup_run; exit 130' INT
+  trap 'cleanup_run; exit 143' TERM
+  mkdir -p "$DIR"
+  : > "$OUTPUT"
+  : > "$PIDS_FILE"
+  printf 'START host=%s sha=%s lane=%s class=%s load=%s\n' \
+    "$(hostname -s)" "$SHA" "$LANE" "$CLASS" "$(uptime)" | tee -a "$OUTPUT"
+  "$@" >> "$OUTPUT" 2>&1 &
+  COMMAND_PID=$!
+  record_run_pids
+  write_owner
+  last_mtime=$(stat_mtime "$OUTPUT")
+  warned=0
+
+  while kill -0 "$COMMAND_PID" 2>/dev/null; do
+    sleep "$POLL"
+    if ! still_owner; then
+      log "WARN lease lost lane=$LANE pid=$COMMAND_PID"
+      kill "$COMMAND_PID" 2>/dev/null || true
+      wait "$COMMAND_PID" 2>/dev/null || true
+      return 75
+    fi
+    record_run_pids
+    current_mtime=$(stat_mtime "$OUTPUT")
+    if [ "$current_mtime" -gt "$last_mtime" ]; then
+      HEARTBEAT=$(now)
+      EXPIRES=$((HEARTBEAT + LEASE_SECONDS))
+      last_mtime="$current_mtime"
+      write_owner
+    fi
+    age=$(( $(now) - ACQUIRED ))
+    if [ "$age" -gt "$WARN_SECONDS" ] && [ "$warned" -eq 0 ]; then
+      log "WARN hold exceeds 30 min lane=$LANE age=$(format_duration "$age")"
+      warned=1
+    fi
+  done
+
+  wait "$COMMAND_PID"
+  result_code=$?
+  cat "$OUTPUT"
+  if [ -n "$RESULT" ] && [ ! -e "$RESULT" ]; then
+    log "WARN xcresult missing lane=$LANE result=$RESULT"
+    [ "$result_code" -eq 0 ] && result_code=2
+  else
+    log "collected lane=$LANE result=$RESULT"
+  fi
+  return "$result_code"
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  gui-lock status
+  gui-lock run --lane NAME --class required|pr|full|perf --sha SHA --dir RUN_DIR
+      [--pr N] [--lease-minutes N] [--queue-timeout SECONDS]
+      [--result XCRESULT] [--output LOG] [--restore-script FILE] -- COMMAND [ARG...]
+
+`run` owns exactly one command. It acquires a priority FIFO ticket, renews the
+lease only while the command PID is alive and its output advances, verifies the
+xcresult, restores settings, cleans only recorded PIDs, and releases in a trap.
+EOF
+}
+
+command="${1:-status}"
+[ $# -gt 0 ] && shift
+case "$command" in
+  status) status; exit 0;;
+  acquire|release)
+    echo "manual $command is disabled; use 'gui-lock run' for one run per lease" >&2
+    exit 2
+    ;;
+  run) ;;
+  -h|--help|help) usage; exit 0;;
+  *) usage >&2; exit 2;;
+esac
+
+LANE=""
+CLASS="pr"
+PR=""
+SHA=""
+DIR=""
+RESULT=""
+OUTPUT=""
+RESTORE_SCRIPT=""
+LEASE_MINUTES="$DEFAULT_LEASE_MINUTES"
+QUEUE_TIMEOUT=3600
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --lane) LANE="$2"; shift 2;;
+    --class) CLASS="$2"; shift 2;;
+    --pr) PR="$2"; shift 2;;
+    --sha) SHA="$2"; shift 2;;
+    --dir) DIR="$2"; shift 2;;
+    --result) RESULT="$2"; shift 2;;
+    --output) OUTPUT="$2"; shift 2;;
+    --restore-script) RESTORE_SCRIPT="$2"; shift 2;;
+    --lease-minutes) LEASE_MINUTES="$2"; shift 2;;
+    --queue-timeout) QUEUE_TIMEOUT="$2"; shift 2;;
+    --) shift; break;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 2;;
+  esac
+done
+
+[ -n "$LANE" ] && [ -n "$SHA" ] && [ -n "$DIR" ] && [ $# -gt 0 ] || {
+  echo "run requires --lane, --sha, --dir, and a command after --" >&2
+  exit 2
+}
+valid_class "$CLASS" || { echo "invalid class: $CLASS" >&2; exit 2; }
+case "$LEASE_MINUTES" in *[!0-9]*|"") echo "lease minutes must be an integer" >&2; exit 2;; esac
+[ "$LEASE_MINUTES" -ge 1 ] && [ "$LEASE_MINUTES" -le "$MAX_LEASE_MINUTES" ] || {
+  echo "lease minutes must be between 1 and $MAX_LEASE_MINUTES" >&2
+  exit 2
+}
+case "$QUEUE_TIMEOUT" in *[!0-9]*|"") echo "queue timeout must be an integer" >&2; exit 2;; esac
+[ "$QUEUE_TIMEOUT" -ge 1 ] || { echo "queue timeout must be positive" >&2; exit 2; }
+
+LEASE_SECONDS=$((LEASE_MINUTES * 60))
+OUTPUT="${OUTPUT:-$DIR/gui-lock-run.log}"
+RESULT="${RESULT:-$DIR/result.xcresult}"
+PIDS_FILE="$DIR/gui-lock-pids"
+TOKEN=""
+TICKET=""
+ACQUIRED=0
+HEARTBEAT=0
+EXPIRES=0
+COMMAND_PID=""
+
+run_one "$@"

@@ -1,8 +1,6 @@
 ---
 name: "gui-lock-mac-mini"
-description: "Use when a WaveWrangler lane needs a GUI run (XCUITest, accessibility audit, computer-use, app launch): build on the dev Mac, run on the Mac mini under the self-serve per-host GUI lock, collect the xcresult, post results on the PR. Does NOT authorize GUI work on the user's main working Mac, and reviewers never use it."
-domain: "testing, GUI hosts"
-confidence: "medium"
+description: "Use when a WaveWrangler lane needs a GUI run, including XCUITest, an accessibility audit, computer-use, or an app launch. Build on the dev Mac, then use the Mac mini lease helper for exactly one run, collect the xcresult, and post the evidence on the PR. Does NOT authorize GUI work on the user's main working Mac, manual lock holding between runs, or GUI work by reviewers."
 ---
 
 # Self-serve GUI lock and the Mac mini pipeline
@@ -12,7 +10,10 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
 ## Rules
 
 - **GUI hosts:** the user's Mac mini ("Macsimus": Apple M2 Pro, 12 cores, 32 GiB, macOS 27.0.1) has standing user consent for UI, XCUITest, accessibility audits, computer-use, temporary VoiceOver and temporary display/accessibility settings (record originals, restore afterwards). **Never** take over the GUI of the user's main working Mac.
-- **One GUI run per host at a time.** Every result is labelled with host and SHA. The mini is not the macOS 26 / 16 GB reference.
+- **One GUI run per lease.** `scripts/gui-lock run` owns one `test-without-building` invocation and releases in a trap. Never hold the GUI while analysing, rebuilding, or preparing another round.
+- **Check status before polling lanes.** `gui-lock status` shows the holder, lease age, priority queue, ticket ages and estimated wait.
+- **Priority:** `required` (required path / exit gate), then `pr`, then `full` and `perf`; FIFO within a class.
+- Every result is labelled with host and SHA. The mini is not the macOS 26 / 16 GB reference.
 - **Reviewers never take the lock or run UI tests.** They review diffs, CI and the evidence the author posts (a reviewer's run collided with the regression runner in M1, #149).
 - **Per-PR runs** cover only the UI test classes the PR affects. PRs that change no app UI or test code skip GUI runs.
 - **Batching:** a lane may batch several of its own PRs' classes only at one SHA. Never mix unrelated PR binaries.
@@ -33,18 +34,21 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
    ssh brandonmartinez@<mini> "mkdir -p $RUN"
    rsync -a .build/DerivedData-ui/Build/Products/ brandonmartinez@<mini>:$RUN/Products/
    ```
-3. **Acquire, run, clean up, release** on the mini:
+3. **Run one command under a lease** on the mini:
    ```sh
-   ~/ww-uitest-runs/gui-lock acquire --lane <lane> --pr <N> --sha <sha> --dir $RUN --timeout 3600
-   cd $RUN && xcodebuild test-without-building -xctestrun Products/WaveWranglerUITests_*.xctestrun \
-     -destination 'platform=macOS,arch=arm64' -parallel-testing-enabled NO \
-     -only-testing:WaveWranglerUITests/<Class> -resultBundlePath $RUN/result.xcresult
-   # Orphan cleanup: kill only processes whose executable lives under this run's Products directory
-   for pid in $(pgrep -f "$RUN/Products/"); do kill "$pid"; done
-   pgrep -fl 'WaveWrangler|xctest' || true   # anything left that isn't ours: report it, don't kill it
-   ~/ww-uitest-runs/gui-lock release --lane <lane>
+   ~/ww-uitest-runs/gui-lock status
+   ~/ww-uitest-runs/gui-lock run \
+     --lane <lane> --class pr --pr <N> --sha <sha> --dir "$RUN" \
+     --result "$RUN/result.xcresult" --lease-minutes 30 --queue-timeout 3600 -- \
+     xcodebuild test-without-building \
+       -xctestrun "$RUN"/Products/WaveWranglerUITests_*.xctestrun \
+       -destination 'platform=macOS,arch=arm64' -parallel-testing-enabled NO \
+       -only-testing:WaveWranglerUITests/<Class> \
+       -resultBundlePath "$RUN/result.xcresult"
    ```
-   Release even when the run fails (use a `trap`). Kill orphans by PID, and only those launched from `$RUN`; never kill another lane's processes or kill by name. Foreign processes go in the PR's run notes (#149).
+   The helper renews the lease only while the wrapped PID is alive and its output log advances. It verifies the
+   xcresult, restores `$RUN/restore-settings.sh` when present, kills only recorded run PIDs, and releases on
+   `EXIT`, `INT`, or `TERM`. A queue timeout keeps the ticket in place and continues waiting.
 4. **Copy the xcresult back** and analyse it here (`xcrun xcresulttool`).
 5. **Post on the PR:** SHA, host, classes, pass/fail/skip counts, xcresult location, and any new audit finding versus the pinned waiver baseline.
 
@@ -54,11 +58,16 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
 
 | Command | Effect |
 |---|---|
-| `acquire --lane L --pr N --sha S --dir RUN_DIR [--pid P] [--timeout T]` | Atomic `mkdir .gui.lock` plus an owner file (lane, PR, SHA, dir, pid, start, host). Waiters hold FIFO tickets in `.gui.queue`, polled every 15 s; abandoned tickets drop after 4 h |
-| `release --lane L` | Releases the lane's lock |
-| `status` | Holder and queue |
+| `run --lane L --class C --sha S --dir RUN_DIR --result PATH -- COMMAND...` | Priority FIFO ticket, renewable lease, exactly one wrapped command, xcresult check, scoped cleanup and automatic release |
+| `status` | Holder, lease age/remaining time, stale state, and queue positions/ages/ETAs |
 
-A lock is **stale** if its pid is dead or its run dir has had no new files for 30 min; it is moved to `.gui.lock.stale-<timestamp>` and logged in `gui-lock.log`. Only the coordinator intervenes on stale locks. Full-suite shards acquire the lock on every host they use.
+A lease defaults to 30 minutes and may be configured up to a hard maximum of 45. The next waiter atomically
+reclaims an expired lease or a lease whose recorded PID died, logs `reclaimed`, and kills only the stale holder's
+recorded PIDs. A lane rejoins the back of its priority FIFO for every additional run.
+
+Full suites use class `full` and must be split by test class into shards expected to complete within 30 minutes.
+Each shard is a separate `gui-lock run` ticket and xcresult. If a shard exceeds 30 minutes, split its class list
+again rather than increasing the lease; the 45-minute maximum is for a known indivisible class.
 
 ## Hygiene (M1 lessons)
 

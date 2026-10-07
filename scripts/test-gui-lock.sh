@@ -1,0 +1,132 @@
+#!/bin/bash
+set -eu
+
+ROOT=$(mktemp -d "${TMPDIR:-/tmp}/gui-lock-tests.XXXXXX")
+SCRIPT="$(cd "$(dirname "$0")" && pwd)/gui-lock"
+export GUI_LOCK_ROOT="$ROOT"
+export GUI_LOCK_POLL_SECONDS=1
+trap 'rm -rf "$ROOT"' EXIT INT TERM
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+assert_contains() {
+  file="$1"; text="$2"
+  grep -F "$text" "$file" >/dev/null || fail "$file does not contain: $text"
+}
+reset_state() {
+  rm -rf "$ROOT/.gui.lock" "$ROOT/.gui.queue" "$ROOT"/*.xcresult "$ROOT"/run-*
+  mkdir -p "$ROOT/.gui.queue/required" "$ROOT/.gui.queue/pr" "$ROOT/.gui.queue/full" "$ROOT/.gui.queue/perf"
+  : > "$ROOT/gui-lock.log"
+  : > "$ROOT/order"
+}
+run_lane() {
+  lane="$1"; class="$2"; seconds="$3"; queue_timeout="${4:-10}"
+  dir="$ROOT/run-$lane"
+  "$SCRIPT" run --lane "$lane" --class "$class" --pr 1 --sha test --dir "$dir" \
+    --lease-minutes 1 --queue-timeout "$queue_timeout" --result "$dir/result.xcresult" -- \
+    bash -c 'sleep "$1"; echo "$2" >> "$3"; mkdir -p "$4"; echo completed' _ \
+      "$seconds" "$lane" "$ROOT/order" "$dir/result.xcresult"
+}
+
+echo "test: one run and result collection"
+reset_state
+run_lane single pr 0 > "$ROOT/single.out"
+assert_contains "$ROOT/single.out" "ACQUIRED lane=single class=pr"
+assert_contains "$ROOT/single.out" "RELEASED lane=single"
+[ "$(cat "$ROOT/order")" = single ] || fail "single run did not execute"
+
+echo "test: concurrent FIFO and priority ordering"
+reset_state
+run_lane holder pr 5 > "$ROOT/holder.out" 2>&1 &
+holder_pid=$!
+sleep 1
+run_lane first-pr pr 0 > "$ROOT/first-pr.out" 2>&1 &
+first_pr_pid=$!
+sleep 1
+run_lane perf perf 0 > "$ROOT/perf.out" 2>&1 &
+perf_pid=$!
+sleep 1
+run_lane full full 0 > "$ROOT/full.out" 2>&1 &
+full_pid=$!
+run_lane required required 0 > "$ROOT/required.out" 2>&1 &
+required_pid=$!
+run_lane second-pr pr 0 > "$ROOT/second-pr.out" 2>&1 &
+second_pr_pid=$!
+wait "$holder_pid" "$first_pr_pid" "$perf_pid" "$full_pid" "$required_pid" "$second_pr_pid"
+expected=$(printf 'holder\nrequired\nfirst-pr\nsecond-pr\nperf\nfull')
+[ "$(cat "$ROOT/order")" = "$expected" ] || fail "priority/FIFO order was: $(tr '\n' ' ' < "$ROOT/order")"
+
+echo "test: status visibility"
+reset_state
+run_lane visible pr 3 > "$ROOT/visible.out" 2>&1 &
+visible_pid=$!
+sleep 1
+run_lane queued full 0 > "$ROOT/queued.out" 2>&1 &
+queued_pid=$!
+sleep 1
+"$SCRIPT" status > "$ROOT/status.out"
+assert_contains "$ROOT/status.out" "HOLDER lane=visible class=pr"
+assert_contains "$ROOT/status.out" "QUEUE position=1 class=full lane=queued"
+assert_contains "$ROOT/status.out" "eta="
+wait "$visible_pid" "$queued_pid"
+
+seed_owner() {
+  reason="$1"
+  mkdir -p "$ROOT/.gui.lock"
+  current=$(date +%s)
+  expires=$((current + 60))
+  pid=""
+  [ "$reason" = expired ] && expires=$((current - 1))
+  [ "$reason" = dead ] && pid=999999
+  cat > "$ROOT/.gui.lock/owner" <<EOF
+token=seed
+lane=stale-$reason
+class=pr
+pr=1
+sha=old
+dir=$ROOT/stale-$reason
+pid=$pid
+pids_file=$ROOT/stale-$reason/pids
+output=$ROOT/stale-$reason/output
+result=$ROOT/stale-$reason/result.xcresult
+host=test
+acquired=$((current - 120))
+heartbeat=$((current - 120))
+expires=$expires
+lease_seconds=60
+EOF
+}
+
+echo "test: expired lease reclamation"
+reset_state
+seed_owner expired
+run_lane expired-reclaimer pr 0 > "$ROOT/expired.out"
+assert_contains "$ROOT/expired.out" "RECLAIMED lane=stale-expired reason=lease expired"
+assert_contains "$ROOT/gui-lock.log" "reclaimed lane=stale-expired"
+
+echo "test: dead PID reclamation"
+reset_state
+seed_owner dead
+run_lane dead-reclaimer pr 0 > "$ROOT/dead.out"
+assert_contains "$ROOT/dead.out" "RECLAIMED lane=stale-dead reason=recorded pid 999999 is dead"
+assert_contains "$ROOT/gui-lock.log" "reclaimed lane=stale-dead"
+
+echo "test: queue timeout retains position"
+reset_state
+run_lane timeout-holder pr 4 > "$ROOT/timeout-holder.out" 2>&1 &
+timeout_holder_pid=$!
+sleep 1
+run_lane timeout-waiter pr 0 1 > "$ROOT/timeout-waiter.out" 2>&1 &
+timeout_waiter_pid=$!
+sleep 2
+"$SCRIPT" status > "$ROOT/timeout-status.out"
+assert_contains "$ROOT/timeout-status.out" "QUEUE position=1 class=pr lane=timeout-waiter"
+wait "$timeout_holder_pid" "$timeout_waiter_pid"
+assert_contains "$ROOT/timeout-waiter.out" "WAIT queue timeout; ticket retained in place"
+assert_contains "$ROOT/gui-lock.log" "requeued in place"
+
+echo "test: hard lease maximum"
+if "$SCRIPT" run --lane invalid --class pr --sha test --dir "$ROOT/invalid" --lease-minutes 46 -- true > /dev/null 2>&1; then
+  fail "46-minute lease was accepted"
+fi
+
+echo "PASS: gui-lock lease tests"
