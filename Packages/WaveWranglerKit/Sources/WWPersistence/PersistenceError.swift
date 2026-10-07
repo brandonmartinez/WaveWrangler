@@ -5,7 +5,8 @@ import WWCore
 public enum PersistenceError: Error, Sendable, Equatable {
     case malformed(String)
     case formatMismatch(expected: String, found: String)
-    /// The file was written by a newer WaveWrangler. It must not be edited, saved or downsaved.
+    /// The file was written by a newer WaveWrangler. It must not be edited, saved or downsaved. `found`/`supported`
+    /// are the newer part's schema versions: the envelope's, or an embedded component's (a show's time map).
     case unknownNewerSchema(found: Int, supported: Int)
     case unsupportedOlderSchema(found: Int, minimum: Int)
     case invalidRevision(Int)

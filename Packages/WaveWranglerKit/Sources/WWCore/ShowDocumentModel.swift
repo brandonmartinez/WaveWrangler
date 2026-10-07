@@ -9,7 +9,11 @@ public enum SchemaVersion {
     /// 2: speaker channel references carry an explicit `Knowledge<Int>` channel (`.unknown` until stated)
     /// instead of a bare index with 0 as a placeholder. Schema 1 shows are upgraded only through the
     /// explicit, consented C5 migration (WWPersistence `ShowSchemaMigration`), which keeps a backup first.
-    public static let show = 2
+    /// 3: episodes may carry `alignment` (WW-020: source occurrences/epochs, groups and versioned positive maps
+    /// as strict `WWTimeMap` JSON). Schema 1 and 2 shows are upgraded only through the same consented migration.
+    /// An embedded map's `timeMapSchemaVersion` is part of this schema: a time-map schema bump requires a show
+    /// schema bump (pinned by `AlignmentPersistenceTests.schemaVersionsArePinned`).
+    public static let show = 3
     /// Canonical library document payload (`LibraryModel`).
     /// 2: adds `libraryID`. Schema 1 libraries are upgraded with a derived, stable ID (see WWPersistence
     /// `LibraryCoder`); the original bytes are kept as a backup before the first schema 2 publication.

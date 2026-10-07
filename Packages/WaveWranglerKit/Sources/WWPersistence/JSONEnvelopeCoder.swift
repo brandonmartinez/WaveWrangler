@@ -11,7 +11,8 @@ import WWCore
 ///
 /// Read order: strict JSON structure (well-formed, no duplicate keys anywhere) → version header `{format, schemaVersion}` only → format → schema range (unknown-newer
 /// refusal happens before any version-specific field or the payload is decoded) → version-specific header
-/// `{checksum, publicationID, revision}` → revision → payload decode → checksum → no unrecognized content
+/// `{checksum, publicationID, revision}` → revision → payload decode → newer embedded content (refused as
+/// unknown-newer, e.g. a show's embedded time map) → checksum → no unrecognized content
 /// → semantic validation. `{format, schemaVersion}` is the only envelope shape frozen across versions.
 ///
 /// `revision` is an ordering hint; `publicationID` (fresh per write) and `checksum` identify a publication. The checksum is SHA-256 over
@@ -21,12 +22,17 @@ import WWCore
 /// replacement, acknowledgement) and recovery are separate responsibilities owned by persistence.
 public struct JSONEnvelopeCoder<Payload: Codable & Sendable>: CanonicalDocumentCoding {
     public typealias Validator = @Sendable (_ payload: Payload, _ schemaVersion: Int) -> [ValidationIssue]
+    /// Finds content inside a supported-schema payload that a newer build wrote (e.g. an embedded map with a newer
+    /// sub-schema), as `(found, supported)` versions of that content.
+    public typealias NewerContentCheck = @Sendable (_ payload: Payload) -> (found: Int, supported: Int)?
 
     public let format: DocumentFormat
+    private let newerContent: NewerContentCheck?
     private let validate: Validator
 
-    public init(format: DocumentFormat, validate: @escaping Validator) {
+    public init(format: DocumentFormat, newerContent: NewerContentCheck? = nil, validate: @escaping Validator) {
         self.format = format
+        self.newerContent = newerContent
         self.validate = validate
     }
 
@@ -71,6 +77,11 @@ public struct JSONEnvelopeCoder<Payload: Codable & Sendable>: CanonicalDocumentC
             rawPayload = try decoder.decode(PayloadBox<JSONValue>.self, from: data).payload
         } catch {
             throw .malformed("Unreadable payload: \(error.localizedDescription)")
+        }
+        // Newer embedded content is refused as unknown-newer, like a newer envelope schema: before the checksum
+        // and validation, so no damaged/recovery path can stand in for the refusal.
+        if let newer = newerContent?(payload) {
+            throw .unknownNewerSchema(found: newer.found, supported: newer.supported)
         }
         let canonicalBytes = try Self.canonicalBytes(of: payload)
         guard Self.checksum(of: canonicalBytes) == header.checksum else { throw .checksumMismatch }
@@ -247,7 +258,9 @@ enum CanonicalDate {
 
 extension JSONEnvelopeCoder where Payload == ShowDocumentModel {
     public static var show: JSONEnvelopeCoder<ShowDocumentModel> {
-        JSONEnvelopeCoder(format: .show) { $0.validationIssues(expectedSchemaVersion: $1) }
+        JSONEnvelopeCoder(format: .show, newerContent: { $0.newerEmbeddedTimeMapSchema() }) {
+            $0.validationIssues(expectedSchemaVersion: $1) + $0.embeddedMapIssues()
+        }
     }
 }
 

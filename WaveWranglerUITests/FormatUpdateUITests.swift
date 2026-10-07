@@ -20,6 +20,8 @@ import XCTest
 /// the updated, editable show window gets the essential set.
 @MainActor
 final class FormatUpdateUITests: XCTestCase {
+    /// `SchemaVersion.show` (the UI test bundle doesn't link WaveWranglerKit): 3 since WW-020.
+    private static let currentShowSchema = 3
     private var app: XCUIApplication!
     private var workDirectory: URL!
     private var findings: [String] = []
@@ -62,7 +64,7 @@ final class FormatUpdateUITests: XCTestCase {
         try task("T21-update") {
             let window = try openAndExpectPrompt(document, name: "Older Show", original: original)
             app.typeKey(.return, modifierFlags: [])
-            check(Acceptance.waitFor(timeout: 10) { self.diskSchemaVersion(document) == 2 }, "Return updates the file to schema 2: \(String(describing: diskSchemaVersion(document)))")
+            check(Acceptance.waitFor(timeout: 10) { self.diskSchemaVersion(document) == Self.currentShowSchema }, "Return updates the file to the current schema: \(String(describing: diskSchemaVersion(document)))")
             let status = element("ww.show.saveStatus")
             check(Acceptance.waitFor(timeout: 10) { self.value(status).hasPrefix("Saved") }, "status Saved after the update: \(value(status))")
             check(diskShowTitle(document) == "Stated Show", "content kept: \(String(describing: diskShowTitle(document)))")
@@ -83,7 +85,7 @@ final class FormatUpdateUITests: XCTestCase {
         try task("T21-placeholder") {
             _ = try openAndExpectPrompt(document, name: "Placeholder", original: original)
             app.typeKey(.return, modifierFlags: [])
-            check(Acceptance.waitFor(timeout: 10) { self.diskSchemaVersion(document) == 2 }, "updated to schema 2")
+            check(Acceptance.waitFor(timeout: 10) { self.diskSchemaVersion(document) == Self.currentShowSchema }, "updated to the current schema")
             check(diskPrimaryChannels(document) == ["unknown"], "the index-0 placeholder became Unknown: \(diskPrimaryChannels(document))")
         }
     }
@@ -261,7 +263,7 @@ final class FormatUpdateUITests: XCTestCase {
             check(texts(in: sheet).contains("Update “Later” to the current format?"), "prompt title: \(texts(in: sheet))")
             check((try? Data(contentsOf: document)) == original, "nothing is written before Update")
             app.typeKey(.return, modifierFlags: [])
-            check(Acceptance.waitFor(timeout: 10) { self.diskSchemaVersion(document) == 2 }, "Return updates the file to schema 2")
+            check(Acceptance.waitFor(timeout: 10) { self.diskSchemaVersion(document) == Self.currentShowSchema }, "Return updates the file to the current schema")
             check(Acceptance.waitFor(timeout: 10) { self.value(status).hasPrefix("Saved") }, "status Saved after the update: \(value(status))")
         }
     }
@@ -651,7 +653,7 @@ final class FormatUpdateUITests: XCTestCase {
         ((envelope(url)?["payload"] as? [String: Any])?["show"] as? [String: Any])?["title"] as? String
     }
 
-    /// Each assignment's primary channel in the first episode, as "known:n" or "unknown" (schema 2 only).
+    /// Each assignment's primary channel in the first episode, as "known:n" or "unknown" (schema 2 and later).
     private func diskPrimaryChannels(_ url: URL) -> [String] {
         guard let payload = envelope(url)?["payload"] as? [String: Any],
               let episode = (payload["episodes"] as? [[String: Any]])?.first,

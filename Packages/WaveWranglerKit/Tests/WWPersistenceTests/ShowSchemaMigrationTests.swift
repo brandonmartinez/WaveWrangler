@@ -4,9 +4,10 @@ import Testing
 import WWCore
 @testable import WWPersistence
 
-/// Show schema 1 → 2 (WW-009 C5, issue #63): explicit stated-channel references, migrated from golden schema 1
-/// files through the unchanged C3 publication order. Synthetic fixtures only; deterministic (no wall clock).
-@Suite("Show schema 1 → 2 migration (C5, #63)")
+/// Show schema 1 → current (WW-009 C5, issue #63): explicit stated-channel references, migrated from golden
+/// schema 1 files through the unchanged C3 publication order, straight to the current schema (3 since WW-020; the
+/// 2 → 3 step is covered by `ShowSchema2MigrationTests`). Synthetic fixtures only; deterministic (no wall clock).
+@Suite("Show schema 1 → current migration (C5, #63)")
 struct ShowSchemaMigrationTests {
     // MARK: - Fixture identifiers (see ShowSchema1Fixtures)
 
@@ -59,7 +60,7 @@ struct ShowSchemaMigrationTests {
     @Test(arguments: goldens)
     func goldenFilesAreSchema1AndRefusedByTheCurrentReader(_ golden: Golden) throws {
         #expect(RevisionFingerprint(of: golden.bytes).schemaVersion == 1)
-        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 1, minimum: 2)) {
+        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 1, minimum: SchemaVersion.show)) {
             try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(golden.bytes)
         }
         let decoded = try ShowSchemaMigration.decodeSchema1(golden.bytes)
@@ -219,7 +220,7 @@ struct ShowSchemaMigrationTests {
         #expect(Self.paths(try rig.recovery.migrationBackups(for: golden.key)) == Self.paths([receipt.backup]), "retry reuses the identical backup")
 
         #expect(throws: PublicationError.self) { try migrator.migrate(url, key: golden.key) }
-        #expect(try Data(contentsOf: url) == migrated, "a schema 2 show is not migrated again")
+        #expect(try Data(contentsOf: url) == migrated, "a current show is not migrated again")
         #expect(Self.paths(try rig.recovery.migrationBackups(for: golden.key)) == Self.paths([receipt.backup]))
         #expect(try Data(contentsOf: receipt.backup) == golden.bytes)
     }
@@ -311,7 +312,7 @@ struct ShowSchemaMigrationTests {
         let clean = Rig(dir: dir)
         let receipt = try DocumentMigrator.show(publisher: clean.publisher).migrate(url, key: golden.key)
         #expect(try Data(contentsOf: receipt.backup) == golden.bytes)
-        #expect(RevisionFingerprint(of: try Data(contentsOf: url)).schemaVersion == 2)
+        #expect(RevisionFingerprint(of: try Data(contentsOf: url)).schemaVersion == SchemaVersion.show)
     }
 
     // MARK: - Identity: a different show's schema 1 file is never adopted or migrated (#175 review)
@@ -492,7 +493,11 @@ struct ShowSchemaMigrationTests {
     @Test(arguments: PublicationBoundary.migration + PublicationBoundary.show.dropLast())
     func everyFaultLeavesTheOriginalOrTheMigratedRevision(_ boundary: PublicationBoundary) throws {
         let golden = Self.goldens[2]
-        let expected = try ShowSchemaMigration.decodeSchema1(golden.bytes).payload
+        try Self.faultMatrix(boundary, golden: golden, fromSchema: 1, expected: try ShowSchemaMigration.decodeSchema1(golden.bytes).payload)
+    }
+
+    /// The C5 fault matrix for one migration step (`fromSchema` → current) at one boundary.
+    static func faultMatrix(_ boundary: PublicationBoundary, golden: Golden, fromSchema: Int, expected: ShowDocumentModel) throws {
         var variants = FaultInjectionHarnessTests.variants(for: boundary)
         if boundary == .candidateValidated {
             variants = [{ _ in .crash(at: boundary) }] // a migration retains no prior checkpoint: no write follows P1
@@ -504,7 +509,7 @@ struct ShowSchemaMigrationTests {
         var fired = 0
         for (index, variant) in variants.enumerated() {
             for fraction in [0.1, 0.35, 0.65, 0.9] {
-                let dir = TempDirectory("show-migration-\(boundary.rawValue)-\(index)")
+                let dir = TempDirectory("show-migration-\(fromSchema)-\(boundary.rawValue)-\(index)")
                 let url = Rig(dir: dir).url()
                 try golden.bytes.write(to: url)
                 let faults = FaultState(variant(fraction))
@@ -521,7 +526,7 @@ struct ShowSchemaMigrationTests {
                 let backups = try after.recovery.migrationBackups(for: golden.key)
                 #expect(try backups.allSatisfy { try Data(contentsOf: $0) == golden.bytes }, "every backup holds the original bytes")
                 switch Self.opener(after).open(url, key: golden.key) {
-                case .needsMigration(1, _) where try Data(contentsOf: url) == golden.bytes:
+                case let .needsMigration(schema, _) where try schema == fromSchema && Data(contentsOf: url) == golden.bytes:
                     outcomes.append(.old)
                     let receipt = try DocumentMigrator.show(publisher: after.publisher).migrate(url, key: golden.key)
                     #expect(Self.paths(try after.recovery.migrationBackups(for: golden.key)) == Self.paths([receipt.backup]), "retry keeps exactly one backup")
@@ -536,7 +541,7 @@ struct ShowSchemaMigrationTests {
                 Self.cleanStaging(faults)
             }
         }
-        Evidence.record("show schema 1→2 migration boundary=\(boundary.rawValue) runs=\(outcomes.count) fired=\(fired) old=\(outcomes.count { $0 == .old }) new=\(outcomes.count { $0 == .new }) recoveredOld=\(outcomes.count { $0 == .recoveredOld }) [simulated/local]")
+        Evidence.record("show schema \(fromSchema)→\(SchemaVersion.show) migration boundary=\(boundary.rawValue) runs=\(outcomes.count) fired=\(fired) old=\(outcomes.count { $0 == .old }) new=\(outcomes.count { $0 == .new }) recoveredOld=\(outcomes.count { $0 == .recoveredOld }) [simulated/local]")
         #expect(fired == outcomes.count, "every injected fault fired")
         #expect(!outcomes.contains(.mixed) && !outcomes.contains(.zeroValid), "\(outcomes)")
     }
@@ -550,7 +555,7 @@ struct ShowSchemaMigrationTests {
     /// The M1 (schema 1) build's show reader: current and minimum readable schema 1.
     static let olderReader = JSONEnvelopeCoder<ShowSchemaMigration.ShowDocumentModelV1>(format: ShowSchemaMigration.schema1Format) { _, _ in [] }
 
-    @Test func anOlderBuildRefusesASchema2ShowAsUnknownNewer() throws {
+    @Test func anOlderBuildRefusesTheMigratedShowAsUnknownNewer() throws {
         let rig = Rig()
         let url = rig.url()
         let golden = Self.goldens[2]
@@ -558,22 +563,22 @@ struct ShowSchemaMigrationTests {
         _ = try DocumentMigrator.show(publisher: rig.publisher).migrate(url, key: golden.key)
         let migrated = try Data(contentsOf: url)
 
-        #expect(throws: PersistenceError.unknownNewerSchema(found: 2, supported: 1)) { try Self.olderReader.decode(migrated) }
+        #expect(throws: PersistenceError.unknownNewerSchema(found: SchemaVersion.show, supported: 1)) { try Self.olderReader.decode(migrated) }
         let olderOpener = DocumentOpener(coder: Self.olderReader, recovery: nil)
-        guard case .refusedNewerFormat(found: 2, supported: 1, _) = olderOpener.open(url) else {
-            Issue.record("an older build must refuse schema 2 as unknown-newer")
+        guard case .refusedNewerFormat(found: SchemaVersion.show, supported: 1, _) = olderOpener.open(url) else {
+            Issue.record("an older build must refuse the migrated show as unknown-newer")
             return
         }
         // The older build still reads its own format (the simulation is faithful, not a blanket refusal).
         #expect(try Self.olderReader.decode(golden.bytes).revision == golden.revision)
 
-        // An older build's edit-checkpoint offer reports a schema 2 record as newer, never applies it.
+        // An older build's edit-checkpoint offer reports a current-schema record as newer, never applies it.
         let record = try rig.recovery.writeEditCheckpoint(snapshot: migrated, base: nil, schemaVersion: SchemaVersion.show, for: golden.key,
                                                           at: Date(timeIntervalSince1970: 1_790_000_000))
         let offer = EditCheckpointOffer.assess([StoredEditCheckpoint(url: url, record: .success(record))], documentID: golden.key.rawValue,
                                                onDisk: nil, coder: Self.olderReader, belongsToDocument: { _ in true })
         #expect(offer.usable.isEmpty)
-        #expect(offer.problems == [.newerFormat(url, found: 2, supported: 1)])
+        #expect(offer.problems == [.newerFormat(url, found: SchemaVersion.show, supported: 1)])
     }
 
     @Test func thisBuildRefusesAFutureSchemaAsUnknownNewer() throws {
@@ -590,7 +595,7 @@ struct ShowSchemaMigrationTests {
         let rig = Rig()
         let url = rig.url()
         try future.write(to: url)
-        guard case .refusedNewerFormat(found: 3, supported: 2, _) = Self.opener(rig).open(url) else {
+        guard case .refusedNewerFormat(found: SchemaVersion.show + 1, supported: SchemaVersion.show, _) = Self.opener(rig).open(url) else {
             Issue.record("expected unknown-newer refusal")
             return
         }
