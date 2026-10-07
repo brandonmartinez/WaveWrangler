@@ -185,6 +185,22 @@ final class ContrastEvidenceUITests: XCTestCase {
             app.menuBars.menuItems["Zoom"].click()
             Thread.sleep(forTimeInterval: 1)
             capture("visual-\(appearance)-setup-200-zoomed")
+            let offlineRow = app.outlines["ww.setup.sources"].outlineRows
+                .containing(NSPredicate(format: "label == %@", "offline.wav"))
+                .firstMatch
+            XCTAssertTrue(offlineRow.waitForExistence(timeout: 3), "\(appearance): offline source row")
+            offlineRow.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).click()
+            Thread.sleep(forTimeInterval: 1)
+            let offlineStatus = app.descendants(matching: .any).matching(NSPredicate(
+                format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status' AND value BEGINSWITH 'No connection'"
+            )).firstMatch
+            XCTAssertTrue(offlineStatus.waitForExistence(timeout: 3), "\(appearance): selected no-connection status")
+            let statusMeasurement = ContrastMeter.measure(offlineStatus.screenshot().image) ?? [:]
+            let glyphPixels = statusMeasurement["glyphPixels"] as? Int ?? 0
+            let glyphP75 = statusMeasurement["glyphP75"] as? Double ?? 0
+            XCTAssertGreaterThanOrEqual(glyphPixels, AcceptanceAudit.minimumGlyphPixels, "\(appearance): selected no-connection glyph pixels")
+            XCTAssertGreaterThanOrEqual(glyphP75, 4.5, "\(appearance): selected no-connection status p75")
+            Acceptance.record(self, "#221 \(appearance) selected no-connection status: \(glyphPixels) px, p75 \(glyphP75)")
             let unwaivedSetup = try AcceptanceAudit.run(app, surface: "Setup \(appearance) 200% reduce motion", test: self)
             Acceptance.record(self, "A11Y-003 Setup \(appearance) 200%: \(unwaivedSetup.isEmpty ? "no unwaived audit issues" : "\(unwaivedSetup)")")
             app.terminate()

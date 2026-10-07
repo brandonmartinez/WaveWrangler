@@ -261,7 +261,12 @@ private struct SourcesSection: View {
                 EpisodeProgressView(progress: progress)
             }
             GeometryReader { geometry in
-                SourcesTable(model: model, rows: presentation.sourceRows, width: geometry.size.width)
+                SourcesTable(
+                    model: model,
+                    rows: presentation.sourceRows,
+                    width: geometry.size.width,
+                    isFocused: focusedTable.wrappedValue == .sources
+                )
                     .focused(focusedTable, equals: .sources)
                     .onChange(of: SetupColumnPlan.columns(forWidth: geometry.size.width, scale: Double(textScale))) {
                         SetupTableFocus.fitColumns("ww.setup.sources", in: model.window())
@@ -351,6 +356,7 @@ private struct SourcesTable: View {
     @Bindable var model: EpisodeSetupModel
     let rows: [SetupSourceRow]
     let width: Double
+    let isFocused: Bool
     @Environment(\.setupTextScale) private var textScale
 
     private var scale: Double { Double(textScale) }
@@ -407,7 +413,11 @@ private struct SourcesTable: View {
                 .disabledCustomizationBehavior([.visibility, .reorder])
             TableColumn("Status") { row in
                 if let status = row.status, case let .source(id) = row.id {
-                    StatusCell(summary: status, identifier: "ww.setup.source.\(id).status")
+                    StatusCell(
+                        summary: status,
+                        identifier: "ww.setup.source.\(id).status",
+                        isSelectedInFocusedTable: isFocused && model.selection.contains(row.id)
+                    )
                 }
             }
             .width(min: 100 * scale, ideal: SetupColumnPlan.idealWidth(.status, scale: scale))
@@ -537,6 +547,7 @@ private struct CellView: View {
 struct StatusCell: View {
     let summary: SourceStatusSummary
     let identifier: String
+    let isSelectedInFocusedTable: Bool
 
     var body: some View {
         HStack(spacing: 4) {
@@ -544,6 +555,7 @@ struct StatusCell: View {
             Text(summary.displayText)
                 .setupFont(.body)
                 .foregroundStyle(.primary)
+                .emphasizedSelectionForeground(selectedInFocusedList: isSelectedInFocusedTable)
                 .lineLimit(2)
                 .accessibilityLabel("Status")
                 .accessibilityValue(summary.accessibilityValue)
