@@ -68,6 +68,38 @@ The quiet-host runs below are **load-condition checks**. Macsimus began at 3.69 
 
 The episode-switch handler-to-commit p95 remained below 100 ms on both quiet hosts (92.522 ms on the mini; 70.084 ms locally); the user-visible event-to-commit metric did not. None of the initial run, isolated rerun, or quiet-host load-condition checks waives #220: it remains a hard-gate **FAIL** until fixed.
 
+### Baseline revision 2026-10-07: episode switch accepted with an issue (#220)
+
+**Decision:** the user, 2026-10-07 00:27, via the relay: "accept" (option A). Recorded in `.squad/decisions.md`.
+
+**Why:** the failure predates M2. Interleaved, load-matched runs on the quiet Mac mini show the M1 exit product (`21104e9`) failing the same way as current `main` (`348af45`), so no post-M1 code regression is reproduced. The M1 exit gate's `ResponsivenessUITests` 5/5 was the five-sample class, not the 100-sample gate measurement, so it can't show the gate passed at M1. M1's closest native measurement was 95 / 136 ms on this Mac (`10eb4b8`, `docs/planning/milestone-exits/m1.md` §SCALE-001), just under the gate. Three optimisation candidates in draft PR #224 weren't faster, so none is a proven fix.
+
+All runs: Macsimus, the same 100-sample synthetic episode-switch XCUITest, at least 60 s idle and a 1-minute load under 6 before each run. Full evidence is in the #220 comments and in #224's `docs/m2/evidence/ww-220-episode-switch.md`.
+
+| Run | SHA | Load before → after | Event p95 / max (ms) | Handler-to-commit p95 / max (ms) |
+| --- | --- | ---: | ---: | ---: |
+| A1 | `21104e9` (M1 exit) | 4.48 → 2.92 | 112.841 / 125.031 | 96.486 / 120.235 |
+| B1 | `348af45` | 2.84 → 4.38 | 116.517 / 147.714 | 99.270 / 138.821 |
+| A2 | `21104e9` (M1 exit) | 4.55 → 4.28 | 114.755 / 132.523 | 96.061 / 119.752 |
+| B2 | `348af45` | 4.19 → 3.39 | 114.688 / 120.626 | 96.117 / 113.751 |
+| B3 | `348af45` | 4.13 → 3.73 | 112.625 / 118.471 | 95.964 / 100.437 |
+| C1 | `7c67443` (candidate, reverted) | 4.09 → 3.90 | 118.290 / 129.203 | 98.579 / 113.271 |
+| B4 | `348af45` | 3.11 → 5.74 | 113.263 / 120.252 | 98.132 / 109.947 |
+| C2 | `7c67443` (candidate, reverted) | 3.66 → 3.09 | 117.801 / 131.749 | 97.474 / 114.372 |
+| B5 | `348af45` | 3.79 → 7.20 | 117.459 / 121.369 | 98.290 / 101.345 |
+| D1 | `331df72` (candidate) | 5.21 → 4.87 | 119.455 / 133.569 | 102.452 / 120.110 |
+| B6 | `348af45` | 2.98 → 6.59 | 116.352 / 122.837 | 103.601 / 117.607 |
+| D2 | `331df72` (candidate) | 4.56 → 6.47 | 118.610 / 127.456 | 103.104 / 117.400 |
+
+**Accepted item:** the episode-switch event-to-commit p95 at the current level. #220 stays **open, P1, owner Mac, milestone M3**. Its acceptance is unchanged: p95 under 100 ms over 100 samples on the quiet mini, measured with the unchanged M1 instrumentation. It goes to M3 rather than M5 because WW-007 responsiveness was never transferred to M5, and M3 adds speech and edit-review UI to the same workspace, where a slow switch path compounds.
+
+**M2 exit gate for episode switch (defined before any gate run):**
+- On the quiet Mac mini (at least 60 s idle, 1-minute load under 6 before the run), the exit SHA's 100-sample episode-switch event-to-commit nearest-rank p95 must be **≤ 122.5 ms**. That is the highest of the six load-matched `348af45` runs (117.459 ms) plus 5.0 ms, roughly the 4.8 ms spread of those six runs (112.625–117.459 ms). Max is reported but not gated.
+- If the first gate run exceeds 122.5 ms, one labelled, load-matched rerun is allowed, interleaved with a `348af45` run in the same session. The gate fails if the exit SHA exceeds 122.5 ms again, or exceeds the paired `348af45` p95 by more than 5.0 ms. Both runs are recorded; neither is dropped or relabelled.
+- **Nothing else is relaxed.** Every other responsiveness metric in the table above keeps its original gate (<1000 ms opens and launch, <100 ms interactions). The "All interactions" pooled p95 is reported for information only, because it includes the accepted episode-switch samples. Its components are gated individually. Essential audits and safety invariants are unchanged.
+
+**Informational, not gated:** a Debug-versus-optimised-build measurement of the same SHA is pending (relay-directed 00:18). It goes in #220 and the M2 exit record, and doesn't change this decision.
+
 ## Baseline maintenance
 
 Only a reviewed PR may change this file. Subsequent M2 PR runs compare their affected classes with this record and fail on new UI-test, essential-audit, or responsiveness findings. Existing items remain failures or accepted follow-ups until their evidence is updated in a reviewed baseline revision.
