@@ -212,8 +212,9 @@ extension ShowDocumentModel {
 
     private static func validatedSource(for channel: ChannelReference, in episode: Episode) throws(DomainError) -> SourceRecord {
         guard let source = episode.source(channel.sourceID) else { throw .sourceNotFound(channel.sourceID) }
-        guard channel.channel >= 0 else { throw .invalidChannel(channel) }
-        if let count = source.observations.channelCount.value, channel.channel >= count {
+        guard let index = channel.channel.value else { return source }
+        guard index >= 0 else { throw .invalidChannel(channel) }
+        if let count = source.observations.channelCount.value, index >= count {
             throw .channelOutOfRange(channel, channelCount: count)
         }
         return source

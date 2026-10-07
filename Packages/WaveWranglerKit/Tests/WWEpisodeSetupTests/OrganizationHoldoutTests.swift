@@ -202,7 +202,7 @@ struct RunDCase {
             return refs.isEmpty ? nil : pick(refs)
         }
         func randomReference() -> SpeakerChannelReference {
-            SpeakerChannelReference(speakerID: pick(speakers), channel: ChannelReference(sourceID: pick(sources), channel: int(0...2)), isPrimary: false)
+            SpeakerChannelReference(speakerID: pick(speakers), channel: ChannelReference(sourceID: pick(sources), channel: chance(30) ? .unknown : .known(int(0...2))), isPrimary: false)
         }
         switch int(0...13) {
         case 0...2:
@@ -263,7 +263,7 @@ struct RunDCase {
         var primaries: [ChannelReference] = []
         for assignment in episode.speakerAssignments {
             guard var primary = assignment.primary else { continue }
-            if sources.contains(primary.sourceID) { primary = ChannelReference(sourceID: primary.sourceID, channel: channel ?? 0) }
+            if sources.contains(primary.sourceID) { primary = ChannelReference(sourceID: primary.sourceID, statedChannel: channel) }
             if primaries.contains(primary) { return true }
             primaries.append(primary)
         }
@@ -428,7 +428,7 @@ struct OrganizationHoldoutTests {
         #expect(!RunDCase.expectedRefusal(.setChannel(8, [unknown.id]), model, truth))
         #expect(RunDCase.expectedRefusal(.setChannel(0, [unknown.id]), model, truth))
         #expect(RunDCase.expectedRefusal(.setEpoch(1, [two.id]), model, truth))  // ungrouped
-        #expect(RunDCase.expectedRefusal(.useAsPrimary(SpeakerChannelReference(speakerID: SpeakerID(), channel: ChannelReference(sourceID: two.id, channel: 0), isPrimary: false)), model, truth))
+        #expect(RunDCase.expectedRefusal(.useAsPrimary(SpeakerChannelReference(speakerID: SpeakerID(), channel: ChannelReference(sourceID: two.id, channel: .unknown), isPrimary: false)), model, truth))
     }
 
     @Test func runD() throws {

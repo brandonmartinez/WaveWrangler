@@ -270,6 +270,8 @@ enum AcceptanceAudit {
     static let minimumGlyphPixels = 40
 
     static let types: XCUIAccessibilityAuditType = [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]
+    /// Every type but `.contrast`: for surfaces that are neither blocked nor recovery (M2 baseline).
+    static let essentialTypes: XCUIAccessibilityAuditType = types.subtracting(.contrast)
 
     @MainActor
     static func perform(_ app: XCUIApplication, kinds: XCUIAccessibilityAuditType, surface: String, test: XCTestCase,
@@ -339,6 +341,14 @@ enum AcceptanceAudit {
         if inSheet, id.hasPrefix("_NS:") {
             return "AppKit sheet message text (mini 479eb9e: 9.75:1)"
         }
+        // Setup header source count and Speakers status (non-blocked), measured legible on the Mac mini at #175
+        // 2ac330a (GUI round 1, D15): "4 sources" p75 12.39:1 (147 glyph px), "Choose primary" p75 12.75:1 (248).
+        if text.range(of: #"^[0-9]+ sources?$"#, options: .regularExpression) != nil {
+            return "Setup source count, system headline text (mini #175 2ac330a: p75 12.39:1)"
+        }
+        if id.isEmpty, element.label == "Status", text != "Status" {
+            return "Setup Speakers status text, system text (mini #175 2ac330a: p75 12.75:1)"
+        }
         if id == "ww.show.saveStatus.popover" {
             return "save-status popover text, system text (mini #197 round 3, 0d99329: p75 9.14:1, max 9.47:1)"
         }
@@ -351,8 +361,12 @@ enum AcceptanceAudit {
         return count >= minimumGlyphPixels && p75 >= 4.5
     }
 
+    /// `kinds` defaults to every type. The M2 essential set (`essentialTypes`) leaves out `.contrast`, which the M2
+    /// baseline enforces only on blocked or recovery surfaces (docs/m2/evidence/m2-gui-baseline.md).
     @MainActor
-    static func run(_ app: XCUIApplication, surface: String, test: XCTestCase) throws -> [String] {
+    static func run(_ app: XCUIApplication, surface: String, test: XCTestCase,
+                    types kinds: XCUIAccessibilityAuditType = types,
+                    additionalWaiver: ((XCUIAccessibilityAuditIssue) -> String?)? = nil) throws -> [String] {
         var unwaived: [String] = []
         var waived: [[String: Any]] = []
         let sheet: XCUIElement? = app.sheets.firstMatch.exists ? app.sheets.firstMatch : nil
@@ -375,6 +389,9 @@ enum AcceptanceAudit {
             if let rationale = structuralWaiver(for: issue) {
                 waived.append(["finding": description, "rationale": rationale, "kind": "structural"])
                 print("AUDIT WAIVED \(description) — \(rationale)")
+            } else if let rationale = additionalWaiver?(issue) {
+                waived.append(["finding": description, "rationale": rationale, "kind": "test-scoped"])
+                print("AUDIT WAIVED \(description) — \(rationale)")
             } else if issue.auditType == .contrast, let element = issue.element {
                 contrast.append((element, description))
                 issueFor.append(issue)
@@ -388,8 +405,8 @@ enum AcceptanceAudit {
         func audit(_ kinds: XCUIAccessibilityAuditType) throws {
             try perform(app, kinds: kinds, surface: surface, test: test, handling: handle)
         }
-        try audit(types.subtracting(.contrast))
-        try audit(.contrast)
+        try audit(kinds.subtracting(.contrast))
+        if kinds.contains(.contrast) { try audit(.contrast) }
         for (index, (element, description)) in contrast.enumerated() {
             let shot = element.exists ? element.screenshot() : nil
             let measured = shot.flatMap { ContrastMeter.measure($0.image) }
@@ -465,7 +482,7 @@ enum AcceptanceAudit {
             }
         }
         Acceptance.writeEvidence("audit-\(surface.replacingOccurrences(of: " ", with: "_"))", [
-            "surface": surface, "unwaived": unwaived, "waived": waived,
+            "surface": surface, "unwaived": unwaived, "waived": waived, "contrastAudited": kinds.contains(.contrast),
         ], test: test)
         print("AUDIT \(surface): \(unwaived.isEmpty ? "no unwaived issues" : "\(unwaived.count) unwaived issue(s)"); \(waived.count) waived (recorded)")
         return unwaived
@@ -497,6 +514,23 @@ enum AcceptanceAudit {
         return nil
     }
 
+    /// Source file names in the frozen M1 golden shows (`ShowSchema1Fixtures`, F-OLDER), read from their bytes.
+    static let goldenFixtureFileNames: Set<String> = {
+        var names: Set<String> = []
+        func collect(_ value: Any) {
+            if let object = value as? [String: Any] {
+                if let name = object["displayNameHint"] as? String { names.insert(name) }
+                object.values.forEach(collect)
+            } else if let array = value as? [Any] {
+                array.forEach(collect)
+            }
+        }
+        for bytes in [ShowSchema1Fixtures.placeholderOnly, ShowSchema1Fixtures.statedChannels, ShowSchema1Fixtures.mixed] {
+            if let object = try? JSONSerialization.jsonObject(with: bytes) { collect(object) }
+        }
+        return names
+    }()
+
     static func structuralWaiver(for issue: XCUIAccessibilityAuditIssue) -> String? {
         guard let element = issue.element else { return nil }
         if [.window, .toolbar, .splitter, .menuBar, .menuBarItem, .touchBar].contains(element.elementType) { return "system window chrome" }
@@ -504,10 +538,13 @@ enum AcceptanceAudit {
         if issue.auditType == .action, element.elementType == .popUpButton { return "system pop-up button exposes AXShowMenu" }
         // Since #112 the Setup Name cell's label is the source's file name (the visible name, IA §5) and its value
         // carries the hidden columns; the audit's heuristic calls a file name "not human-readable". Scoped to Name
-        // cells of the synthetic fixtures (`synthetic-N.wav`, fixture-states `trN.wav`), where the label is verifiably the file's name.
+        // cells of the synthetic fixtures (`synthetic-N.wav`, fixture-states `trN.wav`) and of the frozen M1 golden shows
+        // (F-OLDER, #159), where the label is verifiably the file's name. This is the M2 baseline's "Setup source-name
+        // cells" artefact class (docs/m2/evidence/m2-gui-baseline.md).
         if issue.auditType == .sufficientElementDescription, element.elementType == .staticText,
            element.identifier.range(of: #"^ww\.setup\.source\.[0-9A-F-]{36}$"#, options: .regularExpression) != nil,
-           element.label.range(of: #"^(synthetic-[0-9]+|tr[0-9]+)\.wav$"#, options: .regularExpression) != nil {
+           element.label.range(of: #"^(synthetic-[0-9]+|tr[0-9]+)\.wav$"#, options: .regularExpression) != nil
+            || goldenFixtureFileNames.contains(element.label) {
             return "Setup Name cell labelled with the source's file name '\(element.label)' (the visible name; heuristic finding)"
         }
         if element.elementType == .popUpButton, element.label == "emoji & symbols" { return "system input item, not app UI" }

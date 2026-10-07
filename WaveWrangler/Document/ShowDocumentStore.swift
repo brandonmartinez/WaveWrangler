@@ -39,6 +39,8 @@ final class ShowDocumentStore {
         coalescing key: String? = nil,
         _ operation: (ShowDocumentModel) throws(DomainError) -> ShowDocumentModel
     ) -> Bool {
+        // #159: an older-format show is read-only until its update has published.
+        guard FormatUpdatePolicy.allowsEdits(document?.status.formatUpdate) else { return false }
         do {
             let updated = try operation(model)
             lastError = nil

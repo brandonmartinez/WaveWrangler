@@ -156,7 +156,7 @@ struct SetupEditCommandTests {
         let assignment = try #require(editor.showModel.episode(episodeID)?.assignment(for: ana.id))
         #expect(assignment.primary == ref.channel)
         #expect(assignment.primaryConfirmation == .userConfirmed)
-        #expect(assignment.backups == [ChannelReference(sourceID: tr2.id, channel: 0)])
+        #expect(assignment.backups == [ChannelReference(sourceID: tr2.id, channel: .unknown)])
     }
 
     @Test func refusalsRegisterNoUndoAndExplainWhy() {

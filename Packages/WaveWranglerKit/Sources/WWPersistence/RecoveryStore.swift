@@ -85,13 +85,22 @@ public struct RecoveryStore: Sendable {
         for key: DocumentKey,
         coder: Coder
     ) throws -> [(checkpoint: RecoveryCheckpoint, document: DecodedDocument<Coder.Payload>)] {
+        try validatedCheckpoints(for: key) { try coder.decode($0) }
+    }
+
+    /// As above, decoding each record with `decode` (for example a read-only in-memory upgrade of a supported
+    /// older schema, so records written before a format change stay offerable).
+    public func validatedCheckpoints<Payload: Sendable>(
+        for key: DocumentKey,
+        decode: (Data) throws -> DecodedDocument<Payload>
+    ) throws -> [(checkpoint: RecoveryCheckpoint, document: DecodedDocument<Payload>)] {
         var all = try checkpoints(for: key)
         if let current = verifiedCurrent(for: key), !all.contains(where: { $0.fingerprint.byteDigest == current.fingerprint.byteDigest }) {
             all.append(current)
         }
         return all
             .compactMap { checkpoint in
-                guard let data = try? ops.read(checkpoint.url), let decoded = try? coder.decode(data) else { return nil }
+                guard let data = try? ops.read(checkpoint.url), let decoded = try? decode(data) else { return nil }
                 return (checkpoint, decoded)
             }
             .sorted { $0.document.revision > $1.document.revision }

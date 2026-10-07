@@ -82,8 +82,8 @@ struct EpisodeSetupOperationTests {
         #expect(episode.assignment(for: f.ana.id)?.primary == nil)
         #expect(episode.source(f.tr1.id)?.roleConfirmation == .provisional)
 
-        let tr1 = ChannelReference(sourceID: f.tr1.id, channel: 0)
-        let tr2 = ChannelReference(sourceID: f.tr2.id, channel: 0)
+        let tr1 = ChannelReference(sourceID: f.tr1.id, channel: .unknown)
+        let tr2 = ChannelReference(sourceID: f.tr2.id, channel: .unknown)
         result = try result.usingAsPrimary(tr1, for: f.ana.id, in: f.episode.id)
         result = try result.usingAsPrimary(tr2, for: f.ana.id, in: f.episode.id)
         episode = try f.ep(result)
@@ -99,20 +99,20 @@ struct EpisodeSetupOperationTests {
     @Test func usingAsBackupClearsPrimaryAndSettingPrimaryNoneKeepsTheChannel() throws {
         var result = try f.model.addingSpeaker(f.ana, toEpisode: f.episode.id)
         result = try result.assigningSpeaker(f.ana.id, toSource: f.tr1.id, in: f.episode.id)
-        let tr1 = ChannelReference(sourceID: f.tr1.id, channel: 0)
+        let tr1 = ChannelReference(sourceID: f.tr1.id, channel: .unknown)
         result = try result.usingAsPrimary(tr1, for: f.ana.id, in: f.episode.id)
         let none = try result.settingPrimary(nil, for: f.ana.id, in: f.episode.id)
         #expect(try f.ep(none).assignment(for: f.ana.id)?.primary == nil)
         #expect(try f.ep(none).assignment(for: f.ana.id)?.backups == [tr1])
-        #expect(throws: DomainError.channelNotAssignedToSpeaker(ChannelReference(sourceID: f.tr2.id, channel: 0), f.ana.id)) {
-            try result.usingAsPrimary(ChannelReference(sourceID: f.tr2.id, channel: 0), for: f.ana.id, in: f.episode.id)
+        #expect(throws: DomainError.channelNotAssignedToSpeaker(ChannelReference(sourceID: f.tr2.id, channel: .unknown), f.ana.id)) {
+            try result.usingAsPrimary(ChannelReference(sourceID: f.tr2.id, channel: .unknown), for: f.ana.id, in: f.episode.id)
         }
     }
 
     @Test func reassigningASourceMovesItBetweenSpeakers() throws {
         var result = try f.model.addingSpeaker(f.ana, toEpisode: f.episode.id).addingSpeaker(f.ben, toEpisode: f.episode.id)
         result = try result.assigningSpeaker(f.ana.id, toSource: f.tr1.id, in: f.episode.id)
-        result = try result.usingAsPrimary(ChannelReference(sourceID: f.tr1.id, channel: 0), for: f.ana.id, in: f.episode.id)
+        result = try result.usingAsPrimary(ChannelReference(sourceID: f.tr1.id, channel: .unknown), for: f.ana.id, in: f.episode.id)
         result = try result.assigningSpeaker(f.ben.id, toSource: f.tr1.id, in: f.episode.id)
         let episode = try f.ep(result)
         #expect(episode.assignment(for: f.ana.id)?.primary == nil)
@@ -125,7 +125,7 @@ struct EpisodeSetupOperationTests {
     @Test func multiSelectAssignKeepsTheExistingSpeakersConfirmedPrimary() throws {
         var result = try f.model.addingSpeaker(f.ana, toEpisode: f.episode.id).addingSpeaker(f.ben, toEpisode: f.episode.id)
         result = try result.assigningSpeaker(f.ana.id, toSource: f.tr1.id, in: f.episode.id)
-        let tr1 = ChannelReference(sourceID: f.tr1.id, channel: 0)
+        let tr1 = ChannelReference(sourceID: f.tr1.id, channel: .unknown)
         result = try result.usingAsPrimary(tr1, for: f.ana.id, in: f.episode.id)
         result = try result.assigningSpeaker(f.ben.id, toSource: f.tr2.id, in: f.episode.id)
         let before = result
@@ -138,7 +138,7 @@ struct EpisodeSetupOperationTests {
         let ana = try #require(episode.assignment(for: f.ana.id))
         #expect(ana.primary == tr1)
         #expect(ana.primaryConfirmation == .userConfirmed)
-        #expect(ana.backups == [ChannelReference(sourceID: f.tr2.id, channel: 0)])
+        #expect(ana.backups == [ChannelReference(sourceID: f.tr2.id, channel: .unknown)])
         #expect(episode.source(f.tr1.id)?.role == .primary)
         #expect(episode.source(f.tr1.id)?.roleConfirmation == .userConfirmed)
         #expect(episode.assignment(for: f.ben.id)?.backups.isEmpty == true, "only other speakers' references are stripped")
@@ -151,15 +151,19 @@ struct EpisodeSetupOperationTests {
         var result = try f.model.addingSpeaker(f.ana, toEpisode: f.episode.id)
         result = try result.assigningSpeaker(f.ana.id, toSource: f.tr1.id, in: f.episode.id)
         #expect(try f.ep(result).statedChannel(of: f.tr1.id) == nil)
+        #expect(try f.ep(result).references(to: f.tr1.id).map(\.channel.channel) == [.unknown], "schema 2: unknown, never channel 0")
+        result = try result.settingStatedChannel(0, forSource: f.tr1.id, in: f.episode.id)
+        #expect(try f.ep(result).references(to: f.tr1.id).map(\.channel.channel) == [.known(0)], "a stated channel 0 is known")
         result = try result.settingStatedChannel(1, forSource: f.tr1.id, in: f.episode.id)
         var episode = try f.ep(result)
         #expect(episode.statedChannel(of: f.tr1.id) == 1)
-        #expect(episode.references(to: f.tr1.id).first?.channel.channel == 1)
+        #expect(episode.references(to: f.tr1.id).first?.channel.channel == .known(1))
         #expect(episode.source(f.tr1.id)?.observations.channelCount == .unknown, "never observed from the file")
         result = try result.settingStatedChannel(nil, forSource: f.tr1.id, in: f.episode.id)
         episode = try f.ep(result)
         #expect(episode.statedChannel(of: f.tr1.id) == nil)
-        #expect(throws: DomainError.invalidChannel(ChannelReference(sourceID: f.tr1.id, channel: -1))) {
+        #expect(episode.references(to: f.tr1.id).map(\.channel.channel) == [.unknown], "clearing the stated channel makes references unknown again")
+        #expect(throws: DomainError.invalidChannel(ChannelReference(sourceID: f.tr1.id, channel: .known(-1)))) {
             try result.settingStatedChannel(-1, forSource: f.tr1.id, in: f.episode.id)
         }
     }
@@ -183,7 +187,7 @@ struct EpisodeSetupOperationTests {
     @Test func removingASourceDropsItsReferencesOnly() throws {
         var result = try f.model.addingSpeaker(f.ana, toEpisode: f.episode.id)
         result = try result.assigningSpeaker(f.ana.id, toSource: f.tr1.id, in: f.episode.id)
-        result = try result.usingAsPrimary(ChannelReference(sourceID: f.tr1.id, channel: 0), for: f.ana.id, in: f.episode.id)
+        result = try result.usingAsPrimary(ChannelReference(sourceID: f.tr1.id, channel: .unknown), for: f.ana.id, in: f.episode.id)
         result = try result.removingSource(f.tr1.id, from: f.episode.id)
         let episode = try f.ep(result)
         #expect(episode.source(f.tr1.id) == nil)

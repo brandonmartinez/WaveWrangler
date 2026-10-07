@@ -769,7 +769,8 @@ extension EpisodeSetupModel {
         let channels = (assignment.primary.map { [$0] } ?? []) + assignment.backups
         return channels.compactMap { channel in
             guard let source = episode.source(channel.sourceID) else { return nil }
-            let words = episode.statedChannel(of: source.id).map { "channel \($0 + 1)" } ?? "channel unknown"
+            // The reference's own channel (schema 2): Unknown is never shown or used as channel 1.
+            let words = channel.channel.value.map { "channel \($0 + 1)" } ?? "channel unknown"
             return ChannelChoice(channel: channel, title: "\(source.displayNameHint) · \(words)")
         }
     }

@@ -6,7 +6,10 @@ import Foundation
 /// Readers refuse versions newer than they support (no edit, save or downsave).
 public enum SchemaVersion {
     /// Canonical portable show document payload (`ShowDocumentModel`).
-    public static let show = 1
+    /// 2: speaker channel references carry an explicit `Knowledge<Int>` channel (`.unknown` until stated)
+    /// instead of a bare index with 0 as a placeholder. Schema 1 shows are upgraded only through the
+    /// explicit, consented C5 migration (WWPersistence `ShowSchemaMigration`), which keeps a backup first.
+    public static let show = 2
     /// Canonical library document payload (`LibraryModel`).
     /// 2: adds `libraryID`. Schema 1 libraries are upgraded with a derived, stable ID (see WWPersistence
     /// `LibraryCoder`); the original bytes are kept as a backup before the first schema 2 publication.

@@ -203,7 +203,7 @@ final class ShowWindowState {
             dismissedMessageBar = presentation.messageBar?.heading
         case .revertToEarlierVersion:
             document.browseVersions(nil)
-        case .cancelSave, .resolve, .details, .showDetails:
+        case .cancelSave, .resolve, .details, .showDetails, .updateFormat:
             break
         }
     }
@@ -258,6 +258,7 @@ final class ShowWindowState {
     func attach(to window: NSWindow) {
         self.window = window
         ShowWindowRegistry.register(self, for: window)
+        observeBecomingKey(window)
         // Window chrome and bridging must not change while AppKit/SwiftUI are attaching and laying out the
         // view (re-entrant constraint updates); apply them on the next main-queue turn.
         DispatchQueue.main.async { [weak self, weak window] in
@@ -292,6 +293,21 @@ final class ShowWindowState {
                 }
             }
         }
+    }
+
+    @ObservationIgnored private var becameKeyObserver: NotificationObservation?
+
+    /// #159: an older-format show whose D14 sheet couldn't appear yet (a background tab, a minimized or restored
+    /// window) is asked when this window becomes key: its tab is selected, it's un-minimized or brought forward.
+    private func observeBecomingKey(_ window: NSWindow) {
+        becameKeyObserver = NotificationObservation(NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
+        ) { [weak self, weak window] _ in
+            MainActor.assumeIsolated {
+                guard let self, let window, self.window === window else { return }
+                self.store.document?.presentFormatUpdatePromptIfNeeded(preferring: window)
+            }
+        })
     }
 
     /// IA-06: subtitle = selected episode's title.
@@ -331,4 +347,13 @@ enum ShowWindowRegistry {
     static func states(for document: NSDocument) -> [ShowWindowState] {
         document.windowControllers.compactMap { state(for: $0.window) }
     }
+}
+
+/// Removes a block-based notification observer when the owner goes away (or replaces it).
+final class NotificationObservation {
+    private let token: NSObjectProtocol
+
+    init(_ token: NSObjectProtocol) { self.token = token }
+
+    deinit { NotificationCenter.default.removeObserver(token) }
 }

@@ -51,6 +51,10 @@ final class ShowDocument: NSDocument {
     static var debugPublicationHooks: (any PublicationHooks)?
     /// Debug-only replacement for the shared library acknowledgement (native holdout runner).
     static var debugLibraryAcknowledger: (@MainActor (ShowID, String, PublicationStamp) async -> Void)?
+    /// Debug-only fault injection for the format update (#159, `-WWUITestFailFormatUpdate`); `nil` in normal use.
+    static var debugFormatUpdateHooks: (any PublicationHooks)?
+    /// Debug-only: runs before a show file is decoded (F-OLDER-BAD seeds an M1-era recovery checkpoint for it).
+    static var debugBeforeRead: (@MainActor (URL) -> Void)?
     #endif
     /// ST-11: after a failed save with autosave ON, WaveWrangler retries automatically at most this often.
     static var saveRetryInterval: TimeInterval = 30
@@ -67,6 +71,12 @@ final class ShowDocument: NSDocument {
     /// The key of the candidate being saved when it isn't this document's current show (a copy with a new ID).
     private var pendingCandidateKey: DocumentKey?
     var documentKey: DocumentKey { .show(store.model.show.id) }
+    /// #159: the exact older-format bytes this document read; the update's "unchanged" check compares against them.
+    private var formatUpdateOriginal: Data?
+    /// #159: the D14 sheet is still to be shown (once, after the window's first frame).
+    var formatUpdatePromptPending = false
+    /// #159: an older-format show is open read-only until its update has published (D14/D15).
+    var isAwaitingFormatUpdate: Bool { status.formatUpdate != nil }
     private var gate: AutosaveGate { PersistenceEnvironment.autosaveGate }
     private var recovery: RecoveryStore { PersistenceEnvironment.recovery }
 
@@ -120,7 +130,12 @@ final class ShowDocument: NSDocument {
         let interval = OpenSignposts.begin("document.read")
         defer { OpenSignposts.end(interval) }
         let data = try Data(contentsOf: url)
-        try MainActor.assumeIsolated { try load(data, url: url) }
+        try MainActor.assumeIsolated {
+            #if DEBUG
+            Self.debugBeforeRead?(url)
+            #endif
+            try load(data, url: url)
+        }
     }
 
     override func read(from data: Data, ofType typeName: String) throws {
@@ -128,10 +143,17 @@ final class ShowDocument: NSDocument {
     }
 
     private func load(_ data: Data, url: URL?) throws {
-        let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery)
+        // A schema 1 show reports `.needsMigration`: it opens upgraded in memory, read-only, and nothing is written
+        // until the user chooses Update (#159). Schema 1 recovery checkpoints stay offerable, upgraded in memory.
+        let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery,
+                                    migratableSchemas: ShowSchemaMigration.migratableSchemas,
+                                    recoveryDecode: { try ShowSchemaMigration.decodeUpgradingOlder($0) })
         let outcome = OpenSignposts.measure("document.decode") { opener.outcome(for: data, url: url) }
         switch outcome {
         case let .editable(document, fingerprint):
+            formatUpdateOriginal = nil
+            formatUpdatePromptPending = false
+            status.setFormatUpdate(nil)
             store.replaceLoadedModel(document.payload)
             publication = document.publication
             onDiskBase = fingerprint
@@ -146,8 +168,24 @@ final class ShowDocument: NSDocument {
         case let .refusedNewerFormat(found, supported, _):
             // Refuse with reason; nothing is ever written to a newer document.
             throw PersistenceError.unknownNewerSchema(found: found, supported: supported)
-        case let .needsMigration(schema, _):
-            throw PersistenceError.unsupportedOlderSchema(found: schema, minimum: DocumentFormat.show.minimumReadableSchemaVersion)
+        case let .needsMigration(_, fingerprint):
+            // #159 D14: view the whole older show upgraded in memory (the same decode the migration stages), read-only.
+            // An older file that can't be decoded and verified whole is refused as damaged, unchanged, with its
+            // validated recovery checkpoints offered as a new copy (M1's "Open Recovered Copy").
+            let upgraded: DecodedDocument<ShowDocumentModel>
+            switch opener.olderShowForViewing(data, url: url) {
+            case let .viewable(document): upgraded = document
+            case let .damaged(error, candidates): throw DocumentRecoveryOffer.error(for: error, candidates: candidates)
+            }
+            store.replaceLoadedModel(upgraded.payload)
+            publication = upgraded.publication
+            onDiskBase = fingerprint
+            formatUpdateOriginal = data
+            formatUpdatePromptPending = true
+            status.setFormatUpdate(.needed)
+            status.set(.clean(revision: upgraded.revision))
+            // Edit checkpoints are set aside and offered only once the update has published (restoring is an edit).
+            scheduleAfterFirstFrame()
         case let .damaged(error, candidates):
             throw DocumentRecoveryOffer.error(for: error, candidates: candidates)
         case let .unreadable(kind, detail, _):
@@ -174,6 +212,12 @@ final class ShowDocument: NSDocument {
         // The model is already current (edits apply live); end any coalesced burst so that an edit made
         // after this save registers new undo and marks the document dirty again.
         store.endCoalescing()
+        // #159: nothing writes the older show's file, or adopts another one, before its update has published.
+        guard FormatUpdatePolicy.allowsSave(status.formatUpdate, adoptsPublication: Self.adoptsPublication(saveOperation),
+                                            toOwnFile: url.standardizedFileURL == fileURL?.standardizedFileURL) else {
+            completionHandler(formatUpdateSaveRefusal())
+            return
+        }
         if let request = copyElsewhere, saveOperation == .saveAsOperation {
             saveCopy(request, to: url, ofType: typeName, completionHandler: completionHandler)
             return
@@ -473,6 +517,10 @@ final class ShowDocument: NSDocument {
 
     override func writeSafely(to url: URL, ofType typeName: String, for saveOperation: NSDocument.SaveOperationType) throws {
         try MainActor.assumeIsolated {
+            guard FormatUpdatePolicy.allowsSave(status.formatUpdate, adoptsPublication: Self.adoptsPublication(saveOperation),
+                                                toOwnFile: url.standardizedFileURL == fileURL?.standardizedFileURL) else {
+                throw formatUpdateSaveRefusal()
+            }
             let candidate = try pendingCandidate ?? coder.encodeDocument(store.model, revision: revision + 1, publicationID: UUID())
             pendingCandidate = candidate
             let inPlace = (saveOperation == .saveOperation || saveOperation == .autosaveInPlaceOperation)
@@ -597,6 +645,7 @@ final class ShowDocument: NSDocument {
         let offer = EditCheckpointOffer.assess(
             recovery.offeredEditCheckpoints(for: documentKey),
             documentID: documentKey.rawValue, onDisk: onDiskBase, coder: coder,
+            decodeOlder: ShowSchemaMigration.decodeUpgradingOlder,
             belongsToDocument: { $0.show.id == showID }
         ).excluding(restoredOfferURLs.union(setAsideOfferURLs))
         status.setEditCheckpointOffer(offer.isEmpty ? nil : offer)
@@ -750,6 +799,9 @@ final class ShowDocument: NSDocument {
         super.showWindows()
         if firstShow { OpenSignposts.endAfterCommit(interval) }
         scheduleDeferredWorkAfterFrame()
+        // #159: a D14 sheet that is still pending (it couldn't appear on an earlier display) is asked on the next turn,
+        // once the window is on screen, whatever the deferred work above has already done.
+        DispatchQueue.main.async { [weak self] in self?.presentFormatUpdatePromptIfNeeded() }
     }
 
     /// Called by the show window when it is attached, on every display path (including state restoration).
@@ -767,7 +819,104 @@ final class ShowDocument: NSDocument {
         afterFirstFrameScheduled = false
         OpenSignposts.measure("document.deferred") {
             if let url = fileURL { status.setProviderConflicts(ProviderConflictReport.inspect(url)) }
+            if !isAwaitingFormatUpdate { refreshEditCheckpointOffer() }
+        }
+        presentFormatUpdatePromptIfNeeded()
+    }
+
+    // MARK: - Format update (#159, C5)
+
+    private func formatUpdateSaveRefusal() -> CocoaError {
+        CocoaError(.fileWriteNoPermission, userInfo: [
+            NSLocalizedDescriptionKey: "“\(showFileName)” needs to be updated to the current format before it can be saved.",
+            NSLocalizedRecoverySuggestionErrorKey: "Close and reopen the show, then choose Update. The original file wasn't changed.",
+        ])
+    }
+
+    /// Update (D14) and Try Again (D15): runs the C5 migration off the main thread (backup → stage → validate → C3
+    /// publication, coordinated on behalf of this document), then reads the file back independently and decides from
+    /// what is on disk: a valid update of this show is adopted; exactly the original bytes mean D15; anything else is
+    /// reported without claiming the original is unchanged.
+    func updateFormat() {
+        guard FormatUpdatePolicy.allowsUpdateAttempt(status.formatUpdate), let url = fileURL, let original = formatUpdateOriginal else { return }
+        status.setFormatUpdate(.updating)
+        let key = documentKey
+        var hooks: any PublicationHooks = NoPublicationHooks()
+        #if DEBUG
+        if let debugHooks = Self.debugFormatUpdateHooks { hooks = debugHooks }
+        #endif
+        let coordination = PresenterFileCoordination(presenter: self)
+        let migrator = DocumentMigrator.show(publisher: DocumentPublisher(coder: coder, coordination: coordination, recovery: recovery, hooks: hooks))
+        // The activity keeps NSDocument's own saves, reverts and closes behind the update; the block's thread isn't
+        // documented, so it hops to the main actor explicitly.
+        performActivity(withSynchronousWaiting: false) { [weak self] finishActivity in
+            let finish = ActivityCompletion(finishActivity)
+            Task { @MainActor in
+                let attempt = await Task.detached(priority: .userInitiated) {
+                    let errorDetail: String?
+                    do {
+                        _ = try migrator.migrate(url, key: key)
+                        errorDetail = nil
+                    } catch {
+                        errorDetail = Self.formatUpdateDetail(error)
+                    }
+                    let onDisk = try? coordination.coordinateReading(at: url) { try Data(contentsOf: $0) }
+                    return (errorDetail: errorDetail, onDisk: onDisk)
+                }.value
+                self?.finishFormatUpdate(errorDetail: attempt.errorDetail, original: original, onDisk: attempt.onDisk, url: url)
+                finish.run()
+            }
+        }
+    }
+
+    /// NSDocument's activity completion handler, carried to the main actor (it may be called from any thread).
+    private struct ActivityCompletion: @unchecked Sendable {
+        let run: () -> Void
+        init(_ run: @escaping () -> Void) { self.run = run }
+    }
+
+    private nonisolated static func formatUpdateDetail(_ error: any Error) -> String {
+        if case let .invalidCandidate(reason) = error as? PublicationError, let description = reason.errorDescription {
+            return description
+        }
+        if error is PublicationError { return error.localizedDescription }
+        return (error as NSError).localizedFailureReason ?? error.localizedDescription
+    }
+
+    private func finishFormatUpdate(errorDetail: String?, original: Data, onDisk: Data?, url: URL) {
+        guard status.formatUpdate == .updating else { return }
+        guard fileURL?.standardizedFileURL == url.standardizedFileURL else {
+            // The show was moved or renamed during the update: what's at its new location wasn't checked here.
+            formatUpdateOriginal = nil
+            status.setFormatUpdate(.interrupted(reason: "its file was moved while WaveWrangler was updating it. Close and reopen it to see what's there now"))
+            return
+        }
+        let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery, identityOf: { .show($0.show.id) })
+        var adopted: (document: DecodedDocument<ShowDocumentModel>, fingerprint: RevisionFingerprint)?
+        if let onDisk, case let .editable(document, fingerprint) = opener.outcome(for: onDisk, url: url, key: documentKey) {
+            adopted = (document, fingerprint)
+        }
+        switch FormatUpdateOutcome.classify(errorDetail: errorDetail, original: original, onDiskNow: onDisk,
+                                            onDiskIsCurrentFormatOfThisShow: adopted != nil) {
+        case .updated:
+            guard let adopted else { return }
+            store.replaceLoadedModel(adopted.document.payload)
+            publication = adopted.document.publication
+            onDiskBase = adopted.fingerprint
+            fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            formatUpdateOriginal = nil
+            status.setFormatUpdate(nil)
+            status.set(.saved(revision: adopted.document.revision, at: Date()))
+            try? recovery.setAsideEditCheckpoints(for: documentKey)
             refreshEditCheckpointOffer()
+            acknowledgeToLibrary(adopted.document.publication)
+        case let .unchanged(detail):
+            status.setFormatUpdate(.failed(detail: detail))
+        case .changedElsewhere:
+            formatUpdateOriginal = nil
+            status.setFormatUpdate(.interrupted(
+                reason: "its file was changed by something else while WaveWrangler was updating it. Close and reopen it to see what's there now"
+            ))
         }
     }
 

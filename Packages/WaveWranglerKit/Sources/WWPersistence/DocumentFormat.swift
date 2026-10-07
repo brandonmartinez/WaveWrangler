@@ -23,7 +23,9 @@ public struct DocumentFormat: Sendable, Equatable {
         identifier: "com.brandonmartinez.wavewrangler.show",
         filenameExtension: "wwshow",
         currentSchemaVersion: SchemaVersion.show,
-        minimumReadableSchemaVersion: 1
+        // Schema 1 (bare channel index, 0 as placeholder) opens as `.needsMigration` and changes only through
+        // the consented C5 migration (`ShowSchemaMigration`, `DocumentMigrator.show`).
+        minimumReadableSchemaVersion: SchemaVersion.show
     )
 
     /// Canonical library document (`.wwlibrary`). Declared now; storage/location lands with the library owner.

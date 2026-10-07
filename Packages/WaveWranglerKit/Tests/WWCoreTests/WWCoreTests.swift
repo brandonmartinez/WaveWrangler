@@ -26,7 +26,7 @@ struct Fixture {
     }
 
     func channel(_ source: SourceRecord, _ index: Int) -> ChannelReference {
-        ChannelReference(sourceID: source.id, channel: index)
+        ChannelReference(sourceID: source.id, channel: .known(index))
     }
 }
 
@@ -58,6 +58,24 @@ struct AssignmentTests {
         #expect(result.episode(f.episode.id)?.source(f.unknownChannels.id)?.observations.channelCount == .unknown)
     }
 
+    @Test func unknownChannelIsExplicitAndNeverRangeCheckedAsChannelZero() throws {
+        let unknown = ChannelReference(sourceID: f.stereo.id, channel: .unknown)
+        #expect(ChannelReference(sourceID: f.stereo.id, statedChannel: nil) == unknown)
+        #expect(ChannelReference(sourceID: f.stereo.id, statedChannel: 0) == f.channel(f.stereo, 0))
+        #expect(unknown != f.channel(f.stereo, 0), "unknown is never channel 0")
+        #expect(unknown.description == "\(f.stereo.id)#unknown")
+        let result = try f.model.assigningPrimary(unknown, to: f.alice.id, in: f.episode.id, confirmation: .provisional)
+        #expect(result.episode(f.episode.id)?.assignment(for: f.alice.id)?.primary?.channel == .unknown)
+        #expect(result.validationIssues().isEmpty)
+        // Two speakers sharing the same unknown-channel primary still conflict.
+        var model = f.model
+        model.episodes[0].speakerAssignments = [
+            SpeakerAssignment(speakerID: f.alice.id, primary: unknown),
+            SpeakerAssignment(speakerID: f.bob.id, primary: unknown),
+        ]
+        #expect(model.validationIssues().map(\.code).contains(.conflictingPrimary))
+    }
+
     @Test func refusesNegativeChannel() {
         #expect(throws: DomainError.invalidChannel(f.channel(f.unknownChannels, -1))) {
             try f.model.assigningPrimary(f.channel(f.unknownChannels, -1), to: f.alice.id, in: f.episode.id, confirmation: .userConfirmed)
@@ -69,7 +87,7 @@ struct AssignmentTests {
         #expect(throws: DomainError.speakerNotFound(stranger)) {
             try f.model.assigningPrimary(f.channel(f.stereo, 0), to: stranger, in: f.episode.id, confirmation: .userConfirmed)
         }
-        let missing = ChannelReference(sourceID: SourceID(), channel: 0)
+        let missing = ChannelReference(sourceID: SourceID(), channel: .known(0))
         #expect(throws: DomainError.sourceNotFound(missing.sourceID)) {
             try f.model.assigningPrimary(missing, to: f.alice.id, in: f.episode.id, confirmation: .userConfirmed)
         }
@@ -203,7 +221,7 @@ struct ValidationTests {
         model.episodes[0].speakerAssignments = [
             SpeakerAssignment(speakerID: f.alice.id, primary: f.channel(f.stereo, 0)),
             SpeakerAssignment(speakerID: f.bob.id, primary: f.channel(f.stereo, 0)),
-            SpeakerAssignment(speakerID: SpeakerID(), primary: ChannelReference(sourceID: SourceID(), channel: 0)),
+            SpeakerAssignment(speakerID: SpeakerID(), primary: ChannelReference(sourceID: SourceID(), channel: .known(0))),
         ]
         let codes = Set(model.validationIssues().map(\.code))
         #expect(codes.isSuperset(of: [.conflictingPrimary, .danglingReference]))
