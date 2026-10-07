@@ -34,10 +34,15 @@ public struct MigrationReceipt: Sendable, Equatable {
 public struct DocumentMigrator<Coder: CanonicalDocumentCoding>: Sendable {
     public let publisher: DocumentPublisher<Coder>
     public let steps: [Int: MigrationStep<Coder.Payload>]
+    /// Read-only identity of the original bytes (`nil` when they can't be read). When set, an original whose
+    /// identity differs from the `key` passed to `migrate` is refused before any backup or other write, so another
+    /// document found at the location is never migrated, nor backed up under the wrong key.
+    public let identify: (@Sendable (Data) -> DocumentKey?)?
 
-    public init(publisher: DocumentPublisher<Coder>, steps: [MigrationStep<Coder.Payload>]) {
+    public init(publisher: DocumentPublisher<Coder>, steps: [MigrationStep<Coder.Payload>], identify: (@Sendable (Data) -> DocumentKey?)? = nil) {
         self.publisher = publisher
         self.steps = Dictionary(uniqueKeysWithValues: steps.map { ($0.fromSchema, $0) })
+        self.identify = identify
     }
 
     public var migratableSchemas: Set<Int> { Set(steps.keys) }
@@ -56,6 +61,9 @@ public struct DocumentMigrator<Coder: CanonicalDocumentCoding>: Sendable {
         let originalFingerprint = RevisionFingerprint(of: original)
         guard let schema = originalFingerprint.schemaVersion, let step = steps[schema] else {
             throw PublicationError.failed(stage: .migrationOriginalRead, kind: .other, detail: "no migration from schema \(originalFingerprint.schemaVersion.map(String.init) ?? "?")")
+        }
+        if let identify, let found = identify(original), found != key {
+            throw PublicationError.invalidCandidate(.identityMismatch(expected: key.rawValue, found: found.rawValue))
         }
 
         try publisher.hooks.reached(.migrationOriginalRead)

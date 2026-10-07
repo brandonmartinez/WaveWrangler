@@ -537,7 +537,8 @@ private struct SpeakerInspector: View {
             }
     }
 
-    private static func tag(_ channel: ChannelReference) -> String { "\(channel.sourceID)#\(channel.channel)" }
+    /// `<source>#<index>` or `<source>#unknown` (schema 2: an unknown channel is never tagged as index 0).
+    private static func tag(_ channel: ChannelReference) -> String { channel.description }
 
     private func commit() {
         let trimmed = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)

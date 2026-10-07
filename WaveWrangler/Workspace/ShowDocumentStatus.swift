@@ -13,7 +13,8 @@ extension ShowDocument: DocumentStatusProviding {
             autosaveEnabled: AutosavePolicyController.shared.isEnabled,
             folderDisplayName: fileURL?.deletingLastPathComponent().lastPathComponent,
             providerConflictVersions: status.saveStatus.providerConflicts.unresolvedVersionCount,
-            retryingAutomatically: status.retryingAutomatically
+            retryingAutomatically: status.retryingAutomatically,
+            formatUpdate: status.formatUpdate
         )
     }
 }

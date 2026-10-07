@@ -4,13 +4,14 @@ import Foundation
 // channels, speakers, primaries/backups, source removal/order and import batches.
 //
 // Every operation returns a new value or throws without partial mutation, never touches referenced
-// originals and never reads media. Schema v1 encodings used here:
+// originals and never reads media. Schema 2 encodings used here:
 // - **Epoch number** `n` of a grouped source is the 1-based position of its `placement.epochID` in its
 //   group's `epochs`. Groups gain epochs labelled "1", "2", … as needed; unused epochs are kept.
 // - **Stated channel.** M1 never observes channel counts. A channel the user has stated for a source is
 //   recorded as a `ChannelLabel` in `placement.channelLabels`; when none is stated the channel is
-//   *unknown*. Speaker channel references of a source without a stated channel use index 0 as a
-//   placeholder that the UI always presents as "Unknown", never as "channel 1".
+//   *unknown*. Speaker channel references of a source follow its stated channel: `.known(n)` when the
+//   user stated channel `n`, otherwise an explicit `.unknown` channel (never index 0 — schema 1's
+//   placeholder is converted by the C5 show migration).
 
 /// One source to add in an import batch with the user-confirmed recorder group and speaker names
 /// (`nil` = Ungrouped / Unassigned). Unconfirmed suggestions are never passed here.
@@ -149,14 +150,14 @@ extension ShowDocumentModel {
 
     /// Records the channel the user says carries speech (`nil` = Unknown). Never checked against the file.
     public func settingStatedChannel(_ channel: Int?, forSource sourceID: SourceID, in episodeID: EpisodeID) throws(DomainError) -> ShowDocumentModel {
-        if let channel, channel < 0 { throw .invalidChannel(ChannelReference(sourceID: sourceID, channel: channel)) }
+        if let channel, channel < 0 { throw .invalidChannel(ChannelReference(sourceID: sourceID, channel: .known(channel))) }
         return try updatingSetup(episodeID) { (episode: inout Episode) throws(DomainError) in
             guard let index = episode.sources.firstIndex(where: { $0.id == sourceID }) else { throw .sourceNotFound(sourceID) }
             if let count = episode.sources[index].observations.channelCount.value, let channel, channel >= count {
-                throw .channelOutOfRange(ChannelReference(sourceID: sourceID, channel: channel), channelCount: count)
+                throw .channelOutOfRange(ChannelReference(sourceID: sourceID, channel: .known(channel)), channelCount: count)
             }
             episode.sources[index].placement.channelLabels = channel.map { [ChannelLabel(channel: $0, label: "")] } ?? []
-            let target = ChannelReference(sourceID: sourceID, channel: channel ?? 0)
+            let target = ChannelReference(sourceID: sourceID, statedChannel: channel)
             for assignmentIndex in episode.speakerAssignments.indices {
                 var assignment = episode.speakerAssignments[assignmentIndex]
                 if assignment.primary?.sourceID == sourceID { assignment.primary = target }
@@ -230,7 +231,7 @@ extension ShowDocumentModel {
             }
             guard !alreadyAssigned else { return }
             var assignment = episode.assignment(for: speakerID) ?? SpeakerAssignment(speakerID: speakerID)
-            assignment.backups.append(ChannelReference(sourceID: sourceID, channel: episode.statedChannel(of: sourceID) ?? 0))
+            assignment.backups.append(ChannelReference(sourceID: sourceID, statedChannel: episode.statedChannel(of: sourceID)))
             Self.set(assignment, in: &episode)
             Self.setRole(.backup, .provisional, of: sourceID, in: &episode)
         }

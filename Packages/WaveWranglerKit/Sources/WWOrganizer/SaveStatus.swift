@@ -33,6 +33,8 @@ public enum DocumentSaveState: Sendable, Equatable {
     case readOnlyDamaged
     /// D14. The update sheet is shown on open; the window stays read-only until the user chooses.
     case updateNeeded
+    /// D14 after Update: the update is running. Still read-only, and nothing to choose until it finishes.
+    case updatingFormat
     /// D15.
     case updateFailed
     /// D16.
@@ -84,14 +86,14 @@ extension DocumentSaveState {
     public var impliesUnsavedChanges: Bool {
         switch self {
         case .edited, .saving, .notConfirmed, .conflict, .locationUnavailable, .diskFull, .failed, .cancelled: true
-        case .checking, .unknown, .saved, .recovered, .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded,
+        case .checking, .unknown, .saved, .recovered, .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updatingFormat,
              .updateFailed, .readOnlyLocation, .readOnly: false
         }
     }
 
     public var isReadOnly: Bool {
         switch self {
-        case .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updateFailed, .readOnlyLocation, .readOnly: true
+        case .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updatingFormat, .updateFailed, .readOnlyLocation, .readOnly: true
         default: false
         }
     }
@@ -130,6 +132,8 @@ public enum SaveStatusAction: String, Sendable, Equatable, CaseIterable {
     case revertToEarlierVersion = "Revert To an Earlier Version…"
     case showDetails = "Show Details"
     case duplicate = "Duplicate…"
+    /// D14 fallback: asks "Update to the current format?" again (the sheet can't appear until a window is visible).
+    case updateFormat = "Update…"
 }
 
 /// Persistent message bar content (IA §6, ST-05: never time-boxed).
@@ -266,7 +270,14 @@ public struct SaveStatusPresentation: Sendable, Equatable {
         case .updateNeeded:
             text = "Read-only"
             symbol = "lock.fill"
-            popover = "WaveWrangler needs to update this show before you can edit it. The original is kept unchanged as a backup next to it."
+            popover = FormatUpdatePrompt.body
+            // A keyboard-reachable way back to the D14 sheet, whatever happened to its first presentation.
+            actions = [.updateFormat]
+            suffix = false
+        case .updatingFormat:
+            text = "Updating…"
+            symbol = nil
+            popover = "WaveWrangler is updating “\(showName)” to the current format. You can view it read-only until the update finishes."
             actions = []
             suffix = false
         case .updateFailed:

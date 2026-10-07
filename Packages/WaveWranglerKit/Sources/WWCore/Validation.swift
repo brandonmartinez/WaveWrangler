@@ -83,7 +83,7 @@ extension ShowDocumentModel {
             }
             if let primary = assignment.primary {
                 if let other = primaries[primary] {
-                    issues.append(.init(.conflictingPrimary, "\(primary.sourceID)#\(primary.channel) for \(other) and \(assignment.speakerID)"))
+                    issues.append(.init(.conflictingPrimary, "\(primary) for \(other) and \(assignment.speakerID)"))
                 }
                 primaries[primary] = assignment.speakerID
                 if assignment.backups.contains(primary) {
@@ -98,11 +98,13 @@ extension ShowDocumentModel {
         guard let source = episode.source(channel.sourceID) else {
             return [.init(.danglingReference, "episode \(episode.id) channel source \(channel.sourceID)")]
         }
-        if channel.channel < 0 {
-            return [.init(.invalidChannel, "\(channel.sourceID)#\(channel.channel)")]
+        // An unknown channel is a valid "not yet stated" reference; only a known index is range-checked.
+        guard let index = channel.channel.value else { return [] }
+        if index < 0 {
+            return [.init(.invalidChannel, "\(channel)")]
         }
-        if let count = source.observations.channelCount.value, channel.channel >= count {
-            return [.init(.invalidChannel, "\(channel.sourceID)#\(channel.channel) >= \(count)")]
+        if let count = source.observations.channelCount.value, index >= count {
+            return [.init(.invalidChannel, "\(channel) >= \(count)")]
         }
         return []
     }

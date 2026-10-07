@@ -17,7 +17,8 @@ public enum SymbolCatalog {
             .checking, .unknown(reason: "x"), .saved(at: date, folderDisplayName: nil), .edited, .saving(cancellable: true),
             .notConfirmed, .conflict(changedAt: nil), .locationUnavailable, .diskFull(volumeName: "x"),
             .failed(reason: "x"), .cancelled, .recovered(incompleteSaveAt: nil, openedVersionAt: nil),
-            .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updateFailed, .readOnlyLocation, .readOnly(reason: "x"),
+            .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updatingFormat, .updateFailed, .readOnlyLocation,
+            .readOnly(reason: "x"),
         ]
         for state in saveStates {
             for autosave in [true, false] {

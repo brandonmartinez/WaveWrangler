@@ -82,15 +82,30 @@ public struct ChannelLabel: Sendable, Equatable, Codable {
     }
 }
 
-/// A specific channel of a specific logical source.
-public struct ChannelReference: Sendable, Hashable, Codable {
+/// A channel of a specific logical source.
+///
+/// Since show schema 2 the channel is an explicit `Knowledge<Int>`: `.known(n)` is a zero-based channel
+/// index a person stated (or the generic API recorded), and `.unknown` means "this source, channel not
+/// yet stated". `.unknown` is never encoded as, or treated as, channel 0. Schema 1 stored a bare index and
+/// used 0 as a placeholder; `ShowSchemaMigration` (WWPersistence) converts that placeholder to `.unknown`.
+public struct ChannelReference: Sendable, Hashable, Codable, CustomStringConvertible {
     public var sourceID: SourceID
-    /// Zero-based channel index.
-    public var channel: Int
+    /// Zero-based channel index when known; `.unknown` until a person states it.
+    public var channel: Knowledge<Int>
 
-    public init(sourceID: SourceID, channel: Int) {
+    public init(sourceID: SourceID, channel: Knowledge<Int>) {
         self.sourceID = sourceID
         self.channel = channel
+    }
+
+    /// A reference to a stated zero-based channel, or to an unknown channel of the source when `nil`.
+    public init(sourceID: SourceID, statedChannel: Int?) {
+        self.init(sourceID: sourceID, channel: statedChannel.map { .known($0) } ?? .unknown)
+    }
+
+    /// `<source>#<zero-based index>` or `<source>#unknown`; for diagnostics, never shown to people.
+    public var description: String {
+        "\(sourceID)#\(channel.value.map(String.init) ?? "unknown")"
     }
 }
 

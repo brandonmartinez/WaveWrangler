@@ -196,7 +196,8 @@ struct REF019Case {
         let known = source.observations.channelCount.value
         // Mostly valid channels; sometimes deliberately out of range (refusal expected when known).
         let channelIndex = chance(15) ? (known ?? 0) + int(0...2) : int(0...max(0, (known ?? 2) - 1))
-        let channel = ChannelReference(sourceID: source.id, channel: channelIndex)
+        // Sometimes an explicit unknown channel (schema 2): valid for any existing source, never channel 0.
+        let channel = ChannelReference(sourceID: source.id, channel: chance(10) ? .unknown : .known(channelIndex))
         let speaker = truth.speakers[int(0...(truth.speakers.count - 1))].id
         let confirmation: WWCore.Confirmation = chance(40) ? .userConfirmed : .provisional
         switch int(0...9) {
@@ -217,8 +218,9 @@ struct REF019Case {
         guard let episode = model.episode(truth.episodeID) else { return true }
         func channelInvalid(_ channel: ChannelReference) -> Bool {
             guard let source = truth.sources.first(where: { $0.id == channel.sourceID }) else { return true }
-            if channel.channel < 0 { return true }
-            if let count = source.observations.channelCount.value, channel.channel >= count { return true }
+            guard let index = channel.channel.value else { return false }
+            if index < 0 { return true }
+            if let count = source.observations.channelCount.value, index >= count { return true }
             return false
         }
         switch correction {
@@ -274,8 +276,9 @@ struct REF019Case {
         // Channel references stay within known channel counts.
         for assignment in post.speakerAssignments {
             for channel in [assignment.primary].compactMap({ $0 }) + assignment.backups {
-                if let count = truth.sources.first(where: { $0.id == channel.sourceID })?.observations.channelCount.value {
-                    check(channel.channel < count, "channel \(channel.channel) beyond known count \(count)")
+                if let count = truth.sources.first(where: { $0.id == channel.sourceID })?.observations.channelCount.value,
+                   let index = channel.channel.value {
+                    check(index < count, "channel \(channel) beyond known count \(count)")
                 }
             }
         }
@@ -364,9 +367,11 @@ struct OrganizationFixtureTests {
         let speaker = Speaker(name: "S")
         let truth = REF019Truth(showID: ShowID(), episodeID: EpisodeID(), groups: [group], sources: [two, unknown], speakers: [speaker])
         let model = ShowDocumentModel(show: Show(title: "T"), speakers: [speaker], episodes: [Episode(id: truth.episodeID, title: "E", recorderGroups: [group], sources: [two, unknown])])
-        #expect(REF019Case.expectedRefusal(.assignPrimary(ChannelReference(sourceID: two.id, channel: 2), speaker.id, .provisional), model, truth))
-        #expect(!REF019Case.expectedRefusal(.assignPrimary(ChannelReference(sourceID: unknown.id, channel: 7), speaker.id, .provisional), model, truth))
-        #expect(REF019Case.expectedRefusal(.removeBackup(ChannelReference(sourceID: two.id, channel: 0), speaker.id), model, truth))
+        #expect(REF019Case.expectedRefusal(.assignPrimary(ChannelReference(sourceID: two.id, channel: .known(2)), speaker.id, .provisional), model, truth))
+        #expect(!REF019Case.expectedRefusal(.assignPrimary(ChannelReference(sourceID: unknown.id, channel: .known(7)), speaker.id, .provisional), model, truth))
+        #expect(REF019Case.expectedRefusal(.removeBackup(ChannelReference(sourceID: two.id, channel: .known(0)), speaker.id), model, truth))
+        #expect(!REF019Case.expectedRefusal(.assignPrimary(ChannelReference(sourceID: two.id, channel: .unknown), speaker.id, .provisional), model, truth),
+                "an unknown channel is never range-checked as channel 0")
     }
 
     @Test func ref019() throws {

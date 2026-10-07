@@ -59,7 +59,7 @@ struct SaveStatusTests {
         .edited, .saving(cancellable: false), .notConfirmed, .conflict(changedAt: nil), .locationUnavailable,
         .diskFull(volumeName: "Data"), .failed(reason: "WaveWrangler doesn't have permission to save in this folder"),
         .cancelled, .recovered(incompleteSaveAt: date, openedVersionAt: date), .readOnlyNewerFormat, .readOnlyDamaged,
-        .updateNeeded, .updateFailed, .readOnlyLocation, .readOnly(reason: "it's a recovered copy"),
+        .updateNeeded, .updatingFormat, .updateFailed, .readOnlyLocation, .readOnly(reason: "it's a recovered copy"),
     ]
 
     private func present(_ state: DocumentSaveState, autosave: Bool = true, retrying: Bool = false) -> SaveStatusPresentation {
@@ -237,5 +237,40 @@ struct ProviderConflictStatusTests {
             let none = SaveStatusPresentation(DocumentSaveStatus(state: state, autosaveEnabled: true), showName: "Show")
             #expect(!none.popoverText.contains("cloud service also kept") && !none.accessibilityValue.contains("other version"))
         }
+    }
+}
+
+@Suite("Format update prompt (D14/D15, #159)")
+struct FormatUpdatePromptTests {
+    @Test func promptWordingAndButtonOrder() {
+        let prompt = FormatUpdatePrompt(showName: "The Daily Wrangle")
+        #expect(prompt.title == "Update “The Daily Wrangle” to the current format?")
+        #expect(prompt.buttons == [.update, .openReadOnly, .cancel])
+        #expect(prompt.buttons.map(\.rawValue) == ["Update", "Open Read-Only", "Cancel"])
+        // The C5 backup is in this Mac's recovery store: never claim it's next to the show.
+        #expect(prompt.body.contains("backup on this Mac") && !prompt.body.contains("next to it"))
+    }
+
+    @Test func updateNeededAndFailedAreReadOnlyAndHonest() {
+        let needed = SaveStatusPresentation(DocumentSaveStatus(state: .updateNeeded, autosaveEnabled: true), showName: "Show")
+        #expect(DocumentSaveState.updateNeeded.isReadOnly && DocumentSaveState.updateFailed.isReadOnly)
+        #expect(needed.itemText == "Read-only" && needed.popoverText.hasPrefix(FormatUpdatePrompt.body))
+        // The D14 sheet stays reachable from the status item if its first presentation didn't happen or was dismissed.
+        #expect(needed.actions == [.updateFormat] && SaveStatusAction.updateFormat.rawValue == "Update…")
+        #expect(needed.messageBar == nil)
+        // While the update runs there's nothing to choose: no dead Update… button, still read-only, not dirty.
+        let updating = SaveStatusPresentation(DocumentSaveStatus(state: .updatingFormat, autosaveEnabled: true), showName: "Show")
+        #expect(DocumentSaveState.updatingFormat.isReadOnly && !DocumentSaveState.updatingFormat.impliesUnsavedChanges)
+        #expect(updating.actions.isEmpty && updating.messageBar == nil && updating.isReadOnly)
+        #expect(updating.itemText == "Updating…" && updating.symbolName == nil)
+        #expect(updating.accessibilityValue == "Updating…. WaveWrangler is updating “Show” to the current format.")
+        #expect(CloseDecision(state: .updatingFormat, autosaveEnabled: true, showName: "Show") == .closeImmediately)
+        let failed = SaveStatusPresentation(DocumentSaveStatus(state: .updateFailed, autosaveEnabled: true), showName: "Show")
+        #expect(failed.itemText == "Read-only")
+        #expect(failed.messageBar?.heading == "Couldn't update this show")
+        #expect(failed.messageBar?.body == "The original is unchanged. You can view it read-only.")
+        #expect(failed.messageBar?.actions == [.tryAgain, .showDetails])
+        // Not colour-only: a distinct symbol and text accompany the tint.
+        #expect(failed.symbolName == "xmark.octagon" && failed.accessibilityValue.contains("Read-only"))
     }
 }
