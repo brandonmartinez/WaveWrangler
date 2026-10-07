@@ -128,6 +128,37 @@ if ! grep -q 'peaks well under 1 GiB" passed' "$PIPELINE_LOG"; then
 fi
 rm -f "$PIPELINE_LOG"
 
+# WW-023 full-length aligned-asset envelope: a mixed-rate, three-recorder 75-minute group is rendered through
+# the real pipeline path. At Debug speed it cannot fit CI's 60-minute job, so CI relies on the always-on short
+# path coverage and this recorded local gate. Developer runs execute it alone in an optimized, testable build.
+if [[ "${CI:-}" == true ]]; then
+  echo "==> pipeline 75-minute render pass skipped on CI (local bounded measurement; see ww-021 evidence)"
+else
+  echo "==> swift test pipeline 75-minute render pass: PipelineRender75Tests"
+  PIPELINE_RENDER_LOG="$(mktemp)"
+  WW_PIPELINE_RENDER75=1 swift test \
+    --package-path "$ROOT/Packages/WaveWranglerKit" \
+    --scratch-path "$ROOT/.build/swiftpm" \
+    --configuration release \
+    -Xswiftc -enable-testing \
+    -Xswiftc -DDEBUG \
+    --jobs "$JOBS" \
+    --no-parallel \
+    --filter 'WWAlignPipelineTests\.PipelineRender75Tests' 2>&1 | tee "$PIPELINE_RENDER_LOG"
+  PIPELINE_RENDER_REQUIRED=(
+    "A mixed-rate three-recorder group renders all six channels for 75 minutes within the engineering envelope"
+    "Cancellation remains responsive after a 75-minute aligned render has begun"
+  )
+  for pipeline_render_test in "${PIPELINE_RENDER_REQUIRED[@]}"; do
+    if ! grep -q "Test \"$pipeline_render_test\" passed" "$PIPELINE_RENDER_LOG"; then
+      echo "pipeline 75-minute render pass: '$pipeline_render_test' did not run and pass" >&2
+      rm -f "$PIPELINE_RENDER_LOG"
+      exit 1
+    fi
+  done
+  rm -f "$PIPELINE_RENDER_LOG"
+fi
+
 # Timing gates (WW-005 ≤2 s edit-to-quiescent checkpoint, publication cost, library scale p95), the WW-016
 # estimator throughput report and the WW-018 render family peak run one at a time after the parallel suite, so
 # the fault harness's own I/O does not distort the measurements.
