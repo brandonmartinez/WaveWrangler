@@ -62,7 +62,7 @@ final class ContrastEvidenceUITests: XCTestCase {
             }
             // Audit without any contrast waiver: which elements does the audit flag in this appearance?
             var flagged: [String] = []
-            try app.performAccessibilityAudit(for: [.contrast]) { issue in
+            try AcceptanceAudit.perform(app, kinds: [.contrast], surface: "Library \(appearance) contrast evidence", test: self) { issue in
                 flagged.append("\(issue.element?.identifier ?? "") \(issue.element?.label ?? "") \(issue.element.map { "\($0.frame)" } ?? "")")
                 return true
             }

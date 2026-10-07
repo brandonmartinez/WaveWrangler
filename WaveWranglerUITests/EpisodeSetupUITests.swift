@@ -56,13 +56,7 @@ final class EpisodeSetupUITests: XCTestCase {
     }
 
     private func menu(_ path: String...) {
-        var item = app.menuBars.menuBarItems[path[0]]
-        item.click()
-        for title in path.dropFirst() {
-            item = item.menuItems[title].firstMatch
-            XCTAssertTrue(item.waitForExistence(timeout: 2), "menu item \(title)")
-            item.click()
-        }
+        XCTAssertTrue(app.chooseMenu(path, timeout: 3), "menu \(path.joined(separator: " › "))")
     }
 
     private func importFixture() {

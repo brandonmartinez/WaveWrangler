@@ -28,6 +28,13 @@ final class UITestIsolation: NSObject, XCTestObservation {
         MainActor.assumeIsolated { Self.resetApp(before: className) }
     }
 
+    func testCase(_ testCase: XCTestCase, didRecord issue: XCTIssue) {
+        let description = "\(issue.compactDescription)\n\(issue.detailedDescription)"
+        guard description.localizedCaseInsensitiveContains("Failed to synthesize event")
+                || description.localizedCaseInsensitiveContains("Timed out while synthesizing event") else { return }
+        Acceptance.record(testCase, "INFRA EVENT-SYNTHESIS TIMEOUT: \(description)")
+    }
+
     @MainActor
     private static func resetApp(before className: String) {
         let app = XCUIApplication()

@@ -138,6 +138,29 @@ extension XCUIApplication {
         open(document)
         activate()
     }
+
+    /// Opens a menu path, waiting for every item before using it. Intermediate items are hovered so their
+    /// submenus have time to populate; only the terminal item is clicked.
+    @MainActor
+    func chooseMenu(_ path: [String], timeout: TimeInterval = 3) -> Bool {
+        guard let rootTitle = path.first else { return false }
+        let root = menuBars.menuBarItems[rootTitle]
+        guard root.waitForExistence(timeout: timeout) else { return false }
+        root.click()
+
+        var parent = root
+        for (index, title) in path.dropFirst().enumerated() {
+            let item = parent.menuItems[title].firstMatch
+            guard item.waitForExistence(timeout: timeout) else { return false }
+            if index == path.count - 2 {
+                item.click()
+            } else {
+                item.hover()
+            }
+            parent = item
+        }
+        return true
+    }
 }
 
 /// Visible-part contrast for a `.contrast` audit finding on an element that is **partly** clipped by its
@@ -184,6 +207,30 @@ enum AcceptanceAudit {
     static let minimumGlyphPixels = 40
 
     static let types: XCUIAccessibilityAuditType = [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]
+
+    @MainActor
+    static func perform(_ app: XCUIApplication, kinds: XCUIAccessibilityAuditType, surface: String, test: XCTestCase,
+                        handling handler: @escaping (XCUIAccessibilityAuditIssue) -> Bool) throws {
+        func isTimeout(_ error: Error) -> Bool {
+            let error = error as NSError
+            return error.code == -56 && error.localizedDescription.contains("Audit failed to complete in time")
+        }
+
+        do {
+            try app.performAccessibilityAudit(for: kinds, handler)
+        } catch {
+            guard isTimeout(error) else { throw error }
+            Acceptance.record(test, "INFRA ACCESSIBILITY-AUDIT TIMEOUT: \(surface) \(kinds) first attempt; retrying once")
+            do {
+                try app.performAccessibilityAudit(for: kinds, handler)
+            } catch {
+                if isTimeout(error) {
+                    Acceptance.record(test, "INFRA ACCESSIBILITY-AUDIT TIMEOUT: \(surface) \(kinds) retry also timed out")
+                }
+                throw error
+            }
+        }
+    }
 
     /// Episode inspector field labels measured at 15.7–15.9:1 (#59 "first row under the toolbar"). Only these
     /// four were measured; the "Episode" heading and the Show Info inspector's labels were not.
@@ -274,13 +321,9 @@ enum AcceptanceAudit {
             return true
         }
         // Audits of large trees can time out (XCTest error -56); run contrast separately and retry once.
+        // Findings are retained in `unwaived`/`contrast` across both attempts, never retried away.
         func audit(_ kinds: XCUIAccessibilityAuditType) throws {
-            do {
-                try app.performAccessibilityAudit(for: kinds, handle)
-            } catch let error as NSError where error.code == -56 {
-                print("AUDIT \(surface): timed out once for \(kinds); retrying")
-                try app.performAccessibilityAudit(for: kinds, handle)
-            }
+            try perform(app, kinds: kinds, surface: surface, test: test, handling: handle)
         }
         try audit(types.subtracting(.contrast))
         try audit(.contrast)
