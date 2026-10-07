@@ -194,12 +194,12 @@ struct AlignmentPresentationTests {
                 availableFrames: 48_000 * 60
             )
         }
-        #expect(throws: AlignmentAuditionRequestError.startTooDistant(maximumSeconds: 30)) {
+        #expect(throws: AlignmentAuditionRequestError.seekTooDistant(maximumSeconds: 86_400)) {
             _ = try AlignmentAuditionRequest.frameRange(
-                startSeconds: 30.001,
+                startSeconds: 86_400.001,
                 durationSeconds: 1,
                 sampleRate: 48_000,
-                availableFrames: 48_000 * 600
+                availableFrames: 48_000 * 90_000
             )
         }
         #expect(throws: AlignmentAuditionRequestError.unsupportedSampleRate(maximum: 384_000)) {
@@ -219,11 +219,12 @@ struct AlignmentPresentationTests {
             )
         }
         #expect(try AlignmentAuditionRequest.frameRange(
-            startSeconds: 1,
+            startSeconds: 4_500,
             durationSeconds: 2,
             sampleRate: 48_000,
-            availableFrames: 48_000 * 10
-        ) == 48_000..<144_000)
+            availableFrames: 48_000 * 4_600
+        ) == 216_000_000..<216_096_000)
+        #expect(AlignmentAuditionRequest.seekProgress(position: 24_000, target: 48_000) == 0.5)
     }
 
     @Test func gapAndOutsideCoverageMapResultsReachInspectionPresentation() throws {
@@ -314,5 +315,17 @@ struct AlignmentPresentationTests {
         ))
         #expect(outside.copy == AlignmentPresentation.outsideCoverage)
         #expect(outside.nearestSourceSeconds == 4.9)
+        guard let nearest = outside.nearestSourceSeconds else {
+            Issue.record("expected a mapped remedy")
+            return
+        }
+        let nearestFrame = Int64((nearest * 10).rounded())
+        guard case .aligned? = try? map.alignedTime(
+            ofFrame: nearestFrame,
+            in: occurrence.id
+        ) else {
+            Issue.record("nearest remedy did not map forward")
+            return
+        }
     }
 }

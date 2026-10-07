@@ -68,6 +68,10 @@ final class AlignmentInspectionUITests: XCTestCase {
         aligned.typeKey("a", modifierFlags: .command)
         aligned.typeText("0.125")
         aligned.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(waitForValue("0.125", in: app.textFields["ww.alignment.anchor.0.alignedTime"]))
+        anchor.click()
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(waitForAnyValue(["0", "0.000"], in: app.textFields["ww.alignment.anchor.0.alignedTime"]))
     }
 
     func testTM204DeleteAnchorCommandIsKeyboardReachable() {
@@ -81,7 +85,11 @@ final class AlignmentInspectionUITests: XCTestCase {
         let confirmation = app.sheets.buttons["Delete Anchor"]
         XCTAssertTrue(confirmation.waitForExistence(timeout: 2))
         app.typeKey(.return, modifierFlags: [])
-        XCTAssertTrue(app.tables["ww.alignment.groups"].exists)
+        let anchors = app.tables["ww.alignment.anchors"]
+        XCTAssertTrue(waitForRowCount(0, in: anchors))
+        app.tables["ww.alignment.groups"].click()
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(waitForRowCount(2, in: anchors))
     }
 
     func testTM205CorrectEpochNumericallyReturnAndEscape() {
@@ -224,5 +232,38 @@ final class AlignmentInspectionUITests: XCTestCase {
             app.typeKey(.tab, modifierFlags: [])
         }
         return element.value(forKey: "hasKeyboardFocus") as? Bool == true
+    }
+
+    private func waitForValue(
+        _ value: String,
+        in element: XCUIElement,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        waitForAnyValue([value], in: element, timeout: timeout)
+    }
+
+    private func waitForAnyValue(
+        _ values: [String],
+        in element: XCUIElement,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let predicate = NSPredicate(format: "value IN %@", values)
+        return XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: predicate, object: element)],
+            timeout: timeout
+        ) == .completed
+    }
+
+    private func waitForRowCount(
+        _ count: Int,
+        in table: XCUIElement,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if table.descendants(matching: .tableRow).count == count { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        } while Date() < deadline
+        return table.descendants(matching: .tableRow).count == count
     }
 }

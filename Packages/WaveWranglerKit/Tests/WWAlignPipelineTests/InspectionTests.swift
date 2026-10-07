@@ -44,6 +44,35 @@ struct InspectionTests {
         #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == accepted.revision.revision)
     }
 
+    @Test func repeatedInspectionDoesNotSupersedePendingPersistenceVerification() async throws {
+        let fixture = try await PipelineFixture([
+            .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 231))]),
+            .init(name: "Target", sources: [.init(name: "target", seconds: 30, signal: .scene(seed: 231, rate: 1.00001, offset: 0.02))]),
+        ])
+        let report = try await fixture.analyse()
+        let target = fixture.epochs[1]
+        let accepted = try await fixture.pipeline.accept(
+            model: fixture.model,
+            episode: fixture.episodeID,
+            report: report,
+            decisions: [target: .numeric(ppm: 3, offsetMilliseconds: 4)]
+        )
+
+        for _ in 0..<2 {
+            _ = await fixture.pipeline.inspect(
+                model: accepted.model,
+                episode: fixture.episodeID,
+                sources: fixture.sources
+            )
+        }
+
+        try await fixture.pipeline.activate(accepted)
+        #expect(
+            await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID]
+                == accepted.revision.revision
+        )
+    }
+
     @Test func manualRevisionWorksFromPersistedAcceptedMapWithoutAnalysisReport() async throws {
         let fixture = try await PipelineFixture([
             .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 24))]),

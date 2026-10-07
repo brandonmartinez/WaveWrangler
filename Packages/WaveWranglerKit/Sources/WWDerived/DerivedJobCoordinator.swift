@@ -120,6 +120,8 @@ public actor DerivedJobCoordinator {
 
     public private(set) var inputs: DerivedInputs
     private var slots: [DerivedSlot: SlotRecord] = [:]
+    private var cachedCandidates: [DerivedSlot: [DerivedAssetKey]] = [:]
+    private var explicitlyInvalidated: Set<DerivedSlot> = []
     private var nextJobID: UInt64 = 0
     /// Every job that has not finished, including superseded or cancelled ones whose work is still returning.
     private var inFlight: [UInt64: Task<DerivedJobOutcome, Never>] = [:]
@@ -225,6 +227,8 @@ public actor DerivedJobCoordinator {
     /// Marks one slot stale (e.g. its definition changed) and cancels its job.
     public func invalidate(_ slot: DerivedSlot) {
         guard var record = slots[slot], let key = record.state.key else { return }
+        explicitlyInvalidated.insert(slot)
+        cachedCandidates[slot] = nil
         if case .stale = record.state { return }
         record.task?.cancel()
         record.task = nil
@@ -281,6 +285,8 @@ public actor DerivedJobCoordinator {
     ) -> DerivedJob {
         guard !hasShutDown else { return DerivedJob(slot: slot, key: key, task: Task { .cancelled }) }
         var record = slots[slot] ?? SlotRecord()
+        rememberCachedCandidate(record.state.key, for: slot)
+        explicitlyInvalidated.subtract([slot])
         record.task?.cancel()
         nextJobID += 1
         let jobID = nextJobID
@@ -344,6 +350,35 @@ public actor DerivedJobCoordinator {
         record.state = .cancelled(key)
         slots[slot] = record
         continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
+    }
+
+    /// Re-adopts cached results that match the current inputs after an intentional history move such as
+    /// undo/redo. Ordinary `refresh()` only invalidates forward; this explicit path runs after the restored
+    /// accepted-map identity has published, so upstream-dependent assets can become current again without
+    /// rerunning work. Explicitly invalidated slots are never revived.
+    public func restoreCachedCurrentSlots() {
+        var changed = true
+        while changed {
+            changed = false
+            for slot in slots.keys.sorted(by: { $0.name < $1.name }) {
+                guard !explicitlyInvalidated.contains(slot),
+                      let record = slots[slot],
+                      case let .stale(current, _) = record.state
+                else { continue }
+                let candidates = [current] + (cachedCandidates[slot] ?? [])
+                guard let restored = candidates.first(where: {
+                    staleReasons(for: $0).isEmpty && store.payload(for: $0) != nil
+                }) else { continue }
+                rememberCachedCandidate(current, for: slot)
+                var updated = record
+                updated.state = .ready(restored)
+                updated.currentJob = nil
+                updated.task = nil
+                slots[slot] = updated
+                continuation.yield(DerivedSlotChange(slot: slot, state: updated.state))
+                changed = true
+            }
+        }
     }
 
     // MARK: - Completion (each is one synchronous actor turn)
@@ -436,6 +471,15 @@ public actor DerivedJobCoordinator {
         record.state = .stale(key, reasons: reasons)
         slots[slot] = record
         continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
+    }
+
+    private func rememberCachedCandidate(_ key: DerivedAssetKey?, for slot: DerivedSlot) {
+        guard let key, store.payload(for: key) != nil else { return }
+        var candidates = cachedCandidates[slot] ?? []
+        candidates.removeAll(where: { $0 == key })
+        candidates.insert(key, at: 0)
+        if candidates.count > 8 { candidates.removeLast(candidates.count - 8) }
+        cachedCandidates[slot] = candidates
     }
 
     /// Re-evaluates every ready or running slot against the current inputs until nothing changes, so a stale

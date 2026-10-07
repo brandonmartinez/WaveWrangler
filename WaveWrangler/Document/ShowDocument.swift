@@ -45,6 +45,9 @@ final class ShowDocument: NSDocument {
     private var resolvesOffer: OfferResolution?
 
     var revision: Int { publication?.revision ?? 0 }
+    /// The exact model last independently verified on disk. Alignment uses this only for one-time open
+    /// reconciliation; live inspection never treats the mutable in-memory model as persisted truth.
+    private(set) var verifiedModel: ShowDocumentModel?
 
     #if DEBUG
     /// Debug-only fault injection at the C3 boundaries (native holdout runner); `nil` in normal use.
@@ -155,6 +158,7 @@ final class ShowDocument: NSDocument {
             formatUpdatePromptPending = false
             status.setFormatUpdate(nil)
             store.replaceLoadedModel(document.payload)
+            verifiedModel = document.payload
             publication = document.publication
             onDiskBase = fingerprint
             status.set(.clean(revision: document.revision))
@@ -178,6 +182,7 @@ final class ShowDocument: NSDocument {
             case let .damaged(error, candidates): throw DocumentRecoveryOffer.error(for: error, candidates: candidates)
             }
             store.replaceLoadedModel(upgraded.payload)
+            verifiedModel = upgraded.payload
             publication = upgraded.publication
             onDiskBase = fingerprint
             formatUpdateOriginal = data
@@ -294,6 +299,7 @@ final class ShowDocument: NSDocument {
             uncertainCandidate = nil
             publication = receipt.publication
             onDiskBase = receipt.fingerprint
+            verifiedModel = candidateModel
             // #87: AppKit only marks an autosave in place as "autosaved"; clear "— Edited" exactly when the verified
             // publication holds the current model. Edits made during the save keep the document (and status) edited.
             let isAutosaveInPlace = saveOperation == .autosaveInPlaceOperation
@@ -930,6 +936,7 @@ final class ShowDocument: NSDocument {
         case .updated:
             guard let adopted else { return }
             store.replaceLoadedModel(adopted.document.payload)
+            verifiedModel = adopted.document.payload
             publication = adopted.document.publication
             onDiskBase = adopted.fingerprint
             fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate

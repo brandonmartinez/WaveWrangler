@@ -91,6 +91,58 @@ struct MapCurrencyTests {
         }
     }
 
+    @Test("Persisted undo and redo restore each revision's identity and cached dependents")
+    func persistedUndoRedoRestoresIdentityAndDependents() async throws {
+        let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "undo-redo")
+        let target = fixture.epochs[1]
+        let report = try await fixture.analyse(preferredReference: "ref")
+        let first = try await fixture.acceptAndActivate(
+            report,
+            [target: ConcurrencyTests.truth]
+        )
+        let firstRender = try await fixture.render()
+        let firstKeys = Set(
+            ConcurrencyTests.published(firstRender.groups.flatMap(\.results)).map(\.key)
+        )
+        #expect(!firstKeys.isEmpty)
+
+        let second = try await fixture.pipeline.reviseAcceptedMap(
+            model: first.model,
+            episode: fixture.episodeID,
+            decisions: [target: Self.other]
+        )
+        fixture.model = second.model
+        try await fixture.pipeline.activate(second)
+        let secondRender = try await fixture.render()
+        let secondKeys = Set(
+            ConcurrencyTests.published(secondRender.groups.flatMap(\.results)).map(\.key)
+        )
+        #expect(!secondKeys.isEmpty)
+        #expect(secondKeys.isDisjoint(with: firstKeys))
+
+        fixture.model = first.model
+        try await fixture.pipeline.activate(model: first.model, episode: fixture.episodeID)
+        let restoredFirst = try await fixture.render()
+        #expect(restoredFirst.isComplete)
+        for key in firstKeys {
+            #expect(await fixture.coordinator.staleReasons(for: key).isEmpty)
+        }
+        for key in secondKeys {
+            #expect(await fixture.coordinator.staleReasons(for: key).contains(.mapChanged(fixture.episodeID)))
+        }
+
+        fixture.model = second.model
+        try await fixture.pipeline.activate(model: second.model, episode: fixture.episodeID)
+        let restoredSecond = try await fixture.render()
+        #expect(restoredSecond.isComplete)
+        for key in secondKeys {
+            #expect(await fixture.coordinator.staleReasons(for: key).isEmpty)
+        }
+        for key in firstKeys {
+            #expect(await fixture.coordinator.staleReasons(for: key).contains(.mapChanged(fixture.episodeID)))
+        }
+    }
+
     @Test("activate refuses an acceptance whose identity or result does not match the document's map version")
     func activateRefusesForgedContent() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(referenceSeconds: 6, targetSeconds: 4), label: "forged-content")

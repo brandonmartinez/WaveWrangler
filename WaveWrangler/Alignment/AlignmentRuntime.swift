@@ -9,6 +9,7 @@ actor AlignmentRuntime {
     struct Prepared: Sendable {
         var sources: [AlignmentSource]
         var snapshot: AlignmentInspectionSnapshot?
+        var reconciliationWarning: String?
     }
 
     struct AuditionClip: Sendable {
@@ -28,18 +29,40 @@ actor AlignmentRuntime {
     private let access: SourceAccessContext
     private var sourceByEpoch: [EpisodeID: [RecordingEpochID: AlignmentSource]] = [:]
     private var reports: [EpisodeID: AlignmentAnalysisReport] = [:]
+    private var reconciliationFailures: [EpisodeID: String] = [:]
+    private var openedDocuments: [EpisodeID: ObjectIdentifier] = [:]
     #if DEBUG
     private var seededFixtureDependents: Set<EpisodeID> = []
     #endif
 
-    init(showID: ShowID, accessStore: any DeviceAccessStore, access: SourceAccessContext) throws {
+    private init(
+        showID: ShowID,
+        accessStore: any DeviceAccessStore,
+        access: SourceAccessContext,
+        derived: DerivedAssetStore
+    ) {
         self.showID = showID
         self.accessStore = accessStore
         self.access = access
-        let root = PersistenceEnvironment.caches("Derived/\(showID)")
-        let derived = try DerivedAssetStore(root: root, sourceLocations: [])
         coordinator = DerivedJobCoordinator(store: derived)
         pipeline = AlignmentPipeline(coordinator: coordinator, decoder: SourceDecoder(access: access))
+    }
+
+    nonisolated static func make(
+        showID: ShowID,
+        accessStore: any DeviceAccessStore,
+        access: SourceAccessContext
+    ) async throws -> AlignmentRuntime {
+        let root = PersistenceEnvironment.caches("Derived/\(showID)")
+        let derived = try await Task.detached(priority: .userInitiated) {
+            try DerivedAssetStore(root: root, sourceLocations: [])
+        }.value
+        return AlignmentRuntime(
+            showID: showID,
+            accessStore: accessStore,
+            access: access,
+            derived: derived
+        )
     }
 
     func inspect(model: ShowDocumentModel, episode episodeID: EpisodeID) async -> Prepared {
@@ -61,11 +84,14 @@ actor AlignmentRuntime {
             }
         }
         sourceByEpoch[episodeID] = byEpoch
-        try? await pipeline.activate(model: model, episode: episodeID)
         #if DEBUG
         await seedFixtureDependentIfRequested(model: model, episode: episodeID)
         #endif
-        return Prepared(sources: sources, snapshot: snapshot)
+        return Prepared(
+            sources: sources,
+            snapshot: snapshot,
+            reconciliationWarning: reconciliationFailures[episodeID]
+        )
     }
 
     func analyse(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws -> AlignmentAnalysisReport {
@@ -122,6 +148,7 @@ actor AlignmentRuntime {
     }
 
     func activate(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws {
+        _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
         try await pipeline.activate(model: model, episode: episodeID)
     }
 
@@ -129,11 +156,33 @@ actor AlignmentRuntime {
         try await pipeline.activate(accepted)
     }
 
+    /// Reconciles only the model independently verified by the document open path. This performs metadata-only
+    /// source revision verification through the gateway, never decode or analysis, before publishing identity.
+    func activateOpened(
+        _ model: ShowDocumentModel,
+        episode episodeID: EpisodeID,
+        documentID: ObjectIdentifier
+    ) async {
+        guard openedDocuments[episodeID] != documentID else { return }
+        openedDocuments[episodeID] = documentID
+        guard let episode = model.episode(episodeID),
+              episode.alignment?.acceptedRevision != nil
+        else { return }
+        _ = await resolveSources(episode.sources)
+        do {
+            try await pipeline.activate(model: model, episode: episodeID)
+            reconciliationFailures[episodeID] = nil
+        } catch {
+            reconciliationFailures[episodeID] = String(describing: error)
+        }
+    }
+
     func audition(
         episode episodeID: EpisodeID,
         epoch: RecordingEpochID,
         startSeconds: Double,
-        durationSeconds: Double
+        durationSeconds: Double,
+        progress: @escaping @Sendable (Double) -> Void
     ) async throws -> AuditionClip {
         guard let source = sourceByEpoch[episodeID]?[epoch] else { throw DecodeFailure.notFound }
         return try await pipeline.decoder.withDecodingCursor(source.url, source: source.id) { cursor in
@@ -146,8 +195,24 @@ actor AlignmentRuntime {
             )
             var samples: [Float] = []
             samples.reserveCapacity(range.count)
+            var lastReportedProgress = -1.0
+            if range.lowerBound > 0 { progress(0) }
             while await cursor.position < range.upperBound, let chunk = try await cursor.next() {
                 try Task.checkCancellation()
+                let position = await cursor.position
+                if position < range.lowerBound {
+                    let value = AlignmentAuditionRequest.seekProgress(
+                        position: position,
+                        target: range.lowerBound
+                    )
+                    if value - lastReportedProgress >= 0.01 {
+                        progress(value)
+                        lastReportedProgress = value
+                    }
+                } else if lastReportedProgress < 1 {
+                    progress(1)
+                    lastReportedProgress = 1
+                }
                 let chunkStart = chunk.firstSourceFrame
                 let (chunkEnd, overflow) = chunkStart.addingReportingOverflow(Int64(chunk.frameCount))
                 guard !overflow else {
@@ -261,11 +326,43 @@ actor AlignmentRuntime {
 @MainActor
 enum AlignmentRuntimeProvider {
     private static var runtimes: [ShowID: AlignmentRuntime] = [:]
+    private static var creations: [ShowID: Task<AlignmentRuntime, Error>] = [:]
 
-    static func runtime(for showID: ShowID) throws -> AlignmentRuntime {
-        if let existing = runtimes[showID] { return existing }
-        let runtime = try AlignmentRuntime(showID: showID, accessStore: SetupEngineProvider.store, access: SetupEngineProvider.context)
-        runtimes[showID] = runtime
+    static func runtime(
+        for document: ShowDocument,
+        episode episodeID: EpisodeID
+    ) async throws -> AlignmentRuntime {
+        let showID = document.store.model.show.id
+        let runtime: AlignmentRuntime
+        if let existing = runtimes[showID] {
+            runtime = existing
+        } else if let creation = creations[showID] {
+            runtime = try await creation.value
+        } else {
+            let creation = Task { @MainActor in
+                try await AlignmentRuntime.make(
+                    showID: showID,
+                    accessStore: SetupEngineProvider.store,
+                    access: SetupEngineProvider.context
+                )
+            }
+            creations[showID] = creation
+            do {
+                runtime = try await creation.value
+                runtimes[showID] = runtime
+                creations[showID] = nil
+            } catch {
+                creations[showID] = nil
+                throw error
+            }
+        }
+        if let verified = document.verifiedModel {
+            await runtime.activateOpened(
+                verified,
+                episode: episodeID,
+                documentID: ObjectIdentifier(document)
+            )
+        }
         return runtime
     }
 }

@@ -61,7 +61,11 @@ enum AlignmentRegionProjection {
             return AlignmentRegionPresentation(
                 copy: AlignmentPresentation.outsideCoverage,
                 nearestSourceSeconds: nearestSourceTime(
-                    sourceSeconds, placement: placement, sourceRate: sourceRate
+                    sourceSeconds,
+                    map: map,
+                    group: group,
+                    placement: placement,
+                    sourceRate: sourceRate
                 )
             )
         }
@@ -80,7 +84,11 @@ enum AlignmentRegionProjection {
             return AlignmentRegionPresentation(
                 copy: AlignmentPresentation.outsideCoverage,
                 nearestSourceSeconds: nearestSourceTime(
-                    sourceSeconds, placement: placement, sourceRate: sourceRate
+                    sourceSeconds,
+                    map: map,
+                    group: group,
+                    placement: placement,
+                    sourceRate: sourceRate
                 )
             )
         default:
@@ -90,13 +98,64 @@ enum AlignmentRegionProjection {
 
     private static func nearestSourceTime(
         _ sourceSeconds: Double,
+        map: AlignedTimelineMap,
+        group: GroupTimeMap,
         placement: OccurrencePlacement,
         sourceRate: Double
     ) -> Double? {
-        guard let first = placement.spans.first, let last = placement.spans.last else { return nil }
-        let firstTime = Double(first.startFrame) / sourceRate
-        let lastTime = Double(max(last.startFrame, last.endFrame - 1)) / sourceRate
-        return sourceSeconds < firstTime ? firstTime : lastTime
+        let requestedFrame = sourceSeconds * sourceRate
+        var candidates = Set<Int64>()
+        for span in placement.spans {
+            guard span.endFrame > span.startFrame,
+                  let epoch = group.epochs.first(where: { $0.epoch == span.epoch }),
+                  case let .mapped(segments, _) = epoch.mapping
+            else { continue }
+            candidates.insert(span.startFrame)
+            candidates.insert(span.endFrame - 1)
+            if requestedFrame.isFinite {
+                let clamped = min(
+                    Double(span.endFrame - 1),
+                    max(Double(span.startFrame), requestedFrame)
+                )
+                if clamped >= Double(Int64.min), clamped < Double(Int64.max) {
+                    candidates.insert(Int64(clamped.rounded()))
+                }
+            }
+            for segment in segments {
+                let sourceStart = (
+                    segment.groupClockStart.approximateDouble
+                        - span.groupClockOffset.approximateDouble
+                ) * sourceRate
+                let sourceEnd = (
+                    segment.groupClockEnd.approximateDouble
+                        - span.groupClockOffset.approximateDouble
+                ) * sourceRate
+                for boundary in [sourceStart, sourceEnd] where boundary.isFinite {
+                    for delta in -2...2 {
+                        let value = boundary.rounded(.down) + Double(delta)
+                        guard value >= Double(span.startFrame),
+                              value < Double(span.endFrame),
+                              value >= Double(Int64.min),
+                              value < Double(Int64.max)
+                        else { continue }
+                        candidates.insert(Int64(value))
+                    }
+                }
+            }
+        }
+        let mapped = candidates.filter {
+            guard case .aligned? = try? map.alignedTime(
+                ofFrame: $0,
+                in: placement.occurrence.id
+            ) else { return false }
+            return true
+        }
+        guard let nearest = mapped.min(by: {
+            let left = abs(Double($0) - requestedFrame)
+            let right = abs(Double($1) - requestedFrame)
+            return left == right ? $0 < $1 : left < right
+        }) else { return nil }
+        return Double(nearest) / sourceRate
     }
 }
 
@@ -156,7 +215,7 @@ enum AlignmentEditorDefaults {
 enum AlignmentAuditionRequestError: Error, LocalizedError, Equatable {
     case invalidStart
     case invalidDuration
-    case startTooDistant(maximumSeconds: Double)
+    case seekTooDistant(maximumSeconds: Double)
     case durationTooLong(maximumSeconds: Double)
     case outsideSource
     case unsupportedSampleRate(maximum: Double)
@@ -168,8 +227,8 @@ enum AlignmentAuditionRequestError: Error, LocalizedError, Equatable {
             "Audition start must be a finite non-negative time."
         case .invalidDuration:
             "Audition duration must be a finite positive time."
-        case let .startTooDistant(maximum):
-            "Audition start is limited to \(Int(maximum)) seconds so preparing playback stays bounded."
+        case let .seekTooDistant(maximum):
+            "Audition can seek within sources up to \(Int(maximum / 3_600)) hours long."
         case let .durationTooLong(maximum):
             "Audition duration is limited to \(Int(maximum)) seconds."
         case .outsideSource:
@@ -183,7 +242,9 @@ enum AlignmentAuditionRequestError: Error, LocalizedError, Equatable {
 }
 
 enum AlignmentAuditionRequest {
-    static let maximumStartSeconds = 30.0
+    /// Sequential gateway-cursor seek bound. Reads are discarded in cancellable chunks with progress; no
+    /// source content bypasses WWDecode and no unbounded source can monopolize preparation.
+    static let maximumSeekSeconds = 24.0 * 60 * 60
     static let maximumDurationSeconds = 30.0
     static let maximumSampleRate = 384_000.0
     static let maximumFrameCount: Int64 = 1_500_000
@@ -196,8 +257,8 @@ enum AlignmentAuditionRequest {
     ) throws(AlignmentAuditionRequestError) -> Range<Int64> {
         guard startSeconds.isFinite, startSeconds >= 0 else { throw .invalidStart }
         guard durationSeconds.isFinite, durationSeconds > 0 else { throw .invalidDuration }
-        guard startSeconds <= maximumStartSeconds else {
-            throw .startTooDistant(maximumSeconds: maximumStartSeconds)
+        guard startSeconds <= maximumSeekSeconds else {
+            throw .seekTooDistant(maximumSeconds: maximumSeekSeconds)
         }
         guard durationSeconds <= maximumDurationSeconds else {
             throw .durationTooLong(maximumSeconds: maximumDurationSeconds)
@@ -224,6 +285,11 @@ enum AlignmentAuditionRequest {
         let (requestedEnd, overflow) = start.addingReportingOverflow(duration)
         guard !overflow else { throw .tooManyFrames(maximum: maximumFrameCount) }
         return start..<min(availableFrames, requestedEnd)
+    }
+
+    static func seekProgress(position: Int64, target: Int64) -> Double {
+        guard target > 0 else { return 1 }
+        return min(1, max(0, Double(position) / Double(target)))
     }
 }
 

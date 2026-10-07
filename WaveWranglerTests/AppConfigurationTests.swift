@@ -86,6 +86,38 @@ struct UITestHooksDebugOnlyTests {
         try String(contentsOf: AppConfigurationTests.appFolder.appending(path: path), encoding: .utf8)
     }
 
+    @Suite("Alignment runtime boundaries")
+    struct AlignmentRuntimeBoundaryTests {
+        static let runtimeURL = AppConfigurationTests.appFolder
+            .appending(path: "Alignment/AlignmentRuntime.swift")
+
+        static func runtimeSource() throws -> String {
+            try String(contentsOf: runtimeURL, encoding: .utf8)
+        }
+
+        @Test func inspectionNeverActivatesTheMutableLiveModel() throws {
+            let source = try Self.runtimeSource()
+            let start = try #require(source.range(of: "func inspect("))
+            let end = try #require(source[start.upperBound...].range(of: "\n    func analyse("))
+            let body = source[start.lowerBound..<end.lowerBound]
+            #expect(!body.contains("activate("))
+        }
+
+        @Test func derivedStoreFilesystemInitializationIsDetachedFromMainActor() throws {
+            let source = try Self.runtimeSource()
+            let store = try #require(source.range(of: "DerivedAssetStore(root:"))
+            let detached = try #require(source[..<store.lowerBound].range(
+                of: "Task.detached(priority: .userInitiated)",
+                options: .backwards
+            ))
+            let factory = try #require(source[..<detached.lowerBound].range(
+                of: "nonisolated static func make(",
+                options: .backwards
+            ))
+            #expect(factory.lowerBound < detached.lowerBound)
+        }
+    }
+
     @Test func hooksTypeIsCompiledOnlyInDebug() throws {
         let lines = try Self.source("Document/UITestHooks.swift").split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let code = lines.filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") && !$0.trimmingCharacters(in: .whitespaces).isEmpty && $0 != "import Foundation" }

@@ -29,7 +29,10 @@ struct EpisodeAlignmentContent: View {
         .task(id: episodeID) {
             do {
                 guard let document = state.store.document else { return }
-                let runtime = try AlignmentRuntimeProvider.runtime(for: document.store.model.show.id)
+                let runtime = try await AlignmentRuntimeProvider.runtime(
+                    for: document,
+                    episode: episodeID
+                )
                 let value = EpisodeAlignmentModel(document: document, episodeID: episodeID, runtime: runtime)
                 model = value
                 state.alignmentModel = value

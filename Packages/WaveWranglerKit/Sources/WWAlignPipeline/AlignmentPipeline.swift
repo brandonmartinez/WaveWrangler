@@ -567,6 +567,21 @@ public final class AlignmentPipeline: Sendable {
     /// Reconciles the coordinator with a coherently persisted document value. This is used after undo/redo
     /// as well as a new acceptance, so stale dependents reverse exactly with the document's accepted revision.
     public func activate(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws(AlignmentAcceptanceError) {
+        await activation.lock()
+        var failure: AlignmentAcceptanceError?
+        do throws(AlignmentAcceptanceError) {
+            try await activatePersistedSerialized(model: model, episode: episodeID)
+        } catch {
+            failure = error
+        }
+        await activation.unlock()
+        if let failure { throw failure }
+    }
+
+    private func activatePersistedSerialized(
+        model: ShowDocumentModel,
+        episode episodeID: EpisodeID
+    ) async throws(AlignmentAcceptanceError) {
         guard let episode = model.episode(episodeID) else { throw .episodeNotFound(episodeID) }
         if await coordinator.isShutdown { throw .coordinatorShutDown }
         guard let revision = episode.alignment?.acceptedRevision else {
@@ -580,7 +595,49 @@ public final class AlignmentPipeline: Sendable {
         guard let applicability = try? episode.applicability(ofMapRevision: revision), applicability.isCurrent else {
             throw .history(.mapNotFound(revision: revision))
         }
-        await coordinator.acceptMap(MapRevisionReference(episode: episodeID, revision: revision))
+        guard let version = episode.alignment?.map(revision: revision) else {
+            throw .history(.mapNotFound(revision: revision))
+        }
+        let map: AlignedTimelineMap
+        do throws(MapHistoryError) {
+            map = try model.timeMap(revision: revision, in: episodeID)
+        } catch {
+            throw .history(error)
+        }
+        let inputs = await coordinator.inputs
+        let changes = MapDependencies.verify(
+            version: version,
+            map: map,
+            episode: episode,
+            registered: inputs.sources,
+            format: inputs.format
+        )
+        guard changes.isEmpty else { throw .analysisStale(changes) }
+        let reference = MapRevisionReference(episode: episodeID, revision: revision)
+        let identity: AcceptedMapIdentity
+        do {
+            identity = try mapIdentity(
+                revision: reference,
+                version: version,
+                map: map,
+                registered: inputs.sources
+            )
+        } catch {
+            throw .invalidMap(String(describing: error))
+        }
+        await coordinator.acceptMap(reference)
+        await coordinator.setRecipe(identity.recipe)
+        await coordinator.setAssetRevision(AlignmentAssetKinds.acceptedMapIdentity)
+        let canonical = Data(identity.digest.utf8)
+        let published = await coordinator.run(
+            identity.slot,
+            key: identity.key
+        ) { () throws(AlignmentWorkFailure) -> Data in canonical }
+        guard published.isAvailable else {
+            if await coordinator.isShutdown { throw .coordinatorShutDown }
+            throw .invalidMap("the restored map identity did not publish: \(published.outcome)")
+        }
+        await coordinator.restoreCachedCurrentSlots()
         await ledger.reconcile(
             episode: episodeID,
             snapshot: AcceptanceLedger.Snapshot(alignment: episode.alignment)

@@ -211,7 +211,12 @@ final class EpisodeAlignmentModel {
                     episode: episodeID, epoch: epoch,
                     startSeconds: auditionStartSeconds,
                     durationSeconds: auditionDurationSeconds
-                )
+                ) { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.isPreparingAudition else { return }
+                        self.auditionLabel = "Seeking through the source… \(Int(progress * 100))%. Nothing is exported."
+                    }
+                }
                 try Task.checkCancellation()
                 try play(clip)
                 try Task.checkCancellation()
@@ -248,6 +253,9 @@ final class EpisodeAlignmentModel {
                 anchorSelection = selectedAnchors.first?.id
             }
             await updateDependents()
+            if let warning = prepared.reconciliationWarning {
+                message = "The persisted map is visible, but its derived identity could not be restored: \(warning)"
+            }
             if let interval { Responsiveness.endAfterCommit(interval) }
         }
     }
