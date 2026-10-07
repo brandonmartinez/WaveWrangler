@@ -18,7 +18,8 @@ reset_state() {
     "$ROOT/.gui.queue" "$ROOT"/*.xcresult "$ROOT"/run-*
   rm -f "$ROOT/xcodebuild" "$ROOT/WaveWranglerUITests-Runner" \
     "$ROOT/guard-held" "$ROOT/counter" "$ROOT/completed" \
-    "$ROOT/restore-marker"
+    "$ROOT/restore-marker" "$ROOT/restore-count" "$ROOT/successor-signaled" \
+    "$ROOT/release-entered"
   mkdir -p "$ROOT/.gui.queue/required" "$ROOT/.gui.queue/pr" "$ROOT/.gui.queue/full" "$ROOT/.gui.queue/perf"
   : > "$ROOT/gui-lock.log"
   : > "$ROOT/order"
@@ -363,15 +364,61 @@ assert_contains "$ROOT/gui-lock.log" "lease expired while command ran lane=silen
 
 echo "test: reclaimed wrapper cannot kill the new holder"
 reset_state
-run_lane old pr 20 > "$ROOT/old.out" 2>&1 &
+old_dir="$ROOT/run-old"
+mkdir -p "$old_dir"
+cat > "$old_dir/restore-settings.sh" <<EOF
+#!/bin/bash
+echo restored >> "$ROOT/restore-count"
+EOF
+chmod +x "$old_dir/restore-settings.sh"
+export GUI_LOCK_TEST_RELEASE_PRE_GUARD_SECONDS=5
+export GUI_LOCK_TEST_RELEASE_MARKER="$ROOT/release-entered"
+"$SCRIPT" run --lane old --class pr --pr 1 --sha test --dir "$old_dir" \
+  --lease-minutes 1 --queue-timeout 10 --result "$old_dir/result.xcresult" \
+  --restore-script "$old_dir/restore-settings.sh" -- \
+  bash -c 'sleep 20; mkdir -p "$1"; echo completed' _ "$old_dir/result.xcresult" \
+  > "$ROOT/old.out" 2>&1 &
 old_pid=$!
 wait_for_run old
+old_token=$(sed -n 's/^token=//p' "$ROOT/.gui.lock/owner")
 expire_current_lease
-run_lane new pr 2 > "$ROOT/new.out" 2>&1 &
+unset GUI_LOCK_TEST_RELEASE_PRE_GUARD_SECONDS GUI_LOCK_TEST_RELEASE_MARKER
+new_dir="$ROOT/run-new"
+"$SCRIPT" run --lane new --class pr --pr 1 --sha test --dir "$new_dir" \
+  --lease-minutes 1 --queue-timeout 10 --result "$new_dir/result.xcresult" -- \
+  bash -c 'trap "echo signaled > \"$1\"; exit 99" INT TERM; sleep 2; mkdir -p "$2"; echo completed' _ \
+    "$ROOT/successor-signaled" "$new_dir/result.xcresult" > "$ROOT/new.out" 2>&1 &
 new_pid=$!
+wait_for_run new
 wait "$old_pid" || true
 wait "$new_pid"
 assert_contains "$ROOT/new.out" "RELEASED lane=new"
+[ "$(grep -c '^restored$' "$ROOT/restore-count")" -eq 1 ] ||
+  fail "expired holder settings were not restored exactly once"
+[ ! -e "$ROOT/successor-signaled" ] || fail "old wrapper signaled its successor"
+assert_contains "$ROOT/gui-lock.log" "skipped cleanup: ownership transferred (token $old_token)"
+
+echo "test: dead holder settings restore precedes successor command"
+reset_state
+seed_owner dead
+dead_dir="$ROOT/stale-dead"
+mkdir -p "$dead_dir"
+cat > "$dead_dir/restore-settings.sh" <<EOF
+#!/bin/bash
+echo restored >> "$ROOT/order"
+echo restored >> "$ROOT/restore-count"
+EOF
+chmod +x "$dead_dir/restore-settings.sh"
+cat >> "$ROOT/.gui.lock/owner" <<EOF
+settings_restore_pending=1
+restore_script=$dead_dir/restore-settings.sh
+EOF
+run_lane dead-settings-reclaimer pr 0 > "$ROOT/dead-settings.out"
+expected=$(printf 'restored\ndead-settings-reclaimer')
+[ "$(cat "$ROOT/order")" = "$expected" ] ||
+  fail "dead holder restoration did not precede successor: $(tr '\n' ' ' < "$ROOT/order")"
+[ "$(grep -c '^restored$' "$ROOT/restore-count")" -eq 1 ] ||
+  fail "dead holder settings were not restored exactly once"
 
 echo "test: killed guard holder releases kernel lock"
 reset_state

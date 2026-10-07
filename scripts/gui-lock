@@ -13,6 +13,7 @@ MAX_LEASE_MINUTES=45
 WARN_SECONDS=1800
 ACQUIRING_GRACE_SECONDS=120
 LEGACY_HARD_MAX_SECONDS=2700
+RESTORE_TIMEOUT_SECONDS=30
 CLASSES="required pr full perf"
 
 mkdir -p "$ROOT" "$QUEUE"
@@ -266,8 +267,37 @@ kill_recorded_pids() {
   done
 }
 
+restore_recorded_settings() {
+  local owner="$1" pending script output lane timeout_command
+  pending=$(field "$owner" settings_restore_pending)
+  [ "$pending" = 1 ] || return 0
+  script=$(field "$owner" restore_script)
+  output=$(field "$owner" output)
+  lane=$(field "$owner" lane)
+  if [ ! -x "$script" ]; then
+    log "WARN settings restore script is not executable lane=$lane script=$script"
+    return 0
+  fi
+  timeout_command=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)
+  if [ -z "$timeout_command" ]; then
+    log "WARN settings restore unavailable without timeout command lane=$lane script=$script"
+    return 0
+  fi
+  "$timeout_command" "$RESTORE_TIMEOUT_SECONDS" "$script" >> "$output" 2>&1 ||
+    log "WARN settings restore failed lane=$lane script=$script"
+}
+
+cleanup_reclaimed_lease() {
+  local reclaimed="$1" reclaimed_owner pids_file
+  reclaimed_owner=$(owner_file "$reclaimed")
+  pids_file=$(field "$reclaimed_owner" pids_file)
+  kill_recorded_pids "$pids_file"
+  restore_recorded_settings "$reclaimed_owner"
+  rm -rf "$reclaimed"
+}
+
 reclaim_if_stale() {
-  local old_owner old_token old_snapshot reclaimed lane pids_file
+  local old_owner old_token old_snapshot reclaimed lane
   acquire_guard
   if block_if_test_active; then
     release_guard
@@ -294,10 +324,8 @@ reclaim_if_stale() {
     lane=$(field "$(owner_file "$reclaimed")" lane)
     log "reclaimed lane=$lane reason=$STALE_REASON"
     printf 'RECLAIMED lane=%s reason=%s\n' "$lane" "$STALE_REASON"
-    pids_file=$(field "$(owner_file "$reclaimed")" pids_file)
+    cleanup_reclaimed_lease "$reclaimed"
     release_guard
-    kill_recorded_pids "$pids_file"
-    rm -rf "$reclaimed"
     return 0
   fi
   release_guard
@@ -318,6 +346,8 @@ write_owner_file() {
     printf 'pids_file=%s\n' "$PIDS_FILE"
     printf 'output=%s\n' "$OUTPUT"
     printf 'result=%s\n' "$RESULT"
+    printf 'settings_restore_pending=%s\n' "$SETTINGS_RESTORE_PENDING"
+    printf 'restore_script=%s\n' "$RECORDED_RESTORE_SCRIPT"
     printf 'host=%s\n' "$(hostname -s)"
     printf 'acquired=%s\n' "$ACQUIRED"
     printf 'heartbeat=%s\n' "$HEARTBEAT"
@@ -364,7 +394,7 @@ record_run_pids() {
   } | sort -u | atomic_write "$PIDS_FILE"
 }
 
-release_owned_lease() {
+cleanup_owned_lease() {
   if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ -n "${GUI_LOCK_TEST_RELEASE_PRE_GUARD_SECONDS:-}" ]; then
     [ -n "${GUI_LOCK_TEST_RELEASE_MARKER:-}" ] && : > "$GUI_LOCK_TEST_RELEASE_MARKER"
     sleep "$GUI_LOCK_TEST_RELEASE_PRE_GUARD_SECONDS"
@@ -372,30 +402,21 @@ release_owned_lease() {
   acquire_guard
   owner="$(owner_file "$LOCK")"
   if [ ! -f "$owner" ] || [ "$(field "$owner" token)" != "$TOKEN" ]; then
+    log "skipped cleanup: ownership transferred (token $TOKEN)"
     release_guard
     return 0
   fi
+  kill_recorded_pids "$(field "$owner" pids_file)"
+  restore_recorded_settings "$owner"
   releasing="$ROOT/.gui.lock.releasing-$TOKEN"
   if mv "$LOCK" "$releasing" 2>/dev/null; then
-    release_guard
     log "released lane=$LANE class=$CLASS sha=$SHA"
     rm -rf "$releasing"
     printf 'RELEASED lane=%s\n' "$LANE"
+    release_guard
     return 0
   fi
   release_guard
-}
-
-restore_settings() {
-  script="$RESTORE_SCRIPT"
-  if [ -z "$script" ] && [ -x "$DIR/restore-settings.sh" ]; then script="$DIR/restore-settings.sh"; fi
-  if [ -n "$script" ]; then
-    if [ -x "$script" ]; then
-      "$script" >> "$OUTPUT" 2>&1 || log "WARN settings restore failed lane=$LANE script=$script"
-    else
-      log "WARN settings restore script is not executable lane=$LANE script=$script"
-    fi
-  fi
 }
 
 cleanup_run() {
@@ -403,9 +424,7 @@ cleanup_run() {
   release_guard
   [ -n "${TICKET:-}" ] && [ -d "$TICKET" ] && rm -rf "$TICKET"
   if [ "${ACQUIRED_OWNERSHIP:-0}" = 1 ] && [ -n "${TOKEN:-}" ]; then
-    [ -n "${PIDS_FILE:-}" ] && [ -f "$PIDS_FILE" ] && kill_recorded_pids "$PIDS_FILE"
-    [ -n "${DIR:-}" ] && restore_settings
-    release_owned_lease
+    cleanup_owned_lease
   fi
 }
 
@@ -507,6 +526,12 @@ acquire_for_run() {
         if mkdir "$LOCK" 2>/dev/null; then
           TOKEN="$(now)-$$-$sequence"
           mkdir -p "$DIR"
+          RECORDED_RESTORE_SCRIPT="$RESTORE_SCRIPT"
+          if [ -z "$RECORDED_RESTORE_SCRIPT" ] && [ -x "$DIR/restore-settings.sh" ]; then
+            RECORDED_RESTORE_SCRIPT="$DIR/restore-settings.sh"
+          fi
+          SETTINGS_RESTORE_PENDING=0
+          [ -z "$RECORDED_RESTORE_SCRIPT" ] || SETTINGS_RESTORE_PENDING=1
           PIDS_FILE="$DIR/gui-lock-pids.$TOKEN"
           ACQUIRED=$(now)
           HEARTBEAT="$ACQUIRED"
@@ -722,5 +747,7 @@ WRAPPER_PID="$$"
 OWN_OWNER_FILE=""
 ACQUIRED_OWNERSHIP=0
 GUARD_HELD=0
+RECORDED_RESTORE_SCRIPT=""
+SETTINGS_RESTORE_PENDING=0
 
 run_one "$@"
