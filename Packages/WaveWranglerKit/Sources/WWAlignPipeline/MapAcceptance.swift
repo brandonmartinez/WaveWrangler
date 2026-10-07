@@ -106,7 +106,9 @@ enum MapAcceptance {
         analyses: [RecordingEpochID: EpochAnalysisRecord],
         decisions: [RecordingEpochID: EpochMapDecision],
         prior: AlignedTimelineMap?,
-        priorIsCurrent: Bool = false
+        priorIsCurrent: Bool = false,
+        priorAcceptedProposals: [String: String] = [:],
+        currentAnalyses: [RecordingEpochID: String] = [:]
     ) throws(AlignmentAcceptanceError) -> Built {
         guard let reference = plan.reference else { throw .noReference }
         guard facts[reference.source] != nil else { throw .referenceFactsUnavailable(reference.source) }
@@ -151,7 +153,9 @@ enum MapAcceptance {
                 let mapping = try mapping(
                     for: epoch.epoch, reference: reference, end: epochEnd[epoch.epoch],
                     decision: decisions[epoch.epoch], analysis: analyses[epoch.epoch], facts: facts,
-                    prior: priorMappings[epoch.epoch], priorIsCurrent: priorIsCurrent
+                    prior: priorMappings[epoch.epoch], priorIsCurrent: priorIsCurrent,
+                    priorAcceptedProposal: priorAcceptedProposals[epoch.epoch.description],
+                    currentAnalysis: currentAnalyses[epoch.epoch]
                 )
                 epochMaps.append(EpochClockMap(epoch: epoch.epoch, mapping: mapping))
                 for source in epoch.sources {
@@ -219,7 +223,9 @@ enum MapAcceptance {
         analysis: EpochAnalysisRecord?,
         facts: [SourceID: SourceFacts],
         prior: EpochClockMap.Mapping?,
-        priorIsCurrent: Bool
+        priorIsCurrent: Bool,
+        priorAcceptedProposal: String?,
+        currentAnalysis: String?
     ) throws(AlignmentAcceptanceError) -> EpochClockMap.Mapping {
         if epoch == reference.epoch {
             guard let end else { throw .referenceFactsUnavailable(reference.source) }
@@ -235,6 +241,21 @@ enum MapAcceptance {
                     case let .mapped(_, .manual(correction))
                         where correction.basis == .numericEntry || correction.basis == .anchors:
                         return prior
+                    case let .mapped(segments, .manual(correction))
+                        where correction.basis == .acceptedAcousticProposal:
+                        if let analysis, let proposal = analysis.proposal,
+                           isCurrent(analysis, epoch: epoch, reference: reference, facts: facts),
+                           let priorAcceptedProposal, priorAcceptedProposal == currentAnalysis,
+                           segments.count == 1, let segment = segments.first,
+                           segment == proposal.segment || (
+                               correction.note.hasPrefix("proposal extended to the whole epoch")
+                               && segment.rateRatio == proposal.segment.rateRatio
+                               && segment.alignedOffset == proposal.segment.alignedOffset
+                               && segment.groupClockStart <= proposal.segment.groupClockStart
+                               && segment.groupClockEnd >= proposal.segment.groupClockEnd
+                           ) {
+                            return prior
+                        }
                     case .unsupported:
                         return prior
                     default:

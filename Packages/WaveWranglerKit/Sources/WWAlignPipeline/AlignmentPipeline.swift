@@ -201,10 +201,11 @@ public final class AlignmentPipeline: Sendable {
         let expected = plan.epochs.filter {
             $0.group != plan.reference?.group && !$0.sources.isEmpty
         }
-        if expected.count > 1 {
+        let expectedGroups = Set(expected.map(\.group))
+        if expectedGroups.count > 1 {
             for unit in units {
                 if let missing = expected.first(where: { planned in
-                    planned.epoch != unit.targetEpoch && !units.contains(where: { $0.targetEpoch == planned.epoch })
+                    planned.group != unit.targetGroup && !units.contains(where: { $0.targetGroup == planned.group })
                 }) {
                     epochFailures[unit.targetEpoch] = .cyclePeerUnavailable(missing.sources[0])
                 }
@@ -249,7 +250,13 @@ public final class AlignmentPipeline: Sendable {
                 epochFailures[unit.targetEpoch] = .encoding("the published analysis is missing from the store")
             }
         }
-        if expected.count > 1, let failed = units.first(where: { epochFailures[$0.targetEpoch] != nil }) {
+        if expectedGroups.count > 1, let failed = units.first(where: { unit in
+            epochFailures[unit.targetEpoch] != nil
+                && !units.contains(where: { peer in
+                    peer.targetGroup == unit.targetGroup && peer.targetEpoch != unit.targetEpoch
+                        && records[peer.targetEpoch] != nil
+                })
+        }) {
             if let failure = epochFailures[failed.targetEpoch] {
                 sourceFailures[failed.target.id] = failure
             }
@@ -324,9 +331,24 @@ public final class AlignmentPipeline: Sendable {
         } else {
             priorIsCurrent = false
         }
+        let currentAnalyses = Dictionary(uniqueKeysWithValues: analyses.keys.compactMap { epoch in
+            report.analyses[epoch].map { (epoch, $0.key.digest) }
+        })
         let built = try MapAcceptance.build(
             plan: report.plan, facts: facts, analyses: analyses, decisions: decisions,
-            prior: prior, priorIsCurrent: priorIsCurrent
+            prior: prior, priorIsCurrent: priorIsCurrent,
+            priorAcceptedProposals: priorRevision.flatMap { episode.alignment?.map(revision: $0) }
+                .map(MapDependencies.acceptedProposals) ?? [:],
+            currentAnalyses: currentAnalyses
+        )
+        let acceptedProposals: [String: String] = Dictionary(uniqueKeysWithValues:
+            built.map.groups.flatMap(\.epochs).compactMap { epoch -> (String, String)? in
+                guard case let .mapped(_, .manual(correction)) = epoch.mapping,
+                      correction.basis == .acceptedAcousticProposal,
+                      let key = currentAnalyses[epoch.epoch]
+                else { return nil }
+                return (epoch.epoch.description, key)
+            }
         )
         let tokens = Dictionary(uniqueKeysWithValues: facts.map { ($0.key, $0.value.revisionToken) })
         guard let dependencies = MapDependencies.digest(map: built.map, tokens: tokens, format: inputs.format) else {
@@ -340,7 +362,8 @@ public final class AlignmentPipeline: Sendable {
             let recorded: ShowDocumentModel
             (recorded, revision) = try model.recordingMap(
                 built.map, in: episodeID, inputs: built.inputs,
-                recipe: MapDependencies.recipe(digest: dependencies), derivedFrom: priorRevision
+                recipe: MapDependencies.recipe(digest: dependencies, acceptedProposals: acceptedProposals),
+                derivedFrom: priorRevision
             )
             accepted = try recorded.acceptingMap(revision: revision.revision, in: episodeID)
             guard let updated = accepted.episode(episodeID), let recordedVersion = updated.alignment?.map(revision: revision.revision) else {

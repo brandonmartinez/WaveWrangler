@@ -102,6 +102,23 @@ struct CycleTests {
         #expect(AcceptanceTests.provenances(accepted.map)[fixture.epochs[1]] == nil)
     }
 
+    @Test("One failed epoch of the only target recorder does not block its healthy restart epoch")
+    func failedSiblingEpochDoesNotBlockTwoRecorders() async throws {
+        var groups = TwoRecorder.groups()
+        groups[1].sources.append(SourceSpec(name: "restart", seconds: 24, signal: .scene(
+            seed: TwoRecorder.seed, rate: TwoRecorder.rate, offset: TwoRecorder.offset
+        )))
+        let fixture = try await PipelineFixture(groups, label: "two-recorder-failed-sibling")
+        let healthy = try fixture.moveToNewEpoch("restart")
+        try fixture.rewrite("tgt")
+        let report = try await fixture.analyse(preferredReference: "ref")
+        #expect(report.sourceFailures[fixture.id("tgt")] == .sourceChangedSinceRegistration)
+        #expect(report.epochFailures[healthy] == nil)
+        #expect(report.records[healthy]?.proposal != nil)
+        #expect(report.analyses[healthy] != nil)
+        #expect(await fixture.states(report)[healthy]?.status.proposal != nil)
+    }
+
     @Test("Three targets decode each peer excerpt once per analysis run")
     func peerExcerptsAreLinear() async throws {
         var specs = Self.groups()
