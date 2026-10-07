@@ -195,7 +195,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         let contentInspector = app.descendants(matching: .any)["ww.show.contentInspector"]
         let sidebar = app.descendants(matching: .any)["ww.show.sidebar.episodes"]
         let episodesLabel = app.staticTexts["Episodes"]
-        let newEpisode = app.buttons["ww.show.sidebar.newEpisode"]
+        let newEpisode = app.buttons["New Episode"]
         XCTAssertTrue(contentInspector.waitForExistence(timeout: 2))
         XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
         XCTAssertTrue(episodesLabel.waitForExistence(timeout: 2))
@@ -271,10 +271,11 @@ final class AlignmentInspectionUITests: XCTestCase {
             scroll.swipeDown()
         }
         let table = app.outlines["ww.alignment.anchors"]
-        for _ in 0..<12 where table.frame.width == 0 {
+        let window = app.windows["ww.show.window"]
+        for _ in 0..<12 where !table.frame.intersects(window.frame) {
             scroll.swipeUp()
         }
-        XCTAssertGreaterThan(table.frame.width, 0)
+        XCTAssertTrue(table.frame.intersects(window.frame))
         let rows = table.descendants(matching: .outlineRow)
         XCTAssertGreaterThan(rows.count, index)
         let row = rows.element(boundBy: index)

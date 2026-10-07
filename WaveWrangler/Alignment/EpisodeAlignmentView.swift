@@ -471,9 +471,9 @@ private struct AnchorAlignedTimeField: NSViewRepresentable {
         guard model.requestedAnchorFocus == anchor.id else { return }
         DispatchQueue.main.async {
             guard model.requestedAnchorFocus == anchor.id,
-                  let window = field.window,
-                  window.makeFirstResponder(field)
+                  field.window != nil
             else { return }
+            field.selectText(nil)
             model.requestedAnchorFocus = nil
         }
     }
@@ -584,7 +584,7 @@ private enum AlignmentFieldFocus {
         let identifier = "ww.alignment.anchor.\(anchor).alignedTime"
         if let field = findTextField(identifier, in: window.contentView) {
             field.scrollToVisible(field.bounds)
-            _ = window.makeFirstResponder(field)
+            field.selectText(nil)
             return
         }
         guard let table = findTable("ww.alignment.anchors", in: window.contentView) else {
@@ -609,7 +609,7 @@ private enum AlignmentFieldFocus {
             return
         }
         field.scrollToVisible(field.bounds)
-        _ = window.makeFirstResponder(field)
+        field.selectText(nil)
     }
 
     private static func retry(
