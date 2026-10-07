@@ -210,6 +210,58 @@ enum PartialClipContrast {
     }
 }
 
+/// Apple's contrast audit can sample the entire blue selection fill as foreground when a selected Setup status
+/// wraps to two lines. This handler is intentionally limited to the imported, focused "No connection" row and
+/// measures only light glyph pixels against that row's accent fill. A clipped row never qualifies.
+@MainActor
+enum SelectedSetupStatusContrast {
+    struct Result { let waived: Bool; let record: [String: Any]; let crop: Data? }
+
+    static func measure(_ element: XCUIElement, in app: XCUIApplication, minimumGlyphPixels: Int) -> Result? {
+        let id = element.identifier
+        let value = (element.value as? String) ?? element.label
+        guard element.elementType == .staticText,
+              id.hasPrefix("ww.setup.source."), id.hasSuffix(".status"),
+              value.hasPrefix("No connection") else { return nil }
+
+        let sources = app.outlines["ww.setup.sources"]
+        let rowID = String(id.dropLast(".status".count))
+        let row = app.descendants(matching: .any).matching(identifier: rowID).firstMatch
+        let outlineFrame = sources.frame
+        let rowFrame = row.frame
+        let statusFrame = element.frame
+        let fullyVisible = sources.exists && row.exists && element.exists &&
+            !outlineFrame.isEmpty && !rowFrame.isEmpty && !statusFrame.isEmpty &&
+            outlineFrame.contains(rowFrame) && outlineFrame.contains(statusFrame)
+        let selectionPreserved = "\(sources.value ?? "")" == "9 selected"
+        let focused = Acceptance.hasKeyboardFocus(sources)
+        let shot = element.exists ? element.screenshot() : nil
+        let measured: [String: Any]
+        if fullyVisible, let shot {
+            measured = ContrastMeter.measureTextOnSelection(
+                shot.image,
+                selectionImage: row.screenshot().image
+            ) ?? [:]
+        } else {
+            measured = [:]
+        }
+        let glyphPixels = measured["glyphPixels"] as? Int ?? 0
+        let glyphP75 = measured["glyphP75"] as? Double ?? 0
+        let background = measured["background"] as? String ?? ""
+        let accent = Acceptance.isAccentBlue(background)
+        let waived = fullyVisible && selectionPreserved && focused && accent &&
+            glyphPixels >= minimumGlyphPixels && glyphP75 >= 4.5
+        let record: [String: Any] = [
+            "element": "\(id) \(value)", "outline": "\(outlineFrame)", "row": "\(rowFrame)",
+            "status": "\(statusFrame)", "fullyVisible": fullyVisible, "selection": "\(sources.value ?? "")",
+            "focused": focused, "background": background, "glyphPixels": glyphPixels, "glyphP75": glyphP75,
+            "max": measured["ratio"] ?? 0, "waived": waived,
+            "rule": "exact selected No connection status; row and status fully visible; accent-fill glyph p75 >= 4.5",
+        ]
+        return Result(waived: waived, record: record, crop: shot?.pngRepresentation)
+    }
+}
+
 enum AcceptanceAudit {
     /// Minimum glyph pixels (>= 1.5:1 against the background) for a measured contrast waiver, with p75 >= 4.5.
     /// Policy change 2026-10-05 (coordinator decision, disclosed in WW-007 evidence §7): 100 → 40, decided after
@@ -380,6 +432,26 @@ enum AcceptanceAudit {
                     print("AUDIT WAIVED \(description) — partly clipped; visible part measured \(partial.record)")
                 } else {
                     unwaived.append("\(description) — partly clipped; visible part measured \(partial.record)")
+                }
+                continue
+            }
+            if let selectedStatus = SelectedSetupStatusContrast.measure(
+                element,
+                in: app,
+                minimumGlyphPixels: minimumGlyphPixels
+            ) {
+                if let data = selectedStatus.crop {
+                    Acceptance.attach(test, png: data, name: "selection-fill-\(crop)")
+                }
+                if selectedStatus.waived {
+                    waived.append([
+                        "finding": description, "kind": "selected-status-sampling-artefact",
+                        "measured": selectedStatus.record,
+                        "rationale": "Apple sampled the accent selection fill as glyphs; isolated light text passes",
+                    ])
+                    print("AUDIT WAIVED \(description) — selected status sampling artefact; measured \(selectedStatus.record)")
+                } else {
+                    unwaived.append("\(description) — selected status did not satisfy narrow artefact rule \(selectedStatus.record)")
                 }
                 continue
             }
