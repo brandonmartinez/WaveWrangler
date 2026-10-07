@@ -372,9 +372,7 @@ final class EpisodeAlignmentModel {
               let format = AVAudioFormat(standardFormatWithSampleRate: clip.sampleRate, channels: 1)
         else { throw CocoaError(.fileReadCorruptFile) }
         let cursor = AuditionSampleCursor(samples: clip.samples)
-        let source = AVAudioSourceNode(format: format) { _, _, frameCount, output in
-            cursor.render(frameCount: frameCount, output: output)
-        }
+        let source = cursor.makeSourceNode(format: format)
         auditionSource = source
         auditionEngine.attach(source)
         auditionEngine.connect(source, to: auditionEngine.mainMixerNode, format: format)
@@ -388,28 +386,6 @@ final class EpisodeAlignmentModel {
             try? await Task.sleep(for: .seconds(auditionPlaybackDurationSeconds))
             guard !Task.isCancelled, isAuditioning else { return }
             stopAudition()
-        }
-    }
-
-    private final class AuditionSampleCursor: @unchecked Sendable {
-        private let samples: [Float]
-        private var index = 0
-
-        init(samples: [Float]) {
-            self.samples = samples
-        }
-
-        func render(frameCount: AVAudioFrameCount, output: UnsafeMutablePointer<AudioBufferList>) -> OSStatus {
-            let buffers = UnsafeMutableAudioBufferListPointer(output)
-            let count = Int(frameCount)
-            for buffer in buffers {
-                guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
-                for frame in 0..<count {
-                    data[frame] = index + frame < samples.count ? samples[index + frame] : 0
-                }
-            }
-            index = min(samples.count, index + count)
-            return noErr
         }
     }
 
@@ -632,5 +608,34 @@ final class EpisodeAlignmentModel {
             }
         }
         return result
+    }
+}
+
+/// Audio render callbacks run off the main actor; AVAudioSourceNode invokes this cursor serially.
+private final class AuditionSampleCursor: @unchecked Sendable {
+    private let samples: [Float]
+    private var index = 0
+
+    init(samples: [Float]) {
+        self.samples = samples
+    }
+
+    func makeSourceNode(format: AVAudioFormat) -> AVAudioSourceNode {
+        AVAudioSourceNode(format: format) { [self] _, _, frameCount, output in
+            render(frameCount: frameCount, output: output)
+        }
+    }
+
+    func render(frameCount: AVAudioFrameCount, output: UnsafeMutablePointer<AudioBufferList>) -> OSStatus {
+        let buffers = UnsafeMutableAudioBufferListPointer(output)
+        let count = Int(frameCount)
+        for buffer in buffers {
+            guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+            for frame in 0..<count {
+                data[frame] = index + frame < samples.count ? samples[index + frame] : 0
+            }
+        }
+        index = min(samples.count, index + count)
+        return noErr
     }
 }

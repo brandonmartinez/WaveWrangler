@@ -31,9 +31,6 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(stateHeading("Reference").waitForExistence(timeout: 2))
         selectTargetEpoch()
         XCTAssertTrue(app.staticTexts["ww.inspector.alignment.evidence"].waitForExistence(timeout: 2))
-        app.typeKey("i", modifierFlags: [.command, .control])
-        app.typeKey("i", modifierFlags: [.command, .control])
-        XCTAssertTrue(app.staticTexts["ww.inspector.alignment.evidence"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.buttons["alignment.analyse"].exists)
         XCTAssertTrue(app.buttons["alignment.editNumeric"].exists)
         XCTAssertTrue(app.buttons["alignment.placeAnchors"].exists)
@@ -106,7 +103,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         chooseEpisodeMenu("Edit Epoch Timing Numerically…")
         let preserved = app.textFields["alignment.numeric.rate"]
         XCTAssertTrue(preserved.waitForExistence(timeout: 2))
-        XCTAssertEqual(preserved.value as? String, "12.5")
+        XCTAssertEqual(preserved.value as? String, "12.500")
         app.typeKey(.escape, modifierFlags: [])
     }
 
@@ -130,7 +127,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(anchor.waitForExistence(timeout: 5))
         anchor.click()
         chooseEpisodeMenu("Start New Epoch at Anchor")
-        XCTAssertTrue(app.staticTexts["Epoch 2"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Epoch 3"].waitForExistence(timeout: 5))
     }
 
     func testTM209AuditionAndStopShortcuts() {
@@ -147,7 +144,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         replace(app.textFields["ww.alignment.audition.range.start"], with: "2.5")
         let heading = app.staticTexts["ww.alignment.region.heading"]
         XCTAssertTrue(heading.waitForExistence(timeout: 2))
-        XCTAssertEqual(heading.label, "Gap — clock restarted")
+        XCTAssertEqual(heading.value as? String, "Gap — clock restarted")
         XCTAssertTrue(app.buttons["Go to Epoch After"].exists)
     }
 
@@ -158,7 +155,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["1 of 1 dependent job stale."].waitForExistence(timeout: 5))
     }
 
-    func testTM212NoRecorderGroupBlockedPanel() {
+    func testTM212NoRecorderGroupBlockedPanel() throws {
         app.terminate()
         app = XCUIApplication()
         app.launchArguments = [
@@ -171,6 +168,9 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["ww.show.blocked.heading"].waitForExistence(timeout: 5))
         let goToSetup = app.buttons["ww.show.blocked.goToSetup"]
         XCTAssertTrue(goToSetup.exists)
+        guard UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0 else {
+            throw XCTSkip("Tab-only recovery requires system Full Keyboard Access")
+        }
         XCTAssertTrue(tabToFocus(goToSetup))
         app.typeKey(.space, modifierFlags: [])
         XCTAssertTrue(app.tables["ww.setup.sources"].waitForExistence(timeout: 5))

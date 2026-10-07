@@ -43,6 +43,10 @@ frame-filling AppKit host with no intrinsic size and an `NSHostingView` that pub
 constraints to its parent. Its accessibility children remain exposed, and the host has an explicit
 label. On macOS 27, SwiftUI's disclosure `Table` exposes an accessibility **Outline**, not a Table;
 the UI probes target that native role and keep the input fields' individual identifiers.
+The first full local GUI pass then exposed a separate audition crash: Swift 6's actor-executor
+check trapped on AVAudioSourceNode's render thread because its callback was created inside a
+main-actor method. The cursor now creates its render block outside the actor; the focused
+audition case reaches its status assertion without that trap.
 
 ## Validation
 
