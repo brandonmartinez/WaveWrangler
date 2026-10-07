@@ -118,11 +118,12 @@ private struct ShowSidebar: View {
                     Button {
                         state.newEpisode()
                     } label: {
-                        Image(systemName: "plus").accessibilityLabel("New Episode")
+                        Image(systemName: "plus")
                     }
                     .buttonStyle(.borderless)
                     .help("New Episode (⇧⌘N)")
                     .disabled(!state.canEdit)
+                    .accessibilityLabel("New Episode")
                     .accessibilityIdentifier("ww.show.sidebar.newEpisode")
                 }
             }

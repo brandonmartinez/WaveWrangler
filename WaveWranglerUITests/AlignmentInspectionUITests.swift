@@ -50,6 +50,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         chooseEpisodeMenu("Place Anchors…")
         app.buttons["alignment.anchors.apply"].click()
         XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
+        let anchorsBefore = Set(anchorFields().allElementsBoundByIndex.map(\.identifier))
         replace(app.textFields["ww.alignment.audition.range.start"], with: "1")
         replace(app.textFields["ww.alignment.audition.range.duration"], with: "2")
         app.typeKey(.return, modifierFlags: .command)
@@ -57,25 +58,31 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(waitForText("Audition stopped at", in: app.staticTexts["alignment.auditionStatus"]))
         chooseEpisodeMenu("Place Anchor at Playhead")
-        let appended = app.textFields.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND hasKeyboardFocus == true",
-            "ww.alignment.anchor."
-        )).firstMatch
-        XCTAssertTrue(appended.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForAnchorFieldCount(anchorsBefore.count + 1))
+        let anchorsAfter = anchorFields().allElementsBoundByIndex
+        guard let appendedID = anchorsAfter.map(\.identifier).first(where: { !anchorsBefore.contains($0) }),
+              let initial = Double(app.textFields[appendedID].value as? String ?? "")
+        else { return XCTFail("Expected one newly appended numeric anchor field") }
+        let appended = app.textFields[appendedID]
+        let replacement = String(format: "%.3f", initial + 0.001)
+        app.typeKey("a", modifierFlags: .command)
+        app.typeText(replacement)
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(waitForValue(replacement, in: appended))
     }
 
     func testTM203EditAnchorTimeNumerically() {
         selectTargetEpoch()
         chooseEpisodeMenu("Place Anchors…")
         app.buttons["alignment.anchors.apply"].click()
+        XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
         selectAnchorRow(0)
         app.typeKey(.return, modifierFlags: [])
         let aligned = app.textFields["ww.alignment.anchor.0.alignedTime"]
         XCTAssertTrue(aligned.waitForExistence(timeout: 2))
-        XCTAssertTrue(waitForKeyboardFocus(aligned))
-        aligned.typeKey("a", modifierFlags: .command)
-        aligned.typeText("0.125")
-        aligned.typeKey(.return, modifierFlags: [])
+        app.typeKey("a", modifierFlags: .command)
+        app.typeText("0.125")
+        app.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(waitForValue("0.125", in: app.textFields["ww.alignment.anchor.0.alignedTime"]))
         selectAnchorRow(0)
         app.typeKey("z", modifierFlags: .command)
@@ -86,6 +93,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         selectTargetEpoch()
         chooseEpisodeMenu("Place Anchors…")
         app.buttons["alignment.anchors.apply"].click()
+        XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
         selectAnchorRow(1)
         app.typeKey(.delete, modifierFlags: [])
         let confirmation = app.sheets.buttons["Delete Anchor"]
@@ -430,16 +438,22 @@ final class AlignmentInspectionUITests: XCTestCase {
         return table.descendants(matching: .outlineRow).count == count
     }
 
-    private func waitForKeyboardFocus(
-        _ element: XCUIElement,
+    private func anchorFields() -> XCUIElementQuery {
+        app.textFields.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "ww.alignment.anchor."
+        ))
+    }
+
+    private func waitForAnchorFieldCount(
+        _ count: Int,
         timeout: TimeInterval = 5
     ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            if element.value(forKey: "hasKeyboardFocus") as? Bool == true { return true }
+            if anchorFields().count == count { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         } while Date() < deadline
-        return element.value(forKey: "hasKeyboardFocus") as? Bool == true
+        return anchorFields().count == count
     }
 
 }
