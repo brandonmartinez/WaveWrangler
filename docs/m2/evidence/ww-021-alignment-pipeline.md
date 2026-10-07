@@ -53,13 +53,15 @@ number of groups. The estimate is conservative: the measured growth was about 29
 
 ## Tests
 
-Package suites (`swift test --filter "WWAlignPipelineTests|ForbiddenAPITests"`, 65 tests in 14 suites; synthetic only):
+Package suites (`swift test --filter "WWAlignPipelineTests|ForbiddenAPITests"`, 70 pipeline tests in 15 suites; synthetic only):
 
 - **End to end:** decode → propose → accept → activate → render → map change invalidates the renders.
   Rendering the same revision again reuses every segment and opens nothing.
 - **Abstention** (7 cases): silent, unrelated (weak), periodic, echo (ambiguous), offset step
   (discontinuous), short reference (disconnected) and an unreachable search range (insufficient coverage).
   Each resolves to its WW-014 state and remedies, with full evidence stored.
+- **Cycle/restart/gap** (5 cases): consistent and conflicting 3-recorder cycles, a weak peer,
+  a declared restart plus an in-recording step, and an internal gap with no supported inverse.
 - **Eligibility:** OFF, unauthorized, unregistered and unlocated sources are planned out with typed
   reasons and never reach the decoder. With every source OFF, the whole run is metadata only (zero opens
   through the recording gateway). Turning a source OFF before rendering skips its channels without opening
