@@ -233,9 +233,26 @@ final class FormatUpdateUITests: XCTestCase {
                 let obscured = flagged.screenshot()
                 let measurement = ContrastMeter.measure(obscured.image)
                 guard !AcceptanceAudit.passesGlyphContrast(measurement) else { return nil }
+                let fullyCovered = popover.frame.contains(flagged.frame)
+                let exposed = fullyCovered ? [] : self.exposedContrast(of: obscured, frame: flagged.frame,
+                                                                       excluding: popover.frame)
+                guard fullyCovered || (!exposed.isEmpty && exposed.allSatisfy {
+                    AcceptanceAudit.passesGlyphContrast($0.measurement)
+                }) else { return nil }
                 Acceptance.attach(self, png: obscured.pngRepresentation, name: "T21-needs-permission-under-popover.png")
                 Acceptance.writeEvidence("T21-needs-permission-occluded", measurement ?? [:], test: self)
-                return "enabled source status \(flagged.identifier) measured legible before the popover, then covered by the popover; current pixels \(measurement?["glyphPixels"] ?? 0) glyph px, p75 \(measurement?["glyphP75"] ?? 0):1"
+                for crop in exposed {
+                    Acceptance.attach(self, png: crop.png, name: "T21-needs-permission-exposed-\(crop.name).png")
+                }
+                Acceptance.writeEvidence("T21-needs-permission-exposed", [
+                    "fullyCovered": fullyCovered,
+                    "regions": exposed.map {
+                        ["name": $0.name, "frame": "\($0.frame)",
+                         "glyphPixels": $0.measurement["glyphPixels"] ?? 0,
+                         "glyphP75": $0.measurement["glyphP75"] ?? 0]
+                    },
+                ], test: self)
+                return "enabled source status \(flagged.identifier) measured legible before the popover, then \(fullyCovered ? "fully covered" : "partly covered with every exposed crop still legible") by the popover; current pixels \(measurement?["glyphPixels"] ?? 0) glyph px, p75 \(measurement?["glyphP75"] ?? 0):1"
             }
             // Focus starts on the popover's first action (Update…), so Space activates it with keyboard navigation.
             activate(update, "Update… in the save-status popover", task: "T21-update-later", tabs: 0)
@@ -260,12 +277,13 @@ final class FormatUpdateUITests: XCTestCase {
             check(app.windows.matching(identifier: "ww.show.window").firstMatch.waitForExistence(timeout: 10), "the first show opens")
             // Open the second before answering the first; merge the two document windows into native tabs.
             // Delivered to the running app as Finder does; `XCUIApplication.open` would start a second instance (GUI round 1).
-            try openInRunningApp(second)
+            let launchedProcessIdentifier = try openInRunningApp(second)
             // Background tabs may be absent from the AX window list, so wait for the second (selected) tab only.
             check(Acceptance.waitFor(timeout: 10) { self.app.windows.allElementsBoundByIndex.contains { $0.title.contains("Second Tab") } },
                   "the second show opens in the app under test: \(app.windows.allElementsBoundByIndex.map(\.title))")
-            check(NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier).count == 1,
-                  "one app process: \(NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier).map(\.processIdentifier))")
+            let processIdentifiers = waitForSingleAppProcess(launchedProcessIdentifier, timeout: 10)
+            check(processIdentifiers == [launchedProcessIdentifier],
+                  "one app process hosts both documents: expected \(launchedProcessIdentifier), observed \(processIdentifiers), XCUIApplication state \(app.state.rawValue)")
             guard waitForForegroundApp() else {
                 throw NSError(domain: "FormatUpdate", code: 4,
                               userInfo: [NSLocalizedDescriptionKey: "the opened app did not become foreground before merging"])
@@ -274,6 +292,8 @@ final class FormatUpdateUITests: XCTestCase {
             let merge = app.menuBars.menuItems["Merge All Windows"]
             check(merge.exists && merge.isEnabled, "Window › Merge All Windows can group both shows as tabs")
             if merge.exists && merge.isEnabled { merge.click() }
+            check(nativeTabGroupContains(["First Tab", "Second Tab"]),
+                  "the native tab group contains both First Tab and Second Tab")
             var asked: [String] = []
             for name in ["Second Tab", "First Tab"] {
                 check(selectTab(named: name), "\(name) is selected through the Window menu")
@@ -442,10 +462,47 @@ final class FormatUpdateUITests: XCTestCase {
     private func selectTab(named name: String) -> Bool {
         guard waitForForegroundApp() else { return false }
         app.menuBars.menuBarItems["Window"].click()
-        let item = app.menuBars.menuItems.matching(NSPredicate(format: "title BEGINSWITH %@", "\(name).wwshow")).firstMatch
+        let item = windowMenuItem(named: name)
         guard item.exists && item.isEnabled else { return false }
         item.click()
         return Acceptance.waitFor(timeout: 5) { self.showWindow(named: name).exists && self.app.state == .runningForeground }
+    }
+
+    private func windowMenuItem(named name: String) -> XCUIElement {
+        app.menuBars.menuItems.matching(
+            NSPredicate(format: "title == %@ OR title == %@", name, "\(name).wwshow")
+        ).firstMatch
+    }
+
+    /// After Window › Merge All Windows, either the tab bar AX nodes name both documents or the Window menu proves
+    /// the selected document belongs to a native tab group and exposes exact entries for both document names.
+    private func nativeTabGroupContains(_ names: [String]) -> Bool {
+        let window = showWindow(named: names.last ?? "")
+        let tabGroups = window.descendants(matching: .tabGroup).allElementsBoundByIndex
+        let tabs = window.descendants(matching: .tab).allElementsBoundByIndex
+        let tabNames = tabs.flatMap { [$0.title, $0.label, value($0)] }.filter { !$0.isEmpty }
+        let axContainsBoth = names.allSatisfy { name in
+            tabNames.contains { $0 == name || $0 == "\(name).wwshow" }
+        }
+
+        app.menuBars.menuBarItems["Window"].click()
+        let moveTab = app.menuBars.menuItems["Move Tab to New Window"]
+        let menuEntries = names.map { name in
+            let item = windowMenuItem(named: name)
+            return ["name": name, "exists": "\(item.exists)", "title": item.title]
+        }
+        let menuContainsBoth = moveTab.exists && moveTab.isEnabled
+            && names.allSatisfy { windowMenuItem(named: $0).exists }
+        Acceptance.writeEvidence("format-update-T21-native-tab-group", [
+            "tabGroupCount": tabGroups.count,
+            "tabNames": tabNames,
+            "moveTabToNewWindow": ["exists": moveTab.exists, "enabled": moveTab.isEnabled],
+            "windowMenuEntries": menuEntries,
+            "axContainsBoth": axContainsBoth,
+            "windowMenuContainsBoth": menuContainsBoth,
+        ], test: self)
+        app.typeKey(.escape, modifierFlags: [])
+        return axContainsBoth || menuContainsBoth
     }
 
     /// Keeps the selected tab and any sheet title in the xcresult so a repeated prompt identifies its document.
@@ -481,8 +538,8 @@ final class FormatUpdateUITests: XCTestCase {
 
     /// Opens `url` in the app instance under test, as Finder does: LaunchServices delivers it to the running
     /// instance. `XCUIApplication.open(_:)` on a running app starts a second instance instead.
-    private func openInRunningApp(_ url: URL) throws {
-        let running = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier)
+    private func openInRunningApp(_ url: URL) throws -> pid_t {
+        let running = waitForRunningApplications(timeout: 10)
         guard let target = running.max(by: { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) }),
               let bundleURL = target.bundleURL else {
             throw NSError(domain: "FormatUpdate", code: 2, userInfo: [NSLocalizedDescriptionKey: "the app under test isn't running"])
@@ -498,6 +555,78 @@ final class FormatUpdateUITests: XCTestCase {
         wait(for: [opened], timeout: 15)
         if let error = outcome.error { throw NSError(domain: "FormatUpdate", code: 3, userInfo: [NSLocalizedDescriptionKey: error]) }
         app.activate()
+        return target.processIdentifier
+    }
+
+    /// NSWorkspace can transiently return no processes from a sandboxed UI-test runner. Empty snapshots never pass:
+    /// poll while XCUIApplication still reports a live process, and require the one surviving bundle process to be
+    /// the process that received the second document.
+    private func waitForSingleAppProcess(_ expected: pid_t, timeout: TimeInterval) -> [pid_t] {
+        var identifiers: [pid_t] = []
+        _ = Acceptance.waitFor(timeout: timeout) {
+            guard self.app.state != .notRunning else {
+                identifiers = []
+                return false
+            }
+            identifiers = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier)
+                .map(\.processIdentifier).sorted()
+            return identifiers == [expected]
+        }
+        Acceptance.writeEvidence("format-update-T21-app-processes", [
+            "expected": expected,
+            "observed": identifiers,
+            "xcuiState": app.state.rawValue,
+        ], test: self)
+        return identifiers
+    }
+
+    private func waitForRunningApplications(timeout: TimeInterval) -> [NSRunningApplication] {
+        var running: [NSRunningApplication] = []
+        _ = Acceptance.waitFor(timeout: timeout) {
+            guard self.app.state != .notRunning else { return false }
+            running = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier)
+            return !running.isEmpty
+        }
+        return running
+    }
+
+    private struct ExposedContrastCrop {
+        let name: String
+        let frame: CGRect
+        let measurement: [String: Any]
+        let png: Data
+    }
+
+    /// Crops the non-overlapped strips from an element screenshot. A partly covered finding is handled only when
+    /// every exposed strip still contains enough rendered glyph pixels at p75 >= 4.5:1.
+    private func exposedContrast(of screenshot: XCUIScreenshot, frame: CGRect,
+                                 excluding cover: CGRect) -> [ExposedContrastCrop] {
+        let overlap = frame.intersection(cover)
+        guard !overlap.isNull, !overlap.isEmpty, overlap != frame,
+              let cg = screenshot.image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              frame.width > 0, frame.height > 0 else { return [] }
+        let regions: [(String, CGRect)] = [
+            ("left", CGRect(x: frame.minX, y: frame.minY, width: overlap.minX - frame.minX, height: frame.height)),
+            ("right", CGRect(x: overlap.maxX, y: frame.minY, width: frame.maxX - overlap.maxX, height: frame.height)),
+            ("top", CGRect(x: overlap.minX, y: frame.minY, width: overlap.width, height: overlap.minY - frame.minY)),
+            ("bottom", CGRect(x: overlap.minX, y: overlap.maxY, width: overlap.width, height: frame.maxY - overlap.maxY)),
+        ].filter { $0.1.width >= 1 && $0.1.height >= 1 }
+        let scaleX = CGFloat(cg.width) / frame.width
+        let scaleY = CGFloat(cg.height) / frame.height
+        let imageBounds = CGRect(x: 0, y: 0, width: cg.width, height: cg.height)
+        return regions.compactMap { name, region in
+            let pixels = CGRect(x: (region.minX - frame.minX) * scaleX,
+                                y: (region.minY - frame.minY) * scaleY,
+                                width: region.width * scaleX, height: region.height * scaleY)
+                .integral.intersection(imageBounds)
+            guard !pixels.isEmpty, let cropped = cg.cropping(to: pixels),
+                  let png = NSBitmapImageRep(cgImage: cropped).representation(using: .png, properties: [:]) else {
+                return nil
+            }
+            let image = NSImage(cgImage: cropped, size: NSSize(width: pixels.width, height: pixels.height))
+            return ExposedContrastCrop(name: name, frame: region,
+                                       measurement: ContrastMeter.measure(image) ?? [:], png: png)
+        }
     }
 
     /// Audits, then brings the app back to the front: an audit can take minutes, and on the Mac mini (GUI round 1) the
