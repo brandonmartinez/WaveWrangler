@@ -105,13 +105,6 @@ private struct ShowSidebar: View {
         let episodes = state.store.model.episodes
         List(selection: $state.sidebarSelection) {
             Section {
-                ForEach(episodes) { episode in
-                    EpisodeSidebarRow(state: state, episode: episode)
-                        .tag(ShowWindowState.SidebarSelection.episode(episode.id))
-                        .contextMenu { episodeMenu(episode) }
-                }
-                .onMove { source, destination in state.moveEpisodes(fromOffsets: source, toOffset: destination) }
-            } header: {
                 HStack {
                     Text("Episodes")
                     Spacer()
@@ -126,6 +119,14 @@ private struct ShowSidebar: View {
                     .accessibilityLabel("New Episode")
                     .accessibilityIdentifier("ww.show.sidebar.newEpisode")
                 }
+                .listRowSeparator(.hidden)
+
+                ForEach(episodes) { episode in
+                    EpisodeSidebarRow(state: state, episode: episode)
+                        .tag(ShowWindowState.SidebarSelection.episode(episode.id))
+                        .contextMenu { episodeMenu(episode) }
+                }
+                .onMove { source, destination in state.moveEpisodes(fromOffsets: source, toOffset: destination) }
             }
             Section("Show") {
                 Label("Show Info", systemImage: "info.circle")

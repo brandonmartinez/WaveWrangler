@@ -457,6 +457,8 @@ private struct AnchorAlignedTimeField: NSViewRepresentable {
         let field = NSTextField(string: formatted(anchor.alignedSeconds))
         field.isBezeled = false
         field.drawsBackground = false
+        field.isEditable = true
+        field.isSelectable = true
         field.focusRingType = .exterior
         field.delegate = context.coordinator
         field.target = context.coordinator
@@ -480,6 +482,7 @@ private struct AnchorAlignedTimeField: NSViewRepresentable {
                   field.window != nil
             else { return }
             field.selectText(nil)
+            guard field.currentEditor() != nil else { return }
             model.requestedAnchorFocus = nil
         }
     }
@@ -591,6 +594,8 @@ private enum AlignmentFieldFocus {
         if let field = findTextField(identifier, in: window.contentView) {
             field.scrollToVisible(field.bounds)
             field.selectText(nil)
+            if field.currentEditor() != nil { return }
+            retry(anchor: anchor, in: window, attemptsRemaining: attemptsRemaining)
             return
         }
         guard let table = findTable("ww.alignment.anchors", in: window.contentView) else {
@@ -616,6 +621,9 @@ private enum AlignmentFieldFocus {
         }
         field.scrollToVisible(field.bounds)
         field.selectText(nil)
+        if field.currentEditor() == nil {
+            retry(anchor: anchor, in: window, attemptsRemaining: attemptsRemaining)
+        }
     }
 
     private static func retry(

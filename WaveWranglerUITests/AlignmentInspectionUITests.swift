@@ -51,7 +51,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.buttons["alignment.anchors.apply"].click()
         XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
         let anchorsBefore = Set(anchorFields().allElementsBoundByIndex.map(\.identifier))
-        replace(app.textFields["ww.alignment.audition.range.start"], with: "1")
+        replace(app.textFields["ww.alignment.audition.range.start"], with: "0.5")
         replace(app.textFields["ww.alignment.audition.range.duration"], with: "2")
         app.typeKey(.return, modifierFlags: .command)
         XCTAssertTrue(waitForText("Auditioning", in: app.staticTexts["alignment.auditionStatus"]))
@@ -137,6 +137,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         selectTargetEpoch()
         chooseEpisodeMenu("Place Anchors…")
         app.buttons["alignment.anchors.apply"].click()
+        XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
         selectAnchorRow(1)
         chooseEpisodeMenu("Start New Epoch at Anchor")
         XCTAssertTrue(waitForText("Started Epoch 3", in: app.staticTexts["alignment.status"], timeout: 15))
@@ -210,7 +211,6 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
         XCTAssertTrue(newEpisode.waitForExistence(timeout: 2))
         var layoutContainerFindings = 0
-        var sectionHeaderFindings = 0
         try app.performAccessibilityAudit(
             for: [.elementDetection, .sufficientElementDescription, .hitRegion, .action]
         ) { issue in
@@ -220,27 +220,15 @@ final class AlignmentInspectionUITests: XCTestCase {
             else { return false }
             let isContent = self.approximatelyEqual(element.frame, contentInspector.frame)
             let isSidebar = self.approximatelyEqual(element.frame, sidebar.frame)
-            let isEpisodesHeader = sidebar.frame.contains(element.frame)
-                && element.frame.contains(newEpisode.frame)
-                && element.frame.height < 40
-            guard isContent || isSidebar || isEpisodesHeader else { return false }
-            if isEpisodesHeader {
-                sectionHeaderFindings += 1
-                print(
-                    "AUDIT WAIVED [sidebar-section-header] \(issue.compactDescription) — " +
-                    "framework Section container whose labeled text and button remain exposed"
-                )
-            } else {
-                layoutContainerFindings += 1
-                print(
-                    "AUDIT WAIVED [show-layout-container] \(issue.compactDescription) — " +
-                    "noninteractive container whose labeled children remain exposed"
-                )
-            }
+            guard isContent || isSidebar else { return false }
+            layoutContainerFindings += 1
+            print(
+                "AUDIT WAIVED [show-layout-container] \(issue.compactDescription) — " +
+                "noninteractive container whose labeled children remain exposed"
+            )
             return true
         }
         XCTAssertLessThanOrEqual(layoutContainerFindings, 2)
-        XCTAssertLessThanOrEqual(sectionHeaderFindings, 1)
     }
 
     func testBlockedRecoveryContrastAudit() throws {
