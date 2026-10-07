@@ -64,8 +64,8 @@ final class AlignmentInspectionUITests: XCTestCase {
               let initial = Double(app.textFields[appendedID].value as? String ?? "")
         else { return XCTFail("Expected one newly appended numeric anchor field") }
         let appended = app.textFields[appendedID]
-        XCTAssertTrue(appended.isHittable, "The appended anchor row must be scrolled into view")
         XCTAssertTrue(waitForKeyboardFocus(appended), "The new anchor editor must own keyboard focus")
+        XCTAssertTrue(appended.isHittable, "The appended anchor row must be scrolled into view")
         let replacement = String(format: "%.3f", initial + 0.001)
         app.typeKey("a", modifierFlags: .command)
         app.typeText(replacement)
@@ -305,7 +305,10 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertGreaterThan(rows.count, index)
         let row = rows.element(boundBy: index)
         XCTAssertGreaterThan(row.frame.width, 0)
-        row.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).click()
+        let source = app.staticTexts["ww.alignment.anchor.\(index).sourceTime"]
+        XCTAssertTrue(source.waitForExistence(timeout: 2))
+        source.click()
+        XCTAssertTrue(row.isSelected, "Anchor \(index) must be selected before the command")
     }
 
     private func selectTargetEpoch() {

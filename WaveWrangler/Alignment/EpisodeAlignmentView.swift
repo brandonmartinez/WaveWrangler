@@ -253,6 +253,7 @@ private struct AlignmentWorkspace: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
             }
+            .accessibilityLabel("Alignment workspace")
             .accessibilityIdentifier("ww.alignment.workspace")
             .onAppear {
                 AlignmentKeyHandler.install()
@@ -571,8 +572,14 @@ private struct AnchorAlignedTimeField: NSViewRepresentable {
                let row = model.selectedAnchors.firstIndex(where: { $0.id == anchorID }),
                row < table.numberOfRows {
                 table.scrollRowToVisible(row)
+                if let column = table.tableColumns.firstIndex(where: {
+                    $0.headerCell.stringValue == "Aligned time"
+                }) {
+                    table.scrollColumnToVisible(column)
+                }
                 table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
                 if table.row(for: field) == row {
+                    field.scrollToVisible(field.bounds)
                     field.selectText(nil)
                     if let editor = field.currentEditor(),
                        window.firstResponder === editor,
