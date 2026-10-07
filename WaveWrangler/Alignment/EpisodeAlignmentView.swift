@@ -101,6 +101,7 @@ private struct AlignmentWorkspace: View {
                 .accessibilityIdentifier("alignment.analyse")
 
                 AlignmentOutlineTable(model: model)
+                    .id("ww.alignment.groupSection")
                     .frame(minHeight: 180, idealHeight: 240)
 
                 GroupBox("Anchors for \(model.selectedRow?.epochLabel ?? "selected epoch")") {
@@ -259,6 +260,11 @@ private struct AlignmentWorkspace: View {
                 DispatchQueue.main.async {
                     AlignmentFieldFocus.focus(anchor: anchor, in: NSApp.keyWindow)
                 }
+            }
+            .onChange(of: model.requestedEpochFocus) { _, epoch in
+                guard epoch != nil else { return }
+                scrollProxy.scrollTo("ww.alignment.groupSection", anchor: .top)
+                model.requestedEpochFocus = nil
             }
             .sheet(item: $model.editorRequest) { request in
                 switch request {
@@ -467,7 +473,7 @@ private struct AnchorAlignedTimeField: NSViewRepresentable {
         if field.currentEditor() == nil {
             field.stringValue = formatted(anchor.alignedSeconds)
         }
-        field.setAccessibilityValue(AlignmentPresentation.formatTime(anchor.alignedSeconds))
+        field.setAccessibilityValue(formatted(anchor.alignedSeconds))
         guard model.requestedAnchorFocus == anchor.id else { return }
         DispatchQueue.main.async {
             guard model.requestedAnchorFocus == anchor.id,

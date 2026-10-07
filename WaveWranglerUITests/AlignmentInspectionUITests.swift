@@ -51,7 +51,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.buttons["alignment.anchors.apply"].click()
         XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
         replace(app.textFields["ww.alignment.audition.range.start"], with: "1")
-        replace(app.textFields["ww.alignment.audition.range.duration"], with: "1")
+        replace(app.textFields["ww.alignment.audition.range.duration"], with: "2")
         app.typeKey(.return, modifierFlags: .command)
         XCTAssertTrue(waitForText("Auditioning", in: app.staticTexts["alignment.auditionStatus"]))
         app.typeKey(.escape, modifierFlags: [])
@@ -90,7 +90,6 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.typeKey(.return, modifierFlags: [])
         let anchors = app.outlines["ww.alignment.anchors"]
         XCTAssertTrue(waitForRowCount(0, in: anchors, timeout: 15))
-        app.outlines["ww.alignment.groups"].click()
         app.typeKey("z", modifierFlags: .command)
         XCTAssertTrue(waitForRowCount(2, in: anchors, timeout: 15))
     }
@@ -129,10 +128,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.buttons["alignment.anchors.apply"].click()
         selectAnchorRow(1)
         chooseEpisodeMenu("Start New Epoch at Anchor")
-        for _ in 0..<12 {
-            app.scrollViews["ww.alignment.workspace"].swipeDown()
-        }
-        XCTAssertTrue(app.staticTexts["Epoch 3"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Epoch 3"].waitForExistence(timeout: 15))
     }
 
     func testTM209AuditionAndStopShortcuts() {

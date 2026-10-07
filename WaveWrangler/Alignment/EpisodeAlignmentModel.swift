@@ -26,6 +26,7 @@ final class EpisodeAlignmentModel {
     var editorRequest: AlignmentEditorRequest?
     var anchorSelection: Int?
     var requestedAnchorFocus: Int?
+    var requestedEpochFocus: RecordingEpochID?
     private var anchorsByEpoch: [RecordingEpochID: [AlignmentAnchorRow]] = [:]
     private var acceptedMap: AlignedTimelineMap?
 
@@ -182,6 +183,7 @@ final class EpisodeAlignmentModel {
                         model: accepted.model, episodeID: episodeID, states: [],
                         map: accepted.map
                     )
+                    requestedEpochFocus = epoch.id
                     message = "Started \(epoch.label) at the selected anchor. The new epoch is unsupported until you time it."
                 }
             } catch {
