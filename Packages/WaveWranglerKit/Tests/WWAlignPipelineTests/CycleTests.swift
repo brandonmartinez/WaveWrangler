@@ -83,6 +83,42 @@ struct CycleTests {
         #expect(weak.abstention?.abstentionReason == .weak)
     }
 
+    @Test("A failed third-recorder probe blocks the planned cycle rather than estimating two recorders")
+    func missingPeerProbe() async throws {
+        let fixture = try await PipelineFixture(Self.groups(), label: "cycle-missing-probe")
+        try fixture.rewrite("b")
+        let report = try await fixture.analyse(preferredReference: "ref")
+        let missing = fixture.id("b")
+        #expect(report.sourceFailures[missing] == .sourceChangedSinceRegistration)
+        #expect(report.records[fixture.epochs[1]] == nil)
+        #expect(report.analyses[fixture.epochs[1]] == nil)
+        #expect(report.epochFailures[fixture.epochs[1]] == .cyclePeerUnavailable(missing))
+        let state = try #require(await fixture.states(report)[fixture.epochs[1]])
+        #expect(state.status == .sourceBlocked(missing, .readFailed(.sourceChangedSinceRegistration)))
+        #expect(state.remedies == [.retryAnalysis, .goToSetup])
+        let accepted = try await fixture.pipeline.accept(
+            model: fixture.model, episode: fixture.episodeID, report: report, decisions: [:]
+        )
+        #expect(AcceptanceTests.provenances(accepted.map)[fixture.epochs[1]] == nil)
+    }
+
+    @Test("Three targets decode each peer excerpt once per analysis run")
+    func peerExcerptsAreLinear() async throws {
+        var specs = Self.groups()
+        specs.append(GroupSpec(name: "Field C", sources: [
+            SourceSpec(name: "c", seconds: 24, signal: .scene(seed: TwoRecorder.seed, rate: 1.00002, offset: 0.3))
+        ]))
+        let fixture = try await PipelineFixture(specs, label: "cycle-peer-cache")
+        let report = try await fixture.analyse(preferredReference: "ref")
+        #expect(report.epochFailures.isEmpty)
+        #expect(fixture.content.total.opens == 12, "4 probes + 3 reference decodes + 3 targets + 2 one-time peer excerpts")
+        #expect(fixture.content.record(fixture.url("a")).opens == 2, "first target provides its own peer excerpt")
+        for name in ["b", "c"] {
+            #expect(fixture.content.record(fixture.url(name)).opens == 3, "probe + target + one peer excerpt: \(name)")
+        }
+        #expect(fixture.content.total.readsOnMainThread == 0)
+    }
+
     @Test("Declared recorder restart is flagged; a further in-recording step remains unsupported")
     func restarted() async throws {
         var groups = Self.groups(first: .scene(seed: TwoRecorder.seed, rate: 1.0001, offset: 1.25, stepAt: 12, stepBy: 0.4))

@@ -203,7 +203,10 @@ struct AnalysisUnit: Sendable {
 
     /// Decodes both excerpts (sequentially, inside one admission), runs the estimator and returns the
     /// encoded `EpochAnalysisRecord`.
-    func run(environment: PipelineEnvironment, peers: [AnalysisUnit] = []) async throws(AlignmentWorkFailure) -> Data {
+    func run(
+        environment: PipelineEnvironment, peers: [AnalysisUnit] = [],
+        cache: CycleExcerptCache? = nil, retainedBytes: Int = 0
+    ) async throws(AlignmentWorkFailure) -> Data {
         let referenceRange = referenceRange
         let targetRange = targetRange
         let referenceParticipant = try participant(referenceChoice.group, referenceChoice.epoch, reference, referenceFacts, range: referenceRange)
@@ -216,7 +219,7 @@ struct AnalysisUnit: Sendable {
                 detail: "The search range cannot reach the reference recording from this epoch's excerpt."
             )
         } else {
-            let bytes = try estimatedWorkingSetBytes(peers: peers)
+            let bytes = try estimatedWorkingSetBytes(peers: peers) + retainedBytes
             let unit = self
             do {
                 record = try await environment.gate.withAdmission(bytes: bytes) {
@@ -224,14 +227,23 @@ struct AnalysisUnit: Sendable {
                     try Task.checkCancellation()
                     let targetSamples = try await unit.decodeAnalysisBuffer(unit.target, facts: unit.targetFacts, range: targetRange, decoder: environment.decoder)
                     try Task.checkCancellation()
+                    if let cache {
+                        await cache.rememberTarget(unit, samples: targetSamples)
+                    }
                     var peerTracks: [EstimatorTrack] = []
                     for peer in peers {
                         let range = peer.cycleTargetRange
                         let participant = try peer.participant(peer.targetGroup, peer.targetEpoch, peer.target, peer.targetFacts, range: range)
-                        let samples = try await peer.decodeAnalysisBuffer(peer.target, facts: peer.targetFacts, range: range, decoder: environment.decoder)
+                        let samples: [Float]
+                        if let cache {
+                            samples = try await cache.samples(for: peer, decoder: environment.decoder)
+                        } else {
+                            samples = try await peer.decodeAnalysisBuffer(peer.target, facts: peer.targetFacts, range: range, decoder: environment.decoder)
+                        }
                         peerTracks.append(try unit.track(samples: samples, participant: participant))
                         try Task.checkCancellation()
                     }
+
                     return try unit.estimate(
                         referenceSamples: referenceSamples, referenceParticipant: referenceParticipant,
                         targetSamples: targetSamples, targetParticipant: targetParticipant,
@@ -331,5 +343,34 @@ struct AnalysisUnit: Sendable {
             )
         }
         return record
+    }
+}
+
+/// One run's bounded, decimated peer excerpts. The caller serializes multi-recorder units so the
+/// gateway is opened at most once per source revision; nothing persists beyond that analysis run.
+actor CycleExcerptCache {
+    private var excerpts: [SourceRevision: [Float]] = [:]
+
+    func rememberTarget(_ unit: AnalysisUnit, samples: [Float]) {
+        let revision = SourceRevision(source: unit.target.id, token: unit.targetFacts.revisionToken)
+        guard excerpts[revision] == nil else { return }
+        let peer = unit.cycleTargetRange
+        guard let factor = try? AnalysisUnit.factor(unit.targetFacts.sampleRate, unit.configuration.minimumAnalysisRate) else { return }
+        let offset = peer.lowerBound - unit.targetRange.lowerBound
+        guard offset % Int64(factor) == 0 else { return }
+        let start = Int(offset / Int64(factor))
+        let count = AnalysisDecimator.outputCount(frames: Int64(peer.count), factor: factor)
+        guard start + count <= samples.count else { return }
+        excerpts[revision] = Array(samples[start ..< start + count])
+    }
+
+    func samples(for peer: AnalysisUnit, decoder: SourceDecoder) async throws -> [Float] {
+        let revision = SourceRevision(source: peer.target.id, token: peer.targetFacts.revisionToken)
+        if let samples = excerpts[revision] { return samples }
+        let samples = try await peer.decodeAnalysisBuffer(
+            peer.target, facts: peer.targetFacts, range: peer.cycleTargetRange, decoder: decoder
+        )
+        excerpts[revision] = samples
+        return samples
     }
 }

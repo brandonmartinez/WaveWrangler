@@ -104,6 +104,7 @@ struct PipelineMemoryTests {
             print("[pipeline-memory] epoch \(record.target.group): proposal ppm \(record.proposal.map { String(format: "%.2f", $0.ppm) } ?? "none"), abstention \(record.abstention?.reason ?? "none")")
         }
         #expect(fixture.content.peakOpenReaders <= configuration.concurrency)
+        #expect(fixture.content.total.opens == 11, "6 probes + 2 reference decodes + 2 targets + 1 cached peer excerpt")
         #expect(fixture.content.total.readsOnMainThread == 0)
         #expect(gate.peakActive <= configuration.concurrency && gate.peakBytes <= configuration.analysisMemoryBudgetBytes)
 

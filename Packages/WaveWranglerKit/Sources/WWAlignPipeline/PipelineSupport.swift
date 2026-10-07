@@ -20,6 +20,8 @@ public enum AlignmentWorkFailure: Error, Sendable, Equatable {
     case sourceFactsMismatch
     /// A source's facts are not ready (probe first).
     case sourceFactsUnavailable(SourceID)
+    /// A required recorder cannot close the planned cycle; do not run a smaller-cohort estimator.
+    case cyclePeerUnavailable(SourceID)
     case estimator(AlignEstimateError)
     /// One unit's estimated working set exceeds the whole analysis memory budget.
     case memoryBudget(requested: Int, budget: Int)
