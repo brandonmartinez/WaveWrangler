@@ -80,13 +80,16 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.typeKey(.return, modifierFlags: [])
         let aligned = app.textFields["ww.alignment.anchor.0.alignedTime"]
         XCTAssertTrue(aligned.waitForExistence(timeout: 2))
+        guard let originalValue = aligned.value as? String else {
+            return XCTFail("Expected the aligned-time field's original numeric value")
+        }
         app.typeKey("a", modifierFlags: .command)
         app.typeText("0.125")
         app.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(waitForValue("0.125", in: app.textFields["ww.alignment.anchor.0.alignedTime"]))
         selectAnchorRow(0)
         app.typeKey("z", modifierFlags: .command)
-        XCTAssertTrue(waitForAnyValue(["0", "0.000"], in: app.textFields["ww.alignment.anchor.0.alignedTime"]))
+        XCTAssertTrue(waitForValue(originalValue, in: app.textFields["ww.alignment.anchor.0.alignedTime"]))
     }
 
     func testTM204DeleteAnchorCommandIsKeyboardReachable() {

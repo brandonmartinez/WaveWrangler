@@ -372,7 +372,10 @@ enum LaunchFixtures {
 @MainActor
 enum SyntheticShowFiles {
     static func ensure(_ fixture: SyntheticLibraryFixture.Output) -> [ShowID: URL] {
-        let folder = URL(filePath: NSTemporaryDirectory()).appending(path: "WWUITestLibrary100-v1", directoryHint: .isDirectory)
+        // A previous schema's persisted fixtures must not become format-update prompts in current-format UI tests.
+        let schema = JSONEnvelopeCoder<ShowDocumentModel>.show.format.currentSchemaVersion
+        let folder = URL(filePath: NSTemporaryDirectory())
+            .appending(path: "WWUITestLibrary100-schema\(schema)", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let publisher = DocumentPublisher(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: nil)
         var locations: [ShowID: URL] = [:]

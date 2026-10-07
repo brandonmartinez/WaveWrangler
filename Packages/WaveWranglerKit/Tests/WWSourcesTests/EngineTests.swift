@@ -592,14 +592,25 @@ struct ForbiddenAPITests {
     ]
     /// The store may ask FileManager only for the caches folder and whether a path exists.
     static let derivedFileManagerCalls: Set<String> = ["url", "fileExists"]
+    /// The two directory listings are confined to the store's own staging and published-assets folders.
+    static let derivedDirectoryListingCalls = [
+        "files.contentsOfDirectory(stagingDirectory)",
+        "files.contentsOfDirectory(assetsDirectory)",
+    ]
 
     /// `fileName` is the path relative to Sources/WWDerived. WWDerived reaches source content only through
     /// `SourceDecoder` (the other-module scan forbids the gateway itself), hashes only in its two digest files,
     /// and mutates files only through the store.
     static func derivedViolations(in source: String, fileName: String) -> [String] {
         var code = maskingInMemoryContentsOf(code(source))
-        // The store lists its own staging and asset folders through its file-operations abstraction.
-        if fileName == "DerivedAssetStore.swift" { code = code.replacingOccurrences(of: "files.contentsOfDirectory(", with: "files.listDirectory(") }
+        if fileName == "DerivedAssetStore.swift" {
+            for call in derivedDirectoryListingCalls {
+                code = code.replacingOccurrences(
+                    of: call,
+                    with: call.replacingOccurrences(of: "contentsOf", with: "list")
+                )
+            }
+        }
         let allowed = derivedExceptions[fileName] ?? []
         var found = Array(Set(forbidden + decodeMutationTokens + derivedStoreTokens))
             .filter { !allowed.contains($0) && code.contains($0) }
@@ -621,11 +632,15 @@ struct ForbiddenAPITests {
         #expect(Self.derivedViolations(in: "let d = try Data(contentsOf: source)", fileName: "DerivedAssetStore.swift") == ["DerivedAssetStore.swift: Data(contentsOf", "DerivedAssetStore.swift: contentsOf"])
         #expect(Self.derivedViolations(in: "let t = try String(contentsOf: source)", fileName: "MapHistory.swift") == ["MapHistory.swift: contentsOf"])
         #expect(Self.derivedViolations(in: "bytes.append(contentsOf: header)", fileName: "MapHistory.swift").isEmpty)
-        #expect(Self.derivedViolations(in: "let names = try files.contentsOfDirectory(root)", fileName: "DerivedAssetStore.swift").isEmpty)
+        #expect(Self.derivedViolations(in: "let names = try files.contentsOfDirectory(root)", fileName: "DerivedAssetStore.swift").contains("DerivedAssetStore.swift: contentsOf"))
         #expect(Self.derivedViolations(in: "let names = try files.contentsOfDirectory(root)", fileName: "DerivedJobCoordinator.swift").contains("DerivedJobCoordinator.swift: contentsOf"))
         #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "DerivedJobCoordinator.swift") == ["DerivedJobCoordinator.swift: writeNew"])
         #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "DerivedAssetStore.swift").isEmpty)
         #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "Sub/DerivedAssetStore.swift") == ["Sub/DerivedAssetStore.swift: writeNew"])
+        #expect(Self.derivedViolations(in: "try files.contentsOfDirectory(sourceURL)", fileName: "DerivedAssetStore.swift")
+            == ["DerivedAssetStore.swift: contentsOf"])
+        #expect(Self.derivedViolations(in: "try files.contentsOfDirectory(url)", fileName: "DerivedJobCoordinator.swift")
+            == ["DerivedJobCoordinator.swift: contentsOf"])
         #expect(Self.derivedViolations(in: "let h = SHA256.hash(data: bytes)", fileName: "MapHistory.swift") == ["MapHistory.swift: SHA256"])
         #expect(Self.derivedViolations(in: "let h = SHA256.hash(data: bytes)", fileName: "DerivedAssetStore.swift") == ["DerivedAssetStore.swift: SHA256"])
         #expect(Self.derivedViolations(in: "try FileManager.default.moveItem(at: a, to: b)", fileName: "DerivedAssetStore.swift")
@@ -640,7 +655,14 @@ struct ForbiddenAPITests {
         #expect(Set(files.map(\.path)).isSuperset(of: Self.derivedExceptions.keys))
         var violations: [String] = []
         for file in files {
-            violations += Self.derivedViolations(in: try String(contentsOf: file.url, encoding: .utf8), fileName: file.path)
+            let source = try String(contentsOf: file.url, encoding: .utf8)
+            if file.path == "DerivedAssetStore.swift" {
+                let count = Self.derivedDirectoryListingCalls.reduce(0) { count, call in
+                    count + source.components(separatedBy: call).count - 1
+                }
+                #expect(count == 2, "DerivedAssetStore's two confined directory listings remain explicit")
+            }
+            violations += Self.derivedViolations(in: source, fileName: file.path)
         }
         #expect(violations.isEmpty, "\(violations)")
     }
