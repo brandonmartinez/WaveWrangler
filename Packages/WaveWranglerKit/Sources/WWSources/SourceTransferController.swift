@@ -63,10 +63,11 @@ public struct TransferEvent: Sendable, Equatable {
 /// - Requests only for placeholder items with an evidenced request API (iCloud), only when the
 ///   controller's *current* availability setting is ON or the user explicitly asked for the item. The
 ///   setting lives here, so the check and the request are atomic inside the actor.
-/// - Exactly one active request per source; a second call while active just reports the current state.
+/// - Exactly one active request per source; an explicit Retry replaces an active transfer only when
+///   the provider was observed idle or the transfer has stalled.
 /// - Cancel stops the app's request/observation; it never evicts, deletes or modifies the original.
 /// - A stall publishes `offlineOrUnknown` but keeps observing with backoff, so a provider that keeps
-///   downloading still flips the source to available; an explicit retry issues a fresh request.
+///   downloading still flips the source to available; Retry leaves a reported download alone.
 /// - Switching availability OFF cancels automatic transfers (user-requested ones continue).
 /// - Observation never outlives its owner: `shutdown()` stops every observer, and observers hold the
 ///   controller only weakly between polls, so dropping the controller also stops polling.
@@ -104,6 +105,7 @@ public actor SourceTransferController {
     private var continuations: [UUID: (epoch: Int, continuation: AsyncStream<TransferEvent>.Continuation)] = [:]
     /// Total download requests issued to the gateway (for audits/tests).
     public private(set) var downloadRequestCount = 0
+    private let observedIO: TransferObservingIO
     private let sleep: Sleeper
 
     public init(
@@ -112,7 +114,9 @@ public actor SourceTransferController {
         setting: SourceAvailabilitySetting = .default,
         sleep: @escaping Sleeper = { try await Task.sleep(for: $0) }
     ) {
-        self.context = context
+        let observedIO = TransferObservingIO(base: context.io)
+        self.observedIO = observedIO
+        self.context = SourceAccessContext(io: observedIO, ledger: context.ledger, now: context.now)
         self.policy = policy
         self.setting = setting
         self.sleep = sleep
@@ -174,8 +178,10 @@ public actor SourceTransferController {
             return state(of: key)
         }
         if let running = active[key] {
-            if userRequested, case .offlineOrUnknown = state(of: key) {
-                // Explicit retry of a stalled transfer: stop the backoff observer and request again.
+            let stalled: Bool
+            if case .offlineOrUnknown = state(of: key) { stalled = true } else { stalled = false }
+            if userRequested, (observedIO.providerIsIdle(at: url) || (stalled && !observedIO.providerIsDownloading(at: url))) {
+                // Explicit retry after a stall or an idle-provider observation replaces the old observer.
                 running.task.cancel()
                 draining[key, default: []].append(running.task)
                 active[key] = nil
@@ -264,8 +270,8 @@ public actor SourceTransferController {
         await running.task.value
     }
 
-    /// Re-requests after cancel/failure/offline. A no-op while a request is active (except that an
-    /// explicit retry marks it user-requested).
+    /// Re-requests after cancel/failure/offline or when an active observer saw the provider idle.
+    /// Otherwise an active request is only marked user-requested.
     @discardableResult
     public func retry(_ key: DeviceAccessKey, at url: URL, userRequested: Bool = true) -> TransferState {
         makeAvailable(key, at: url, userRequested: userRequested)
@@ -467,6 +473,65 @@ public actor SourceTransferController {
     private func removeContinuation(_ id: UUID) {
         continuations[id] = nil
     }
+}
+
+/// Retains the observer's last metadata sample without changing `observe` or reading the provider
+/// again at Retry time (metadata reads can advance provider state). A new request invalidates the
+/// previous sample so it cannot cause a duplicate Retry before the next observation.
+private final class TransferObservingIO: SourceIO {
+    private struct Samples {
+        var requestVersion: [URL: Int] = [:]
+        var metadata: [URL: SourceMetadata] = [:]
+    }
+
+    let base: any SourceIO
+    private let samples = Mutex(Samples())
+
+    init(base: any SourceIO) { self.base = base }
+
+    var provenance: ObservationProvenance { base.provenance }
+
+    func metadata(at url: URL) -> MetadataResult {
+        let version = samples.withLock { $0.requestVersion[url, default: 0] }
+        let result = base.metadata(at: url)
+        samples.withLock {
+            guard $0.requestVersion[url, default: 0] == version else { return }
+            if case let .success(value) = result {
+                $0.metadata[url] = value
+            } else {
+                $0.metadata[url] = nil
+            }
+        }
+        return result
+    }
+
+    func providerIsIdle(at url: URL) -> Bool {
+        samples.withLock { samples in
+            guard let value = samples.metadata[url] else { return false }
+            return value.residency.0 == .cloudPlaceholder
+                && value.ubiquitous.isDownloading.value != true
+                && value.ubiquitous.downloadRequested.value != true
+        }
+    }
+
+    func providerIsDownloading(at url: URL) -> Bool {
+        samples.withLock { $0.metadata[url]?.ubiquitous.isDownloading.value == true }
+    }
+
+    func requestDownload(of url: URL) throws {
+        samples.withLock {
+            $0.requestVersion[url, default: 0] += 1
+            $0.metadata[url] = nil
+        }
+        try base.requestDownload(of: url)
+    }
+
+    func listItems(under directory: URL) -> DirectoryListing { base.listItems(under: directory) }
+    func makeReadOnlyBookmark(for url: URL) throws -> Data { try base.makeReadOnlyBookmark(for: url) }
+    func resolveBookmark(_ data: Data) -> BookmarkResolution { base.resolveBookmark(data) }
+    func startAccessingSecurityScope(_ url: URL) -> Bool { base.startAccessingSecurityScope(url) }
+    func stopAccessingSecurityScope(_ url: URL) { base.stopAccessingSecurityScope(url) }
+    func downloadFraction(of url: URL) async -> Knowledge<Double> { await base.downloadFraction(of: url) }
 }
 
 /// Weak reference to the controller for detached observers.
