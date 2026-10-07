@@ -68,6 +68,9 @@ private struct AlignmentContentHost: NSViewRepresentable {
             hostingView.sizingOptions = []
             hostingView.setAccessibilityElement(false)
             super.init(frame: .zero)
+            setAccessibilityElement(true)
+            setAccessibilityRole(.group)
+            setAccessibilityLabel("Alignment workspace")
             hostingView.frame = bounds
             hostingView.autoresizingMask = [.width, .height]
             addSubview(hostingView)
@@ -255,19 +258,13 @@ private struct AlignmentWorkspace: View {
                 AlignmentKeyHandler.install()
             }
             .onChange(of: model.requestedAnchorFocus) { _, anchor in
-                guard let anchor else { return }
+                guard anchor != nil else { return }
                 scrollProxy.scrollTo("ww.alignment.anchorSection", anchor: .center)
-                DispatchQueue.main.async {
-                    AlignmentFieldFocus.focus(anchor: anchor, in: NSApp.keyWindow) {
-                        guard model.requestedAnchorFocus == anchor else { return }
-                        model.requestedAnchorFocus = nil
-                    }
-                }
             }
             .onChange(of: model.requestedEpochFocus) { _, epoch in
-                guard epoch != nil else { return }
+                guard let epoch else { return }
                 scrollProxy.scrollTo("ww.alignment.groupSection", anchor: .top)
-                model.requestedEpochFocus = nil
+                AlignmentEpochFocus.focus(epoch: epoch, model: model, in: NSApp.keyWindow)
             }
             .sheet(item: $model.editorRequest) { request in
                 switch request {
@@ -363,6 +360,58 @@ private struct AlignmentOutlineTable: View {
                 if expanded { collapsedGroups.remove(id) } else { collapsedGroups.insert(id) }
             }
         )
+    }
+}
+
+@MainActor
+private enum AlignmentEpochFocus {
+    static func focus(epoch: RecordingEpochID, model: EpisodeAlignmentModel, in window: NSWindow?) {
+        DispatchQueue.main.async {
+            attempt(epoch: epoch, model: model, in: window, remaining: 30)
+        }
+    }
+
+    private static func attempt(
+        epoch: RecordingEpochID,
+        model: EpisodeAlignmentModel,
+        in window: NSWindow?,
+        remaining: Int
+    ) {
+        guard model.requestedEpochFocus == epoch else { return }
+        if let window, window.attachedSheet == nil,
+           let table = findTable(in: window.contentView),
+           table.selectedRow >= 0 {
+            table.scrollRowToVisible(table.selectedRow)
+            _ = window.makeFirstResponder(table)
+            if window.firstResponder === table {
+                model.requestedEpochFocus = nil
+                return
+            }
+        }
+        guard remaining > 1 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            attempt(epoch: epoch, model: model, in: window, remaining: remaining - 1)
+        }
+    }
+
+    private static func findTable(in view: NSView?) -> NSTableView? {
+        guard let view else { return nil }
+        if view.accessibilityIdentifier() == "ww.alignment.groups" {
+            if let table = view as? NSTableView { return table }
+            return firstTable(in: view)
+        }
+        for child in view.subviews {
+            if let table = findTable(in: child) { return table }
+        }
+        return nil
+    }
+
+    private static func firstTable(in view: NSView) -> NSTableView? {
+        if let table = view as? NSTableView { return table }
+        for child in view.subviews {
+            if let table = firstTable(in: child) { return table }
+        }
+        return nil
     }
 }
 
@@ -479,6 +528,9 @@ private struct AnchorAlignedTimeField: NSViewRepresentable {
             field.stringValue = formatted(anchor.alignedSeconds)
         }
         field.setAccessibilityValue(formatted(anchor.alignedSeconds))
+        if model.requestedAnchorFocus == anchor.id {
+            context.coordinator.requestFocus(of: field)
+        }
     }
 
     private func formatted(_ value: Double) -> String {
@@ -489,6 +541,7 @@ private struct AnchorAlignedTimeField: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var model: EpisodeAlignmentModel
         var anchorID: Int
+        private var focusScheduled = false
 
         init(model: EpisodeAlignmentModel, anchorID: Int) {
             self.model = model
@@ -497,6 +550,46 @@ private struct AnchorAlignedTimeField: NSViewRepresentable {
 
         @objc func commit(_ field: NSTextField) {
             commitValue(from: field)
+        }
+
+        func requestFocus(of field: NSTextField) {
+            guard !focusScheduled else { return }
+            focusScheduled = true
+            DispatchQueue.main.async { [weak self, weak field] in
+                self?.attemptFocus(of: field, remaining: 30)
+            }
+        }
+
+        private func attemptFocus(of field: NSTextField?, remaining: Int) {
+            guard model.requestedAnchorFocus == anchorID, let field else {
+                focusScheduled = false
+                return
+            }
+            if let window = field.window, window.attachedSheet == nil,
+               let table = sequence(first: field as NSView?, next: { $0?.superview })
+                .compactMap({ $0 as? NSTableView }).first,
+               let row = model.selectedAnchors.firstIndex(where: { $0.id == anchorID }),
+               row < table.numberOfRows {
+                table.scrollRowToVisible(row)
+                table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                if table.row(for: field) == row {
+                    field.selectText(nil)
+                    if let editor = field.currentEditor(),
+                       window.firstResponder === editor,
+                       editor.delegate === field {
+                        model.requestedAnchorFocus = nil
+                        focusScheduled = false
+                        return
+                    }
+                }
+            }
+            guard remaining > 1 else {
+                focusScheduled = false
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak field] in
+                self?.attemptFocus(of: field, remaining: remaining - 1)
+            }
         }
 
         func controlTextDidEndEditing(_ notification: Notification) {
@@ -569,145 +662,6 @@ private enum AlignmentKeyHandler {
         }
         return false
     }
-}
-
-@MainActor
-private enum AlignmentFieldFocus {
-    static func focus(
-        anchor: Int,
-        in window: NSWindow?,
-        onFocused: @escaping @MainActor () -> Void
-    ) {
-        DispatchQueue.main.async {
-            attemptFocus(
-                anchor: anchor,
-                in: window,
-                attemptsRemaining: 30,
-                onFocused: onFocused
-            )
-        }
-    }
-
-    private static func attemptFocus(
-        anchor: Int,
-        in window: NSWindow?,
-        attemptsRemaining: Int,
-        onFocused: @escaping @MainActor () -> Void
-    ) {
-        guard let window, window.attachedSheet == nil else {
-            retry(
-                anchor: anchor,
-                in: window,
-                attemptsRemaining: attemptsRemaining,
-                onFocused: onFocused
-            )
-            return
-        }
-        guard let table = findTable("ww.alignment.anchors", in: window.contentView) else {
-            retry(
-                anchor: anchor,
-                in: window,
-                attemptsRemaining: attemptsRemaining,
-                onFocused: onFocused
-            )
-            return
-        }
-        let row = anchor
-        guard row >= 0, row < table.numberOfRows else {
-            retry(
-                anchor: anchor,
-                in: window,
-                attemptsRemaining: attemptsRemaining,
-                onFocused: onFocused
-            )
-            return
-        }
-        table.scrollToVisible(table.bounds)
-        table.scrollRowToVisible(row)
-        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-        let column = table.tableColumns.firstIndex {
-            $0.headerCell.stringValue == "Aligned time"
-        } ?? min(2, table.numberOfColumns - 1)
-        guard column >= 0,
-              let cell = table.view(atColumn: column, row: row, makeIfNecessary: true),
-              let field = findTextField(in: cell)
-        else {
-            retry(
-                anchor: anchor,
-                in: window,
-                attemptsRemaining: attemptsRemaining,
-                onFocused: onFocused
-            )
-            return
-        }
-        field.scrollToVisible(field.bounds)
-        DispatchQueue.main.async {
-            _ = window.makeFirstResponder(field)
-            field.selectText(nil)
-            guard let editor = field.currentEditor(),
-                  window.firstResponder === editor
-            else {
-                retry(
-                    anchor: anchor,
-                    in: window,
-                    attemptsRemaining: attemptsRemaining,
-                    onFocused: onFocused
-                )
-                return
-            }
-            onFocused()
-        }
-    }
-
-    private static func retry(
-        anchor: Int,
-        in window: NSWindow?,
-        attemptsRemaining: Int,
-        onFocused: @escaping @MainActor () -> Void
-    ) {
-        guard attemptsRemaining > 1 else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            attemptFocus(
-                anchor: anchor,
-                in: window,
-                attemptsRemaining: attemptsRemaining - 1,
-                onFocused: onFocused
-            )
-        }
-    }
-
-    private static func findTable(_ identifier: String, in view: NSView?) -> NSTableView? {
-        guard let view else { return nil }
-        if view.accessibilityIdentifier() == identifier {
-            if let table = view as? NSTableView { return table }
-            if let table = firstTable(in: view) { return table }
-        }
-        if let table = view as? NSTableView,
-           table.enclosingScrollView?.accessibilityIdentifier() == identifier {
-            return table
-        }
-        for subview in view.subviews {
-            if let match = findTable(identifier, in: subview) { return match }
-        }
-        return nil
-    }
-
-    private static func firstTable(in view: NSView) -> NSTableView? {
-        if let table = view as? NSTableView { return table }
-        for subview in view.subviews {
-            if let table = firstTable(in: subview) { return table }
-        }
-        return nil
-    }
-
-    private static func findTextField(in view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField { return field }
-        for subview in view.subviews {
-            if let field = findTextField(in: subview) { return field }
-        }
-        return nil
-    }
-
 }
 
 struct AlignmentInspectorView: View {

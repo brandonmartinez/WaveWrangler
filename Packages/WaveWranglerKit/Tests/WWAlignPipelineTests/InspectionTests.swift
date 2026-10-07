@@ -153,6 +153,53 @@ struct InspectionTests {
         #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == split.revision.revision)
     }
 
+    @Test func anchoredEpochCanSplitBeforeAnExistingRestart() async throws {
+        let fixture = try await PipelineFixture([
+            .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 25))]),
+            .init(name: "Target", sources: [.init(name: "target", seconds: 30, signal: .scene(seed: 25, rate: 1.00001, offset: 0.02))]),
+        ])
+        let report = try await fixture.analyse()
+        let oldEpoch = fixture.epochs[1]
+        let accepted = try await fixture.acceptAndActivate(
+            report, [oldEpoch: .anchors([
+                AlignmentAnchor(sourceSeconds: 0, alignedSeconds: 0.0842),
+                AlignmentAnchor(sourceSeconds: 0.5, alignedSeconds: 0.5),
+            ])]
+        )
+        var model = accepted.model
+        let episodeIndex = try #require(model.episodes.firstIndex(where: { $0.id == fixture.episodeID }))
+        let groupIndex = try #require(
+            model.episodes[episodeIndex].recorderGroups.firstIndex(where: { $0.id == fixture.groups[1] })
+        )
+        let restart = RecordingEpoch(label: "Restart")
+        model.episodes[episodeIndex].recorderGroups[groupIndex].epochs.append(restart)
+        let first = try await fixture.pipeline.splitAcceptedOccurrence(
+            model: model, episode: fixture.episodeID, group: fixture.groups[1],
+            source: fixture.id("target"), epoch: oldEpoch, frame: 48_000 * 2,
+            newEpoch: restart.id
+        )
+        model = first.model
+        let newEpoch = RecordingEpoch(label: "Epoch 3")
+        model.episodes[episodeIndex].recorderGroups[groupIndex].epochs.append(newEpoch)
+        await #expect(throws: AlignmentAcceptanceError.staleSnapshot) {
+            try await fixture.pipeline.splitAcceptedOccurrence(
+                model: model, episode: fixture.episodeID, group: fixture.groups[1],
+                source: fixture.id("target"), epoch: oldEpoch, frame: 48_000 / 2,
+                newEpoch: newEpoch.id
+            )
+        }
+        try await fixture.pipeline.activate(first)
+        let split = try await fixture.pipeline.splitAcceptedOccurrence(
+            model: model, episode: fixture.episodeID, group: fixture.groups[1],
+            source: fixture.id("target"), epoch: oldEpoch, frame: 48_000 / 2,
+            newEpoch: newEpoch.id
+        )
+        #expect(split.revision.revision == first.revision.revision + 1)
+        let group = try #require(split.map.groups.first(where: { $0.group == fixture.groups[1] }))
+        let placement = try #require(group.placements.first(where: { $0.occurrence.source == fixture.id("target") }))
+        #expect(placement.spans.map(\.epoch) == [oldEpoch, newEpoch.id, restart.id])
+    }
+
     @Test func anchorRevisionPersistsExactAnchorPairs() async throws {
         let fixture = try await PipelineFixture([
             .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 26))]),

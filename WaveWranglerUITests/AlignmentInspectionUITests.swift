@@ -65,6 +65,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         else { return XCTFail("Expected one newly appended numeric anchor field") }
         let appended = app.textFields[appendedID]
         XCTAssertTrue(appended.isHittable, "The appended anchor row must be scrolled into view")
+        XCTAssertTrue(waitForKeyboardFocus(appended), "The new anchor editor must own keyboard focus")
         let replacement = String(format: "%.3f", initial + 0.001)
         app.typeKey("a", modifierFlags: .command)
         app.typeText(replacement)
@@ -146,12 +147,16 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
         selectAnchorRow(1)
         chooseEpisodeMenu("Start New Epoch at Anchor")
-        XCTAssertTrue(waitForText("Started Epoch 3", in: app.staticTexts["alignment.status"], timeout: 15))
+        XCTAssertTrue(
+            waitForText("Started Epoch 3", in: app.staticTexts["alignment.status"], timeout: 15),
+            "Split error: \(app.descendants(matching: .any)["alignment.error"].debugDescription)"
+        )
         let epoch = app.descendants(matching: .any).matching(NSPredicate(
             format: "label BEGINSWITH %@ OR value BEGINSWITH %@", "Epoch 3", "Epoch 3"
         )).firstMatch
         XCTAssertTrue(epoch.waitForExistence(timeout: 5))
         XCTAssertTrue(waitForSelectedEpoch("Epoch 3"))
+        XCTAssertTrue(waitForKeyboardFocus(app.outlines["ww.alignment.groups"]))
     }
 
     func testTM209AuditionAndStopShortcuts() {
@@ -421,6 +426,14 @@ final class AlignmentInspectionUITests: XCTestCase {
             app.typeKey(.tab, modifierFlags: [])
         }
         return element.value(forKey: "hasKeyboardFocus") as? Bool == true
+    }
+
+    private func waitForKeyboardFocus(_ element: XCUIElement) -> Bool {
+        let predicate = NSPredicate(format: "hasKeyboardFocus == true")
+        return XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: predicate, object: element)],
+            timeout: 5
+        ) == .completed
     }
 
     private func waitForValue(

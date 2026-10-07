@@ -154,7 +154,8 @@ final class EpisodeAlignmentModel {
                   $0.spans.contains(where: { $0.epoch == row.epochID })
               })
         else { return }
-        var model = document.store.model
+        let prior = document.store.model
+        var model = prior
         guard let episodeIndex = model.episodes.firstIndex(where: { $0.id == episodeID }),
               let groupIndex = model.episodes[episodeIndex].recorderGroups.firstIndex(where: { $0.id == row.groupID })
         else { return }
@@ -164,8 +165,16 @@ final class EpisodeAlignmentModel {
         let rate = Double(placement.occurrence.nominalRate.framesPerSecond)
         let frame = Int64((anchor.sourceSeconds * rate).rounded())
         isWorking = true
+        lastError = nil
         Task {
             do {
+                try await withCheckedThrowingContinuation { continuation in
+                    document.persistExpectedModel(prior) { result in
+                        continuation.resume(with: result)
+                    }
+                }
+                guard document.store.model == prior else { throw CocoaError(.userCancelled) }
+                try await runtime.activate(model: prior, episode: episodeID)
                 let accepted = try await runtime.split(
                     model: model, episode: episodeID, group: row.groupID,
                     source: placement.occurrence.source, epoch: row.epochID,
