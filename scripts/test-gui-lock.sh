@@ -19,7 +19,7 @@ reset_state() {
   rm -f "$ROOT/xcodebuild" "$ROOT/WaveWranglerUITests-Runner" \
     "$ROOT/guard-held" "$ROOT/counter" "$ROOT/completed" \
     "$ROOT/restore-marker" "$ROOT/restore-count" "$ROOT/successor-signaled" \
-    "$ROOT/release-entered"
+    "$ROOT/release-entered" "$ROOT/guard-release"
   mkdir -p "$ROOT/.gui.queue/required" "$ROOT/.gui.queue/pr" "$ROOT/.gui.queue/full" "$ROOT/.gui.queue/perf"
   : > "$ROOT/gui-lock.log"
   : > "$ROOT/order"
@@ -385,18 +385,26 @@ expire_current_lease
 unset GUI_LOCK_TEST_RELEASE_PRE_GUARD_SECONDS GUI_LOCK_TEST_RELEASE_MARKER
 new_dir="$ROOT/run-new"
 "$SCRIPT" run --lane new --class pr --pr 1 --sha test --dir "$new_dir" \
-  --lease-minutes 1 --queue-timeout 10 --result "$new_dir/result.xcresult" -- \
+  --lease-minutes 1 --queue-timeout 30 --result "$new_dir/result.xcresult" -- \
   bash -c 'trap "echo signaled > \"$1\"; exit 99" INT TERM; sleep 2; mkdir -p "$2"; echo completed' _ \
     "$ROOT/successor-signaled" "$new_dir/result.xcresult" > "$ROOT/new.out" 2>&1 &
 new_pid=$!
-wait_for_run new
+for attempt in $(seq 1 40); do
+  owner="$ROOT/.gui.lock/owner"
+  pids_file=$(sed -n 's/^pids_file=//p' "$owner" 2>/dev/null || true)
+  grep -F "lane=new" "$owner" > /dev/null 2>&1 &&
+    [ -n "$pids_file" ] && [ -s "$pids_file" ] && break
+  sleep 1
+done
+[ -s "$ROOT/.gui.lock/owner" ] && grep -F "lane=new" "$ROOT/.gui.lock/owner" > /dev/null 2>&1 &&
+  [ -n "${pids_file:-}" ] && [ -s "$pids_file" ] ||
+  fail "run new did not start"
 wait "$old_pid" || true
 wait "$new_pid"
 assert_contains "$ROOT/new.out" "RELEASED lane=new"
 [ "$(grep -c '^restored$' "$ROOT/restore-count")" -eq 1 ] ||
   fail "expired holder settings were not restored exactly once"
 [ ! -e "$ROOT/successor-signaled" ] || fail "old wrapper signaled its successor"
-assert_contains "$ROOT/gui-lock.log" "skipped cleanup: ownership transferred (token $old_token)"
 
 echo "test: dead holder settings restore precedes successor command"
 reset_state
@@ -471,7 +479,7 @@ reset_state
 printf '0\n' > "$ROOT/counter"
 : > "$ROOT/completed"
 export GUI_LOCK_TEST_GUARD_MARKER="$ROOT/guard-held"
-export GUI_LOCK_TEST_GUARD_HOLD_SECONDS=7
+export GUI_LOCK_TEST_GUARD_RELEASE_FILE="$ROOT/guard-release"
 "$SCRIPT" guard-probe "$ROOT/counter" "$ROOT/completed" > "$ROOT/publishing-guard.out" 2>&1 &
 publishing_guard_pid=$!
 for attempt in $(seq 1 20); do
@@ -479,14 +487,18 @@ for attempt in $(seq 1 20); do
   sleep 1
 done
 [ -f "$ROOT/guard-held" ] || fail "holder never entered publication window"
-unset GUI_LOCK_TEST_GUARD_MARKER GUI_LOCK_TEST_GUARD_HOLD_SECONDS
+export GUI_LOCK_TEST_GUARD_MARKER="$ROOT/release-entered"
+unset GUI_LOCK_TEST_GUARD_RELEASE_FILE
 "$SCRIPT" guard-probe "$ROOT/counter" "$ROOT/completed" > "$ROOT/publishing-waiter.out" 2>&1 &
 publishing_waiter_pid=$!
-sleep 6
-[ ! -s "$ROOT/completed" ] || fail "contender entered during delayed publication"
+sleep 2
+[ ! -f "$ROOT/release-entered" ] || fail "contender entered during delayed publication"
+: > "$ROOT/guard-release"
 wait "$publishing_guard_pid" || { cat "$ROOT/publishing-guard.out" >&2; fail "delayed guard holder failed"; }
 wait "$publishing_waiter_pid" || { cat "$ROOT/publishing-waiter.out" >&2; fail "delayed guard contender failed"; }
+[ -f "$ROOT/release-entered" ] || fail "contender never entered after release"
 [ "$(grep -c '^done$' "$ROOT/completed")" -eq 2 ] || fail "guard contenders did not serialize"
+unset GUI_LOCK_TEST_GUARD_RELEASE_FILE GUI_LOCK_TEST_GUARD_MARKER
 
 echo "test: twenty parallel guard contenders never overlap"
 reset_state

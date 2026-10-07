@@ -132,6 +132,11 @@ acquire_guard() {
   GUARD_HELD=1
   if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ]; then
     [ -z "${GUI_LOCK_TEST_GUARD_MARKER:-}" ] || : > "$GUI_LOCK_TEST_GUARD_MARKER"
+    if [ -n "${GUI_LOCK_TEST_GUARD_RELEASE_FILE:-}" ]; then
+      while [ ! -f "$GUI_LOCK_TEST_GUARD_RELEASE_FILE" ]; do
+        sleep 1 9>&-
+      done
+    fi
     if [ -n "${GUI_LOCK_TEST_GUARD_HOLD_SECONDS:-}" ]; then
       sleep "$GUI_LOCK_TEST_GUARD_HOLD_SECONDS" 9>&-
     fi
@@ -268,7 +273,7 @@ kill_recorded_pids() {
 }
 
 restore_recorded_settings() {
-  local owner="$1" pending script output lane timeout_command
+  local owner="$1" pending script output lane timeout_command rc
   pending=$(field "$owner" settings_restore_pending)
   [ "$pending" = 1 ] || return 0
   script=$(field "$owner" restore_script)
@@ -279,12 +284,18 @@ restore_recorded_settings() {
     return 0
   fi
   timeout_command=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)
+  if [ -z "$timeout_command" ] && [ -x /run/current-system/sw/bin/timeout ]; then
+    timeout_command=/run/current-system/sw/bin/timeout
+  fi
   if [ -z "$timeout_command" ]; then
     log "WARN settings restore unavailable without timeout command lane=$lane script=$script"
     return 0
   fi
-  "$timeout_command" "$RESTORE_TIMEOUT_SECONDS" "$script" >> "$output" 2>&1 ||
-    log "WARN settings restore failed lane=$lane script=$script"
+  "$timeout_command" --kill-after=5 "$RESTORE_TIMEOUT_SECONDS" "$script" >> "$output" 2>&1
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "WARN settings restore failed/killed lane=$lane script=$script status=$rc"
+  fi
 }
 
 cleanup_reclaimed_lease() {
