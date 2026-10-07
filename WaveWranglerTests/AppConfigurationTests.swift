@@ -128,9 +128,34 @@ struct UITestHooksDebugOnlyTests {
             let runtime = try Self.runtimeSource()
             #expect(runtime.contains("documentID: ObjectIdentifier(document),\n                publication: publication"))
             #expect(runtime.contains("let published = try await reconciler.reconcile("))
+            #expect(runtime.contains("private func publicationReconciler(for episodeID: EpisodeID)"))
             #expect(runtime.contains("if episode.alignment?.acceptedRevision != nil {"))
             #expect(!runtime.contains("episode.alignment?.acceptedRevision != nil\n        else { return }"))
             #expect(!runtime.contains("guard episode.alignment?.acceptedRevision != nil else { return }"))
+
+            let modelActivationStart = try #require(runtime.range(
+                of: "func activate(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws {"
+            ))
+            let acceptedActivationStart = try #require(runtime[modelActivationStart.upperBound...].range(
+                of: "\n    func activate(_ accepted: AcceptedAlignment) async throws {"
+            ))
+            let openedActivationStart = try #require(runtime[acceptedActivationStart.upperBound...].range(
+                of: "\n    /// Reconciles only the model"
+            ))
+            let modelActivation = runtime[modelActivationStart.lowerBound..<acceptedActivationStart.lowerBound]
+            let acceptedActivation = runtime[acceptedActivationStart.lowerBound..<openedActivationStart.lowerBound]
+            #expect(modelActivation.contains("let reconciler = publicationReconciler(for: episodeID)"))
+            #expect(modelActivation.contains("_ = try await reconciler.reconcile("))
+            #expect(acceptedActivation.contains("let reconciler = publicationReconciler(for: episodeID)"))
+            #expect(acceptedActivation.contains("_ = try await reconciler.reconcile("))
+        }
+
+        @Test func alignmentInspectorKeepsAStableHostedWidth() throws {
+            let source = try UITestHooksDebugOnlyTests.source("Workspace/Inspectors.swift")
+            let start = try #require(source.range(of: "struct InspectorContainer: View"))
+            let end = try #require(source[start.upperBound...].range(of: "\n/// Episode metadata"))
+            let body = source[start.lowerBound..<end.lowerBound]
+            #expect(body.contains(".frame(width: 260)"))
         }
     }
 

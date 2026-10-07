@@ -35,7 +35,7 @@ actor AlignmentRuntime {
         var publication: PublicationStamp
     }
     private var openedDocuments: [EpisodeID: OpenedVersion] = [:]
-    private var openedReconcilers: [EpisodeID: VerifiedDocumentReconciler] = [:]
+    private var publicationReconcilers: [EpisodeID: VerifiedDocumentReconciler] = [:]
     #if DEBUG
     private var seededFixtureDependents: Set<EpisodeID> = []
     #endif
@@ -153,12 +153,32 @@ actor AlignmentRuntime {
     }
 
     func activate(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws {
-        _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
-        try await pipeline.activate(model: model, episode: episodeID)
+        guard let episode = model.episode(episodeID) else {
+            try await pipeline.activate(model: model, episode: episodeID)
+            return
+        }
+        let reconciler = publicationReconciler(for: episodeID)
+        _ = try await reconciler.reconcile(
+            resolve: { [self] in
+                if episode.alignment?.acceptedRevision != nil {
+                    _ = await resolveSources(episode.sources)
+                }
+            },
+            publish: { [self] in
+                try await pipeline.activate(model: model, episode: episodeID)
+            }
+        )
     }
 
     func activate(_ accepted: AcceptedAlignment) async throws {
-        try await pipeline.activate(accepted)
+        let episodeID = accepted.revision.episode
+        let reconciler = publicationReconciler(for: episodeID)
+        _ = try await reconciler.reconcile(
+            resolve: {},
+            publish: { [self] in
+                try await pipeline.activate(accepted)
+            }
+        )
     }
 
     /// Reconciles only the model independently verified by the document open path. This performs metadata-only
@@ -173,8 +193,7 @@ actor AlignmentRuntime {
         guard openedDocuments[episodeID] != version else { return }
         openedDocuments[episodeID] = version
         guard let episode = model.episode(episodeID) else { return }
-        let reconciler = openedReconcilers[episodeID] ?? VerifiedDocumentReconciler()
-        openedReconcilers[episodeID] = reconciler
+        let reconciler = publicationReconciler(for: episodeID)
         do {
             let published = try await reconciler.reconcile(
                 resolve: { [self] in
@@ -273,6 +292,13 @@ actor AlignmentRuntime {
         openedDocuments.compactMap { episode, opened in
             opened.documentID == documentID ? episode : nil
         }
+    }
+
+    private func publicationReconciler(for episodeID: EpisodeID) -> VerifiedDocumentReconciler {
+        if let reconciler = publicationReconcilers[episodeID] { return reconciler }
+        let reconciler = VerifiedDocumentReconciler()
+        publicationReconcilers[episodeID] = reconciler
+        return reconciler
     }
 
     private func resolveSources(_ records: [SourceRecord]) async -> [AlignmentSource] {

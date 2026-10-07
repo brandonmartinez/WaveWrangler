@@ -2,8 +2,10 @@
 
 PR #219 remains stacked on `brandonmartinez/ww-021-alignment-pipeline`. Reconciliation now keys a
 verified document by both its object and its publication stamp. Per-episode publication is
-serialized: an older source-resolution continuation checks ownership before activation, while
-an activation already underway completes before the newer one. Verified revisions without an
+serialized across open, uncertain-publication adoption, verified save, undo and redo: an older
+source-resolution continuation checks ownership before activation, while an activation already
+underway completes before the newer one. Cancellation is checked after source resolution, after
+waiting for prior publication and immediately before publication. Verified revisions without an
 accepted map clear the coordinator's accepted-map identity. Uncertain publication adoption sets
 the verified model and requests reconciliation for episodes already open in the runtime.
 
@@ -23,6 +25,7 @@ before the next mutation. Expected failures were observed:
 | No accepted map leaves old identity | Reinstate early return on `acceptedRevision == nil` in the app runtime | `AlignmentRuntimeBoundaryTests/uncertainPublicationAdoptionReconcilesItsVerifiedRevision`: source-contract assertion failed; package test also exercises the nil activation against a cached dependent |
 | Uncertain adoption keeps stale verified model | Remove `verifiedModel = document.payload` | `AlignmentRuntimeBoundaryTests/uncertainPublicationAdoptionReconcilesItsVerifiedRevision`: source-contract assertion failed |
 | Rejected submit revives invalidated cache | Restore pre-currency-check candidate caching and tombstone removal | `DerivedJobCoordinatorTests/rejectedStaleSubmissionDoesNotReviveExplicitlyInvalidatedCache`: ready payload was unexpectedly available |
+| Verified save bypasses publication ownership (2026-10-07) | Replace the accepted-save callback's guarded `runtime.activate(_:)` implementation with direct `pipeline.activate(_:)` | Unhosted `WaveWranglerTests`: `AlignmentRuntimeBoundaryTests/uncertainPublicationAdoptionReconcilesItsVerifiedRevision` failed (xcodebuild 65); guarded implementation restored and the suite passed |
 
 The app's unhosted test target cannot link the executable's private `AlignmentRuntime` and
 `ShowDocument` types. The ordering and nil-map tests exercise the shared package reconciler

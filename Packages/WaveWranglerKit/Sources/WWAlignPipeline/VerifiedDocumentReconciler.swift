@@ -15,12 +15,19 @@ public actor VerifiedDocumentReconciler {
         generation &+= 1
         let current = generation
         await resolve()
+        try Task.checkCancellation()
         guard generation == current else { return false }
         let previous = publication
         let next = Task { [self] () -> Result<Bool, any Error> in
             _ = await previous?.value
+            do {
+                try Task.checkCancellation()
+            } catch {
+                return .failure(error)
+            }
             guard generation == current else { return .success(false) }
             do {
+                try Task.checkCancellation()
                 try await publish()
                 return .success(generation == current)
             } catch {
@@ -28,6 +35,10 @@ public actor VerifiedDocumentReconciler {
             }
         }
         publication = next
-        return try await next.value.get()
+        return try await withTaskCancellationHandler {
+            try await next.value.get()
+        } onCancel: {
+            next.cancel()
+        }
     }
 }
