@@ -64,6 +64,7 @@ final class AlignmentInspectionUITests: XCTestCase {
               let initial = Double(app.textFields[appendedID].value as? String ?? "")
         else { return XCTFail("Expected one newly appended numeric anchor field") }
         let appended = app.textFields[appendedID]
+        XCTAssertTrue(appended.isHittable, "The appended anchor row must be scrolled into view")
         let replacement = String(format: "%.3f", initial + 0.001)
         app.typeKey("a", modifierFlags: .command)
         app.typeText(replacement)
@@ -139,8 +140,8 @@ final class AlignmentInspectionUITests: XCTestCase {
     func testTM208StartNewEpochCommandExists() {
         selectTargetEpoch()
         chooseEpisodeMenu("Place Anchors…")
-        replace(app.textFields["alignment.anchors.second.source"], with: "0.5")
-        replace(app.textFields["alignment.anchors.second.aligned"], with: "0.5")
+        replaceSheetValue("alignment.anchors.second.source", with: "0.5")
+        replaceSheetValue("alignment.anchors.second.aligned", with: "0.5")
         app.buttons["alignment.anchors.apply"].click()
         XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
         selectAnchorRow(1)
@@ -150,6 +151,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             format: "label BEGINSWITH %@ OR value BEGINSWITH %@", "Epoch 3", "Epoch 3"
         )).firstMatch
         XCTAssertTrue(epoch.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForSelectedEpoch("Epoch 3"))
     }
 
     func testTM209AuditionAndStopShortcuts() {
@@ -212,10 +214,13 @@ final class AlignmentInspectionUITests: XCTestCase {
         let contentInspector = app.descendants(matching: .any)["ww.show.contentInspector"]
         let sidebar = app.descendants(matching: .any)["ww.show.sidebar.episodes"]
         let newEpisode = app.buttons["New Episode"]
+        let showInfo = app.descendants(matching: .any)["ww.show.sidebar.showInfo"]
         XCTAssertTrue(contentInspector.waitForExistence(timeout: 2))
         XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
         XCTAssertTrue(newEpisode.waitForExistence(timeout: 2))
+        XCTAssertTrue(showInfo.waitForExistence(timeout: 2))
         var layoutContainerFindings = 0
+        var showSectionFindings = 0
         try app.performAccessibilityAudit(
             for: [.elementDetection, .sufficientElementDescription, .hitRegion, .action]
         ) { issue in
@@ -225,15 +230,27 @@ final class AlignmentInspectionUITests: XCTestCase {
             else { return false }
             let isContent = self.approximatelyEqual(element.frame, contentInspector.frame)
             let isSidebar = self.approximatelyEqual(element.frame, sidebar.frame)
-            guard isContent || isSidebar else { return false }
-            layoutContainerFindings += 1
-            print(
-                "AUDIT WAIVED [show-layout-container] \(issue.compactDescription) — " +
-                "noninteractive container whose labeled children remain exposed"
-            )
+            let isShowSection = sidebar.frame.contains(element.frame)
+                && element.frame.contains(showInfo.frame)
+                && element.frame.height < 80
+            guard isContent || isSidebar || isShowSection else { return false }
+            if isShowSection {
+                showSectionFindings += 1
+                print(
+                    "AUDIT WAIVED [show-sidebar-section] \(issue.compactDescription) — " +
+                    "noninteractive Section group; labelled Show Info child remains exposed"
+                )
+            } else {
+                layoutContainerFindings += 1
+                print(
+                    "AUDIT WAIVED [show-layout-container] \(issue.compactDescription) — " +
+                    "noninteractive container whose labeled children remain exposed"
+                )
+            }
             return true
         }
         XCTAssertLessThanOrEqual(layoutContainerFindings, 2)
+        XCTAssertLessThanOrEqual(showSectionFindings, 1)
     }
 
     func testBlockedRecoveryContrastAudit() throws {
@@ -304,6 +321,14 @@ final class AlignmentInspectionUITests: XCTestCase {
         field.typeKey("a", modifierFlags: .command)
         field.typeText(text)
         field.typeKey(.return, modifierFlags: [])
+    }
+
+    private func replaceSheetValue(_ identifier: String, with text: String) {
+        let field = app.descendants(matching: .any)[identifier]
+        XCTAssertTrue(field.waitForExistence(timeout: 2))
+        field.click()
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText(text)
     }
 
     private func waitForText(
@@ -447,6 +472,27 @@ final class AlignmentInspectionUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         } while Date() < deadline
         return anchorFields().count == count
+    }
+
+    private func waitForSelectedEpoch(
+        _ label: String,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let table = app.outlines["ww.alignment.groups"]
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            let rows = table.descendants(matching: .outlineRow)
+            for index in 0..<rows.count {
+                let row = rows.element(boundBy: index)
+                guard row.isSelected else { continue }
+                let epoch = row.descendants(matching: .any).matching(NSPredicate(
+                    format: "label BEGINSWITH %@ OR value BEGINSWITH %@", label, label
+                )).firstMatch
+                if epoch.exists { return true }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        } while Date() < deadline
+        return false
     }
 
 }
