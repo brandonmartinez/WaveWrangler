@@ -73,7 +73,7 @@ final class SelectionContrastUITests: XCTestCase {
         let background = m["background"] as? String ?? ""
         let count = m["glyphPixels"] as? Int ?? 0, p75 = m["glyphP75"] as? Double ?? 0
         let label = "\(appearance) (system Increase Contrast \(increaseContrast)) \(surface)"
-        XCTAssertTrue(Self.isAccentBlue(background), "\(label): row is on an emphasized accent selection (background \(background))")
+        XCTAssertTrue(Acceptance.isAccentBlue(background), "\(label): row is on an emphasized accent selection (background \(background))")
         XCTAssertGreaterThanOrEqual(count, AcceptanceAudit.minimumGlyphPixels, "\(label): glyph pixels \(count)")
         XCTAssertGreaterThanOrEqual(p75, 4.5, "\(label): text p75 \(p75) (\(m["text"] ?? "") on \(background))")
         Acceptance.record(self, "#138 \(label): \(count) px, p75 \(p75), \(m["text"] ?? "") on \(background)")
@@ -96,10 +96,4 @@ final class SelectionContrastUITests: XCTestCase {
                 "frame": "\(row.frame)"].merging(m) { $1 }
     }
 
-    /// The accent variants (#0064E1, #0A6CF0, #0050C0, #0A66E8) and the system blue are all strongly blue.
-    static func isAccentBlue(_ hex: String) -> Bool {
-        guard hex.count == 7, let value = Int(hex.dropFirst(), radix: 16) else { return false }
-        let r = value >> 16 & 0xFF, g = value >> 8 & 0xFF, b = value & 0xFF
-        return b - r >= 120 && b - g >= 60
-    }
 }

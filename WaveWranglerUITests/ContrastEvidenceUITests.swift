@@ -191,6 +191,8 @@ final class ContrastEvidenceUITests: XCTestCase {
             XCTAssertTrue(offlineRow.waitForExistence(timeout: 3), "\(appearance): offline source row")
             offlineRow.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).click()
             Thread.sleep(forTimeInterval: 1)
+            let sources = app.outlines["ww.setup.sources"]
+            XCTAssertTrue(Acceptance.hasKeyboardFocus(sources), "\(appearance): Sources table has keyboard focus for emphasized selection")
             let offlineStatus = app.descendants(matching: .any).matching(NSPredicate(
                 format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status' AND value BEGINSWITH 'No connection'"
             )).firstMatch
@@ -198,9 +200,26 @@ final class ContrastEvidenceUITests: XCTestCase {
             let statusMeasurement = ContrastMeter.measure(offlineStatus.screenshot().image) ?? [:]
             let glyphPixels = statusMeasurement["glyphPixels"] as? Int ?? 0
             let glyphP75 = statusMeasurement["glyphP75"] as? Double ?? 0
+            let background = statusMeasurement["background"] as? String ?? ""
+            XCTAssertTrue(Acceptance.isAccentBlue(background), "\(appearance): selected no-connection status has emphasized accent background \(background)")
             XCTAssertGreaterThanOrEqual(glyphPixels, AcceptanceAudit.minimumGlyphPixels, "\(appearance): selected no-connection glyph pixels")
             XCTAssertGreaterThanOrEqual(glyphP75, 4.5, "\(appearance): selected no-connection status p75")
-            Acceptance.record(self, "#221 \(appearance) selected no-connection status: \(glyphPixels) px, p75 \(glyphP75)")
+            Acceptance.record(self, "#221 \(appearance) emphasized selected no-connection status: \(glyphPixels) px, p75 \(glyphP75), background \(background)")
+
+            let speakers = app.outlines["ww.setup.speakers"]
+            XCTAssertTrue(speakers.waitForExistence(timeout: 3), "\(appearance): Speakers table")
+            speakers.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).click()
+            Thread.sleep(forTimeInterval: 1)
+            XCTAssertTrue(Acceptance.hasKeyboardFocus(speakers), "\(appearance): Speakers table has keyboard focus")
+            XCTAssertFalse(Acceptance.hasKeyboardFocus(sources), "\(appearance): Sources table no longer has keyboard focus")
+            let unfocusedMeasurement = ContrastMeter.measure(offlineStatus.screenshot().image) ?? [:]
+            let unfocusedGlyphPixels = unfocusedMeasurement["glyphPixels"] as? Int ?? 0
+            let unfocusedGlyphP75 = unfocusedMeasurement["glyphP75"] as? Double ?? 0
+            let unfocusedBackground = unfocusedMeasurement["background"] as? String ?? ""
+            XCTAssertFalse(Acceptance.isAccentBlue(unfocusedBackground), "\(appearance): selected no-connection status has unemphasized background \(unfocusedBackground)")
+            XCTAssertGreaterThanOrEqual(unfocusedGlyphPixels, AcceptanceAudit.minimumGlyphPixels, "\(appearance): unfocused selected no-connection glyph pixels")
+            XCTAssertGreaterThanOrEqual(unfocusedGlyphP75, 4.5, "\(appearance): unfocused selected no-connection status p75")
+            Acceptance.record(self, "#221 \(appearance) unemphasized selected no-connection status: \(unfocusedGlyphPixels) px, p75 \(unfocusedGlyphP75), background \(unfocusedBackground)")
             let unwaivedSetup = try AcceptanceAudit.run(app, surface: "Setup \(appearance) 200% reduce motion", test: self)
             Acceptance.record(self, "A11Y-003 Setup \(appearance) 200%: \(unwaivedSetup.isEmpty ? "no unwaived audit issues" : "\(unwaivedSetup)")")
             app.terminate()

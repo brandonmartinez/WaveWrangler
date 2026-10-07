@@ -111,6 +111,17 @@ enum Acceptance {
         }
         return condition()
     }
+
+    /// Accent variants and the system blue used for emphasized list selection are strongly blue.
+    static func isAccentBlue(_ hex: String) -> Bool {
+        guard hex.count == 7, let value = Int(hex.dropFirst(), radix: 16) else { return false }
+        let r = value >> 16 & 0xFF, g = value >> 8 & 0xFF, b = value & 0xFF
+        return b - r >= 120 && b - g >= 60
+    }
+
+    static func hasKeyboardFocus(_ element: XCUIElement) -> Bool {
+        element.exists && (element.value(forKey: "hasKeyboardFocus") as? Bool ?? false)
+    }
 }
 
 /// Accessibility audit policy for the acceptance suites (accessibility-acceptance §4.2): the macOS audit
