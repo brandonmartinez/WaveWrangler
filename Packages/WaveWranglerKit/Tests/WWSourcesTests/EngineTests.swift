@@ -807,22 +807,46 @@ struct StallFollowUpTests {
         _ = tree
         let collector = await eventCollector(controller, key: key) { $0.isOfflineOrUnknown }
         _ = await controller.makeAvailable(key, at: file)
-        var requests = sleeper.requests.makeAsyncIterator()
         for _ in 0...5 {
-            _ = await requests.next()
+            guard await nextSteppedSleepRequest(sleeper.requests) != nil else {
+                collector.cancel()
+                await controller.cancelAll()
+                _ = await collector.value
+                return
+            }
             sleeper.step()
         }
-        #expect((await collector.value).last?.isOfflineOrUnknown == true)
+        guard (await collector.value).last?.isOfflineOrUnknown == true else {
+            Issue.record("stalled observer exited before publishing its stalled state")
+            await controller.cancelAll()
+            return
+        }
         // An automatic call while stalled does nothing new.
         _ = await controller.makeAvailable(key, at: file)
         #expect(io.count(.downloadRequest) == 1)
         let resumed = await eventCollector(controller, key: key) { if case .inProgress = $0 { true } else { false } }
         io.mutateSimulated(file) { $0.evictAgain(script: [.progress(0.5), .complete]) }
-        _ = await requests.next()
+        guard await nextSteppedSleepRequest(sleeper.requests) != nil else {
+            resumed.cancel()
+            await controller.cancelAll()
+            _ = await resumed.value
+            return
+        }
         sleeper.step()
-        #expect((await resumed.value).last == .inProgress(fractionCompleted: .unknown))
-        _ = await requests.next()
-        #expect(await controller.state(of: key) == .inProgress(fractionCompleted: .unknown))
+        guard (await resumed.value).last == .inProgress(fractionCompleted: .unknown) else {
+            Issue.record("observer did not publish in-progress after the provider dropped its transfer")
+            await controller.cancelAll()
+            return
+        }
+        guard await nextSteppedSleepRequest(sleeper.requests) != nil else {
+            await controller.cancelAll()
+            return
+        }
+        guard await controller.state(of: key) == .inProgress(fractionCompleted: .unknown) else {
+            Issue.record("observer left the in-progress retry window before Retry")
+            await controller.cancelAll()
+            return
+        }
         #expect(await controller.retry(key, at: file) == .requested)
         #expect(io.count(.downloadRequest) == 2)
         #expect(await settled(controller, key) == .idle)
@@ -881,6 +905,7 @@ final class SteppedSleeper: @unchecked Sendable {
     private let lock = NSLock()
     private var pending: CheckedContinuation<Void, any Error>?
     private var cancelled = false
+    private var requestsFinished = false
 
     init() {
         (requests, requestContinuation) = AsyncStream<Duration>.makeStream()
@@ -901,11 +926,14 @@ final class SteppedSleeper: @unchecked Sendable {
                 }
             }
         } onCancel: {
-            let continuation = lock.withLock { () -> CheckedContinuation<Void, any Error>? in
+            let (continuation, shouldFinish) = lock.withLock { () -> (CheckedContinuation<Void, any Error>?, Bool) in
                 cancelled = true
+                let shouldFinish = !requestsFinished
+                requestsFinished = true
                 defer { pending = nil }
-                return pending
+                return (pending, shouldFinish)
             }
+            if shouldFinish { requestContinuation.finish() }
             continuation?.resume(throwing: CancellationError())
         }
     }
@@ -922,6 +950,56 @@ final class SteppedSleeper: @unchecked Sendable {
     var isCancelled: Bool { lock.withLock { cancelled } }
 }
 
+private enum SteppedSleepRequestResult: Sendable {
+    case request(Duration)
+    case finished
+    case timedOut
+    case cancelled
+}
+
+/// Waits without parking a cooperative-pool thread. Cancelling the losing deadline task cannot be
+/// mistaken for a timeout, and cancelling the stream read makes `AsyncStream.next()` return promptly.
+func nextSteppedSleepRequest(
+    _ requests: AsyncStream<Duration>,
+    timeout: Duration = .seconds(1),
+    recordFailure: Bool = true
+) async -> Duration? {
+    let result = await withTaskGroup(of: SteppedSleepRequestResult.self) { group in
+        group.addTask {
+            var iterator = requests.makeAsyncIterator()
+            if let duration = await iterator.next() {
+                return .request(duration)
+            }
+            return .finished
+        }
+        group.addTask {
+            do {
+                try await Task.sleep(for: timeout)
+                return .timedOut
+            } catch {
+                return .cancelled
+            }
+        }
+        let first = await group.next() ?? .cancelled
+        group.cancelAll()
+        return first
+    }
+
+    switch result {
+    case .request(let duration):
+        return duration
+    case .finished:
+        if recordFailure { Issue.record("stepped sleeper ended before the expected sleep request") }
+    case .timedOut:
+        if recordFailure { Issue.record("timed out waiting for a stepped-sleeper request") }
+    case .cancelled:
+        if recordFailure && !Task.isCancelled {
+            Issue.record("stepped-sleeper request wait was cancelled unexpectedly")
+        }
+    }
+    return nil
+}
+
 /// Step the original observer through its stall and first idle-provider sample, then leave its next
 /// sleep suspended. Cancellation releases it; the replacement observer uses ordinary async sleeps.
 func resumeStalledObserverAfterDrop(
@@ -930,22 +1008,55 @@ func resumeStalledObserverAfterDrop(
     file: URL,
     controller: SourceTransferController,
     key: DeviceAccessKey,
-    stalled: Task<[TransferState], Never>
+    stalled: Task<[TransferState], Never>,
+    requestTimeout: Duration = .seconds(1),
+    recordSetupFailure: Bool = true
 ) async -> Bool {
-    var requests = sleeper.requests.makeAsyncIterator()
     for _ in 0...5 {
-        guard await requests.next() != nil else { return false }
+        guard await nextSteppedSleepRequest(sleeper.requests, timeout: requestTimeout, recordFailure: recordSetupFailure) != nil else {
+            stalled.cancel()
+            await controller.cancelAll()
+            _ = await controller.waitUntilSettled(key)
+            _ = await stalled.value
+            return false
+        }
         sleeper.step()
     }
-    guard (await stalled.value).last?.isOfflineOrUnknown == true else { return false }
+    guard (await stalled.value).last?.isOfflineOrUnknown == true else {
+        if recordSetupFailure { Issue.record("observer exited before publishing its stalled state") }
+        await controller.cancelAll()
+        _ = await controller.waitUntilSettled(key)
+        return false
+    }
     let resumed = await eventCollector(controller, key: key) { $0 == .inProgress(fractionCompleted: .unknown) }
     io.mutateSimulated(file) { $0.evictAgain(script: [.progress(0.5), .complete]) }
-    guard await requests.next() != nil else { return false }
+    guard await nextSteppedSleepRequest(sleeper.requests, timeout: requestTimeout, recordFailure: recordSetupFailure) != nil else {
+        resumed.cancel()
+        await controller.cancelAll()
+        _ = await controller.waitUntilSettled(key)
+        _ = await resumed.value
+        return false
+    }
     sleeper.step()
-    guard (await resumed.value).last == .inProgress(fractionCompleted: .unknown) else { return false }
+    guard (await resumed.value).last == .inProgress(fractionCompleted: .unknown) else {
+        if recordSetupFailure { Issue.record("observer did not publish in-progress after the provider dropped its transfer") }
+        await controller.cancelAll()
+        _ = await controller.waitUntilSettled(key)
+        return false
+    }
     // The first observer cannot poll again until Retry cancels it.
-    guard await requests.next() != nil else { return false }
-    return await controller.state(of: key) == .inProgress(fractionCompleted: .unknown)
+    guard await nextSteppedSleepRequest(sleeper.requests, timeout: requestTimeout, recordFailure: recordSetupFailure) != nil else {
+        await controller.cancelAll()
+        _ = await controller.waitUntilSettled(key)
+        return false
+    }
+    guard await controller.state(of: key) == .inProgress(fractionCompleted: .unknown) else {
+        if recordSetupFailure { Issue.record("observer left the in-progress retry window before Retry") }
+        await controller.cancelAll()
+        _ = await controller.waitUntilSettled(key)
+        return false
+    }
+    return true
 }
 
 /// Polling has stopped once the metadata call count stays unchanged for 40 ms (a live test observer
@@ -1135,10 +1246,49 @@ struct StallLifetimeTests {
         let collector = await eventCollector(controller, key: key) { $0.isOfflineOrUnknown }
         _ = await controller.makeAvailable(key, at: file)
         let waiter = Task { await settled(controller, key) }
-        #expect(await resumeStalledObserverAfterDrop(sleeper, io: io, file: file, controller: controller, key: key, stalled: collector))
+        guard await resumeStalledObserverAfterDrop(sleeper, io: io, file: file, controller: controller, key: key, stalled: collector) else {
+            waiter.cancel()
+            _ = await waiter.value
+            return
+        }
         #expect(await controller.state(of: key) == .inProgress(fractionCompleted: .unknown))
         #expect(await controller.retry(key, at: file) == .requested)
         #expect(await waiter.value == .idle)
+    }
+
+    @Test func steppedObserverSetupFailsFastAfterEarlyExit() async throws {
+        let tree = try SyntheticTree(label: "stall-setup-early-exit")
+        var rng = SplitMix64(seed: 201)
+        let file = try tree.file("long.wav", bytes: 64, rng: &rng)
+        let io = HarnessIO()
+        io.simulate(file, SimulatedCloudItem(script: Self.stallForever))
+        let sleeper = SteppedSleeper()
+        let controller = SourceTransferController(context: makeContext(io), policy: StallFollowUpTests.policy, setting: .on) { duration in
+            try await sleeper.sleep(duration)
+        }
+        let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
+        _ = await controller.makeAvailable(key, at: file)
+        guard await nextSteppedSleepRequest(sleeper.requests) != nil else {
+            await controller.cancelAll()
+            return
+        }
+        await controller.cancel(key)
+
+        let clock = ContinuousClock()
+        let started = clock.now
+        let completed = await resumeStalledObserverAfterDrop(
+            sleeper,
+            io: io,
+            file: file,
+            controller: controller,
+            key: key,
+            stalled: Task { [] },
+            requestTimeout: .seconds(5),
+            recordSetupFailure: false
+        )
+        #expect(!completed)
+        #expect(started.duration(to: clock.now) < .seconds(1))
+        #expect(await controller.activeCount == 0)
     }
 
     /// Event-driven (#85 follow-up): the injected sleeper hands each requested duration to the test and
@@ -1157,10 +1307,13 @@ struct StallLifetimeTests {
         let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
         _ = await controller.makeAvailable(key, at: file)
         var durations: [Duration] = []
-        for await duration in sleeper.requests {
+        while durations.count < 10 {
+            guard let duration = await nextSteppedSleepRequest(sleeper.requests) else {
+                await controller.cancelAll()
+                return
+            }
             durations.append(duration)
-            if durations.count == 10 { break }
-            sleeper.step()
+            if durations.count < 10 { sleeper.step() }
         }
         await controller.cancel(key)
         // 1 poll establishes the signature, 3 unchanged polls trigger the stall, then 4 → 8 → 16 (cap).
@@ -1259,7 +1412,9 @@ struct RetryAfterProviderDropTests {
         let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
         let stalled = await eventCollector(controller, key: key) { $0.isOfflineOrUnknown }
         _ = await controller.makeAvailable(key, at: file)
-        #expect(await resumeStalledObserverAfterDrop(sleeper, io: io, file: file, controller: controller, key: key, stalled: stalled))
+        guard await resumeStalledObserverAfterDrop(sleeper, io: io, file: file, controller: controller, key: key, stalled: stalled) else {
+            return
+        }
         #expect(await controller.state(of: key) == .inProgress(fractionCompleted: .unknown))
         let retried = await controller.retry(key, at: file)
         #expect(retried == .requested)
