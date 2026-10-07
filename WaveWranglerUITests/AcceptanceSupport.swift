@@ -255,7 +255,8 @@ enum AcceptanceAudit {
     /// baseline enforces only on blocked or recovery surfaces (docs/m2/evidence/m2-gui-baseline.md).
     @MainActor
     static func run(_ app: XCUIApplication, surface: String, test: XCTestCase,
-                    types kinds: XCUIAccessibilityAuditType = types) throws -> [String] {
+                    types kinds: XCUIAccessibilityAuditType = types,
+                    additionalWaiver: ((XCUIAccessibilityAuditIssue) -> String?)? = nil) throws -> [String] {
         var unwaived: [String] = []
         var waived: [[String: Any]] = []
         let sheet: XCUIElement? = app.sheets.firstMatch.exists ? app.sheets.firstMatch : nil
@@ -277,6 +278,9 @@ enum AcceptanceAudit {
             let description = describe(issue)
             if let rationale = structuralWaiver(for: issue) {
                 waived.append(["finding": description, "rationale": rationale, "kind": "structural"])
+                print("AUDIT WAIVED \(description) — \(rationale)")
+            } else if let rationale = additionalWaiver?(issue) {
+                waived.append(["finding": description, "rationale": rationale, "kind": "test-scoped"])
                 print("AUDIT WAIVED \(description) — \(rationale)")
             } else if issue.auditType == .contrast, let element = issue.element {
                 contrast.append((element, description))

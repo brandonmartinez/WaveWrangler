@@ -72,6 +72,10 @@ The episode-switch handler-to-commit p95 remained below 100 ms on both quiet hos
 
 The Setup source-name `sufficientElementDescription` audit-artifact waiver also covers the golden F-OLDER fixture names in `WaveWranglerUITests/FormatUpdateUITests.swift` and `Packages/WaveWranglerKit/Tests/WWPersistenceTests/ShowSchema1Fixtures.swift`. Those fixture names are frozen ShowSchema1Fixture bytes used to exercise the v1-to-v2 migration path; they are visible intended file labels, not missing descriptions.
 
+`FormatUpdateUITests.testT21UpdateFromStatusItemAfterOpenReadOnly` may waive a `.contrast` finding only for the AX-disabled `Number` static text inside `ww.show.saveStatus.popover`. The handler matches the exact element identity within that popover, requires `isEnabled == false`, and handles no other audit type or element. WCAG 2.1 success criterion 1.4.3 excludes inactive user-interface components; an enabled finding remains unwaived and is a product failure.
+
+Validation for this revision is the #175 GUI round 2 run at `792eee8`: **45 pass / 4 fail / 4 skip** across the requested seven classes. `FormatUpdateUITests` exercised the F-OLDER fixtures with the expanded source-name waiver; its remaining deterministic failures were the tab-selection sequencing assertion and the disabled status-popover contrast report addressed by the next revision. The original `348af457` baseline results predate these rules and do **not** validate this revision.
+
 ## Baseline maintenance
 
 Only a reviewed PR may change this file. Subsequent M2 PR runs compare their affected classes with this record and fail on new UI-test, essential-audit, or responsiveness findings. Existing items remain failures or accepted follow-ups until their evidence is updated in a reviewed baseline revision.

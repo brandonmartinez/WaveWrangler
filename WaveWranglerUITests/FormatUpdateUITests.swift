@@ -190,7 +190,13 @@ final class FormatUpdateUITests: XCTestCase {
             check(popover.waitForExistence(timeout: 5), "the status popover opens")
             let update = popover.buttons["Update…"]
             check(update.exists, "Update… is offered: \(popover.buttons.allElementsBoundByIndex.map(\.title))")
-            try audit("T21 status popover Update…")
+            try audit("T21 status popover Update…") { issue in
+                guard issue.auditType == .contrast, let flagged = issue.element,
+                      flagged.elementType == .staticText, flagged.identifier.isEmpty,
+                      !flagged.isEnabled, self.value(flagged) == "Number",
+                      AcceptanceAudit.isDescendant(flagged, of: popover) else { return nil }
+                return "inactive Number field in the read-only save-status popover; WCAG 1.4.3 excludes inactive UI components"
+            }
             // Focus starts on the popover's first action (Update…), so Space activates it with keyboard navigation.
             activate(update, "Update… in the save-status popover", task: "T21-update-later", tabs: 0)
             let sheet = app.sheets.firstMatch
@@ -221,23 +227,30 @@ final class FormatUpdateUITests: XCTestCase {
             check(NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier).count == 1,
                   "one app process: \(NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier).map(\.processIdentifier))")
             var asked: [String] = []
-            for _ in 0..<6 where asked.count < 2 {
-                let sheet = app.sheets.firstMatch
-                if sheet.waitForExistence(timeout: 5) {
-                    let title = texts(in: sheet).first { $0.hasPrefix("Update “") } ?? "?"
-                    asked.append(title)
-                    app.typeKey("r", modifierFlags: .command)   // Open Read-Only: nothing is written
-                    _ = Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists }
-                } else {
+            for name in ["Second Tab", "First Tab"] {
+                if name == "First Tab" {
                     app.typeKey("\t", modifierFlags: .control)   // Window › Show Next Tab
                 }
+                check(waitForSelectedTab(named: name), "\(name) becomes the selected key tab")
+                let sheet = app.sheets.firstMatch
+                check(sheet.waitForExistence(timeout: 5), "\(name) shows its update prompt")
+                recordTabState("initial-\(name)", expected: name)
+                let title = texts(in: sheet).first { $0.hasPrefix("Update “") } ?? "?"
+                asked.append(title)
+                app.typeKey("r", modifierFlags: .command)   // Open Read-Only: nothing is written
+                check(Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists },
+                      "\(name) prompt dismisses after Open Read-Only")
             }
             Acceptance.record(self, "T21 tabs asked: \(asked)")
             check(Set(asked) == ["Update “First Tab” to the current format?", "Update “Second Tab” to the current format?"]
                   && asked.count == 2, "each tabbed show asks exactly once: \(asked)")
             // Selecting each tab again never asks a second time.
-            app.typeKey("\t", modifierFlags: .control)
-            check(!app.sheets.firstMatch.waitForExistence(timeout: 3), "no second prompt after Open Read-Only")
+            for name in ["Second Tab", "First Tab"] {
+                app.typeKey("\t", modifierFlags: .control)
+                check(waitForSelectedTab(named: name), "\(name) becomes the selected key tab again")
+                recordTabState("answered-\(name)", expected: name)
+                check(!app.sheets.firstMatch.waitForExistence(timeout: 3), "no second prompt after Open Read-Only")
+            }
             for (url, original) in originals {
                 check((try? Data(contentsOf: url)) == original, "\(url.lastPathComponent) is byte-unchanged")
             }
@@ -355,6 +368,29 @@ final class FormatUpdateUITests: XCTestCase {
         element.exists && (element.value(forKey: "hasKeyboardFocus") as? Bool ?? false)
     }
 
+    /// A tabbed document's background windows may be absent from AX. Once the app is active, the visible show-window
+    /// title identifies the selected key tab; waiting for that title prevents a prompt from the previous tab being
+    /// mistaken for the newly selected tab's state.
+    private func waitForSelectedTab(named name: String) -> Bool {
+        app.activate()
+        return Acceptance.waitFor(timeout: 5) {
+            self.app.state == .runningForeground
+                && self.app.windows.matching(identifier: "ww.show.window").firstMatch.title.contains(name)
+        }
+    }
+
+    /// Keeps the selected tab and any sheet title in the xcresult so a repeated prompt identifies its document.
+    private func recordTabState(_ phase: String, expected: String) {
+        let windows = app.windows.matching(identifier: "ww.show.window").allElementsBoundByIndex.map(\.title)
+        let sheet = app.sheets.firstMatch
+        let sheetTexts = sheet.exists ? texts(in: sheet) : []
+        Acceptance.writeEvidence("format-update-T21-tabs-\(phase.replacingOccurrences(of: " ", with: "_"))", [
+            "expectedSelectedTab": expected,
+            "visibleShowWindows": windows,
+            "sheetTexts": sheetTexts,
+        ], test: self)
+    }
+
     /// Activates `button` by keyboard (Tab until focused, or `tabs` presses, then Space) with keyboard navigation on;
     /// otherwise with an element action, recorded as needing Full Keyboard Access (see the type comment).
     private func activate(_ button: XCUIElement, _ step: String, task: String, tabs: Int? = nil) {
@@ -396,8 +432,11 @@ final class FormatUpdateUITests: XCTestCase {
 
     /// Audits, then brings the app back to the front: an audit can take minutes, and on the Mac mini (GUI round 1) the
     /// app was no longer frontmost for the next key event.
-    private func audit(_ surface: String, types: XCUIAccessibilityAuditType = AcceptanceAudit.types) throws {
-        let unwaived = try AcceptanceAudit.run(app, surface: surface, test: self, types: types)
+    private func audit(_ surface: String, types: XCUIAccessibilityAuditType = AcceptanceAudit.types,
+                       additionalWaiver: ((XCUIAccessibilityAuditIssue) -> String?)? = nil) throws {
+        let unwaived = try AcceptanceAudit.run(
+            app, surface: surface, test: self, types: types, additionalWaiver: additionalWaiver
+        )
         for finding in unwaived { findings.append("AUDIT \(finding)") }
         app.activate()
     }
