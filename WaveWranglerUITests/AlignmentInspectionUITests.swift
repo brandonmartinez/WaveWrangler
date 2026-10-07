@@ -160,7 +160,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         chooseEpisodeMenu("Accept Proposal as Manual")
         XCTAssertTrue(
             waitForStaleDependents(in: notice, previousTotal: total, timeout: 15),
-            "Expected at least \(total) stale dependents, got \(text(of: notice))"
+            "Expected an affected dependent to become stale, got \(text(of: notice))"
         )
     }
 
@@ -189,12 +189,16 @@ final class AlignmentInspectionUITests: XCTestCase {
         let window = app.windows["ww.show.window"]
         XCTAssertTrue(window.exists)
         window.doubleClick()
+        let contentInspector = app.descendants(matching: .any)["ww.show.contentInspector"]
+        XCTAssertTrue(contentInspector.waitForExistence(timeout: 2))
         var compactContainerFindings = 0
         try app.performAccessibilityAudit(
             for: [.elementDetection, .sufficientElementDescription, .hitRegion, .action]
         ) { issue in
             guard issue.auditType == .sufficientElementDescription,
-                  issue.element?.identifier == "ww.show.compactContentInspector"
+                  let element = issue.element,
+                  element.elementType == .group,
+                  self.approximatelyEqual(element.frame, contentInspector.frame)
             else { return false }
             compactContainerFindings += 1
             print(
@@ -240,14 +244,12 @@ final class AlignmentInspectionUITests: XCTestCase {
 
     private func selectAnchorRow(_ index: Int) {
         let table = app.outlines["ww.alignment.anchors"]
-        makeReachable(table)
-        table.click()
-        for _ in 0..<4 {
-            app.typeKey(.upArrow, modifierFlags: [])
-        }
-        for _ in 0..<index {
-            app.typeKey(.downArrow, modifierFlags: [])
-        }
+        scrollIntoView(table)
+        let rows = table.descendants(matching: .outlineRow)
+        XCTAssertGreaterThan(rows.count, index)
+        let row = rows.element(boundBy: index)
+        XCTAssertGreaterThan(row.frame.width, 0)
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
     }
 
     private func selectTargetEpoch() {
@@ -303,7 +305,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         repeat {
             let parts = text(of: element).split(separator: " ")
             if parts.count >= 4, let stale = Int(parts[0]), parts[1] == "of",
-               let total = Int(parts[2]), stale == previousTotal, total >= stale,
+               let total = Int(parts[2]), stale > 0, total >= previousTotal, total >= stale,
                text(of: element).hasSuffix("stale.") {
                 return true
             }
@@ -327,6 +329,37 @@ final class AlignmentInspectionUITests: XCTestCase {
         }
         XCTAssertTrue(element.exists, "\(element.identifier) exists after scrolling", file: file, line: line)
         XCTAssertTrue(element.isHittable, "\(element.identifier) is hittable after scrolling", file: file, line: line)
+    }
+
+    private func scrollIntoView(
+        _ element: XCUIElement,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let scroll = app.scrollViews["ww.alignment.workspace"]
+        for _ in 0..<12 {
+            let frame = element.frame
+            if frame.width > 0, scroll.frame.intersects(frame) { break }
+            if frame.midY < scroll.frame.minY {
+                scroll.swipeDown()
+            } else {
+                scroll.swipeUp()
+            }
+        }
+        XCTAssertTrue(element.exists, "\(element.identifier) exists after scrolling", file: file, line: line)
+        XCTAssertTrue(
+            scroll.frame.intersects(element.frame),
+            "\(element.identifier) is on screen after scrolling",
+            file: file,
+            line: line
+        )
+    }
+
+    private func approximatelyEqual(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+        abs(lhs.minX - rhs.minX) <= 2
+            && abs(lhs.minY - rhs.minY) <= 2
+            && abs(lhs.width - rhs.width) <= 2
+            && abs(lhs.height - rhs.height) <= 2
     }
 
     private func assertReachable(

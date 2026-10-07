@@ -524,22 +524,54 @@ private enum AlignmentKeyHandler {
 private enum AlignmentFieldFocus {
     static func focus(anchor: Int, in window: NSWindow?) {
         DispatchQueue.main.async {
-            guard let window, window.attachedSheet == nil,
-                  let table = findTable("ww.alignment.anchors", in: window.contentView)
-            else { return }
-            let row = table.selectedRow >= 0 ? table.selectedRow : anchor
-            guard row >= 0, row < table.numberOfRows else { return }
-            table.scrollToVisible(table.bounds)
-            table.scrollRowToVisible(row)
-            let column = table.tableColumns.firstIndex {
-                $0.headerCell.stringValue == "Aligned time"
-            } ?? min(2, table.numberOfColumns - 1)
-            guard column >= 0,
-                  let cell = table.view(atColumn: column, row: row, makeIfNecessary: true),
-                  let field = findTextField(in: cell)
-            else { return }
-            field.scrollToVisible(field.bounds)
-            _ = window.makeFirstResponder(field)
+            attemptFocus(anchor: anchor, in: window, attemptsRemaining: 3)
+        }
+    }
+
+    private static func attemptFocus(
+        anchor: Int,
+        in window: NSWindow?,
+        attemptsRemaining: Int
+    ) {
+        guard let window, window.attachedSheet == nil,
+              let table = findTable("ww.alignment.anchors", in: window.contentView)
+        else {
+            retry(anchor: anchor, in: window, attemptsRemaining: attemptsRemaining)
+            return
+        }
+        let row = table.selectedRow >= 0 ? table.selectedRow : anchor
+        guard row >= 0, row < table.numberOfRows else {
+            retry(anchor: anchor, in: window, attemptsRemaining: attemptsRemaining)
+            return
+        }
+        table.scrollToVisible(table.bounds)
+        table.scrollRowToVisible(row)
+        let column = table.tableColumns.firstIndex {
+            $0.headerCell.stringValue == "Aligned time"
+        } ?? min(2, table.numberOfColumns - 1)
+        guard column >= 0,
+              let cell = table.view(atColumn: column, row: row, makeIfNecessary: true),
+              let field = findTextField(in: cell)
+        else {
+            retry(anchor: anchor, in: window, attemptsRemaining: attemptsRemaining)
+            return
+        }
+        field.scrollToVisible(field.bounds)
+        _ = window.makeFirstResponder(field)
+    }
+
+    private static func retry(
+        anchor: Int,
+        in window: NSWindow?,
+        attemptsRemaining: Int
+    ) {
+        guard attemptsRemaining > 1 else { return }
+        DispatchQueue.main.async {
+            attemptFocus(
+                anchor: anchor,
+                in: window,
+                attemptsRemaining: attemptsRemaining - 1
+            )
         }
     }
 

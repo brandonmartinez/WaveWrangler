@@ -38,9 +38,6 @@ private struct ShowWindowContent: View {
                             .frame(width: 260)
                     }
                 }
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Show content and inspector")
-                .accessibilityIdentifier("ww.show.compactContentInspector")
             } else {
                 core
                     // No inspectorColumnWidth(min:ideal:max:): inside an AppKit-hosted window it caused a
@@ -50,6 +47,9 @@ private struct ShowWindowContent: View {
                     }
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Show content and inspector")
+        .accessibilityIdentifier("ww.show.contentInspector")
         .toolbar {
             ToolbarItem(placement: .principal) {
                 DestinationControl(state: state)
