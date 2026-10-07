@@ -100,6 +100,36 @@ All runs: Macsimus, the same 100-sample synthetic episode-switch XCUITest, at le
 
 **Informational, not gated:** a Debug-versus-optimised-build measurement of the same SHA is pending (relay-directed 00:18). It goes in #220 and the M2 exit record, and doesn't change this decision.
 
+### Baseline revision 2026-10-07: Setup blocked-status measurement corrected (#221)
+
+PR #225 revision `5e8bb95d5910d4c3676fcf959531b671f04480ff` was validated on Macsimus with
+`ContrastEvidenceUITests`, `EpisodeSetupUITests`, and `SelectionContrastUITests`: **22 pass / 0 fail /
+1 expected skip**. Result bundle: `~/ww-uitest-runs/pr225-r6-5e8bb95/mini.xcresult`.
+
+The original `348af45` baseline's dark-200% value, 31,772 pixels at p75 **2.29:1**, was a measurement
+artefact rather than a product-colour failure. The selected `offline.wav` row was partly clipped: its
+two-line status frame extended into a dark strip below the blue selection. The old general meter chose
+that strip's most frequent colour (`#1E1E1E`) as the background, then counted the blue selection fill
+itself as approximately 26,823 "glyph" pixels because it differed from the dark strip by at least 1.5:1.
+
+The corrected evidence keeps all nine imported rows selected and the Sources outline focused, scrolls
+without clicking, and requires both the row and status frames to be entirely contained by the outline.
+It then takes the row's accent selection fill as the background and counts only pixels moving from that
+fill toward the light text colour. The final dark capture recorded:
+
+- outline `(239, 193, 1084, 553)`, row `(278, 686, 119.5, 30)`, status `(1103, 671, 169, 60)`;
+- background `#004DC4`, 5,438 isolated glyph pixels, p75 **7.35:1**;
+- `visual-darkAqua-setup-200-offline-selected.png`,
+  `contrast-crop-darkAqua-setup-200-offline-status.png`, and the audit crop
+  `audit-crop-Setup_darkAqua_200%_reduce_motion-2.png` in the xcresult.
+
+Apple's `.contrast` audit still flags that same fully visible status because its aggregate sampling
+reproduces the old 2.29 result. The new artefact handler waives only an exact `No connection` Setup
+status when the Sources outline reports `9 selected`, retains keyboard focus, contains both complete
+frames, has an accent-blue fill, and the isolated glyph measurement has at least 40 pixels at p75
+≥4.5:1. A clipped capture or failed pixel check remains unwaived. Both aqua (14,271 pixels, p75 7.17)
+and darkAqua passed, with no unwaived Setup audit issues. No product colour override remains.
+
 ## Baseline maintenance
 
 Only a reviewed PR may change this file. Subsequent M2 PR runs compare their affected classes with this record and fail on new UI-test, essential-audit, or responsiveness findings. Existing items remain failures or accepted follow-ups until their evidence is updated in a reviewed baseline revision.
