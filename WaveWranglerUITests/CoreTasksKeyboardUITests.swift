@@ -256,18 +256,42 @@ final class CoreTasksKeyboardUITests: XCTestCase {
     func testT24TwoWindowsSharedUndo() throws {
         let document = try makeDocument("Windows")
         try task("T24") {
-            let window = try launchAndOpen(document, autosave: false)
+            let window = try launchAndOpen(document, autosave: false, extraArguments: ["-WWUITestOffsetNewWindows", "YES"])
             app.menuBars.menuBarItems["File"].click()
             app.menuBars.menuItems.matching(NSPredicate(format: "title BEGINSWITH 'New Window'")).firstMatch.click()
             let windows = app.windows.matching(identifier: "ww.show.window")
             check(windows.element(boundBy: 1).waitForExistence(timeout: 5), "second window")
-            try editShowTitle(windows.element(boundBy: 0), "Shared Edit")
-            app.menuBars.menuBarItems["Edit"].click()
-            let undo = app.menuBars.menuItems.matching(NSPredicate(format: "title BEGINSWITH 'Undo '")).firstMatch
-            check(undo.exists, "named undo: \(undo.exists ? undo.title : "missing")")
-            app.typeKey(.escape, modifierFlags: [])
-            windows.element(boundBy: 1).click()
+            let first = windows.element(boundBy: 0)
+            let second = windows.element(boundBy: 1)
+            check(first.frame != second.frame, "second window is offset from the first")
+            try editShowTitle(first, "Shared Edit")
+
+            @MainActor func recordUndoState(_ moment: String) {
+                app.menuBars.menuBarItems["Edit"].click()
+                let undo = app.menuBars.menuItems.matching(NSPredicate(format: "title BEGINSWITH 'Undo '")).firstMatch
+                let undoExists = undo.waitForExistence(timeout: 3)
+                let key = windows.allElementsBoundByIndex.first {
+                    ($0.value(forKey: "hasKeyboardFocus") as? Bool) == true
+                }?.title ?? "none"
+                Acceptance.writeEvidence("t24-\(moment)", [
+                    "keyWindow": key,
+                    "undoTitle": undoExists ? undo.title : "missing",
+                    "undoEnabled": undoExists && undo.isEnabled,
+                    "firstTitle": first.title,
+                    "secondTitle": second.title,
+                    "firstFrame": "\(first.frame)",
+                    "secondFrame": "\(second.frame)",
+                ], test: self)
+                if moment == "before-command-z" {
+                    check(undoExists && undo.isEnabled, "Undo is enabled before ⌘Z")
+                }
+                app.typeKey(.escape, modifierFlags: [])
+            }
+
+            recordUndoState("before-command-z")
+            second.click()
             app.typeKey("z", modifierFlags: .command)
+            recordUndoState("after-command-z")
             let showInfo = window.textFields["Show title"]
             check(Acceptance.waitFor(timeout: 3) { showInfo.value as? String == Self.original }, "undo from the other window reverts the shared edit")
         }
@@ -304,8 +328,9 @@ final class CoreTasksKeyboardUITests: XCTestCase {
     @discardableResult
     /// `freshStorage` deletes the isolated UI-test storage (library, recovery, edit checkpoints) left by earlier
     /// suites, e.g. the DUR-026 checkpoint scenario, whose restore offer would otherwise cover the window.
-    private func openOptionally(_ document: URL, autosave: Bool, expectWindow: Bool = false, freshStorage: Bool = false) throws -> XCUIElement? {
-        launch(["-WWUITestAutosave", autosave ? "ON" : "OFF"] + (freshStorage ? ["-WWUITestResetStorage", "YES"] : []), opening: document)
+    private func openOptionally(_ document: URL, autosave: Bool, expectWindow: Bool = false, freshStorage: Bool = false,
+                                extraArguments: [String] = []) throws -> XCUIElement? {
+        launch(["-WWUITestAutosave", autosave ? "ON" : "OFF"] + (freshStorage ? ["-WWUITestResetStorage", "YES"] : []) + extraArguments, opening: document)
         let name = document.deletingPathExtension().lastPathComponent
         let window = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", name)).firstMatch
         guard window.waitForExistence(timeout: 10) else {
@@ -319,8 +344,10 @@ final class CoreTasksKeyboardUITests: XCTestCase {
         return app.windows.matching(identifier: "ww.show.window").firstMatch
     }
 
-    private func launchAndOpen(_ document: URL, autosave: Bool, freshStorage: Bool = true) throws -> XCUIElement {
-        guard let window = try openOptionally(document, autosave: autosave, expectWindow: true, freshStorage: freshStorage) else {
+    private func launchAndOpen(_ document: URL, autosave: Bool, freshStorage: Bool = true,
+                               extraArguments: [String] = []) throws -> XCUIElement {
+        guard let window = try openOptionally(document, autosave: autosave, expectWindow: true, freshStorage: freshStorage,
+                                              extraArguments: extraArguments) else {
             throw NSError(domain: "CoreTasks", code: 1)
         }
         return window
@@ -387,4 +414,3 @@ final class CoreTasksKeyboardUITests: XCTestCase {
         return (first["title"] as? String, first["number"] as? Int)
     }
 }
-
