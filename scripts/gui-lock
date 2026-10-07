@@ -12,7 +12,6 @@ DEFAULT_LEASE_MINUTES=30
 MAX_LEASE_MINUTES=45
 WARN_SECONDS=1800
 ACQUIRING_GRACE_SECONDS=120
-GUARD_CREATION_GRACE_SECONDS=5
 LEGACY_HARD_MAX_SECONDS=2700
 CLASSES="required pr full perf"
 
@@ -98,62 +97,48 @@ reclaim_dead_tickets() {
     release_guard
   done
 }
-stat_inode() {
-  /usr/bin/stat -f %i "$1" 2>/dev/null || /usr/bin/stat -c %i "$1" 2>/dev/null || echo 0
-}
 acquire_guard() {
-  local guard_pid guard_created guard_age stale_guard guard_inode guard_token
-  while :; do
-    if mkdir "$GUARD" 2>/dev/null; then
-      guard_inode=$(stat_inode "$GUARD")
-      if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ -n "${GUI_LOCK_TEST_GUARD_PUBLISH_SECONDS:-}" ]; then
-        sleep "$GUI_LOCK_TEST_GUARD_PUBLISH_SECONDS"
-      fi
-      [ "$(stat_inode "$GUARD")" = "$guard_inode" ] || continue
-      guard_token="$$-$(now)-$RANDOM"
-      {
-        printf 'pid=%s\n' "$$"
-        printf 'created=%s\n' "$(now)"
-        printf 'token=%s\n' "$guard_token"
-      } | atomic_write "$GUARD/owner"
-      [ "$(stat_inode "$GUARD")" = "$guard_inode" ] &&
-        [ "$(field "$GUARD/owner" token)" = "$guard_token" ] || continue
-      GUARD_HELD=1
-      GUARD_TOKEN="$guard_token"
-      if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ -n "${GUI_LOCK_TEST_GUARD_HOLD_SECONDS:-}" ]; then
-        sleep "$GUI_LOCK_TEST_GUARD_HOLD_SECONDS"
-      fi
-      return 0
+  exec 9>"$GUARD" || { echo "cannot open GUI guard: $GUARD" >&2; exit 1; }
+  if ! /usr/bin/lockf -s -t 120 9; then
+    echo "cannot acquire GUI guard: $GUARD" >&2
+    exec 9>&-
+    exit 1
+  fi
+  GUARD_HELD=1
+  if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ]; then
+    [ -z "${GUI_LOCK_TEST_GUARD_MARKER:-}" ] || : > "$GUI_LOCK_TEST_GUARD_MARKER"
+    if [ -n "${GUI_LOCK_TEST_GUARD_HOLD_SECONDS:-}" ]; then
+      sleep "$GUI_LOCK_TEST_GUARD_HOLD_SECONDS" 9>&-
     fi
-    guard_pid=$(field "$GUARD/owner" pid)
-    guard_created=$(field "$GUARD/owner" created)
-    if [ -z "$guard_pid" ]; then
-      guard_age=$(( $(now) - $(stat_mtime "$GUARD") ))
-      [ "$guard_age" -ge "$GUARD_CREATION_GRACE_SECONDS" ] || { sleep 1; continue; }
-    else
-      kill -0 "$guard_pid" 2>/dev/null && { sleep 1; continue; }
-      guard_age=$(( $(now) - ${guard_created:-$(stat_mtime "$GUARD")} ))
-    fi
-    if [ -d "$GUARD" ]; then
-      stale_guard="$ROOT/.gui.lock.guard.stale-$(now)-$$"
-      if mv "$GUARD" "$stale_guard" 2>/dev/null; then
-        log "reclaimed guard pid=${guard_pid:-missing} age=${guard_age}s"
-        rm -rf "$stale_guard"
-        continue
-      fi
-    fi
-    sleep 1
-  done
+  fi
 }
 release_guard() {
   [ "${GUARD_HELD:-0}" = 1 ] || return 0
-  [ "$(field "$GUARD/owner" token)" = "${GUARD_TOKEN:-}" ] || {
-    GUARD_HELD=0
-    return 0
-  }
-  rm -f "$GUARD/owner"
-  rmdir "$GUARD" 2>/dev/null || true
+  exec 9>&-
   GUARD_HELD=0
+}
+
+guard_probe() {
+  local counter="$1" completed="$2" held
+  acquire_guard
+  if ! /bin/mkdir "$counter.inside" 2>/dev/null; then
+    printf 'overlap\n' >> "$completed"
+    release_guard
+    return 1
+  fi
+  IFS= read -r held < "$counter"
+  if [ "$held" -ne 0 ]; then
+    printf 'overlap\n' >> "$completed"
+    /bin/rmdir "$counter.inside"
+    release_guard
+    return 1
+  fi
+  printf '1\n' > "$counter"
+  /bin/sleep 0.1 9>&-
+  printf '0\n' > "$counter"
+  /bin/rmdir "$counter.inside"
+  printf 'done\n' >> "$completed"
+  release_guard
 }
 
 legacy_has_xcodebuild() {
@@ -609,6 +594,11 @@ command="${1:-status}"
 [ $# -gt 0 ] && shift
 case "$command" in
   status) status; exit 0;;
+  guard-probe)
+    [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ $# -eq 2 ] || exit 2
+    guard_probe "$1" "$2"
+    exit $?
+    ;;
   acquire|release)
     echo "manual $command is disabled; use 'gui-lock run' for one run per lease" >&2
     exit 2

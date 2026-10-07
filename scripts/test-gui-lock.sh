@@ -14,9 +14,10 @@ assert_contains() {
   grep -F "$text" "$file" >/dev/null || fail "$file does not contain: $text"
 }
 reset_state() {
-  rm -rf "$ROOT/.gui.lock" "$ROOT/.gui.lock.guard" "$ROOT/.gui.lock.guard.stale-"* \
+  rm -rf "$ROOT/.gui.lock" \
     "$ROOT/.gui.queue" "$ROOT"/*.xcresult "$ROOT"/run-*
-  rm -f "$ROOT/xcodebuild" "$ROOT/WaveWranglerUITests-Runner"
+  rm -f "$ROOT/xcodebuild" "$ROOT/WaveWranglerUITests-Runner" \
+    "$ROOT/guard-held" "$ROOT/counter" "$ROOT/completed"
   mkdir -p "$ROOT/.gui.queue/required" "$ROOT/.gui.queue/pr" "$ROOT/.gui.queue/full" "$ROOT/.gui.queue/perf"
   : > "$ROOT/gui-lock.log"
   : > "$ROOT/order"
@@ -371,73 +372,67 @@ wait "$old_pid" || true
 wait "$new_pid"
 assert_contains "$ROOT/new.out" "RELEASED lane=new"
 
-echo "test: interrupted guard owner is reclaimed"
+echo "test: killed guard holder releases kernel lock"
 reset_state
+printf '0\n' > "$ROOT/counter"
+: > "$ROOT/completed"
+export GUI_LOCK_TEST_GUARD_MARKER="$ROOT/guard-held"
 export GUI_LOCK_TEST_GUARD_HOLD_SECONDS=20
-run_lane guard-victim pr 0 > "$ROOT/guard-victim.out" 2>&1 &
+"$SCRIPT" guard-probe "$ROOT/counter" "$ROOT/completed" > "$ROOT/guard-victim.out" 2>&1 &
 guard_victim_pid=$!
 for attempt in $(seq 1 20); do
-  [ -f "$ROOT/.gui.lock.guard/owner" ] && break
+  [ -f "$ROOT/guard-held" ] && break
   sleep 1
 done
-[ -f "$ROOT/.gui.lock.guard/owner" ] || fail "guard victim never acquired the guard"
-guard_owner_pid=$(sed -n 's/^pid=//p' "$ROOT/.gui.lock.guard/owner")
-kill -9 "$guard_owner_pid" 2>/dev/null || true
+[ -f "$ROOT/guard-held" ] || fail "guard victim never acquired the guard"
+kill -9 "$guard_victim_pid" 2>/dev/null || true
 wait "$guard_victim_pid" 2>/dev/null || true
-unset GUI_LOCK_TEST_GUARD_HOLD_SECONDS
-run_lane guard-reclaimer pr 0 > "$ROOT/guard-reclaimer.out"
-assert_contains "$ROOT/guard-reclaimer.out" "RELEASED lane=guard-reclaimer"
-assert_contains "$ROOT/gui-lock.log" "reclaimed guard"
+unset GUI_LOCK_TEST_GUARD_HOLD_SECONDS GUI_LOCK_TEST_GUARD_MARKER
+printf '0\n' > "$ROOT/counter"
+"$SCRIPT" guard-probe "$ROOT/counter" "$ROOT/completed"
+[ "$(cat "$ROOT/completed")" = done ] || fail "killed holder did not free the lock"
 
-echo "test: ownerless guard has a creation grace"
+echo "test: contender cannot enter during delayed guard publication"
 reset_state
-mkdir "$ROOT/.gui.lock.guard"
-run_lane ownerless-guard pr 0 > "$ROOT/ownerless-guard.out" 2>&1 &
-ownerless_guard_pid=$!
-sleep 2
-[ -d "$ROOT/.gui.lock.guard" ] || fail "ownerless guard was reclaimed during creation grace"
-if grep -F "reclaimed guard" "$ROOT/gui-lock.log" > /dev/null; then
-  fail "fresh ownerless guard was stolen"
-fi
-wait "$ownerless_guard_pid"
-assert_contains "$ROOT/gui-lock.log" "reclaimed guard pid=missing"
-
-echo "test: a live guard owner is never stolen for age"
-reset_state
-export GUI_LOCK_TEST_GUARD_HOLD_SECONDS=12
-run_lane slow-guard pr 0 > "$ROOT/slow-guard.out" 2>&1 &
-slow_guard_pid=$!
-for attempt in $(seq 1 20); do
-  [ -f "$ROOT/.gui.lock.guard/owner" ] && break
-  sleep 1
-done
-[ -f "$ROOT/.gui.lock.guard/owner" ] || fail "slow guard never published its owner"
-unset GUI_LOCK_TEST_GUARD_HOLD_SECONDS
-run_lane slow-guard-waiter pr 0 > "$ROOT/slow-guard-waiter.out" 2>&1 &
-slow_guard_waiter_pid=$!
-sleep 11
-if grep -F "reclaimed guard" "$ROOT/gui-lock.log" > /dev/null; then
-  fail "live slow guard was stolen after ten seconds"
-fi
-wait "$slow_guard_pid" "$slow_guard_waiter_pid"
-
-echo "test: interrupted guard publication preserves the guard until grace"
-reset_state
-export GUI_LOCK_TEST_GUARD_PUBLISH_SECONDS=3
-run_lane publishing-guard pr 0 > "$ROOT/publishing-guard.out" 2>&1 &
+printf '0\n' > "$ROOT/counter"
+: > "$ROOT/completed"
+export GUI_LOCK_TEST_GUARD_MARKER="$ROOT/guard-held"
+export GUI_LOCK_TEST_GUARD_HOLD_SECONDS=7
+"$SCRIPT" guard-probe "$ROOT/counter" "$ROOT/completed" > "$ROOT/publishing-guard.out" 2>&1 &
 publishing_guard_pid=$!
 for attempt in $(seq 1 20); do
-  [ -d "$ROOT/.gui.lock.guard" ] && break
+  [ -f "$ROOT/guard-held" ] && break
   sleep 1
 done
-unset GUI_LOCK_TEST_GUARD_PUBLISH_SECONDS
-run_lane publishing-waiter pr 0 > "$ROOT/publishing-waiter.out" 2>&1 &
+[ -f "$ROOT/guard-held" ] || fail "holder never entered publication window"
+unset GUI_LOCK_TEST_GUARD_MARKER GUI_LOCK_TEST_GUARD_HOLD_SECONDS
+"$SCRIPT" guard-probe "$ROOT/counter" "$ROOT/completed" > "$ROOT/publishing-waiter.out" 2>&1 &
 publishing_waiter_pid=$!
-sleep 2
-if grep -F "reclaimed guard" "$ROOT/gui-lock.log" > /dev/null; then
-  fail "contender stole a guard before owner publication"
-fi
-wait "$publishing_guard_pid" "$publishing_waiter_pid"
+sleep 6
+[ ! -s "$ROOT/completed" ] || fail "contender entered during delayed publication"
+wait "$publishing_guard_pid" || { cat "$ROOT/publishing-guard.out" >&2; fail "delayed guard holder failed"; }
+wait "$publishing_waiter_pid" || { cat "$ROOT/publishing-waiter.out" >&2; fail "delayed guard contender failed"; }
+[ "$(grep -c '^done$' "$ROOT/completed")" -eq 2 ] || fail "guard contenders did not serialize"
+
+echo "test: twenty parallel guard contenders never overlap"
+reset_state
+printf '0\n' > "$ROOT/counter"
+: > "$ROOT/completed"
+pids=""
+for contender in $(seq 1 20); do
+  "$SCRIPT" guard-probe "$ROOT/counter" "$ROOT/completed" > "$ROOT/guard-$contender.out" 2>&1 &
+  pids="$pids $!"
+done
+for pid in $pids; do
+  if ! wait "$pid"; then
+    for output in "$ROOT"/guard-*.out; do
+      [ ! -s "$output" ] || { printf '%s:\n' "$output" >&2; cat "$output" >&2; }
+    done
+    fail "guard contender $pid failed"
+  fi
+done
+[ "$(grep -c '^done$' "$ROOT/completed")" -eq 20 ] || fail "some guard contenders did not finish"
+[ "$(cat "$ROOT/counter")" = 0 ] || fail "guard counter was not restored"
 
 echo "test: killed waiter ticket is reclaimed without losing live FIFO positions"
 reset_state

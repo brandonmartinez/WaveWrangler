@@ -65,6 +65,13 @@ A lease defaults to 30 minutes and may be configured up to a hard maximum of 45.
 reclaims an expired lease or a lease whose recorded PID died, logs `reclaimed`, and kills only the stale holder's
 recorded PIDs. A lane rejoins the back of its priority FIFO for every additional run.
 
+### Cutover from the legacy helper
+
+Wait for the legacy holder and flat-file queue to drain or hand off to their owners; never erase live state
+to force installation. Back up `~/ww-uitest-runs/gui-lock` before installing the new helper, then run
+`gui-lock status`. The manual acquire/release interface and flat-file tickets are not compatible with this
+lease helper. Test it first with `GUI_LOCK_ROOT` in a temporary sandbox; do not deploy until approved.
+
 Full suites use class `full` and must be split by test class into shards expected to complete within 30 minutes.
 Each shard is a separate `gui-lock run` ticket and xcresult. If a shard exceeds 30 minutes, split its class list
 again rather than increasing the lease; the 45-minute maximum is for a known indivisible class.
