@@ -186,7 +186,10 @@ final class ContrastEvidenceUITests: XCTestCase {
             Thread.sleep(forTimeInterval: 1)
             capture("visual-\(appearance)-setup-200-zoomed")
             let offlineRow = app.outlines["ww.setup.sources"].outlineRows
-                .containing(NSPredicate(format: "label == %@", "offline.wav"))
+                .containing(NSPredicate(
+                    format: "identifier BEGINSWITH 'ww.setup.source.' AND (label == %@ OR value == %@)",
+                    "offline.wav", "offline.wav"
+                ))
                 .firstMatch
             XCTAssertTrue(offlineRow.waitForExistence(timeout: 3), "\(appearance): offline source row")
             offlineRow.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).click()
