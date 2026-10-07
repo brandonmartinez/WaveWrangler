@@ -265,7 +265,8 @@ private struct SourcesSection: View {
                     model: model,
                     rows: presentation.sourceRows,
                     width: geometry.size.width,
-                    isFocused: focusedTable.wrappedValue == .sources
+                    isFocused: focusedTable.wrappedValue == .sources,
+                    focusedTable: focusedTable
                 )
                     .focused(focusedTable, equals: .sources)
                     .onChange(of: SetupColumnPlan.columns(forWidth: geometry.size.width, scale: Double(textScale))) {
@@ -357,6 +358,7 @@ private struct SourcesTable: View {
     let rows: [SetupSourceRow]
     let width: Double
     let isFocused: Bool
+    var focusedTable: FocusState<EpisodeSetupModel.FocusedTable?>.Binding
     @Environment(\.setupTextScale) private var textScale
 
     private var scale: Double { Double(textScale) }
@@ -448,7 +450,10 @@ private struct SourcesTable: View {
         .onDeleteCommand { model.requestDeleteFromSources() }
         .onChange(of: model.selection) {
             model.inspectorFollowsSpeakers = false
-            if !model.selection.isEmpty { SetupTableFocus.focus("ww.setup.sources", in: model.window()) }
+            if !model.selection.isEmpty {
+                focusedTable.wrappedValue = .sources
+                SetupTableFocus.focus("ww.setup.sources", in: model.window())
+            }
         }
         .environment(\.defaultMinListRowHeight, 22 * scale)
     }
@@ -672,7 +677,10 @@ private struct SpeakersSection: View {
             }
             .onChange(of: model.speakerSelection) {
                 model.inspectorFollowsSpeakers = !model.speakerSelection.isEmpty
-                if !model.speakerSelection.isEmpty { SetupTableFocus.focus("ww.setup.speakers", in: model.window()) }
+                if !model.speakerSelection.isEmpty {
+                    focusedTable.wrappedValue = .speakers
+                    SetupTableFocus.focus("ww.setup.speakers", in: model.window())
+                }
             }
             .environment(\.defaultMinListRowHeight, 22 * scale)
         }
