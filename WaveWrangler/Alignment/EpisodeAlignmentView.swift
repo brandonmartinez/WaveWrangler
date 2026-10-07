@@ -86,8 +86,9 @@ private struct AlignmentWorkspace: View {
     @FocusState private var focusedAnchor: Int?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Alignment")
                         .font(.title2.weight(.semibold))
@@ -131,6 +132,7 @@ private struct AlignmentWorkspace: View {
                     .frame(minHeight: 90, idealHeight: 120, maxHeight: 160)
                     .accessibilityIdentifier("ww.alignment.anchors")
                 }
+                .id("ww.alignment.anchorSection")
 
                 LazyVGrid(
                     columns: [GridItem(.adaptive(minimum: 145), alignment: .leading)],
@@ -248,26 +250,30 @@ private struct AlignmentWorkspace: View {
                         .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                         .accessibilityIdentifier("alignment.error")
                 }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-        }
-        .accessibilityIdentifier("ww.alignment.workspace")
-        .onAppear {
-            AlignmentKeyHandler.install()
-        }
-        .onChange(of: model.requestedAnchorFocus) { _, anchor in
-            guard let anchor else { return }
-            focusedAnchor = anchor
-            AlignmentFieldFocus.focus(anchor: anchor, in: NSApp.keyWindow)
-            model.requestedAnchorFocus = nil
-        }
-        .sheet(item: $model.editorRequest) { request in
-            switch request {
-            case .numeric:
-                NumericTimingSheet(model: model)
-            case .anchors:
-                AnchorTimingSheet(model: model)
+            .accessibilityIdentifier("ww.alignment.workspace")
+            .onAppear {
+                AlignmentKeyHandler.install()
+            }
+            .onChange(of: model.requestedAnchorFocus) { _, anchor in
+                guard let anchor else { return }
+                scrollProxy.scrollTo("ww.alignment.anchorSection", anchor: .center)
+                model.requestedAnchorFocus = nil
+                DispatchQueue.main.async {
+                    focusedAnchor = anchor
+                    AlignmentFieldFocus.focus(anchor: anchor, in: NSApp.keyWindow)
+                }
+            }
+            .sheet(item: $model.editorRequest) { request in
+                switch request {
+                case .numeric:
+                    NumericTimingSheet(model: model)
+                case .anchors:
+                    AnchorTimingSheet(model: model)
+                }
             }
         }
     }
