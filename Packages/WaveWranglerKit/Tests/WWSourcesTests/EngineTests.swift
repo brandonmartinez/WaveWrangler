@@ -602,7 +602,7 @@ struct ForbiddenAPITests {
     /// `SourceDecoder` (the other-module scan forbids the gateway itself), hashes only in its two digest files,
     /// and mutates files only through the store.
     static func derivedViolations(in source: String, fileName: String) -> [String] {
-        var code = code(source)
+        var code = maskingInMemoryContentsOf(code(source))
         if fileName == "DerivedAssetStore.swift" {
             for call in derivedDirectoryListingCalls {
                 code = code.replacingOccurrences(of: call, with: call.replacingOccurrences(of: "contentsOf", with: "list"))
@@ -619,10 +619,18 @@ struct ForbiddenAPITests {
         return found.map { "\(fileName): \($0)" }
     }
 
+    /// `Array.append(contentsOf:)` / `Data.append(contentsOf:)` copy in-memory collections; every other
+    /// `contentsOf` (`String(contentsOf:)`, `NSSound(contentsOf:)`, …) stays forbidden.
+    static func maskingInMemoryContentsOf(_ code: String) -> String {
+        code.replacingOccurrences(of: ".append(contentsOf:", with: ".append(")
+    }
+
     @Test func derivedScannerDetectsContentHashingAndMutation() {
         #expect(Self.derivedViolations(in: "let d = try Data(contentsOf: source)", fileName: "DerivedAssetStore.swift") == [
             "DerivedAssetStore.swift: Data(contentsOf", "DerivedAssetStore.swift: contentsOf",
         ])
+        #expect(Self.derivedViolations(in: "let t = try String(contentsOf: source)", fileName: "MapHistory.swift") == ["MapHistory.swift: contentsOf"])
+        #expect(Self.derivedViolations(in: "bytes.append(contentsOf: header)", fileName: "MapHistory.swift").isEmpty)
         #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "DerivedJobCoordinator.swift") == ["DerivedJobCoordinator.swift: writeNew"])
         #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "DerivedAssetStore.swift").isEmpty)
         #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "Sub/DerivedAssetStore.swift") == ["Sub/DerivedAssetStore.swift: writeNew"])
@@ -652,6 +660,58 @@ struct ForbiddenAPITests {
                 #expect(count == 2, "DerivedAssetStore's two confined directory listings remain explicit")
             }
             violations += Self.derivedViolations(in: source, fileName: file.path)
+        }
+        #expect(violations.isEmpty, "\(violations)")
+    }
+
+    // MARK: - WWAlignPipeline: alignment analysis and aligned assets
+
+    /// Beyond every file, content, hashing and mutation API: the pipeline never touches the coordinator's
+    /// test-only hooks, never sizes work by the processor count, and never blocks or hops to the main thread.
+    static let pipelineTokens = [
+        "skipCurrencyCheck", "DerivedCoordinatorTestHooks", "beforeCommit", "activeProcessorCount", "processorCount",
+        "MainActor", "DispatchQueue", "DispatchSemaphore", "DispatchGroup", "Thread", "usleep(", "NSLock", "pthread_",
+    ]
+
+    /// WWAlignPipeline reaches source content only through `SourceDecoder` and writes only through the
+    /// WWDerived coordinator: no file in it may use any of these, with no exceptions.
+    static func pipelineViolations(in source: String, fileName: String) -> [String] {
+        let code = maskingInMemoryContentsOf(code(source))
+        let tokens = Set(forbidden + decodeMutationTokens + derivedStoreTokens + decodeTokens + contentGatewayAPITokens + pipelineTokens)
+        return tokens.filter { code.contains($0) }.sorted().map { "\(fileName): \($0)" }
+    }
+
+    @Test func pipelineScannerDetectsFilesContentHooksAndThreads() {
+        let samples: [(String, String)] = [
+            ("let d = try Data(contentsOf: url)", "Data(contentsOf"),
+            ("let t = try String(contentsOf: url)", "contentsOf"),
+            ("let names = try files.contentsOfDirectory(root)", "contentsOf"),
+            ("let r = try content.openForDecoding(url)", "openForDecoding"),
+            ("try files.writeNew(bytes, to: url)", "writeNew"),
+            ("let h = SHA256.hash(data: bytes)", "SHA256"),
+            ("let a = AVURLAsset(url: url)", "AVURLAsset"),
+            ("let n = ProcessInfo.processInfo.activeProcessorCount", "activeProcessorCount"),
+            ("DerivedJobCoordinator(store: s, inputs: i, testHooks: .init(skipCurrencyCheck: true))", "skipCurrencyCheck"),
+            ("DispatchQueue.main.async { }", "DispatchQueue"),
+            ("let s = DispatchSemaphore(value: 0)", "DispatchSemaphore"),
+            ("@MainActor func publish() {}", "MainActor"),
+            ("Thread.sleep(forTimeInterval: 1)", "Thread"),
+        ]
+        for (line, token) in samples {
+            #expect(Self.pipelineViolations(in: line, fileName: "AnalysisJob.swift").contains("AnalysisJob.swift: \(token)"), "\(line)")
+        }
+        #expect(Self.pipelineViolations(in: "/// FileManager, Thread and activeProcessorCount in a doc comment", fileName: "AnalysisJob.swift").isEmpty)
+        #expect(Self.pipelineViolations(in: "samples.append(contentsOf: chunk)", fileName: "AnalysisJob.swift").isEmpty)
+        #expect(Self.pipelineViolations(in: "let samples = try await decoder.withDecodingCursor(url, source: id) { try await $0.next() }", fileName: "AnalysisJob.swift").isEmpty)
+    }
+
+    @Test func wwAlignPipelineHasNoFileContentHookOrThreadAPIs() throws {
+        let files = try Self.swiftFiles(under: Self.packageRoot.appendingPathComponent("Sources/WWAlignPipeline"))
+        #expect(files.count >= 12)
+        #expect(files.contains { $0.path == "AnalysisJob.swift" } && files.contains { $0.path == "AlignedAssetJob.swift" })
+        var violations: [String] = []
+        for file in files {
+            violations += Self.pipelineViolations(in: try String(contentsOf: file.url, encoding: .utf8), fileName: file.path)
         }
         #expect(violations.isEmpty, "\(violations)")
     }

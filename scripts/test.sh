@@ -111,6 +111,23 @@ for segment_test in "${SEGMENT_REQUIRED[@]}"; do
 done
 rm -f "$SEGMENT_LOG"
 
+# WW-021 analysis memory bound: three 14-channel 75-minute synthetic groups analysed at the default
+# configuration must peak well under 1 GiB resident. Runs alone so no other suite inflates the process peak.
+echo "==> swift test pipeline memory pass: PipelineMemoryTests"
+PIPELINE_LOG="$(mktemp)"
+WW_PIPELINE_HEAVY_TESTS=1 swift test \
+  --package-path "$ROOT/Packages/WaveWranglerKit" \
+  --scratch-path "$ROOT/.build/swiftpm" \
+  --jobs "$JOBS" \
+  --no-parallel \
+  --filter 'WWAlignPipelineTests\.PipelineMemoryTests' 2>&1 | tee "$PIPELINE_LOG"
+if ! grep -q 'peaks well under 1 GiB" passed' "$PIPELINE_LOG"; then
+  echo "pipeline memory pass did not run and pass" >&2
+  rm -f "$PIPELINE_LOG"
+  exit 1
+fi
+rm -f "$PIPELINE_LOG"
+
 # Timing gates (WW-005 ≤2 s edit-to-quiescent checkpoint, publication cost, library scale p95), the WW-016
 # estimator throughput report and the WW-018 render family peak run one at a time after the parallel suite, so
 # the fault harness's own I/O does not distort the measurements.
