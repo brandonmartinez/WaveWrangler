@@ -48,6 +48,28 @@ check trapped on AVAudioSourceNode's render thread because its callback was crea
 main-actor method. The cursor now creates its render block outside the actor; the focused
 audition case reaches its status assertion without that trap.
 
+## Remaining GUI failure triage (2026-10-07)
+
+The retained `24a02c7` xcresult distinguishes product defects from test defects:
+
+- The workspace's root SwiftUI `Group` had no useful description. This was a product
+  accessibility defect even when the diagnostic destination contained only text. The scrollable
+  Alignment workspace now owns the `Alignment workspace` label and identifier.
+- At the supported 760×440 content minimum, the unscrolled workspace clipped the action and
+  audition controls. The split child still uses the no-intrinsic-size AppKit host and
+  `NSHostingView(sizingOptions: [])`; an inner vertical scroll view and adaptive action/audition
+  grids provide reachability without publishing content-driven split constraints.
+- TM202/TM209 queried only `AXLabel` for a SwiftUI `Text` status whose visible content is exposed
+  through `AXValue`; the tests now accept the same prefix from either text attribute.
+- TM203's native Outline gives keyboard focus to the selected cell while AppKit's field editor
+  receives application-level typing. The test now sends the edit keystrokes through the
+  application after Return instead of requiring the child `TextField` AX node itself to own focus.
+- TM211 raced the debug fixture's derived-job seeding and assumed there was exactly one dependent.
+  It now records the exact current total and requires that same total to become stale.
+- The blocked-state contrast finding was the AppKit title `Empty Alignment`, outside the blocked
+  content. Its exact element and context crops, one-finding cap and narrow handler are recorded in
+  `m2-gui-baseline.md`; no Alignment content finding is waived.
+
 ## Validation
 
 - Filtered `WWAlignPipelineTests|WWDerivedTests|ForbiddenAPITests`: 130 tests across package
