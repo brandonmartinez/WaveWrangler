@@ -204,10 +204,8 @@ final class ContrastEvidenceUITests: XCTestCase {
             ))
                 .firstMatch
             XCTAssertTrue(offlineSource.waitForExistence(timeout: 3), "\(appearance): offline source cell")
-            let sourceScrollView = sources.scrollViews.firstMatch
-            XCTAssertTrue(sourceScrollView.waitForExistence(timeout: 3), "\(appearance): Sources scroll view")
             for _ in 0..<3 where !offlineSource.isHittable {
-                sourceScrollView.scroll(byDeltaX: 0, deltaY: -400)
+                sources.scroll(byDeltaX: 0, deltaY: -400)
                 Thread.sleep(forTimeInterval: 0.5)
             }
             XCTAssertTrue(offlineSource.isHittable, "\(appearance): offline source cell fully visible without changing selection")
