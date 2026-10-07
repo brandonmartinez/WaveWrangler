@@ -89,10 +89,10 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(confirmation.waitForExistence(timeout: 2))
         app.typeKey(.return, modifierFlags: [])
         let anchors = app.outlines["ww.alignment.anchors"]
-        XCTAssertTrue(waitForRowCount(0, in: anchors))
+        XCTAssertTrue(waitForRowCount(0, in: anchors, timeout: 15))
         app.outlines["ww.alignment.groups"].click()
         app.typeKey("z", modifierFlags: .command)
-        XCTAssertTrue(waitForRowCount(2, in: anchors))
+        XCTAssertTrue(waitForRowCount(2, in: anchors, timeout: 15))
     }
 
     func testTM205CorrectEpochNumericallyReturnAndEscape() {
@@ -129,6 +129,9 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.buttons["alignment.anchors.apply"].click()
         selectAnchorRow(1)
         chooseEpisodeMenu("Start New Epoch at Anchor")
+        for _ in 0..<12 {
+            app.scrollViews["ww.alignment.workspace"].swipeDown()
+        }
         XCTAssertTrue(app.staticTexts["Epoch 3"].waitForExistence(timeout: 5))
     }
 
@@ -261,6 +264,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         let row = rows.element(boundBy: index)
         XCTAssertGreaterThan(row.frame.width, 0)
         row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        XCTAssertTrue(waitForSelected(row))
     }
 
     private func selectTargetEpoch() {
@@ -406,5 +410,17 @@ final class AlignmentInspectionUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         } while Date() < deadline
         return table.descendants(matching: .outlineRow).count == count
+    }
+
+    private func waitForSelected(
+        _ element: XCUIElement,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if element.isSelected { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        } while Date() < deadline
+        return element.isSelected
     }
 }

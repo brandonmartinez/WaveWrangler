@@ -125,6 +125,9 @@ private struct ShowSidebar: View {
                     .disabled(!state.canEdit)
                     .accessibilityIdentifier("ww.show.sidebar.newEpisode")
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Episodes section")
+                .accessibilityIdentifier("ww.show.sidebar.episodesHeader")
             }
             Section("Show") {
                 Label("Show Info", systemImage: "info.circle")

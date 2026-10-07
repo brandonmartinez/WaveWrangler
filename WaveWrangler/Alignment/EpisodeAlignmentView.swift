@@ -83,7 +83,6 @@ private struct AlignmentContentHost: NSViewRepresentable {
 
 private struct AlignmentWorkspace: View {
     @Bindable var model: EpisodeAlignmentModel
-    @FocusState private var focusedAnchor: Int?
 
     var body: some View {
         ScrollViewReader { scrollProxy in
@@ -121,11 +120,7 @@ private struct AlignmentWorkspace: View {
                         }
                         .width(ideal: 130)
                         TableColumn("Aligned time") { anchor in
-                            AnchorAlignedTimeField(
-                                model: model, anchor: anchor,
-                                focusedAnchor: $focusedAnchor
-                            )
-                                .accessibilityIdentifier("ww.alignment.anchor.\(anchor.id).alignedTime")
+                            AnchorAlignedTimeField(model: model, anchor: anchor)
                         }
                         .width(ideal: 130)
                     }
@@ -263,7 +258,6 @@ private struct AlignmentWorkspace: View {
                 scrollProxy.scrollTo("ww.alignment.anchorSection", anchor: .center)
                 model.requestedAnchorFocus = nil
                 DispatchQueue.main.async {
-                    focusedAnchor = anchor
                     AlignmentFieldFocus.focus(anchor: anchor, in: NSApp.keyWindow)
                 }
             }
@@ -446,28 +440,55 @@ private struct AlignmentOutlineRow: Identifiable {
     }
 }
 
-private struct AnchorAlignedTimeField: View {
+private struct AnchorAlignedTimeField: NSViewRepresentable {
     @Bindable var model: EpisodeAlignmentModel
     let anchor: AlignmentAnchorRow
-    let focusedAnchor: FocusState<Int?>.Binding
-    @State private var value: Double
 
-    init(
-        model: EpisodeAlignmentModel,
-        anchor: AlignmentAnchorRow,
-        focusedAnchor: FocusState<Int?>.Binding
-    ) {
-        self.model = model
-        self.anchor = anchor
-        self.focusedAnchor = focusedAnchor
-        _value = State(initialValue: anchor.alignedSeconds)
+    func makeCoordinator() -> Coordinator {
+        Coordinator(model: model, anchorID: anchor.id)
     }
 
-    var body: some View {
-        TextField("Aligned time", value: $value, format: .number.precision(.fractionLength(3)))
-            .focused(focusedAnchor, equals: anchor.id)
-            .onSubmit { model.editAnchor(id: anchor.id, alignedSeconds: value) }
-            .accessibilityValue(AlignmentPresentation.formatTime(value))
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(string: formatted(anchor.alignedSeconds))
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .exterior
+        field.delegate = context.coordinator
+        field.setAccessibilityLabel("Aligned time")
+        field.setAccessibilityIdentifier("ww.alignment.anchor.\(anchor.id).alignedTime")
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.model = model
+        context.coordinator.anchorID = anchor.id
+        field.setAccessibilityIdentifier("ww.alignment.anchor.\(anchor.id).alignedTime")
+        if field.currentEditor() == nil {
+            field.stringValue = formatted(anchor.alignedSeconds)
+        }
+        field.setAccessibilityValue(AlignmentPresentation.formatTime(anchor.alignedSeconds))
+    }
+
+    private func formatted(_ value: Double) -> String {
+        String(format: "%.3f", value)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var model: EpisodeAlignmentModel
+        var anchorID: Int
+
+        init(model: EpisodeAlignmentModel, anchorID: Int) {
+            self.model = model
+            self.anchorID = anchorID
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField,
+                  let value = Double(field.stringValue)
+            else { return }
+            model.editAnchor(id: anchorID, alignedSeconds: value)
+        }
     }
 }
 
@@ -539,9 +560,17 @@ private enum AlignmentFieldFocus {
         in window: NSWindow?,
         attemptsRemaining: Int
     ) {
-        guard let window, window.attachedSheet == nil,
-              let table = findTable("ww.alignment.anchors", in: window.contentView)
-        else {
+        guard let window, window.attachedSheet == nil else {
+            retry(anchor: anchor, in: window, attemptsRemaining: attemptsRemaining)
+            return
+        }
+        let identifier = "ww.alignment.anchor.\(anchor).alignedTime"
+        if let field = findTextField(identifier, in: window.contentView) {
+            field.scrollToVisible(field.bounds)
+            _ = window.makeFirstResponder(field)
+            return
+        }
+        guard let table = findTable("ww.alignment.anchors", in: window.contentView) else {
             retry(anchor: anchor, in: window, attemptsRemaining: attemptsRemaining)
             return
         }
@@ -609,6 +638,17 @@ private enum AlignmentFieldFocus {
         if let field = view as? NSTextField { return field }
         for subview in view.subviews {
             if let field = findTextField(in: subview) { return field }
+        }
+        return nil
+    }
+
+    private static func findTextField(_ identifier: String, in view: NSView?) -> NSTextField? {
+        guard let view else { return nil }
+        if let field = view as? NSTextField, field.accessibilityIdentifier() == identifier {
+            return field
+        }
+        for subview in view.subviews {
+            if let field = findTextField(identifier, in: subview) { return field }
         }
         return nil
     }
