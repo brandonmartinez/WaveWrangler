@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 import WWCore
@@ -8,6 +9,67 @@ import WWCore
 /// boundary. Local APFS only — **simulated/local, not provider-observed**.
 @Suite("Multi-process (real processes)", .serialized)
 struct MultiProcessTests {
+    struct GatedProbe {
+        let writer: String
+        let process: Process
+        let output: Pipe
+        let readiness: Pipe
+        let release: Pipe
+
+        func waitUntilReady(timeoutMilliseconds: Int32 = 30_000) throws {
+            var descriptor = pollfd(
+                fd: readiness.fileHandleForReading.fileDescriptor,
+                events: Int16(POLLIN | POLLHUP),
+                revents: 0
+            )
+            var result: Int32
+            repeat {
+                result = Darwin.poll(&descriptor, 1, timeoutMilliseconds)
+            } while result < 0 && errno == EINTR
+            guard result > 0, descriptor.revents & Int16(POLLIN) != 0 else {
+                let termination: String
+                if process.isRunning {
+                    termination = "still running"
+                } else {
+                    process.waitUntilExit()
+                    termination = "\(process.terminationReason.rawValue)/\(process.terminationStatus)"
+                }
+                throw CocoaError(.fileReadUnknown, userInfo: [
+                    NSLocalizedDescriptionKey: "writer \(writer) did not reach the save gate; poll=\(result) events=\(descriptor.revents) termination=\(termination)",
+                ])
+            }
+            let marker = readiness.fileHandleForReading.readData(ofLength: 1)
+            guard marker == Data([0x52]) else {
+                throw CocoaError(.fileReadCorruptFile, userInfo: [
+                    NSLocalizedDescriptionKey: "writer \(writer) emitted an invalid save-gate marker",
+                ])
+            }
+        }
+
+        func releaseToSave() throws {
+            try release.fileHandleForWriting.write(contentsOf: Data([0x47]))
+            try release.fileHandleForWriting.close()
+        }
+
+        func finish() -> [String: Any] {
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [
+                "result": "noOutput",
+                "rawOutput": String(decoding: data, as: UTF8.self),
+                "terminationReason": process.terminationReason.rawValue,
+                "terminationStatus": process.terminationStatus,
+            ]
+        }
+
+        func cancelIfRunning() {
+            try? release.fileHandleForWriting.close()
+            guard process.isRunning else { return }
+            process.terminate()
+            process.waitUntilExit()
+        }
+    }
+
     static func probeURL() throws -> URL {
         var candidates: [URL] = [Bundle(for: ProbeLocator.self).bundleURL.deletingLastPathComponent()]
         candidates += Bundle.allBundles.map { $0.bundleURL.deletingLastPathComponent() }
@@ -30,6 +92,20 @@ struct MultiProcessTests {
         return (process, pipe)
     }
 
+    static func launchGated(writer: String, _ arguments: [String]) throws -> GatedProbe {
+        let process = Process()
+        process.executableURL = try probeURL()
+        process.arguments = arguments + ["--gate-stdin", "1"]
+        let output = Pipe()
+        let readiness = Pipe()
+        let release = Pipe()
+        process.standardOutput = output
+        process.standardError = readiness
+        process.standardInput = release
+        try process.run()
+        return GatedProbe(writer: writer, process: process, output: output, readiness: readiness, release: release)
+    }
+
     static func output(_ pipe: Pipe) -> [String: Any] {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
@@ -43,21 +119,17 @@ struct MultiProcessTests {
             let model = Fixtures.show(seed: 5_000 + UInt64(round))
             let url = rig.url("Shared-\(round).wwshow")
             _ = try rig.publisher.publish(model, revision: 1, key: .show(model.show.id), to: url, target: .newLocation)
-            let barrier = rig.dir.sub("barrier-\(round)")
-            let go = barrier.appending(path: "go")
-            var running: [(Process, Pipe)] = []
+            var running: [GatedProbe] = []
+            defer { for probe in running { probe.cancelIfRunning() } }
             for writer in ["A", "B"] {
-                running.append(try Self.launch(["save", "--file", url.path, "--title", "Process \(writer)", "--recovery", rig.recovery.root.path,
-                                                "--ready", barrier.appending(path: "ready-\(writer)").path, "--go", go.path]))
+                running.append(try Self.launchGated(writer: writer, [
+                    "save", "--file", url.path, "--title", "Process \(writer)", "--recovery", rig.recovery.root.path,
+                ]))
             }
-            for writer in ["A", "B"] { _ = waitFor(barrier.appending(path: "ready-\(writer)")) }
-            FileManager.default.createFile(atPath: go.path, contents: Data())
-            let results = running.map { process, pipe in
-                let output = Self.output(pipe)
-                process.waitUntilExit()
-                return output
-            }
-            for result in results {
+            for probe in running { try probe.waitUntilReady() }
+            for probe in running { try probe.releaseToSave() }
+            let results = running.map { ($0.writer, $0.finish()) }
+            for (writer, result) in results {
                 switch result["result"] as? String {
                 case "saved": saved += 1
                 case "conflict":
@@ -68,11 +140,13 @@ struct MultiProcessTests {
                        decoded.payload.show.title == result["title"] as? String {
                         preserved += 1
                     }
-                default: other += 1
+                default:
+                    other += 1
+                    Issue.record("round \(round) writer \(writer) unexpected probe result \(result)")
                 }
             }
             guard case let .editable(document, _) = rig.opener.open(url) else { Issue.record("round \(round) unreadable"); continue }
-            #expect(results.contains { $0["result"] as? String == "saved" && $0["title"] as? String == document.payload.show.title })
+            #expect(results.contains { $0.1["result"] as? String == "saved" && $0.1["title"] as? String == document.payload.show.title })
         }
         Evidence.record("two real processes, same file (NSFileCoordinator across processes) rounds=\(rounds) saved=\(saved) conflicts=\(conflicts) conflictCandidatesPreserved=\(preserved) other=\(other) [simulated/local, not provider-observed]")
         #expect(saved == rounds && conflicts == rounds && preserved == rounds && other == 0)
@@ -136,14 +210,6 @@ struct MultiProcessTests {
         #expect(killed == runs && mixed == 0 && zeroValid == 0 && old + new == runs)
     }
 
-    func waitFor(_ url: URL, timeout: Double = 30) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if FileManager.default.fileExists(atPath: url.path) { return true }
-            usleep(2_000)
-        }
-        return false
-    }
 }
 
 /// Anchors `Bundle(for:)` to the test bundle, which is built next to the `wwpersist-probe` executable.

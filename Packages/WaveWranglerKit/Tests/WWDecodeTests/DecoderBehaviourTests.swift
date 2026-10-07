@@ -44,6 +44,7 @@ final class ScriptedContentIO: SourceContentIO, @unchecked Sendable {
         var opens = 0
         var closes = 0
         var reads = 0
+        var contentCallsInsideTask = 0
         var bufferIdentities = Set<ObjectIdentifier>()
         var bufferCapacities = Set<Int>()
         var readsOnMainThread = 0
@@ -57,7 +58,10 @@ final class ScriptedContentIO: SourceContentIO, @unchecked Sendable {
     init(_ script: Script) { self.script = script }
 
     func openForDecoding(_ url: URL) throws(DecodeFailure) -> any DecodingContentReader {
-        lock.withLock { _record.opens += 1 }
+        lock.withLock {
+            _record.opens += 1
+            withUnsafeCurrentTask { if $0 != nil { _record.contentCallsInsideTask += 1 } }
+        }
         if let failure = script.openFailure { throw failure }
         return Reader(owner: self)
     }
@@ -79,6 +83,8 @@ final class ScriptedContentIO: SourceContentIO, @unchecked Sendable {
             readIndex += 1
             owner.update {
                 $0.reads += 1
+                let insideTask = withUnsafeCurrentTask { $0 != nil }
+                if insideTask { $0.contentCallsInsideTask += 1 }
                 $0.bufferIdentities.insert(ObjectIdentifier(buffer))
                 $0.bufferCapacities.insert(buffer.capacityFrames)
                 if pthread_main_np() != 0 { $0.readsOnMainThread += 1 }
@@ -96,13 +102,21 @@ final class ScriptedContentIO: SourceContentIO, @unchecked Sendable {
         }
 
         func currentOpenedFileState() throws(DecodeFailure) -> OpenedFileState {
-            owner.script.stateAfterDecode ?? owner.script.facts.openedFile
+            owner.update {
+                let insideTask = withUnsafeCurrentTask { $0 != nil }
+                if insideTask { $0.contentCallsInsideTask += 1 }
+            }
+            return owner.script.stateAfterDecode ?? owner.script.facts.openedFile
         }
 
         func close() {
             guard !closed else { return }
             closed = true
-            owner.update { $0.closes += 1 }
+            owner.update {
+                $0.closes += 1
+                let insideTask = withUnsafeCurrentTask { $0 != nil }
+                if insideTask { $0.contentCallsInsideTask += 1 }
+            }
         }
     }
 }
