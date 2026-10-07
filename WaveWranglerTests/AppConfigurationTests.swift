@@ -150,13 +150,6 @@ struct UITestHooksDebugOnlyTests {
             #expect(acceptedActivation.contains("_ = try await reconciler.reconcile("))
         }
 
-        @Test func alignmentInspectorKeepsAStableHostedWidth() throws {
-            let source = try UITestHooksDebugOnlyTests.source("Workspace/Inspectors.swift")
-            let start = try #require(source.range(of: "struct InspectorContainer: View"))
-            let end = try #require(source[start.upperBound...].range(of: "\n/// Episode metadata"))
-            let body = source[start.lowerBound..<end.lowerBound]
-            #expect(body.contains(".frame(width: 260)"))
-        }
     }
 
     @Test func hooksTypeIsCompiledOnlyInDebug() throws {

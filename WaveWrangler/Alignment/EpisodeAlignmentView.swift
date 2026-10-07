@@ -100,47 +100,45 @@ private struct AlignmentWorkspace: View {
                 .accessibilityIdentifier("ww.alignment.anchors")
             }
 
-            ScrollView(.horizontal) {
-                HStack {
-                    Button("Accept as Manual") { model.acceptProposal() }
-                        .disabled(model.selectedRow?.state.heading.hasPrefix("Proposed") != true)
-                        .help(model.selectedRow?.state.heading.hasPrefix("Proposed") == true
-                              ? "Accept this acoustic proposal as a manual decision."
-                              : "Select an unconfirmed proposal.")
-                        .accessibilityIdentifier("alignment.acceptProposal")
-                    Button("Reject") { model.rejectProposal() }
-                        .disabled(model.selectedRow?.state.heading.hasPrefix("Proposed") != true)
-                        .help(model.selectedRow?.state.heading.hasPrefix("Proposed") == true
-                              ? "Reject this proposal and leave the epoch unsupported."
-                              : "Select an unconfirmed proposal.")
-                        .accessibilityIdentifier("alignment.rejectProposal")
-                    Button("Edit Numerically…") { model.requestNumericEditor() }
-                        .disabled(!model.canCorrect)
-                        .help(model.canCorrect ? "Type a signed rate and offset correction." : "Select an epoch that can be timed manually.")
-                        .accessibilityIdentifier("alignment.editNumeric")
-                    Button("Place Anchors…") { model.requestAnchorEditor() }
-                        .disabled(!model.canCorrect)
-                        .help(model.canCorrect ? "Type source and aligned time anchors." : "Select an epoch that can be timed manually.")
-                        .accessibilityIdentifier("alignment.placeAnchors")
-                    Button("Place Anchor at Playhead") { model.placeAnchorAtPlayhead() }
-                        .disabled(!model.canPlaceAnchorAtPlayhead)
-                        .help(
-                            model.canPlaceAnchorAtPlayhead
-                                ? "Append an anchor at the stopped audition position."
-                                : "Stop audition on an epoch that already has a persisted anchor map."
-                        )
-                        .accessibilityIdentifier("alignment.placeAnchorAtPlayhead")
-                    Button("Delete Anchor") { model.requestDeleteSelectedAnchor() }
-                        .disabled(model.anchorSelection == nil)
-                        .help(model.anchorSelection == nil ? "Select an anchor first." : "Delete the selected anchor.")
-                        .accessibilityIdentifier("alignment.deleteAnchor")
-                    Button("Start New Epoch at Anchor") { model.startNewEpochAtSelectedAnchor() }
-                        .disabled(!model.canStartNewEpoch)
-                        .help(model.canStartNewEpoch ? "Split this occurrence at the selected anchor." : "Select an anchor in an accepted map.")
-                        .accessibilityIdentifier("alignment.startNewEpoch")
-                }
+            HStack {
+                Button("Accept as Manual") { model.acceptProposal() }
+                    .disabled(model.selectedRow?.state.heading.hasPrefix("Proposed") != true)
+                    .help(model.selectedRow?.state.heading.hasPrefix("Proposed") == true
+                          ? "Accept this acoustic proposal as a manual decision."
+                          : "Select an unconfirmed proposal.")
+                    .accessibilityIdentifier("alignment.acceptProposal")
+                Button("Reject") { model.rejectProposal() }
+                    .disabled(model.selectedRow?.state.heading.hasPrefix("Proposed") != true)
+                    .help(model.selectedRow?.state.heading.hasPrefix("Proposed") == true
+                          ? "Reject this proposal and leave the epoch unsupported."
+                          : "Select an unconfirmed proposal.")
+                    .accessibilityIdentifier("alignment.rejectProposal")
+                Button("Edit Numerically…") { model.requestNumericEditor() }
+                    .disabled(!model.canCorrect)
+                    .help(model.canCorrect ? "Type a signed rate and offset correction." : "Select an epoch that can be timed manually.")
+                    .accessibilityIdentifier("alignment.editNumeric")
+                Button("Place Anchors…") { model.requestAnchorEditor() }
+                    .disabled(!model.canCorrect)
+                    .help(model.canCorrect ? "Type source and aligned time anchors." : "Select an epoch that can be timed manually.")
+                    .accessibilityIdentifier("alignment.placeAnchors")
+                Button("Place Anchor at Playhead") { model.placeAnchorAtPlayhead() }
+                    .disabled(!model.canPlaceAnchorAtPlayhead)
+                    .help(
+                        model.canPlaceAnchorAtPlayhead
+                            ? "Append an anchor at the stopped audition position."
+                            : "Stop audition on an epoch that already has a persisted anchor map."
+                    )
+                    .accessibilityIdentifier("alignment.placeAnchorAtPlayhead")
+                Button("Delete Anchor") { model.requestDeleteSelectedAnchor() }
+                    .disabled(model.anchorSelection == nil)
+                    .help(model.anchorSelection == nil ? "Select an anchor first." : "Delete the selected anchor.")
+                    .accessibilityIdentifier("alignment.deleteAnchor")
+                Button("Start New Epoch at Anchor") { model.startNewEpochAtSelectedAnchor() }
+                    .disabled(!model.canStartNewEpoch)
+                    .help(model.canStartNewEpoch ? "Split this occurrence at the selected anchor." : "Select an anchor in an accepted map.")
+                    .accessibilityIdentifier("alignment.startNewEpoch")
+                Spacer()
             }
-            .scrollIndicators(.never)
 
             GroupBox("Audition") {
                 HStack {

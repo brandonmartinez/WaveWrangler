@@ -23,9 +23,6 @@ struct InspectorContainer: View {
             }
             .padding(14)
         }
-        // Keep the hosted inspector's intrinsic width stable while Alignment swaps its loading and
-        // evidence content. macOS 27 traps if a split-view child changes its min size during constraints.
-        .frame(width: 260)
         .wwFont(.body)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Inspector")
