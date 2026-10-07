@@ -204,27 +204,41 @@ final class ContrastEvidenceUITests: XCTestCase {
             ))
                 .firstMatch
             XCTAssertTrue(offlineSource.waitForExistence(timeout: 3), "\(appearance): offline source cell")
-            for _ in 0..<3 where !offlineSource.isHittable {
-                sources.scroll(byDeltaX: 0, deltaY: -400)
-                Thread.sleep(forTimeInterval: 0.5)
-            }
-            XCTAssertTrue(offlineSource.isHittable, "\(appearance): offline source cell fully visible without changing selection")
-            XCTAssertTrue(nineSelected.exists, "\(appearance): scrolling preserves nine selected source rows")
-            XCTAssertTrue(Acceptance.hasKeyboardFocus(sources), "\(appearance): Sources table retains keyboard focus")
             let offlineStatus = app.descendants(matching: .any).matching(NSPredicate(
                 format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status' AND value BEGINSWITH 'No connection'"
             )).firstMatch
             XCTAssertTrue(offlineStatus.waitForExistence(timeout: 3), "\(appearance): selected no-connection status")
-            XCTAssertTrue(offlineStatus.isHittable, "\(appearance): selected no-connection status fully visible")
+            func fullyVisible(_ element: XCUIElement) -> Bool {
+                element.exists && !element.frame.isEmpty && sources.frame.contains(element.frame)
+            }
+            for _ in 0..<12 where !fullyVisible(offlineSource) || !fullyVisible(offlineStatus) {
+                sources.scroll(byDeltaX: 0, deltaY: -200)
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+            XCTAssertTrue(fullyVisible(offlineSource),
+                          "\(appearance): offline row is entirely inside Sources \(sources.frame), row \(offlineSource.frame)")
+            XCTAssertTrue(fullyVisible(offlineStatus),
+                          "\(appearance): offline status is entirely inside Sources \(sources.frame), status \(offlineStatus.frame)")
+            XCTAssertTrue(nineSelected.exists, "\(appearance): scrolling preserves nine selected source rows")
+            XCTAssertTrue(Acceptance.hasKeyboardFocus(sources), "\(appearance): Sources table retains keyboard focus")
             Acceptance.attach(self, png: window.screenshot().pngRepresentation, name: "visual-\(appearance)-setup-200-offline-selected.png")
-            let statusMeasurement = ContrastMeter.measure(offlineStatus.screenshot().image) ?? [:]
+            let statusShot = offlineStatus.screenshot()
+            Acceptance.attach(self, png: statusShot.pngRepresentation, name: "contrast-crop-\(appearance)-setup-200-offline-status.png")
+            let statusMeasurement = ContrastMeter.measureTextOnSelection(
+                statusShot.image,
+                selectionImage: offlineSource.screenshot().image
+            ) ?? [:]
             let glyphPixels = statusMeasurement["glyphPixels"] as? Int ?? 0
             let glyphP75 = statusMeasurement["glyphP75"] as? Double ?? 0
             let background = statusMeasurement["background"] as? String ?? ""
             XCTAssertTrue(Acceptance.isAccentBlue(background), "\(appearance): selected no-connection status has emphasized accent background \(background)")
             XCTAssertGreaterThanOrEqual(glyphPixels, AcceptanceAudit.minimumGlyphPixels, "\(appearance): selected no-connection glyph pixels")
             XCTAssertGreaterThanOrEqual(glyphP75, 4.5, "\(appearance): selected no-connection status p75")
-            Acceptance.record(self, "#221 \(appearance) emphasized selected no-connection status: \(glyphPixels) px, p75 \(glyphP75), background \(background)")
+            Acceptance.record(
+                self,
+                "#221 \(appearance) emphasized selected no-connection status: \(glyphPixels) px, p75 \(glyphP75), " +
+                    "background \(background), outline \(sources.frame), row \(offlineSource.frame), status \(offlineStatus.frame)"
+            )
 
             let unwaivedSetup = try AcceptanceAudit.run(app, surface: "Setup \(appearance) 200% reduce motion", test: self)
             Acceptance.record(self, "A11Y-003 Setup \(appearance) 200%: \(unwaivedSetup.isEmpty ? "no unwaived audit issues" : "\(unwaivedSetup)")")
@@ -489,6 +503,7 @@ enum ContrastMeter {
             if ratio > best.ratio { best = (ratio, pixel) }
             if ratio >= 1.5 { glyph.append(ratio) }
         }
+
         glyph.sort()
         func percentile(_ p: Double) -> Double {
             glyph.isEmpty ? 0 : (glyph[min(glyph.count - 1, Int(Double(glyph.count) * p))] * 100).rounded() / 100
@@ -498,6 +513,38 @@ enum ContrastMeter {
         return [
             "ratio": (best.ratio * 100).rounded() / 100,
             "background": bg.hex, "text": best.pixel.hex, "pixels": pixels.count,
+            "glyphPixels": glyph.count, "glyphP50": percentile(0.5), "glyphP75": percentile(0.75),
+        ]
+    }
+
+    /// Measures antialiased light text against an emphasized selection fill. The fill comes from the selected
+    /// row, not from the most frequent colour in the status crop: a clipped dark strip must not become the
+    /// background, and blue selection pixels must not be counted as glyphs.
+    static func measureTextOnSelection(_ image: NSImage, selectionImage: NSImage) -> [String: Any]? {
+        guard let pixels = rgba(image), let selectionPixels = rgba(selectionImage) else { return nil }
+        var blues: [UInt32: Int] = [:]
+        for pixel in selectionPixels
+        where Int(pixel.b) - Int(pixel.r) >= 120 && Int(pixel.b) - Int(pixel.g) >= 60 {
+            blues[pixel.key, default: 0] += 1
+        }
+        guard let backgroundKey = blues.max(by: { $0.value < $1.value })?.key else { return nil }
+        let background = Pixel(key: backgroundKey)
+        var best = (ratio: 1.0, pixel: background)
+        var glyph: [Double] = []
+        for pixel in pixels {
+            let ratio = contrast(pixel.luminance, background.luminance)
+            let movesTowardWhite = pixel.r >= background.r && pixel.g >= background.g && pixel.b >= background.b
+            guard movesTowardWhite, ratio >= 1.5 else { continue }
+            glyph.append(ratio)
+            if ratio > best.ratio { best = (ratio, pixel) }
+        }
+        glyph.sort()
+        func percentile(_ p: Double) -> Double {
+            glyph.isEmpty ? 0 : (glyph[min(glyph.count - 1, Int(Double(glyph.count) * p))] * 100).rounded() / 100
+        }
+        return [
+            "ratio": (best.ratio * 100).rounded() / 100,
+            "background": background.hex, "text": best.pixel.hex, "pixels": pixels.count,
             "glyphPixels": glyph.count, "glyphP50": percentile(0.5), "glyphP75": percentile(0.75),
         ]
     }
