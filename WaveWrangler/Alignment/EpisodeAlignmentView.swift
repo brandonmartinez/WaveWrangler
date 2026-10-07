@@ -545,11 +545,24 @@ private enum AlignmentFieldFocus {
 
     private static func findTable(_ identifier: String, in view: NSView?) -> NSTableView? {
         guard let view else { return nil }
-        if let table = view as? NSTableView, table.accessibilityIdentifier() == identifier {
+        if view.accessibilityIdentifier() == identifier {
+            if let table = view as? NSTableView { return table }
+            if let table = firstTable(in: view) { return table }
+        }
+        if let table = view as? NSTableView,
+           table.enclosingScrollView?.accessibilityIdentifier() == identifier {
             return table
         }
         for subview in view.subviews {
             if let match = findTable(identifier, in: subview) { return match }
+        }
+        return nil
+    }
+
+    private static func firstTable(in view: NSView) -> NSTableView? {
+        if let table = view as? NSTableView { return table }
+        for subview in view.subviews {
+            if let table = firstTable(in: subview) { return table }
         }
         return nil
     }
