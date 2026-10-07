@@ -32,8 +32,6 @@ The table pins every observed waiver class and its rationale at `348af457`. A la
 
 | Audit finding / surface | Audit type | Baseline | Reason | Disposition |
 | --- | --- | ---: | --- | --- |
-| T16 conflict-resolution flow | Essential keyboard / recovery | 1 deterministic failed task | The conflict sheet lacks the required Save Mine as a Copy path. | Accepted with issue #66 |
-| Contrast-only audit timeout | Essential-audit infrastructure | 1 initial timeout, isolated rerun passed | XCTest returned audit error `-56`; no product contrast finding was observed. | Accepted with issue #218 |
 | Disabled SwiftUI layout groups, import review | `sufficientElementDescription` | 39 (cap 39) | Non-interactive layout containers. | Audit artefact |
 | Disabled SwiftUI layout groups, Setup | `sufficientElementDescription` | 65 (cap 67) | Non-interactive layout containers. | Audit artefact |
 | System pop-up `AXShowMenu`, import review / Setup | `action` | 10 / 2 (caps 10 / 2) | System pop-up controls expose `AXShowMenu`; app actions remain labelled. | Audit artefact |
@@ -42,16 +40,17 @@ The table pins every observed waiver class and its rationale at `348af457`. A la
 | AppKit sheet icon | `sufficientElementDescription` | 1 on T17/T20 | Decorative `NSAlert` icon; the alert text carries the message. | Audit artefact |
 | Setup source-name cells | `sufficientElementDescription` | 2 unwaived filename-heuristic reports | AX audit calls ordinary visible file names such as `ana-zoom.m4a` and `intro.wav` “not human-readable”; the names are the intended visible labels. | Audit artefact |
 | Library 200% HelpTag | `sufficientElementDescription` | 1 | AppKit HelpTag without an app-owned description. | Audit artefact |
-| Fully offscreen / partly clipped library cells | `contrast` | `notOnScreen` 0–2 (cap 5); four 2-point bottom-edge samples | No rendered glyph region exists for a scrolled/clipped cell; it is not a foreground-colour measurement. | Audit artefact |
-| Library dark collection row | `contrast` | 1 unwaived report | Measured p75 15.72:1; the audit is measuring sidebar material incorrectly. | Audit artefact |
-| Sidebar, table, Setup cells, titles, and sheet text | `contrast` | Within existing per-surface `tableText` caps (import 1/1, Setup 1/4) | Pixel evidence meets the 40-glyph / p75 4.5:1 measured-artefact rule, or the content is dimmed/occluded and audited frontmost. | Audit artefact |
 | Setup source status, dark 200% blocked/recovery state | `contrast` | 1 unwaived report | Measured p75 2.29:1 at 31,772 glyph pixels. | Accepted with issue #221 |
+
+### Broad (M5) observations
+
+The following are informational broad-accessibility observations for M5 / WW-053, not entries in the M2 essential-audit waiver baseline: fully offscreen or partly clipped library-cell contrast reports (`notOnScreen` 0–2, cap 5, plus four two-point bottom-edge samples); one library dark-collection-row report measured at p75 15.72:1 where the audit samples sidebar material; and sidebar, table, non-blocked Setup-cell, title, and sheet-text contrast reports within existing per-surface `tableText` caps (import 1/1, Setup 1/4). Pixel evidence meets the 40-glyph / p75 4.5:1 measured-artefact rule, or the content is dimmed or occluded while the audit measures the frontmost surface.
 
 ## Responsiveness baseline
 
-The M1 `Responsiveness` instrumentation recorded application event-to-committed-run-loop timing; p95 uses nearest rank. The first two local runs measured 111.524 / 127.612 ms and 109.097 / 115.297 ms (p95 / max) for episode switching, but ran with concurrent heavy work and approximately 30 one-minute load. They are retained in #220 as contaminated-condition observations, not quiet-host baseline measurements.
+The M1 `Responsiveness` instrumentation recorded application event-to-committed-run-loop timing; p95 uses nearest rank. The initial local 100-sample run measured 111.524 / 127.612 ms (p95 / max) for episode switching under concurrent heavy work and approximately 30 one-minute load. Its required isolated local rerun measured 109.097 / 115.297 ms under the same contaminated condition. Both remain in #220 as contaminated-condition observations, not quiet-host baseline measurements.
 
-The quiet runs below are the baseline measurements. Macsimus began at 3.69 one-minute load and ended at 4.94; this Mac began at 6.14 and ended at 6.52. Result bundles and extracted JSON remain host-local:
+The quiet-host runs below are **load-condition checks**. Macsimus began at 3.69 one-minute load and ended at 4.94; this Mac began at 6.14 and ended at 6.52. Result bundles and extracted JSON remain host-local:
 
 - Mac mini: `~/ww-uitest-runs/m2-regression-348af45/responsiveness-100-mini.xcresult` and `responsiveness-100-mini.json`.
 - This Mac: `~/ww-uitest-runs/m2-regression-348af45-local/responsiveness-100-quiet-local.xcresult` and `responsiveness-100-quiet-local.json`.
@@ -67,7 +66,7 @@ The quiet runs below are the baseline measurements. Macsimus began at 3.69 one-m
 | Metadata edit | 100 | <100 | 31.023 / 37.970 | 36.501 / 66.872 | Pass |
 | All interactions | 403 | <100 | 102.332 / 119.962 | 97.793 / 125.829 | Mini fail; local pass |
 
-The episode-switch handler-to-commit p95 remained below 100 ms on both quiet hosts (92.522 ms on the mini; 70.084 ms locally); the user-visible event-to-commit metric did not. This distinction is recorded for diagnosis, not as a waiver.
+The episode-switch handler-to-commit p95 remained below 100 ms on both quiet hosts (92.522 ms on the mini; 70.084 ms locally); the user-visible event-to-commit metric did not. None of the initial run, isolated rerun, or quiet-host load-condition checks waives #220: it remains a hard-gate **FAIL** until fixed.
 
 ## Baseline maintenance
 
