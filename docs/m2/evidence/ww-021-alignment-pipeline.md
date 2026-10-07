@@ -9,7 +9,7 @@ there was no real recording, no network and no GUI.
 | Step | Entry point | Guarantee |
 |---|---|---|
 | Plan | `AlignmentPipeline.plan` | Lists every recorder group and epoch of the episode and picks one reference. A source is admitted only when its location is known, availability is ON, the user explicitly authorized content work (`ContentWorkAuthorization`) and its revision is registered. Every other source gets a typed `SourceIneligibility` and **zero decode work** (proven against the recording content gateway). |
-| Analyse | `AlignmentPipeline.analyse` | Probes admitted sources (`SourceFacts`, a derived result), then for each target epoch decodes one bounded excerpt per side through `SourceDecoder.withDecodingCursor`. It mixes channels to mono, decimates by an integer factor to ≥ 8 kHz, and runs the frozen `WWAlignEstimate` API. The result is stored as an `EpochAnalysisRecord` keyed by every M2-C5 component (sources and revisions, format revision, recipe, estimator identity, map revision of record = none, asset version). Proposals are `acousticConsistentProposal` only. Abstentions keep the estimator's evidence and resolve to WW-014 states (weak / disconnected / ambiguous / silent / periodic / discontinuous → U7/U8), each with its remedies. |
+| Analyse | `AlignmentPipeline.analyse` | Probes admitted sources (`SourceFacts`, a derived result), then decodes bounded excerpts through `SourceDecoder.withDecodingCursor`. It mixes channels to mono, decimates by an integer factor to ≥ 8 kHz, and runs the frozen `WWAlignEstimate` API. For multiple target epochs the estimator receives the target and its peers in one request, so shared windows can close cycles and declared restarts carry `restartedEpoch`. The result is stored as an `EpochAnalysisRecord` keyed by every M2-C5 component (reference, target and peer sources/revisions, format revision, cohort/recipe, estimator identity, map revision of record = none, asset version). Proposals are `acousticConsistentProposal` only. Abstentions keep the estimator's evidence and resolve to WW-014 states (weak / disconnected / ambiguous / silent / periodic / discontinuous / cycle-inconsistent → U7/U8), each with its remedies. |
 | Accept / manual | `AlignmentPipeline.accept`, then `activate` | Accepting a current proposal (as `manual`, basis `acceptedAcousticProposal`), numeric entry (ppm/offset), anchors (≥ 2, fitted exactly) or a reject (U8 `notAttempted`) builds an `AlignedTimelineMap`. It appends it as a new revision through `MapHistory` (marking dependents stale); `activate` publishes through the unchanged C3 coordinator path. An accepted proposal keeps **only its measured interval**: frames outside it stay `outsideCoverage` in both directions (no extrapolation, M2-C3), and sources wholly outside it are reported. Extending to the whole epoch is a separate explicit decision (`extendProposalToEpoch`), recorded as `manual` provenance with a note saying so. Before building, `accept` re-checks the report's plan (source → group/epoch placements, epoch membership) and probed facts (revision tokens, format/envelope revisions) against the current episode and registrations; any change is `analysisStale`, never applied. The map revision persists a dependency digest (placements, revision tokens, format) in its recipe, which `activate` and every render re-verify. Acceptance is a serialized transaction per episode: a pipeline refuses an acceptance built on a document snapshot other than the one it last activated (`staleSnapshot`), and only the latest acceptance issued on that snapshot can activate (`supersededAcceptance`). A proposal measured against another reference or source revision is refused. A prior `clockApproved` epoch is refused, never carried forward, and nothing in the module can construct `ClockApproval` or `.clockApproved` (`ForbiddenAPITests`, `AcceptanceTests`). |
 | Render | `AlignmentPipeline.renderAlignedAssets` | For the accepted, active and applicable map whose dependencies still verify (`mapStale` otherwise), streams `WWRender` output for every same-group channel, segment by segment, into `DerivedAssetStore` (app cache only), with recipe, renderer and asset versions in the key. `activate` publishes the accepted map's **content identity** (a digest of the canonical encoded map version: map, inputs and dependency record) through the coordinator, and every aligned segment names it as an upstream in its key and records it in its header, so two different maps with the same revision number never share or adopt each other's audio; a render refuses unless the coordinator is publishing that exact content (`acceptedMapContentNotActive`). The output hull covers only the placed (covered) spans, so frames outside a partial proposal are never mapped. Every group renders at one episode-wide output rate. That rate is decided by the WW-050 `OutputSettingsPolicy` over the probed `FormatInterpretation` of every renderable source: by default 48 kHz, or `matchSources` when configured. The decision and its reasons are in the report, and the policy version and rate are in each segment's recipe name. Cached assets stay binary32; the policy's sample format applies at M4 export. Each segment re-checks the accepted revision and content identity, cancellation and shutdown before it starts, and the coordinator's commit-time currency check discards late results. Each whole group render is registered as tracked work before any cursor opens; `AlignmentPipeline.shutdown()` refuses new renders, cancels the running ones and the coordinator, and returns only after every render (and so every gateway cursor) has finished. Export stays blocked (M4). |
 | Resolve | `EpochAlignmentState.resolve` | Maps plan, accepted map, records and failures to the inspection-spec states, with the accepted map as the decision of record first. |
@@ -202,13 +202,42 @@ was deleted; M19 and M62 now check that check.
 | M65 | F5 used sources omit map inputs | killed (1) | The identity is keyed on the map's placements and its inputs, each independently |
 | M66 | F5 identity token is not the registered revision | killed (26) | Every test that renders an accepted map (the coordinator sees the published identity's token as a stale source revision), e.g. A synthetic episode is proposed, accepted, rendered, re-timed and re-rendered; nothing on the main thread; A change to the reference source while a target segment commits discards every target segment; an identity without source revisions (negative control) would publish them; shutdown() returns only once every render reader is closed; untracked renders (negative control) let it return with a reader open |
 
+## Multi-recorder follow-up (WW-021)
+
+`CycleTests` uses deterministic 3-recorder scenes and a declared two-epoch restart. Each analysis
+request includes the reported target and the other eligible epochs; the frozen estimator measures
+peer-to-peer windows against the reference-relative fits. The analysis asset is revision 2 and its
+record schema is version 2: each record now persists `cycleTriangles`, the maximum disagreement
+in milliseconds (nil when unavailable), and the estimator's sorted flags. Its key includes every
+peer source revision and the cohort's epoch identities. A conflicting cycle abstains both affected
+epochs (`cycleInconsistent`), with numeric-entry/anchor remedies; no target is silently selected.
+An unmeasurable cross-group cycle abstains as `insufficientCoverage`. Declared restarts retain
+`restartedEpoch`; an additional step inside an epoch abstains as `discontinuous` rather than
+bridging it. An internal `coverageGap` demotes any whole-span proposal to a discontinuous,
+unsupported epoch until a boundary or anchors are supplied; the resulting map has no inverse
+there. Two-recorder analyses keep their original single-target request and key.
+
+The strict cooperative-pool targeted pass (`WWAlignPipelineTests|ForbiddenAPITests`) passed
+70 pipeline tests and 12 forbidden-API tests. The serialized `WW_PIPELINE_HEAVY_TESTS=1`
+three-recorder pass passed: resident peak 340 MiB (<1 GiB), sampled footprint 300 MiB
+(<768 MiB), and gate peak 425 MiB of the 512 MiB budget; both target proposals published.
+
+| Mutation (applied alone, then restored) | Targeted outcome |
+|---|---|
+| M67: omit peer tracks from the estimator request | killed: the conflicting-cycle test failed with 10 issues, including missing cycle evidence and wrong abstentions |
+| M68: discard the estimator's `restartedEpoch` flag before persistence | killed: the restart test failed with 2 missing-flag issues |
+
 ## Known limits and risks
 
 - The proposal for an epoch is one affine segment over the analysed interval only; frames outside it are
   `outsideCoverage` (not rendered). Covering the whole epoch needs the explicit `extendProposalToEpoch`
   decision (manual provenance). Every source in an epoch is placed at group-clock 0.
-- Each target epoch is estimated against the reference only (single pair, mono mix of one source per
-  side); there is no cycle-consistency check across targets.
+- Each target epoch is estimated with all other eligible target epochs against the same reference. The
+  reported target keeps its configured excerpt; each peer uses a centred 20 s excerpt to bound memory and
+  supply at least five common windows for the frozen cycle check. Cycles cannot establish clock truth or
+  detect acoustic propagation delays common to every pair. A target with no measurable cross-group
+  triangle is unsupported, not silently promoted. Restart flags reflect *declared* epochs, not a proven
+  device reset; a step inside an epoch abstains until the person declares a boundary or places anchors.
 - Analysis decodes sequentially from frame 0, with no seek. For a centred 600 s excerpt of a 75-minute
   file, that decodes about 57 % of the reference and target.
 - Estimator CPU runs on the cooperative pool, limited only by the gate's permits.

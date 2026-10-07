@@ -19,6 +19,9 @@ enum Signal: Sendable {
     /// The recorder at source time `u` hears `scene(seed, rate·u + offset)`, plus `stepBy` seconds of extra
     /// offset from source time `stepAt` on (a discontinuity).
     case scene(seed: UInt64, rate: Double = 1, offset: Double = 0, stepAt: Double? = nil, stepBy: Double = 0)
+    /// Two independent scenes: the reference hears only the first; the second dominates peer-to-peer.
+    case dualScene(seed: UInt64, secondSeed: UInt64, rate: Double, offset: Double, secondDelay: Double)
+    case gap(seed: UInt64, rate: Double, offset: Double, start: Double, end: Double)
     /// The scene plus an equal copy `delay` seconds later (two equally good alignments).
     case echo(seed: UInt64, delay: Double)
     case silence
@@ -49,6 +52,11 @@ enum Signal: Sendable {
             var t = rate * u + offset
             if let stepAt, u >= stepAt { t += stepBy }
             return Self.scene(seed, t)
+        case let .dualScene(seed, secondSeed, rate, offset, secondDelay):
+            let t = rate * u + offset
+            return Self.scene(seed, t) + 1.6 * Self.scene(secondSeed, t - secondDelay)
+        case let .gap(seed, rate, offset, start, end):
+            return start <= u && u < end ? 0 : Self.scene(seed, rate * u + offset)
         case let .echo(seed, delay):
             return 0.7 * (Self.scene(seed, u) + Self.scene(seed, u - delay))
         case .silence:

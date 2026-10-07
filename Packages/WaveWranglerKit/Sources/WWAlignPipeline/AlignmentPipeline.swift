@@ -198,10 +198,13 @@ public final class AlignmentPipeline: Sendable {
                 ))
             }
         }
-        for recipe in Set(units.map(\.recipe)) { await coordinator.setRecipe(recipe) }
+        let recipes = units.map { unit in unit.recipe(peers: units.filter { $0.targetEpoch != unit.targetEpoch }) }
+        for recipe in Set(recipes) { await coordinator.setRecipe(recipe) }
+        let cohort = units
         let analysisResults = await boundedMap(units, limit: configuration.concurrency) { unit in
-            await coordinator.run(PipelineSlots.analysis(unit.targetEpoch), key: unit.key) { () throws(AlignmentWorkFailure) -> Data in
-                try await unit.run(environment: environment)
+            let peers = cohort.filter { $0.targetEpoch != unit.targetEpoch }
+            return await coordinator.run(PipelineSlots.analysis(unit.targetEpoch), key: unit.key(peers: peers)) { () throws(AlignmentWorkFailure) -> Data in
+                try await unit.run(environment: environment, peers: peers)
             }
         }
         var analyses: [RecordingEpochID: PipelineJobResult] = [:]
