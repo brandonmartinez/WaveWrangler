@@ -26,8 +26,102 @@ private actor PublicationLog {
     func values() -> [Int] { revisions }
 }
 
+private actor OpenedPublicationStore {
+    private var publications = OpenedDocumentPublications()
+
+    func begin(_ episode: EpisodeID, _ document: ObjectIdentifier, _ stamp: PublicationStamp) -> Bool {
+        publications.begin(episode: episode, documentID: document, publication: stamp)
+    }
+
+    func retry(_ episode: EpisodeID, _ document: ObjectIdentifier, _ stamp: PublicationStamp) {
+        publications.retry(episode: episode, documentID: document, publication: stamp)
+    }
+
+    func owns(_ episode: EpisodeID, _ document: ObjectIdentifier, _ stamp: PublicationStamp) -> Bool {
+        publications.owns(episode: episode, documentID: document, publication: stamp)
+    }
+
+    func episodes(_ document: ObjectIdentifier) -> [EpisodeID] {
+        publications.episodes(for: document)
+    }
+}
+
 @Suite("Verified document reconciliation")
 struct VerifiedDocumentReconcilerTests {
+    @Test func cancelledOpenRetriesTheSamePublication() async throws {
+        let episode = EpisodeID()
+        let document = ObjectIdentifier(NSObject())
+        let stamp = PublicationStamp(revision: 1, publicationID: UUID(), checksum: "sha256:first")
+        let store = OpenedPublicationStore()
+        let reconciler = VerifiedDocumentReconciler()
+        let entered = ReconciliationGate()
+        let release = ReconciliationGate()
+        let log = PublicationLog()
+
+        #expect(await store.begin(episode, document, stamp))
+        let cancelled = Task {
+            try await reconciler.reconcile(
+                resolve: {
+                    await entered.open()
+                    await release.wait()
+                },
+                publish: { await log.record(1) }
+            )
+        }
+        await entered.wait()
+        cancelled.cancel()
+        await release.open()
+        do {
+            _ = try await cancelled.value
+            Issue.record("cancelled open unexpectedly published")
+        } catch is CancellationError {
+            await store.retry(episode, document, stamp)
+        }
+        #expect(await store.episodes(document) == [episode])
+        #expect(await store.begin(episode, document, stamp))
+        #expect(try await reconciler.reconcile(
+            resolve: {},
+            publish: { await log.record(2) }
+        ))
+        #expect(await log.values() == [2])
+        #expect(await !store.begin(episode, document, stamp))
+    }
+
+    @Test func failedOlderOpenCannotClearANewerPublication() async throws {
+        let episode = EpisodeID()
+        let document = ObjectIdentifier(NSObject())
+        let oldStamp = PublicationStamp(revision: 1, publicationID: UUID(), checksum: "sha256:first")
+        let newStamp = PublicationStamp(revision: 2, publicationID: UUID(), checksum: "sha256:second")
+        let store = OpenedPublicationStore()
+        let reconciler = VerifiedDocumentReconciler()
+        let entered = ReconciliationGate()
+        let release = ReconciliationGate()
+        let log = PublicationLog()
+
+        #expect(await store.begin(episode, document, oldStamp))
+        let old = Task {
+            try await reconciler.reconcile(
+                resolve: {
+                    await entered.open()
+                    await release.wait()
+                },
+                publish: { await log.record(1) }
+            )
+        }
+        await entered.wait()
+        #expect(await store.begin(episode, document, newStamp))
+        #expect(try await reconciler.reconcile(
+            resolve: {},
+            publish: { await log.record(2) }
+        ))
+        await release.open()
+        #expect(try await !old.value)
+        await store.retry(episode, document, oldStamp)
+        #expect(await store.owns(episode, document, newStamp))
+        #expect(await !store.begin(episode, document, newStamp))
+        #expect(await log.values() == [2])
+    }
+
     private func seedDependent(
         _ fixture: PipelineFixture,
         map: MapRevisionReference,

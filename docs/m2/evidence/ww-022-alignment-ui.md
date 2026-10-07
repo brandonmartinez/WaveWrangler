@@ -8,6 +8,9 @@ underway completes before the newer one. Cancellation is checked after source re
 waiting for prior publication and immediately before publication. Verified revisions without an
 accepted map clear the coordinator's accepted-map identity. Uncertain publication adoption sets
 the verified model and requests reconciliation for episodes already open in the runtime.
+An interrupted open keeps its episode registered for later verified revisions but releases its
+in-flight publication stamp; reopening the same verified revision retries, while a newer stamp
+cannot be cleared by the older completion.
 
 Explicit invalidation records a tombstone for each cached key. A rejected stale submission
 neither clears that tombstone nor resurrects the prior candidate; history restoration skips
@@ -26,6 +29,7 @@ before the next mutation. Expected failures were observed:
 | Uncertain adoption keeps stale verified model | Remove `verifiedModel = document.payload` | `AlignmentRuntimeBoundaryTests/uncertainPublicationAdoptionReconcilesItsVerifiedRevision`: source-contract assertion failed |
 | Rejected submit revives invalidated cache | Restore pre-currency-check candidate caching and tombstone removal | `DerivedJobCoordinatorTests/rejectedStaleSubmissionDoesNotReviveExplicitlyInvalidatedCache`: ready payload was unexpectedly available |
 | Verified save bypasses publication ownership (2026-10-07) | Replace the accepted-save callback's guarded `runtime.activate(_:)` implementation with direct `pipeline.activate(_:)` | Unhosted `WaveWranglerTests`: `AlignmentRuntimeBoundaryTests/uncertainPublicationAdoptionReconcilesItsVerifiedRevision` failed (xcodebuild 65); guarded implementation restored and the suite passed |
+| Cancelled open suppresses a retry of the same stamp (2026-10-07) | Make the publication tracker's `retry` leave the in-flight stamp reserved | `VerifiedDocumentReconcilerTests/cancelledOpenRetriesTheSamePublication` rejects the second `begin` (mutation exit 1); restoring the release passes. The app boundary test requires the guarded retry wiring |
 
 The app's unhosted test target cannot link the executable's private `AlignmentRuntime` and
 `ShowDocument` types. The ordering and nil-map tests exercise the shared package reconciler

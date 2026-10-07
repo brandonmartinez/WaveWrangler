@@ -30,11 +30,7 @@ actor AlignmentRuntime {
     private var sourceByEpoch: [EpisodeID: [RecordingEpochID: AlignmentSource]] = [:]
     private var reports: [EpisodeID: AlignmentAnalysisReport] = [:]
     private var reconciliationFailures: [EpisodeID: String] = [:]
-    private struct OpenedVersion: Equatable {
-        var documentID: ObjectIdentifier
-        var publication: PublicationStamp
-    }
-    private var openedDocuments: [EpisodeID: OpenedVersion] = [:]
+    private var openedDocuments = OpenedDocumentPublications()
     private var publicationReconcilers: [EpisodeID: VerifiedDocumentReconciler] = [:]
     #if DEBUG
     private var seededFixtureDependents: Set<EpisodeID> = []
@@ -189,10 +185,10 @@ actor AlignmentRuntime {
         documentID: ObjectIdentifier,
         publication: PublicationStamp
     ) async {
-        let version = OpenedVersion(documentID: documentID, publication: publication)
-        guard openedDocuments[episodeID] != version else { return }
-        openedDocuments[episodeID] = version
         guard let episode = model.episode(episodeID) else { return }
+        guard openedDocuments.begin(
+            episode: episodeID, documentID: documentID, publication: publication
+        ) else { return }
         let reconciler = publicationReconciler(for: episodeID)
         do {
             let published = try await reconciler.reconcile(
@@ -205,12 +201,19 @@ actor AlignmentRuntime {
                     try await pipeline.activate(model: model, episode: episodeID)
                 }
             )
-            if published, openedDocuments[episodeID] == version {
-                reconciliationFailures[episodeID] = nil
+            if openedDocuments.owns(episode: episodeID, documentID: documentID, publication: publication) {
+                if published {
+                    reconciliationFailures[episodeID] = nil
+                } else {
+                    openedDocuments.retry(episode: episodeID, documentID: documentID, publication: publication)
+                }
             }
         } catch {
-            if openedDocuments[episodeID] == version {
-                reconciliationFailures[episodeID] = String(describing: error)
+            if openedDocuments.owns(episode: episodeID, documentID: documentID, publication: publication) {
+                openedDocuments.retry(episode: episodeID, documentID: documentID, publication: publication)
+                if !(error is CancellationError) {
+                    reconciliationFailures[episodeID] = String(describing: error)
+                }
             }
         }
     }
@@ -289,9 +292,7 @@ actor AlignmentRuntime {
     }
 
     func openedEpisodes(for documentID: ObjectIdentifier) -> [EpisodeID] {
-        openedDocuments.compactMap { episode, opened in
-            opened.documentID == documentID ? episode : nil
-        }
+        openedDocuments.episodes(for: documentID)
     }
 
     private func publicationReconciler(for episodeID: EpisodeID) -> VerifiedDocumentReconciler {
