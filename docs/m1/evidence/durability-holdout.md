@@ -36,6 +36,15 @@ Test tree IDs (identical in all four run records):
 | `WaveWranglerUITests` | `d24d20620b51b9e9b112c318c827f4c61107d011` |
 | `scripts/holdout.sh` | `981995a995b52ceef04d7ff3922d9b74e66280c5` |
 
+### Post-freeze harness revision (2026-10-06)
+
+PR #223 revised the DUR-009 two-process test and probe harness after this frozen run to replace its
+file-poll barrier with deterministic inherited process pipes (#176). The recipe remains 10 calibration /
+100 holdout cases with the same gate: exactly one saved publication, one surfaced conflict, a whole
+winning revision on disk and the losing candidate preserved. The run record and tree IDs above remain
+the facts for `m1-freeze-1`; any execution with the revised harness is **post-freeze** and must be labelled
+that way. No revised DUR-009 holdout result is claimed in this record.
+
 The native cells (NSDocument DUR-006 and DUR-008) ran in the sandboxed Debug app, launched directly with
 `-WWUITestHooks YES -WWNativeHoldout holdout`, under the GUI lock the coordinator granted for this run. The runner,
 `WaveWrangler/Document/NativeHoldoutRunner.swift`, is compiled only in `#if DEBUG`; Release ignores the hooks.
