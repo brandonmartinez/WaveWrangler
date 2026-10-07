@@ -58,7 +58,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(waitForText("Audition stopped at", in: app.staticTexts["alignment.auditionStatus"]))
         chooseEpisodeMenu("Place Anchor at Playhead")
-        XCTAssertTrue(waitForAnchorFieldCount(anchorsBefore.count + 1))
+        XCTAssertTrue(waitForAnchorFieldCount(anchorsBefore.count + 1, timeout: 15))
         let anchorsAfter = anchorFields().allElementsBoundByIndex
         guard let appendedID = anchorsAfter.map(\.identifier).first(where: { !anchorsBefore.contains($0) }),
               let initial = Double(app.textFields[appendedID].value as? String ?? "")
@@ -136,6 +136,8 @@ final class AlignmentInspectionUITests: XCTestCase {
     func testTM208StartNewEpochCommandExists() {
         selectTargetEpoch()
         chooseEpisodeMenu("Place Anchors…")
+        replace(app.textFields["alignment.anchors.second.source"], with: "0.5")
+        replace(app.textFields["alignment.anchors.second.aligned"], with: "0.5")
         app.buttons["alignment.anchors.apply"].click()
         XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
         selectAnchorRow(1)

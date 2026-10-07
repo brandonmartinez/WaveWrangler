@@ -128,7 +128,9 @@ private struct ShowSidebar: View {
                 }
                 .onMove { source, destination in state.moveEpisodes(fromOffsets: source, toOffset: destination) }
             }
-            Section("Show") {
+            Section {
+                Text("Show")
+                    .listRowSeparator(.hidden)
                 Label("Show Info", systemImage: "info.circle")
                     .wwFont(.body)
                     .emphasizedSelectionForeground(selectedInFocusedList: state.episodeListFocused

@@ -552,6 +552,10 @@ private enum AlignmentKeyHandler {
             return true
         }
         guard event.keyCode == 36 || event.keyCode == 76 else { return false }
+        if model.anchorSelection != nil {
+            model.requestSelectedAnchorFocus()
+            return true
+        }
         if isInside("ww.alignment.anchors", responder: window.firstResponder) {
             model.requestSelectedAnchorFocus()
             return true
