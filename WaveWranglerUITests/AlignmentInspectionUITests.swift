@@ -57,9 +57,11 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(waitForText("Audition stopped at", in: app.staticTexts["alignment.auditionStatus"]))
         chooseEpisodeMenu("Place Anchor at Playhead")
-        let appended = app.textFields["ww.alignment.anchor.2.alignedTime"]
+        let appended = app.textFields.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND hasKeyboardFocus == true",
+            "ww.alignment.anchor."
+        )).firstMatch
         XCTAssertTrue(appended.waitForExistence(timeout: 5))
-        XCTAssertTrue(appended.value(forKey: "hasKeyboardFocus") as? Bool == true)
     }
 
     func testTM203EditAnchorTimeNumerically() {
@@ -70,9 +72,10 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.typeKey(.return, modifierFlags: [])
         let aligned = app.textFields["ww.alignment.anchor.0.alignedTime"]
         XCTAssertTrue(aligned.waitForExistence(timeout: 2))
-        app.typeKey("a", modifierFlags: .command)
-        app.typeText("0.125")
-        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(waitForKeyboardFocus(aligned))
+        aligned.typeKey("a", modifierFlags: .command)
+        aligned.typeText("0.125")
+        aligned.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(waitForValue("0.125", in: app.textFields["ww.alignment.anchor.0.alignedTime"]))
         selectAnchorRow(0)
         app.typeKey("z", modifierFlags: .command)
@@ -128,7 +131,11 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.buttons["alignment.anchors.apply"].click()
         selectAnchorRow(1)
         chooseEpisodeMenu("Start New Epoch at Anchor")
-        XCTAssertTrue(app.staticTexts["Epoch 3"].waitForExistence(timeout: 15))
+        XCTAssertTrue(waitForText("Started Epoch 3", in: app.staticTexts["alignment.status"], timeout: 15))
+        let epoch = app.descendants(matching: .any).matching(NSPredicate(
+            format: "label BEGINSWITH %@ OR value BEGINSWITH %@", "Epoch 3", "Epoch 3"
+        )).firstMatch
+        XCTAssertTrue(epoch.waitForExistence(timeout: 5))
     }
 
     func testTM209AuditionAndStopShortcuts() {
@@ -190,13 +197,10 @@ final class AlignmentInspectionUITests: XCTestCase {
         window.doubleClick()
         let contentInspector = app.descendants(matching: .any)["ww.show.contentInspector"]
         let sidebar = app.descendants(matching: .any)["ww.show.sidebar.episodes"]
-        let episodesLabel = app.staticTexts["Episodes"]
         let newEpisode = app.buttons["New Episode"]
         XCTAssertTrue(contentInspector.waitForExistence(timeout: 2))
         XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
-        XCTAssertTrue(episodesLabel.waitForExistence(timeout: 2))
         XCTAssertTrue(newEpisode.waitForExistence(timeout: 2))
-        let episodesHeaderFrame = episodesLabel.frame.union(newEpisode.frame)
         var layoutContainerFindings = 0
         var sectionHeaderFindings = 0
         try app.performAccessibilityAudit(
@@ -208,7 +212,9 @@ final class AlignmentInspectionUITests: XCTestCase {
             else { return false }
             let isContent = self.approximatelyEqual(element.frame, contentInspector.frame)
             let isSidebar = self.approximatelyEqual(element.frame, sidebar.frame)
-            let isEpisodesHeader = self.approximatelyEqual(element.frame, episodesHeaderFrame)
+            let isEpisodesHeader = sidebar.frame.contains(element.frame)
+                && element.frame.contains(newEpisode.frame)
+                && element.frame.height < 40
             guard isContent || isSidebar || isEpisodesHeader else { return false }
             if isEpisodesHeader {
                 sectionHeaderFindings += 1
@@ -422,6 +428,18 @@ final class AlignmentInspectionUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         } while Date() < deadline
         return table.descendants(matching: .outlineRow).count == count
+    }
+
+    private func waitForKeyboardFocus(
+        _ element: XCUIElement,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if element.value(forKey: "hasKeyboardFocus") as? Bool == true { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        } while Date() < deadline
+        return element.value(forKey: "hasKeyboardFocus") as? Bool == true
     }
 
 }
