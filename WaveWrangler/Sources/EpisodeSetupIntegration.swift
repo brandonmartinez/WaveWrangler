@@ -52,10 +52,10 @@ enum SetupTableFocus {
     static func anchorSelection(_ identifier: String, in window: NSWindow?) {
         DispatchQueue.main.async {
             guard let window, let table = find(identifier, in: window.contentView),
-                  let anchor = table.selectedRowIndexes.first else { return }
-            let selection = table.selectedRowIndexes
-            table.selectRowIndexes(IndexSet(integer: anchor), byExtendingSelection: false)
-            table.selectRowIndexes(selection, byExtendingSelection: true)
+                  !table.selectedRowIndexes.isEmpty else { return }
+            // Extending the existing selection establishes AppKit's anchor without emitting the interim
+            // single-row selection that a replace-then-extend sequence sends back through SwiftUI.
+            table.selectRowIndexes(table.selectedRowIndexes, byExtendingSelection: true)
         }
     }
 
