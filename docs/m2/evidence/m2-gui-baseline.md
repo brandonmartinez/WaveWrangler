@@ -129,6 +129,35 @@ The enabled `ww.setup.source.00000000-0000-4000-8000-000000000030.status` (`Need
 The warm-reopen failure was stale persistent `lib100files` test data: the mini's `WWUITestLibrary100-v1/Synthetic Show 004.wwshow` still had schema 1 after #175 raised the current show schema. The fixture now uses a directory keyed by `JSONEnvelopeCoder<ShowDocumentModel>.show.format.currentSchemaVersion`, so current-format reopen measures current-format files rather than an intentional update sheet. `ResponsivenessUITests.testWarmReopen` passed in both full rounds (5 warm samples; second round p95 309.182 ms). The second round's five-sample episode-switch event-to-commit p95 was 106.014 ms, **informational only**, not the 100-sample #220 exit gate.
 
 **Open T21 tab risk:** Round 1's isolated rerun identified two separately positioned document windows, not a merged native tab group; the original global first-sheet query and assumed AX window order could not prove which document was answered. The second full round attempted native Window › Merge All Windows and document-scoped sheet assertions but stopped at a foreground-interaction error before exercising the merged-tab path. Its one labelled isolated retry exposed that XCUITest does not support KVC `isMainWindow` even though the snapshot carries that property. The subsequent `867685f` test selects each tab by its titled Window-menu item, checks that tab's prompt title and hittability, dismisses that sheet's own Open Read-Only button, then checks each named prompt is absent on re-selection. It compiles but **has not had a further GUI run** under the two-round cap; neither its tab outcome nor a product dismissal fault is claimed resolved.
+### Baseline revision 2026-10-07: Setup blocked-status measurement corrected (#221)
+
+PR #225 revision `5e8bb95d5910d4c3676fcf959531b671f04480ff` was validated on Macsimus with
+`ContrastEvidenceUITests`, `EpisodeSetupUITests`, and `SelectionContrastUITests`: **22 pass / 0 fail /
+1 expected skip**. Result bundle: `~/ww-uitest-runs/pr225-r6-5e8bb95/mini.xcresult`.
+
+The original `348af45` baseline's dark-200% value, 31,772 pixels at p75 **2.29:1**, was a measurement
+artefact rather than a product-colour failure. The selected `offline.wav` row was partly clipped: its
+two-line status frame extended into a dark strip below the blue selection. The old general meter chose
+that strip's most frequent colour (`#1E1E1E`) as the background, then counted the blue selection fill
+itself as approximately 26,823 "glyph" pixels because it differed from the dark strip by at least 1.5:1.
+
+The corrected evidence keeps all nine imported rows selected and the Sources outline focused, scrolls
+without clicking, and requires both the row and status frames to be entirely contained by the outline.
+It then takes the row's accent selection fill as the background and counts only pixels moving from that
+fill toward the light text colour. The final dark capture recorded:
+
+- outline `(239, 193, 1084, 553)`, row `(278, 686, 119.5, 30)`, status `(1103, 671, 169, 60)`;
+- background `#004DC4`, 5,438 isolated glyph pixels, p75 **7.35:1**;
+- `visual-darkAqua-setup-200-offline-selected.png`,
+  `contrast-crop-darkAqua-setup-200-offline-status.png`, and the audit crop
+  `audit-crop-Setup_darkAqua_200%_reduce_motion-2.png` in the xcresult.
+
+Apple's `.contrast` audit still flags that same fully visible status because its aggregate sampling
+reproduces the old 2.29 result. The new artefact handler waives only an exact `No connection` Setup
+status when the Sources outline reports `9 selected`, retains keyboard focus, contains both complete
+frames, has an accent-blue fill, and the isolated glyph measurement has at least 40 pixels at p75
+≥4.5:1. A clipped capture or failed pixel check remains unwaived. Both aqua (14,271 pixels, p75 7.17)
+and darkAqua passed, with no unwaived Setup audit issues. No product colour override remains.
 
 ## Baseline maintenance
 
