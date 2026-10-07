@@ -275,3 +275,9 @@
 - **Writer children:** one lane created a corrective writer session itself, outside the budget. It was told to stand down. Rule: writer children never spawn writers.
 - **Writer budget:** while M1 was open, M2 briefly ran 4 writers against the relay's cap of 3 (about 05:50–06:30) before the user raised the cap to 4 at 12:37. Disclosed in the M2 exit record.
 
+### 2026-10-07: #220 episode switch accepted into the M2 waiver baseline
+
+**By:** the user (00:27, via the relay: "accept", option A). Recorded by the M2 coordinator.
+- **What:** the episode-switch responsiveness failure (#220) is added to M2's pinned waiver baseline as accepted with an issue. It's a pre-existing condition: interleaved, load-matched runs on the quiet Mac mini show it failing equally at the M1 exit SHA `21104e9` and at `main` `348af45`. The M1 exit gate's 5/5 Responsiveness result was the five-sample class, not the 100-sample measurement.
+- **Gate now:** no new regression against today's level. On the quiet mini, the exit SHA's episode-switch p95 must be ≤ 122.5 ms (the six-run `348af45` maximum of 117.459 ms + 5.0 ms). One labelled, paired rerun is allowed, and the full rule is in `docs/m2/evidence/m2-gui-baseline.md` (baseline revision 2026-10-07). All other gates are unchanged.
+- **Follow-up:** #220 stays open, P1, owner Mac, milestone M3 (fix to <100 ms p95 over 100 samples). It's carried into `docs/planning/kickoffs/m3.md` and the M2 exit record. An informational Debug-versus-optimised measurement goes in #220 and the M2 exit; it doesn't change this decision.
