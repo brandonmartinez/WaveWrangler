@@ -88,10 +88,11 @@ struct PipelineRender75Tests {
             guard local >= 0, local < Int64(header.frameCount) else { return nil }
             let offset = bodyStart + Int(local) * MemoryLayout<Float>.size
             return data.withUnsafeBytes { bytes in
-                let bits = UInt32(bytes[offset])
-                    | UInt32(bytes[offset + 1]) << 8
-                    | UInt32(bytes[offset + 2]) << 16
-                    | UInt32(bytes[offset + 3]) << 24
+                let b0 = UInt32(bytes[offset])
+                let b1 = UInt32(bytes[offset + 1]) << 8
+                let b2 = UInt32(bytes[offset + 2]) << 16
+                let b3 = UInt32(bytes[offset + 3]) << 24
+                let bits = b0 | b1 | b2 | b3
                 return Float(bitPattern: bits)
             }
         }
