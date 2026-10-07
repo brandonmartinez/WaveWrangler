@@ -65,9 +65,10 @@ private struct ShowWindowContent: View {
                 .help(state.inspectorPresented ? "Hide Inspector (⌃⌘I)" : "Show Inspector (⌃⌘I)")
             }
         }
-        // The inspector is added outside this core and contributes its own width. Keep the core's
-        // minimum narrow enough that the complete window can still reach its 760 pt content minimum.
-        .frame(minWidth: 490, minHeight: 440)
+        // The NSWindow owns the complete 760×440 minimum. A content-driven minimum here is only for
+        // the pre-inspector split and can re-enter AppKit constraint updates when the inspector is
+        // visible; let the sidebar, detail and inspector lay out inside the window instead.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WindowBinder(state: state))
         .onChange(of: store.model.episodes.map(\.id)) { old, _ in
             state.reconcileSelection(previousOrder: old)
