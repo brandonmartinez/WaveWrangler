@@ -103,6 +103,129 @@ struct AcceptanceTests {
         #expect(await fixture.states(report)[targetEpoch]?.status == .manual(.acceptedAcousticProposal, revision: 4))
     }
 
+    @Test("An undecided epoch does not carry an unaccepted acoustic map across cycle abstention")
+    func staleCycleProposalIsNotMapped() async throws {
+        let fixture = try await PipelineFixture(CycleTests.groups(), label: "cycle-map-stale")
+        let target = fixture.epochs[1]
+        let initial = try await fixture.analyse(preferredReference: "ref")
+        let first = try await fixture.acceptAndActivate(initial, [:])
+        #expect(Self.provenances(first.map)[target] == .acousticConsistentProposal)
+
+        for (name, delay, rate, offset) in [("a", 0.0, 1.0001, 1.25), ("b", 0.02, 0.99995, -0.5)] {
+            fixture.content.register(fixture.url(name), .init(
+                channels: 2, frames: fixture.specs[name]!.frames,
+                signal: .dualScene(seed: TwoRecorder.seed, secondSeed: 771, rate: rate, offset: offset, secondDelay: delay)
+            ))
+            try fixture.rewrite(name)
+            await fixture.coordinator.updateSource(try PipelineFixture.registration(fixture.id(name), fixture.url(name)))
+        }
+        let report = try await fixture.analyse(preferredReference: "ref")
+        #expect(report.records[target]?.abstention?.abstentionReason == .cycleInconsistent)
+        let accepted = try await fixture.acceptAndActivate(report, [:])
+        #expect(Self.provenances(accepted.map)[target] == nil)
+        #expect(Self.segment(accepted.map, target) == nil)
+        #expect(await fixture.states(report)[target]?.status.proposal == nil)
+    }
+
+    @Test("Accepting a second recorder preserves the first accepted acoustic proposal")
+    func sequentialCycleAcceptance() async throws {
+        let fixture = try await PipelineFixture(CycleTests.groups(), label: "cycle-sequential-accept")
+        let (first, second) = (fixture.epochs[1], fixture.epochs[2])
+        let report = try await fixture.analyse(preferredReference: "ref")
+        let acceptedFirst = try await fixture.acceptAndActivate(report, [first: .acceptProposal(note: "first")])
+        let firstSegment = try #require(Self.segment(acceptedFirst.map, first))
+        let acceptedSecond = try await fixture.acceptAndActivate(report, [second: .acceptProposal(note: "second")])
+        #expect(Self.segment(acceptedSecond.map, first) == firstSegment)
+        #expect(Self.provenances(acceptedSecond.map)[first] == .manual)
+        #expect(Self.provenances(acceptedSecond.map)[second] == .manual)
+        #expect(await fixture.states(report)[first]?.status == .manual(.acceptedAcousticProposal, revision: 2))
+        #expect(await fixture.states(report)[second]?.status == .manual(.acceptedAcousticProposal, revision: 2))
+    }
+
+    @Test("A previously accepted proposal is dropped on cycle abstention with manual remedies")
+    func acceptedCycleProposalAbstains() async throws {
+        let fixture = try await PipelineFixture(CycleTests.groups(), label: "cycle-accepted-abstains")
+        let first = fixture.epochs[1]
+        let initial = try await fixture.analyse(preferredReference: "ref")
+        _ = try await fixture.acceptAndActivate(initial, [first: .acceptProposal()])
+        for (name, delay, rate, offset) in [("a", 0.0, 1.0001, 1.25), ("b", 0.02, 0.99995, -0.5)] {
+            fixture.content.register(fixture.url(name), .init(
+                channels: 2, frames: fixture.specs[name]!.frames,
+                signal: .dualScene(seed: TwoRecorder.seed, secondSeed: 771, rate: rate, offset: offset, secondDelay: delay)
+            ))
+            try fixture.rewrite(name)
+            await fixture.coordinator.updateSource(try PipelineFixture.registration(fixture.id(name), fixture.url(name)))
+        }
+        let report = try await fixture.analyse(preferredReference: "ref")
+        #expect(report.records[first]?.abstention?.abstentionReason == .cycleInconsistent)
+        let accepted = try await fixture.acceptAndActivate(report, [:])
+        #expect(Self.segment(accepted.map, first) == nil)
+        #expect(accepted.map.groups.flatMap(\.epochs).first { $0.epoch == first }?.mapping == .unsupported(.estimatorAbstained))
+        let state = try #require(await fixture.states(report)[first])
+        #expect(state.status == .unsupported(.estimatorAbstained, .acceptedMap(revision: 2)))
+        #expect(state.remedies == [.editNumerically, .placeAnchors])
+    }
+
+    @Test("A new peer revision invalidates accepted acoustic evidence even when the peer was not mapped")
+    func acceptedProposalRequiresPeerEvidence() async throws {
+        let fixture = try await PipelineFixture(CycleTests.groups(), label: "accepted-peer-revision")
+        let (first, peer) = (fixture.epochs[1], fixture.epochs[2])
+        let initial = try await fixture.analyse(preferredReference: "ref")
+        let accepted = try await fixture.acceptAndActivate(initial, [
+            first: .acceptProposal(), peer: .unmapped,
+        ])
+        #expect(Self.provenances(accepted.map)[first] == .manual)
+        try fixture.rewrite("b")
+        await fixture.coordinator.updateSource(try PipelineFixture.registration(fixture.id("b"), fixture.url("b")))
+        let refreshed = try await fixture.analyse(preferredReference: "ref")
+        #expect(refreshed.records[first]?.proposal != nil)
+        let replaced = try await fixture.acceptAndActivate(refreshed, [:])
+        #expect(Self.provenances(replaced.map)[first] == .acousticConsistentProposal)
+    }
+
+    @Test("Two-recorder sequential acceptance across restart epochs retains both decisions")
+    func sequentialRestartAcceptance() async throws {
+        var groups = TwoRecorder.groups(referenceSeconds: 30, targetSeconds: 12)
+        groups[1].sources.append(SourceSpec(name: "restart", seconds: 12, signal: .scene(
+            seed: TwoRecorder.seed, rate: TwoRecorder.rate, offset: 16
+        )))
+        let fixture = try await PipelineFixture(
+            groups, configuration: .init(concurrency: 2, targetExcerptSeconds: 12, searchDeviationSeconds: 18, renderSegmentSeconds: 2),
+            label: "two-recorder-sequential"
+        )
+        let second = try fixture.moveToNewEpoch("restart")
+        let first = fixture.epochs[1]
+        let report = try await fixture.analyse(preferredReference: "ref")
+        #expect(report.records[first]?.proposal != nil)
+        #expect(report.records[second]?.proposal != nil)
+        _ = try await fixture.acceptAndActivate(report, [first: .acceptProposal()])
+        let accepted = try await fixture.acceptAndActivate(report, [second: .acceptProposal()])
+        #expect(Self.provenances(accepted.map)[first] == .manual)
+        #expect(Self.provenances(accepted.map)[second] == .manual)
+    }
+
+    @Test("A verified manual anchor survives an undecided revision but not a changed dependency")
+    func priorAnchorsRequireCurrentDependencies() async throws {
+        let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "anchor-currency")
+        let target = fixture.epochs[1]
+        let report = try await fixture.analyse(preferredReference: "ref")
+        let anchors = [
+            AlignmentAnchor(sourceSeconds: 1, alignedSeconds: 2.2501),
+            AlignmentAnchor(sourceSeconds: 21, alignedSeconds: 22.2521),
+        ]
+        let anchored = try await fixture.acceptAndActivate(report, [target: .anchors(anchors)])
+        let retained = try await fixture.acceptAndActivate(report, [:])
+        #expect(Self.segment(retained.map, target) == Self.segment(anchored.map, target))
+        #expect(Self.provenances(retained.map)[target] == .manual)
+
+        try fixture.rewrite("tgt")
+        await fixture.coordinator.updateSource(try PipelineFixture.registration(fixture.id("tgt"), fixture.url("tgt")))
+        let refreshed = try await fixture.analyse(preferredReference: "ref")
+        let replaced = try await fixture.acceptAndActivate(refreshed, [:])
+        #expect(Self.provenances(replaced.map)[target] == .acousticConsistentProposal)
+        #expect(Self.segment(replaced.map, target) != Self.segment(anchored.map, target))
+    }
+
     @Test("Anchors placed on the truth and the numeric truth produce the identical exact segment")
     func anchorsFromTruthAreExact() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "anchors")

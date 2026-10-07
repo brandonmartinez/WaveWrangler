@@ -52,8 +52,11 @@ enum MapDependencies {
         return DerivedAssetKey(asset: AssetSpec(kind: "ww.alignment-dependencies", revision: 1), sources: entries).digest
     }
 
-    static func recipe(digest: String) -> RecipeReference {
-        RecipeReference(name: AlignmentAssetKinds.acceptanceRecipePrefix + digest, revision: AlignmentAssetKinds.acceptanceRecipeRevision)
+    static func recipe(digest: String, acceptedProposals: [String: String] = [:]) -> RecipeReference {
+        let accepted = acceptedProposals.sorted { $0.key < $1.key }
+            .map { "\($0.key):\($0.value)" }.joined(separator: ",")
+        let suffix = accepted.isEmpty ? "" : ";accepted=\(accepted)"
+        return RecipeReference(name: AlignmentAssetKinds.acceptanceRecipePrefix + digest + suffix, revision: AlignmentAssetKinds.acceptanceRecipeRevision)
     }
 
     static func persistedDigest(_ version: TimeMapVersion) -> String? {
@@ -61,8 +64,22 @@ enum MapDependencies {
               recipe.revision == AlignmentAssetKinds.acceptanceRecipeRevision,
               recipe.name.hasPrefix(AlignmentAssetKinds.acceptanceRecipePrefix)
         else { return nil }
-        let digest = String(recipe.name.dropFirst(AlignmentAssetKinds.acceptanceRecipePrefix.count))
+        let digest = String(recipe.name.dropFirst(AlignmentAssetKinds.acceptanceRecipePrefix.count).prefix { $0 != ";" })
         return digest.isEmpty ? nil : digest
+    }
+
+    static func acceptedProposals(_ version: TimeMapVersion) -> [String: String] {
+        guard persistedDigest(version) != nil,
+              let suffix = version.inputs.recipe?.name.components(separatedBy: ";accepted=").last,
+              suffix != version.inputs.recipe?.name, !suffix.isEmpty
+        else { return [:] }
+        var keys: [String: String] = [:]
+        for entry in suffix.split(separator: ",") {
+            let parts = entry.split(separator: ":", omittingEmptySubsequences: false)
+            guard parts.count == 2, !parts[0].isEmpty, parts[1].count == 64 else { return [:] }
+            keys[String(parts[0])] = String(parts[1])
+        }
+        return keys
     }
 
     /// Every placed source must still be placed exactly where the map places it.

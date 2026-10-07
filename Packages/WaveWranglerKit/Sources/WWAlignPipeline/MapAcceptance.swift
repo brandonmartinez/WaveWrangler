@@ -99,13 +99,16 @@ enum MapAcceptance {
     }
 
     /// Builds the full aligned map from the plan, probed facts, current analysis records, the person's
-    /// decisions and (for undecided epochs) the prior accepted map. Pure.
+    /// decisions and (for undecided epochs) verified prior manual decisions. Pure.
     static func build(
         plan: AlignmentPlan,
         facts: [SourceID: SourceFacts],
         analyses: [RecordingEpochID: EpochAnalysisRecord],
         decisions: [RecordingEpochID: EpochMapDecision],
-        prior: AlignedTimelineMap?
+        prior: AlignedTimelineMap?,
+        priorIsCurrent: Bool = false,
+        priorAcceptedProposals: [String: String] = [:],
+        currentAnalyses: [RecordingEpochID: String] = [:]
     ) throws(AlignmentAcceptanceError) -> Built {
         guard let reference = plan.reference else { throw .noReference }
         guard facts[reference.source] != nil else { throw .referenceFactsUnavailable(reference.source) }
@@ -150,7 +153,9 @@ enum MapAcceptance {
                 let mapping = try mapping(
                     for: epoch.epoch, reference: reference, end: epochEnd[epoch.epoch],
                     decision: decisions[epoch.epoch], analysis: analyses[epoch.epoch], facts: facts,
-                    prior: priorMappings[epoch.epoch]
+                    prior: priorMappings[epoch.epoch], priorIsCurrent: priorIsCurrent,
+                    priorAcceptedProposal: priorAcceptedProposals[epoch.epoch.description],
+                    currentAnalysis: currentAnalyses[epoch.epoch]
                 )
                 epochMaps.append(EpochClockMap(epoch: epoch.epoch, mapping: mapping))
                 for source in epoch.sources {
@@ -217,7 +222,10 @@ enum MapAcceptance {
         decision: EpochMapDecision?,
         analysis: EpochAnalysisRecord?,
         facts: [SourceID: SourceFacts],
-        prior: EpochClockMap.Mapping?
+        prior: EpochClockMap.Mapping?,
+        priorIsCurrent: Bool,
+        priorAcceptedProposal: String?,
+        currentAnalysis: String?
     ) throws(AlignmentAcceptanceError) -> EpochClockMap.Mapping {
         if epoch == reference.epoch {
             guard let end else { throw .referenceFactsUnavailable(reference.source) }
@@ -228,7 +236,32 @@ enum MapAcceptance {
                 if case let .mapped(_, provenance) = prior, provenance.kind.isClockApproved {
                     throw .priorMapHasClockApproval(epoch)
                 }
-                return prior
+                if priorIsCurrent {
+                    switch prior {
+                    case let .mapped(_, .manual(correction))
+                        where correction.basis == .numericEntry || correction.basis == .anchors:
+                        return prior
+                    case let .mapped(segments, .manual(correction))
+                        where correction.basis == .acceptedAcousticProposal:
+                        if let analysis, let proposal = analysis.proposal,
+                           isCurrent(analysis, epoch: epoch, reference: reference, facts: facts),
+                           let priorAcceptedProposal, priorAcceptedProposal == currentAnalysis,
+                           segments.count == 1, let segment = segments.first,
+                           segment == proposal.segment || (
+                               correction.note.hasPrefix("proposal extended to the whole epoch")
+                               && segment.rateRatio == proposal.segment.rateRatio
+                               && segment.alignedOffset == proposal.segment.alignedOffset
+                               && segment.groupClockStart <= proposal.segment.groupClockStart
+                               && segment.groupClockEnd >= proposal.segment.groupClockEnd
+                           ) {
+                            return prior
+                        }
+                    case .unsupported:
+                        return prior
+                    default:
+                        break
+                    }
+                }
             }
             // Undecided with a current proposal: persisted as the unaccepted proposal it is (U3), so
             // accepting another epoch never silently rejects this one.

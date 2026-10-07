@@ -174,6 +174,14 @@ enum AlignmentStateResolver {
             if let failure = sourceFailures[source], let block = block(for: failure) { return .sourceBlocked(source, block) }
         }
         if let failure {
+            if case let .cyclePeerUnavailable(source) = failure {
+                if let ineligible = plan.ineligible[source] {
+                    return .sourceBlocked(source, .needsSetup(.ineligible(ineligible)))
+                }
+                if let sourceFailure = sourceFailures[source], let block = block(for: sourceFailure) {
+                    return .sourceBlocked(source, block)
+                }
+            }
             if let block = block(for: failure), let source = involved.first { return .sourceBlocked(source, block) }
             return .unsupported(.notAttempted, .analysisFailed(failure))
         }

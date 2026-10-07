@@ -101,19 +101,27 @@ struct AnalysisUnit: Sendable {
         RecipeReference(name: configuration.analysisRecipeName + "[ref=\(referenceChoice.group)/\(referenceChoice.epoch)]", revision: 1)
     }
 
-    var key: DerivedAssetKey {
+    func recipe(peers: [AnalysisUnit]) -> RecipeReference {
+        guard !peers.isEmpty else { return recipe }
+        let cohort = peers.map { "\($0.targetGroup)/\($0.targetEpoch)" }.joined(separator: ",")
+        return RecipeReference(name: recipe.name + "[cycle=\(cohort);peerExcerpt=20]", revision: 1)
+    }
+
+    func key(peers: [AnalysisUnit]) -> DerivedAssetKey {
         DerivedAssetKey(
             asset: AlignmentAssetKinds.analysis,
             sources: [
                 SourceRevision(source: reference.id, token: referenceFacts.revisionToken),
                 SourceRevision(source: target.id, token: targetFacts.revisionToken),
-            ],
+            ] + peers.map { SourceRevision(source: $0.target.id, token: $0.targetFacts.revisionToken) },
             format: .current,
             epoch: targetEpoch,
             occurrence: targetOccurrence,
-            recipe: recipe
+            recipe: recipe(peers: peers)
         )
     }
+
+    var key: DerivedAssetKey { key(peers: []) }
 
     /// Centred target excerpt, source frames.
     var targetRange: Range<Int64> {
@@ -149,7 +157,7 @@ struct AnalysisUnit: Sendable {
     /// and per-window scratch ≈ 32 B per analysis sample), the largest correlation FFT (≈ 56 B per point),
     /// decode chunks in flight for the wider source and fixed overhead. Measured against real peaks in the
     /// heavy suite (`PipelineMemoryTests`).
-    func estimatedWorkingSetBytes() throws(AlignmentWorkFailure) -> Int {
+    func estimatedWorkingSetBytes(peers: [AnalysisUnit] = []) throws(AlignmentWorkFailure) -> Int {
         let minimum = configuration.minimumAnalysisRate
         let referenceFactor = try Self.factor(referenceFacts.sampleRate, minimum)
         let targetFactor = try Self.factor(targetFacts.sampleRate, minimum)
@@ -159,7 +167,21 @@ struct AnalysisUnit: Sendable {
         while fft < 2 * configuration.searchDeviationSeconds * 4000 + 8000 { fft <<= 1 }
         let channels = Swift.max(referenceFacts.channelCount, targetFacts.channelCount)
         let chunks = 3 * chunkFrames * channels * MemoryLayout<Float>.size * 2
-        return (referenceOut + targetOut) * 32 + fft * 56 + chunks + (8 << 20)
+        var peerBytes = 0
+        for peer in peers {
+            let factor = try Self.factor(peer.targetFacts.sampleRate, minimum)
+            let frames = Int64(peer.cycleTargetRange.count)
+            peerBytes += AnalysisDecimator.outputCount(frames: frames, factor: factor) * 32
+        }
+        return (referenceOut + targetOut) * 32 + peerBytes + fft * 56 + chunks + (8 << 20)
+    }
+
+    /// A peer needs enough shared windows to close a cycle, not the full long-form excerpt being reported.
+    var cycleTargetRange: Range<Int64> {
+        let full = targetRange
+        let length = Swift.min(Int64(full.count), 20 * Int64(targetFacts.sampleRate))
+        let start = full.lowerBound + (Int64(full.count) - length) / 2
+        return start ..< (start + length)
     }
 
     static func factor(_ rate: Int, _ minimum: Int) throws(AlignmentWorkFailure) -> Int {
@@ -181,7 +203,10 @@ struct AnalysisUnit: Sendable {
 
     /// Decodes both excerpts (sequentially, inside one admission), runs the estimator and returns the
     /// encoded `EpochAnalysisRecord`.
-    func run(environment: PipelineEnvironment) async throws(AlignmentWorkFailure) -> Data {
+    func run(
+        environment: PipelineEnvironment, peers: [AnalysisUnit] = [],
+        cache: CycleExcerptCache? = nil, retainedBytes: Int = 0
+    ) async throws(AlignmentWorkFailure) -> Data {
         let referenceRange = referenceRange
         let targetRange = targetRange
         let referenceParticipant = try participant(referenceChoice.group, referenceChoice.epoch, reference, referenceFacts, range: referenceRange)
@@ -189,12 +214,12 @@ struct AnalysisUnit: Sendable {
         let record: EpochAnalysisRecord
         if referenceRange.isEmpty {
             record = EpochAnalysisRecord(
-                recipe: recipe.name, reference: referenceParticipant, target: targetParticipant, search: search,
+                recipe: recipe(peers: peers).name, reference: referenceParticipant, target: targetParticipant, search: search,
                 abstention: .insufficientCoverage,
                 detail: "The search range cannot reach the reference recording from this epoch's excerpt."
             )
         } else {
-            let bytes = try estimatedWorkingSetBytes()
+            let bytes = try estimatedWorkingSetBytes(peers: peers) + retainedBytes
             let unit = self
             do {
                 record = try await environment.gate.withAdmission(bytes: bytes) {
@@ -202,9 +227,27 @@ struct AnalysisUnit: Sendable {
                     try Task.checkCancellation()
                     let targetSamples = try await unit.decodeAnalysisBuffer(unit.target, facts: unit.targetFacts, range: targetRange, decoder: environment.decoder)
                     try Task.checkCancellation()
+                    if let cache {
+                        await cache.rememberTarget(unit, samples: targetSamples)
+                    }
+                    var peerTracks: [EstimatorTrack] = []
+                    for peer in peers {
+                        let range = peer.cycleTargetRange
+                        let participant = try peer.participant(peer.targetGroup, peer.targetEpoch, peer.target, peer.targetFacts, range: range)
+                        let samples: [Float]
+                        if let cache {
+                            samples = try await cache.samples(for: peer, decoder: environment.decoder)
+                        } else {
+                            samples = try await peer.decodeAnalysisBuffer(peer.target, facts: peer.targetFacts, range: range, decoder: environment.decoder)
+                        }
+                        peerTracks.append(try unit.track(samples: samples, participant: participant))
+                        try Task.checkCancellation()
+                    }
+
                     return try unit.estimate(
                         referenceSamples: referenceSamples, referenceParticipant: referenceParticipant,
-                        targetSamples: targetSamples, targetParticipant: targetParticipant
+                        targetSamples: targetSamples, targetParticipant: targetParticipant,
+                        peerTracks: peerTracks, recipe: unit.recipe(peers: peers).name
                     )
                 }
             } catch {
@@ -251,37 +294,83 @@ struct AnalysisUnit: Sendable {
         }
     }
 
+    func track(samples: [Float], participant: AnalysisParticipant) throws(AlignmentWorkFailure) -> EstimatorTrack {
+        do throws(AlignEstimateError) {
+            let start: ExactRational
+            do throws(TimeMapError) {
+                start = try ExactRational(participant.excerptStartFrame, Int64(participant.sourceRate))
+            } catch {
+                throw .timeMap(error)
+            }
+            return EstimatorTrack(
+                group: participant.group, epoch: participant.epoch, occurrence: participant.occurrence,
+                groupClockStart: start, buffer: try SampleBuffer(samples: samples, sampleRate: participant.analysisRate)
+            )
+        } catch {
+            throw .estimator(error)
+        }
+    }
+
     func estimate(
         referenceSamples: [Float], referenceParticipant: AnalysisParticipant,
-        targetSamples: [Float], targetParticipant: AnalysisParticipant
+        targetSamples: [Float], targetParticipant: AnalysisParticipant,
+        peerTracks: [EstimatorTrack] = [], recipe: String? = nil
     ) throws(AlignmentWorkFailure) -> EpochAnalysisRecord {
-        let referenceStart: ExactRational
-        let targetStart: ExactRational
-        do throws(TimeMapError) {
-            referenceStart = try ExactRational(referenceParticipant.excerptStartFrame, Int64(referenceParticipant.sourceRate))
-            targetStart = try ExactRational(targetParticipant.excerptStartFrame, Int64(targetParticipant.sourceRate))
-        } catch {
-            throw .estimator(.timeMap(error))
-        }
+        let referenceTrack = try track(samples: referenceSamples, participant: referenceParticipant)
+        let targetTrack = try track(samples: targetSamples, participant: targetParticipant)
         let report: EstimationReport
         do throws(AlignEstimateError) {
-            let referenceTrack = EstimatorTrack(
-                group: referenceChoice.group, epoch: referenceChoice.epoch, occurrence: referenceChoice.occurrence,
-                groupClockStart: referenceStart,
-                buffer: try SampleBuffer(samples: referenceSamples, sampleRate: referenceParticipant.analysisRate)
-            )
-            let targetTrack = EstimatorTrack(
-                group: targetGroup, epoch: targetEpoch, occurrence: targetOccurrence,
-                groupClockStart: targetStart,
-                buffer: try SampleBuffer(samples: targetSamples, sampleRate: targetParticipant.analysisRate)
-            )
-            report = try AcousticEstimator.estimate(EstimationRequest(reference: referenceTrack, tracks: [targetTrack], search: search))
+            report = try AcousticEstimator.estimate(EstimationRequest(reference: referenceTrack, tracks: [targetTrack] + peerTracks, search: search))
         } catch {
             throw .estimator(error)
         }
         guard let estimate = report.epochs.first(where: { $0.epoch == targetEpoch }) else {
             throw .estimator(.invalidParameter("the estimator returned no result for the target epoch"))
         }
-        return EpochAnalysisRecord(recipe: recipe.name, reference: referenceParticipant, target: targetParticipant, search: search, estimate: estimate)
+        var record = EpochAnalysisRecord(recipe: recipe ?? self.recipe.name, reference: referenceParticipant, target: targetParticipant, search: search, estimate: estimate)
+        if estimate.flags.contains(.coverageGap), record.abstention?.abstentionReason != .cycleInconsistent {
+            record.proposal = nil
+            record.abstention = AbstentionRecord(
+                reason: AbstentionReason.discontinuous.rawValue,
+                detail: "Internal coverage gap: declare an epoch boundary or place anchors manually; no inverse is available across the gap."
+            )
+        }
+        if peerTracks.contains(where: { $0.group != targetGroup }), record.cycleTriangles == 0, record.proposal != nil {
+            record.proposal = nil
+            record.abstention = AbstentionRecord(
+                reason: AbstentionReason.insufficientCoverage.rawValue,
+                detail: "No shared peer windows closed a recorder cycle; place anchors manually or retry with overlapping recordings."
+            )
+        }
+        return record
+    }
+}
+
+/// One run's bounded, decimated peer excerpts. The caller serializes multi-recorder units so the
+/// gateway is opened at most once per source revision; nothing persists beyond that analysis run.
+actor CycleExcerptCache {
+    private var excerpts: [SourceRevision: [Float]] = [:]
+
+    func rememberTarget(_ unit: AnalysisUnit, samples: [Float]) {
+        let revision = SourceRevision(source: unit.target.id, token: unit.targetFacts.revisionToken)
+        guard excerpts[revision] == nil else { return }
+        let peer = unit.cycleTargetRange
+        guard let factor = try? AnalysisUnit.factor(unit.targetFacts.sampleRate, unit.configuration.minimumAnalysisRate) else { return }
+        let offset = peer.lowerBound - unit.targetRange.lowerBound
+        guard offset % Int64(factor) == 0 else { return }
+        let start = Int(offset / Int64(factor))
+        let count = AnalysisDecimator.outputCount(frames: Int64(peer.count), factor: factor)
+        guard start + count <= samples.count else { return }
+        excerpts[revision] = Array(samples[start ..< start + count])
+    }
+
+    func samples(for peer: AnalysisUnit, decoder: SourceDecoder) async throws -> [Float] {
+        let revision = SourceRevision(source: peer.target.id, token: peer.targetFacts.revisionToken)
+        if let samples = excerpts[revision] { return samples }
+        let samples = try await peer.decodeAnalysisBuffer(
+            peer.target, facts: peer.targetFacts, range: peer.cycleTargetRange, decoder: decoder
+        )
+        excerpts[revision] = samples
+        return samples
     }
 }

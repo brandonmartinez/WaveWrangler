@@ -198,10 +198,42 @@ public final class AlignmentPipeline: Sendable {
                 ))
             }
         }
-        for recipe in Set(units.map(\.recipe)) { await coordinator.setRecipe(recipe) }
-        let analysisResults = await boundedMap(units, limit: configuration.concurrency) { unit in
-            await coordinator.run(PipelineSlots.analysis(unit.targetEpoch), key: unit.key) { () throws(AlignmentWorkFailure) -> Data in
-                try await unit.run(environment: environment)
+        let expected = plan.epochs.filter {
+            $0.group != plan.reference?.group && !$0.sources.isEmpty
+        }
+        let expectedGroups = Set(expected.map(\.group))
+        if expectedGroups.count > 1 {
+            for unit in units {
+                if let missing = expected.first(where: { planned in
+                    planned.group != unit.targetGroup && !units.contains(where: { $0.targetGroup == planned.group })
+                }) {
+                    epochFailures[unit.targetEpoch] = .cyclePeerUnavailable(missing.sources[0])
+                }
+            }
+            units.removeAll { epochFailures[$0.targetEpoch] != nil }
+        }
+        let excerptBytes = units.reduce(0) { total, unit in
+            total + AnalysisDecimator.outputCount(
+                frames: Int64(unit.cycleTargetRange.count),
+                factor: (try? AnalysisUnit.factor(unit.targetFacts.sampleRate, configuration.minimumAnalysisRate)) ?? 1
+            ) * MemoryLayout<Float>.size
+        }
+        if units.count > 1 && excerptBytes > configuration.analysisMemoryBudgetBytes / 8 {
+            for unit in units {
+                epochFailures[unit.targetEpoch] = .memoryBudget(
+                    requested: excerptBytes * 8, budget: configuration.analysisMemoryBudgetBytes
+                )
+            }
+            units.removeAll()
+        }
+        let recipes = units.map { unit in unit.recipe(peers: units.filter { $0.targetEpoch != unit.targetEpoch }) }
+        for recipe in Set(recipes) { await coordinator.setRecipe(recipe) }
+        let cohort = units
+        let cache: CycleExcerptCache? = cohort.count > 1 ? CycleExcerptCache() : nil
+        let analysisResults = await boundedMap(units, limit: cache == nil ? configuration.concurrency : 1) { unit in
+            let peers = cohort.filter { $0.targetEpoch != unit.targetEpoch }
+            return await coordinator.run(PipelineSlots.analysis(unit.targetEpoch), key: unit.key(peers: peers)) { () throws(AlignmentWorkFailure) -> Data in
+                try await unit.run(environment: environment, peers: peers, cache: cache, retainedBytes: cache == nil ? 0 : excerptBytes)
             }
         }
         var analyses: [RecordingEpochID: PipelineJobResult] = [:]
@@ -216,6 +248,21 @@ public final class AlignmentPipeline: Sendable {
                 }
             } else {
                 epochFailures[unit.targetEpoch] = .encoding("the published analysis is missing from the store")
+            }
+        }
+        if expectedGroups.count > 1, let failed = units.first(where: { unit in
+            epochFailures[unit.targetEpoch] != nil
+                && !units.contains(where: { peer in
+                    peer.targetGroup == unit.targetGroup && peer.targetEpoch != unit.targetEpoch
+                        && records[peer.targetEpoch] != nil
+                })
+        }) {
+            if let failure = epochFailures[failed.targetEpoch] {
+                sourceFailures[failed.target.id] = failure
+            }
+            for unit in units where unit.targetEpoch != failed.targetEpoch {
+                records[unit.targetEpoch] = nil
+                epochFailures[unit.targetEpoch] = .cyclePeerUnavailable(failed.target.id)
             }
         }
         return AlignmentAnalysisReport(
@@ -248,9 +295,8 @@ public final class AlignmentPipeline: Sendable {
     ///
     /// Provenance is chosen here, never supplied: the reference epoch is `.timelineReference`, decided epochs
     /// are `.manual(...)` (an accepted proposal is `manual(.acceptedAcousticProposal)`; a rejected one is
-    /// `unsupported(.notAttempted)`), undecided epochs keep the prior accepted mapping or, with none, carry a
-    /// current proposal as `.acousticConsistentProposal`, and a prior `clockApproved` mapping is refused
-    /// rather than carried.
+    /// `unsupported(.notAttempted)`). Undecided epochs carry only verified prior manual decisions or a
+    /// current proposal as `.acousticConsistentProposal`; a prior clock approval is refused.
     public func accept(
         model: ShowDocumentModel,
         episode episodeID: EpisodeID,
@@ -277,7 +323,33 @@ public final class AlignmentPipeline: Sendable {
                 throw .priorMapUnreadable(error)
             }
         }
-        let built = try MapAcceptance.build(plan: report.plan, facts: facts, analyses: analyses, decisions: decisions, prior: prior)
+        let priorIsCurrent: Bool
+        if let prior, let priorRevision, let version = episode.alignment?.map(revision: priorRevision) {
+            priorIsCurrent = MapDependencies.verify(
+                version: version, map: prior, episode: episode, registered: inputs.sources, format: inputs.format
+            ).isEmpty
+        } else {
+            priorIsCurrent = false
+        }
+        let currentAnalyses = Dictionary(uniqueKeysWithValues: analyses.keys.compactMap { epoch in
+            report.analyses[epoch].map { (epoch, $0.key.digest) }
+        })
+        let built = try MapAcceptance.build(
+            plan: report.plan, facts: facts, analyses: analyses, decisions: decisions,
+            prior: prior, priorIsCurrent: priorIsCurrent,
+            priorAcceptedProposals: priorRevision.flatMap { episode.alignment?.map(revision: $0) }
+                .map(MapDependencies.acceptedProposals) ?? [:],
+            currentAnalyses: currentAnalyses
+        )
+        let acceptedProposals: [String: String] = Dictionary(uniqueKeysWithValues:
+            built.map.groups.flatMap(\.epochs).compactMap { epoch -> (String, String)? in
+                guard case let .mapped(_, .manual(correction)) = epoch.mapping,
+                      correction.basis == .acceptedAcousticProposal,
+                      let key = currentAnalyses[epoch.epoch]
+                else { return nil }
+                return (epoch.epoch.description, key)
+            }
+        )
         let tokens = Dictionary(uniqueKeysWithValues: facts.map { ($0.key, $0.value.revisionToken) })
         guard let dependencies = MapDependencies.digest(map: built.map, tokens: tokens, format: inputs.format) else {
             throw .analysisStale([.dependenciesMissing])
@@ -290,7 +362,8 @@ public final class AlignmentPipeline: Sendable {
             let recorded: ShowDocumentModel
             (recorded, revision) = try model.recordingMap(
                 built.map, in: episodeID, inputs: built.inputs,
-                recipe: MapDependencies.recipe(digest: dependencies), derivedFrom: priorRevision
+                recipe: MapDependencies.recipe(digest: dependencies, acceptedProposals: acceptedProposals),
+                derivedFrom: priorRevision
             )
             accepted = try recorded.acceptingMap(revision: revision.revision, in: episodeID)
             guard let updated = accepted.episode(episodeID), let recordedVersion = updated.alignment?.map(revision: revision.revision) else {

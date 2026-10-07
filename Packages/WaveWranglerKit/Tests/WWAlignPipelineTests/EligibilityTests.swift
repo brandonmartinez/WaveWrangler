@@ -50,9 +50,13 @@ struct EligibilityTests {
             #expect(state.remedies == [.goToSetup])
             #expect(report.analyses[epoch] == nil)
         }
-        // Positive control: the eligible target in the same run was analysed.
-        #expect(fixture.content.record(fixture.url("ok")).reads > 0)
-        #expect(states[fixture.epochs[1]]?.status.proposal != nil)
+        // The eligible target is probed, but the unavailable recorder cohort blocks its cycle.
+        #expect(fixture.content.record(fixture.url("ok")).opens == 1)
+        #expect(fixture.content.record(fixture.url("ok")).reads == 0)
+        #expect(report.epochFailures[fixture.epochs[1]] == .cyclePeerUnavailable(fixture.id("off")))
+        #expect(states[fixture.epochs[1]]?.status == .sourceBlocked(
+            fixture.id("off"), .needsSetup(.ineligible(.availabilityOff))
+        ))
     }
 
     @Test("With every source OFF the whole run is metadata only")

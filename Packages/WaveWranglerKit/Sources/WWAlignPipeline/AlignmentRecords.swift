@@ -13,7 +13,7 @@ public enum AlignmentAssetKinds {
     /// content access, so probes are consent-gated like any decode.
     public static let sourceFacts = AssetSpec(kind: "ww.source-facts", revision: 1)
     /// One epoch's analysis: a proposal or an abstention, with its full evidence (`EpochAnalysisRecord`).
-    public static let analysis = AssetSpec(kind: "ww.alignment-analysis", revision: 1)
+    public static let analysis = AssetSpec(kind: "ww.alignment-analysis", revision: 2)
     /// One output channel of one aligned segment (`AlignedAudioSegment`). The revision is WWRender's output
     /// asset format version, so a format bump stales every aligned asset.
     public static let alignedAudio = AssetSpec(kind: "ww.aligned-audio-segment", revision: RenderVersions.outputAssetFormat)
@@ -136,7 +136,7 @@ public struct AbstentionRecord: Sendable, Codable, Equatable {
 
 /// The full, versioned result of analysing one epoch against the timeline reference.
 public struct EpochAnalysisRecord: Sendable, Codable, Equatable {
-    public static let currentVersion = 1
+    public static let currentVersion = 2
 
     public var recordVersion: Int
     public var estimator: String
@@ -153,6 +153,10 @@ public struct EpochAnalysisRecord: Sendable, Codable, Equatable {
     public var medianPeakMargin: Double
     /// `EstimateFlag` raw values, sorted.
     public var flags: [String]
+    /// Measured triangles through this epoch; zero means cycle evidence was unavailable.
+    public var cycleTriangles: Int
+    /// Worst measured disagreement, in milliseconds; nil when no triangle was measured.
+    public var cycleMaximumMilliseconds: Double?
 
     init(
         recipe: String,
@@ -190,6 +194,14 @@ public struct EpochAnalysisRecord: Sendable, Codable, Equatable {
         medianPeakScore = estimate.scores.medianPeakScore
         medianPeakMargin = estimate.scores.medianPeakMargin
         flags = estimate.flags.map(\.rawValue).sorted()
+        switch estimate.cycle {
+        case .unavailable:
+            cycleTriangles = 0
+            cycleMaximumMilliseconds = nil
+        case let .measured(triangles, maximumMilliseconds):
+            cycleTriangles = triangles
+            cycleMaximumMilliseconds = maximumMilliseconds
+        }
     }
 
     /// A record for an epoch the pipeline could not analyse for a structural reason it decided itself (no
@@ -209,6 +221,8 @@ public struct EpochAnalysisRecord: Sendable, Codable, Equatable {
         medianPeakScore = 0
         medianPeakMargin = 0
         flags = []
+        cycleTriangles = 0
+        cycleMaximumMilliseconds = nil
     }
 
     static func encode(_ record: EpochAnalysisRecord) throws -> Data {
