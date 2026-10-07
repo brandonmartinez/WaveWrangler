@@ -147,6 +147,19 @@ struct LibraryPresentationTests {
         let rows = LibraryPresentation.entries(for: .collection(collection.id), library: fixture.library, details: fixture.details)
         #expect(rows.map(\.showID) == collection.showIDs)
     }
+
+    @Test func selectedEntriesPreserveOrderAndCurrentStatus() throws {
+        let fixture = SyntheticLibraryFixture.make()
+        let collection = try #require(fixture.library.collections.first)
+        let chosen = Set([fixture.library.entries[0].showID, fixture.library.entries[3].showID])
+        let items: [LibrarySidebarItem] = [.shows, .recent, .unavailable, .collection(collection.id)]
+        for item in items {
+            let all = LibraryPresentation.entries(for: item, library: fixture.library, details: fixture.details)
+            let selected = LibraryPresentation.entries(for: item, library: fixture.library, details: fixture.details, selectedIDs: chosen)
+            #expect(selected == all.filter { chosen.contains($0.showID) })
+            #expect(LibraryPresentation.entries(for: item, library: fixture.library, details: fixture.details, selectedIDs: []).isEmpty)
+        }
+    }
 }
 
 @Suite("Workspace operations")

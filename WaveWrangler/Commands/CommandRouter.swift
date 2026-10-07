@@ -244,7 +244,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
         let show = activeShowState
         let library = libraryState
         let keyLibrary = keyLibraryState
-        let selection = library?.selectedRows ?? []
+        var selection: [LibraryEntryRow] { library?.selectedRows ?? [] }
         switch item.action {
         case #selector(showSettings(_:)), #selector(showLibrary(_:)), #selector(newShow(_:)), #selector(openDocument(_:)),
              #selector(textActualSize(_:)), #selector(rebuildLibraryIndex(_:)):

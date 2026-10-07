@@ -41,8 +41,8 @@ final class LibraryWindowState {
     var selectedCollectionID: CollectionID? { sidebarSelection?.collectionID }
 
     var selectedRows: [LibraryEntryRow] {
-        guard let item = sidebarSelection else { return [] }
-        return store.rows(for: item).filter { entrySelection.contains($0.showID) }
+        guard let item = sidebarSelection, !entrySelection.isEmpty else { return [] }
+        return store.rows(for: item, selectedIDs: entrySelection)
     }
 
     var isSidebarShown: Bool { columnVisibility != .doubleColumn && columnVisibility != .detailOnly }

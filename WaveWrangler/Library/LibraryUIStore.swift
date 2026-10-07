@@ -263,7 +263,7 @@ final class LibraryUIStore {
         LibraryPresentation.sidebar(library: library, details: details)
     }
 
-    func rows(for item: LibrarySidebarItem) -> [LibraryEntryRow] {
-        LibraryPresentation.entries(for: item, library: library, details: details)
+    func rows(for item: LibrarySidebarItem, selectedIDs: Set<ShowID>? = nil) -> [LibraryEntryRow] {
+        LibraryPresentation.entries(for: item, library: library, details: details, selectedIDs: selectedIDs)
     }
 }

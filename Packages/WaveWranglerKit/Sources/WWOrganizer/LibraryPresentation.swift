@@ -272,9 +272,11 @@ public enum LibraryPresentation {
     public static func entries(
         for item: LibrarySidebarItem,
         library: LibraryModel,
-        details: [ShowID: LibraryEntryDetails]
+        details: [ShowID: LibraryEntryDetails],
+        selectedIDs: Set<ShowID>? = nil
     ) -> [LibraryEntryRow] {
         let byID = Dictionary(library.entries.map { ($0.showID, $0) }, uniquingKeysWith: { first, _ in first })
+        func included(_ id: ShowID) -> Bool { selectedIDs?.contains(id) ?? true }
         func row(_ entry: LibraryShowEntry) -> LibraryEntryRow {
             let detail = details[entry.showID]
             let name = displayName(of: entry)
@@ -290,13 +292,13 @@ public enum LibraryPresentation {
         }
         switch item {
         case .shows:
-            return library.entries.map(row).sorted(by: nameOrder)
+            return library.entries.filter { included($0.showID) }.map(row).sorted(by: nameOrder)
         case .recent:
-            return library.recentShowIDs.compactMap { byID[$0] }.map(row)
+            return library.recentShowIDs.filter(included).compactMap { byID[$0] }.map(row)
         case .unavailable:
-            return library.entries.map(row).filter(\.status.needsAttention).sorted(by: nameOrder)
+            return library.entries.filter { included($0.showID) }.map(row).filter(\.status.needsAttention).sorted(by: nameOrder)
         case .collection(let id):
-            return (library.collection(id)?.showIDs ?? []).compactMap { byID[$0] }.map(row)
+            return (library.collection(id)?.showIDs ?? []).filter(included).compactMap { byID[$0] }.map(row)
         }
     }
 
