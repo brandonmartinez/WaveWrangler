@@ -118,6 +118,7 @@ final class ShowDocument: NSDocument {
         #else
         let initialHeight = 520.0
         #endif
+        window.contentMinSize = NSSize(width: 760, height: 440)
         window.setContentSize(NSSize(width: 760, height: initialHeight))
         window.tabbingMode = .preferred
         addWindowController(NSWindowController(window: window))

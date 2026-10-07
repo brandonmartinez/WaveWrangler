@@ -66,7 +66,7 @@ private struct AlignmentContentHost: NSViewRepresentable {
         init(model: EpisodeAlignmentModel) {
             hostingView = NSHostingView(rootView: AlignmentWorkspace(model: model))
             hostingView.sizingOptions = []
-            hostingView.setAccessibilityLabel("Alignment workspace")
+            hostingView.setAccessibilityLabel("Alignment controls for recorder groups, anchors, corrections and audition")
             super.init(frame: .zero)
             hostingView.frame = bounds
             hostingView.autoresizingMask = [.width, .height]
@@ -253,13 +253,19 @@ private struct AlignmentWorkspace: View {
             .padding(16)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Alignment workspace")
+        .accessibilityLabel("Alignment controls for recorder groups, anchors, corrections and audition")
+        .accessibilityHint("Scroll to reach every Alignment control.")
         .accessibilityIdentifier("ww.alignment.workspace")
         .onAppear {
             AlignmentKeyHandler.install()
         }
         .onChange(of: model.requestedAnchorFocus) { _, anchor in
             focusedAnchor = anchor
+            guard let anchor else { return }
+            AlignmentFieldFocus.focus(
+                "ww.alignment.anchor.\(anchor).alignedTime",
+                in: NSApp.keyWindow
+            )
         }
         .sheet(item: $model.editorRequest) { request in
             switch request {
@@ -488,8 +494,7 @@ private enum AlignmentKeyHandler {
             model.stopAudition()
             return true
         }
-        if (event.keyCode == 36 || event.keyCode == 76), modifiers == .command,
-           !(window.firstResponder is NSTextView) {
+        if (event.keyCode == 36 || event.keyCode == 76), modifiers == .command {
             model.auditionSelection()
             return true
         }
@@ -517,6 +522,28 @@ private enum AlignmentKeyHandler {
             view = current.superview
         }
         return false
+    }
+}
+
+@MainActor
+private enum AlignmentFieldFocus {
+    static func focus(_ identifier: String, in window: NSWindow?) {
+        DispatchQueue.main.async {
+            guard let window, window.attachedSheet == nil,
+                  let field = find(identifier, in: window.contentView)
+            else { return }
+            field.scrollToVisible(field.bounds)
+            _ = window.makeFirstResponder(field)
+        }
+    }
+
+    private static func find(_ identifier: String, in view: NSView?) -> NSView? {
+        guard let view else { return nil }
+        if view.accessibilityIdentifier() == identifier { return view }
+        for subview in view.subviews {
+            if let match = find(identifier, in: subview) { return match }
+        }
+        return nil
     }
 }
 

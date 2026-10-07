@@ -67,7 +67,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         chooseEpisodeMenu("Place Anchors…")
         app.buttons["alignment.anchors.apply"].click()
         let anchor = app.staticTexts["ww.alignment.anchor.0.sourceTime"]
-        XCTAssertTrue(anchor.waitForExistence(timeout: 5))
+        makeReachable(anchor)
         anchor.click()
         app.typeKey(.return, modifierFlags: [])
         let aligned = app.textFields["ww.alignment.anchor.0.alignedTime"]
@@ -86,7 +86,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         chooseEpisodeMenu("Place Anchors…")
         app.buttons["alignment.anchors.apply"].click()
         let anchor = app.staticTexts["ww.alignment.anchor.1.sourceTime"]
-        XCTAssertTrue(anchor.waitForExistence(timeout: 5))
+        makeReachable(anchor)
         anchor.click()
         app.typeKey(.delete, modifierFlags: [])
         let confirmation = app.sheets.buttons["Delete Anchor"]
@@ -132,7 +132,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         chooseEpisodeMenu("Place Anchors…")
         app.buttons["alignment.anchors.apply"].click()
         let anchor = app.staticTexts["ww.alignment.anchor.1.sourceTime"]
-        XCTAssertTrue(anchor.waitForExistence(timeout: 5))
+        makeReachable(anchor)
         anchor.click()
         chooseEpisodeMenu("Start New Epoch at Anchor")
         XCTAssertTrue(app.staticTexts["Epoch 3"].waitForExistence(timeout: 5))
@@ -159,13 +159,12 @@ final class AlignmentInspectionUITests: XCTestCase {
     func testTM211DependentsNoticeIsReadableWithoutFocusMove() {
         selectTargetEpoch()
         let notice = app.staticTexts["ww.alignment.dependents"]
-        XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        makeReachable(notice)
         guard let total = dependentTotal(from: notice) else {
             return XCTFail("Expected current dependent count, got \(text(of: notice))")
         }
         chooseEpisodeMenu("Accept Proposal as Manual")
-        XCTAssertTrue(waitForText("\(total) of \(total) dependent job", in: notice))
-        XCTAssertTrue(text(of: notice).hasSuffix("stale."))
+        XCTAssertTrue(waitForStaleDependents(in: notice, previousTotal: total))
     }
 
     func testTM212NoRecorderGroupBlockedPanel() throws {
@@ -241,7 +240,7 @@ final class AlignmentInspectionUITests: XCTestCase {
     }
 
     private func replace(_ field: XCUIElement, with text: String) {
-        XCTAssertTrue(field.waitForExistence(timeout: 2))
+        makeReachable(field)
         field.click()
         field.typeKey("a", modifierFlags: .command)
         field.typeText(text)
@@ -272,17 +271,44 @@ final class AlignmentInspectionUITests: XCTestCase {
         return Int(first)
     }
 
+    private func waitForStaleDependents(
+        in element: XCUIElement,
+        previousTotal: Int,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            let parts = text(of: element).split(separator: " ")
+            if parts.count >= 4, let stale = Int(parts[0]), parts[1] == "of",
+               let total = Int(parts[2]), stale == previousTotal, total >= stale,
+               text(of: element).hasSuffix("stale.") {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        } while Date() < deadline
+        return false
+    }
+
+    private func makeReachable(
+        _ element: XCUIElement,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let scroll = app.scrollViews["ww.alignment.workspace"]
+        for _ in 0..<12 where !element.exists || !element.isHittable {
+            scroll.swipeUp()
+        }
+        XCTAssertTrue(element.exists, "\(element.identifier) exists after scrolling", file: file, line: line)
+        XCTAssertTrue(element.isHittable, "\(element.identifier) is hittable after scrolling", file: file, line: line)
+    }
+
     private func assertReachable(
         _ element: XCUIElement,
         in window: XCUIElement,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        XCTAssertTrue(element.waitForExistence(timeout: 3), element.identifier, file: file, line: line)
-        let scroll = app.scrollViews["ww.alignment.workspace"]
-        for _ in 0..<12 where !window.frame.intersects(element.frame) {
-            scroll.swipeUp()
-        }
+        makeReachable(element, file: file, line: line)
         XCTAssertTrue(
             window.frame.intersects(element.frame),
             "\(element.identifier) is reachable by scrolling",

@@ -65,7 +65,9 @@ private struct ShowWindowContent: View {
                 .help(state.inspectorPresented ? "Hide Inspector (⌃⌘I)" : "Show Inspector (⌃⌘I)")
             }
         }
-        .frame(minWidth: 760, minHeight: 440)
+        // The inspector is added outside this core and contributes its own width. Keep the core's
+        // minimum narrow enough that the complete window can still reach its 760 pt content minimum.
+        .frame(minWidth: 490, minHeight: 440)
         .background(WindowBinder(state: state))
         .onChange(of: store.model.episodes.map(\.id)) { old, _ in
             state.reconcileSelection(previousOrder: old)
