@@ -266,6 +266,10 @@ final class FormatUpdateUITests: XCTestCase {
                   "the second show opens in the app under test: \(app.windows.allElementsBoundByIndex.map(\.title))")
             check(NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier).count == 1,
                   "one app process: \(NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier).map(\.processIdentifier))")
+            guard waitForSelectedTab(named: "Second Tab") else {
+                throw NSError(domain: "FormatUpdate", code: 4,
+                              userInfo: [NSLocalizedDescriptionKey: "Second Tab was not the foreground main window before merging"])
+            }
             app.menuBars.menuBarItems["Window"].click()
             let merge = app.menuBars.menuItems["Merge All Windows"]
             check(merge.exists && merge.isEnabled, "Window › Merge All Windows can group both shows as tabs")
@@ -432,11 +436,14 @@ final class FormatUpdateUITests: XCTestCase {
 
     /// AX main-window state identifies the selected document; both tab windows can report hittable.
     private func waitForSelectedTab(named name: String) -> Bool {
-        app.activate()
-        return Acceptance.waitFor(timeout: 5) {
-            self.app.state == .runningForeground
-                && (self.showWindow(named: name).value(forKey: "isMainWindow") as? Bool == true)
+        for _ in 0..<3 {
+            app.activate()
+            if Acceptance.waitFor(timeout: 3, {
+                self.app.state == .runningForeground
+                    && (self.showWindow(named: name).value(forKey: "isMainWindow") as? Bool == true)
+            }) { return true }
         }
+        return false
     }
 
     /// Keeps the selected tab and any sheet title in the xcresult so a repeated prompt identifies its document.
