@@ -66,7 +66,8 @@ final class AlignmentInspectionUITests: XCTestCase {
         selectTargetEpoch()
         chooseEpisodeMenu("Place Anchors…")
         app.buttons["alignment.anchors.apply"].click()
-        let anchor = app.staticTexts["ww.alignment.anchor.0.sourceTime"]
+        let anchor = app.outlines["ww.alignment.anchors"]
+            .descendants(matching: .outlineRow).element(boundBy: 0)
         makeReachable(anchor)
         anchor.click()
         app.typeKey(.return, modifierFlags: [])
@@ -85,7 +86,8 @@ final class AlignmentInspectionUITests: XCTestCase {
         selectTargetEpoch()
         chooseEpisodeMenu("Place Anchors…")
         app.buttons["alignment.anchors.apply"].click()
-        let anchor = app.staticTexts["ww.alignment.anchor.1.sourceTime"]
+        let anchor = app.outlines["ww.alignment.anchors"]
+            .descendants(matching: .outlineRow).element(boundBy: 1)
         makeReachable(anchor)
         anchor.click()
         app.typeKey(.delete, modifierFlags: [])
@@ -131,7 +133,8 @@ final class AlignmentInspectionUITests: XCTestCase {
         selectTargetEpoch()
         chooseEpisodeMenu("Place Anchors…")
         app.buttons["alignment.anchors.apply"].click()
-        let anchor = app.staticTexts["ww.alignment.anchor.1.sourceTime"]
+        let anchor = app.outlines["ww.alignment.anchors"]
+            .descendants(matching: .outlineRow).element(boundBy: 1)
         makeReachable(anchor)
         anchor.click()
         chooseEpisodeMenu("Start New Epoch at Anchor")

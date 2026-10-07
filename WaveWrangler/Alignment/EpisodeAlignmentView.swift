@@ -257,12 +257,10 @@ private struct AlignmentWorkspace: View {
             AlignmentKeyHandler.install()
         }
         .onChange(of: model.requestedAnchorFocus) { _, anchor in
-            focusedAnchor = anchor
             guard let anchor else { return }
-            AlignmentFieldFocus.focus(
-                "ww.alignment.anchor.\(anchor).alignedTime",
-                in: NSApp.keyWindow
-            )
+            focusedAnchor = anchor
+            AlignmentFieldFocus.focus(anchor: anchor, in: NSApp.keyWindow)
+            model.requestedAnchorFocus = nil
         }
         .sheet(item: $model.editorRequest) { request in
             switch request {
@@ -524,21 +522,42 @@ private enum AlignmentKeyHandler {
 
 @MainActor
 private enum AlignmentFieldFocus {
-    static func focus(_ identifier: String, in window: NSWindow?) {
+    static func focus(anchor: Int, in window: NSWindow?) {
         DispatchQueue.main.async {
             guard let window, window.attachedSheet == nil,
-                  let field = find(identifier, in: window.contentView)
+                  let table = findTable("ww.alignment.anchors", in: window.contentView)
+            else { return }
+            let row = table.selectedRow >= 0 ? table.selectedRow : anchor
+            guard row >= 0, row < table.numberOfRows else { return }
+            table.scrollToVisible(table.bounds)
+            table.scrollRowToVisible(row)
+            let column = table.tableColumns.firstIndex {
+                $0.headerCell.stringValue == "Aligned time"
+            } ?? min(2, table.numberOfColumns - 1)
+            guard column >= 0,
+                  let cell = table.view(atColumn: column, row: row, makeIfNecessary: true),
+                  let field = findTextField(in: cell)
             else { return }
             field.scrollToVisible(field.bounds)
             _ = window.makeFirstResponder(field)
         }
     }
 
-    private static func find(_ identifier: String, in view: NSView?) -> NSView? {
+    private static func findTable(_ identifier: String, in view: NSView?) -> NSTableView? {
         guard let view else { return nil }
-        if view.accessibilityIdentifier() == identifier { return view }
+        if let table = view as? NSTableView, table.accessibilityIdentifier() == identifier {
+            return table
+        }
         for subview in view.subviews {
-            if let match = find(identifier, in: subview) { return match }
+            if let match = findTable(identifier, in: subview) { return match }
+        }
+        return nil
+    }
+
+    private static func findTextField(in view: NSView) -> NSTextField? {
+        if let field = view as? NSTextField { return field }
+        for subview in view.subviews {
+            if let field = findTextField(in: subview) { return field }
         }
         return nil
     }
