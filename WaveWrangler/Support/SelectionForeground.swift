@@ -13,11 +13,8 @@ struct EmphasizedSelectionForeground: ViewModifier {
     @Environment(\.controlActiveState) private var controlActiveState
 
     func body(content: Content) -> some View {
-        if isSelectedInFocusedList && controlActiveState == .key {
-            content.foregroundStyle(Color.white)
-        } else {
-            content
-        }
+        // Keep the row's view identity stable across selection changes; nil inherits the system colour.
+        content.foregroundColor(isSelectedInFocusedList && controlActiveState == .key ? .white : nil)
     }
 }
 
