@@ -165,6 +165,34 @@ legacy_has_xcodebuild() {
   return 1
 }
 
+active_test_pid() {
+  local candidate executable arguments
+  for candidate in $(pgrep -f 'xcodebuild|WaveWranglerUITests-Runner' 2>/dev/null || true); do
+    executable=$(ps -p "$candidate" -o comm= 2>/dev/null)
+    case "$executable" in
+      */xcodebuild|xcodebuild)
+        arguments=$(ps -p "$candidate" -o args= 2>/dev/null)
+        case " $arguments " in *" test-without-building "*) ;; *) continue;; esac
+        ;;
+      */WaveWranglerUITests-Runner|WaveWranglerUITests-Runner) ;;
+      *) continue;;
+    esac
+    if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ]; then
+      case "$executable" in "$ROOT/"*) ;; *) continue;; esac
+    fi
+    kill -0 "$candidate" 2>/dev/null && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
+}
+
+block_if_test_active() {
+  local blocked_pid
+  blocked_pid=$(active_test_pid)
+  [ -n "$blocked_pid" ] || return 1
+  log "blocked: active xcodebuild pid $blocked_pid"
+  return 0
+}
+
 owner_is_stale() {
   [ -d "$LOCK" ] || return 1
   owner=$(owner_file "$LOCK")
@@ -232,6 +260,10 @@ kill_recorded_pids() {
 reclaim_if_stale() {
   local old_owner old_token old_snapshot reclaimed lane pids_file
   acquire_guard
+  if block_if_test_active; then
+    release_guard
+    return 1
+  fi
   old_owner=$(owner_file "$LOCK")
   if [ ! -f "$old_owner" ]; then
     release_guard
@@ -429,29 +461,33 @@ acquire_for_run() {
     first=$(first_ticket)
     if [ "$first" = "$TICKET" ]; then
       acquire_guard
-      if owner_is_stale; then
+      if block_if_test_active; then
         release_guard
-        reclaim_if_stale || true
-        continue
-      fi
-      if mkdir "$LOCK" 2>/dev/null; then
-        TOKEN="$(now)-$$-$sequence"
-        mkdir -p "$DIR"
-        PIDS_FILE="$DIR/gui-lock-pids.$TOKEN"
-        ACQUIRED=$(now)
-        HEARTBEAT="$ACQUIRED"
-        EXPIRES=$((HEARTBEAT + LEASE_SECONDS))
-        COMMAND_PID=""
-        OWN_OWNER_FILE="$DIR/gui-lock-owner-$TOKEN"
-        write_owner
-        ACQUIRED_OWNERSHIP=1
-        rm -rf "$TICKET"
+      else
+        if owner_is_stale; then
+          release_guard
+          reclaim_if_stale || true
+          continue
+        fi
+        if mkdir "$LOCK" 2>/dev/null; then
+          TOKEN="$(now)-$$-$sequence"
+          mkdir -p "$DIR"
+          PIDS_FILE="$DIR/gui-lock-pids.$TOKEN"
+          ACQUIRED=$(now)
+          HEARTBEAT="$ACQUIRED"
+          EXPIRES=$((HEARTBEAT + LEASE_SECONDS))
+          COMMAND_PID=""
+          OWN_OWNER_FILE="$DIR/gui-lock-owner-$TOKEN"
+          write_owner
+          ACQUIRED_OWNERSHIP=1
+          rm -rf "$TICKET"
+          release_guard
+          log "acquired lane=$LANE class=$CLASS pr=$PR sha=$SHA lease=${LEASE_SECONDS}s"
+          printf 'ACQUIRED lane=%s class=%s lease=%s\n' "$LANE" "$CLASS" "$(format_duration "$LEASE_SECONDS")"
+          return 0
+        fi
         release_guard
-        log "acquired lane=$LANE class=$CLASS pr=$PR sha=$SHA lease=${LEASE_SECONDS}s"
-        printf 'ACQUIRED lane=%s class=%s lease=%s\n' "$LANE" "$CLASS" "$(format_duration "$LEASE_SECONDS")"
-        return 0
       fi
-      release_guard
     fi
     if [ "$(now)" -ge "$deadline" ]; then
       log "WARN queue timeout lane=$LANE class=$CLASS ticket=$(basename "$TICKET") requeued in place"

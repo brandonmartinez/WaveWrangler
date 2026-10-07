@@ -16,6 +16,7 @@ assert_contains() {
 reset_state() {
   rm -rf "$ROOT/.gui.lock" "$ROOT/.gui.lock.guard" "$ROOT/.gui.lock.guard.stale-"* \
     "$ROOT/.gui.queue" "$ROOT"/*.xcresult "$ROOT"/run-*
+  rm -f "$ROOT/xcodebuild" "$ROOT/WaveWranglerUITests-Runner"
   mkdir -p "$ROOT/.gui.queue/required" "$ROOT/.gui.queue/pr" "$ROOT/.gui.queue/full" "$ROOT/.gui.queue/perf"
   : > "$ROOT/gui-lock.log"
   : > "$ROOT/order"
@@ -248,6 +249,73 @@ reset_state
 seed_legacy_owner legacy-empty "" "$(( $(date +%s) - 121 ))"
 run_lane legacy-empty-reclaimer pr 0 > "$ROOT/legacy-empty.out"
 assert_contains "$ROOT/legacy-empty.out" "RECLAIMED lane=legacy-empty reason=legacy owner pid is missing after acquisition grace"
+
+echo "test: orphaned acquire parent cannot expose a live wrapper lease"
+reset_state
+( run_lane durable-owner pr 10; : ) > "$ROOT/durable-owner.out" 2>&1 &
+acquire_parent_pid=$!
+wait_for_run durable-owner
+durable_pid=$(sed -n 's/^pid=//p' "$ROOT/.gui.lock/owner")
+[ "$durable_pid" != "$acquire_parent_pid" ] || fail "lease owner was the short-lived acquire parent"
+kill -9 "$acquire_parent_pid"
+wait "$acquire_parent_pid" 2>/dev/null || true
+kill -0 "$durable_pid" 2>/dev/null || fail "wrapper died with its acquire parent"
+run_lane durable-waiter pr 0 > "$ROOT/durable-waiter.out" 2>&1 &
+durable_waiter_pid=$!
+wait_for_ticket durable-waiter
+sleep 2
+[ "$(sed -n 's/^lane=//p' "$ROOT/.gui.lock/owner")" = durable-owner ] ||
+  fail "live wrapper lease was stolen after acquire parent died"
+wait "$durable_waiter_pid"
+assert_contains "$ROOT/durable-owner.out" "RELEASED lane=durable-owner"
+assert_contains "$ROOT/durable-waiter.out" "RELEASED lane=durable-waiter"
+
+echo "test: host xcodebuild blocks acquisition without dropping ticket"
+reset_state
+ln -s /bin/bash "$ROOT/xcodebuild"
+"$ROOT/xcodebuild" -c 'sleep 7; :' test-without-building &
+active_build_pid=$!
+run_lane host-blocked pr 0 1 > "$ROOT/host-blocked.out" 2>&1 &
+host_blocked_pid=$!
+wait_for_ticket host-blocked
+sleep 2
+[ ! -d "$ROOT/.gui.lock" ] || fail "new lease acquired while host xcodebuild was active"
+"$SCRIPT" status > "$ROOT/host-blocked-status.out"
+assert_contains "$ROOT/host-blocked-status.out" "QUEUE position=1 class=pr lane=host-blocked"
+assert_contains "$ROOT/gui-lock.log" "blocked: active xcodebuild pid $active_build_pid"
+wait "$active_build_pid" "$host_blocked_pid"
+assert_contains "$ROOT/host-blocked.out" "WAIT queue timeout; ticket retained in place"
+assert_contains "$ROOT/host-blocked.out" "RELEASED lane=host-blocked"
+
+echo "test: active host xcodebuild prevents stale reclaim"
+reset_state
+seed_owner expired
+ln -s /bin/bash "$ROOT/xcodebuild"
+"$ROOT/xcodebuild" -c 'sleep 7; :' test-without-building &
+active_reclaim_pid=$!
+run_lane reclaim-blocked pr 0 > "$ROOT/reclaim-blocked.out" 2>&1 &
+reclaim_blocked_pid=$!
+wait_for_ticket reclaim-blocked
+sleep 2
+[ "$(sed -n 's/^token=//p' "$ROOT/.gui.lock/owner")" = seed ] ||
+  fail "stale lease reclaimed while host xcodebuild was active"
+assert_contains "$ROOT/gui-lock.log" "blocked: active xcodebuild pid $active_reclaim_pid"
+wait "$active_reclaim_pid" "$reclaim_blocked_pid"
+assert_contains "$ROOT/reclaim-blocked.out" "RECLAIMED lane=stale-expired"
+
+echo "test: active UI test runner also blocks acquisition"
+reset_state
+ln -s /bin/bash "$ROOT/WaveWranglerUITests-Runner"
+"$ROOT/WaveWranglerUITests-Runner" -c 'sleep 7; :' runner &
+active_runner_pid=$!
+run_lane runner-blocked pr 0 > "$ROOT/runner-blocked.out" 2>&1 &
+runner_blocked_pid=$!
+wait_for_ticket runner-blocked
+sleep 2
+[ ! -d "$ROOT/.gui.lock" ] || fail "new lease acquired while UI test runner was active"
+assert_contains "$ROOT/gui-lock.log" "blocked: active xcodebuild pid $active_runner_pid"
+wait "$active_runner_pid" "$runner_blocked_pid"
+assert_contains "$ROOT/runner-blocked.out" "RELEASED lane=runner-blocked"
 
 echo "test: queue timeout retains position"
 reset_state
