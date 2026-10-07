@@ -19,7 +19,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.launch()
         app.activate()
         app.typeKey("2", modifierFlags: .command)
-        XCTAssertTrue(app.tables["ww.alignment.groups"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.outlines["ww.alignment.groups"].waitForExistence(timeout: 5))
     }
 
     func testTM201ReachEveryAlignmentControl() {
@@ -28,8 +28,10 @@ final class AlignmentInspectionUITests: XCTestCase {
         group.click()
         app.typeKey(.leftArrow, modifierFlags: [])
         app.typeKey(.rightArrow, modifierFlags: [])
-        XCTAssertTrue(app.staticTexts["Reference"].waitForExistence(timeout: 2))
+        XCTAssertTrue(stateHeading("Reference").waitForExistence(timeout: 2))
         selectTargetEpoch()
+        XCTAssertTrue(app.staticTexts["ww.inspector.alignment.evidence"].waitForExistence(timeout: 2))
+        app.typeKey("i", modifierFlags: [.command, .control])
         app.typeKey("i", modifierFlags: [.command, .control])
         XCTAssertTrue(app.staticTexts["ww.inspector.alignment.evidence"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.buttons["alignment.analyse"].exists)
@@ -42,7 +44,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         selectTargetEpoch()
         chooseEpisodeMenu("Place Anchors…")
         app.buttons["alignment.anchors.apply"].click()
-        XCTAssertTrue(app.staticTexts["Set by you"].waitForExistence(timeout: 5))
+        XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
         replace(app.textFields["ww.alignment.audition.range.start"], with: "1")
         replace(app.textFields["ww.alignment.audition.range.duration"], with: "1")
         app.typeKey(.return, modifierFlags: .command)
@@ -85,9 +87,9 @@ final class AlignmentInspectionUITests: XCTestCase {
         let confirmation = app.sheets.buttons["Delete Anchor"]
         XCTAssertTrue(confirmation.waitForExistence(timeout: 2))
         app.typeKey(.return, modifierFlags: [])
-        let anchors = app.tables["ww.alignment.anchors"]
+        let anchors = app.outlines["ww.alignment.anchors"]
         XCTAssertTrue(waitForRowCount(0, in: anchors))
-        app.tables["ww.alignment.groups"].click()
+        app.outlines["ww.alignment.groups"].click()
         app.typeKey("z", modifierFlags: .command)
         XCTAssertTrue(waitForRowCount(2, in: anchors))
     }
@@ -100,7 +102,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         rate.typeKey("a", modifierFlags: .command)
         rate.typeText("12.5")
         app.typeKey(.return, modifierFlags: [])
-        XCTAssertTrue(app.staticTexts["Set by you"].waitForExistence(timeout: 5))
+        XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
         chooseEpisodeMenu("Edit Epoch Timing Numerically…")
         let preserved = app.textFields["alignment.numeric.rate"]
         XCTAssertTrue(preserved.waitForExistence(timeout: 2))
@@ -111,13 +113,13 @@ final class AlignmentInspectionUITests: XCTestCase {
     func testTM206AcceptProposalCommandExists() {
         selectTargetEpoch()
         chooseEpisodeMenu("Accept Proposal as Manual")
-        XCTAssertTrue(app.staticTexts["Set by you"].waitForExistence(timeout: 5))
+        XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
     }
 
     func testTM207RejectProposalCommandExists() {
         selectTargetEpoch()
         chooseEpisodeMenu("Reject Proposal")
-        XCTAssertTrue(app.staticTexts["Unsupported — not attempted"].waitForExistence(timeout: 5))
+        XCTAssertTrue(stateHeading("Unsupported — not attempted").waitForExistence(timeout: 5))
     }
 
     func testTM208StartNewEpochCommandExists() {
@@ -201,9 +203,15 @@ final class AlignmentInspectionUITests: XCTestCase {
     }
 
     private func selectTargetEpoch() {
-        let state = app.staticTexts["Proposed — not confirmed"]
+        let state = stateHeading("Proposed — not confirmed")
         XCTAssertTrue(state.waitForExistence(timeout: 5))
         state.click()
+    }
+
+    private func stateHeading(_ heading: String) -> XCUIElement {
+        app.staticTexts.matching(NSPredicate(
+            format: "label BEGINSWITH %@ OR value BEGINSWITH %@", heading, heading
+        )).firstMatch
     }
 
     private func replace(_ field: XCUIElement, with text: String) {
@@ -261,9 +269,9 @@ final class AlignmentInspectionUITests: XCTestCase {
     ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            if table.descendants(matching: .tableRow).count == count { return true }
+            if table.descendants(matching: .outlineRow).count == count { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         } while Date() < deadline
-        return table.descendants(matching: .tableRow).count == count
+        return table.descendants(matching: .outlineRow).count == count
     }
 }

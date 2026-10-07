@@ -35,6 +35,15 @@ The app's unhosted test target cannot link the executable's private `AlignmentRu
 `ShowDocument` types. The ordering and nil-map tests exercise the shared package reconciler
 and pipeline; the app test guards their wiring and the uncertain-adoption assignments.
 
+## Alignment split-view sizing (2026-10-07)
+
+The native `NavigationSplitView` detail child must not derive its min/max constraints from
+Alignment's changing table, controls or audition content. The Alignment workspace now lives in a
+frame-filling AppKit host with no intrinsic size and an `NSHostingView` that publishes no sizing
+constraints to its parent. Its accessibility children remain exposed, and the host has an explicit
+label. On macOS 27, SwiftUI's disclosure `Table` exposes an accessibility **Outline**, not a Table;
+the UI probes target that native role and keep the input fields' individual identifiers.
+
 ## Validation
 
 - Filtered `WWAlignPipelineTests|WWDerivedTests|ForbiddenAPITests`: 130 tests across package

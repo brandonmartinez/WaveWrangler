@@ -13,7 +13,8 @@ struct EpisodeAlignmentContent: View {
     var body: some View {
         Group {
             if let model {
-                AlignmentWorkspace(model: model)
+                AlignmentContentHost(model: model)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let startupError {
                 ContentUnavailableView(
                     "Alignment unavailable",
@@ -44,6 +45,38 @@ struct EpisodeAlignmentContent: View {
         .onDisappear {
             model?.stopAudition()
             if let model, state.alignmentModel === model { state.alignmentModel = nil }
+        }
+    }
+}
+
+private struct AlignmentContentHost: NSViewRepresentable {
+    let model: EpisodeAlignmentModel
+
+    func makeNSView(context: Context) -> HostedView {
+        HostedView(model: model)
+    }
+
+    func updateNSView(_ nsView: HostedView, context: Context) {
+        nsView.hostingView.rootView = AlignmentWorkspace(model: model)
+    }
+
+    final class HostedView: NSView {
+        let hostingView: NSHostingView<AlignmentWorkspace>
+
+        init(model: EpisodeAlignmentModel) {
+            hostingView = NSHostingView(rootView: AlignmentWorkspace(model: model))
+            hostingView.sizingOptions = []
+            hostingView.setAccessibilityLabel("Alignment workspace")
+            super.init(frame: .zero)
+            hostingView.frame = bounds
+            hostingView.autoresizingMask = [.width, .height]
+            addSubview(hostingView)
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override var intrinsicContentSize: NSSize {
+            NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
         }
     }
 }
@@ -162,7 +195,6 @@ private struct AlignmentWorkspace: View {
                     .help(model.canAudition ? "Play the selected source range. Nothing is exported." : "Select a mapped epoch with an available source.")
                     .accessibilityIdentifier("ww.alignment.audition.play")
                 }
-                .accessibilityIdentifier("ww.alignment.audition.range")
             }
             .accessibilityIdentifier("ww.alignment.audition")
 
