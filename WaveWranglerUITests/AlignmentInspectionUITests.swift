@@ -194,10 +194,13 @@ final class AlignmentInspectionUITests: XCTestCase {
         window.doubleClick()
         let contentInspector = app.descendants(matching: .any)["ww.show.contentInspector"]
         let sidebar = app.descendants(matching: .any)["ww.show.sidebar.episodes"]
-        let episodesHeader = app.descendants(matching: .any)["ww.show.sidebar.episodesHeader"]
+        let episodesLabel = app.staticTexts["Episodes"]
+        let newEpisode = app.buttons["ww.show.sidebar.newEpisode"]
         XCTAssertTrue(contentInspector.waitForExistence(timeout: 2))
         XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
-        XCTAssertTrue(episodesHeader.waitForExistence(timeout: 2))
+        XCTAssertTrue(episodesLabel.waitForExistence(timeout: 2))
+        XCTAssertTrue(newEpisode.waitForExistence(timeout: 2))
+        let episodesHeaderFrame = episodesLabel.frame.union(newEpisode.frame)
         var layoutContainerFindings = 0
         var sectionHeaderFindings = 0
         try app.performAccessibilityAudit(
@@ -209,7 +212,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             else { return false }
             let isContent = self.approximatelyEqual(element.frame, contentInspector.frame)
             let isSidebar = self.approximatelyEqual(element.frame, sidebar.frame)
-            let isEpisodesHeader = self.approximatelyEqual(element.frame, episodesHeader.frame)
+            let isEpisodesHeader = self.approximatelyEqual(element.frame, episodesHeaderFrame)
             guard isContent || isSidebar || isEpisodesHeader else { return false }
             if isEpisodesHeader {
                 sectionHeaderFindings += 1
@@ -276,7 +279,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertGreaterThan(rows.count, index)
         let row = rows.element(boundBy: index)
         XCTAssertGreaterThan(row.frame.width, 0)
-        row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).click()
     }
 
     private func selectTargetEpoch() {

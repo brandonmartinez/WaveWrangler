@@ -256,7 +256,6 @@ private struct AlignmentWorkspace: View {
             .onChange(of: model.requestedAnchorFocus) { _, anchor in
                 guard let anchor else { return }
                 scrollProxy.scrollTo("ww.alignment.anchorSection", anchor: .center)
-                model.requestedAnchorFocus = nil
                 DispatchQueue.main.async {
                     AlignmentFieldFocus.focus(anchor: anchor, in: NSApp.keyWindow)
                 }
@@ -469,6 +468,14 @@ private struct AnchorAlignedTimeField: NSViewRepresentable {
             field.stringValue = formatted(anchor.alignedSeconds)
         }
         field.setAccessibilityValue(AlignmentPresentation.formatTime(anchor.alignedSeconds))
+        guard model.requestedAnchorFocus == anchor.id else { return }
+        DispatchQueue.main.async {
+            guard model.requestedAnchorFocus == anchor.id,
+                  let window = field.window,
+                  window.makeFirstResponder(field)
+            else { return }
+            model.requestedAnchorFocus = nil
+        }
     }
 
     private func formatted(_ value: Double) -> String {
@@ -530,6 +537,7 @@ private enum AlignmentKeyHandler {
             return true
         }
         guard modifiers.isEmpty else { return false }
+        guard !(window.firstResponder is NSTextView) else { return false }
         if event.keyCode == 51, isInside("ww.alignment.anchors", responder: window.firstResponder) {
             model.requestDeleteSelectedAnchor()
             return true
