@@ -96,10 +96,15 @@ seed_owner() {
   reason="$1"
   mkdir -p "$ROOT/.gui.lock"
   current=$(date +%s)
+  acquired=$((current - 120))
   expires=$((current + 60))
   pid=""
-  [ "$reason" = expired ] && expires=$((current - 1))
+  if [ "$reason" = expired ]; then
+    expires=$((current - 1))
+    pid="$$"
+  fi
   [ "$reason" = dead ] && pid=999999
+  [ "$reason" = acquiring ] && acquired="$current"
   cat > "$ROOT/.gui.lock/owner" <<EOF
 token=seed
 lane=stale-$reason
@@ -112,7 +117,7 @@ pids_file=$ROOT/stale-$reason/pids
 output=$ROOT/stale-$reason/output
 result=$ROOT/stale-$reason/result.xcresult
 host=test
-acquired=$((current - 120))
+acquired=$acquired
 heartbeat=$((current - 120))
 expires=$expires
 lease_seconds=60
@@ -132,6 +137,19 @@ seed_owner dead
 run_lane dead-reclaimer pr 0 > "$ROOT/dead.out"
 assert_contains "$ROOT/dead.out" "RECLAIMED lane=stale-dead reason=recorded pid 999999 is dead"
 assert_contains "$ROOT/gui-lock.log" "reclaimed lane=stale-dead"
+
+echo "test: acquiring owner with an empty PID has a reclaim grace"
+reset_state
+seed_owner acquiring
+run_lane acquiring-waiter pr 0 > "$ROOT/acquiring-waiter.out" 2>&1 &
+acquiring_waiter_pid=$!
+sleep 2
+[ -d "$ROOT/.gui.lock" ] || fail "empty-PID owner was reclaimed during acquisition grace"
+if grep -F "reclaimed lane=stale-acquiring" "$ROOT/gui-lock.log" > /dev/null; then
+  fail "waiter reclaimed an acquiring owner"
+fi
+kill "$acquiring_waiter_pid" 2>/dev/null || true
+wait "$acquiring_waiter_pid" 2>/dev/null || true
 
 echo "test: queue timeout retains position"
 reset_state

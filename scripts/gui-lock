@@ -11,6 +11,7 @@ POLL="${GUI_LOCK_POLL_SECONDS:-15}"
 DEFAULT_LEASE_MINUTES=30
 MAX_LEASE_MINUTES=45
 WARN_SECONDS=1800
+ACQUIRING_GRACE_SECONDS=120
 CLASSES="required pr full perf"
 
 mkdir -p "$ROOT" "$QUEUE"
@@ -81,6 +82,14 @@ owner_is_stale() {
   expires=$(field "$owner" expires)
   pid=$(field "$owner" pid)
   wrapper_pid=$(field "$owner" wrapper_pid)
+  acquired=$(field "$owner" acquired)
+  if [ -z "$pid" ]; then
+    if [ -n "$acquired" ] && [ $((current - acquired)) -lt "$ACQUIRING_GRACE_SECONDS" ]; then
+      return 1
+    fi
+    STALE_REASON="owner pid is missing after acquisition grace"
+    return 0
+  fi
   if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
     if [ -z "$wrapper_pid" ] || ! kill -0 "$wrapper_pid" 2>/dev/null; then
       STALE_REASON="recorded pid $pid is dead"
@@ -146,8 +155,8 @@ write_owner_file() {
     printf 'pr=%s\n' "$PR"
     printf 'sha=%s\n' "$SHA"
     printf 'dir=%s\n' "$DIR"
-    printf 'pid=%s\n' "$COMMAND_PID"
-    printf 'wrapper_pid=%s\n' "$$"
+    printf 'pid=%s\n' "$WRAPPER_PID"
+    printf 'wrapper_pid=%s\n' "$WRAPPER_PID"
     printf 'pids_file=%s\n' "$PIDS_FILE"
     printf 'output=%s\n' "$OUTPUT"
     printf 'result=%s\n' "$RESULT"
@@ -483,6 +492,7 @@ ACQUIRED=0
 HEARTBEAT=0
 EXPIRES=0
 COMMAND_PID=""
+WRAPPER_PID="$$"
 OWN_OWNER_FILE=""
 ACQUIRED_OWNERSHIP=0
 
