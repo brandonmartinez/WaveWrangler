@@ -17,27 +17,18 @@ struct HoldoutProcessTests {
             let model = HoldoutGen.show(&rng)
             let url = rig.url()
             _ = try rig.publisher.publish(model, revision: 1, key: .show(model.show.id), to: url, target: .newLocation)
-            let barrier = rig.dir.sub("barrier")
-            let go = barrier.appending(path: "go")
             let delays = [HoldoutGen.int(0...20, &rng), HoldoutGen.int(0...20, &rng)]
-            var running: [(Process, Pipe)] = []
+            var running: [MultiProcessTests.GatedProbe] = []
+            defer { for probe in running { probe.cancelIfRunning() } }
             for (writer, delay) in zip(["A", "B"], delays) {
-                running.append(try MultiProcessTests.launch([
+                running.append(try MultiProcessTests.launchGated(writer: writer, [
                     "save", "--file", url.path, "--title", "Process \(writer) \(index)", "--recovery", rig.recovery.root.path,
-                    "--ready", barrier.appending(path: "ready-\(writer)").path, "--go", go.path, "--delay-ms", String(delay),
+                    "--delay-ms", String(delay),
                 ]))
             }
-            for writer in ["A", "B"] {
-                let ready = barrier.appending(path: "ready-\(writer)")
-                let deadline = Date().addingTimeInterval(30)
-                while !FileManager.default.fileExists(atPath: ready.path), Date() < deadline { usleep(2_000) }
-            }
-            FileManager.default.createFile(atPath: go.path, contents: Data())
-            let outputs = running.map { process, pipe in
-                let output = MultiProcessTests.output(pipe)
-                process.waitUntilExit()
-                return output
-            }
+            for probe in running { try probe.waitUntilReady() }
+            for probe in running { try probe.releaseToSave() }
+            let outputs = running.map { $0.finish() }
             let saved = outputs.filter { $0["result"] as? String == "saved" }
             let conflicts = outputs.filter { $0["result"] as? String == "conflict" }
             try check(saved.count == 1 && conflicts.count == 1, "outcomes \(outputs.map { $0["result"] ?? "?" })")
