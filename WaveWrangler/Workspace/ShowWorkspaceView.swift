@@ -87,7 +87,14 @@ private struct ShowSidebar: View {
         List(selection: $state.sidebarSelection) {
             Section {
                 ForEach(episodes) { episode in
-                    EpisodeSidebarRow(state: state, episode: episode)
+                    EpisodeSidebarRow(
+                        state: state,
+                        episode: episode,
+                        isRenaming: state.renamingEpisodeID == episode.id,
+                        selectedInFocusedList: state.episodeListFocused && state.sidebarSelection == .episode(episode.id)
+                    )
+                        // Only the old and new selected rows need new hosting content.
+                        .equatable()
                         .tag(ShowWindowState.SidebarSelection.episode(episode.id))
                         .contextMenu { episodeMenu(episode) }
                 }
@@ -157,14 +164,21 @@ private struct ShowSidebar: View {
     }
 }
 
-private struct EpisodeSidebarRow: View {
+private struct EpisodeSidebarRow: View, Equatable {
     @Bindable var state: ShowWindowState
     let episode: Episode
+    let isRenaming: Bool
+    let selectedInFocusedList: Bool
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
 
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.episode == rhs.episode && lhs.isRenaming == rhs.isRenaming
+            && lhs.selectedInFocusedList == rhs.selectedInFocusedList
+    }
+
     var body: some View {
-        if state.renamingEpisodeID == episode.id {
+        if isRenaming {
             TextField("Episode title", text: $draft)
                 .focused($fieldFocused)
                 .accessibilityLabel("Episode title")
@@ -188,8 +202,7 @@ private struct EpisodeSidebarRow: View {
                 Image(systemName: "music.mic").accessibilityHidden(true)
             }
             .wwFont(.body)
-            .emphasizedSelectionForeground(selectedInFocusedList: state.episodeListFocused
-                && state.sidebarSelection == .episode(episode.id))
+            .emphasizedSelectionForeground(selectedInFocusedList: selectedInFocusedList)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(ShowSidebarPresentation.episodeRowTitle(episode))
             .accessibilityAddTraits(.isStaticText)
