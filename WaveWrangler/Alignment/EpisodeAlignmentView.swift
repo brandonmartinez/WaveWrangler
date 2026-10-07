@@ -454,6 +454,8 @@ private struct AnchorAlignedTimeField: NSViewRepresentable {
         field.drawsBackground = false
         field.focusRingType = .exterior
         field.delegate = context.coordinator
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.commit(_:))
         field.setAccessibilityLabel("Aligned time")
         field.setAccessibilityIdentifier("ww.alignment.anchor.\(anchor.id).alignedTime")
         return field
@@ -483,10 +485,17 @@ private struct AnchorAlignedTimeField: NSViewRepresentable {
             self.anchorID = anchorID
         }
 
+        @objc func commit(_ field: NSTextField) {
+            commitValue(from: field)
+        }
+
         func controlTextDidEndEditing(_ notification: Notification) {
-            guard let field = notification.object as? NSTextField,
-                  let value = Double(field.stringValue)
-            else { return }
+            guard let field = notification.object as? NSTextField else { return }
+            commitValue(from: field)
+        }
+
+        private func commitValue(from field: NSTextField) {
+            guard let value = Double(field.stringValue) else { return }
             model.editAnchor(id: anchorID, alignedSeconds: value)
         }
     }
@@ -551,7 +560,7 @@ private enum AlignmentKeyHandler {
 private enum AlignmentFieldFocus {
     static func focus(anchor: Int, in window: NSWindow?) {
         DispatchQueue.main.async {
-            attemptFocus(anchor: anchor, in: window, attemptsRemaining: 3)
+            attemptFocus(anchor: anchor, in: window, attemptsRemaining: 30)
         }
     }
 
@@ -601,7 +610,7 @@ private enum AlignmentFieldFocus {
         attemptsRemaining: Int
     ) {
         guard attemptsRemaining > 1 else { return }
-        DispatchQueue.main.async {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             attemptFocus(
                 anchor: anchor,
                 in: window,
