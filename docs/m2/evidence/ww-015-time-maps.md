@@ -83,3 +83,59 @@ CI runs on macos-26 / Xcode 26.6.
   necessary but not sufficient for `clockApproved` (M2-C4 also requires the frozen WW-016 holdout).
 - The lag sign is a *declared* convention, tested here only definitionally. Estimating the lag sign is untested and
   remains open (M2-C3).
+
+## `m2-freeze-timemap` (calibration only)
+
+Refs #10. [`m2-freeze-timemap.json`](../fixtures/m2-freeze-timemap.json) (2026-10-06, in the
+[registry](../fixtures/m2-fixture-registry.json)) freezes fixture M2-TIMEMAP-001 with:
+- 7 strata: general, multi-segment, gap, unsupported, extreme rate ratio, edge nominal rate and long occurrence;
+- seeds `SHA-256("ww-m2-fixture|v1|M2-TIMEMAP-001|<split>|<index>")`, disjoint from the regression seeds above;
+- 700 calibration and 2,100 holdout cases. Rule of three: zero failures in the holdout bounds the per-case failure rate
+  below about 0.14 % overall and 1 % per stratum;
+- the gate verbatim. Round trip within 0.5 source frame (nearest-rank p95 and max reported). Gaps are not invertible.
+  Forward and inverse agree on unsupported and gap. The oracle agrees on everything;
+- the pinned `WWTimeMap` (`24c7aadf…`, unchanged by this PR) and `WWTimeMapTests` tree IDs, which `TimeMapFreezeTests`
+  re-checks on every run.
+
+`RoundTripPropertyTests` now labels each failure with a category. Its regression numbers above are unchanged.
+
+**Calibration (pre-freeze), every gate PASS, first run.** Records:
+[`ww-015/calibration.jsonl`](ww-015/calibration.jsonl), SHA-256 `8f963552…02c741a96c`, byte-identical across separate processes.
+Each case record carries its raw quantisation values, so the pooled p95 can be recomputed from the file alone;
+`committedCalibrationRecordsReproduceTheReportedQuantisation` checks the hash and recomputes it on every run.
+- 700 cases: 3,104 occurrences, 6,248 spans, up to 185,522,597,535 frames.
+- 52,887 exact frame round trips.
+- 78,913 inverse round trips: quantisation **max 0.5, pooled p95 (nearest-rank) 0.4679** source
+  frames (the p95 of the per-case p95s, 0.4932, is a different statistic).
+- Forward gap / unsupported / outside: 8,624 / 6,231 / 28,877. Inverse: 8,090 / 2,005 / 12,476.
+- 0 failures in every category.
+
+Same host as above. `scripts/test.sh` runs the calibration split in its own serialized pass. A split measures at most 4 cases at once (`WW_M2_FREEZE_MAX_CONCURRENCY` may lower it); the rerun under that cap gave byte-identical records.
+
+## `m2-freeze-timemap` holdout (frozen run)
+
+**PASS — all gates.** This is the sole 2,100-case frozen holdout run. Before it started the checkout was clean at
+`2b1fb94760a7e4666bacc7b986b75c94b714e1c7` (committed 2026-10-06T16:39:36Z); that commit added only the
+three decode evidence artifacts and changed no source or test tree. `origin/main`
+`7f17bfc417b52e5cc138be31cca4cd75632d24f0` remained its parent. The frozen code/harness trees matched:
+`Sources/WWTimeMap` `24c7aadfbf1470c8555542061ab08eb23e37325b`;
+`Tests/WWTimeMapTests` `330f7ca81fe1626269b00ba42b5990bd3ef6c44d`; the `Sources/WWCore` dependency tree also
+matched `c310389c4b41ebde80c5dabaea12fd5376f5d9ba`. The 1-minute load was below 24. On the claimed Apple M5 Max
+host (macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4, 18 cores, 128 GiB), it ran with the default
+maximum concurrency of four:
+
+`cd Packages/WaveWranglerKit && WW_M2_TIMEMAP_HOLDOUT=1 WW_TIMEMAP_RECORDS_DIR=../../docs/m2/evidence/ww-015 swift test --scratch-path .build/swiftpm --filter TimeMapCalibrationTests/holdoutSplitMeetsEveryFrozenGate`
+
+The full raw output, including UTC start/end lines (2026-10-06T16:39:42Z through
+2026-10-06T16:39:48Z), is [`ww-015/holdout-run.log`](ww-015/holdout-run.log). The per-case records are
+[`ww-015/holdout.jsonl`](ww-015/holdout.jsonl); SHA-256s for both artifacts are in
+[`ww-015/holdout.sha256`](ww-015/holdout.sha256).
+
+- **Round trip: PASS.** 154,558 exact frame round trips and 231,783 inverse sources had 0 round-trip failures;
+  quantisation **max 0.5** and pooled nearest-rank **p95 0.46658590084369295** source frames.
+- **Gap non-invertibility: PASS.** 25,024 forward and 23,152 inverse gap probes had 0 failures.
+- **Forward/inverse agreement: PASS.** 18,679 forward and 5,949 inverse unsupported probes had 0 agreement
+  failures; oracle agreement also had 0 failures. All seven frozen strata contributed 300 cases.
+
+The run generated 3,910 draws, 9,364 occurrences and 18,426 spans (maximum frame count 274,880,552,223). This
+is frozen holdout evidence, not calibration evidence.

@@ -147,9 +147,12 @@ struct LibraryStoreTests {
         // Edits now publish in the new location only.
         _ = try await store.update { LibraryReconciler.recordingRecent($0.entries[4].showID, in: $0) }
         #expect(try Data(contentsOf: rig.containerFile) == original)
-        // Moving back finds a different library in the container: never overwritten.
-        guard case .success(.destinationHasLibrary) = await store.moveLibraryToAppContainer() else { Issue.record("expected refusal"); return }
-        #expect(try Data(contentsOf: rig.containerFile) == original)
+        // Moving back finds this library's retired copy in the container: it is kept as a backup (never
+        // overwritten or combined) and the move goes ahead (LibraryMoveBackTests).
+        guard case .success(.moved) = await store.moveLibraryToAppContainer() else { Issue.record("expected a move back"); return }
+        let backups = try FileManager.default.contentsOfDirectory(at: rig.container, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("Library (Backup r") }
+        #expect(try backups.map { try Data(contentsOf: $0) } == [original])
     }
 
     @Test func movingOntoAnIdenticalCopyAdoptsIt() async throws {

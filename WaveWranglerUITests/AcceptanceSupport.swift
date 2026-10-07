@@ -138,6 +138,29 @@ extension XCUIApplication {
         open(document)
         activate()
     }
+
+    /// Opens a menu path, waiting for every item before using it. Intermediate items are hovered so their
+    /// submenus have time to populate; only the terminal item is clicked.
+    @MainActor
+    func chooseMenu(_ path: [String], timeout: TimeInterval = 3) -> Bool {
+        guard let rootTitle = path.first else { return false }
+        let root = menuBars.menuBarItems[rootTitle]
+        guard root.waitForExistence(timeout: timeout) else { return false }
+        root.click()
+
+        var parent = root
+        for (index, title) in path.dropFirst().enumerated() {
+            let item = parent.menuItems[title].firstMatch
+            guard item.waitForExistence(timeout: timeout) else { return false }
+            if index == path.count - 2 {
+                item.click()
+            } else {
+                item.hover()
+            }
+            parent = item
+        }
+        return true
+    }
 }
 
 /// Visible-part contrast for a `.contrast` audit finding on an element that is **partly** clipped by its
@@ -184,6 +207,32 @@ enum AcceptanceAudit {
     static let minimumGlyphPixels = 40
 
     static let types: XCUIAccessibilityAuditType = [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .action, .parentChild]
+    /// Every type but `.contrast`: for surfaces that are neither blocked nor recovery (M2 baseline).
+    static let essentialTypes: XCUIAccessibilityAuditType = types.subtracting(.contrast)
+
+    @MainActor
+    static func perform(_ app: XCUIApplication, kinds: XCUIAccessibilityAuditType, surface: String, test: XCTestCase,
+                        handling handler: @escaping (XCUIAccessibilityAuditIssue) -> Bool) throws {
+        func isTimeout(_ error: Error) -> Bool {
+            let error = error as NSError
+            return error.code == -56 && error.localizedDescription.contains("Audit failed to complete in time")
+        }
+
+        do {
+            try app.performAccessibilityAudit(for: kinds, handler)
+        } catch {
+            guard isTimeout(error) else { throw error }
+            Acceptance.record(test, "INFRA ACCESSIBILITY-AUDIT TIMEOUT: \(surface) \(kinds) first attempt; retrying once")
+            do {
+                try app.performAccessibilityAudit(for: kinds, handler)
+            } catch {
+                if isTimeout(error) {
+                    Acceptance.record(test, "INFRA ACCESSIBILITY-AUDIT TIMEOUT: \(surface) \(kinds) retry also timed out")
+                }
+                throw error
+            }
+        }
+    }
 
     /// Episode inspector field labels measured at 15.7–15.9:1 (#59 "first row under the toolbar"). Only these
     /// four were measured; the "Episode" heading and the Show Info inspector's labels were not.
@@ -229,6 +278,17 @@ enum AcceptanceAudit {
         if inSheet, id.hasPrefix("_NS:") {
             return "AppKit sheet message text (mini 479eb9e: 9.75:1)"
         }
+        // Setup header source count and Speakers status (non-blocked), measured legible on the Mac mini at #175
+        // 2ac330a (GUI round 1, D15): "4 sources" p75 12.39:1 (147 glyph px), "Choose primary" p75 12.75:1 (248).
+        if text.range(of: #"^[0-9]+ sources?$"#, options: .regularExpression) != nil {
+            return "Setup source count, system headline text (mini #175 2ac330a: p75 12.39:1)"
+        }
+        if id.isEmpty, element.label == "Status", text != "Status" {
+            return "Setup Speakers status text, system text (mini #175 2ac330a: p75 12.75:1)"
+        }
+        if id == "ww.show.saveStatus.popover" {
+            return "save-status popover text, system text (mini #197 round 3, 0d99329: p75 9.14:1, max 9.47:1)"
+        }
         return nil
     }
 
@@ -238,11 +298,16 @@ enum AcceptanceAudit {
         return count >= minimumGlyphPixels && p75 >= 4.5
     }
 
+    /// `kinds` defaults to every type. The M2 essential set (`essentialTypes`) leaves out `.contrast`, which the M2
+    /// baseline enforces only on blocked or recovery surfaces (docs/m2/evidence/m2-gui-baseline.md).
     @MainActor
-    static func run(_ app: XCUIApplication, surface: String, test: XCTestCase) throws -> [String] {
+    static func run(_ app: XCUIApplication, surface: String, test: XCTestCase,
+                    types kinds: XCUIAccessibilityAuditType = types,
+                    additionalWaiver: ((XCUIAccessibilityAuditIssue) -> String?)? = nil) throws -> [String] {
         var unwaived: [String] = []
         var waived: [[String: Any]] = []
-        let sheetFrame: CGRect? = app.sheets.firstMatch.exists ? app.sheets.firstMatch.frame : nil
+        let sheet: XCUIElement? = app.sheets.firstMatch.exists ? app.sheets.firstMatch : nil
+        let sheetFrame: CGRect? = sheet?.frame
         let inspector = app.descendants(matching: .any).matching(identifier: "ww.inspector").firstMatch
         let inspectorFrame: CGRect? = inspector.exists ? inspector.frame : nil
         // The Episode inspector (not Show Info) is showing when its Title field exists.
@@ -261,6 +326,9 @@ enum AcceptanceAudit {
             if let rationale = structuralWaiver(for: issue) {
                 waived.append(["finding": description, "rationale": rationale, "kind": "structural"])
                 print("AUDIT WAIVED \(description) — \(rationale)")
+            } else if let rationale = additionalWaiver?(issue) {
+                waived.append(["finding": description, "rationale": rationale, "kind": "test-scoped"])
+                print("AUDIT WAIVED \(description) — \(rationale)")
             } else if issue.auditType == .contrast, let element = issue.element {
                 contrast.append((element, description))
                 issueFor.append(issue)
@@ -270,16 +338,12 @@ enum AcceptanceAudit {
             return true
         }
         // Audits of large trees can time out (XCTest error -56); run contrast separately and retry once.
+        // Findings are retained in `unwaived`/`contrast` across both attempts, never retried away.
         func audit(_ kinds: XCUIAccessibilityAuditType) throws {
-            do {
-                try app.performAccessibilityAudit(for: kinds, handle)
-            } catch let error as NSError where error.code == -56 {
-                print("AUDIT \(surface): timed out once for \(kinds); retrying")
-                try app.performAccessibilityAudit(for: kinds, handle)
-            }
+            try perform(app, kinds: kinds, surface: surface, test: test, handling: handle)
         }
-        try audit(types.subtracting(.contrast))
-        try audit(.contrast)
+        try audit(kinds.subtracting(.contrast))
+        if kinds.contains(.contrast) { try audit(.contrast) }
         for (index, (element, description)) in contrast.enumerated() {
             let shot = element.exists ? element.screenshot() : nil
             let measured = shot.flatMap { ContrastMeter.measure($0.image) }
@@ -287,8 +351,10 @@ enum AcceptanceAudit {
             if let shot { Acceptance.attach(test, png: shot.pngRepresentation, name: crop) }
             var stats: [String: Any] = measured.map { m in ["glyphPixels": m["glyphPixels"] ?? 0, "glyphP75": m["glyphP75"] ?? 0, "max": m["ratio"] ?? 0] } ?? [:]
             stats["crop"] = crop
-            let mid = CGPoint(x: element.frame.midX, y: element.frame.midY)
-            let inSheet = sheetFrame?.contains(mid) ?? false
+            // In the sheet by AX membership, not by geometry: window content lying under the sheet's rectangle isn't
+            // the sheet's text (its screenshot shows the sheet's pixels; M1 gate cdb56bd, T23 D7). `.contrast` is
+            // enforced on the sheet's own elements, the surface being audited.
+            let inSheet = sheet.map { Self.isDescendant(element, of: $0) } ?? false
             // Occluded: the element belongs (by AX hierarchy) to a window behind another app window that overlaps
             // it (AX lists windows front to back). Its screenshot shows the front window's pixels, so nothing can be
             // measured here; recorded, and that window is audited while frontmost (as the C03 test does). An
@@ -300,7 +366,7 @@ enum AcceptanceAudit {
                 print("AUDIT WAIVED \(description) — occluded by a window in front; measured (front pixels) \(stats)")
                 continue
             }
-            if let sheetFrame, element.exists, !sheetFrame.contains(mid) {
+            if sheetFrame != nil, element.exists, !inSheet {
                 waived.append(["finding": description, "kind": "behind-modal-sheet", "measured": stats,
                                "rationale": "window content dimmed behind a modal sheet; that surface is audited without the sheet"])
                 print("AUDIT WAIVED \(description) — dimmed behind a modal sheet; measured \(stats)")
@@ -333,7 +399,7 @@ enum AcceptanceAudit {
             }
         }
         Acceptance.writeEvidence("audit-\(surface.replacingOccurrences(of: " ", with: "_"))", [
-            "surface": surface, "unwaived": unwaived, "waived": waived,
+            "surface": surface, "unwaived": unwaived, "waived": waived, "contrastAudited": kinds.contains(.contrast),
         ], test: test)
         print("AUDIT \(surface): \(unwaived.isEmpty ? "no unwaived issues" : "\(unwaived.count) unwaived issue(s)"); \(waived.count) waived (recorded)")
         return unwaived
@@ -343,17 +409,44 @@ enum AcceptanceAudit {
     /// identifier (or label and value when there is none) and frame. Geometry alone is not enough: a cell partly
     /// clipped at the front window's edge can lie wholly inside a larger window behind it.
     @MainActor
-    static func owningWindowIndex(of element: XCUIElement, in windows: [XCUIElement]) -> Int? {
+    /// Whether `element` is in `container`'s AX hierarchy (same type, identifier or label and value, and frame).
+    static func isDescendant(_ element: XCUIElement, of container: XCUIElement) -> Bool {
         let frame = element.frame
-        let predicate: NSPredicate = element.identifier.isEmpty
+        return container.descendants(matching: element.elementType).matching(sameElement(element)).allElementsBoundByIndex.contains { $0.frame == frame }
+    }
+
+    /// Matches `element` by identifier, or by label and value when it has none (a fresh predicate per query).
+    static func sameElement(_ element: XCUIElement) -> NSPredicate {
+        element.identifier.isEmpty
             ? NSPredicate(format: "label == %@ AND value == %@", element.label, (element.value as? String) ?? "")
             : NSPredicate(format: "identifier == %@", element.identifier)
+    }
+
+    static func owningWindowIndex(of element: XCUIElement, in windows: [XCUIElement]) -> Int? {
+        let frame = element.frame
         for (index, window) in windows.enumerated() {
-            let candidates = window.descendants(matching: element.elementType).matching(predicate).allElementsBoundByIndex
+            let candidates = window.descendants(matching: element.elementType).matching(sameElement(element)).allElementsBoundByIndex
             if candidates.contains(where: { $0.frame == frame }) { return index }
         }
         return nil
     }
+
+    /// Source file names in the frozen M1 golden shows (`ShowSchema1Fixtures`, F-OLDER), read from their bytes.
+    static let goldenFixtureFileNames: Set<String> = {
+        var names: Set<String> = []
+        func collect(_ value: Any) {
+            if let object = value as? [String: Any] {
+                if let name = object["displayNameHint"] as? String { names.insert(name) }
+                object.values.forEach(collect)
+            } else if let array = value as? [Any] {
+                array.forEach(collect)
+            }
+        }
+        for bytes in [ShowSchema1Fixtures.placeholderOnly, ShowSchema1Fixtures.statedChannels, ShowSchema1Fixtures.mixed] {
+            if let object = try? JSONSerialization.jsonObject(with: bytes) { collect(object) }
+        }
+        return names
+    }()
 
     static func structuralWaiver(for issue: XCUIAccessibilityAuditIssue) -> String? {
         guard let element = issue.element else { return nil }
@@ -362,10 +455,13 @@ enum AcceptanceAudit {
         if issue.auditType == .action, element.elementType == .popUpButton { return "system pop-up button exposes AXShowMenu" }
         // Since #112 the Setup Name cell's label is the source's file name (the visible name, IA §5) and its value
         // carries the hidden columns; the audit's heuristic calls a file name "not human-readable". Scoped to Name
-        // cells of the synthetic fixtures (`synthetic-N.wav`, fixture-states `trN.wav`), where the label is verifiably the file's name.
+        // cells of the synthetic fixtures (`synthetic-N.wav`, fixture-states `trN.wav`) and of the frozen M1 golden shows
+        // (F-OLDER, #159), where the label is verifiably the file's name. This is the M2 baseline's "Setup source-name
+        // cells" artefact class (docs/m2/evidence/m2-gui-baseline.md).
         if issue.auditType == .sufficientElementDescription, element.elementType == .staticText,
            element.identifier.range(of: #"^ww\.setup\.source\.[0-9A-F-]{36}$"#, options: .regularExpression) != nil,
-           element.label.range(of: #"^(synthetic-[0-9]+|tr[0-9]+)\.wav$"#, options: .regularExpression) != nil {
+           element.label.range(of: #"^(synthetic-[0-9]+|tr[0-9]+)\.wav$"#, options: .regularExpression) != nil
+            || goldenFixtureFileNames.contains(element.label) {
             return "Setup Name cell labelled with the source's file name '\(element.label)' (the visible name; heuristic finding)"
         }
         if element.elementType == .popUpButton, element.label == "emoji & symbols" { return "system input item, not app UI" }

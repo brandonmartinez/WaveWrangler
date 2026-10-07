@@ -6,6 +6,18 @@ import XCTest
 /// keyboard only. F-OLDER is the frozen M1 golden bytes (`ShowSchema1Fixtures`, shared with the package tests);
 /// F-OLDER-BAD is the same bytes with the payload changed under its checksum. The D15 case forces the migration to fail
 /// after its backup is kept (`-WWUITestFailFormatUpdate YES`, Debug only). Every case checks the file's bytes.
+///
+/// Keyboard only (C01), with one limit (as `LibraryLocationUITests` and `OfflineSaveKeyboardUITests`): Tab reaches
+/// message-bar and popover buttons, and buttons take keyboard focus, only with the system Full Keyboard Access
+/// ("Keyboard navigation") setting on, which tests never change.
+/// - **On** (the user's C01 run): Tab/Space reach and activate those buttons, and focus is asserted.
+/// - **Off** (agent and Mac mini runs): only those steps use XCUITest element actions, each recorded as **Not run
+///   (needs Full Keyboard Access)** in `format-update-keyboard-navigation` evidence. Return, Esc and ⌘R stay key
+///   events, and every outcome check (prompt, disk bytes, schema, status, bar) stays a hard check either way.
+///
+/// Audits follow the M2 baseline (docs/m2/evidence/m2-gui-baseline.md): `.contrast` is enforced on the blocked and
+/// recovery surfaces (the prompt, read-only window, failure bar and details, status popover, damaged-file refusal);
+/// the updated, editable show window gets the essential set.
 @MainActor
 final class FormatUpdateUITests: XCTestCase {
     /// `SchemaVersion.show` (the UI test bundle doesn't link WaveWranglerKit): 3 since WW-020.
@@ -13,6 +25,12 @@ final class FormatUpdateUITests: XCTestCase {
     private var app: XCUIApplication!
     private var workDirectory: URL!
     private var findings: [String] = []
+    /// Steps not run as key events because the system keyboard navigation setting is off.
+    private var needsKeyboardNavigation: [String] = []
+
+    /// The system Full Keyboard Access / "Keyboard navigation" setting (`AppleKeyboardUIMode` bit 2, global domain).
+    private static let keyboardNavigation = UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0
+    private static let bundleIdentifier = "com.brandonmartinez.wavewrangler"
 
     override func setUp() async throws {
         continueAfterFailure = true
@@ -25,6 +43,13 @@ final class FormatUpdateUITests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        if app != nil {
+            let run = testRun
+            let outcome = run?.hasBeenSkipped == true ? "skipped" : (run?.totalFailureCount ?? 0) == 0 ? "passed" : "failed"
+            Acceptance.writeEvidence("format-update-keyboard-navigation-\(name.replacingOccurrences(of: " ", with: "_"))",
+                                     ["outcome": outcome, "keyboardNavigation": Self.keyboardNavigation,
+                                      "notRunNeedsFullKeyboardAccess": Array(Set(needsKeyboardNavigation)).sorted()], test: self)
+        }
         if let app, app.state != .notRunning { app.terminate() }
         if let workDirectory { try? FileManager.default.removeItem(at: workDirectory) }
     }
@@ -49,7 +74,7 @@ final class FormatUpdateUITests: XCTestCase {
             if showInfo.waitForExistence(timeout: 5) { showInfo.click() }
             let title = window.textFields["Show title"]
             check(title.waitForExistence(timeout: 5) && title.isEnabled, "the updated show is editable")
-            try audit("T21 updated show window")
+            try audit("T21 updated show window", types: AcceptanceAudit.essentialTypes)   // editable: not a blocked surface
         }
     }
 
@@ -77,8 +102,26 @@ final class FormatUpdateUITests: XCTestCase {
             check(window.exists, "the window stays open")
             let status = element("ww.show.saveStatus")
             check(Acceptance.waitFor(timeout: 5) { self.value(status).hasPrefix("Read-only") }, "status Read-only: \(value(status))")
+            try audit("T21 read-only window")
             let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
-            if showInfo.waitForExistence(timeout: 5) { showInfo.click() }
+            if showInfo.waitForExistence(timeout: 5) {
+                showInfo.click()
+                let inspector = window.descendants(matching: .any).matching(identifier: "ww.inspector").firstMatch
+                try audit("T21 read-only Show Info") { issue in
+                    guard issue.auditType == .contrast, let flagged = issue.element,
+                          flagged.elementType == .staticText, !flagged.isEnabled,
+                          inspector.exists, AcceptanceAudit.isDescendant(flagged, of: inspector),
+                          let text = flagged.value as? String,
+                          (text.hasPrefix("WaveWranglerFormatUpdate-") || text.hasPrefix("WaveWrangler needs to update this show")) else { return nil }
+                    let shot = flagged.screenshot()
+                    let measurement = ContrastMeter.measure(shot.image)
+                    guard AcceptanceAudit.passesGlyphContrast(measurement) else { return nil }
+                    let crop = text.hasPrefix("WaveWranglerFormatUpdate-")
+                        ? "inactive-show-info-location.png" : "inactive-show-info-save-status.png"
+                    Acceptance.attach(self, png: shot.pngRepresentation, name: crop)
+                    return "AX-disabled Show Info \(crop), \(measurement?["glyphPixels"] ?? 0) glyph pixels, p75 \(measurement?["glyphP75"] ?? 0):1; WCAG 1.4.3 excludes inactive UI components"
+                }
+            }
             let title = window.textFields["Show title"]
             check(title.waitForExistence(timeout: 5) && title.value as? String == "Mixed Show", "the older content is shown: \(title.value ?? "nil")")
             check(!title.isEnabled, "the title can't be edited")
@@ -91,7 +134,6 @@ final class FormatUpdateUITests: XCTestCase {
             app.typeKey("s", modifierFlags: .command)
             Thread.sleep(forTimeInterval: 3)   // past the autosave delay
             check((try? Data(contentsOf: document)) == original, "nothing is written: the file is byte-unchanged")
-            try audit("T21 read-only window")
         }
     }
 
@@ -129,12 +171,12 @@ final class FormatUpdateUITests: XCTestCase {
             check(tryAgain.exists && details.exists, "Try Again and Show Details: \(bar.buttons.allElementsBoundByIndex.map(\.title))")
             try audit("T21 D15 failure bar")
             // Keyboard: Tab to Try Again and press Space; the forced failure repeats and nothing changes.
-            check(tabTo(tryAgain), "Tab reaches Try Again")
-            app.typeKey(" ", modifierFlags: [])
+            activate(tryAgain, "Try Again in the failure bar", task: "T21-D15")
             Thread.sleep(forTimeInterval: 2)
             check(bar.exists && (try? Data(contentsOf: document)) == original, "Try Again fails again, original unchanged")
-            check(tabTo(details), "Tab reaches Show Details")
-            app.typeKey(" ", modifierFlags: [])
+            check((texts(in: bar) + [bar.label]).contains("Couldn't update this show") && value(status).hasPrefix("Read-only"),
+                  "still the failure bar and read-only: \(value(status))")
+            activate(details, "Show Details in the failure bar", task: "T21-D15")
             let detailsSheet = app.sheets.firstMatch
             check(detailsSheet.waitForExistence(timeout: 5), "Show Details explains the failure")
             check(texts(in: detailsSheet).contains { $0.contains("simulated failure") && $0.contains("The original file is unchanged.") },
@@ -155,6 +197,18 @@ final class FormatUpdateUITests: XCTestCase {
             app.typeKey("r", modifierFlags: .command)
             check(Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists }, "⌘R dismisses the prompt")
             let status = element("ww.show.saveStatus")
+            let sourceStatus = app.staticTexts.matching(
+                NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status'")
+            ).matching(NSPredicate(format: "value BEGINSWITH 'Needs permission'")).firstMatch
+            check(sourceStatus.waitForExistence(timeout: 5), "the Needs permission source status is visible")
+            let sourceShot = sourceStatus.exists ? sourceStatus.screenshot() : nil
+            let unobscured = sourceShot.flatMap { ContrastMeter.measure($0.image) }
+            if let sourceShot {
+                Acceptance.attach(self, png: sourceShot.pngRepresentation, name: "T21-needs-permission-unobscured.png")
+            }
+            Acceptance.writeEvidence("T21-needs-permission-unobscured", unobscured ?? [:], test: self)
+            check(AcceptanceAudit.passesGlyphContrast(unobscured),
+                  "unobscured Needs permission status meets 40 glyph px and p75 4.5:1: \(unobscured ?? [:])")
             // View › Show Save Status (as T27); keyboard focus starts on the popover's first action.
             app.menuBars.menuBarItems["View"].click()
             let showStatus = app.menuBars.menuItems["Show Save Status"]
@@ -162,11 +216,48 @@ final class FormatUpdateUITests: XCTestCase {
             showStatus.click()
             let popover = app.popovers.firstMatch
             check(popover.waitForExistence(timeout: 5), "the status popover opens")
+            Acceptance.writeEvidence("T21-needs-permission-popover-geometry", [
+                "status": "\(sourceStatus.frame)", "popover": "\(popover.frame)",
+                "overlaps": sourceStatus.frame.intersects(popover.frame),
+            ], test: self)
             let update = popover.buttons["Update…"]
             check(update.exists, "Update… is offered: \(popover.buttons.allElementsBoundByIndex.map(\.title))")
-            check(update.value(forKey: "hasKeyboardFocus") as? Bool == true, "keyboard focus starts on Update…")
-            try audit("T21 status popover Update…")
-            app.typeKey(" ", modifierFlags: [])
+            try audit("T21 status popover Update…") { issue in
+                guard issue.auditType == .contrast, let flagged = issue.element,
+                      flagged.elementType == .staticText else { return nil }
+                if flagged.identifier.isEmpty, !flagged.isEnabled, self.value(flagged) == "Number",
+                   AcceptanceAudit.isDescendant(flagged, of: popover) {
+                    return "inactive Number field in the read-only save-status popover; WCAG 1.4.3 excludes inactive UI components"
+                }
+                guard flagged.isEnabled, flagged.identifier == sourceStatus.identifier,
+                      sourceStatus.exists, AcceptanceAudit.passesGlyphContrast(unobscured),
+                      flagged.frame.intersects(popover.frame) else { return nil }
+                let obscured = flagged.screenshot()
+                let measurement = ContrastMeter.measure(obscured.image)
+                guard !AcceptanceAudit.passesGlyphContrast(measurement) else { return nil }
+                let fullyCovered = popover.frame.contains(flagged.frame)
+                let exposed = fullyCovered ? [] : self.exposedContrast(of: obscured, frame: flagged.frame,
+                                                                       excluding: popover.frame)
+                guard fullyCovered || (!exposed.isEmpty && exposed.allSatisfy {
+                    AcceptanceAudit.passesGlyphContrast($0.measurement)
+                }) else { return nil }
+                Acceptance.attach(self, png: obscured.pngRepresentation, name: "T21-needs-permission-under-popover.png")
+                Acceptance.writeEvidence("T21-needs-permission-occluded", measurement ?? [:], test: self)
+                for crop in exposed {
+                    Acceptance.attach(self, png: crop.png, name: "T21-needs-permission-exposed-\(crop.name).png")
+                }
+                Acceptance.writeEvidence("T21-needs-permission-exposed", [
+                    "fullyCovered": fullyCovered,
+                    "regions": exposed.map {
+                        ["name": $0.name, "frame": "\($0.frame)",
+                         "glyphPixels": $0.measurement["glyphPixels"] ?? 0,
+                         "glyphP75": $0.measurement["glyphP75"] ?? 0]
+                    },
+                ], test: self)
+                return "enabled source status \(flagged.identifier) measured legible before the popover, then \(fullyCovered ? "fully covered" : "partly covered with every exposed crop still legible") by the popover; current pixels \(measurement?["glyphPixels"] ?? 0) glyph px, p75 \(measurement?["glyphP75"] ?? 0):1"
+            }
+            // Focus starts on the popover's first action (Update…), so Space activates it with keyboard navigation.
+            activate(update, "Update… in the save-status popover", task: "T21-update-later", tabs: 0)
             let sheet = app.sheets.firstMatch
             check(sheet.waitForExistence(timeout: 5), "Update… asks again")
             check(texts(in: sheet).contains("Update “Later” to the current format?"), "prompt title: \(texts(in: sheet))")
@@ -186,26 +277,53 @@ final class FormatUpdateUITests: XCTestCase {
         try task("T21-tabs") {
             launch(["-WWUITestAutosave", "ON", "-WWUITestResetStorage", "YES"], opening: first)
             check(app.windows.matching(identifier: "ww.show.window").firstMatch.waitForExistence(timeout: 10), "the first show opens")
-            // Open the second before answering the first: it opens as the selected tab, the first goes to the background.
-            app.open(second)
+            // Open the second before answering the first; merge the two document windows into native tabs.
+            // Delivered to the running app as Finder does; `XCUIApplication.open` would start a second instance (GUI round 1).
+            let launchedProcessIdentifier = try openInRunningApp(second)
+            // Background tabs may be absent from the AX window list, so wait for the second (selected) tab only.
+            check(Acceptance.waitFor(timeout: 10) { self.app.windows.allElementsBoundByIndex.contains { $0.title.contains("Second Tab") } },
+                  "the second show opens in the app under test: \(app.windows.allElementsBoundByIndex.map(\.title))")
+            let processIdentifiers = waitForSingleAppProcess(launchedProcessIdentifier, timeout: 10)
+            check(processIdentifiers == [launchedProcessIdentifier],
+                  "one app process hosts both documents: expected \(launchedProcessIdentifier), observed \(processIdentifiers), XCUIApplication state \(app.state.rawValue)")
+            guard waitForForegroundApp() else {
+                throw NSError(domain: "FormatUpdate", code: 4,
+                              userInfo: [NSLocalizedDescriptionKey: "the opened app did not become foreground before merging"])
+            }
+            app.menuBars.menuBarItems["Window"].click()
+            let merge = app.menuBars.menuItems["Merge All Windows"]
+            check(merge.exists && merge.isEnabled, "Window › Merge All Windows can group both shows as tabs")
+            if merge.exists && merge.isEnabled { merge.click() }
+            check(nativeTabGroupContains(["First Tab", "Second Tab"]),
+                  "the native tab group contains both First Tab and Second Tab")
             var asked: [String] = []
-            for _ in 0..<6 where asked.count < 2 {
-                let sheet = app.sheets.firstMatch
-                if sheet.waitForExistence(timeout: 5) {
-                    let title = texts(in: sheet).first { $0.hasPrefix("Update “") } ?? "?"
-                    asked.append(title)
-                    app.typeKey("r", modifierFlags: .command)   // Open Read-Only: nothing is written
-                    _ = Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists }
-                } else {
-                    app.typeKey("\t", modifierFlags: .control)   // Window › Show Next Tab
-                }
+            for name in ["Second Tab", "First Tab"] {
+                check(selectTab(named: name), "\(name) is selected through the Window menu")
+                let window = showWindow(named: name)
+                let sheet = window.sheets.firstMatch
+                check(sheet.waitForExistence(timeout: 5), "\(name) shows its own update prompt")
+                recordTabState("initial-\(name)", expected: name)
+                let title = texts(in: sheet).first { $0.hasPrefix("Update “") } ?? "?"
+                check(title == "Update “\(name)” to the current format?", "\(name) owns its prompt: \(title)")
+                check(sheet.isHittable, "\(name)'s prompt is on the selected tab")
+                asked.append(title)
+                let readOnly = sheet.buttons["ww.formatUpdate.openReadOnly"]
+                check(readOnly.isHittable, "\(name)'s Open Read-Only button is available")
+                if readOnly.isHittable { readOnly.click() } // ⌘R is covered separately; clicking keeps the action on this sheet.
+                check(Acceptance.waitFor(timeout: 5) { !self.hasPrompt(named: name) },
+                      "\(name)'s own prompt dismisses after Open Read-Only")
             }
             Acceptance.record(self, "T21 tabs asked: \(asked)")
             check(Set(asked) == ["Update “First Tab” to the current format?", "Update “Second Tab” to the current format?"]
                   && asked.count == 2, "each tabbed show asks exactly once: \(asked)")
             // Selecting each tab again never asks a second time.
-            app.typeKey("\t", modifierFlags: .control)
-            check(!app.sheets.firstMatch.waitForExistence(timeout: 3), "no second prompt after Open Read-Only")
+            for name in ["Second Tab", "First Tab"] {
+                check(selectTab(named: name), "\(name) is selected through the Window menu again")
+                recordTabState("answered-\(name)", expected: name)
+                check(!Acceptance.waitFor(timeout: 3) { self.hasPrompt(named: name) },
+                      "\(name) does not ask a second time after Open Read-Only")
+            }
+            check(app.sheets.count == 0, "no tab has an update prompt after both were answered")
             for (url, original) in originals {
                 check((try? Data(contentsOf: url)) == original, "\(url.lastPathComponent) is byte-unchanged")
             }
@@ -319,17 +437,209 @@ final class FormatUpdateUITests: XCTestCase {
         element.staticTexts.allElementsBoundByIndex.map { ($0.value as? String) ?? $0.label }
     }
 
-    private func tabTo(_ target: XCUIElement, limit: Int = 40) -> Bool {
-        for _ in 0..<limit {
-            if target.exists, target.value(forKey: "hasKeyboardFocus") as? Bool == true { return true }
-            app.typeKey("\t", modifierFlags: [])
-        }
-        return target.exists && target.value(forKey: "hasKeyboardFocus") as? Bool == true
+    private func isFocused(_ element: XCUIElement) -> Bool {
+        element.exists && (element.value(forKey: "hasKeyboardFocus") as? Bool ?? false)
     }
 
-    private func audit(_ surface: String) throws {
-        let unwaived = try AcceptanceAudit.run(app, surface: surface, test: self)
+    private func showWindow(named name: String) -> XCUIElement {
+        app.windows.matching(identifier: "ww.show.window")
+            .matching(NSPredicate(format: "title CONTAINS %@", name)).firstMatch
+    }
+
+    private func hasPrompt(named name: String) -> Bool {
+        app.sheets.allElementsBoundByIndex.contains {
+            texts(in: $0).contains("Update “\(name)” to the current format?")
+        }
+    }
+
+    private func waitForForegroundApp() -> Bool {
+        for _ in 0..<3 {
+            app.activate()
+            if Acceptance.waitFor(timeout: 3, { self.app.state == .runningForeground }) { return true }
+        }
+        return false
+    }
+
+    /// Window-menu items target a document by title, unlike AX window order or `isHittable` (both tabs can be hittable).
+    private func selectTab(named name: String) -> Bool {
+        guard waitForForegroundApp() else { return false }
+        app.menuBars.menuBarItems["Window"].click()
+        let item = windowMenuItem(named: name)
+        guard item.exists && item.isEnabled else { return false }
+        item.click()
+        return Acceptance.waitFor(timeout: 5) { self.showWindow(named: name).exists && self.app.state == .runningForeground }
+    }
+
+    private func windowMenuItem(named name: String) -> XCUIElement {
+        app.menuBars.menuItems.matching(
+            NSPredicate(format: "title == %@ OR title == %@", name, "\(name).wwshow")
+        ).firstMatch
+    }
+
+    /// After Window › Merge All Windows, either the tab bar AX nodes name both documents or the Window menu proves
+    /// the selected document belongs to a native tab group and exposes exact entries for both document names.
+    private func nativeTabGroupContains(_ names: [String]) -> Bool {
+        let window = showWindow(named: names.last ?? "")
+        let tabGroups = window.descendants(matching: .tabGroup).allElementsBoundByIndex
+        let tabs = window.descendants(matching: .tab).allElementsBoundByIndex
+        let tabNames = tabs.flatMap { [$0.title, $0.label, value($0)] }.filter { !$0.isEmpty }
+        let axContainsBoth = names.allSatisfy { name in
+            tabNames.contains { $0 == name || $0 == "\(name).wwshow" }
+        }
+
+        app.menuBars.menuBarItems["Window"].click()
+        let moveTab = app.menuBars.menuItems["Move Tab to New Window"]
+        let menuEntries = names.map { name in
+            let item = windowMenuItem(named: name)
+            return ["name": name, "exists": "\(item.exists)", "title": item.title]
+        }
+        let menuContainsBoth = moveTab.exists && moveTab.isEnabled
+            && names.allSatisfy { windowMenuItem(named: $0).exists }
+        Acceptance.writeEvidence("format-update-T21-native-tab-group", [
+            "tabGroupCount": tabGroups.count,
+            "tabNames": tabNames,
+            "moveTabToNewWindow": ["exists": moveTab.exists, "enabled": moveTab.isEnabled],
+            "windowMenuEntries": menuEntries,
+            "axContainsBoth": axContainsBoth,
+            "windowMenuContainsBoth": menuContainsBoth,
+        ], test: self)
+        app.typeKey(.escape, modifierFlags: [])
+        return axContainsBoth || menuContainsBoth
+    }
+
+    /// Keeps the selected tab and any sheet title in the xcresult so a repeated prompt identifies its document.
+    private func recordTabState(_ phase: String, expected: String) {
+        let windows = app.windows.matching(identifier: "ww.show.window").allElementsBoundByIndex
+        let sheet = showWindow(named: expected).sheets.firstMatch
+        let sheetTexts = sheet.exists ? texts(in: sheet) : []
+        Acceptance.writeEvidence("format-update-T21-tabs-\(phase.replacingOccurrences(of: " ", with: "_"))", [
+            "expectedSelectedTab": expected,
+            "visibleShowWindows": windows.map { ["title": $0.title, "hittable": "\($0.isHittable)",
+                                                   "ownSheet": texts(in: $0.sheets.firstMatch)] },
+            "sheetTexts": sheetTexts,
+        ], test: self)
+    }
+
+    /// Activates `button` by keyboard (Tab until focused, or `tabs` presses, then Space) with keyboard navigation on;
+    /// otherwise with an element action, recorded as needing Full Keyboard Access (see the type comment).
+    private func activate(_ button: XCUIElement, _ step: String, task: String, tabs: Int? = nil) {
+        check(button.waitForExistence(timeout: 3), "\(task): \(step) exists")
+        if Self.keyboardNavigation {
+            if let tabs {
+                for _ in 0..<tabs { app.typeKey("\t", modifierFlags: []) }
+            } else {
+                for _ in 0..<40 where !isFocused(button) { app.typeKey("\t", modifierFlags: []) }
+            }
+            check(isFocused(button), "\(task): keyboard focus reaches \(step)")
+            app.typeKey(" ", modifierFlags: [])
+        } else {
+            needsKeyboardNavigation.append("\(task): Tab/Space to \(step)")
+            button.click()
+        }
+    }
+
+    /// Opens `url` in the app instance under test, as Finder does: LaunchServices delivers it to the running
+    /// instance. `XCUIApplication.open(_:)` on a running app starts a second instance instead.
+    private func openInRunningApp(_ url: URL) throws -> pid_t {
+        let running = waitForRunningApplications(timeout: 10)
+        guard let target = running.max(by: { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) }),
+              let bundleURL = target.bundleURL else {
+            throw NSError(domain: "FormatUpdate", code: 2, userInfo: [NSLocalizedDescriptionKey: "the app under test isn't running"])
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        let opened = expectation(description: "open \(url.lastPathComponent)")
+        let outcome = OpenOutcome()
+        NSWorkspace.shared.open([url], withApplicationAt: bundleURL, configuration: configuration) { _, error in
+            outcome.error = error.map { "\($0)" }
+            opened.fulfill()
+        }
+        wait(for: [opened], timeout: 15)
+        if let error = outcome.error { throw NSError(domain: "FormatUpdate", code: 3, userInfo: [NSLocalizedDescriptionKey: error]) }
+        app.activate()
+        return target.processIdentifier
+    }
+
+    /// NSWorkspace can transiently return no processes from a sandboxed UI-test runner. Empty snapshots never pass:
+    /// poll while XCUIApplication still reports a live process, and require the one surviving bundle process to be
+    /// the process that received the second document.
+    private func waitForSingleAppProcess(_ expected: pid_t, timeout: TimeInterval) -> [pid_t] {
+        var identifiers: [pid_t] = []
+        _ = Acceptance.waitFor(timeout: timeout) {
+            guard self.app.state != .notRunning else {
+                identifiers = []
+                return false
+            }
+            identifiers = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier)
+                .map(\.processIdentifier).sorted()
+            return identifiers == [expected]
+        }
+        Acceptance.writeEvidence("format-update-T21-app-processes", [
+            "expected": expected,
+            "observed": identifiers,
+            "xcuiState": app.state.rawValue,
+        ], test: self)
+        return identifiers
+    }
+
+    private func waitForRunningApplications(timeout: TimeInterval) -> [NSRunningApplication] {
+        var running: [NSRunningApplication] = []
+        _ = Acceptance.waitFor(timeout: timeout) {
+            guard self.app.state != .notRunning else { return false }
+            running = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier)
+            return !running.isEmpty
+        }
+        return running
+    }
+
+    private struct ExposedContrastCrop {
+        let name: String
+        let frame: CGRect
+        let measurement: [String: Any]
+        let png: Data
+    }
+
+    /// Crops the non-overlapped strips from an element screenshot. A partly covered finding is handled only when
+    /// every exposed strip still contains enough rendered glyph pixels at p75 >= 4.5:1.
+    private func exposedContrast(of screenshot: XCUIScreenshot, frame: CGRect,
+                                 excluding cover: CGRect) -> [ExposedContrastCrop] {
+        let overlap = frame.intersection(cover)
+        guard !overlap.isNull, !overlap.isEmpty, overlap != frame,
+              let cg = screenshot.image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              frame.width > 0, frame.height > 0 else { return [] }
+        let regions: [(String, CGRect)] = [
+            ("left", CGRect(x: frame.minX, y: frame.minY, width: overlap.minX - frame.minX, height: frame.height)),
+            ("right", CGRect(x: overlap.maxX, y: frame.minY, width: frame.maxX - overlap.maxX, height: frame.height)),
+            ("top", CGRect(x: overlap.minX, y: frame.minY, width: overlap.width, height: overlap.minY - frame.minY)),
+            ("bottom", CGRect(x: overlap.minX, y: overlap.maxY, width: overlap.width, height: frame.maxY - overlap.maxY)),
+        ].filter { $0.1.width >= 1 && $0.1.height >= 1 }
+        let scaleX = CGFloat(cg.width) / frame.width
+        let scaleY = CGFloat(cg.height) / frame.height
+        let imageBounds = CGRect(x: 0, y: 0, width: cg.width, height: cg.height)
+        return regions.compactMap { name, region in
+            let pixels = CGRect(x: (region.minX - frame.minX) * scaleX,
+                                y: (region.minY - frame.minY) * scaleY,
+                                width: region.width * scaleX, height: region.height * scaleY)
+                .integral.intersection(imageBounds)
+            guard !pixels.isEmpty, let cropped = cg.cropping(to: pixels),
+                  let png = NSBitmapImageRep(cgImage: cropped).representation(using: .png, properties: [:]) else {
+                return nil
+            }
+            let image = NSImage(cgImage: cropped, size: NSSize(width: pixels.width, height: pixels.height))
+            return ExposedContrastCrop(name: name, frame: region,
+                                       measurement: ContrastMeter.measure(image) ?? [:], png: png)
+        }
+    }
+
+    /// Audits, then brings the app back to the front: an audit can take minutes, and on the Mac mini (GUI round 1) the
+    /// app was no longer frontmost for the next key event.
+    private func audit(_ surface: String, types: XCUIAccessibilityAuditType = AcceptanceAudit.types,
+                       additionalWaiver: ((XCUIAccessibilityAuditIssue) -> String?)? = nil) throws {
+        let unwaived = try AcceptanceAudit.run(
+            app, surface: surface, test: self, types: types, additionalWaiver: additionalWaiver
+        )
         for finding in unwaived { findings.append("AUDIT \(finding)") }
+        app.activate()
     }
 
     private func envelope(_ url: URL) -> [String: Any]? {
@@ -353,4 +663,9 @@ final class FormatUpdateUITests: XCTestCase {
             return channel["state"] as? String == "known" ? "known:\(channel["value"] as? Int ?? -1)" : "\(channel["state"] ?? "?")"
         }
     }
+}
+
+/// The open's result, written once by NSWorkspace's completion handler before the expectation it waits on is fulfilled.
+private final class OpenOutcome: @unchecked Sendable {
+    var error: String?
 }

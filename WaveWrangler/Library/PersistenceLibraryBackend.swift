@@ -14,6 +14,7 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
     @ObservationIgnored let store: LibraryDocumentStore
     @ObservationIgnored let controller: LibraryLocationController
     private(set) var resultMessage: String?
+    private(set) var lastActionPublished = false
     /// The running move's step, reported by the store (ST-33 step 3).
     private(set) var moveStep: LibraryMoveStep?
 
@@ -222,16 +223,21 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
     @ObservationIgnored private var offeredFolder: URL?
 
     func perform(_ action: LibraryLevelAction) async -> LibraryActionFollowUp {
+        lastActionPublished = false
         switch action {
         case .tryAgain:
             await store.retryPendingEdits()
+            lastActionPublished = LibraryFailureMessage.published(store.lastPendingOutcome)
             await controller.reload()
         case .combine:
             await store.resolveConflictByCombining()
+            lastActionPublished = store.lastError == nil
             if let summary = store.lastMergeSummary { resultMessage = Self.combineMessage(summary) }
         case .useOtherMacsVersion:
             await store.resolveConflictUsingOtherVersion()
             await controller.reload()
+            // The on-disk version is adopted; this Mac's version (with the edit that failed) is kept as a backup.
+            lastActionPublished = store.levelState == .ready
             resultMessage = "Using the other Mac's library. This Mac's version was kept as a backup copy."
         case .grantAccess:
             let panel = NSOpenPanel()
@@ -247,6 +253,7 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
             guard await panel.begin() == .OK, let url = panel.url else { return .none }
             await controller.regrantAccess(to: url)
             guard let outcome = controller.lastRegrantOutcome else { return .none }
+            lastActionPublished = LibraryFailureMessage.published(outcome)
             let result = Self.map(outcome)
             // Outcomes carry the library file URL; Use That Library needs the folder the user chose.
             if case .differentLibrary = outcome { offeredFolder = url }
@@ -254,7 +261,7 @@ final class PersistenceLibraryBackend: LibraryPersisting, LibraryLocationControl
             return LibraryRegrantWording.followUp(for: result)
         case .recoverEarlierVersion:
             if case .damaged(let revisions) = store.levelState, let newest = revisions.max() {
-                _ = await store.recover(revision: newest)
+                lastActionPublished = await store.recover(revision: newest)
                 await controller.reload()
             }
         case .librarySettings:

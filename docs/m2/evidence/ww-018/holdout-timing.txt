@@ -1,0 +1,1 @@
+WW-018 timing: 6 ch x 60s @48k a=1.0001: 34.92 s wall (1.7x real time), chunks 704, resident peak 38.5 MiB, renderer working set 198632 bytes, peak window 4159 frames

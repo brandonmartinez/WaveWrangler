@@ -33,6 +33,8 @@ Packages/WaveWranglerKit/         Local Swift package linked by the app
                                   WWTimeMap proposals/unsupported maps out; no I/O, never approves a clock)
   Sources/WWDerived/              Versioned map history/acceptance, M2-C5 derived-asset keys, app-cache asset store,
                                   cancellable job coordinator, consent-gated decoded-content digest (WW-020)
+  Sources/WWAlignSegment/         Pure discontinuity segmenter (WW-017): splits a recorder group at offset steps/slope
+                                  changes into per-epoch GroupTimeMaps; brackets stay unsupported; never approves a clock
   Sources/WWRender/               Pure group renderer (WW-018 candidate SRC): one GroupTimeMap transform for every
                                   same-group channel, exact plan + Kaiser-windowed sinc, bounded chunks; never opens files
   Sources/WWOrganizer/            Library/workspace presentation: wording catalogs, preference keys,
@@ -66,6 +68,7 @@ Parallel sessions work on disjoint folders. Cross-folder changes go through the 
 | `WWDecode` | Mac (WW-050) | Only `SystemSourceContentIO.swift` may open source content, read-only (`ForbiddenAPITests` enforces this, recursively). No writes, no dataless materialization, no partial publication on failure or cancel. Bump `formatInterpretationVersion` whenever the interpretation of the same bytes changes. Envelope evidence: [`docs/m2/evidence/ww-050-decode-envelope.md`](../m2/evidence/ww-050-decode-envelope.md). |
 | `WWAlignEstimate` | Alignment (WW-016/WW-021) | Pure: imports only Foundation, WWCore and WWTimeMap; no file/content/decode APIs, no Accelerate, and no clock-approval surface (`EstimatorPurityTests`). Emits only `acousticConsistentProposal` or a typed abstention; audio alone cannot tell propagation delay from clock change, so it never produces `clockApproved`. Scores are not probabilities, and the vocabulary scan bans such wording. Calibration and the frozen holdout definition: [`docs/m2/evidence/ww-016-estimator-calibration.md`](../m2/evidence/ww-016-estimator-calibration.md), [`docs/m2/fixtures/m2-freeze-estimator.json`](../m2/fixtures/m2-freeze-estimator.json). |
 | `WWDerived` | Mac (WW-020) | Versioned maps are append-only revisions with one accepted pointer, embedded in the show (`Episode.alignment`, strict canonical `WWTimeMap` JSON, re-validated on open and save). Derived assets live only in the app cache: `DerivedAssetStore` refuses roots in or containing a source folder (canonical, case-folded paths; only exactly the user `~/Library` is exempt) and roots in iCloud Drive, `~/Library/CloudStorage` or any ubiquitous location. Assets are keyed by every M2-C5 component, and publish only after a currency check in the same coordinator turn (late results are discarded). The owner calls `DerivedJobCoordinator.shutdown()` before releasing source access: it cancels every job, refuses later submits and returns once no job runs; releasing the coordinator also cancels its jobs. Content digests need an explicit per-source request and availability ON, and go through `SourceDecoder` only. `ForbiddenAPITests` confines file mutation to `DerivedAssetStore.swift` and hashing to `DerivedAssetKey.swift`/`ContentDigest.swift`. |
+| `WWAlignSegment` | Alignment (WW-017) | Pure: imports only Foundation, `WWCore`, `WWTimeMap` and `WWAlignEstimate` (public API only; the estimator stays frozen under `m2-freeze-estimator`). `SegmentPurityTests` and the repo-wide scan ban file/content/decode APIs, random/UUID/shuffle/hashing APIs (epoch IDs are minted at exactly two counted sites), wall clocks, concurrency, `clockApproved` and probability wording. Every region is its own epoch: mapped regions are `acousticConsistentProposal`, and anything not localised to the WW-016 gate stays a typed unsupported region (no inverse). It never fits one map across a detected jump. Revision 2 requires time-persistent fitted runs before declaring a boundary; the rev-1 failed holdout remains recorded. Calibration harness concurrency is capped by `WW_SEGMENT_MAX_CONCURRENCY` (default 4, may only lower). CI runs only the gated calibration (`WW_SEGMENT_SWEEPS=0`); the floor and edge-silence sweeps run in local `scripts/test.sh`. Evidence and frozen revision: [`docs/m2/evidence/ww-017-discontinuities.md`](../m2/evidence/ww-017-discontinuities.md), [`docs/m2/fixtures/m2-freeze-discontinuity-2.json`](../m2/fixtures/m2-freeze-discontinuity-2.json). |
 | `WWRender` | Alignment (WW-018) | Pure: imports only Foundation, `WWCore` and `WWTimeMap` (`RenderPurityTests` plus the repo-wide `ForbiddenAPITests` scan). Consumes plain decoded buffers through `RenderSampleProvider`; applies no gain, mix, proxy or stretch. It plans from `GroupTimeMap` inverses and never redefines their conventions. Bump `RenderVersions.renderer` (or `RenderRecipe.currentVersion` / `RenderVersions.outputAssetFormat`) whenever the same inputs would render or lay out differently. The SRC is a calibrated **candidate**, not qualified. Listening is blocked. Calibration and the frozen holdout definition: [`docs/m2/evidence/ww-018-render-calibration.md`](../m2/evidence/ww-018-render-calibration.md), [`docs/m2/fixtures/m2-freeze-render.json`](../m2/fixtures/m2-freeze-render.json). |
 | Planned (M2) | — | `WWTimeMap` (WW-015) adds its row through its own lane. See [`docs/m2/ww-019-m2-contracts.md`](../m2/ww-019-m2-contracts.md). Each lane adds its own row here when its module merges. |
 | `.github/workflows/ci.yml`, `scripts/` | Mac (app foundation) | Keep scripts working for every lane. |
@@ -74,6 +77,7 @@ Pure domain logic belongs in the package (testable without the app); the app tar
 integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depends on `WWCore` and
 `WWSources` (scoped access); `WWPersistence` also depends on `WWTimeMap` (embedded map validation);
 `WWAlignEstimate` and `WWRender` depend on `WWCore` and `WWTimeMap`;
+`WWAlignSegment` depends on `WWCore`, `WWTimeMap` and `WWAlignEstimate`;
 `WWDerived` depends on `WWCore`, `WWTimeMap`, `WWSources`, `WWDecode` and `WWPersistence`; nothing depends on the app.
 
 ## Selected M1 contracts (implemented behind swappable seams)
@@ -179,12 +183,17 @@ without checking the CI image.
 ```sh
 scripts/build.sh            # xcodebuild build, Debug, ad-hoc signed, -jobs 4, DerivedData in .build/
 scripts/build.sh Release
-scripts/test.sh             # swift test (package, --jobs 4), serialized estimator, timing and render calibration passes, then xcodebuild test -only-testing:WaveWranglerTests
+scripts/test.sh             # swift test (package, --jobs 4), serialized estimator, segment, timing and render calibration passes, then xcodebuild test -only-testing:WaveWranglerTests
 scripts/test.sh --package-only
 scripts/test.sh --ui        # XCUITests only (launches the app); needs GUI permission + the coordinator's GUI lock
 ```
 
 Environment overrides: `WW_JOBS` (default 4) and `WW_DERIVED_DATA` (default `.build/DerivedData`).
+`WW_SEGMENT_SWEEPS` selects the WW-017 segment pass. `1` runs calibration, the floor sweep and edge silence; `0` runs
+calibration only. It defaults to `1` locally and to `0` when `CI=true`; the CI workflow also sets `0` explicitly, to
+keep the job well inside its timeout. With the sweeps off, the always-on cheap test
+`committedRecordsReproduceTheReportedCalibration` still re-checks the committed floor and edge-silence records. Run
+the full `scripts/test.sh` locally before handoff so the sweeps themselves run.
 All outputs live under the gitignored `.build/` inside your worktree.
 
 Settings: macOS 26.0 deployment target, arm64 only, Swift 6 language mode with complete strict

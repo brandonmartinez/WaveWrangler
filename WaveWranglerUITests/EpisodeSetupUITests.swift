@@ -20,8 +20,9 @@ final class EpisodeSetupUITests: XCTestCase {
             "-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
             "-WWUITestCenterWindows", "YES", "-WWUITestOpenShow", "Setup Fixture", "-WWUITestShowEpisodes", "1",
         ]
-        // T30 Off half: "Download sources automatically" off for this launch (argument domain).
-        if name.contains("DownloadsOff") { app.launchArguments += ["-WWDownloadSourcesAutomatically", "NO"] }
+        // T30 Off half: "Download sources automatically" off for this launch. (A plain
+        // `-WWDownloadSourcesAutomatically NO` argument is a string, which the Bool preference ignores.)
+        if name.contains("DownloadsOff") { app.launchArguments += ["-WWUITestDownloadSources", "OFF"] }
         app.launch()
         app.activate()
         try openSetup()
@@ -55,13 +56,7 @@ final class EpisodeSetupUITests: XCTestCase {
     }
 
     private func menu(_ path: String...) {
-        var item = app.menuBars.menuBarItems[path[0]]
-        item.click()
-        for title in path.dropFirst() {
-            item = item.menuItems[title].firstMatch
-            XCTAssertTrue(item.waitForExistence(timeout: 2), "menu item \(title)")
-            item.click()
-        }
+        XCTAssertTrue(app.chooseMenu(path, timeout: 3), "menu \(path.joined(separator: " › "))")
     }
 
     private func importFixture() {
@@ -481,7 +476,7 @@ final class EpisodeSetupUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(column.width, 95, "\(context): Status column keeps its minimum width (\(column))")
             XCTAssertLessThanOrEqual(column.maxX, outline.frame.maxX + 1, "\(context): no horizontal overflow (\(column) vs \(outline.frame))")
         }
-        // Ten cycles: the invariant holds every time, and any drift converges (bounded, not compounding).
+        // Ten cycles: the invariant holds every time, and the layout doesn't compound (see below).
         var offsets: [Double] = []
         var widths: [Double] = []
         // Each cycle crosses a column tier (#129): at the default size Epoch and Ch are hidden (their values
@@ -503,8 +498,15 @@ final class EpisodeSetupUITests: XCTestCase {
         summary.name = "zoom cycles"
         summary.lifetime = .keepAlways
         add(summary)
-        func spread(_ values: ArraySlice<Double>) -> Double { values.max()! - values.min()! }
-        XCTAssertLessThanOrEqual(spread(offsets.suffix(3)), spread(offsets.prefix(3)) + 20, "drift converges: \(offsets)")
+        // AppKit settles the zoomed columns in one of two layouts (Status x ≈ 895–925 or ≈ 957–979 on a
+        // 1101 pt table; 7 runs on 2 hosts, range ≤ 84.5 pt, no trend), so comparing the first and last
+        // three cycles depended on which layout came first. Compounding grows without bound: the whole
+        // range stays within 100 pt, and the last cycle lands within the first five cycles' range ± 20 pt.
+        func range(_ values: ArraySlice<Double>) -> ClosedRange<Double> { values.min()!...values.max()! }
+        let all = range(offsets[...])
+        XCTAssertLessThanOrEqual(all.upperBound - all.lowerBound, 100, "no compounding across zooms: \(offsets)")
+        let early = range(offsets.prefix(5))
+        XCTAssertTrue((early.lowerBound - 20...early.upperBound + 20).contains(offsets.last!), "last cycle within the early range: \(offsets)")
         select("tr2.wav")
 
         // #104: columns follow the width plan only; the header offers no show/hide/reorder menu.
@@ -652,11 +654,14 @@ final class EpisodeSetupUITests: XCTestCase {
 
     /// Keyboard only: from the imported multi-selection, ↓ selects one row, then ↑ until the details show
     /// `name`.
+    /// Gives the Sources table keyboard focus with one click on its first source row (the import's
+    /// programmatic multi-selection has no keyboard anchor, so a first ↓ clears it instead of moving), then
+    /// moves with real ↓ key events until the details show `name`, one row selected after every key.
     private func selectWithKeys(_ name: String) {
-        app.typeKey(XCUIKeyboardKey.downArrow.rawValue, modifierFlags: [])
-        XCTAssertTrue(waitForOutline("1 selected"), "↓ selects one row")
+        select("tr1.wav")
         for _ in 0..<12 where !inspectorName.contains(name) {
-            app.typeKey(XCUIKeyboardKey.upArrow.rawValue, modifierFlags: [])
+            app.typeKey(XCUIKeyboardKey.downArrow.rawValue, modifierFlags: [])
+            XCTAssertTrue(waitForOutline("1 selected"), "↓ keeps one row selected")
         }
         XCTAssertTrue(inspectorName.contains(name), "selected \(name) with the keyboard (details show \(inspectorName))")
     }
@@ -682,7 +687,8 @@ final class EpisodeSetupUITests: XCTestCase {
 
         print("[phase] begin t30-on-reconnect \(Date().timeIntervalSince1970)")
         simulateNetwork(offline: false)
-        XCTAssertTrue(waitForStatusCount("Downloading…", 3, timeout: 3), "requested again automatically: Downloading…")
+        // Status cells expose their spoken value ("Downloading, progress unknown" for the visual "Downloading…").
+        XCTAssertTrue(waitForStatusCount("Downloading, progress unknown", 3, timeout: 3), "requested again automatically: Downloading…")
         XCTAssertEqual(statusCount("No connection"), 0)
         XCTAssertTrue(attentionCount(4), "attention count drops once (7 → 4)")
         XCTAssertTrue(waitForStatusCount("Ready", 5), "then Ready (2 + 3), with no user action")
