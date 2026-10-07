@@ -12,7 +12,8 @@ DEFAULT_LEASE_MINUTES=30
 MAX_LEASE_MINUTES=45
 WARN_SECONDS=1800
 ACQUIRING_GRACE_SECONDS=120
-GUARD_TTL_SECONDS="${GUI_LOCK_GUARD_TTL_SECONDS:-10}"
+GUARD_CREATION_GRACE_SECONDS=5
+LEGACY_HARD_MAX_SECONDS=2700
 CLASSES="required pr full perf"
 
 mkdir -p "$ROOT" "$QUEUE"
@@ -43,15 +44,12 @@ format_duration() {
 }
 
 next_sequence() {
-  sequence_lock="$ROOT/.gui.sequence.lock"
-  while ! mkdir "$sequence_lock" 2>/dev/null; do sleep 1; done
-  trap 'rmdir "$sequence_lock" 2>/dev/null || true' INT TERM
-  sequence=0
+  local sequence=0
+  acquire_guard
   [ -f "$ROOT/.gui.sequence" ] && sequence=$(cat "$ROOT/.gui.sequence")
   sequence=$((sequence + 1))
   printf '%s\n' "$sequence" | atomic_write "$ROOT/.gui.sequence"
-  rmdir "$sequence_lock"
-  trap - INT TERM
+  release_guard
   printf '%012d\n' "$sequence"
 }
 
@@ -71,14 +69,57 @@ first_ticket() {
 }
 
 owner_file() { printf '%s/owner\n' "$1"; }
+reclaim_dead_tickets() {
+  local ticket metadata ticket_pid ticket_suffix recorded_pid reclaimed
+  for ticket in $(tickets_in_order); do
+    metadata="$ticket/ticket"
+    ticket_suffix="${ticket##*/}"
+    ticket_suffix="${ticket_suffix#*-}"
+    case "$ticket_suffix" in owner[0-9]*-*) ;; *) continue;; esac
+    ticket_pid="${ticket_suffix#owner}"
+    ticket_pid="${ticket_pid%%-*}"
+    case "$ticket_pid" in ""|*[!0-9]*) continue;; esac
+    recorded_pid=$(field "$metadata" owner_pid)
+    [ -n "$recorded_pid" ] && [ "$recorded_pid" != "$ticket_pid" ] && continue
+    kill -0 "$ticket_pid" 2>/dev/null && continue
+    acquire_guard
+    recorded_pid=$(field "$metadata" owner_pid)
+    if [ -d "$ticket" ] && { [ -z "$recorded_pid" ] || [ "$recorded_pid" = "$ticket_pid" ]; }; then
+      if ! kill -0 "$ticket_pid" 2>/dev/null; then
+        reclaimed="$ROOT/.gui.ticket.reclaimed-$(now)-$$-$RANDOM"
+        if mv "$ticket" "$reclaimed" 2>/dev/null; then
+          release_guard
+          log "reclaimed ticket=$(basename "$ticket") owner_pid=${ticket_pid:-missing}"
+          rm -rf "$reclaimed"
+          continue
+        fi
+      fi
+    fi
+    release_guard
+  done
+}
+stat_inode() {
+  /usr/bin/stat -f %i "$1" 2>/dev/null || /usr/bin/stat -c %i "$1" 2>/dev/null || echo 0
+}
 acquire_guard() {
+  local guard_pid guard_created guard_age stale_guard guard_inode guard_token
   while :; do
     if mkdir "$GUARD" 2>/dev/null; then
+      guard_inode=$(stat_inode "$GUARD")
+      if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ -n "${GUI_LOCK_TEST_GUARD_PUBLISH_SECONDS:-}" ]; then
+        sleep "$GUI_LOCK_TEST_GUARD_PUBLISH_SECONDS"
+      fi
+      [ "$(stat_inode "$GUARD")" = "$guard_inode" ] || continue
+      guard_token="$$-$(now)-$RANDOM"
       {
         printf 'pid=%s\n' "$$"
         printf 'created=%s\n' "$(now)"
+        printf 'token=%s\n' "$guard_token"
       } | atomic_write "$GUARD/owner"
+      [ "$(stat_inode "$GUARD")" = "$guard_inode" ] &&
+        [ "$(field "$GUARD/owner" token)" = "$guard_token" ] || continue
       GUARD_HELD=1
+      GUARD_TOKEN="$guard_token"
       if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ -n "${GUI_LOCK_TEST_GUARD_HOLD_SECONDS:-}" ]; then
         sleep "$GUI_LOCK_TEST_GUARD_HOLD_SECONDS"
       fi
@@ -86,8 +127,14 @@ acquire_guard() {
     fi
     guard_pid=$(field "$GUARD/owner" pid)
     guard_created=$(field "$GUARD/owner" created)
-    guard_age=$(( $(now) - ${guard_created:-0} ))
-    if [ -z "$guard_pid" ] || ! kill -0 "$guard_pid" 2>/dev/null || [ "$guard_age" -ge "$GUARD_TTL_SECONDS" ]; then
+    if [ -z "$guard_pid" ]; then
+      guard_age=$(( $(now) - $(stat_mtime "$GUARD") ))
+      [ "$guard_age" -ge "$GUARD_CREATION_GRACE_SECONDS" ] || { sleep 1; continue; }
+    else
+      kill -0 "$guard_pid" 2>/dev/null && { sleep 1; continue; }
+      guard_age=$(( $(now) - ${guard_created:-$(stat_mtime "$GUARD")} ))
+    fi
+    if [ -d "$GUARD" ]; then
       stale_guard="$ROOT/.gui.lock.guard.stale-$(now)-$$"
       if mv "$GUARD" "$stale_guard" 2>/dev/null; then
         log "reclaimed guard pid=${guard_pid:-missing} age=${guard_age}s"
@@ -100,13 +147,22 @@ acquire_guard() {
 }
 release_guard() {
   [ "${GUARD_HELD:-0}" = 1 ] || return 0
-  [ "$(field "$GUARD/owner" pid)" = "$$" ] || {
+  [ "$(field "$GUARD/owner" token)" = "${GUARD_TOKEN:-}" ] || {
     GUARD_HELD=0
     return 0
   }
   rm -f "$GUARD/owner"
   rmdir "$GUARD" 2>/dev/null || true
   GUARD_HELD=0
+}
+
+legacy_has_xcodebuild() {
+  local child
+  ps -p "$1" -o comm= 2>/dev/null | grep -Eq '(^|/)xcodebuild$' && return 0
+  for child in $(pgrep -P "$1" 2>/dev/null || true); do
+    legacy_has_xcodebuild "$child" && return 0
+  done
+  return 1
 }
 
 owner_is_stale() {
@@ -117,6 +173,25 @@ owner_is_stale() {
   pid=$(field "$owner" pid)
   wrapper_pid=$(field "$owner" wrapper_pid)
   acquired=$(field "$owner" acquired)
+  if [ -z "$(field "$owner" token)" ]; then
+    start=$(field "$owner" start)
+    case "$start" in ""|*[!0-9]*) start=$(stat_mtime "$owner");; esac
+    if [ -z "$pid" ]; then
+      [ $((current - start)) -lt "$ACQUIRING_GRACE_SECONDS" ] && return 1
+      STALE_REASON="legacy owner pid is missing after acquisition grace"
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      STALE_REASON="legacy owner pid $pid is dead"
+      return 0
+    fi
+    if [ $((current - start)) -ge "$LEGACY_HARD_MAX_SECONDS" ] &&
+      ! legacy_has_xcodebuild "$pid"; then
+      STALE_REASON="legacy holder exceeded 45 min without xcodebuild"
+      return 0
+    fi
+    return 1
+  fi
   if [ -z "$pid" ]; then
     if [ -n "$acquired" ] && [ $((current - acquired)) -lt "$ACQUIRING_GRACE_SECONDS" ]; then
       return 1
@@ -155,13 +230,21 @@ kill_recorded_pids() {
 }
 
 reclaim_if_stale() {
+  local old_owner old_token old_snapshot reclaimed lane pids_file
   acquire_guard
+  old_owner=$(owner_file "$LOCK")
+  if [ ! -f "$old_owner" ]; then
+    release_guard
+    return 1
+  fi
+  old_token=$(field "$old_owner" token)
+  old_snapshot=$(cat "$old_owner")
   if ! owner_is_stale; then
     release_guard
     return 1
   fi
-  old_token=$(field "$(owner_file "$LOCK")" token)
-  [ -n "$old_token" ] && [ "$(field "$(owner_file "$LOCK")" token)" = "$old_token" ] || {
+  [ -f "$old_owner" ] && [ "$(field "$old_owner" token)" = "$old_token" ] &&
+    [ "$(cat "$old_owner")" = "$old_snapshot" ] || {
     release_guard
     return 1
   }
@@ -289,9 +372,11 @@ status() {
   if [ -d "$LOCK" ] && [ -f "$(owner_file "$LOCK")" ]; then
     owner=$(owner_file "$LOCK")
     acquired=$(field "$owner" acquired)
+    [ -n "$acquired" ] || acquired=$(field "$owner" start)
+    case "$acquired" in ""|*[!0-9]*) acquired=$(stat_mtime "$owner");; esac
     expires=$(field "$owner" expires)
     age=$((current - acquired))
-    remaining=$((expires - current))
+    case "$expires" in ""|*[!0-9]*) remaining=0;; *) remaining=$((expires - current));; esac
     [ "$remaining" -lt 0 ] && remaining=0
     printf 'HOLDER lane=%s class=%s pr=%s sha=%s pid=%s wrapper_pid=%s age=%s lease_remaining=%s dir=%s\n' \
       "$(field "$owner" lane)" "$(field "$owner" class)" "$(field "$owner" pr)" \
@@ -324,7 +409,7 @@ status() {
 
 acquire_for_run() {
   sequence=$(next_sequence)
-  TICKET="$QUEUE/$CLASS/$sequence-$LANE"
+  TICKET="$QUEUE/$CLASS/$sequence-owner$$-$LANE"
   mkdir "$TICKET"
   {
     printf 'lane=%s\n' "$LANE"
@@ -332,6 +417,7 @@ acquire_for_run() {
     printf 'pr=%s\n' "$PR"
     printf 'sha=%s\n' "$SHA"
     printf 'dir=%s\n' "$DIR"
+    printf 'owner_pid=%s\n' "$$"
     printf 'created=%s\n' "$(now)"
     printf 'lease_seconds=%s\n' "$LEASE_SECONDS"
   } | atomic_write "$TICKET/ticket"
@@ -339,9 +425,15 @@ acquire_for_run() {
   deadline=$(( $(now) + QUEUE_TIMEOUT ))
 
   while :; do
+    reclaim_dead_tickets
     first=$(first_ticket)
     if [ "$first" = "$TICKET" ]; then
-      reclaim_if_stale || true
+      acquire_guard
+      if owner_is_stale; then
+        release_guard
+        reclaim_if_stale || true
+        continue
+      fi
       if mkdir "$LOCK" 2>/dev/null; then
         TOKEN="$(now)-$$-$sequence"
         mkdir -p "$DIR"
@@ -354,10 +446,12 @@ acquire_for_run() {
         write_owner
         ACQUIRED_OWNERSHIP=1
         rm -rf "$TICKET"
+        release_guard
         log "acquired lane=$LANE class=$CLASS pr=$PR sha=$SHA lease=${LEASE_SECONDS}s"
         printf 'ACQUIRED lane=%s class=%s lease=%s\n' "$LANE" "$CLASS" "$(format_duration "$LEASE_SECONDS")"
         return 0
       fi
+      release_guard
     fi
     if [ "$(now)" -ge "$deadline" ]; then
       log "WARN queue timeout lane=$LANE class=$CLASS ticket=$(basename "$TICKET") requeued in place"
@@ -469,6 +563,9 @@ Usage:
 `run` owns exactly one command. It acquires a priority FIFO ticket, renews the
 lease only while the command PID is alive and its output advances, verifies the
 xcresult, restores settings, cleans only recorded PIDs, and releases in a trap.
+At cutover from the manual helper, wait until its holder and queue are empty;
+tokenless owners are retained while live, then reclaimed only after their PID
+dies or after 45 minutes with no xcodebuild under that PID.
 EOF
 }
 

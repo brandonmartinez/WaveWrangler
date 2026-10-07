@@ -54,6 +54,24 @@ wait_for_run() {
   done
   fail "run $lane did not start"
 }
+wait_for_ticket() {
+  lane="$1"
+  for attempt in $(seq 1 20); do
+    find "$ROOT/.gui.queue" -type f -path "*/[0-9]*-$lane/ticket" -print -quit |
+      grep -q . && return 0
+    sleep 1
+  done
+  fail "ticket $lane was not enqueued"
+}
+stop_waiter() {
+  lane="$1"; parent_pid="$2"
+  wait_for_ticket "$lane"
+  ticket_file=$(find "$ROOT/.gui.queue" -type f -path "*/[0-9]*-$lane/ticket" -print -quit)
+  ticket_pid=$(sed -n 's/^owner_pid=//p' "$ticket_file")
+  [ -n "$ticket_pid" ] || fail "waiter ticket $lane has no owner PID"
+  kill "$ticket_pid" 2>/dev/null || true
+  wait "$parent_pid" 2>/dev/null || true
+}
 expire_current_lease() {
   owner="$ROOT/.gui.lock/owner"
   sed 's/^expires=.*/expires=0/' "$owner" > "$owner.expired"
@@ -69,21 +87,24 @@ assert_contains "$ROOT/single.out" "RELEASED lane=single"
 
 echo "test: concurrent FIFO and priority ordering"
 reset_state
-run_lane holder pr 5 > "$ROOT/holder.out" 2>&1 &
+run_lane holder pr 8 > "$ROOT/holder.out" 2>&1 &
 holder_pid=$!
-sleep 1
+wait_for_run holder
 run_lane first-pr pr 0 > "$ROOT/first-pr.out" 2>&1 &
 first_pr_pid=$!
-sleep 1
+wait_for_ticket first-pr
 run_lane perf perf 0 > "$ROOT/perf.out" 2>&1 &
 perf_pid=$!
-sleep 1
+wait_for_ticket perf
 run_lane full full 0 > "$ROOT/full.out" 2>&1 &
 full_pid=$!
+wait_for_ticket full
 run_lane required required 0 > "$ROOT/required.out" 2>&1 &
 required_pid=$!
+wait_for_ticket required
 run_lane second-pr pr 0 > "$ROOT/second-pr.out" 2>&1 &
 second_pr_pid=$!
+wait_for_ticket second-pr
 wait "$holder_pid" "$first_pr_pid" "$perf_pid" "$full_pid" "$required_pid" "$second_pr_pid"
 expected=$(printf 'holder\nrequired\nfirst-pr\nsecond-pr\nperf\nfull')
 [ "$(cat "$ROOT/order")" = "$expected" ] || fail "priority/FIFO order was: $(tr '\n' ' ' < "$ROOT/order")"
@@ -95,8 +116,11 @@ visible_pid=$!
 sleep 1
 run_lane queued full 0 > "$ROOT/queued.out" 2>&1 &
 queued_pid=$!
-sleep 1
-"$SCRIPT" status > "$ROOT/status.out"
+for attempt in $(seq 1 20); do
+  "$SCRIPT" status > "$ROOT/status.out"
+  grep -F "QUEUE position=1 class=full lane=queued" "$ROOT/status.out" > /dev/null && break
+  sleep 1
+done
 assert_contains "$ROOT/status.out" "HOLDER lane=visible class=pr"
 assert_contains "$ROOT/status.out" "QUEUE position=1 class=full lane=queued"
 assert_contains "$ROOT/status.out" "eta="
@@ -134,6 +158,20 @@ lease_seconds=60
 EOF
 }
 
+seed_legacy_owner() {
+  lane="$1"; pid="$2"; start="$3"
+  mkdir -p "$ROOT/.gui.lock"
+  cat > "$ROOT/.gui.lock/owner" <<EOF
+lane=$lane
+pr=1
+sha=old
+dir=$ROOT/legacy-$lane
+pid=$pid
+start=$start
+host=test
+EOF
+}
+
 echo "test: expired lease reclamation"
 reset_state
 seed_owner expired
@@ -158,8 +196,58 @@ sleep 2
 if grep -F "reclaimed lane=stale-acquiring" "$ROOT/gui-lock.log" > /dev/null; then
   fail "waiter reclaimed an acquiring owner"
 fi
-kill "$acquiring_waiter_pid" 2>/dev/null || true
-wait "$acquiring_waiter_pid" 2>/dev/null || true
+stop_waiter acquiring-waiter "$acquiring_waiter_pid"
+
+echo "test: tokenless legacy dead holder is reclaimed"
+reset_state
+seed_legacy_owner legacy-dead 999999 "$(date +%s)"
+run_lane legacy-reclaimer pr 0 > "$ROOT/legacy-dead.out"
+assert_contains "$ROOT/legacy-dead.out" "RECLAIMED lane=legacy-dead reason=legacy owner pid 999999 is dead"
+
+echo "test: live legacy holder survives until release"
+reset_state
+seed_legacy_owner legacy-live "$$" "$(( $(date +%s) - 60 ))"
+run_lane legacy-waiter pr 0 > "$ROOT/legacy-waiter.out" 2>&1 &
+legacy_waiter_pid=$!
+sleep 2
+[ "$(sed -n 's/^lane=//p' "$ROOT/.gui.lock/owner")" = legacy-live ] ||
+  fail "live legacy holder was reclaimed"
+stop_waiter legacy-waiter "$legacy_waiter_pid"
+
+echo "test: legacy hard maximum with no xcodebuild"
+reset_state
+seed_legacy_owner legacy-overdue "$$" "$(( $(date +%s) - 2701 ))"
+run_lane legacy-overdue-reclaimer pr 0 > "$ROOT/legacy-overdue.out"
+assert_contains "$ROOT/legacy-overdue.out" "RECLAIMED lane=legacy-overdue reason=legacy holder exceeded 45 min"
+
+echo "test: overdue legacy holder with live xcodebuild is protected"
+reset_state
+ln -s /bin/sleep "$ROOT/xcodebuild"
+"$ROOT/xcodebuild" 6 &
+legacy_build_pid=$!
+seed_legacy_owner legacy-building "$legacy_build_pid" "$(( $(date +%s) - 2701 ))"
+run_lane legacy-build-waiter pr 0 > "$ROOT/legacy-build-waiter.out" 2>&1 &
+legacy_build_waiter_pid=$!
+sleep 2
+[ "$(sed -n 's/^lane=//p' "$ROOT/.gui.lock/owner")" = legacy-building ] ||
+  fail "overdue legacy holder with live xcodebuild was reclaimed"
+stop_waiter legacy-build-waiter "$legacy_build_waiter_pid"
+wait "$legacy_build_pid"
+run_lane legacy-build-reclaimer pr 0 > "$ROOT/legacy-build-reclaimer.out"
+assert_contains "$ROOT/legacy-build-reclaimer.out" "RECLAIMED lane=legacy-building reason=legacy owner pid"
+
+echo "test: empty legacy PID uses start for acquisition grace"
+reset_state
+seed_legacy_owner legacy-acquiring "" "$(date +%s)"
+run_lane legacy-acquiring-waiter pr 0 > "$ROOT/legacy-acquiring-waiter.out" 2>&1 &
+legacy_acquiring_pid=$!
+sleep 2
+[ -d "$ROOT/.gui.lock" ] || fail "empty legacy PID was reclaimed during grace"
+stop_waiter legacy-acquiring-waiter "$legacy_acquiring_pid"
+reset_state
+seed_legacy_owner legacy-empty "" "$(( $(date +%s) - 121 ))"
+run_lane legacy-empty-reclaimer pr 0 > "$ROOT/legacy-empty.out"
+assert_contains "$ROOT/legacy-empty.out" "RECLAIMED lane=legacy-empty reason=legacy owner pid is missing after acquisition grace"
 
 echo "test: queue timeout retains position"
 reset_state
@@ -225,13 +313,93 @@ for attempt in $(seq 1 20); do
   sleep 1
 done
 [ -f "$ROOT/.gui.lock.guard/owner" ] || fail "guard victim never acquired the guard"
-kill -9 "$guard_victim_pid" 2>/dev/null || true
+guard_owner_pid=$(sed -n 's/^pid=//p' "$ROOT/.gui.lock.guard/owner")
+kill -9 "$guard_owner_pid" 2>/dev/null || true
 wait "$guard_victim_pid" 2>/dev/null || true
-rm -rf "$ROOT/.gui.queue/pr/"*guard-victim
 unset GUI_LOCK_TEST_GUARD_HOLD_SECONDS
 run_lane guard-reclaimer pr 0 > "$ROOT/guard-reclaimer.out"
 assert_contains "$ROOT/guard-reclaimer.out" "RELEASED lane=guard-reclaimer"
 assert_contains "$ROOT/gui-lock.log" "reclaimed guard"
+
+echo "test: ownerless guard has a creation grace"
+reset_state
+mkdir "$ROOT/.gui.lock.guard"
+run_lane ownerless-guard pr 0 > "$ROOT/ownerless-guard.out" 2>&1 &
+ownerless_guard_pid=$!
+sleep 2
+[ -d "$ROOT/.gui.lock.guard" ] || fail "ownerless guard was reclaimed during creation grace"
+if grep -F "reclaimed guard" "$ROOT/gui-lock.log" > /dev/null; then
+  fail "fresh ownerless guard was stolen"
+fi
+wait "$ownerless_guard_pid"
+assert_contains "$ROOT/gui-lock.log" "reclaimed guard pid=missing"
+
+echo "test: a live guard owner is never stolen for age"
+reset_state
+export GUI_LOCK_TEST_GUARD_HOLD_SECONDS=12
+run_lane slow-guard pr 0 > "$ROOT/slow-guard.out" 2>&1 &
+slow_guard_pid=$!
+for attempt in $(seq 1 20); do
+  [ -f "$ROOT/.gui.lock.guard/owner" ] && break
+  sleep 1
+done
+[ -f "$ROOT/.gui.lock.guard/owner" ] || fail "slow guard never published its owner"
+unset GUI_LOCK_TEST_GUARD_HOLD_SECONDS
+run_lane slow-guard-waiter pr 0 > "$ROOT/slow-guard-waiter.out" 2>&1 &
+slow_guard_waiter_pid=$!
+sleep 11
+if grep -F "reclaimed guard" "$ROOT/gui-lock.log" > /dev/null; then
+  fail "live slow guard was stolen after ten seconds"
+fi
+wait "$slow_guard_pid" "$slow_guard_waiter_pid"
+
+echo "test: interrupted guard publication preserves the guard until grace"
+reset_state
+export GUI_LOCK_TEST_GUARD_PUBLISH_SECONDS=3
+run_lane publishing-guard pr 0 > "$ROOT/publishing-guard.out" 2>&1 &
+publishing_guard_pid=$!
+for attempt in $(seq 1 20); do
+  [ -d "$ROOT/.gui.lock.guard" ] && break
+  sleep 1
+done
+unset GUI_LOCK_TEST_GUARD_PUBLISH_SECONDS
+run_lane publishing-waiter pr 0 > "$ROOT/publishing-waiter.out" 2>&1 &
+publishing_waiter_pid=$!
+sleep 2
+if grep -F "reclaimed guard" "$ROOT/gui-lock.log" > /dev/null; then
+  fail "contender stole a guard before owner publication"
+fi
+wait "$publishing_guard_pid" "$publishing_waiter_pid"
+
+echo "test: killed waiter ticket is reclaimed without losing live FIFO positions"
+reset_state
+run_lane ticket-holder pr 6 > "$ROOT/ticket-holder.out" 2>&1 &
+ticket_holder_pid=$!
+wait_for_run ticket-holder
+run_lane abandoned-ticket pr 0 > "$ROOT/abandoned-ticket.out" 2>&1 &
+abandoned_waiter_pid=$!
+for attempt in $(seq 1 20); do
+  ticket_file=$(find "$ROOT/.gui.queue/pr" -name '*-abandoned-ticket' -type d -print -quit)
+  [ -n "$ticket_file" ] && [ -f "$ticket_file/ticket" ] && break
+  sleep 1
+done
+[ -n "${ticket_file:-}" ] || fail "abandoned waiter did not enqueue"
+ticket_owner_pid=$(sed -n 's/^owner_pid=//p' "$ticket_file/ticket")
+[ -n "$ticket_owner_pid" ] || fail "ticket did not record its owner PID"
+kill -9 "$ticket_owner_pid"
+wait "$abandoned_waiter_pid" 2>/dev/null || true
+run_lane next-ticket pr 0 > "$ROOT/next-ticket.out" 2>&1 &
+next_ticket_pid=$!
+wait "$ticket_holder_pid" "$next_ticket_pid"
+assert_contains "$ROOT/gui-lock.log" "reclaimed ticket=$(basename "$ticket_file")"
+assert_contains "$ROOT/next-ticket.out" "RELEASED lane=next-ticket"
+
+echo "test: killed waiter before ticket metadata is published"
+reset_state
+mkdir "$ROOT/.gui.queue/pr/000000000001-owner999999-incomplete"
+run_lane incomplete-reclaimer pr 0 > "$ROOT/incomplete.out"
+assert_contains "$ROOT/gui-lock.log" "reclaimed ticket=000000000001-owner999999-incomplete"
+assert_contains "$ROOT/incomplete.out" "RELEASED lane=incomplete-reclaimer"
 
 echo "test: reused run directory keeps PID cleanup token-specific"
 reset_state
@@ -241,7 +409,7 @@ reused_old_pid=$!
 wait_for_run reused-old
 old_pids_file=$(sed -n 's/^pids_file=//p' "$ROOT/.gui.lock/owner")
 expire_current_lease
-run_lane_in_dir reused-new pr 2 "$shared_dir" > "$ROOT/reused-new.out" 2>&1 &
+run_lane_in_dir reused-new pr 10 "$shared_dir" > "$ROOT/reused-new.out" 2>&1 &
 reused_new_pid=$!
 wait_for_run reused-new
 new_pids_file=$(sed -n 's/^pids_file=//p' "$ROOT/.gui.lock/owner")
