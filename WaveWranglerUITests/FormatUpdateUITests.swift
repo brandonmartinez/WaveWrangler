@@ -104,7 +104,21 @@ final class FormatUpdateUITests: XCTestCase {
             let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
             if showInfo.waitForExistence(timeout: 5) {
                 showInfo.click()
-                try audit("T21 read-only Show Info")
+                let inspector = window.descendants(matching: .any).matching(identifier: "ww.inspector").firstMatch
+                try audit("T21 read-only Show Info") { issue in
+                    guard issue.auditType == .contrast, let flagged = issue.element,
+                          flagged.elementType == .staticText, !flagged.isEnabled,
+                          inspector.exists, AcceptanceAudit.isDescendant(flagged, of: inspector),
+                          let text = flagged.value as? String,
+                          (text.hasPrefix("WaveWranglerFormatUpdate-") || text.hasPrefix("WaveWrangler needs to update this show")) else { return nil }
+                    let shot = flagged.screenshot()
+                    let measurement = ContrastMeter.measure(shot.image)
+                    guard AcceptanceAudit.passesGlyphContrast(measurement) else { return nil }
+                    let crop = text.hasPrefix("WaveWranglerFormatUpdate-")
+                        ? "inactive-show-info-location.png" : "inactive-show-info-save-status.png"
+                    Acceptance.attach(self, png: shot.pngRepresentation, name: crop)
+                    return "AX-disabled Show Info \(crop), \(measurement?["glyphPixels"] ?? 0) glyph pixels, p75 \(measurement?["glyphP75"] ?? 0):1; WCAG 1.4.3 excludes inactive UI components"
+                }
             }
             let title = window.textFields["Show title"]
             check(title.waitForExistence(timeout: 5) && title.value as? String == "Mixed Show", "the older content is shown: \(title.value ?? "nil")")
@@ -181,6 +195,18 @@ final class FormatUpdateUITests: XCTestCase {
             app.typeKey("r", modifierFlags: .command)
             check(Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists }, "⌘R dismisses the prompt")
             let status = element("ww.show.saveStatus")
+            let sourceStatus = app.staticTexts.matching(
+                NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status'")
+            ).matching(NSPredicate(format: "value BEGINSWITH 'Needs permission'")).firstMatch
+            check(sourceStatus.waitForExistence(timeout: 5), "the Needs permission source status is visible")
+            let sourceShot = sourceStatus.exists ? sourceStatus.screenshot() : nil
+            let unobscured = sourceShot.flatMap { ContrastMeter.measure($0.image) }
+            if let sourceShot {
+                Acceptance.attach(self, png: sourceShot.pngRepresentation, name: "T21-needs-permission-unobscured.png")
+            }
+            Acceptance.writeEvidence("T21-needs-permission-unobscured", unobscured ?? [:], test: self)
+            check(AcceptanceAudit.passesGlyphContrast(unobscured),
+                  "unobscured Needs permission status meets 40 glyph px and p75 4.5:1: \(unobscured ?? [:])")
             // View › Show Save Status (as T27); keyboard focus starts on the popover's first action.
             app.menuBars.menuBarItems["View"].click()
             let showStatus = app.menuBars.menuItems["Show Save Status"]
@@ -188,6 +214,10 @@ final class FormatUpdateUITests: XCTestCase {
             showStatus.click()
             let popover = app.popovers.firstMatch
             check(popover.waitForExistence(timeout: 5), "the status popover opens")
+            Acceptance.writeEvidence("T21-needs-permission-popover-geometry", [
+                "status": "\(sourceStatus.frame)", "popover": "\(popover.frame)",
+                "overlaps": sourceStatus.frame.intersects(popover.frame),
+            ], test: self)
             let update = popover.buttons["Update…"]
             check(update.exists, "Update… is offered: \(popover.buttons.allElementsBoundByIndex.map(\.title))")
             try audit("T21 status popover Update…") { issue in
@@ -232,14 +262,16 @@ final class FormatUpdateUITests: XCTestCase {
                     app.typeKey("\t", modifierFlags: .control)   // Window › Show Next Tab
                 }
                 check(waitForSelectedTab(named: name), "\(name) becomes the selected key tab")
-                let sheet = app.sheets.firstMatch
-                check(sheet.waitForExistence(timeout: 5), "\(name) shows its update prompt")
+                let window = showWindow(named: name)
+                let sheet = window.sheets.firstMatch
+                check(sheet.waitForExistence(timeout: 5), "\(name) shows its own update prompt")
                 recordTabState("initial-\(name)", expected: name)
                 let title = texts(in: sheet).first { $0.hasPrefix("Update “") } ?? "?"
+                check(title == "Update “\(name)” to the current format?", "\(name) owns its prompt: \(title)")
                 asked.append(title)
                 app.typeKey("r", modifierFlags: .command)   // Open Read-Only: nothing is written
-                check(Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists },
-                      "\(name) prompt dismisses after Open Read-Only")
+                check(Acceptance.waitFor(timeout: 5) { !sheet.exists },
+                      "\(name)'s own prompt dismisses after Open Read-Only")
             }
             Acceptance.record(self, "T21 tabs asked: \(asked)")
             check(Set(asked) == ["Update “First Tab” to the current format?", "Update “Second Tab” to the current format?"]
@@ -249,7 +281,8 @@ final class FormatUpdateUITests: XCTestCase {
                 app.typeKey("\t", modifierFlags: .control)
                 check(waitForSelectedTab(named: name), "\(name) becomes the selected key tab again")
                 recordTabState("answered-\(name)", expected: name)
-                check(!app.sheets.firstMatch.waitForExistence(timeout: 3), "no second prompt after Open Read-Only")
+                check(!showWindow(named: name).sheets.firstMatch.waitForExistence(timeout: 3),
+                      "\(name) does not ask a second time after Open Read-Only")
             }
             for (url, original) in originals {
                 check((try? Data(contentsOf: url)) == original, "\(url.lastPathComponent) is byte-unchanged")
@@ -368,25 +401,28 @@ final class FormatUpdateUITests: XCTestCase {
         element.exists && (element.value(forKey: "hasKeyboardFocus") as? Bool ?? false)
     }
 
-    /// A tabbed document's background windows may be absent from AX. Once the app is active, the visible show-window
-    /// title identifies the selected key tab; waiting for that title prevents a prompt from the previous tab being
-    /// mistaken for the newly selected tab's state.
+    private func showWindow(named name: String) -> XCUIElement {
+        app.windows.matching(identifier: "ww.show.window")
+            .matching(NSPredicate(format: "title CONTAINS %@", name)).firstMatch
+    }
+
+    /// The selected tab is hittable; AX window order is not tab order and can keep a background tab first.
     private func waitForSelectedTab(named name: String) -> Bool {
         app.activate()
         return Acceptance.waitFor(timeout: 5) {
-            self.app.state == .runningForeground
-                && self.app.windows.matching(identifier: "ww.show.window").firstMatch.title.contains(name)
+            self.app.state == .runningForeground && self.showWindow(named: name).isHittable
         }
     }
 
     /// Keeps the selected tab and any sheet title in the xcresult so a repeated prompt identifies its document.
     private func recordTabState(_ phase: String, expected: String) {
-        let windows = app.windows.matching(identifier: "ww.show.window").allElementsBoundByIndex.map(\.title)
-        let sheet = app.sheets.firstMatch
+        let windows = app.windows.matching(identifier: "ww.show.window").allElementsBoundByIndex
+        let sheet = showWindow(named: expected).sheets.firstMatch
         let sheetTexts = sheet.exists ? texts(in: sheet) : []
         Acceptance.writeEvidence("format-update-T21-tabs-\(phase.replacingOccurrences(of: " ", with: "_"))", [
             "expectedSelectedTab": expected,
-            "visibleShowWindows": windows,
+            "visibleShowWindows": windows.map { ["title": $0.title, "hittable": "\($0.isHittable)",
+                                                   "ownSheet": texts(in: $0.sheets.firstMatch)] },
             "sheetTexts": sheetTexts,
         ], test: self)
     }
