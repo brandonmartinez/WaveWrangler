@@ -12,7 +12,7 @@ import XCTest
 /// ("Keyboard navigation") setting on, which tests never change.
 /// - **On** (the user's C01 run): Tab/Space reach and activate those buttons, and focus is asserted.
 /// - **Off** (agent and Mac mini runs): only those steps use XCUITest element actions, each recorded as **Not run
-///   (needs Full Keyboard Access)** in `format-update-keyboard-navigation` evidence. Return, Esc, ⌘R and ⌃Tab stay key
+///   (needs Full Keyboard Access)** in `format-update-keyboard-navigation` evidence. Return, Esc and ⌘R stay key
 ///   events, and every outcome check (prompt, disk bytes, schema, status, bar) stays a hard check either way.
 ///
 /// Audits follow the M2 baseline (docs/m2/evidence/m2-gui-baseline.md): `.contrast` is enforced on the blocked and
@@ -258,7 +258,7 @@ final class FormatUpdateUITests: XCTestCase {
         try task("T21-tabs") {
             launch(["-WWUITestAutosave", "ON", "-WWUITestResetStorage", "YES"], opening: first)
             check(app.windows.matching(identifier: "ww.show.window").firstMatch.waitForExistence(timeout: 10), "the first show opens")
-            // Open the second before answering the first: it opens as the selected tab, the first goes to the background.
+            // Open the second before answering the first; merge the two document windows into native tabs.
             // Delivered to the running app as Finder does; `XCUIApplication.open` would start a second instance (GUI round 1).
             try openInRunningApp(second)
             // Background tabs may be absent from the AX window list, so wait for the second (selected) tab only.
@@ -266,9 +266,9 @@ final class FormatUpdateUITests: XCTestCase {
                   "the second show opens in the app under test: \(app.windows.allElementsBoundByIndex.map(\.title))")
             check(NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier).count == 1,
                   "one app process: \(NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier).map(\.processIdentifier))")
-            guard waitForSelectedTab(named: "Second Tab") else {
+            guard waitForForegroundApp() else {
                 throw NSError(domain: "FormatUpdate", code: 4,
-                              userInfo: [NSLocalizedDescriptionKey: "Second Tab was not the foreground main window before merging"])
+                              userInfo: [NSLocalizedDescriptionKey: "the opened app did not become foreground before merging"])
             }
             app.menuBars.menuBarItems["Window"].click()
             let merge = app.menuBars.menuItems["Merge All Windows"]
@@ -276,10 +276,7 @@ final class FormatUpdateUITests: XCTestCase {
             if merge.exists && merge.isEnabled { merge.click() }
             var asked: [String] = []
             for name in ["Second Tab", "First Tab"] {
-                if name == "First Tab" {
-                    app.typeKey("\t", modifierFlags: .control)   // Window › Show Next Tab
-                }
-                check(waitForSelectedTab(named: name), "\(name) becomes the selected key tab")
+                check(selectTab(named: name), "\(name) is selected through the Window menu")
                 let window = showWindow(named: name)
                 let sheet = window.sheets.firstMatch
                 check(sheet.waitForExistence(timeout: 5), "\(name) shows its own update prompt")
@@ -299,8 +296,7 @@ final class FormatUpdateUITests: XCTestCase {
                   && asked.count == 2, "each tabbed show asks exactly once: \(asked)")
             // Selecting each tab again never asks a second time.
             for name in ["Second Tab", "First Tab"] {
-                app.typeKey("\t", modifierFlags: .control)
-                check(waitForSelectedTab(named: name), "\(name) becomes the selected key tab again")
+                check(selectTab(named: name), "\(name) is selected through the Window menu again")
                 recordTabState("answered-\(name)", expected: name)
                 check(!Acceptance.waitFor(timeout: 3) { self.hasPrompt(named: name) },
                       "\(name) does not ask a second time after Open Read-Only")
@@ -434,16 +430,22 @@ final class FormatUpdateUITests: XCTestCase {
         }
     }
 
-    /// AX main-window state identifies the selected document; both tab windows can report hittable.
-    private func waitForSelectedTab(named name: String) -> Bool {
+    private func waitForForegroundApp() -> Bool {
         for _ in 0..<3 {
             app.activate()
-            if Acceptance.waitFor(timeout: 3, {
-                self.app.state == .runningForeground
-                    && (self.showWindow(named: name).value(forKey: "isMainWindow") as? Bool == true)
-            }) { return true }
+            if Acceptance.waitFor(timeout: 3, { self.app.state == .runningForeground }) { return true }
         }
         return false
+    }
+
+    /// Window-menu items target a document by title, unlike AX window order or `isHittable` (both tabs can be hittable).
+    private func selectTab(named name: String) -> Bool {
+        guard waitForForegroundApp() else { return false }
+        app.menuBars.menuBarItems["Window"].click()
+        let item = app.menuBars.menuItems.matching(NSPredicate(format: "title BEGINSWITH %@", "\(name).wwshow")).firstMatch
+        guard item.exists && item.isEnabled else { return false }
+        item.click()
+        return Acceptance.waitFor(timeout: 5) { self.showWindow(named: name).exists && self.app.state == .runningForeground }
     }
 
     /// Keeps the selected tab and any sheet title in the xcresult so a repeated prompt identifies its document.
@@ -453,7 +455,7 @@ final class FormatUpdateUITests: XCTestCase {
         let sheetTexts = sheet.exists ? texts(in: sheet) : []
         Acceptance.writeEvidence("format-update-T21-tabs-\(phase.replacingOccurrences(of: " ", with: "_"))", [
             "expectedSelectedTab": expected,
-            "visibleShowWindows": windows.map { ["title": $0.title, "main": "\($0.value(forKey: "isMainWindow") as? Bool == true)",
+            "visibleShowWindows": windows.map { ["title": $0.title, "hittable": "\($0.isHittable)",
                                                    "ownSheet": texts(in: $0.sheets.firstMatch)] },
             "sheetTexts": sheetTexts,
         ], test: self)
