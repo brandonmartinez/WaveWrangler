@@ -86,165 +86,175 @@ private struct AlignmentWorkspace: View {
     @FocusState private var focusedAnchor: Int?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Alignment")
                         .font(.title2.weight(.semibold))
                     Text("Inspect recorder clocks, place manual corrections and audition source regions. Acoustic consistency is evidence, never probability or clock approval.")
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
                 Button(model.isWorking ? "Analysing…" : "Analyse Available Sources") {
                     model.analyse()
                 }
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("alignment.analyse")
-            }
 
-            AlignmentOutlineTable(model: model)
+                AlignmentOutlineTable(model: model)
+                    .frame(minHeight: 180, idealHeight: 240)
 
-            GroupBox("Anchors for \(model.selectedRow?.epochLabel ?? "selected epoch")") {
-                Table(model.selectedAnchors, selection: $model.anchorSelection) {
-                    TableColumn("Source time") { anchor in
-                        Text(AlignmentPresentation.formatTime(anchor.sourceSeconds))
-                            .accessibilityLabel("Source time")
-                            .accessibilityValue(AlignmentPresentation.formatTime(anchor.sourceSeconds))
-                            .accessibilityIdentifier("ww.alignment.anchor.\(anchor.id).sourceTime")
+                GroupBox("Anchors for \(model.selectedRow?.epochLabel ?? "selected epoch")") {
+                    Table(model.selectedAnchors, selection: $model.anchorSelection) {
+                        TableColumn("Source time") { anchor in
+                            Text(AlignmentPresentation.formatTime(anchor.sourceSeconds))
+                                .accessibilityLabel("Source time")
+                                .accessibilityValue(AlignmentPresentation.formatTime(anchor.sourceSeconds))
+                                .accessibilityIdentifier("ww.alignment.anchor.\(anchor.id).sourceTime")
+                        }
+                        .width(ideal: 130)
+                        TableColumn("Group time") { anchor in
+                            Text(AlignmentPresentation.formatTime(anchor.groupSeconds))
+                                .accessibilityLabel("Group time")
+                                .accessibilityValue(AlignmentPresentation.formatTime(anchor.groupSeconds))
+                                .accessibilityIdentifier("ww.alignment.anchor.\(anchor.id).groupTime")
+                        }
+                        .width(ideal: 130)
+                        TableColumn("Aligned time") { anchor in
+                            AnchorAlignedTimeField(
+                                model: model, anchor: anchor,
+                                focusedAnchor: $focusedAnchor
+                            )
+                                .accessibilityIdentifier("ww.alignment.anchor.\(anchor.id).alignedTime")
+                        }
+                        .width(ideal: 130)
                     }
-                    .width(ideal: 130)
-                    TableColumn("Group time") { anchor in
-                        Text(AlignmentPresentation.formatTime(anchor.groupSeconds))
-                            .accessibilityLabel("Group time")
-                            .accessibilityValue(AlignmentPresentation.formatTime(anchor.groupSeconds))
-                            .accessibilityIdentifier("ww.alignment.anchor.\(anchor.id).groupTime")
-                    }
-                    .width(ideal: 130)
-                    TableColumn("Aligned time") { anchor in
-                        AnchorAlignedTimeField(
-                            model: model, anchor: anchor,
-                            focusedAnchor: $focusedAnchor
+                    .frame(minHeight: 90, idealHeight: 120, maxHeight: 160)
+                    .accessibilityIdentifier("ww.alignment.anchors")
+                }
+
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 145), alignment: .leading)],
+                    alignment: .leading,
+                    spacing: 8
+                ) {
+                    Button("Accept as Manual") { model.acceptProposal() }
+                        .disabled(model.selectedRow?.state.heading.hasPrefix("Proposed") != true)
+                        .help(model.selectedRow?.state.heading.hasPrefix("Proposed") == true
+                              ? "Accept this acoustic proposal as a manual decision."
+                              : "Select an unconfirmed proposal.")
+                        .accessibilityIdentifier("alignment.acceptProposal")
+                    Button("Reject") { model.rejectProposal() }
+                        .disabled(model.selectedRow?.state.heading.hasPrefix("Proposed") != true)
+                        .help(model.selectedRow?.state.heading.hasPrefix("Proposed") == true
+                              ? "Reject this proposal and leave the epoch unsupported."
+                              : "Select an unconfirmed proposal.")
+                        .accessibilityIdentifier("alignment.rejectProposal")
+                    Button("Edit Numerically…") { model.requestNumericEditor() }
+                        .disabled(!model.canCorrect)
+                        .help(model.canCorrect ? "Type a signed rate and offset correction." : "Select an epoch that can be timed manually.")
+                        .accessibilityIdentifier("alignment.editNumeric")
+                    Button("Place Anchors…") { model.requestAnchorEditor() }
+                        .disabled(!model.canCorrect)
+                        .help(model.canCorrect ? "Type source and aligned time anchors." : "Select an epoch that can be timed manually.")
+                        .accessibilityIdentifier("alignment.placeAnchors")
+                    Button("Place Anchor at Playhead") { model.placeAnchorAtPlayhead() }
+                        .disabled(!model.canPlaceAnchorAtPlayhead)
+                        .help(
+                            model.canPlaceAnchorAtPlayhead
+                                ? "Append an anchor at the stopped audition position."
+                                : "Stop audition on an epoch that already has a persisted anchor map."
                         )
-                            .accessibilityIdentifier("ww.alignment.anchor.\(anchor.id).alignedTime")
-                    }
-                    .width(ideal: 130)
+                        .accessibilityIdentifier("alignment.placeAnchorAtPlayhead")
+                    Button("Delete Anchor") { model.requestDeleteSelectedAnchor() }
+                        .disabled(model.anchorSelection == nil)
+                        .help(model.anchorSelection == nil ? "Select an anchor first." : "Delete the selected anchor.")
+                        .accessibilityIdentifier("alignment.deleteAnchor")
+                    Button("Start New Epoch at Anchor") { model.startNewEpochAtSelectedAnchor() }
+                        .disabled(!model.canStartNewEpoch)
+                        .help(model.canStartNewEpoch ? "Split this occurrence at the selected anchor." : "Select an anchor in an accepted map.")
+                        .accessibilityIdentifier("alignment.startNewEpoch")
                 }
-                .frame(minHeight: 90, idealHeight: 120, maxHeight: 160)
-                .accessibilityIdentifier("ww.alignment.anchors")
-            }
 
-            HStack {
-                Button("Accept as Manual") { model.acceptProposal() }
-                    .disabled(model.selectedRow?.state.heading.hasPrefix("Proposed") != true)
-                    .help(model.selectedRow?.state.heading.hasPrefix("Proposed") == true
-                          ? "Accept this acoustic proposal as a manual decision."
-                          : "Select an unconfirmed proposal.")
-                    .accessibilityIdentifier("alignment.acceptProposal")
-                Button("Reject") { model.rejectProposal() }
-                    .disabled(model.selectedRow?.state.heading.hasPrefix("Proposed") != true)
-                    .help(model.selectedRow?.state.heading.hasPrefix("Proposed") == true
-                          ? "Reject this proposal and leave the epoch unsupported."
-                          : "Select an unconfirmed proposal.")
-                    .accessibilityIdentifier("alignment.rejectProposal")
-                Button("Edit Numerically…") { model.requestNumericEditor() }
-                    .disabled(!model.canCorrect)
-                    .help(model.canCorrect ? "Type a signed rate and offset correction." : "Select an epoch that can be timed manually.")
-                    .accessibilityIdentifier("alignment.editNumeric")
-                Button("Place Anchors…") { model.requestAnchorEditor() }
-                    .disabled(!model.canCorrect)
-                    .help(model.canCorrect ? "Type source and aligned time anchors." : "Select an epoch that can be timed manually.")
-                    .accessibilityIdentifier("alignment.placeAnchors")
-                Button("Place Anchor at Playhead") { model.placeAnchorAtPlayhead() }
-                    .disabled(!model.canPlaceAnchorAtPlayhead)
-                    .help(
-                        model.canPlaceAnchorAtPlayhead
-                            ? "Append an anchor at the stopped audition position."
-                            : "Stop audition on an epoch that already has a persisted anchor map."
-                    )
-                    .accessibilityIdentifier("alignment.placeAnchorAtPlayhead")
-                Button("Delete Anchor") { model.requestDeleteSelectedAnchor() }
-                    .disabled(model.anchorSelection == nil)
-                    .help(model.anchorSelection == nil ? "Select an anchor first." : "Delete the selected anchor.")
-                    .accessibilityIdentifier("alignment.deleteAnchor")
-                Button("Start New Epoch at Anchor") { model.startNewEpochAtSelectedAnchor() }
-                    .disabled(!model.canStartNewEpoch)
-                    .help(model.canStartNewEpoch ? "Split this occurrence at the selected anchor." : "Select an anchor in an accepted map.")
-                    .accessibilityIdentifier("alignment.startNewEpoch")
-                Spacer()
-            }
-
-            GroupBox("Audition") {
-                HStack {
-                    LabeledContent("Start") {
-                        TextField("Start", value: $model.auditionStartSeconds, format: .number.precision(.fractionLength(3)))
-                            .frame(width: 100)
-                            .accessibilityValue("\(AlignmentPresentation.formatTime(model.auditionStartSeconds))")
-                            .accessibilityIdentifier("ww.alignment.audition.range.start")
+                GroupBox("Audition") {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 150, maximum: 240), alignment: .leading)],
+                        alignment: .leading,
+                        spacing: 8
+                    ) {
+                        LabeledContent("Start") {
+                            TextField("Start", value: $model.auditionStartSeconds, format: .number.precision(.fractionLength(3)))
+                                .frame(width: 100)
+                                .accessibilityValue("\(AlignmentPresentation.formatTime(model.auditionStartSeconds))")
+                                .accessibilityIdentifier("ww.alignment.audition.range.start")
+                        }
+                        LabeledContent("Duration") {
+                            TextField("Duration", value: $model.auditionDurationSeconds, format: .number.precision(.fractionLength(3)))
+                                .frame(width: 100)
+                                .accessibilityValue("\(AlignmentPresentation.formatTime(model.auditionDurationSeconds))")
+                                .accessibilityIdentifier("ww.alignment.audition.range.duration")
+                        }
+                        Button(model.canStopAudition ? "Stop" : "Play") {
+                            model.canStopAudition ? model.stopAudition() : model.auditionSelection()
+                        }
+                        .disabled(!model.canAudition && !model.canStopAudition)
+                        .help(model.canAudition ? "Play the selected source range. Nothing is exported." : "Select a mapped epoch with an available source.")
+                        .accessibilityIdentifier("ww.alignment.audition.play")
                     }
-                    LabeledContent("Duration") {
-                        TextField("Duration", value: $model.auditionDurationSeconds, format: .number.precision(.fractionLength(3)))
-                            .frame(width: 100)
-                            .accessibilityValue("\(AlignmentPresentation.formatTime(model.auditionDurationSeconds))")
-                            .accessibilityIdentifier("ww.alignment.audition.range.duration")
-                    }
-                    Spacer()
-                    Button(model.canStopAudition ? "Stop" : "Play") {
-                        model.canStopAudition ? model.stopAudition() : model.auditionSelection()
-                    }
-                    .disabled(!model.canAudition && !model.canStopAudition)
-                    .help(model.canAudition ? "Play the selected source range. Nothing is exported." : "Select a mapped epoch with an available source.")
-                    .accessibilityIdentifier("ww.alignment.audition.play")
                 }
-            }
-            .accessibilityIdentifier("ww.alignment.audition")
+                .accessibilityIdentifier("ww.alignment.audition")
 
-            if let region = model.selectedRegion {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(region.copy.heading, systemImage: region.copy.symbol)
-                        .font(.callout.weight(.semibold))
-                        .accessibilityLabel("Audition position state")
-                        .accessibilityValue(region.copy.heading)
-                        .accessibilityIdentifier("ww.alignment.region.heading")
-                    Text(region.copy.evidence)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("ww.alignment.region.evidence")
-                    HStack {
-                        ForEach(region.copy.remedies, id: \.self) { remedy in
-                            Button(remedy) { model.goToRegionRemedy(remedy) }
-                                .accessibilityIdentifier(
-                                    "ww.alignment.region.remedy.\(remedy.replacingOccurrences(of: " ", with: "-"))"
-                                )
+                if let region = model.selectedRegion {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(region.copy.heading, systemImage: region.copy.symbol)
+                            .font(.callout.weight(.semibold))
+                            .accessibilityLabel("Audition position state")
+                            .accessibilityValue(region.copy.heading)
+                            .accessibilityIdentifier("ww.alignment.region.heading")
+                        Text(region.copy.evidence)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("ww.alignment.region.evidence")
+                        HStack {
+                            ForEach(region.copy.remedies, id: \.self) { remedy in
+                                Button(remedy) { model.goToRegionRemedy(remedy) }
+                                    .accessibilityIdentifier(
+                                        "ww.alignment.region.remedy.\(remedy.replacingOccurrences(of: " ", with: "-"))"
+                                    )
+                            }
                         }
                     }
-                }
-                .padding(8)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("ww.alignment.region")
-            }
-
-            Text(model.message)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("alignment.status")
-            Text(model.dependents)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("ww.alignment.dependents")
-            Text(model.auditionLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("alignment.auditionStatus")
-            if let error = model.lastError {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.primary)
                     .padding(8)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-                    .accessibilityIdentifier("alignment.error")
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("ww.alignment.region")
+                }
+
+                Text(model.message)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("alignment.status")
+                Text(model.dependents)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("ww.alignment.dependents")
+                Text(model.auditionLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("alignment.auditionStatus")
+                if let error = model.lastError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.primary)
+                        .padding(8)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                        .accessibilityIdentifier("alignment.error")
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
         }
-        .padding(16)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Alignment workspace")
+        .accessibilityIdentifier("ww.alignment.workspace")
         .onAppear {
             AlignmentKeyHandler.install()
         }

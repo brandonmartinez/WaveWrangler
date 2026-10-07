@@ -15,6 +15,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             "-WWUITestOpenShow", "Alignment Fixture",
             "-WWUITestShowEpisodes", "1",
             "-WWUITestAlignmentFixture", "YES",
+            "-WWUITestMinimumShowWindow", "YES",
         ]
         app.launch()
         app.activate()
@@ -23,6 +24,9 @@ final class AlignmentInspectionUITests: XCTestCase {
     }
 
     func testTM201ReachEveryAlignmentControl() {
+        let window = app.windows["ww.show.window"]
+        XCTAssertEqual(window.frame.width, 760, accuracy: 2)
+        XCTAssertEqual(window.frame.height, 492, accuracy: 2)
         let group = app.staticTexts["Studio recorder"]
         XCTAssertTrue(group.waitForExistence(timeout: 5))
         group.click()
@@ -31,10 +35,14 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(stateHeading("Reference").waitForExistence(timeout: 2))
         selectTargetEpoch()
         XCTAssertTrue(app.staticTexts["ww.inspector.alignment.evidence"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.buttons["alignment.analyse"].exists)
-        XCTAssertTrue(app.buttons["alignment.editNumeric"].exists)
-        XCTAssertTrue(app.buttons["alignment.placeAnchors"].exists)
-        XCTAssertTrue(app.buttons["ww.alignment.audition.play"].exists)
+        for identifier in [
+            "alignment.analyse", "alignment.acceptProposal", "alignment.rejectProposal",
+            "alignment.editNumeric", "alignment.placeAnchors", "alignment.placeAnchorAtPlayhead",
+            "alignment.deleteAnchor", "alignment.startNewEpoch", "ww.alignment.audition.play",
+            "ww.alignment.audition.range.start", "ww.alignment.audition.range.duration",
+        ] {
+            assertReachable(app.descendants(matching: .any)[identifier], in: window)
+        }
     }
 
     func testTM202PlaceAnchorFromMenu() {
@@ -45,9 +53,9 @@ final class AlignmentInspectionUITests: XCTestCase {
         replace(app.textFields["ww.alignment.audition.range.start"], with: "1")
         replace(app.textFields["ww.alignment.audition.range.duration"], with: "1")
         app.typeKey(.return, modifierFlags: .command)
-        XCTAssertTrue(waitForLabel("Auditioning", in: app.staticTexts["alignment.auditionStatus"]))
+        XCTAssertTrue(waitForText("Auditioning", in: app.staticTexts["alignment.auditionStatus"]))
         app.typeKey(.escape, modifierFlags: [])
-        XCTAssertTrue(waitForLabel("Audition stopped at", in: app.staticTexts["alignment.auditionStatus"]))
+        XCTAssertTrue(waitForText("Audition stopped at", in: app.staticTexts["alignment.auditionStatus"]))
         chooseEpisodeMenu("Place Anchor at Playhead")
         let appended = app.textFields["ww.alignment.anchor.2.alignedTime"]
         XCTAssertTrue(appended.waitForExistence(timeout: 5))
@@ -64,9 +72,9 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.typeKey(.return, modifierFlags: [])
         let aligned = app.textFields["ww.alignment.anchor.0.alignedTime"]
         XCTAssertTrue(aligned.waitForExistence(timeout: 2))
-        aligned.typeKey("a", modifierFlags: .command)
-        aligned.typeText("0.125")
-        aligned.typeKey(.return, modifierFlags: [])
+        app.typeKey("a", modifierFlags: .command)
+        app.typeText("0.125")
+        app.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(waitForValue("0.125", in: app.textFields["ww.alignment.anchor.0.alignedTime"]))
         anchor.click()
         app.typeKey("z", modifierFlags: .command)
@@ -134,9 +142,9 @@ final class AlignmentInspectionUITests: XCTestCase {
         selectTargetEpoch()
         replace(app.textFields["ww.alignment.audition.range.duration"], with: "2")
         app.typeKey(.return, modifierFlags: .command)
-        XCTAssertTrue(waitForLabel("Auditioning", in: app.staticTexts["alignment.auditionStatus"]))
+        XCTAssertTrue(waitForText("Auditioning", in: app.staticTexts["alignment.auditionStatus"]))
         app.typeKey(.escape, modifierFlags: [])
-        XCTAssertTrue(waitForLabel("Audition stopped at", in: app.staticTexts["alignment.auditionStatus"]))
+        XCTAssertTrue(waitForText("Audition stopped at", in: app.staticTexts["alignment.auditionStatus"]))
     }
 
     func testTM210BlockedStateAndRemedyAreLabelled() {
@@ -150,9 +158,14 @@ final class AlignmentInspectionUITests: XCTestCase {
 
     func testTM211DependentsNoticeIsReadableWithoutFocusMove() {
         selectTargetEpoch()
-        XCTAssertTrue(app.staticTexts["1 dependent job current; none stale."].waitForExistence(timeout: 5))
+        let notice = app.staticTexts["ww.alignment.dependents"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        guard let total = dependentTotal(from: notice) else {
+            return XCTFail("Expected current dependent count, got \(text(of: notice))")
+        }
         chooseEpisodeMenu("Accept Proposal as Manual")
-        XCTAssertTrue(app.staticTexts["1 of 1 dependent job stale."].waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForText("\(total) of \(total) dependent job", in: notice))
+        XCTAssertTrue(text(of: notice).hasSuffix("stale."))
     }
 
     func testTM212NoRecorderGroupBlockedPanel() throws {
@@ -194,7 +207,20 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.activate()
         app.typeKey("2", modifierFlags: .command)
         XCTAssertTrue(app.staticTexts["ww.show.blocked.heading"].waitForExistence(timeout: 5))
-        try app.performAccessibilityAudit(for: [.contrast])
+        let window = app.windows["ww.show.window"]
+        let titlebarBottom = window.frame.minY + 56
+        var titlebarFindings = 0
+        try app.performAccessibilityAudit(for: [.contrast]) { issue in
+            guard issue.auditType == .contrast, let element = issue.element,
+                  element.elementType == .staticText,
+                  (element.value as? String ?? element.label) == "Empty Alignment",
+                  element.frame.maxY <= titlebarBottom
+            else { return false }
+            titlebarFindings += 1
+            print("AUDIT WAIVED [blocked-titlebar] \(issue.compactDescription) — AppKit window title outside the blocked content")
+            return true
+        }
+        XCTAssertLessThanOrEqual(titlebarFindings, 1)
     }
 
     private func chooseEpisodeMenu(_ item: String) {
@@ -222,16 +248,50 @@ final class AlignmentInspectionUITests: XCTestCase {
         field.typeKey(.return, modifierFlags: [])
     }
 
-    private func waitForLabel(
+    private func waitForText(
         _ prefix: String,
         in element: XCUIElement,
         timeout: TimeInterval = 5
     ) -> Bool {
-        let predicate = NSPredicate(format: "label BEGINSWITH %@", prefix)
+        let predicate = NSPredicate(format: "label BEGINSWITH %@ OR value BEGINSWITH %@", prefix, prefix)
         return XCTWaiter.wait(
             for: [XCTNSPredicateExpectation(predicate: predicate, object: element)],
             timeout: timeout
         ) == .completed
+    }
+
+    private func text(of element: XCUIElement) -> String {
+        element.value as? String ?? element.label
+    }
+
+    private func dependentTotal(from element: XCUIElement) -> Int? {
+        let value = text(of: element)
+        guard value.contains(" dependent job"), value.hasSuffix(" current; none stale."),
+              let first = value.split(separator: " ").first
+        else { return nil }
+        return Int(first)
+    }
+
+    private func assertReachable(
+        _ element: XCUIElement,
+        in window: XCUIElement,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(element.waitForExistence(timeout: 3), element.identifier, file: file, line: line)
+        let scroll = app.scrollViews["ww.alignment.workspace"]
+        for _ in 0..<12 where !window.frame.intersects(element.frame) {
+            scroll.swipeUp()
+        }
+        XCTAssertTrue(
+            window.frame.intersects(element.frame),
+            "\(element.identifier) is reachable by scrolling",
+            file: file,
+            line: line
+        )
+        if element.isEnabled {
+            XCTAssertTrue(element.isHittable, "\(element.identifier) is hittable", file: file, line: line)
+        }
     }
 
     private func tabToFocus(_ element: XCUIElement) -> Bool {

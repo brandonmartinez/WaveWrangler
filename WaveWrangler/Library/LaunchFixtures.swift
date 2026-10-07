@@ -28,6 +28,7 @@ import WWTimeMap
 ///   (the Library window is then not shown at launch).
 /// - `-WWUITestAlignmentFixture YES`: give the opened synthetic episode two recorder groups and epochs,
 ///   with synthetic logical source records only. No recording exists and no source content can be read.
+/// - `-WWUITestMinimumShowWindow YES`: open a synthetic show at the supported 760×440 minimum content size.
 /// - `-WWUITestAppearance aqua|darkAqua|highContrastAqua|highContrastDarkAqua`: app appearance for C04/C07
 ///   checks. The high-contrast names are AppKit's Increase Contrast appearances (labelled "override, not
 ///   system setting" in evidence; implements the `-WWForceIncreaseContrast` idea of the acceptance suite).

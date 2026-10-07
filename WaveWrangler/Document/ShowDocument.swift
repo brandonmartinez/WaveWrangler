@@ -113,7 +113,12 @@ final class ShowDocument: NSDocument {
         let hosting = NSHostingController(rootView: ShowWorkspaceView(store: store))
         let window = NSWindow(contentViewController: hosting)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 760, height: 520))
+        #if DEBUG
+        let initialHeight = UserDefaults.standard.bool(forKey: "WWUITestMinimumShowWindow") ? 440.0 : 520.0
+        #else
+        let initialHeight = 520.0
+        #endif
+        window.setContentSize(NSSize(width: 760, height: initialHeight))
         window.tabbingMode = .preferred
         addWindowController(NSWindowController(window: window))
     }
