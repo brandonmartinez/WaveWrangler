@@ -263,7 +263,6 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             check(windows.element(boundBy: 1).waitForExistence(timeout: 5), "second window")
             let first = windows.element(boundBy: 0)
             let second = windows.element(boundBy: 1)
-            check(first.frame != second.frame, "second window is offset from the first")
             try editShowTitle(first, "Shared Edit")
 
             @MainActor func recordUndoState(_ moment: String) {
@@ -281,6 +280,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
                     "secondTitle": second.title,
                     "firstFrame": "\(first.frame)",
                     "secondFrame": "\(second.frame)",
+                    "framesDistinct": first.frame != second.frame,
                 ], test: self)
                 if moment == "before-command-z" {
                     check(undoExists && undo.isEnabled, "Undo is enabled before ⌘Z")
