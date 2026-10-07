@@ -102,7 +102,10 @@ final class FormatUpdateUITests: XCTestCase {
             check(Acceptance.waitFor(timeout: 5) { self.value(status).hasPrefix("Read-only") }, "status Read-only: \(value(status))")
             try audit("T21 read-only window")
             let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
-            if showInfo.waitForExistence(timeout: 5) { showInfo.click() }
+            if showInfo.waitForExistence(timeout: 5) {
+                showInfo.click()
+                try audit("T21 read-only Show Info")
+            }
             let title = window.textFields["Show title"]
             check(title.waitForExistence(timeout: 5) && title.value as? String == "Mixed Show", "the older content is shown: \(title.value ?? "nil")")
             check(!title.isEnabled, "the title can't be edited")
