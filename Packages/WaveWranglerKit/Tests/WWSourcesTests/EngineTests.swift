@@ -597,7 +597,10 @@ struct ForbiddenAPITests {
     /// `SourceDecoder` (the other-module scan forbids the gateway itself), hashes only in its two digest files,
     /// and mutates files only through the store.
     static func derivedViolations(in source: String, fileName: String) -> [String] {
-        let code = code(source)
+        var code = code(source)
+        if fileName == "DerivedAssetStore.swift" {
+            code = code.replacingOccurrences(of: ".contentsOfDirectory(", with: ".listDirectory(")
+        }
         let allowed = derivedExceptions[fileName] ?? []
         var found = Array(Set(forbidden + decodeMutationTokens + derivedStoreTokens))
             .filter { !allowed.contains($0) && code.contains($0) }
@@ -610,10 +613,15 @@ struct ForbiddenAPITests {
     }
 
     @Test func derivedScannerDetectsContentHashingAndMutation() {
-        #expect(Self.derivedViolations(in: "let d = try Data(contentsOf: source)", fileName: "DerivedAssetStore.swift") == ["DerivedAssetStore.swift: Data(contentsOf"])
+        #expect(Self.derivedViolations(in: "let d = try Data(contentsOf: source)", fileName: "DerivedAssetStore.swift") == [
+            "DerivedAssetStore.swift: Data(contentsOf", "DerivedAssetStore.swift: contentsOf",
+        ])
         #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "DerivedJobCoordinator.swift") == ["DerivedJobCoordinator.swift: writeNew"])
         #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "DerivedAssetStore.swift").isEmpty)
         #expect(Self.derivedViolations(in: "try files.writeNew(bytes, to: url)", fileName: "Sub/DerivedAssetStore.swift") == ["Sub/DerivedAssetStore.swift: writeNew"])
+        #expect(Self.derivedViolations(in: "try files.contentsOfDirectory(url)", fileName: "DerivedAssetStore.swift").isEmpty)
+        #expect(Self.derivedViolations(in: "try files.contentsOfDirectory(url)", fileName: "DerivedJobCoordinator.swift")
+            == ["DerivedJobCoordinator.swift: contentsOf"])
         #expect(Self.derivedViolations(in: "let h = SHA256.hash(data: bytes)", fileName: "MapHistory.swift") == ["MapHistory.swift: SHA256"])
         #expect(Self.derivedViolations(in: "let h = SHA256.hash(data: bytes)", fileName: "DerivedAssetStore.swift") == ["DerivedAssetStore.swift: SHA256"])
         #expect(Self.derivedViolations(in: "try FileManager.default.moveItem(at: a, to: b)", fileName: "DerivedAssetStore.swift")
