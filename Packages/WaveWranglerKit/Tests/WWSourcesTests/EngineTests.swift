@@ -744,13 +744,17 @@ struct ReviewRegressionTests {
 struct StallFollowUpTests {
     static let policy = TransferPolicy(pollInterval: .milliseconds(1), stallAfterUnchangedPolls: 5, stalledPollInterval: .milliseconds(1), maxStalledPollInterval: .milliseconds(2))
 
-    func setUp(script: [SimulatedCloudItem.Step], setting: SourceAvailabilitySetting = .on) throws -> (SyntheticTree, URL, HarnessIO, SourceTransferController, DeviceAccessKey) {
+    func setUp(
+        script: [SimulatedCloudItem.Step],
+        setting: SourceAvailabilitySetting = .on,
+        sleep: @escaping SourceTransferController.Sleeper = { try await Task.sleep(for: $0) }
+    ) throws -> (SyntheticTree, URL, HarnessIO, SourceTransferController, DeviceAccessKey) {
         let tree = try SyntheticTree(label: "stall")
         var rng = SplitMix64(seed: 15)
         let file = try tree.file("long.wav", bytes: 64, rng: &rng)
         let io = HarnessIO()
         io.simulate(file, SimulatedCloudItem(script: script))
-        let controller = SourceTransferController(context: makeContext(io), policy: Self.policy, setting: setting)
+        let controller = SourceTransferController(context: makeContext(io), policy: Self.policy, setting: setting, sleep: sleep)
         return (tree, file, io, controller, DeviceAccessKey(showID: testShow, sourceID: SourceID()))
     }
 
@@ -795,17 +799,30 @@ struct StallFollowUpTests {
     }
 
     @Test func explicitRetryOfAStalledTransferIssuesAFreshRequest() async throws {
-        let (tree, file, io, controller, key) = try setUp(script: Array(repeating: .stall, count: 100_000))
+        let sleeper = SteppedSleeper()
+        let (tree, file, io, controller, key) = try setUp(script: Array(repeating: .stall, count: 100_000)) { duration in
+            if sleeper.isCancelled { try await Task.sleep(for: duration) }
+            else { try await sleeper.sleep(duration) }
+        }
         _ = tree
         let collector = await eventCollector(controller, key: key) { $0.isOfflineOrUnknown }
         _ = await controller.makeAvailable(key, at: file)
-        _ = await collector.value
+        var requests = sleeper.requests.makeAsyncIterator()
+        for _ in 0...5 {
+            _ = await requests.next()
+            sleeper.step()
+        }
+        #expect((await collector.value).last?.isOfflineOrUnknown == true)
         // An automatic call while stalled does nothing new.
         _ = await controller.makeAvailable(key, at: file)
         #expect(io.count(.downloadRequest) == 1)
         let resumed = await eventCollector(controller, key: key) { if case .inProgress = $0 { true } else { false } }
         io.mutateSimulated(file) { $0.evictAgain(script: [.progress(0.5), .complete]) }
+        _ = await requests.next()
+        sleeper.step()
         #expect((await resumed.value).last == .inProgress(fractionCompleted: .unknown))
+        _ = await requests.next()
+        #expect(await controller.state(of: key) == .inProgress(fractionCompleted: .unknown))
         #expect(await controller.retry(key, at: file) == .requested)
         #expect(io.count(.downloadRequest) == 2)
         #expect(await settled(controller, key) == .idle)
@@ -901,6 +918,34 @@ final class SteppedSleeper: @unchecked Sendable {
         }
         continuation?.resume()
     }
+
+    var isCancelled: Bool { lock.withLock { cancelled } }
+}
+
+/// Step the original observer through its stall and first idle-provider sample, then leave its next
+/// sleep suspended. Cancellation releases it; the replacement observer uses ordinary async sleeps.
+func resumeStalledObserverAfterDrop(
+    _ sleeper: SteppedSleeper,
+    io: HarnessIO,
+    file: URL,
+    controller: SourceTransferController,
+    key: DeviceAccessKey,
+    stalled: Task<[TransferState], Never>
+) async -> Bool {
+    var requests = sleeper.requests.makeAsyncIterator()
+    for _ in 0...5 {
+        guard await requests.next() != nil else { return false }
+        sleeper.step()
+    }
+    guard (await stalled.value).last?.isOfflineOrUnknown == true else { return false }
+    let resumed = await eventCollector(controller, key: key) { $0 == .inProgress(fractionCompleted: .unknown) }
+    io.mutateSimulated(file) { $0.evictAgain(script: [.progress(0.5), .complete]) }
+    guard await requests.next() != nil else { return false }
+    sleeper.step()
+    guard (await resumed.value).last == .inProgress(fractionCompleted: .unknown) else { return false }
+    // The first observer cannot poll again until Retry cancels it.
+    guard await requests.next() != nil else { return false }
+    return await controller.state(of: key) == .inProgress(fractionCompleted: .unknown)
 }
 
 /// Polling has stopped once the metadata call count stays unchanged for 40 ms (a live test observer
@@ -1082,14 +1127,16 @@ struct StallLifetimeTests {
         let io = HarnessIO()
         io.simulate(file, SimulatedCloudItem(script: Self.stallForever))
         let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
-        let controller = SourceTransferController(context: makeContext(io), policy: StallFollowUpTests.policy, setting: .on)
+        let sleeper = SteppedSleeper()
+        let controller = SourceTransferController(context: makeContext(io), policy: StallFollowUpTests.policy, setting: .on) { duration in
+            if sleeper.isCancelled { try await Task.sleep(for: duration) }
+            else { try await sleeper.sleep(duration) }
+        }
         let collector = await eventCollector(controller, key: key) { $0.isOfflineOrUnknown }
         _ = await controller.makeAvailable(key, at: file)
-        _ = await collector.value
         let waiter = Task { await settled(controller, key) }
-        let resumed = await eventCollector(controller, key: key) { if case .inProgress = $0 { true } else { false } }
-        io.mutateSimulated(file) { $0.evictAgain(script: [.progress(0.5), .complete]) }
-        #expect((await resumed.value).last == .inProgress(fractionCompleted: .unknown))
+        #expect(await resumeStalledObserverAfterDrop(sleeper, io: io, file: file, controller: controller, key: key, stalled: collector))
+        #expect(await controller.state(of: key) == .inProgress(fractionCompleted: .unknown))
         #expect(await controller.retry(key, at: file) == .requested)
         #expect(await waiter.value == .idle)
     }
@@ -1204,15 +1251,16 @@ struct RetryAfterProviderDropTests {
         let before = TreeSnapshot.take(tree.sources)
         let io = HarnessIO()
         io.simulate(file, SimulatedCloudItem(script: StallLifetimeTests.stallForever))
-        let controller = SourceTransferController(context: makeContext(io), policy: StallFollowUpTests.policy, setting: .on)
+        let sleeper = SteppedSleeper()
+        let controller = SourceTransferController(context: makeContext(io), policy: StallFollowUpTests.policy, setting: .on) { duration in
+            if sleeper.isCancelled { try await Task.sleep(for: duration) }
+            else { try await sleeper.sleep(duration) }
+        }
         let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
         let stalled = await eventCollector(controller, key: key) { $0.isOfflineOrUnknown }
         _ = await controller.makeAvailable(key, at: file)
-        #expect((await stalled.value).last?.isOfflineOrUnknown == true)
-
-        let resumed = await eventCollector(controller, key: key) { $0 == .inProgress(fractionCompleted: .unknown) }
-        io.mutateSimulated(file) { $0.evictAgain(script: [.progress(0.5), .complete]) }
-        #expect((await resumed.value).last == .inProgress(fractionCompleted: .unknown))
+        #expect(await resumeStalledObserverAfterDrop(sleeper, io: io, file: file, controller: controller, key: key, stalled: stalled))
+        #expect(await controller.state(of: key) == .inProgress(fractionCompleted: .unknown))
         let retried = await controller.retry(key, at: file)
         #expect(retried == .requested)
         #expect(io.count(.downloadRequest) == 2)
