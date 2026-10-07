@@ -66,12 +66,23 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     }
 
     static func openNewWindow(for document: NSDocument) {
+        let existingWindows = document.windowControllers.compactMap(\.window)
         let before = Set(document.windowControllers.map(ObjectIdentifier.init))
         document.makeWindowControllers()
         for controller in document.windowControllers where !before.contains(ObjectIdentifier(controller)) {
             // IA-02: File › New Window opens another window, not a tab.
             controller.window?.tabbingMode = .disallowed
             controller.showWindow(nil)
+            #if DEBUG
+            if UserDefaults.standard.bool(forKey: "WWUITestOffsetNewWindows"),
+               let window = controller.window, let original = existingWindows.last,
+               let visible = window.screen?.visibleFrame ?? NSScreen.screens.first?.visibleFrame {
+                var frame = window.frame
+                frame.origin.x = min(max(visible.minX, original.frame.origin.x + 48), visible.maxX - frame.width)
+                frame.origin.y = min(max(visible.minY, original.frame.origin.y - 48), visible.maxY - frame.height)
+                window.setFrame(frame, display: true)
+            }
+            #endif
         }
     }
 
