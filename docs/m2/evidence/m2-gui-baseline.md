@@ -108,6 +108,16 @@ All runs: Macsimus, the same 100-sample synthetic episode-switch XCUITest, at le
 
 **Informational, not gated:** a Debug-versus-optimised-build measurement of the same SHA is pending (relay-directed 00:18). It goes in #220 and the M2 exit record, and doesn't change this decision.
 
+### Baseline revision 2026-10-07: #175 GUI round 3 (`cd67159c128c7ffe0e9e08c39efe3668866e660d`)
+
+The final #175 GUI round ran `FormatUpdateUITests`, `CoreTasksKeyboardUITests`, and `OfflineSaveKeyboardUITests` on Macsimus. The initial run was **16 pass / 4 fail / 0 skip**; every failure received its one labelled isolated rerun and remained recorded.
+
+- `CoreTasksKeyboardUITests`: 5 pass / 1 fail. `testT16ConflictNeverOverwrites` repeated the accepted #66 baseline failure.
+- `OfflineSaveKeyboardUITests`: 5 pass / 0 fail.
+- `FormatUpdateUITests`: 5 pass / 3 fail. The tabbed-show test's initial foreground-synthesis interruption reran as deterministic selection/sheet-settling failures; its attachments identify the visible sheet as First Tab after Second Tab was answered, rather than identifying a repeated prompt for the already-answered document. `testT21OpenReadOnlyWithCommandR` repeated two AX-disabled, measured-high-contrast Show Info findings (p75 15.72:1 and 15.91:1), which remain unwaived because the inactive-component rule is scoped only to the status popover. `testT21UpdateFromStatusItemAfterOpenReadOnly` repeated an enabled `ww.setup.source.*.status` `Needs permission` contrast finding at p75 1.66:1, which is a real finding under the round-3 rule.
+
+Full Keyboard Access was off. The run therefore records, but does not claim, the Tab/Space paths for D15 Try Again and Show Details, T21 status-popover Update, T27 status-popover Try Again, and T28 Save a Copy Elsewhere/focus return. Result bundles remain host-local at `~/ww-uitest-runs/pr175-r3-cd67159/round3-tests.xcresult` and `isolated-reruns.xcresult`.
+
 ## Baseline maintenance
 
 Only a reviewed PR may change this file. Subsequent M2 PR runs compare their affected classes with this record and fail on new UI-test, essential-audit, or responsiveness findings. Existing items remain failures or accepted follow-ups until their evidence is updated in a reviewed baseline revision.
