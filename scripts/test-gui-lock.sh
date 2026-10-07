@@ -17,7 +17,8 @@ reset_state() {
   rm -rf "$ROOT/.gui.lock" \
     "$ROOT/.gui.queue" "$ROOT"/*.xcresult "$ROOT"/run-*
   rm -f "$ROOT/xcodebuild" "$ROOT/WaveWranglerUITests-Runner" \
-    "$ROOT/guard-held" "$ROOT/counter" "$ROOT/completed"
+    "$ROOT/guard-held" "$ROOT/counter" "$ROOT/completed" \
+    "$ROOT/restore-marker"
   mkdir -p "$ROOT/.gui.queue/required" "$ROOT/.gui.queue/pr" "$ROOT/.gui.queue/full" "$ROOT/.gui.queue/perf"
   : > "$ROOT/gui-lock.log"
   : > "$ROOT/order"
@@ -392,6 +393,32 @@ printf '0\n' > "$ROOT/counter"
 "$SCRIPT" guard-probe "$ROOT/counter" "$ROOT/completed"
 [ "$(cat "$ROOT/completed")" = done ] || fail "killed holder did not free the lock"
 
+echo "test: guard timeout fails before ticket creation"
+reset_state
+printf '0\n' > "$ROOT/counter"
+: > "$ROOT/completed"
+export GUI_LOCK_TEST_GUARD_MARKER="$ROOT/guard-held"
+export GUI_LOCK_TEST_GUARD_HOLD_SECONDS=10
+"$SCRIPT" guard-probe "$ROOT/counter" "$ROOT/completed" > "$ROOT/timeout-guard-holder.out" 2>&1 &
+timeout_guard_holder_pid=$!
+for attempt in $(seq 1 20); do
+  [ -f "$ROOT/guard-held" ] && break
+  sleep 1
+done
+[ -f "$ROOT/guard-held" ] || fail "timeout guard holder never acquired the guard"
+if GUI_LOCK_TEST_GUARD_TIMEOUT_SECONDS=1 run_lane guard-timeout pr 0 > "$ROOT/guard-timeout.out" 2>&1; then
+  fail "guard timeout unexpectedly created a run"
+fi
+if find "$ROOT/.gui.queue" -mindepth 2 -type d -print -quit | grep -q .; then
+  fail "guard timeout created a ticket"
+fi
+[ ! -s "$ROOT/order" ] || fail "guard timeout ran the wrapped command"
+assert_contains "$ROOT/guard-timeout.out" "cannot allocate GUI ticket sequence"
+assert_contains "$ROOT/gui-lock.log" "ERROR ticket sequence allocation failed lane=guard-timeout"
+kill -9 "$timeout_guard_holder_pid" 2>/dev/null || true
+wait "$timeout_guard_holder_pid" 2>/dev/null || true
+unset GUI_LOCK_TEST_GUARD_HOLD_SECONDS GUI_LOCK_TEST_GUARD_MARKER
+
 echo "test: contender cannot enter during delayed guard publication"
 reset_state
 printf '0\n' > "$ROOT/counter"
@@ -456,6 +483,33 @@ next_ticket_pid=$!
 wait "$ticket_holder_pid" "$next_ticket_pid"
 assert_contains "$ROOT/gui-lock.log" "reclaimed ticket=$(basename "$ticket_file")"
 assert_contains "$ROOT/next-ticket.out" "RELEASED lane=next-ticket"
+
+echo "test: interrupted queued waiter cannot clean run state"
+reset_state
+run_lane cleanup-holder pr 8 > "$ROOT/cleanup-holder.out" 2>&1 &
+cleanup_holder_pid=$!
+wait_for_run cleanup-holder
+queued_dir="$ROOT/run-cleanup-waiter"
+mkdir -p "$queued_dir"
+sleep 30 &
+sentinel_pid=$!
+printf '%s\n' "$sentinel_pid" > "$queued_dir/gui-lock-pids"
+cat > "$queued_dir/restore-settings.sh" <<EOF
+#!/bin/bash
+: > "$ROOT/restore-marker"
+EOF
+chmod +x "$queued_dir/restore-settings.sh"
+run_lane_in_dir cleanup-waiter pr 0 "$queued_dir" > "$ROOT/cleanup-waiter.out" 2>&1 &
+cleanup_waiter_pid=$!
+stop_waiter cleanup-waiter "$cleanup_waiter_pid"
+kill -0 "$sentinel_pid" 2>/dev/null || fail "queued waiter killed a sentinel PID"
+[ ! -e "$ROOT/restore-marker" ] || fail "queued waiter restored settings before acquisition"
+if find "$ROOT/.gui.queue" -type d -name '*-cleanup-waiter' -print -quit | grep -q .; then
+  fail "interrupted queued waiter retained its ticket"
+fi
+kill "$sentinel_pid" 2>/dev/null || true
+wait "$sentinel_pid" 2>/dev/null || true
+wait "$cleanup_holder_pid"
 
 echo "test: killed waiter before ticket metadata is published"
 reset_state

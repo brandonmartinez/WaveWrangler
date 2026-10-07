@@ -45,9 +45,26 @@ format_duration() {
 next_sequence() {
   local sequence=0
   acquire_guard
-  [ -f "$ROOT/.gui.sequence" ] && sequence=$(cat "$ROOT/.gui.sequence")
+  if [ -f "$ROOT/.gui.sequence" ]; then
+    if ! sequence=$(cat "$ROOT/.gui.sequence"); then
+      echo "cannot read GUI ticket sequence: $ROOT/.gui.sequence" >&2
+      release_guard
+      return 1
+    fi
+    case "$sequence" in
+      ""|*[!0-9]*)
+        echo "invalid GUI ticket sequence: $ROOT/.gui.sequence" >&2
+        release_guard
+        return 1
+        ;;
+    esac
+  fi
   sequence=$((sequence + 1))
-  printf '%s\n' "$sequence" | atomic_write "$ROOT/.gui.sequence"
+  if ! printf '%s\n' "$sequence" | atomic_write "$ROOT/.gui.sequence"; then
+    echo "cannot write GUI ticket sequence: $ROOT/.gui.sequence" >&2
+    release_guard
+    return 1
+  fi
   release_guard
   printf '%012d\n' "$sequence"
 }
@@ -98,8 +115,15 @@ reclaim_dead_tickets() {
   done
 }
 acquire_guard() {
+  local timeout=120
+  if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ -n "${GUI_LOCK_TEST_GUARD_TIMEOUT_SECONDS:-}" ]; then
+    case "$GUI_LOCK_TEST_GUARD_TIMEOUT_SECONDS" in
+      ""|*[!0-9]*) echo "test guard timeout must be an integer" >&2; return 1;;
+    esac
+    timeout="$GUI_LOCK_TEST_GUARD_TIMEOUT_SECONDS"
+  fi
   exec 9>"$GUARD" || { echo "cannot open GUI guard: $GUARD" >&2; exit 1; }
-  if ! /usr/bin/lockf -s -t 120 9; then
+  if ! /usr/bin/lockf -s -t "$timeout" 9; then
     echo "cannot acquire GUI guard: $GUARD" >&2
     exec 9>&-
     exit 1
@@ -378,9 +402,11 @@ cleanup_run() {
   trap - EXIT INT TERM
   release_guard
   [ -n "${TICKET:-}" ] && [ -d "$TICKET" ] && rm -rf "$TICKET"
-  [ -n "${PIDS_FILE:-}" ] && [ -f "$PIDS_FILE" ] && kill_recorded_pids "$PIDS_FILE"
-  [ -n "${DIR:-}" ] && restore_settings
-  [ "${ACQUIRED_OWNERSHIP:-0}" = 1 ] && release_owned_lease
+  if [ "${ACQUIRED_OWNERSHIP:-0}" = 1 ] && [ -n "${TOKEN:-}" ]; then
+    [ -n "${PIDS_FILE:-}" ] && [ -f "$PIDS_FILE" ] && kill_recorded_pids "$PIDS_FILE"
+    [ -n "${DIR:-}" ] && restore_settings
+    release_owned_lease
+  fi
 }
 
 status() {
@@ -425,9 +451,24 @@ status() {
 }
 
 acquire_for_run() {
-  sequence=$(next_sequence)
+  if ! sequence=$(next_sequence); then
+    log "ERROR ticket sequence allocation failed lane=$LANE class=$CLASS"
+    echo "cannot allocate GUI ticket sequence" >&2
+    return 1
+  fi
+  case "$sequence" in
+    ""|*[!0-9]*)
+      log "ERROR invalid ticket sequence lane=$LANE class=$CLASS sequence=${sequence:-empty}"
+      echo "invalid GUI ticket sequence" >&2
+      return 1
+      ;;
+  esac
   TICKET="$QUEUE/$CLASS/$sequence-owner$$-$LANE"
-  mkdir "$TICKET"
+  if ! mkdir "$TICKET"; then
+    log "ERROR ticket creation failed lane=$LANE class=$CLASS ticket=$TICKET"
+    echo "cannot create GUI ticket: $TICKET" >&2
+    return 1
+  fi
   {
     printf 'lane=%s\n' "$LANE"
     printf 'class=%s\n' "$CLASS"
@@ -443,7 +484,16 @@ acquire_for_run() {
 
   while :; do
     reclaim_dead_tickets
-    first=$(first_ticket)
+    if ! first=$(first_ticket); then
+      log "ERROR queue read failed lane=$LANE class=$CLASS ticket=$(basename "$TICKET")"
+      echo "cannot read GUI ticket queue" >&2
+      return 1
+    fi
+    if [ -z "$first" ]; then
+      log "ERROR queue unexpectedly empty lane=$LANE class=$CLASS ticket=$(basename "$TICKET")"
+      echo "GUI ticket queue is unexpectedly empty" >&2
+      return 1
+    fi
     if [ "$first" = "$TICKET" ]; then
       acquire_guard
       if block_if_test_active; then
@@ -515,7 +565,9 @@ run_one() {
   trap cleanup_run EXIT
   trap 'cleanup_run; exit 130' INT
   trap 'cleanup_run; exit 143' TERM
-  acquire_for_run
+  if ! acquire_for_run; then
+    return 1
+  fi
   : > "$OUTPUT"
   : > "$PIDS_FILE"
   printf 'START host=%s sha=%s lane=%s class=%s load=%s\n' \
