@@ -45,8 +45,8 @@ final class ShowDocument: NSDocument {
     private var resolvesOffer: OfferResolution?
 
     var revision: Int { publication?.revision ?? 0 }
-    /// The exact model last independently verified on disk. Alignment uses this only for one-time open
-    /// reconciliation; live inspection never treats the mutable in-memory model as persisted truth.
+    /// The exact model last independently verified on disk. Alignment reconciles verified publications;
+    /// live inspection never treats the mutable in-memory model as persisted truth.
     private(set) var verifiedModel: ShowDocumentModel?
 
     #if DEBUG
@@ -535,6 +535,8 @@ final class ShowDocument: NSDocument {
         uncertainCandidate = nil
         publication = document.publication
         onDiskBase = fingerprint
+        verifiedModel = document.payload
+        AlignmentRuntimeProvider.reconcileActive(for: self)
         fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
         if store.model == document.payload {
             updateChangeCount(.changeCleared)

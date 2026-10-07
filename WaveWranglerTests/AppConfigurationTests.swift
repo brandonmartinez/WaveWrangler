@@ -116,6 +116,22 @@ struct UITestHooksDebugOnlyTests {
             ))
             #expect(factory.lowerBound < detached.lowerBound)
         }
+
+        @Test func uncertainPublicationAdoptionReconcilesItsVerifiedRevision() throws {
+            let source = try UITestHooksDebugOnlyTests.source("Document/ShowDocument.swift")
+            let start = try #require(source.range(of: "private func adoptUncertainPublication()"))
+            let end = try #require(source[start.upperBound...].range(of: "\n    override func writeSafely("))
+            let body = source[start.lowerBound..<end.lowerBound]
+            #expect(body.contains("verifiedModel = document.payload"))
+            #expect(body.contains("AlignmentRuntimeProvider.reconcileActive(for: self)"))
+
+            let runtime = try Self.runtimeSource()
+            #expect(runtime.contains("documentID: ObjectIdentifier(document),\n                publication: publication"))
+            #expect(runtime.contains("let published = try await reconciler.reconcile("))
+            #expect(runtime.contains("if episode.alignment?.acceptedRevision != nil {"))
+            #expect(!runtime.contains("episode.alignment?.acceptedRevision != nil\n        else { return }"))
+            #expect(!runtime.contains("guard episode.alignment?.acceptedRevision != nil else { return }"))
+        }
     }
 
     @Test func hooksTypeIsCompiledOnlyInDebug() throws {

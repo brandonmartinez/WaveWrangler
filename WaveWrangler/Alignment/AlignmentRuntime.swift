@@ -30,7 +30,12 @@ actor AlignmentRuntime {
     private var sourceByEpoch: [EpisodeID: [RecordingEpochID: AlignmentSource]] = [:]
     private var reports: [EpisodeID: AlignmentAnalysisReport] = [:]
     private var reconciliationFailures: [EpisodeID: String] = [:]
-    private var openedDocuments: [EpisodeID: ObjectIdentifier] = [:]
+    private struct OpenedVersion: Equatable {
+        var documentID: ObjectIdentifier
+        var publication: PublicationStamp
+    }
+    private var openedDocuments: [EpisodeID: OpenedVersion] = [:]
+    private var openedReconcilers: [EpisodeID: VerifiedDocumentReconciler] = [:]
     #if DEBUG
     private var seededFixtureDependents: Set<EpisodeID> = []
     #endif
@@ -161,19 +166,33 @@ actor AlignmentRuntime {
     func activateOpened(
         _ model: ShowDocumentModel,
         episode episodeID: EpisodeID,
-        documentID: ObjectIdentifier
+        documentID: ObjectIdentifier,
+        publication: PublicationStamp
     ) async {
-        guard openedDocuments[episodeID] != documentID else { return }
-        openedDocuments[episodeID] = documentID
-        guard let episode = model.episode(episodeID),
-              episode.alignment?.acceptedRevision != nil
-        else { return }
-        _ = await resolveSources(episode.sources)
+        let version = OpenedVersion(documentID: documentID, publication: publication)
+        guard openedDocuments[episodeID] != version else { return }
+        openedDocuments[episodeID] = version
+        guard let episode = model.episode(episodeID) else { return }
+        let reconciler = openedReconcilers[episodeID] ?? VerifiedDocumentReconciler()
+        openedReconcilers[episodeID] = reconciler
         do {
-            try await pipeline.activate(model: model, episode: episodeID)
-            reconciliationFailures[episodeID] = nil
+            let published = try await reconciler.reconcile(
+                resolve: { [self] in
+                    if episode.alignment?.acceptedRevision != nil {
+                        _ = await resolveSources(episode.sources)
+                    }
+                },
+                publish: { [self] in
+                    try await pipeline.activate(model: model, episode: episodeID)
+                }
+            )
+            if published, openedDocuments[episodeID] == version {
+                reconciliationFailures[episodeID] = nil
+            }
         } catch {
-            reconciliationFailures[episodeID] = String(describing: error)
+            if openedDocuments[episodeID] == version {
+                reconciliationFailures[episodeID] = String(describing: error)
+            }
         }
     }
 
@@ -248,6 +267,12 @@ actor AlignmentRuntime {
 
     func shutdown() async {
         await coordinator.shutdown()
+    }
+
+    func openedEpisodes(for documentID: ObjectIdentifier) -> [EpisodeID] {
+        openedDocuments.compactMap { episode, opened in
+            opened.documentID == documentID ? episode : nil
+        }
     }
 
     private func resolveSources(_ records: [SourceRecord]) async -> [AlignmentSource] {
@@ -356,13 +381,27 @@ enum AlignmentRuntimeProvider {
                 throw error
             }
         }
-        if let verified = document.verifiedModel {
+        if let verified = document.verifiedModel, let publication = document.publication {
             await runtime.activateOpened(
                 verified,
                 episode: episodeID,
-                documentID: ObjectIdentifier(document)
+                documentID: ObjectIdentifier(document),
+                publication: publication
             )
         }
         return runtime
+    }
+
+    static func reconcileActive(for document: ShowDocument) {
+        guard let runtime = runtimes[document.store.model.show.id],
+              let model = document.verifiedModel, let publication = document.publication else { return }
+        let documentID = ObjectIdentifier(document)
+        Task {
+            for episode in await runtime.openedEpisodes(for: documentID) {
+                await runtime.activateOpened(
+                    model, episode: episode, documentID: documentID, publication: publication
+                )
+            }
+        }
     }
 }

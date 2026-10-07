@@ -121,7 +121,7 @@ public actor DerivedJobCoordinator {
     public private(set) var inputs: DerivedInputs
     private var slots: [DerivedSlot: SlotRecord] = [:]
     private var cachedCandidates: [DerivedSlot: [DerivedAssetKey]] = [:]
-    private var explicitlyInvalidated: Set<DerivedSlot> = []
+    private var explicitlyInvalidated: [DerivedSlot: Set<DerivedAssetKey>] = [:]
     private var nextJobID: UInt64 = 0
     /// Every job that has not finished, including superseded or cancelled ones whose work is still returning.
     private var inFlight: [UInt64: Task<DerivedJobOutcome, Never>] = [:]
@@ -227,7 +227,7 @@ public actor DerivedJobCoordinator {
     /// Marks one slot stale (e.g. its definition changed) and cancels its job.
     public func invalidate(_ slot: DerivedSlot) {
         guard var record = slots[slot], let key = record.state.key else { return }
-        explicitlyInvalidated.insert(slot)
+        explicitlyInvalidated[slot, default: []].insert(key)
         cachedCandidates[slot] = nil
         if case .stale = record.state { return }
         record.task?.cancel()
@@ -285,8 +285,6 @@ public actor DerivedJobCoordinator {
     ) -> DerivedJob {
         guard !hasShutDown else { return DerivedJob(slot: slot, key: key, task: Task { .cancelled }) }
         var record = slots[slot] ?? SlotRecord()
-        rememberCachedCandidate(record.state.key, for: slot)
-        explicitlyInvalidated.subtract([slot])
         record.task?.cancel()
         nextJobID += 1
         let jobID = nextJobID
@@ -300,14 +298,16 @@ public actor DerivedJobCoordinator {
             refresh()
             return DerivedJob(slot: slot, key: key, task: Task { .discardedStale(initial) })
         }
+        rememberCachedCandidate(record.state.key, for: slot)
 
         let store = store
+        let mustRecompute = explicitlyInvalidated[slot]?.contains(key) == true
         #if DEBUG
         let beforeCommit = hooks.beforeCommit
         #endif
         let task = Task.detached(priority: .utility) { [weak self] () async -> DerivedJobOutcome in
             if Task.isCancelled { return await self?.finishWithoutPublishing(jobID, slot: slot, key: key, failure: nil) ?? .cancelled }
-            if store.payload(for: key) != nil {
+            if !mustRecompute && store.payload(for: key) != nil {
                 return await self?.adoptCached(jobID, slot: slot, key: key) ?? .cancelled
             }
             let payload: Data
@@ -361,13 +361,13 @@ public actor DerivedJobCoordinator {
         while changed {
             changed = false
             for slot in slots.keys.sorted(by: { $0.name < $1.name }) {
-                guard !explicitlyInvalidated.contains(slot),
-                      let record = slots[slot],
+                guard let record = slots[slot],
                       case let .stale(current, _) = record.state
                 else { continue }
                 let candidates = [current] + (cachedCandidates[slot] ?? [])
                 guard let restored = candidates.first(where: {
-                    staleReasons(for: $0).isEmpty && store.payload(for: $0) != nil
+                    explicitlyInvalidated[slot]?.contains($0) != true
+                        && staleReasons(for: $0).isEmpty && store.payload(for: $0) != nil
                 }) else { continue }
                 rememberCachedCandidate(current, for: slot)
                 var updated = record
@@ -409,6 +409,7 @@ public actor DerivedJobCoordinator {
             return .failed(String(describing: error))
         }
         record.state = .ready(staged.key)
+        explicitlyInvalidated[slot]?.subtract([staged.key])
         record.currentJob = nil
         record.task = nil
         slots[slot] = record

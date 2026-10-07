@@ -167,6 +167,44 @@ struct DerivedJobCoordinatorTests {
         #expect(await coordinator.readyPayload(for: slot) == nil)
     }
 
+    @Test func rejectedStaleSubmissionDoesNotReviveExplicitlyInvalidatedCache() async throws {
+        let directory = try TemporaryDirectory("jobs")
+        let coordinator = try coordinator(directory)
+        let original = key()
+        let rejected = key(token: "outdated")
+        #expect(await coordinator.submit(slot, key: original) { Data("cached".utf8) }.outcome == .published(original))
+        await coordinator.invalidate(slot)
+        #expect(await coordinator.submit(slot, key: rejected) { Data("never".utf8) }.outcome
+                == .discardedStale([.sourceChanged(source)]))
+        await coordinator.restoreCachedCurrentSlots()
+        #expect(await coordinator.readyPayload(for: slot) == nil)
+        guard case .stale = await coordinator.state(of: slot) else {
+            Issue.record("rejected stale submission revived explicitly invalidated cache")
+            return
+        }
+    }
+
+    @Test func invalidatedKeyIsRecomputedBeforeItsCachedPayloadCanBeServed() async throws {
+        let directory = try TemporaryDirectory("jobs")
+        let coordinator = try coordinator(directory)
+        let key = key()
+        #expect(await coordinator.submit(slot, key: key) { Data("old".utf8) }.outcome == .published(key))
+        await coordinator.invalidate(slot)
+        let started = Latch()
+        let release = Latch()
+        let recompute = await coordinator.submit(slot, key: key) {
+            await started.open()
+            await release.wait()
+            return Data("new".utf8)
+        }
+        await started.wait()
+        await coordinator.restoreCachedCurrentSlots()
+        #expect(await coordinator.readyPayload(for: slot) == nil)
+        await release.open()
+        #expect(await recompute.outcome == .published(key))
+        #expect(await coordinator.readyPayload(for: slot) == Data("new".utf8))
+    }
+
     @Test func aSupersededJobNeverOverwritesItsSuccessor() async throws {
         let directory = try TemporaryDirectory("jobs")
         let coordinator = try coordinator(directory)
