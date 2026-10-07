@@ -7,7 +7,7 @@ import WWPersistence
 // Every command prints one JSON object on stdout.
 //
 //   create    --file F [--seed N] [--recovery DIR]
-//   save      --file F --title T [--recovery DIR] [--ready FILE --go FILE]
+//   save      --file F --title T [--recovery DIR] [--gate-stdin 1 | --ready FILE --go FILE]
 //   open      --file F [--recovery DIR]
 //   versions  --file F
 //   autosave  --file F --enabled 0|1 [--delay S] [--recovery DIR]
@@ -184,7 +184,17 @@ struct Probe {
     func save() async -> Int32 {
         guard let session = openSession() else { return 1 }
         let openedEpochMs = epochMs()
-        if let ready = args.url("ready"), let go = args.url("go") {
+        if args["gate-stdin"] != nil {
+            FileHandle.standardError.write(Data([0x52]))
+            var release = UInt8.zero
+            while true {
+                let count = Darwin.read(STDIN_FILENO, &release, 1)
+                if count == 1 { break }
+                if count < 0, errno == EINTR { continue }
+                emit(["result": "gateFailed", "detail": "release pipe closed before save"])
+                return 1
+            }
+        } else if let ready = args.url("ready"), let go = args.url("go") {
             FileManager.default.createFile(atPath: ready.path, contents: Data())
             guard waitFor(go) else { emit(["result": "timeout"]); return 1 }
         }
