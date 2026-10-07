@@ -28,17 +28,30 @@ private struct ShowWindowContent: View {
     private var store: ShowDocumentStore { state.store }
 
     var body: some View {
-        core
-            // No inspectorColumnWidth(min:ideal:max:): inside an AppKit-hosted window it caused a
-            // re-entrant constraint-update loop (crash) on macOS 27; the default inspector width is used.
-            .inspector(isPresented: $state.inspectorPresented) {
-                InspectorContainer(state: state)
-            }
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    DestinationControl(state: state)
+        GeometryReader { geometry in
+            if geometry.size.width < 900 {
+                HStack(spacing: 0) {
+                    core
+                    if state.inspectorPresented {
+                        Divider()
+                        InspectorContainer(state: state)
+                            .frame(width: 260)
+                    }
                 }
+            } else {
+                core
+                    // No inspectorColumnWidth(min:ideal:max:): inside an AppKit-hosted window it caused a
+                    // re-entrant constraint-update loop (crash) on macOS 27; the default inspector width is used.
+                    .inspector(isPresented: $state.inspectorPresented) {
+                        InspectorContainer(state: state)
+                    }
             }
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                DestinationControl(state: state)
+            }
+        }
     }
 
     private var core: some View {
