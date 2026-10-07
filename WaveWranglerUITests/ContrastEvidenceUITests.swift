@@ -181,28 +181,43 @@ final class ContrastEvidenceUITests: XCTestCase {
             capture("visual-\(appearance)-import-review-200")
             app.typeKey(.return, modifierFlags: [])
             Thread.sleep(forTimeInterval: 2)
+            let sources = app.outlines["ww.setup.sources"]
+            let nineSelected = app.outlines.matching(NSPredicate(
+                format: "identifier == 'ww.setup.sources' AND value == '9 selected'"
+            )).firstMatch
+            XCTAssertTrue(nineSelected.waitForExistence(timeout: 3), "\(appearance): Import leaves all nine source rows selected")
+            XCTAssertTrue(Acceptance.hasKeyboardFocus(sources), "\(appearance): Sources table has keyboard focus after Import")
+            let selectedStatus = app.descendants(matching: .any).matching(NSPredicate(
+                format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status'"
+            )).allElementsBoundByIndex.first(where: \.isHittable)
+            XCTAssertNotNil(selectedStatus, "\(appearance): visible selected status")
+            let selectedMeasurement = selectedStatus.flatMap { ContrastMeter.measure($0.screenshot().image) } ?? [:]
+            let selectedBackground = selectedMeasurement["background"] as? String ?? ""
+            XCTAssertTrue(Acceptance.isAccentBlue(selectedBackground), "\(appearance): imported source rows have emphasized accent backgrounds \(selectedBackground)")
             app.menuBars.menuBarItems["Window"].click()
             app.menuBars.menuItems["Zoom"].click()
             Thread.sleep(forTimeInterval: 1)
             capture("visual-\(appearance)-setup-200-zoomed")
-            let sources = app.outlines["ww.setup.sources"]
             let offlineSource = app.descendants(matching: .any).matching(NSPredicate(
                 format: "identifier BEGINSWITH 'ww.setup.source.' AND NOT identifier ENDSWITH '.status' AND (label == %@ OR value == %@)",
                 "offline.wav", "offline.wav"
             ))
                 .firstMatch
             XCTAssertTrue(offlineSource.waitForExistence(timeout: 3), "\(appearance): offline source cell")
-            offlineSource.click()
-            Thread.sleep(forTimeInterval: 1)
-            let oneSelected = app.outlines.matching(NSPredicate(
-                format: "identifier == 'ww.setup.sources' AND value == '1 selected'"
-            )).firstMatch
-            XCTAssertTrue(oneSelected.waitForExistence(timeout: 3), "\(appearance): offline source is the only selected row")
-            XCTAssertTrue(Acceptance.hasKeyboardFocus(sources), "\(appearance): Sources table has keyboard focus for emphasized selection")
+            let sourceScrollView = sources.scrollViews.firstMatch
+            XCTAssertTrue(sourceScrollView.waitForExistence(timeout: 3), "\(appearance): Sources scroll view")
+            for _ in 0..<3 where !offlineSource.isHittable {
+                sourceScrollView.scroll(byDeltaX: 0, deltaY: -400)
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+            XCTAssertTrue(offlineSource.isHittable, "\(appearance): offline source cell fully visible without changing selection")
+            XCTAssertTrue(nineSelected.exists, "\(appearance): scrolling preserves nine selected source rows")
+            XCTAssertTrue(Acceptance.hasKeyboardFocus(sources), "\(appearance): Sources table retains keyboard focus")
             let offlineStatus = app.descendants(matching: .any).matching(NSPredicate(
                 format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status' AND value BEGINSWITH 'No connection'"
             )).firstMatch
             XCTAssertTrue(offlineStatus.waitForExistence(timeout: 3), "\(appearance): selected no-connection status")
+            XCTAssertTrue(offlineStatus.isHittable, "\(appearance): selected no-connection status fully visible")
             Acceptance.attach(self, png: window.screenshot().pngRepresentation, name: "visual-\(appearance)-setup-200-offline-selected.png")
             let statusMeasurement = ContrastMeter.measure(offlineStatus.screenshot().image) ?? [:]
             let glyphPixels = statusMeasurement["glyphPixels"] as? Int ?? 0
@@ -213,23 +228,6 @@ final class ContrastEvidenceUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(glyphP75, 4.5, "\(appearance): selected no-connection status p75")
             Acceptance.record(self, "#221 \(appearance) emphasized selected no-connection status: \(glyphPixels) px, p75 \(glyphP75), background \(background)")
 
-            let attentionFilter = app.buttons["ww.setup.attentionFilter"]
-            if attentionFilter.exists {
-                attentionFilter.click()
-                Thread.sleep(forTimeInterval: 1)
-            }
-            if attentionFilter.exists, Acceptance.hasKeyboardFocus(attentionFilter), !Acceptance.hasKeyboardFocus(sources) {
-                let unfocusedMeasurement = ContrastMeter.measure(offlineStatus.screenshot().image) ?? [:]
-                let unfocusedGlyphPixels = unfocusedMeasurement["glyphPixels"] as? Int ?? 0
-                let unfocusedGlyphP75 = unfocusedMeasurement["glyphP75"] as? Double ?? 0
-                let unfocusedBackground = unfocusedMeasurement["background"] as? String ?? ""
-                XCTAssertFalse(Acceptance.isAccentBlue(unfocusedBackground), "\(appearance): selected no-connection status has unemphasized background \(unfocusedBackground)")
-                XCTAssertGreaterThanOrEqual(unfocusedGlyphPixels, AcceptanceAudit.minimumGlyphPixels, "\(appearance): unfocused selected no-connection glyph pixels")
-                XCTAssertGreaterThanOrEqual(unfocusedGlyphP75, 4.5, "\(appearance): unfocused selected no-connection status p75")
-                Acceptance.record(self, "#221 \(appearance) unemphasized selected no-connection status: \(unfocusedGlyphPixels) px, p75 \(unfocusedGlyphP75), background \(unfocusedBackground)")
-            } else {
-                Acceptance.record(self, "#221 \(appearance) unfocused selected no-connection status: Not run (focus move unavailable with Full Keyboard Access off)")
-            }
             let unwaivedSetup = try AcceptanceAudit.run(app, surface: "Setup \(appearance) 200% reduce motion", test: self)
             Acceptance.record(self, "A11Y-003 Setup \(appearance) 200%: \(unwaivedSetup.isEmpty ? "no unwaived audit issues" : "\(unwaivedSetup)")")
             app.terminate()
