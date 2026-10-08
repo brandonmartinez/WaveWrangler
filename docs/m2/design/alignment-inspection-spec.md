@@ -196,6 +196,14 @@ epoch, so a gap (U6) never silently mixes anchors across it (M2-C3: "a gap alway
 > §5.2 are otherwise unchanged. **Start New Epoch at Anchor** is likewise enabled only when the selected
 > anchor's frame lies strictly inside the selected occurrence's span; an endpoint selection is refused in
 > the status line rather than silently, with the pipeline rejection kept as a backstop.
+>
+> The Alignment workspace root is labelled on the AppKit side, on the `NSHostingView`: declaring the
+> SwiftUI root as a containing element absorbed the `ww.alignment.workspace` scroll area and its
+> identifier out of the tree entirely. One accessibility finding remains waived — AppKit builds the
+> container around the recorder-group outline's disclosure-column cell itself, and no SwiftUI
+> description reaches it (labelling the cell content, combining its children and the value-keypath
+> shorthand were each tried). The waiver is gated on that container still exposing its own labelled
+> text child, and is capped at one finding. **It needs Lead sign-off.**
 
 ### 4.2 Numeric rate/offset correction
 
