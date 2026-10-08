@@ -13,7 +13,11 @@ The guests are based on Cirrus Labs'
 (macOS 27.0). Each has a local copy of the development Mac's exact Xcode
 27.0 build 27A266a, SSH with a dedicated VM-only key, auto-login, sleep
 and lock disabled, and the same `~/ww-uitest-runs/gui-lock` lease helper
-used on the mini. Each guest's login session runs a persistent `caffeinate -di`
+used on the mini. The image's auto-login is already configured for its guest
+admin account (`sysadminctl -autologin status` confirms it, and
+`/etc/kcpassword` exists); its stored password is never read or copied.
+Guest loginwindow has `DisableScreenLockImmediate` enabled. Each guest's
+login session runs a persistent `caffeinate -di`
 LaunchAgent (`com.wavewrangler.keep-guest-display-awake`): `pmset -g assertions`
 must show `PreventUserIdleDisplaySleep 1` before dispatching XCUITests.
 The guest's virtual display can otherwise sleep despite `displaysleep 0`,
@@ -36,18 +40,32 @@ tart run --no-graphics --no-clipboard --no-audio ww-ui-2
 ```
 
 Use `tart list` and `tart ip ww-ui-1` (or `ww-ui-2`) for status and address.
-The local SSH aliases are `ww-ui-1` and `ww-ui-2`; if an address changes,
-`ssh -o HostName="$(tart ip ww-ui-1)" ww-ui-1` resolves it without changing
-the alias's key and pinned host identity. Check
+The local SSH aliases are `ww-ui-1` and `ww-ui-2`. If an address changes,
+probe it with `ssh -o HostName="$(tart ip ww-ui-1)" ww-ui-1`, then update
+that alias's `HostName` in `~/.ssh/config` **before** copying Products or
+running the pipeline; the one-off override does not change later SSH or
+rsync commands. Keep its key and pinned host identity unchanged. Check
 `ssh ww-ui-1 '~/ww-uitest-runs/gui-lock status'` before each run, and stop
 with `tart stop ww-ui-1` (similarly for `ww-ui-2`). Do not add a third
 macOS VM on this host.
 
 Check the guest's console lock before dispatching a test (substitute `ww-ui-2`
-as needed); `0` means unlocked, `1` means locked:
+as needed). The command succeeds only when a console user has finished logging
+in and the screen is unlocked; a locked or unavailable console fails closed:
 
 ```sh
-ssh ww-ui-1 "swift -e 'import CoreGraphics; let d = CGSessionCopyCurrentDictionary() as? [String: Any] ?? [:]; print(d[\"CGSSessionScreenIsLocked\"] ?? 0)'"
+ssh ww-ui-1 /usr/bin/swift - <<'SWIFT'
+import CoreGraphics
+import Darwin
+guard let session = CGSessionCopyCurrentDictionary() as? [String: Any],
+      session["kCGSSessionOnConsoleKey"] as? Bool == true,
+      session["kCGSessionLoginDoneKey"] as? Bool == true,
+      session["CGSSessionScreenIsLocked"] == nil else {
+    fputs("VM console locked or unavailable\n", stderr)
+    exit(1)
+}
+print("Guest console unlocked")
+SWIFT
 ```
 
 **Readiness gate:** do not dispatch tests to a VM until its Xcode license is
@@ -62,7 +80,9 @@ SHA (`-jobs 4`, isolated DerivedData); copy signed Products atomically to
 a per-run guest directory; verify `rsync -c` and both code signatures.
 On the guest, use one `gui-lock run` lease for one
 `xcodebuild test-without-building` invocation, then retrieve its
-`.xcresult`. Only synthetic fixtures are allowed inside the VMs: never
+`.xcresult`. The helper also rejects a locked VM before acquiring a ticket
+or lease, reporting `VM console locked`; it does not change the physical
+mini's preflight. Only synthetic fixtures are allowed inside the VMs: never
 mount or copy the user's recordings or test media. Label the result
 `VM ww-ui-N (Virtualization.framework, macOS 27, 4 vCPU)` with the SHA.
 
@@ -70,3 +90,20 @@ mount or copy the user's recordings or test media. Label the result
 `ResponsivenessUITests` and other performance measurements on the Mac mini,
 which remains the default physical GUI host. Keep the guests within their
 eight-vCPU combined budget and avoid competing heavy builds on the host.
+
+## Initial functional smoke (2026-10-08)
+
+Both guests ran `LibraryProviderConflictUITests` under their own `gui-lock`
+leases with signed Products built from pushed `origin/main` SHA
+`5ae7fa4a0430ab0780f5dc93dff0af34f79ec000`. Each `.xcresult`
+reports **2 passed, 0 failed, 0 skipped**:
+
+| Evidence label | Guest result bundle |
+| --- | --- |
+| VM ww-ui-1 (Virtualization.framework, macOS 27, 4 vCPU) | `~/ww-uitest-runs/smoke-5ae7fa4-20261008/result.xcresult` |
+| VM ww-ui-2 (Virtualization.framework, macOS 27, 4 vCPU) | `~/ww-uitest-runs/smoke-5ae7fa4-20261008-final/result.xcresult` |
+
+No TCC or damaged-app prompts were observed. `ww-ui-2` required a one-time
+manual unlock of a persisted guest-console lock before its successful run;
+it stayed unlocked through a subsequent headless restart. Recheck the
+console and display-awake assertion after future restarts.
