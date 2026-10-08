@@ -1,26 +1,26 @@
 ---
 name: "gui-lock-mac-mini"
-description: "Use when a WaveWrangler lane needs a GUI run, including XCUITest, an accessibility audit, computer-use, or an app launch. Build on the dev Mac, then use the Mac mini lease helper for exactly one run, collect the xcresult, and post the evidence on the PR. Does NOT authorize GUI work on the user's main working Mac, manual lock holding between runs, or GUI work by reviewers."
+description: "Use when a WaveWrangler lane needs a GUI run, including XCUITest, an accessibility audit, computer-use, or an app launch. Build on the dev Mac, use one lease on a suitable GUI host, collect the xcresult, and post evidence on the PR. Does NOT authorize GUI work on the user's main working Mac, manual lock holding between runs, or GUI work by reviewers."
 ---
 
-# Self-serve GUI lock and the Mac mini pipeline
+# Self-serve GUI locks and the host pipeline
 
 Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI host with coordinator-relayed lock messages and remote trial-and-error UI iteration was the slowest path. From M2 each lane drives its own GUI runs through a per-host lock; the coordinator sees results only.
 
 ## Rules
 
-- **GUI hosts:** the user's Mac mini ("Macsimus": Apple M2 Pro, 12 cores, 32 GiB, macOS 27.0.1) is the default and only standing GUI host. It has user consent for UI, XCUITest, accessibility audits, computer-use, temporary VoiceOver and temporary display/accessibility settings (record originals, restore afterwards). The user's main working Mac is a GUI host only inside an explicitly user-granted away window (its own lock; never computer-use or VoiceOver; stop on user input). Reach the mini by IP (`ssh -o BatchMode=yes brandonmartinez@192.168.18.8`); never edit `known_hosts`.
+- **GUI hosts:** the user's Mac mini ("Macsimus": Apple M2 Pro, 12 cores, 32 GiB, macOS 27.0.1) remains the default physical host and the only host for performance/responsiveness gates, VoiceOver and manual accessibility work. It has user consent for UI, XCUITest, accessibility audits, computer-use, temporary VoiceOver and temporary display/accessibility settings (record originals, restore afterwards). Two headless macOS 27 VMs (`ww-ui-1`, `ww-ui-2`) on Macatron are additional hosts for functional XCUITests using synthetic fixtures only; see [`docs/engineering/ui-test-vm-hosts.md`](../../../docs/engineering/ui-test-vm-hosts.md). The user's main working Mac is a GUI host only inside an explicitly user-granted away window (its own lock; never computer-use or VoiceOver; stop on user input). Reach the mini by IP (`ssh -o BatchMode=yes brandonmartinez@192.168.18.8`); never edit `known_hosts`.
 - **Products come from a committed, pushed SHA only.** Never label a run with a working-tree name. Before use, verify that the `.xctestrun` names `WaveWranglerUITests`, run `codesign --verify --deep` on the app and the Runner, and check `rsync -c` checksum equality. Copy atomically into a per-run unique folder (`rsync` to `~/ww-uitest-runs/.tmp-<lane>-<sha>-<ts>`, then `mv` to `<lane>-<sha>-<ts>`), and never reuse or overwrite another run's folder. A run that breaks these rules is environment-invalid (2026-10-07: `pr219-final-r1`), not a pass or a product failure.
-- **Performance strata** can't be split, so each `ResponsivenessUITests` method gets its own `perf` ticket of up to 45 minutes, after ≥60 s idle and with the pre-run load below 6.
+- **Performance strata** can't be split, so each `ResponsivenessUITests` method gets its own `perf` ticket on the mini of up to 45 minutes, after at least 60 s idle and with the pre-run load below 6. VM timings are never valid for performance gates.
 - **One GUI run per lease.** `scripts/gui-lock run` owns one `test-without-building` invocation and releases in a trap. Never hold the GUI while analysing, rebuilding, or preparing another round.
 - **Check status before polling lanes.** `gui-lock status` shows the holder, lease age, priority queue, ticket ages and estimated wait.
 - **Priority:** `required` (required path / exit gate), then `pr`, then `full` and `perf`; FIFO within a class.
-- Every result is labelled with host and SHA. The mini is not the macOS 26 / 16 GB reference.
+- Every result is labelled with host and SHA. Label VM evidence `VM ww-ui-N (Virtualization.framework, macOS 27, 4 vCPU)`; the mini is not the macOS 26 / 16 GB reference.
 - **Reviewers never take the lock or run UI tests.** They review diffs, CI and the evidence the author posts (a reviewer's run collided with the regression runner in M1, #149).
 - **Per-PR runs** cover only the UI test classes the PR affects. PRs that change no app UI or test code skip GUI runs.
 - **Batching:** a lane may batch several of its own PRs' classes only at one SHA. Never mix unrelated PR binaries.
 - **GUI timebox:** after 3 failed counted GUI rounds on one PR, stop and hand off to Lead (design decision or follow-up issue). There is no fourth counted round unless a recorded Lead decision (on the PR and in `decisions.md`) restarts the count. Rounds that never ran (lock stolen, quiet-gate rejection, released before `xcodebuild`) or were environment-invalid don't count.
-- **Preflight first:** `.squad/skills/kickoff-preflight` (SSH agent, Automation Mode, clean screen). If SSH to the mini fails because the 1Password agent has no identities, don't loop: report it once as needs_input.
+- **Preflight first:** `.squad/skills/kickoff-preflight` (SSH agent, Automation Mode, clean screen). If SSH to the mini fails because the 1Password agent has no identities, don't loop: report it once as needs_input. VM SSH uses a dedicated key, not the 1Password agent; use a VM only after its Xcode license and first-launch checks pass and the smoke run recorded in its [host guide](../../../docs/engineering/ui-test-vm-hosts.md) has passed. Confirm that VM's own lock is available.
 
 ## Pipeline
 
@@ -32,7 +32,7 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
    xcodebuild build-for-testing -project WaveWrangler.xcodeproj -scheme WaveWranglerUITests \
      -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/DerivedData-ui -jobs 4
    ```
-2. **Copy to the mini** (SSH needs `source "$HOME/.shell/exports.sh"` for the 1Password agent):
+2. **Copy to the chosen GUI host** (source `"$HOME/.shell/exports.sh"` for GitHub fetches and SSH to the mini; VM aliases themselves use a dedicated key):
    ```sh
    PRODUCTS=.build/DerivedData-ui/Build/Products
    COMMIT=$(git rev-parse HEAD); SHA=${COMMIT:0:12}
@@ -45,17 +45,19 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
    codesign --verify --deep "$PRODUCTS/Debug/WaveWrangler.app"
    codesign --verify --deep "$PRODUCTS/Debug/WaveWranglerUITests-Runner.app"
 
+   GUI_HOST=brandonmartinez@<mini> # for a VM, use ww-ui-1 or ww-ui-2
+   REMOTE_HOME=$(ssh "$GUI_HOST" 'printf %s "$HOME"')
    TS=$(date +%Y%m%dT%H%M%S)
-   TMP=~/ww-uitest-runs/.tmp-<lane>-"$SHA"-"$TS"
-   RUN=~/ww-uitest-runs/<lane>-"$SHA"-"$TS"
-   MINI=brandonmartinez@<mini>
-   ssh "$MINI" "test ! -e '$TMP' && test ! -e '$RUN' && mkdir -p '$TMP/Products'"
-   rsync -a "$PRODUCTS/" "$MINI:$TMP/Products/"
-   CHANGES=$(rsync -a -c --dry-run --itemize-changes "$PRODUCTS/" "$MINI:$TMP/Products/")
+   TMP="$REMOTE_HOME/ww-uitest-runs/.tmp-<lane>-$SHA-$TS"
+   RUN="$REMOTE_HOME/ww-uitest-runs/<lane>-$SHA-$TS"
+   ssh "$GUI_HOST" "test ! -e '$TMP' && test ! -e '$RUN' && mkdir -p '$TMP/Products'"
+   rsync -a "$PRODUCTS/" "$GUI_HOST:$TMP/Products/"
+   CHANGES=$(rsync -a -c --dry-run --itemize-changes "$PRODUCTS/" "$GUI_HOST:$TMP/Products/")
    test -z "$CHANGES" || { printf '%s\n' "$CHANGES"; exit 1; }
-   ssh "$MINI" "mv '$TMP' '$RUN'"
+   ssh "$GUI_HOST" "mv '$TMP' '$RUN'"
    ```
-3. **Run one command under a lease** on the mini:
+3. **Run one command under a lease** on the selected host (with `RUN` set to
+   the absolute guest path from step 2):
    ```sh
    ~/ww-uitest-runs/gui-lock status
    ~/ww-uitest-runs/gui-lock run \
@@ -72,6 +74,13 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
    `EXIT`, `INT`, or `TERM`. A queue timeout keeps the ticket in place and continues waiting.
 4. **Copy the xcresult back** and analyse it here (`xcrun xcresulttool`).
 5. **Post on the PR:** SHA, host, classes, pass/fail/skip counts, xcresult location, and any new audit finding versus the pinned waiver baseline.
+
+For VM runs, use only synthetic fixtures; never mount or copy the user's recordings or test media.
+Build on the development Mac, not in the guest. Keep the two VMs at four vCPUs
+each (at most eight virtual CPUs combined); avoid concurrent CPU-heavy host
+builds. Once validated, VM hosts have independent locks and can run functional
+XCUITests without taking over the user's desktop. They do not replace the mini for
+performance measurements or manual GUI/a11y work.
 
 ## Lock helper reference
 
