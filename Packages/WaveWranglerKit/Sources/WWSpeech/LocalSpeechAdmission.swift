@@ -1,0 +1,145 @@
+import CryptoKit
+import Darwin
+import Foundation
+import WWCore
+
+/// Only an explicitly confirmed primary channel may be submitted to a speech engine. This is
+/// metadata admission, not proof that a future decoded PCM proxy came from that channel.
+public struct PrimarySpeechSelection: Sendable, Equatable {
+    public let episodeID: EpisodeID
+    public let speakerID: SpeakerID
+    public let sourceID: SourceID
+    public let channel: Int
+
+    public init(episode: Episode, speakerID: SpeakerID) throws(SpeechAdmissionRefusal) {
+        guard episode.speakerAssignments.filter({ $0.speakerID == speakerID }).count == 1,
+              let assignment = episode.assignment(for: speakerID),
+              assignment.primaryConfirmation == .userConfirmed,
+              let primary = assignment.primary,
+              let channel = primary.channel.value, channel >= 0,
+              let source = episode.source(primary.sourceID),
+              episode.sources.filter({ $0.id == primary.sourceID }).count == 1,
+              let channelCount = source.observations.channelCount.value, channel < channelCount,
+              source.role == .primary, source.roleConfirmation == .userConfirmed,
+              !assignment.backups.contains(primary),
+              !episode.speakerAssignments.contains(where: { $0.backups.contains(primary) }),
+              episode.speakerAssignments.filter({ $0.primary == primary }).count == 1
+        else { throw .primaryNotConfirmed }
+        episodeID = episode.id
+        self.speakerID = speakerID
+        sourceID = primary.sourceID
+        self.channel = channel
+    }
+}
+
+public enum SpeechAdmissionRefusal: Error, Sendable, Equatable {
+    case primaryNotConfirmed
+    case invalidPin
+    case assetNotLocalRegularFile
+    case assetSizeMismatch
+    case assetDigestMismatch
+    case assetChangedDuringVerification
+}
+
+/// Exact artifact identity; no implicit downloads, latest-tag resolution, tokenizer fetch or network
+/// fallback. The ggml model contains the tokenizer; runtime and linked libraries are separate pins.
+public struct LocalSpeechAssetPin: Sendable, Equatable {
+    public let name: String
+    public let version: String
+    public let sizeBytes: Int64
+    public let sha256: String
+    public let license: String
+    public let source: String
+
+    public init(name: String, version: String, sizeBytes: Int64, sha256: String, license: String, source: String) throws(SpeechAdmissionRefusal) {
+        guard !name.isEmpty, !version.isEmpty, sizeBytes > 0,
+              sha256.utf8.count == 64, sha256.utf8.allSatisfy({
+                  (48...57).contains($0) || (97...102).contains($0)
+              }), !license.isEmpty, !source.isEmpty
+        else { throw .invalidPin }
+        self.name = name
+        self.version = version
+        self.sizeBytes = sizeBytes
+        self.sha256 = sha256
+        self.license = license
+        self.source = source
+    }
+
+    public static let whisperBaseEnglish = try! LocalSpeechAssetPin(
+        name: "ggml-base.en.bin",
+        version: "ggerganov/whisper.cpp@5359861c739e955e79d9a303bcbc70fb988958b1",
+        sizeBytes: 147_964_211,
+        sha256: "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+        license: "MIT (model repository declaration; redistribution review outstanding)",
+        source: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en.bin"
+    )
+
+    /// Refuses non-local, dataless, symlinked or changed assets. Errors intentionally contain no
+    /// path or file contents. Reverify at use time; a verified value is not an authorization to infer.
+    public func verify(at url: URL) throws(SpeechAdmissionRefusal) {
+        let values: URLResourceValues
+        do {
+            values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .volumeIsLocalKey, .isUbiquitousItemKey])
+        } catch {
+            throw .assetNotLocalRegularFile
+        }
+        guard values.isRegularFile == true, values.isSymbolicLink != true,
+              values.volumeIsLocal == true, values.isUbiquitousItem != true
+        else { throw .assetNotLocalRegularFile }
+
+        let previous = getiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD)
+        guard previous >= 0,
+              setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD, IOPOL_MATERIALIZE_DATALESS_FILES_OFF) == 0
+        else { throw .assetNotLocalRegularFile }
+        defer { _ = setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD, previous) }
+
+        let fd = open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw .assetNotLocalRegularFile }
+        defer { _ = close(fd) }
+        var before = stat()
+        guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG,
+              before.st_flags & UInt32(SF_DATALESS) == 0
+        else { throw .assetNotLocalRegularFile }
+        guard before.st_size == sizeBytes else { throw .assetSizeMismatch }
+        var digest = SHA256()
+        var buffer = [UInt8](repeating: 0, count: 1 << 20)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
+            if count < 0 {
+                if errno == EINTR { continue }
+                throw .assetNotLocalRegularFile
+            }
+            if count == 0 { break }
+            digest.update(data: Data(buffer.prefix(count)))
+        }
+        var after = stat()
+        guard fstat(fd, &after) == 0, after.st_flags & UInt32(SF_DATALESS) == 0,
+              before.st_ino == after.st_ino,
+              before.st_size == after.st_size, before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
+              before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec
+        else { throw .assetChangedDuringVerification }
+        guard digest.finalize().map({ String(format: "%02x", $0) }).joined() == sha256
+        else { throw .assetDigestMismatch }
+    }
+}
+
+/// Argument plan for an independently verified whisper.cpp executable. The OS sandbox denies
+/// every network operation in the subprocess; no shell, URL, downloader or tokenizer service runs.
+/// The future runtime adapter must verify its executable *and linked dylibs*, the model, PCM
+/// provenance and the scratch destination before executing this plan.
+public struct OfflineWhisperPlan: Sendable {
+    public let selection: PrimarySpeechSelection
+    public let executable: URL
+    public let arguments: [String]
+
+    package init(selection: PrimarySpeechSelection, executable: URL, model: URL, inputWAV: URL, outputPrefix: URL) {
+        self.selection = selection
+        self.executable = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        arguments = [
+            "-p", "(version 1)(allow default)(deny network*)",
+            executable.path, "--model", model.path, "--file", inputWAV.path,
+            "--language", "en", "--threads", "4", "--output-json", "--output-file", outputPrefix.path,
+            "--no-prints",
+        ]
+    }
+}
