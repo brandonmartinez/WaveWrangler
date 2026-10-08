@@ -81,14 +81,18 @@ enum ConsentGuards {
     static func digest(_ handle: FileHandle, label: String) throws(HarnessError) -> String {
         var hasher = SHA256()
         while true {
-            let block: Data
-            do {
-                block = try handle.read(upToCount: 8 << 20) ?? Data()
-            } catch {
-                throw HarnessError("SHA-256 of \(label): read failed, \(errnoDescription(error))")
+            let finished = try autoreleasepool { () throws(HarnessError) -> Bool in
+                let block: Data
+                do {
+                    block = try handle.read(upToCount: 8 << 20) ?? Data()
+                } catch {
+                    throw HarnessError("SHA-256 of \(label): read failed, \(errnoDescription(error))")
+                }
+                if block.isEmpty { return true }
+                hasher.update(data: block)
+                return false
             }
-            if block.isEmpty { break }
-            hasher.update(data: block)
+            if finished { break }
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }

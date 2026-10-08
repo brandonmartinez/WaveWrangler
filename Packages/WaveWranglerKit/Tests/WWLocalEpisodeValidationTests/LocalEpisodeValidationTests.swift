@@ -1,4 +1,5 @@
 import Accelerate
+import CryptoKit
 import Darwin
 import Foundation
 import Testing
@@ -37,6 +38,8 @@ private enum Env {
     static let episode = ProcessInfo.processInfo.environment["WW_LOCAL_EPISODE_DIR"]
     static let scratch = ProcessInfo.processInfo.environment["WW_LOCAL_SCRATCH_DIR"]
     static let manual = ProcessInfo.processInfo.environment["WW_LOCAL_EPISODE_MANUAL"] == "1"
+    static let phase = ProcessInfo.processInfo.environment["WW_LOCAL_EPISODE_MEMORY_PHASE"]
+    static let labelMap = ProcessInfo.processInfo.environment["WW_LOCAL_EPISODE_LABEL_MAP"]
 }
 
 private func log(_ line: String) {
@@ -72,6 +75,59 @@ struct LocalEpisodeManualTests {
         var harness = Harness(episode: episode, scratch: scratch)
         try await harness.runManual()
         #expect(harness.findings.isEmpty, "findings: \(harness.findings)")
+    }
+}
+
+@Suite("Local episode isolated memory (opt-in)", .serialized,
+    .enabled(if: Env.episode != nil && Env.phase.map { ["snapshot", "original", "render"].contains($0) } == true))
+struct LocalEpisodeMemoryTests {
+    @Test(.timeLimit(.minutes(30)))
+    func measureIsolatedPhase() async throws {
+        let episode = URL(fileURLWithPath: try #require(Env.episode), isDirectory: true).standardizedFileURL
+        let phase = try #require(Env.phase)
+        if phase == "snapshot" {
+            let harness = Harness(episode: episode, scratch: episode)
+            let items = try harness.enumerate()
+            let snapshot = try harness.snapshot(items)
+            let numbered = harness.number(items, snapshots: snapshot)
+            let labels = numbered.filter(\.isAudio).map {
+                "\($0.number):\(snapshot[$0.url]!.inode)"
+            }.joined(separator: "\n") + "\n"
+            let mapPath = try #require(Env.labelMap, "set a temporary label-map path outside the repository")
+            let mapURL = URL(fileURLWithPath: mapPath)
+            if FileManager.default.fileExists(atPath: mapURL.path) {
+                let previous: String
+                do {
+                    previous = try String(contentsOf: mapURL, encoding: .utf8)
+                } catch {
+                    throw HarnessError("temporary label map unreadable")
+                }
+                guard previous == labels else { throw HarnessError("original source label order changed") }
+            } else {
+                let directory = try ConsentGuards.checkScratch(mapURL.deletingLastPathComponent(), episode: episode)
+                guard ConsentGuards.realPath(mapURL.deletingLastPathComponent()) == directory else {
+                    throw HarnessError("temporary label map is not in guarded scratch")
+                }
+                do {
+                    try labels.write(to: mapURL, atomically: true, encoding: .utf8)
+                } catch {
+                    throw HarnessError("temporary label map write failed")
+                }
+            }
+            var hasher = SHA256()
+            for entry in snapshot.values.map({
+                "\($0.size):\($0.mtime):\($0.ctime):\($0.inode):\($0.sha256 ?? "-")"
+            }).sorted() {
+                hasher.update(data: Data(entry.utf8))
+                hasher.update(data: Data([10]))
+            }
+            log("memory snapshot: \(items.count) items, \(items.filter(\.isAudio).count) audio; aggregate SHA-256 \(hasher.finalize().map { String(format: "%02x", $0) }.joined())")
+            return
+        }
+        let scratchPath = try #require(Env.scratch, "set WW_LOCAL_SCRATCH_DIR to a fresh mktemp -d directory")
+        let scratch = try ConsentGuards.checkScratch(URL(fileURLWithPath: scratchPath, isDirectory: true), episode: episode)
+        var harness = Harness(episode: episode, scratch: scratch)
+        try await harness.runIsolatedMemoryPhase(phase)
     }
 }
 
@@ -739,6 +795,42 @@ private struct AnalysisSink: DecodedAudioSink {
     }
 }
 
+private struct CopySliceSink: DecodedAudioSink {
+    let channelCount: Int
+    let start: Int64
+    let end: Int64
+    var decoded: Int64 = 0
+    var channels: [[Float]]
+
+    init(_ format: FormatInterpretation, startSeconds: Int) {
+        channelCount = format.channelCount
+        start = Int64(startSeconds) * Int64(format.sourceSampleRate)
+        end = min(format.frames.validFrames, start + 36 * Int64(format.sourceSampleRate))
+        channels = Array(repeating: [], count: channelCount)
+    }
+
+    mutating func append(_ chunk: DecodedChunk) throws {
+        let lo = max(decoded, start)
+        let hi = min(decoded + Int64(chunk.frameCount), end)
+        if lo < hi {
+            for channel in 0 ..< channelCount {
+                let base = channel * chunk.frameCount
+                channels[channel].append(contentsOf: chunk.samples[
+                    base + Int(lo - decoded) ..< base + Int(hi - decoded)
+                ])
+            }
+        }
+        decoded += Int64(chunk.frameCount)
+    }
+
+    mutating func finish() throws -> [[Float]] {
+        guard channels.allSatisfy({ $0.count == Int(end - start) }) else {
+            throw HarnessError("short copy frame count mismatch")
+        }
+        return channels
+    }
+}
+
 /// Streaming zero-phase FIR decimator (Blackman-windowed sinc, 16·D + 1 taps, cutoff 0.4/D cycles per input
 /// sample). Output sample j is centred on input sample j·D, so every source keeps its time origin.
 private struct Decimator {
@@ -870,15 +962,13 @@ private struct FileSink: RenderOutputSink {
 // The manual run uses gateway-decoded, channel-preserving short copies. No original is opened by
 // the pipeline's renderer; its source inputs are the disposable copies.
 private extension Harness {
-    func writeSlice(_ decoded: Decoded, to url: URL) throws {
-        let channels = decoded.product.slice
+    func writeSlice(_ channels: [[Float]], rate: Int, to url: URL) throws {
         let frames = channels.first?.count ?? 0
-        guard frames > 0, channels.count == decoded.interpretation.channelCount,
+        guard frames > 0,
               channels.allSatisfy({ $0.count == frames }),
               frames * channels.count * 4 < Int(UInt32.max) - 36 else {
             throw HarnessError("invalid slice shape")
         }
-        let rate = decoded.interpretation.sourceSampleRate
         let bytes = UInt32(frames * channels.count * 4)
         var wave = Data(capacity: 44 + Int(bytes))
         func ascii(_ text: String) { wave.append(contentsOf: text.utf8) }
@@ -894,6 +984,13 @@ private extension Harness {
             }
         }
         try wave.write(to: url, options: .atomic)
+    }
+
+    func writeSlice(_ decoded: Decoded, to url: URL) throws {
+        guard decoded.product.slice.count == decoded.interpretation.channelCount else {
+            throw HarnessError("invalid slice channel count")
+        }
+        try writeSlice(decoded.product.slice, rate: decoded.interpretation.sourceSampleRate, to: url)
     }
 
     mutating func runManual() async throws {
@@ -1131,7 +1228,251 @@ private extension Harness {
     }
 }
 
+private extension Harness {
+    static let memoryMembers = [[1, 2, 3, 4, 5, 6, 8, 9], [7, 10], [11], [12]]
+
+    mutating func runIsolatedMemoryPhase(_ phase: String) async throws {
+        let listed = try enumerate()
+        let withInodes: [(Item, UInt64)] = try listed.map { item in
+            var status = stat()
+            guard lstat(item.url.path, &status) == 0 else {
+                throw HarnessError("source metadata unavailable for numbering")
+            }
+            return (item, UInt64(status.st_ino))
+        }
+        let mapPath = try #require(Env.labelMap, "set the temporary pre-snapshot label map")
+        let labels: String
+        do {
+            labels = try String(contentsOfFile: mapPath, encoding: .utf8)
+        } catch {
+            throw HarnessError("temporary label map unreadable")
+        }
+        var byInode: [UInt64: Int] = [:]
+        for entry in labels.split(separator: "\n") {
+            let pair = entry.split(separator: ":")
+            guard pair.count == 2, let number = Int(pair[0]), let inode = UInt64(pair[1]),
+                  byInode.updateValue(number, forKey: inode) == nil else {
+                throw HarnessError("temporary label map malformed")
+            }
+        }
+        let items = try withInodes.filter { $0.0.isAudio }.map { item, inode in
+            guard let number = byInode[inode] else { throw HarnessError("source label map changed") }
+            var numbered = item
+            numbered.number = number
+            return numbered
+        }
+        guard items.count == 13, byInode.count == 13, Set(items.map(\.number)) == Set(1 ... 13) else {
+            throw HarnessError("temporary label map incomplete")
+        }
+        guard items.filter(\.isAudio).count == 13 else { throw HarnessError("unexpected audio item count") }
+        let phaseDirectory = scratch.appendingPathComponent("phase-work", isDirectory: true)
+        var failure: HarnessError?
+        do {
+            try await isolatedMemoryWork(phase, items: items, root: phaseDirectory)
+        } catch {
+            failure = error as? HarnessError ?? HarnessError("isolated \(phase) phase failed: \(type(of: error))")
+        }
+        if FileManager.default.fileExists(atPath: phaseDirectory.path) {
+            do {
+                try FileManager.default.removeItem(at: phaseDirectory)
+            } catch {
+                throw HarnessError("phase scratch cleanup failed: \(ConsentGuards.errnoDescription(error))")
+            }
+        }
+        guard try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty else {
+            throw HarnessError("phase scratch not empty after cleanup")
+        }
+        if let failure { throw failure }
+        log("memory \(phase): scratch empty; run separate before/after snapshot processes to check originals")
+    }
+
+    func isolatedMemoryWork(_ phase: String, items: [Item], root: URL) async throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        let copies = root.appendingPathComponent("inputs", isDirectory: true)
+        if phase == "render" {
+            try FileManager.default.createDirectory(at: copies, withIntermediateDirectories: false)
+        }
+        let cache = root.appendingPathComponent("cache", isDirectory: true)
+        let store = try DerivedAssetStore(root: cache, sourceLocations: [episode])
+        let coordinator = DerivedJobCoordinator(store: store)
+        let decoder = SourceDecoder(access: SourceAccessContext(io: io))
+        let pipeline = AlignmentPipeline(coordinator: coordinator, decoder: decoder,
+            configuration: AlignmentPipelineConfiguration(concurrency: 1,
+                targetExcerptSeconds: phase == "original" ? 600 : 20,
+                searchDeviationSeconds: phase == "original" ? 120 : 5, renderSegmentSeconds: 6))
+        let episodeID = EpisodeID()
+        var groups: [RecorderGroup] = []
+        var records: [SourceRecord] = []
+        var sources: [AlignmentSource] = []
+        var authorizations: [ContentWorkAuthorization] = []
+        var epochs: [RecordingEpochID] = []
+        var rates: [Int] = []
+        var channelCounts: [Int] = []
+
+        for (groupIndex, members) in Self.memoryMembers.enumerated() {
+            let groupID = RecorderGroupID()
+            let epoch = RecordingEpochID()
+            epochs.append(epoch)
+            groups.append(RecorderGroup(id: groupID, name: "G\(groupIndex + 1)",
+                epochs: [RecordingEpoch(id: epoch, label: "Take 1")]))
+            for member in members {
+                guard let original = items.first(where: { $0.number == member && $0.isAudio }) else {
+                    throw HarnessError("supported-source layout changed")
+                }
+                let source = SourceID()
+                let url: URL
+                if phase == "render" {
+                    let start = [1700, 1702, 1704, 1706][groupIndex]
+                    let result: (FormatInterpretation, [[Float]])
+                    do throws(DecodeFailure) {
+                        let decoded = try await decoder.decode(original.url, source: source) {
+                            CopySliceSink($0, startSeconds: start)
+                        }
+                        result = (decoded.interpretation, decoded.product)
+                    } catch {
+                        throw HarnessError("short-copy decode refused \(sLabel(member)): \(Self.describe(error))")
+                    }
+                    guard result.1.count == result.0.channelCount else {
+                        throw HarnessError("short-copy channel mismatch")
+                    }
+                    rates.append(result.0.sourceSampleRate)
+                    channelCounts.append(result.0.channelCount)
+                    url = copies.appendingPathComponent("\(sLabel(member)).wav")
+                    try writeSlice(result.1, rate: result.0.sourceSampleRate, to: url)
+                } else {
+                    url = original.url
+                }
+                records.append(SourceRecord(id: source, displayNameHint: sLabel(member),
+                    placement: SourcePlacement(recorderGroupID: groupID, epochID: epoch)))
+                sources.append(AlignmentSource(id: source, url: url, availability: .on))
+                authorizations.append(.explicitUserRequest(for: source))
+                guard case let .success(metadata) = io.metadata(at: url) else {
+                    throw HarnessError("phase source registration metadata unavailable")
+                }
+                await coordinator.updateSource(SourceRevision.metadata(source, fingerprint: metadata.fingerprint))
+            }
+        }
+        let model = ShowDocumentModel(show: Show(title: "Local validation"),
+            episodes: [Episode(id: episodeID, title: "Local validation",
+                recorderGroups: groups, sources: records)])
+        let reference = sources[0].id
+        if phase == "original" {
+            let baseline = try PhaseMemorySampler.now()
+            let sampler = PhaseMemorySampler(baseline: baseline)
+            let started = Date()
+            let analysis = await pipeline.analyse(model: model, episode: episodeID,
+                sources: sources, authorizations: authorizations, preferredReference: reference)
+            let peak = try sampler.stop()
+            log("memory original: idle \(baseline.megabytes); peak \(peak.megabytes); elapsed \(f(Date().timeIntervalSince(started), 2)) s")
+            guard let analysis, analysis.plan.epochs.count == 4, analysis.facts.count == 12,
+                  analysis.sourceFailures.isEmpty, analysis.epochFailures.isEmpty,
+                  epochs.dropFirst().allSatisfy({ analysis.records[$0] != nil }) else {
+                throw HarnessError("full-original pipeline analysis incomplete")
+            }
+            for index in 1 ..< epochs.count {
+                let record = analysis.records[epochs[index]]!
+                log("memory original G\(index + 1): \(record.abstention.map { "ABSTAINED \($0.reason)" } ?? "PROPOSAL (not clock-approved)"); eligible \(record.coverage.eligibleCount)/\(record.coverage.windowCount)")
+            }
+        } else {
+            guard rates.count == 12, channelCounts.reduce(0, +) == 19 else {
+                throw HarnessError("short-copy source layout changed")
+            }
+            let analysis = try #require(await pipeline.analyse(model: model, episode: episodeID,
+                sources: sources, authorizations: authorizations, preferredReference: reference))
+            guard analysis.sourceFailures.isEmpty, analysis.epochFailures.isEmpty,
+                  analysis.facts.count == 12 else { throw HarnessError("copy pipeline analysis incomplete") }
+            var decisions: [RecordingEpochID: EpochMapDecision] = [:]
+            for index in 1 ..< epochs.count {
+                decisions[epochs[index]] = .numeric(ppm: 0,
+                    offsetMilliseconds: Double(2 * index * 1000),
+                    note: "Operator equal-origin short-copy placement; no clock truth")
+            }
+            let accepted = try await pipeline.accept(model: model, episode: episodeID,
+                report: analysis, decisions: decisions)
+            try await pipeline.activate(accepted)
+            let baseline = try PhaseMemorySampler.now()
+            let sampler = PhaseMemorySampler(baseline: baseline)
+            let started = Date()
+            let rendered = try await pipeline.renderAlignedAssets(model: accepted.model,
+                episode: episodeID, sources: sources, authorizations: authorizations)
+            let peak = try sampler.stop()
+            log("memory render: idle \(baseline.megabytes); peak \(peak.megabytes); elapsed \(f(Date().timeIntervalSince(started), 2)) s")
+            guard rendered.isComplete, rendered.notRendered.isEmpty, rendered.groups.count == 4,
+                  rendered.groups.reduce(0, { $0 + $1.results.count }) == 118,
+                  rendered.groups.allSatisfy({ $0.outputRate == 48_000 && $0.outputFrames.count == 1_728_000 }) else {
+                throw HarnessError("short-copy aligned render incomplete")
+            }
+            log("memory render: 36 s/channel, 19 channels, 118 assets; copy preparation excluded from measurement")
+        }
+        await pipeline.shutdown()
+    }
+}
+
 // MARK: - Host facts
+
+private final class PhaseMemorySampler: @unchecked Sendable {
+    struct Reading {
+        let resident: Int
+        let footprint: Int
+        var megabytes: String { "RSS \(resident >> 20) MiB, footprint \(footprint >> 20) MiB" }
+    }
+
+    private let condition = NSCondition()
+    private var running = true
+    private var finished = false
+    private var samplingFailed = false
+    private var peak: Reading
+
+    static func now() throws -> Reading {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let status = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard status == KERN_SUCCESS else { throw HarnessError("task VM memory measurement failed") }
+        return Reading(resident: Int(info.resident_size), footprint: Int(info.phys_footprint))
+    }
+
+    init(baseline: Reading) {
+        peak = baseline
+        let thread = Thread { [self] in
+            condition.lock()
+            while running {
+                condition.unlock()
+                if let sample = try? Self.now() {
+                    condition.lock()
+                    peak = Reading(resident: max(peak.resident, sample.resident),
+                                   footprint: max(peak.footprint, sample.footprint))
+                } else {
+                    condition.lock()
+                    samplingFailed = true
+                }
+                _ = condition.wait(until: Date().addingTimeInterval(0.002))
+            }
+            finished = true
+            condition.broadcast()
+            condition.unlock()
+        }
+        thread.stackSize = 1 << 20
+        thread.start()
+    }
+
+    func stop() throws -> Reading {
+        condition.lock()
+        running = false
+        condition.broadcast()
+        while !finished { condition.wait() }
+        let sampled = peak
+        let failed = samplingFailed
+        condition.unlock()
+        guard !failed else { throw HarnessError("task VM memory sampling failed") }
+        let final = try Self.now()
+        return Reading(resident: max(sampled.resident, final.resident),
+                       footprint: max(sampled.footprint, final.footprint))
+    }
+}
 
 private enum Host {
     static var summary: String {
