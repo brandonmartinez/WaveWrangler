@@ -1,6 +1,8 @@
 import Foundation
 import Testing
 import WWCore
+import WWDecode
+import WWSources
 import WWTimeMap
 @testable import WWCommonEdit
 
@@ -708,6 +710,334 @@ struct ProvisionalLaneInventoryTests {
         #expect(throws: ProvisionalLaneInventoryError.ambiguousPrimary(duplicate)) {
             try ProvisionalLaneInventory.inspect(episode: changed, map: map)
         }
+    }
+}
+
+@Suite("Source-backed all-lane proof (synthetic WAV only)")
+struct SourceBackedProofTests {
+    private let fx = Fixture()
+    private let cut = RemovedFrameSpan(start: 100, end: 200)
+    private let fade = RemovedFrameSpan(start: 90, end: 210)
+
+    private func fixture(repeated: Bool = false) throws -> (Episode, CommonEpisodeEditMap, SourceID, SourceID) {
+        let primary = SourceID(), backup = SourceID()
+        let reference = try SourceOccurrence(
+            id: fx.refOccurrence, source: primary, nominalRate: NominalRate(48_000), frameCount: fx.refFrames
+        )
+        let own = try GroupTimeMap(
+            group: fx.group, reference: fx.reference,
+            epochs: [EpochClockMap(epoch: fx.refEpoch, mapping: .mapped(
+                segments: [seg(q(0), q(10), .one, .zero)], provenance: .timelineReference
+            ))],
+            placements: [OccurrencePlacement(occurrence: reference, spans: [span(0, fx.refFrames, fx.refEpoch)])]
+        )
+        let backupEpoch = RecordingEpochID(), backupGroup = RecorderGroupID()
+        let first = try SourceOccurrence(source: backup, nominalRate: NominalRate(48_000), frameCount: fx.refFrames)
+        let second = try SourceOccurrence(source: backup, nominalRate: NominalRate(48_000), frameCount: fx.refFrames)
+        let backupMap = try GroupTimeMap(
+            group: backupGroup, reference: fx.reference,
+            epochs: [mapped(backupEpoch, [seg(q(0), q(10), .one, .zero)])],
+            placements: (repeated ? [first, second] : [first]).map {
+                OccurrencePlacement(occurrence: $0, spans: [span(0, fx.refFrames, backupEpoch)])
+            }
+        )
+        let alignment = try AlignedTimelineMap(reference: fx.reference, groups: [own, backupMap])
+        let map = try CommonEpisodeEditMap(
+            alignment: alignment, alignmentRevision: 7, editRevision: 8,
+            outputRate: NominalRate(48_000), alignedFrameCount: fx.refFrames, removals: [cut]
+        )
+        let encoded = try JSONDecoder().decode(EmbeddedJSON.self, from: JSONEncoder().encode(alignment))
+        let episode = Episode(
+            title: "Synthetic", recorderGroups: [
+                RecorderGroup(id: fx.group, name: "primary", epochs: [RecordingEpoch(id: fx.refEpoch, label: "first")]),
+                RecorderGroup(id: backupGroup, name: "backup", epochs: [RecordingEpoch(id: backupEpoch, label: "second")]),
+            ],
+            sources: [
+                SourceRecord(id: primary, displayNameHint: "primary",
+                             observations: SourceObservations(channelCount: .known(1)),
+                             placement: SourcePlacement(recorderGroupID: fx.group, epochID: fx.refEpoch), role: .primary),
+                SourceRecord(id: backup, displayNameHint: "backup",
+                             observations: SourceObservations(channelCount: .known(2)),
+                             placement: SourcePlacement(recorderGroupID: backupGroup, epochID: backupEpoch), role: .backup),
+            ],
+            speakerAssignments: [
+                SpeakerAssignment(speakerID: SpeakerID(),
+                                  primary: ChannelReference(sourceID: primary, statedChannel: 0),
+                                  backups: [ChannelReference(sourceID: backup, statedChannel: 0)]),
+            ],
+            alignment: EpisodeAlignment(
+                maps: [TimeMapVersion(revision: 7, inputs: TimeMapInputs(sources: [
+                    TimeMapSourceInput(sourceID: primary, formatInterpretationVersion: FormatInterpretation.currentVersion),
+                    TimeMapSourceInput(sourceID: backup, formatInterpretationVersion: FormatInterpretation.currentVersion),
+                ]), map: encoded)], acceptedRevision: 7
+            )
+        )
+        return (episode, map, primary, backup)
+    }
+
+    private func inspect(
+        _ episode: Episode, _ map: CommonEpisodeEditMap, _ urls: [SourceID: URL],
+        fades: [RemovedFrameSpan]? = nil,
+        knownProtected: [CommonRenderLaneKey: [Range<Int64>]] = [:]
+    ) async throws -> ProvisionalSourceBackedProof {
+        try await ProvisionalSourceBackedProof.inspect(
+            episode: episode, map: map, sourceURLs: urls,
+            decoder: SourceDecoder(access: SourceAccessContext()),
+            finalFadeFootprints: fades ?? [fade],
+            knownProtectedFrames: knownProtected
+        )
+    }
+
+    @Test func everyDecodedChannelAndRepeatedOccurrenceHasIndependentSourceProof() async throws {
+        let (episode, map, primary, backup) = try fixture(repeated: true)
+        let files = try SyntheticWAVs()
+        let urls = try files.write(primary: primary, backup: backup)
+        let proof = try await inspect(episode, map, urls)
+        #expect(proof.map == map)
+        #expect(proof.lanes.count == 5)
+        #expect(Set(proof.lanes.map(\.key)).count == 5)
+        #expect(proof.lanes.filter(\.digitalSilence).count == 2)
+        #expect(proof.lanes.filter { $0.source == backup }.count == 4)
+        #expect(proof.lanes.allSatisfy { $0.interpretation.sourceFingerprint.fileSize.value != nil })
+        #expect(throws: CommonRenderRefusal.organizerAuthorityUnavailable) {
+            try CommonRenderAdapter.prepare(map)
+        }
+    }
+
+    @Test func missingAndChangedSourcesNeverBecomeSilentOrSafe() async throws {
+        var (episode, map, primary, backup) = try fixture()
+        let files = try SyntheticWAVs()
+        let urls = try files.write(primary: primary, backup: backup)
+        await #expect(throws: SourceProofRefusal.sourceUnavailable(backup)) {
+            try await inspect(episode, map, [primary: urls[primary]!])
+        }
+        episode.alignment?.maps[0].inputs.sources[1].formatInterpretationVersion = nil
+        await #expect(throws: SourceProofRefusal.unverifiedMapInput(backup)) {
+            try await inspect(episode, map, urls)
+        }
+        episode.alignment?.maps[0].inputs.sources[1].formatInterpretationVersion = FormatInterpretation.currentVersion
+        let mismatched = try files.wav(channels: [[Int16](repeating: 0, count: 480_000)])
+        await #expect(throws: SourceProofRefusal.formatChanged(backup)) {
+            try await inspect(episode, map, [primary: urls[primary]!, backup: mismatched])
+        }
+        let drift = try files.wav(channels: [[Int16](repeating: 0, count: 479_999),
+                                             [Int16](repeating: 0, count: 479_999)])
+        await #expect(throws: SourceProofRefusal.formatChanged(backup)) {
+            try await inspect(episode, map, [primary: urls[primary]!, backup: drift])
+        }
+    }
+
+    @Test func protectedBackupOtherChannelAndMergedFadeAreCheckedFromSamples() async throws {
+        let (episode, map, primary, backup) = try fixture(repeated: true)
+        let files = try SyntheticWAVs()
+        let primaryURL = try files.wav(channels: [SyntheticWAVs.signal(active: 1_000..<1_010)])
+        let protectedBackup = try files.wav(channels: [
+            SyntheticWAVs.signal(active: 1_000..<1_010),
+            SyntheticWAVs.signal(active: 150..<151),
+        ])
+        let keys = map.alignment.groups[1].placements.map {
+            CommonRenderLaneKey(occurrence: $0.occurrence.id, decodedChannel: 1)
+        }
+        await #expect(throws: SourceProofRefusal.unsafeRemoval(keys[0], cut)) {
+            try await inspect(episode, map, [primary: primaryURL, backup: protectedBackup])
+        }
+        let fadedBackup = try files.wav(channels: [
+            SyntheticWAVs.signal(active: 1_000..<1_010),
+            SyntheticWAVs.signal(active: 205..<206),
+        ])
+        await #expect(throws: SourceProofRefusal.unsafeFade(keys[0], fade)) {
+            try await inspect(episode, map, [primary: primaryURL, backup: fadedBackup])
+        }
+        let safe = try files.write(primary: primary, backup: backup)
+        await #expect(throws: SourceProofRefusal.invalidFade(RemovedFrameSpan(start: 101, end: 210))) {
+            try await inspect(episode, map, safe, fades: [RemovedFrameSpan(start: 101, end: 210)])
+        }
+        let twoCuts = try CommonEpisodeEditMap(
+            alignment: map.alignment, alignmentRevision: 7, editRevision: 8,
+            outputRate: map.outputRate, alignedFrameCount: map.alignedFrameCount,
+            removals: [cut, RemovedFrameSpan(start: 220, end: 300)]
+        )
+        let merged = [RemovedFrameSpan(start: 90, end: 230),
+                      RemovedFrameSpan(start: 210, end: 330)]
+        let proof = try await inspect(episode, twoCuts, safe, fades: merged)
+        #expect(proof.lanes.count == 5)
+        let silentKey = CommonRenderLaneKey(occurrence: keys[0].occurrence, decodedChannel: 1)
+        await #expect(throws: SourceProofRefusal.unsafeRemoval(silentKey, cut)) {
+            try await inspect(episode, map, safe, knownProtected: [silentKey: [150..<160]])
+        }
+        await #expect(throws: SourceProofRefusal.unsafeFade(silentKey, fade)) {
+            try await inspect(episode, map, safe, knownProtected: [silentKey: [205..<206]])
+        }
+        let fadeProtected = try files.wav(channels: [
+            SyntheticWAVs.signal(active: 1_000..<1_010),
+            SyntheticWAVs.signal(active: 215..<216),
+        ])
+        await #expect(throws: SourceProofRefusal.unsafeFade(keys[0], RemovedFrameSpan(start: 90, end: 330))) {
+            try await inspect(episode, twoCuts, [primary: primaryURL, backup: fadeProtected], fades: merged)
+        }
+    }
+
+    @Test func mixedRateSourceUsesExactInverseBeforeCommonGridRounding() async throws {
+        var (episode, map, primary, backup) = try fixture()
+        let group = map.alignment.groups[1]
+        let original = group.placements[0].occurrence
+        let mixed = try SourceOccurrence(id: original.id, source: backup,
+                                         nominalRate: NominalRate(44_100), frameCount: 441_000)
+        let changedGroup = try GroupTimeMap(
+            group: group.group, reference: group.reference, epochs: group.epochs,
+            placements: [OccurrencePlacement(
+                occurrence: mixed, spans: [span(0, 441_000, group.epochs[0].epoch)]
+            )]
+        )
+        let alignment = try AlignedTimelineMap(reference: map.alignment.reference,
+                                               groups: [map.alignment.groups[0], changedGroup])
+        episode.alignment?.maps[0].map = try JSONDecoder().decode(
+            EmbeddedJSON.self, from: JSONEncoder().encode(alignment)
+        )
+        map = try CommonEpisodeEditMap(
+            alignment: alignment, alignmentRevision: 7, editRevision: 8,
+            outputRate: NominalRate(48_000), alignedFrameCount: 480_000, removals: [cut]
+        )
+        let files = try SyntheticWAVs()
+        let primaryURL = try files.wav(channels: [SyntheticWAVs.signal(active: 1_000..<1_010)])
+        let backupURL = try files.wav(channels: [
+            [Int16](repeating: 0, count: 441_000),
+            [Int16](repeating: 0, count: 441_000),
+        ], sampleRate: 44_100)
+        let urls = [primary: primaryURL, backup: backupURL]
+        let proof = try await inspect(episode, map, urls)
+        #expect(proof.lanes.count == 3)
+        guard case .source(let position) = try map.alignment.sourceFrame(
+            at: map.outputRate.instant(ofFrame: cut.start), in: mixed.id
+        ) else { Issue.record("mixed-rate cut boundary failed inverse"); return }
+        #expect(position.exactFrame == q(735, 8))
+        let protected = try files.wav(channels: [
+            [Int16](repeating: 0, count: 441_000),
+            {
+                var channel = [Int16](repeating: 0, count: 441_000)
+                channel[135] = 4_096
+                return channel
+            }(),
+        ], sampleRate: 44_100)
+        let key = CommonRenderLaneKey(occurrence: mixed.id, decodedChannel: 1)
+        await #expect(throws: SourceProofRefusal.unsafeRemoval(key, cut)) {
+            try await inspect(episode, map, [primary: primaryURL, backup: protected])
+        }
+    }
+
+    @Test func unmappedInteriorAndSignedOffsetRefuseInsteadOfAssumingPadding() async throws {
+        var (episode, map, _, _) = try fixture()
+        let files = try SyntheticWAVs()
+        let urls = try files.write(primary: episode.sources[0].id, backup: episode.sources[1].id)
+        let group = map.alignment.groups[1]
+        let unsupported = try GroupTimeMap(
+            group: group.group, reference: group.reference,
+            epochs: [EpochClockMap(epoch: group.epochs[0].epoch, mapping: .unsupported(.estimatorAbstained))],
+            placements: group.placements
+        )
+        let alignment = try AlignedTimelineMap(reference: map.alignment.reference,
+                                               groups: [map.alignment.groups[0], unsupported])
+        episode.alignment?.maps[0].map = try JSONDecoder().decode(
+            EmbeddedJSON.self, from: JSONEncoder().encode(alignment)
+        )
+        map = try CommonEpisodeEditMap(
+            alignment: alignment, alignmentRevision: 7, editRevision: 8,
+            outputRate: NominalRate(48_000), alignedFrameCount: 480_000, removals: [cut]
+        )
+        let occurrence = group.placements[0].occurrence.id
+        await #expect(throws: SourceProofRefusal.unsupportedEpoch(group.epochs[0].epoch)) {
+            try await inspect(episode, map, urls)
+        }
+        let longSource = try SourceOccurrence(
+            id: group.placements[0].occurrence.id, source: episode.sources[1].id,
+            nominalRate: NominalRate(48_000), frameCount: 480_001
+        )
+        let longGroup = try GroupTimeMap(
+            group: group.group, reference: group.reference,
+            epochs: [mapped(group.epochs[0].epoch, [seg(q(0), q(480_001, 48_000), .one, .zero)])],
+            placements: [OccurrencePlacement(
+                occurrence: longSource, spans: [span(0, 480_001, group.epochs[0].epoch)]
+            )]
+        )
+        let longAlignment = try AlignedTimelineMap(
+            reference: map.alignment.reference, groups: [map.alignment.groups[0], longGroup]
+        )
+        episode.alignment?.maps[0].map = try JSONDecoder().decode(
+            EmbeddedJSON.self, from: JSONEncoder().encode(longAlignment)
+        )
+        map = try CommonEpisodeEditMap(
+            alignment: longAlignment, alignmentRevision: 7, editRevision: 8,
+            outputRate: NominalRate(48_000), alignedFrameCount: 480_000, removals: [cut]
+        )
+        let longURL = try files.wav(channels: [[Int16](repeating: 0, count: 480_001),
+                                               [Int16](repeating: 0, count: 480_001)])
+        await #expect(throws: SourceProofRefusal.outsideEpisodeCoverage(occurrence)) {
+            try await inspect(episode, map, [episode.sources[0].id: urls[episode.sources[0].id]!,
+                                             episode.sources[1].id: longURL])
+        }
+        let negative = try GroupTimeMap(
+            group: group.group, reference: group.reference,
+            epochs: [mapped(group.epochs[0].epoch, [seg(q(0), q(10), .one, q(-1, 10))])],
+            placements: group.placements
+        )
+        let shifted = try AlignedTimelineMap(reference: map.alignment.reference,
+                                             groups: [map.alignment.groups[0], negative])
+        episode.alignment?.maps[0].map = try JSONDecoder().decode(
+            EmbeddedJSON.self, from: JSONEncoder().encode(shifted)
+        )
+        map = try CommonEpisodeEditMap(
+            alignment: shifted, alignmentRevision: 7, editRevision: 8,
+            outputRate: NominalRate(48_000), alignedFrameCount: 480_000, removals: [cut]
+        )
+        await #expect(throws: SourceProofRefusal.negativeAlignedOrigin(occurrence)) {
+            try await inspect(episode, map, urls)
+        }
+    }
+}
+
+private final class SyntheticWAVs {
+    private let directory: URL
+
+    init() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("ww-common-proof-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    }
+
+    deinit { try? FileManager.default.removeItem(at: directory) }
+
+    static func signal(active: Range<Int>) -> [Int16] {
+        var samples = [Int16](repeating: 0, count: 480_000)
+        for frame in active { samples[frame] = 4_096 }
+        return samples
+    }
+
+    func write(primary: SourceID, backup: SourceID) throws -> [SourceID: URL] {
+        [
+            primary: try wav(channels: [Self.signal(active: 1_000..<1_010)]),
+            backup: try wav(channels: [Self.signal(active: 1_100..<1_110),
+                                        [Int16](repeating: 0, count: 480_000)]),
+        ]
+    }
+
+    func wav(channels: [[Int16]], sampleRate: UInt32 = 48_000) throws -> URL {
+        let count = channels[0].count
+        precondition(channels.allSatisfy { $0.count == count })
+        let bytes = UInt32(count * channels.count * 2)
+        var data = Data()
+        func word(_ value: UInt16) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        func dword(_ value: UInt32) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        data.append(contentsOf: "RIFF".utf8); dword(bytes + 36)
+        data.append(contentsOf: "WAVEfmt ".utf8); dword(16)
+        word(1); word(UInt16(channels.count)); dword(sampleRate)
+        dword(sampleRate * UInt32(channels.count) * 2)
+        word(UInt16(channels.count * 2)); word(16)
+        data.append(contentsOf: "data".utf8); dword(bytes)
+        for frame in 0..<count {
+            for channel in channels { word(UInt16(bitPattern: channel[frame])) }
+        }
+        let url = directory.appendingPathComponent("\(UUID()).wav")
+        try data.write(to: url)
+        return url
     }
 }
 

@@ -81,3 +81,40 @@ alignment job renders one group into segments; neither it nor this inventory est
 backing, protection, human acceptance, full inverse coverage, renderer behavior or publication.
 Until those producers and gates exist, no product preview, export, shorten/lift, real-media proof or
 no-dither null claim is made here.
+
+**Separate WW-045 source-backed diagnostic (stacked on draft #290):**
+`ProvisionalSourceBackedProof.inspect` first derives the entire occurrence/channel inventory above,
+then uses `WWDecode.SourceDecoder` to read each distinct source through its read-only content gateway.
+It refuses absent/extra source locations, decode failures or changes during decode, missing map-input
+format revisions, content-digest inputs that it cannot re-verify, inexact decoded sample formats,
+channel/rate/frame-count drift and non-finite samples. Repeated placements retain separate keys even
+when one source is decoded once. Its immutable result contains the decoded format/fingerprint for
+every lane and identifies channels that were **exactly digital zero for the whole verified decode**;
+it contains no fabricated aligned audio asset, cut permission or publication token. A caller-supplied
+path is still a location hint, not an organizer-attested identity; no persisted source/content revision
+is available to bind that path to the accepted M2 map or to recheck it after inspection.
+
+The recipe projects each complete source-frame span through its supported affine clock pieces using
+exact rational arithmetic; it refuses gaps, unsupported pieces, overlapping mapped coverage, missing
+or extra episode-grid coverage and non-invertible cut endpoints for any occurrence. Ordinary
+shorter/longer source placements and padding **abstain** until timed authoritative backing/silence
+is available; they are not interpreted as zero-filled samples. All removed endpoints are
+already on the ONE common output grid. Every nonzero decoded source sample, on *every* channel, is
+treated as potentially protected speech; a removal or the union of the supplied final fade footprints
+touching its exact projected interval is refused. Explicit known-protected intervals (including
+digital silence) are **additional vetoes only**: a missing or empty list is *not* an authoritative
+speech survey and can never authorize a render. This unusually conservative digital-zero rule may
+abstain on harmless noise, and neither a zero sample nor a supplied fade extent proves a human
+decision, intentional silence policy or actual renderer footprint. Synthetic WAV tests cover
+Primary, Backup, unassigned channels, repeated uses, 44.1/48-kHz grid quantisation, source/format
+drift, unsupported coverage, nonzero speech proxies, protected silence and overlapping fades.
+
+The current nonnegative common-grid domain refuses negative-leading placements rather than silently
+dropping them. **#302** is the separate signed-grid correction, required before these coordinates
+could be used as production proof; this unit neither reproduces nor revises its rejected predecessor.
+**#304** is the separate renderer-budget revision and is not a rendering or backing guarantee for
+this proof. Before any product shortening, the organizer must persist and attest source revisions,
+verify the human-accepted edit and *complete* protected/meaningful/other-speech survey (including
+silent intervals), and couple the final renderer fade footprint, all-lane shared render, and atomic
+current-revision native publication. `CommonRenderAdapter.prepare` remains unconditionally
+`organizerAuthorityUnavailable`; no ShowDocument/store/restore code or frozen M2 tree is changed.
