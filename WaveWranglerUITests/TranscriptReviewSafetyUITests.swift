@@ -50,7 +50,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         showInfo.click()
 
         XCTAssertTrue(app.staticTexts["ww.show.showInfoSummary.title"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.textFields["ww.inspector.show.title"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.descendants(matching: .any)["ww.inspector.showInfo"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.staticTexts["ww.review.heading"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["ww.review.inspector"].exists)
     }
