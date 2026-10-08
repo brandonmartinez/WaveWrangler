@@ -331,3 +331,10 @@
 2. **Model downloads approved:** open-weight local speech-recognition models (e.g. Whisper-family) and Apple on-device speech, for local evaluation (WW-026) and use. Download once from the official source with checksums, and record name, version, size, license and source. Inference is fully offline with no tokenizer or network fallback, and the network-fallback risk is kept as a test. Store models outside the repo and never commit model bodies. No recordings or derived data are sent anywhere.
 - **Not granted:** cloud or hosted speech APIs, network-disconnection toggles, consented listeners (WW-018 listening → M4 #232), and any other recordings.
 - This supersedes the M2 exclusion of transcription and models only for M3 and only within this scope.
+
+### 2026-10-08: Bound estimator test concurrency with a new freeze revision (#237)
+
+**By:** Lead, during M3 integration, after Alignment found that `m2-freeze-estimator.json` pins both the estimator source and test trees.
+- **Decision:** Revise the estimator **test tree only** to bound internal in-flight cases to at most four on the daytime working Mac. Keep the original frozen source tree, M2 freeze record, original holdout and raw evidence unchanged.
+- **Evidence gate:** Before a new holdout, commit a dated `m2-freeze-estimator-2` record with the revised test-tree pin, unchanged counts/thresholds, a disjoint seed and truth recipe. On a clean freeze-containing SHA, run the fresh holdout once, preserve its raw records and nearest-rank p95/max, and measure the test helper at no more than about 400% CPU. Run the full exact-head `scripts/test.sh` within the established host load budget; a stopped or over-budget attempt is not a pass.
+- **Reason:** The current calibration test uses an unbounded task group and has reached about 17 cores. `--jobs` and Swift Testing worker limits do not cap its internal tasks, and no proven external four-core limit is available. The new revision does not retroactively change M2's accepted holdout.
