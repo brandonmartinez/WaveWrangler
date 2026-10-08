@@ -192,6 +192,10 @@ scripts/test.sh --package-only
 scripts/test.sh --ui        # XCUITests only (launches the app); needs GUI permission + the coordinator's GUI lock
 ```
 
+Per-PR GUI selection and the reviewed (currently empty) flake-quarantine list are documented in
+[GUI flake quarantine](gui-flake-quarantine.md). Capped full GUI suites use `scripts/test.sh --ui`
+without selectors so every UI test runs.
+
 Environment overrides: `WW_JOBS` (default 4) and `WW_DERIVED_DATA` (default `.build/DerivedData`).
 `WW_SEGMENT_SWEEPS` selects the WW-017 segment pass. `1` runs calibration, the floor sweep and edge silence; `0` runs
 calibration only. It defaults to `1` locally and to `0` when `CI=true`; the CI workflow also sets `0` explicitly, to
