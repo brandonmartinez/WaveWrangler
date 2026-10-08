@@ -25,10 +25,13 @@ public struct AlignmentPipelineConfiguration: Sendable, Equatable {
     /// Hard ceiling for concurrent pipeline work (user-directed compute budget, 2026-10-06).
     public static let maximumConcurrency = 4
     public static let defaultConcurrency = 2
+    /// Shared analysis/render admission must not be enlarged by a caller-supplied analysis budget.
+    public static let maximumMemoryBudgetBytes = 512 << 20
 
-    /// Concurrent analysis units / probes. Clamped to `1...maximumConcurrency`.
+    /// Concurrent analysis units / probes. Clamped to `1...maximumConcurrency`; aligned renders
+    /// provisionally refuse configurations above 2 pending a whole-process memory qualification.
     public let concurrency: Int
-    /// Upper bound on the estimated working set of all concurrently admitted analysis units, bytes.
+    /// Upper bound on the estimated working set of all concurrently admitted analysis/render units, bytes.
     public let analysisMemoryBudgetBytes: Int
     /// Longest target excerpt analysed per epoch, seconds (centred in the target). The default (10 min)
     /// keeps one unit's estimated working set (~440 MB at a 120 s search) inside the default memory budget;
@@ -41,8 +44,8 @@ public struct AlignmentPipelineConfiguration: Sendable, Equatable {
     /// Analysis buffers are decimated by an integer factor to the lowest exact rate at or above this.
     public let minimumAnalysisRate: Int
     /// Output seconds rendered per aligned-asset segment (one coordinator slot per channel per segment),
-    /// clamped to 1...180. The ceiling is measured for the six-channel, 48 kHz, concurrency-2 fixture;
-    /// other channel/rate/concurrency combinations have not been qualified against the 1 GiB gate.
+    /// clamped to 1...180. Admission additionally checks the output rate, channel/cursor cost and map
+    /// complexity before opening any cursor; the clamp alone is not the process-memory gate.
     public let renderSegmentSeconds: Int
     /// How the common output rate of aligned assets is chosen (WW-050 `OutputSettingsPolicy`): by default
     /// 48 kHz when feasible, else derived from the sources; `.matchSources` derives it from the sources.
@@ -60,7 +63,7 @@ public struct AlignmentPipelineConfiguration: Sendable, Equatable {
         outputSettings: OutputSettingsConfiguration = .default
     ) {
         self.concurrency = min(max(concurrency, 1), Self.maximumConcurrency)
-        self.analysisMemoryBudgetBytes = max(analysisMemoryBudgetBytes, 16 << 20)
+        self.analysisMemoryBudgetBytes = min(max(analysisMemoryBudgetBytes, 16 << 20), Self.maximumMemoryBudgetBytes)
         self.targetExcerptSeconds = min(max(targetExcerptSeconds, 10), 3600)
         self.searchDeviationSeconds = min(max(searchDeviationSeconds, 1), 600)
         self.searchCenterSeconds = searchCenterSeconds

@@ -147,17 +147,63 @@ struct GroupRenderJob: Sendable {
         PipelineSlots.alignedSegment(group: map.group, source: participant.source.id, channel: channel, segment: segment)
     }
 
-    /// Admission for one group's render: one segment of output for every channel, one encoded channel (and
-    /// its staged copy) for the single in-flight store write, and each stream's retained history plus a decode chunk and render request.
-    func admissionBytes(chunkFrames: Int, recipe: RenderRecipe) -> Int {
-        let output = Int(segmentFrames) * channels.count * MemoryLayout<Float>.size
-        let encoded = Int(segmentFrames) * MemoryLayout<Float>.size * 2
-        let history = Int(CursorSampleProvider.history(for: recipe))
-        let reach = recipe.outputChunkFrames * recipe.maximumDecimation + history
-        let streams = participants.reduce(0) { total, participant in
-            total + (history + reach + 2 * chunkFrames) * participant.facts.channelCount * MemoryLayout<Float>.size * 2
+    /// Checked, provisional process-memory admission. CollectingSink retains ALL output channels until
+    /// publication finishes; only one channel at a time is encoded/staged/read back by the store. The
+    /// multipliers allow for Data copies, decoder buffers and Swift array capacity, not just the renderer's
+    /// much smaller reported window. Unmeasured rates, cursor sizes and map complexity refuse up front.
+    func admissionBytes(chunkFrames: Int, recipe: RenderRecipe, concurrency: Int) throws(AlignmentWorkFailure) -> Int {
+        guard concurrency <= 2 else { throw .renderEnvelope("concurrency \(concurrency) exceeds the provisional render envelope (2)") }
+        guard outputRate <= 48_000 else { throw .renderEnvelope("output rate \(outputRate) exceeds the provisional render envelope (48000 Hz)") }
+        guard chunkFrames <= 16_384 else { throw .renderEnvelope("decoder chunk \(chunkFrames) exceeds the provisional render envelope (16384 frames)") }
+        guard participants.count <= 16 else { throw .renderEnvelope("too many simultaneous source cursors (\(participants.count))") }
+        var complexity = map.epochs.count
+        for epoch in map.epochs {
+            if case let .mapped(segments, _) = epoch.mapping {
+                let (sum, overflow) = complexity.addingReportingOverflow(segments.count)
+                guard !overflow else { throw .renderEnvelope("map complexity overflows admission accounting") }
+                complexity = sum
+            }
         }
-        return output + encoded + streams + (8 << 20)
+        for placement in map.placements {
+            let (sum, overflow) = complexity.addingReportingOverflow(placement.spans.count)
+            guard !overflow else { throw .renderEnvelope("map complexity overflows admission accounting") }
+            complexity = sum
+        }
+        guard complexity <= 64 else { throw .renderEnvelope("map complexity \(complexity) exceeds the provisional render envelope (64)") }
+        guard segmentIndices.count <= 256 else { throw .renderEnvelope("too many rendered segments (\(segmentIndices.count))") }
+
+        func add(_ left: Int, _ right: Int) throws(AlignmentWorkFailure) -> Int {
+            let (result, overflow) = left.addingReportingOverflow(right)
+            guard !overflow else { throw .renderEnvelope("render memory accounting overflow") }
+            return result
+        }
+        func multiply(_ factors: Int...) throws(AlignmentWorkFailure) -> Int {
+            var result = 1
+            for factor in factors {
+                let (product, overflow) = result.multipliedReportingOverflow(by: factor)
+                guard !overflow else { throw .renderEnvelope("render memory accounting overflow") }
+                result = product
+            }
+            return result
+        }
+
+        let frames = Int(Swift.min(segmentFrames, Int64(outputFrames.count)))
+        let history = Int(CursorSampleProvider.history(for: recipe))
+        let reach = try add(try multiply(recipe.outputChunkFrames, recipe.maximumDecimation), history)
+        let perStream = try add(try add(history, reach), try multiply(2, chunkFrames))
+        let output = try multiply(frames, channels.count, MemoryLayout<Float>.size)
+        let stagedChannel = try multiply(frames, MemoryLayout<Float>.size, 8)
+        var streams = 0
+        for participant in participants {
+            let retained = try multiply(perStream, participant.facts.channelCount, MemoryLayout<Float>.size, 2)
+            let decoder = try multiply(chunkFrames, participant.facts.channelCount, MemoryLayout<Float>.size, 2)
+            streams = try add(streams, try add(retained, decoder))
+        }
+        let estimate = try add(try add(output, stagedChannel), try add(streams, 8 << 20))
+        guard estimate <= AlignmentPipelineConfiguration.maximumMemoryBudgetBytes else {
+            throw .memoryBudget(requested: estimate, budget: AlignmentPipelineConfiguration.maximumMemoryBudgetBytes)
+        }
+        return estimate
     }
 
     static func floorDiv(_ a: Int64, _ b: Int64) -> Int64 {
@@ -252,6 +298,16 @@ enum AlignedAssetRun {
             segments: job.segmentIndices.count
         )
         let coordinator = environment.coordinator
+        let bytes: Int
+        do throws(AlignmentWorkFailure) {
+            bytes = try job.admissionBytes(
+                chunkFrames: environment.decoder.configuration.chunkFrames, recipe: .m2Candidate,
+                concurrency: environment.configuration.concurrency
+            )
+        } catch {
+            report.failure = error
+            return report
+        }
         var toRender: [Int64] = []
         do throws(AlignmentWorkFailure) {
             for segment in job.segmentIndices {
@@ -292,7 +348,6 @@ enum AlignedAssetRun {
         guard !toRender.isEmpty else { return report }
         let segments = toRender
 
-        let bytes = job.admissionBytes(chunkFrames: environment.decoder.configuration.chunkFrames, recipe: .m2Candidate)
         let decoder = environment.decoder
         let outcome: Result<GroupRenderReport, AlignmentWorkFailure>
         do {

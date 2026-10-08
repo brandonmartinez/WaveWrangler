@@ -94,6 +94,34 @@ three-recorder, six-channel, mixed-rate 48 kHz output, concurrency-2 fixture in 
 it does not prove that every admitted channel count, output rate, concurrency or simultaneous group render
 stays under 1 GiB. The <=1 GiB gate is not waived for unmeasured configurations.
 
+The stacked #235 admission follow-up accounts for the full per-segment `CollectingSink` across **all**
+channels, eight simultaneous full-channel copies during encode/derived-store staging and read-back, cursor
+history/render requests/decoder buffers for every source, and fixed headroom. Arithmetic overflow refuses.
+The shared admission budget is bounded at 512 MiB even if the caller requests more; unsupported render
+rates (>48 kHz), concurrency (>2), decoder chunks (>16,384 frames), excessive map complexity/cursors,
+segments and result slots refuse *before opening a render cursor*, with a typed error. Four-input/eight-channel
+and seven-channel groups remain eligible at small segment sizes. These limits are **provisional engineering
+scope, not approved product caps or proof of a configuration-wide 1 GiB gate**: allocation multipliers and
+process baseline are not mathematical RSS bounds. In particular 96/192 kHz, concurrency 4, maximal decoder
+buffers, fragmented maps, overlapping estimator work and long-run rerender history remain unqualified
+until isolated whole-process measurements (ru_maxrss, sampled RSS and physical footprint) and broader
+admission/streaming work establish the complete envelope. No #235 milestone acceptance is claimed here.
+
+Synthetic isolated SwiftPM processes on `macatron.local` (working Mac, macOS 27, Debug, `--jobs 4`,
+Swift Testing width 1, each profile filtered into its own process) exercised the provisional scope:
+
+| Shape | First render / cached rerender | Peak `ru_maxrss` | Sampled RSS | Sampled footprint | Gate peak estimate |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Two simultaneous groups × four 2-channel inputs, 48 kHz out, 10 s segment, concurrency 2, 16,384-frame decoder (both group hooks rendezvoused before publication) | 1+1 / 1+1 segments | 120,995,840 B | 120,995,840 B | 79,282,992 B | 119,129,088 B |
+| One group × 4+3 channels, 44.1/48 kHz inputs → 48 kHz output, 2 s segment, concurrency 2, 16,384-frame decoder | 5 / 5 segments | 73,809,920 B | 73,809,920 B | 31,933,160 B | 32,047,552 B |
+
+The former fixture (above) measured the 180 s six-channel boundary at its older SHA only; the new
+`WW_RENDER_ENVELOPE_PROFILE=1` boundary test must still run in isolation on this exact head before claiming
+even this provisional boundary's measured behavior. Unit regressions verify typed zero-cursor refusal for
+96/192 kHz output, concurrency 4, the 1,048,576-frame decoder buffer, a valid 80-segment map, accounting
+overflow and a budget below the group estimate. These are refusals, **not** measured acceptance of those
+shapes. Repeated cached rerenders above do not qualify map revisions or a long-lived process.
+
 ## Tests
 
 Package suites (`swift test --filter "WWAlignPipelineTests|ForbiddenAPITests"`, 70 pipeline tests in 15 suites; synthetic only):

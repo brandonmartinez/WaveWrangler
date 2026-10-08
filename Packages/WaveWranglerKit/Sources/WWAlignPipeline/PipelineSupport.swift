@@ -25,6 +25,8 @@ public enum AlignmentWorkFailure: Error, Sendable, Equatable {
     case estimator(AlignEstimateError)
     /// One unit's estimated working set exceeds the whole analysis memory budget.
     case memoryBudget(requested: Int, budget: Int)
+    /// The aligned render is outside the provisionally qualified process-memory envelope.
+    case renderEnvelope(String)
     case encoding(String)
     case render(RenderFailure)
     /// The accepted map changed (or was cleared) while the job ran.

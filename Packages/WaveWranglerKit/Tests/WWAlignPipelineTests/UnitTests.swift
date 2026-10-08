@@ -139,6 +139,7 @@ struct ConfigurationTests {
         #expect(AlignmentPipelineConfiguration(concurrency: ProcessInfo.processInfo.activeProcessorCount).concurrency <= 4)
         #expect(AlignmentPipelineConfiguration(concurrency: 64).concurrency == 4)
         #expect(AlignmentPipelineConfiguration(analysisMemoryBudgetBytes: 0).analysisMemoryBudgetBytes == 16 << 20)
+        #expect(AlignmentPipelineConfiguration(analysisMemoryBudgetBytes: Int.max).analysisMemoryBudgetBytes == 512 << 20)
         #expect(AlignmentPipelineConfiguration(targetExcerptSeconds: 1).targetExcerptSeconds == 10)
         #expect(AlignmentPipelineConfiguration(targetExcerptSeconds: 99_999).targetExcerptSeconds == 3600)
         #expect(AlignmentPipelineConfiguration(searchDeviationSeconds: 0).searchDeviationSeconds == 1)

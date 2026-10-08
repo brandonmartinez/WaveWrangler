@@ -46,6 +46,8 @@ public enum AlignedAssetRefusal: Error, Sendable, Equatable {
     case outputSettings(OutputSettingsFailure)
     /// The policy's rate is not a valid nominal rate (unreachable for grid rates; explicit, never a guess).
     case outputRateInvalid(Int)
+    /// The whole episode exceeds the provisional render planning envelope (before any source opens).
+    case renderEnvelope(String)
     case coordinatorShutDown
 }
 
@@ -1048,6 +1050,9 @@ public final class AlignmentPipeline: Sendable {
             }
             if !participants.isEmpty { renderable.append((group, participants)) }
         }
+        guard renderable.count <= 16 else {
+            throw .renderEnvelope("too many renderable groups (\(renderable.count)); provisional limit is 16")
+        }
 
         // One common output rate for the whole episode, from the probed interpretations alone (WW-050).
         let interpretations = renderable.flatMap { $0.participants.map(\.facts.interpretation) }
@@ -1066,6 +1071,7 @@ public final class AlignmentPipeline: Sendable {
 
         var jobs: [GroupRenderJob] = []
         var failedGroups: [GroupRenderReport] = []
+        var resultSlots = 0
         for (group, participants) in renderable {
             let hull: Range<Int64>?
             do throws(AlignmentWorkFailure) {
@@ -1077,12 +1083,45 @@ public final class AlignmentPipeline: Sendable {
                 continue
             }
             guard let hull, !hull.isEmpty else { continue }
-            jobs.append(GroupRenderJob(
+            let job = GroupRenderJob(
                 episode: episodeID, revision: revision, identity: identity, map: group, nominalOutputRate: nominalOutputRate,
                 participants: participants, outputFrames: hull,
                 segmentFrames: Int64(configuration.renderSegmentSeconds) * Int64(outputRate),
                 recipeBaseName: configuration.renderRecipeName
-            ))
+            )
+            let (slots, overflow) = job.segmentIndices.count.multipliedReportingOverflow(by: job.channels.count)
+            let (total, totalOverflow) = resultSlots.addingReportingOverflow(slots)
+            guard !overflow, !totalOverflow, total <= 4096 else {
+                throw .renderEnvelope("too many aligned segment results; provisional limit is 4096")
+            }
+            resultSlots = total
+            jobs.append(job)
+        }
+        // Validate the whole episode before scheduling any group: a later group's refusal must not
+        // leave an earlier group already decoding or publishing assets from an unsupported render shape.
+        for job in jobs {
+            do throws(AlignmentWorkFailure) {
+                let bytes = try job.admissionBytes(
+                    chunkFrames: decoder.configuration.chunkFrames, recipe: .m2Candidate,
+                    concurrency: configuration.concurrency
+                )
+                guard bytes <= configuration.analysisMemoryBudgetBytes else {
+                    throw .memoryBudget(requested: bytes, budget: configuration.analysisMemoryBudgetBytes)
+                }
+            } catch {
+                let refused = jobs.map { candidate in
+                    var report = GroupRenderReport(
+                        group: candidate.map.group, outputRate: candidate.outputRate,
+                        outputFrames: candidate.outputFrames, segments: candidate.segmentIndices.count
+                    )
+                    report.failure = error
+                    return report
+                }
+                return AlignedAssetReport(
+                    revision: revision, outputSettings: decision, groups: failedGroups + refused,
+                    notRendered: notRendered
+                )
+            }
         }
         let environment = environment
         let renders = renders
