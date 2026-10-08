@@ -72,6 +72,7 @@ struct TranscriptReviewView: View {
         .wwFont(.body)
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ww.review.workspace")
     }
 
@@ -174,27 +175,17 @@ struct TranscriptReviewInspector: View {
                 .wwFont(.headline)
                 .accessibilityAddTraits(.isHeader)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Selection")
-                    .wwFont(.caption)
-                Text(state.selectedOccurrence?.title ?? "No occurrence selected")
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Selected occurrence")
-            .accessibilityValue(state.selectedOccurrence?.title ?? "No occurrence selected")
-            .accessibilityIdentifier("ww.review.inspector.selection")
-
-            Text("Keyboard: View > Setup (⌘1).")
+            Text("Selection: \(state.selectedOccurrence?.title ?? "No occurrence selected")")
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("Keyboard alternative: View > Setup (Command-1)")
-                .accessibilityIdentifier("ww.review.remedy.keyboard")
+                .accessibilityLabel("Selected occurrence")
+                .accessibilityValue(state.selectedOccurrence?.title ?? "No occurrence selected")
+                .accessibilityIdentifier("ww.review.inspector.selection")
 
             actionButton("Accept Shorten when safe", id: "acceptShorten", reason: TranscriptReviewShellPresentation.acceptBlockedReason)
             actionButton("Lift — preserve timing", id: "lift", reason: TranscriptReviewShellPresentation.liftBlockedReason)
             actionButton("Reject proposal", id: "reject", reason: TranscriptReviewShellPresentation.rejectBlockedReason)
 
-            Button("Go to Setup", action: goToSetup)
+            Button("Go to Setup (⌘1)", action: goToSetup)
                 .accessibilityHint("Choose or confirm a Primary source in Setup. Keyboard alternative: View, Setup, Command-1.")
                 .accessibilityIdentifier("ww.review.remedy.setup")
 
