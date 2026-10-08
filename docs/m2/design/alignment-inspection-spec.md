@@ -203,7 +203,11 @@ epoch, so a gap (U6) never silently mixes anchors across it (M2-C3: "a gap alway
 > container around each alignment outline cell itself, and no SwiftUI
 > description reaches it (labelling the cell content, combining its children and the value-keypath
 > shorthand were each tried). The waiver is gated on that container still exposing its own labelled
-> text child, and is capped at one finding per cell. **It needs Lead sign-off.**
+> text child, and is capped at one finding per cell. The row of alignment action buttons is a named
+> container ("Alignment actions") rather than a waiver. Two further waivers cover chrome the app does not
+> build: the show's split layout (two containers over the content area, plus the episode sidebar) and
+> SwiftUI's inspector column around the labelled `ww.inspector` scroll area. Each is matched by the exact
+> frame of a labelled element and capped. **These waivers need Lead sign-off.**
 
 ### 4.2 Numeric rate/offset correction
 
