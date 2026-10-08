@@ -34,15 +34,16 @@ public struct PrimarySpeechSelection: Sendable, Equatable {
 
 public enum SpeechAdmissionRefusal: Error, Sendable, Equatable {
     case primaryNotConfirmed
-    case invalidPin
     case assetNotLocalRegularFile
     case assetSizeMismatch
     case assetDigestMismatch
     case assetChangedDuringVerification
+    case runtimeNotStaged
+    case runtimeDependencyMismatch
+    case sandboxFailed
 }
 
-/// Exact artifact identity; no implicit downloads, latest-tag resolution, tokenizer fetch or network
-/// fallback. The ggml model contains the tokenizer; runtime and linked libraries are separate pins.
+/// Reviewed artifact identity. Production callers cannot supply provenance or substitute their own hash.
 public struct LocalSpeechAssetPin: Sendable, Equatable {
     public let name: String
     public let version: String
@@ -51,12 +52,7 @@ public struct LocalSpeechAssetPin: Sendable, Equatable {
     public let license: String
     public let source: String
 
-    public init(name: String, version: String, sizeBytes: Int64, sha256: String, license: String, source: String) throws(SpeechAdmissionRefusal) {
-        guard !name.isEmpty, !version.isEmpty, sizeBytes > 0,
-              sha256.utf8.count == 64, sha256.utf8.allSatisfy({
-                  (48...57).contains($0) || (97...102).contains($0)
-              }), !license.isEmpty, !source.isEmpty
-        else { throw .invalidPin }
+    package init(name: String, version: String, sizeBytes: Int64, sha256: String, license: String, source: String) {
         self.name = name
         self.version = version
         self.sizeBytes = sizeBytes
@@ -65,7 +61,7 @@ public struct LocalSpeechAssetPin: Sendable, Equatable {
         self.source = source
     }
 
-    public static let whisperBaseEnglish = try! LocalSpeechAssetPin(
+    public static let whisperBaseEnglish = LocalSpeechAssetPin(
         name: "ggml-base.en.bin",
         version: "ggerganov/whisper.cpp@5359861c739e955e79d9a303bcbc70fb988958b1",
         sizeBytes: 147_964_211,
@@ -77,6 +73,15 @@ public struct LocalSpeechAssetPin: Sendable, Equatable {
     /// Refuses non-local, dataless, symlinked or changed assets. Errors intentionally contain no
     /// path or file contents. Reverify at use time; a verified value is not an authorization to infer.
     public func verify(at url: URL) throws(SpeechAdmissionRefusal) {
+        guard url.isFileURL, url.path.hasPrefix("/"),
+              !url.pathComponents.contains("..") else { throw .assetNotLocalRegularFile }
+        var component = URL(fileURLWithPath: "/")
+        for part in url.pathComponents.dropFirst().dropLast() {
+            component.appendPathComponent(part)
+            var metadata = stat()
+            guard lstat(component.path, &metadata) == 0, metadata.st_mode & S_IFMT == S_IFDIR,
+                  metadata.st_flags & UInt32(SF_DATALESS) == 0 else { throw .assetNotLocalRegularFile }
+        }
         let values: URLResourceValues
         do {
             values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .volumeIsLocalKey, .isUbiquitousItemKey])
@@ -98,7 +103,8 @@ public struct LocalSpeechAssetPin: Sendable, Equatable {
         defer { _ = close(fd) }
         var before = stat()
         guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG,
-              before.st_flags & UInt32(SF_DATALESS) == 0
+              before.st_flags & UInt32(SF_DATALESS) == 0,
+              fcntl(fd, F_GETFL) & O_ACCMODE == O_RDONLY
         else { throw .assetNotLocalRegularFile }
         guard before.st_size == sizeBytes else { throw .assetSizeMismatch }
         var digest = SHA256()
@@ -114,32 +120,21 @@ public struct LocalSpeechAssetPin: Sendable, Equatable {
         }
         var after = stat()
         guard fstat(fd, &after) == 0, after.st_flags & UInt32(SF_DATALESS) == 0,
-              before.st_ino == after.st_ino,
+              before.st_dev == after.st_dev, before.st_ino == after.st_ino,
               before.st_size == after.st_size, before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
-              before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec
+              before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+              before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
+              before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec
+        else { throw .assetChangedDuringVerification }
+        var pathState = stat()
+        guard lstat(url.path, &pathState) == 0,
+              pathState.st_dev == after.st_dev, pathState.st_ino == after.st_ino,
+              pathState.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
+              pathState.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+              pathState.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
+              pathState.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec
         else { throw .assetChangedDuringVerification }
         guard digest.finalize().map({ String(format: "%02x", $0) }).joined() == sha256
         else { throw .assetDigestMismatch }
-    }
-}
-
-/// Argument plan for an independently verified whisper.cpp executable. The OS sandbox denies
-/// every network operation in the subprocess; no shell, URL, downloader or tokenizer service runs.
-/// The future runtime adapter must verify its executable *and linked dylibs*, the model, PCM
-/// provenance and the scratch destination before executing this plan.
-public struct OfflineWhisperPlan: Sendable {
-    public let selection: PrimarySpeechSelection
-    public let executable: URL
-    public let arguments: [String]
-
-    package init(selection: PrimarySpeechSelection, executable: URL, model: URL, inputWAV: URL, outputPrefix: URL) {
-        self.selection = selection
-        self.executable = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
-        arguments = [
-            "-p", "(version 1)(allow default)(deny network*)",
-            executable.path, "--model", model.path, "--file", inputWAV.path,
-            "--language", "en", "--threads", "4", "--output-json", "--output-file", outputPrefix.path,
-            "--no-prints",
-        ]
     }
 }

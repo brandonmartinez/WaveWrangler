@@ -61,11 +61,11 @@ struct AdmissionTests {
     }
 
     @Test func verifierRefusesMissingTamperedAndSymlinkedModels() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("synthetic-model")
-        let pin = try LocalSpeechAssetPin(name: "synthetic", version: "1", sizeBytes: 3,
+        let pin = LocalSpeechAssetPin(name: "synthetic", version: "1", sizeBytes: 3,
                                           sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
                                           license: "test", source: "synthetic")
         #expect(throws: SpeechAdmissionRefusal.assetNotLocalRegularFile) { try pin.verify(at: file) }
@@ -80,33 +80,79 @@ struct AdmissionTests {
         #expect(throws: SpeechAdmissionRefusal.assetNotLocalRegularFile) { try pin.verify(at: link) }
     }
 
-    @Test func everyInferencePlanUsesNetworkDenialAndExplicitPaths() throws {
-        let (value, speaker) = episode()
-        let selection = try PrimarySpeechSelection(episode: value, speakerID: speaker)
-        let executable = URL(fileURLWithPath: "/local/whisper-cli")
-        let model = URL(fileURLWithPath: "/local/model")
-        let input = URL(fileURLWithPath: "/scratch/input.wav")
-        let prefix = URL(fileURLWithPath: "/scratch/result")
-        let plan = OfflineWhisperPlan(selection: selection, executable: executable, model: model,
-                                       inputWAV: input, outputPrefix: prefix)
-        #expect(plan.executable.path == "/usr/bin/sandbox-exec")
-        #expect(plan.arguments.prefix(2) == ["-p", "(version 1)(allow default)(deny network*)"])
-        #expect(plan.arguments.contains(executable.path))
-        #expect(plan.arguments.contains(model.path))
-        #expect(plan.arguments.contains(input.path))
-        #expect(plan.arguments.contains(prefix.path))
-        #expect(!plan.arguments.contains("download"))
+    @Test func dependencyReplacementAndMissingTransitiveFailClosed() throws {
+        let root = URL(fileURLWithPath: "/private/tmp/speech-pins-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cli = root.appendingPathComponent("cli")
+        let dependency = root.appendingPathComponent("lib")
+        let pin = LocalSpeechAssetPin(name: "fixture", version: "1", sizeBytes: 3,
+                                      sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                                      license: "synthetic", source: "fixture")
+        let closure = [("cli", pin), ("lib", pin)]
+        try Data("abc".utf8).write(to: cli)
+        #expect(throws: SpeechAdmissionRefusal.runtimeDependencyMismatch) {
+            try ApprovedWhisperRuntime.verify(artifacts: closure, at: root)
+        }
+        try Data("abc".utf8).write(to: dependency)
+        try ApprovedWhisperRuntime.verify(artifacts: closure, at: root)
+        try Data("abd".utf8).write(to: dependency)
+        #expect(throws: SpeechAdmissionRefusal.runtimeDependencyMismatch) {
+            try ApprovedWhisperRuntime.verify(artifacts: closure, at: root)
+        }
+        try Data("abc".utf8).write(to: dependency)
+        try Data("abd".utf8).write(to: cli)
+        #expect(throws: SpeechAdmissionRefusal.runtimeDependencyMismatch) {
+            try ApprovedWhisperRuntime.verify(artifacts: closure, at: root)
+        }
+        #expect(throws: SpeechAdmissionRefusal.runtimeNotStaged) {
+            try ApprovedWhisperRuntime.verify(at: root)
+        }
     }
 
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_SPEECH_MODEL_PATH"] != nil),
-          .timeLimit(.minutes(2)))
-    func provisionedCandidateRunsSyntheticOffline() async throws {
-        let env = ProcessInfo.processInfo.environment
-        let model = URL(fileURLWithPath: try #require(env["WW_SPEECH_MODEL_PATH"]))
-        let executable = URL(fileURLWithPath: try #require(env["WW_SPEECH_CLI_PATH"]))
-        try LocalSpeechAssetPin.whisperBaseEnglish.verify(at: model)
-        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("ww-speech-\(UUID())", isDirectory: true)
+    @Test func denyDefaultProfileBlocksUnrelatedReadAndWrite() throws {
+        let root = URL(fileURLWithPath: "/private/tmp/speech-boundary-\(UUID())")
+        let stage = root.appendingPathComponent("stage")
+        let scratch = root.appendingPathComponent("scratch")
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let input = scratch.appendingPathComponent("input.wav")
+        let unrelated = root.appendingPathComponent("other")
+        try Data("abc".utf8).write(to: input)
+        try Data("private".utf8).write(to: unrelated)
+        let cat = URL(fileURLWithPath: "/bin/cat")
+        let readProfile = OfflineWhisperPlan.profile(stage: stage, input: input, scratch: scratch, executable: cat)
+        #expect(readProfile.contains("(deny default)"))
+        #expect(readProfile.contains("(deny network*)"))
+        #expect(!readProfile.contains("(allow default)"))
+        func invoke(_ executable: URL, _ profile: String, _ args: [String]) throws -> Int32 {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+            process.arguments = ["-p", profile, executable.path] + args
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus
+        }
+        #expect(try invoke(cat, readProfile, [input.path]) == 0)
+        #expect(try invoke(cat, readProfile, [unrelated.path]) != 0)
+        #expect(try invoke(cat, readProfile, ["/System/Volumes/Data" + unrelated.path]) != 0)
+        let touch = URL(fileURLWithPath: "/usr/bin/touch")
+        let writeProfile = OfflineWhisperPlan.profile(stage: stage, input: input, scratch: scratch, executable: touch)
+        #expect(try invoke(touch, writeProfile, [unrelated.path]) != 0)
+        #expect(try String(contentsOf: unrelated, encoding: .utf8) == "private")
+        #expect(try invoke(touch, writeProfile, [scratch.appendingPathComponent("result").path]) == 0)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_SPEECH_STAGE_PATH"] != nil),
+          .timeLimit(.minutes(3)))
+    func provisionedCandidateRunsSyntheticOffline() throws {
+        let stage = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["WW_SPEECH_STAGE_PATH"]))
+        try ApprovedWhisperRuntime.verify(at: stage)
+        let scratch = stage.appendingPathComponent("scratch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false,
+                                                 attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: scratch) }
         let input = scratch.appendingPathComponent("synthetic.wav")
         var wav = Data("RIFF".utf8)
@@ -125,29 +171,20 @@ struct AdmissionTests {
         doubleWord(32_000)
         wav.append(Data(repeating: 0, count: 32_000))
         try wav.write(to: input)
+        let finalInput = scratch.appendingPathComponent("input.wav")
+        try FileManager.default.moveItem(at: input, to: finalInput)
         let (episode, speaker) = episode()
         let selection = try PrimarySpeechSelection(episode: episode, speakerID: speaker)
-        let prefix = scratch.appendingPathComponent("result")
-        let plan = OfflineWhisperPlan(selection: selection, executable: executable, model: model,
-                                       inputWAV: input, outputPrefix: prefix)
-        let process = Process()
-        process.executableURL = plan.executable
-        process.arguments = plan.arguments
-        process.environment = ["HOME": scratch.path, "TMPDIR": scratch.path, "PATH": "/usr/bin:/bin"]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        let plan = try OfflineWhisperPlan(selection: selection, stage: stage,
+                                          inputWAV: finalInput, scratch: scratch)
+        #expect(plan.executable.path == "/usr/bin/sandbox-exec")
         let started = ContinuousClock.now
-        try process.run()
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            process.terminationHandler = { _ in continuation.resume() }
-        }
+        let output = try plan.run()
         let elapsed = started.duration(to: .now)
-        #expect(process.terminationStatus == 0)
-        let output = prefix.appendingPathExtension("json")
         let report = try JSONSerialization.jsonObject(with: Data(contentsOf: output)) as? [String: Any]
         let segments = report?["transcription"] as? [[String: Any]]
         #expect(segments != nil)
         #expect(segments?.allSatisfy { $0["offsets"] != nil && $0["timestamps"] != nil } == true)
-        print("WWSpeech synthetic offline: seconds=1 elapsed=\(elapsed) status=\(process.terminationStatus)")
+        print("WWSpeech staged synthetic offline: seconds=1 elapsed=\(elapsed) status=0")
     }
 }
