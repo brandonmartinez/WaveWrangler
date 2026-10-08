@@ -42,10 +42,11 @@ struct CutPolicyTests {
     }
 
     static func proposal(timing: WordTiming = .supported(start: 100, end: 110),
+                         sourceBase: Int64 = 100,
                          context: CandidateContext = .contextualFiller) -> CutProposal {
         CutProposal(id: "proposal-1", key: key(),
                     words: [CandidateWord(tokenID: "word-1", timing: timing)],
-                    context: context, request: CutRequest(sourceFrames: span(100, 110)))
+                    context: context, request: CutRequest(sourceFrames: span(sourceBase, sourceBase + 10)))
     }
 
     static func proof(key: EvidenceKey = key(), protection: ProtectionProof = .complete([]),
@@ -53,23 +54,24 @@ struct CutPolicyTests {
                       mode: CutMode = .shorten,
                       fade: [FrameSpan] = [], fadeLength: Int64 = 0,
                       backupBacked: Bool = true, backupOrigin: SourceOccurrence = backup,
-                      endpointError: Int64 = 1) -> CutFootprint {
-        CutFootprint(key: key, grid: span(200, 210), outputRate: 48_000,
+                      endpointError: Int64 = 1, sourceBase: Int64 = 100,
+                      gridBase: Int64 = 200, coverageEnd: Int64 = 500) -> CutFootprint {
+        CutFootprint(key: key, grid: span(gridBase, gridBase + 10), outputRate: 48_000,
                      effect: mode == .shorten ? .shorten(removedOutputFrames: 10) :
                         .lift(reservedOutputFrames: 10), lanes: [
-            .audio(id: "primary", origin: primary, coverage: span(1, 500),
-                   removal: span(100, 110),
+            .audio(id: "primary", origin: primary, coverage: span(1, coverageEnd),
+                   removal: span(sourceBase, sourceBase + 10),
                    fades: FadeFootprint(fadeOut: fadeLength > 0 ? fade.first : nil, mergedFinal: fade),
                    protection: protection, backed: true,
                    fadeOutOutputFrames: fadeLength, fadeInOutputFrames: 0,
                    endpointErrorOutputFrames: endpointError),
-            .audio(id: "backup", origin: backupOrigin, coverage: span(1, 500),
-                   removal: span(120, 130),
+            .audio(id: "backup", origin: backupOrigin, coverage: span(1, coverageEnd),
+                   removal: span(sourceBase + 20, sourceBase + 30),
                    fades: FadeFootprint(fadeOut: fadeLength > 0 ? fade.first : nil, mergedFinal: fade),
                    protection: backupProtection, backed: backupBacked,
                    fadeOutOutputFrames: fadeLength, fadeInOutputFrames: 0,
                    endpointErrorOutputFrames: endpointError),
-            .intentionalSilence(id: "silence", gridCoverage: span(1, 500)),
+            .intentionalSilence(id: "silence", gridCoverage: span(1, coverageEnd)),
         ])
     }
 
@@ -90,16 +92,20 @@ struct CutPolicyTests {
     @Test("A hundred and twenty disjoint protected-source-frame cases refuse both modes")
     func protectionMatrix() {
         for i in 0..<120 {
-            let protectedFrame: Int64 = i.isMultiple(of: 2) ? 100 : 129
+            let base = Int64(100 + i * 13)
+            let protectedFrame = i.isMultiple(of: 2) ? base : base + 29
             let lane = i.isMultiple(of: 2) ? "primary" : "backup"
             let interval = Self.span(protectedFrame, protectedFrame + 1)
             for mode in [CutMode.shorten, .lift] {
                 let proof = Self.proof(protection: lane == "primary" ? .complete([interval]) : .complete([]),
                                        backupProtection: lane == "backup" ? .complete([interval]) : .complete([]),
-                                       mode: mode)
-                let request = CutRequest(sourceFrames: Self.span(100, 110), mode: mode)
+                                       mode: mode, sourceBase: base,
+                                       gridBase: base + 100, coverageEnd: 4_000)
+                let candidate = Self.proposal(timing: .supported(start: base, end: base + 10),
+                                               sourceBase: base)
+                let request = CutRequest(sourceFrames: candidate.request.sourceFrames, mode: mode)
                 #expect(throws: CutRefusal.protectedFrame(lane)) {
-                    try CutPolicy.admit(Self.proposal(), request: request, currentKey: Self.key(),
+                    try CutPolicy.admit(candidate, request: request, currentKey: Self.key(),
                                         affectedLanes: Self.lanes, mapping: FixtureMapper(proof: proof))
                 }
             }
