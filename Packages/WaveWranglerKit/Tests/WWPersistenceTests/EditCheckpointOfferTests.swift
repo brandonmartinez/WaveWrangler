@@ -174,28 +174,135 @@ struct EditCheckpointOfferTests {
         #expect(a.payload.show.title == "A" && a.relation == .basedOnCurrent)
         #expect(afterB.candidateMode(restoreInEffect: true) == .copyOnlyWhileAnotherRestoreIsInEffect)
         // Saving resolves B only; A stays on disk and is offered again (restorable once B's restore is saved).
-        let resolved = RestoredEditCheckpoints.resolved(byPublicationStartedWith: [b.url], restoredNow: [b.url], publishedEqualsCurrent: true)
+        var restores = RestoredEditCheckpoints.State<ShowDocumentModel>()
+        restores.mark(b.url, snapshot: b.payload, generation: restores.currentGeneration)
+        let start = restores.startingSave()
+        let resolved = restores.resolved(started: start, published: b.payload, current: b.payload)
         #expect(resolved == [b.url])
         // Even if two were ever marked restored, a save would delete neither.
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a.url, b.url], restoredNow: [a.url, b.url], publishedEqualsCurrent: true).isEmpty)
+        restores.mark(a.url, snapshot: a.payload, generation: restores.currentGeneration)
+        #expect(restores.resolved(started: restores.startingSave(), published: b.payload, current: b.payload).isEmpty)
         try rig.recovery.discardOfferedEditCheckpoints(Array(resolved), for: key)
         #expect(assess(rig, key, model, onDisk: base).usable.map(\.payload.show.title) == ["A"])
     }
 
     /// A verified save resolves a restored record only if it contains the restore (#84 review).
-    @Test func restoredRecordsResolveOnlyWhenThePublicationContainsTheRestore() {
+    @Test func restoredRecordsResolveOnlyWhenThePublicationContainsTheRestore() throws {
         let a = URL(fileURLWithPath: "/offered/a.wwedit"), b = URL(fileURLWithPath: "/offered/b.wwedit")
+        let base = Fixtures.show(seed: 847)
+        let restored = try base.renamingShow(to: "Restored")
+        let unrelated = try base.renamingShow(to: "Unrelated")
+        var state = RestoredEditCheckpoints.State<ShowDocumentModel>()
+        let generation = state.currentGeneration
+        state.mark(a, snapshot: restored, generation: generation)
+        let start = state.startingSave()
         // Restored before the save started, still restored, nothing changed during the save: resolved.
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a], restoredNow: [a], publishedEqualsCurrent: true) == [a])
+        #expect(state.resolved(started: start, published: restored, current: restored) == [a])
+        #expect(state.resolved(started: start, published: unrelated, current: unrelated).isEmpty)
         // The restore was undone during or before completion: kept.
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a], restoredNow: [], publishedEqualsCurrent: true).isEmpty)
+        state.unmark(a, generation: generation)
+        #expect(state.resolved(started: start, published: restored, current: restored).isEmpty)
         // The publication was captured before the restore and finished after it: kept.
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [], restoredNow: [a], publishedEqualsCurrent: true).isEmpty)
+        let beforeRestore = state.startingSave()
+        state.mark(a, snapshot: restored, generation: generation)
+        #expect(state.resolved(started: beforeRestore, published: restored, current: restored).isEmpty)
         // Edits (or an undo) happened during the save, so the published candidate isn't the current model: kept.
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a], restoredNow: [a], publishedEqualsCurrent: false).isEmpty)
+        #expect(state.resolved(started: start, published: restored, current: unrelated).isEmpty)
         // Only the record restored at both ends (at most one restore is ever in effect).
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [b], restoredNow: [b], publishedEqualsCurrent: true) == [b])
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a], restoredNow: [b], publishedEqualsCurrent: true).isEmpty)
+        state.unmark(a, generation: generation)
+        state.mark(b, snapshot: restored, generation: generation)
+        #expect(state.resolved(started: state.startingSave(), published: restored, current: restored) == [b])
+        #expect(state.resolved(started: start, published: restored, current: restored).isEmpty)
+        // Repeated restore after a disk read has a new epoch; stale undo/redo cannot re-mark the prior restore.
+        state.supersede()
+        state.mark(a, snapshot: restored, generation: generation)
+        #expect(state.isEmpty)
+        state.mark(b, snapshot: restored, generation: state.currentGeneration)
+        #expect(state.resolved(started: start, published: restored, current: restored).isEmpty)
+    }
+
+    @Test func revertThenUnrelatedSaveRetainsDeletionCheckpointForReopen() throws {
+        let rig = Rig()
+        let base = Fixtures.show(seed: 848)
+        let url = rig.url()
+        let (current, fingerprint) = try rig.seedTwoRevisions(base, at: url)
+        let key = DocumentKey.show(current.show.id)
+        let restored = try current.renamingShow(to: "Recovered")
+        try rig.recovery.writeEditCheckpoint(
+            snapshot: coder.encode(restored, revision: 3), base: fingerprint,
+            schemaVersion: SchemaVersion.show, for: key
+        )
+        try rig.recovery.setAsideEditCheckpoints(for: key)
+        let candidate = try #require(assess(rig, key, current, onDisk: fingerprint).candidate)
+        var state = RestoredEditCheckpoints.State<ShowDocumentModel>()
+        state.mark(candidate.url, snapshot: candidate.payload, generation: state.currentGeneration)
+        #expect(state.urls == [candidate.url])
+
+        // Revert reads the saved model; even a save captured before it may not resolve this record.
+        let beforeRevert = state.startingSave()
+        guard case let .editable(reloaded, _) = rig.opener.open(url) else {
+            Issue.record("revert did not read the saved document"); return
+        }
+        #expect(reloaded.payload == current)
+        state.supersede()
+        #expect(state.resolved(started: beforeRevert, published: restored, current: restored).isEmpty)
+        let unrelated = try reloaded.payload.renamingShow(to: "Unrelated save")
+        let afterRevert = state.startingSave()
+        let saved = try rig.publisher.publish(unrelated, revision: 3, key: key, to: url, target: .inPlace(expectedBase: fingerprint))
+        #expect(state.resolved(started: afterRevert, published: unrelated, current: unrelated).isEmpty)
+        #expect(rig.recovery.offeredEditCheckpoints(for: key).count == 1)
+        guard case let .editable(reopened, _) = rig.opener.open(url) else {
+            Issue.record("saved show did not reopen"); return
+        }
+        #expect(reopened.payload == unrelated)
+        #expect(assess(rig, key, current, onDisk: saved.fingerprint).candidate?.url == candidate.url)
+        #expect(assess(rig, key, current, onDisk: saved.fingerprint).candidate?.relation == .basedOnOtherRevision)
+    }
+
+    @Test func cancelledOrRefusedSaveRetainsRestoredOfferUntilExactPublication() throws {
+        let rig = Rig()
+        let base = Fixtures.show(seed: 849)
+        let url = rig.url()
+        let (current, fingerprint) = try rig.seedTwoRevisions(base, at: url)
+        let key = DocumentKey.show(current.show.id)
+        let restored = try current.renamingShow(to: "Recovered")
+        try rig.recovery.writeEditCheckpoint(
+            snapshot: coder.encode(restored, revision: 3), base: fingerprint,
+            schemaVersion: SchemaVersion.show, for: key
+        )
+        try rig.recovery.setAsideEditCheckpoints(for: key)
+        let candidate = try #require(assess(rig, key, current, onDisk: fingerprint).candidate)
+        var state = RestoredEditCheckpoints.State<ShowDocumentModel>()
+        state.mark(candidate.url, snapshot: restored, generation: state.currentGeneration)
+        let started = state.startingSave()
+        #expect(throws: PublicationError.cancelled) {
+            try rig.publisher.publish(restored, revision: 3, key: key, to: url,
+                                      target: .inPlace(expectedBase: fingerprint), isCancelled: { true })
+        }
+        #expect(throws: PublicationError.self) {
+            try rig.publisher.publish(restored, revision: 3, key: key, to: url,
+                                      target: .inPlace(expectedBase: RevisionFingerprint(of: Data())))
+        }
+        // Neither error has a verified receipt: no resolution is permitted.
+        #expect(state.urls == [candidate.url])
+        #expect(rig.recovery.offeredEditCheckpoints(for: key).count == 1)
+        guard case let .editable(unchanged, _) = rig.opener.open(url) else {
+            Issue.record("a failed save changed the document"); return
+        }
+        #expect(unchanged.payload == current)
+
+        let published = try rig.publisher.publish(
+            restored, revision: 3, key: key, to: url, target: .inPlace(expectedBase: fingerprint)
+        )
+        let resolved = state.resolved(started: started, published: restored, current: restored)
+        #expect(resolved == [candidate.url])
+        try rig.recovery.discardOfferedEditCheckpoints(Array(resolved), for: key)
+        state.unmark(candidate.url, generation: state.currentGeneration)
+        #expect(state.isEmpty && rig.recovery.offeredEditCheckpoints(for: key).isEmpty)
+        guard case let .editable(reopened, _) = rig.opener.open(url) else {
+            Issue.record("restored show did not reopen"); return
+        }
+        #expect(reopened.payload == restored && reopened.publication == published.publication)
     }
 
     @Test func discardNeverDeletesOutsideTheOfferedRecords() throws {

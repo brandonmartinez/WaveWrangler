@@ -35,10 +35,9 @@ final class ShowDocument: NSDocument {
     private var pendingCandidate: EncodedDocument?
     private var lastReceipt: PublicationReceipt?
     private var scheduler: QuiescenceScheduler?
-    /// Offered C2b records whose Restore is currently in effect (Undo of the Restore removes the record again).
-    /// They stay on disk until a verified publication that contains the restore, or an explicit Don't Save,
-    /// resolves them, so a crash right after Restore loses nothing.
-    private var restoredOfferURLs: Set<URL> = []
+    /// Offered C2b restores stay on disk until their exact snapshot is verified on disk, or an explicit
+    /// Don't Save. Reload supersedes both the marks and their undo callbacks.
+    private var restoredOffers = RestoredEditCheckpoints.State<ShowDocumentModel>()
     /// Offered records opened as a separate copy (kept until that copy is saved) or hidden by the user.
     private var setAsideOfferURLs: Set<URL> = []
     /// Set on a separate copy opened from another show's offer: its first verified save resolves those records.
@@ -169,6 +168,9 @@ final class ShowDocument: NSDocument {
         let outcome = OpenSignposts.measure("document.decode") { opener.outcome(for: data, url: url) }
         switch outcome {
         case let .editable(document, fingerprint):
+            restoredOffers.supersede()
+            status.setEditCheckpointOffer(nil)
+            undoManager?.removeAllActions()
             formatUpdateOriginal = nil
             formatUpdatePromptPending = false
             status.setFormatUpdate(nil)
@@ -196,6 +198,9 @@ final class ShowDocument: NSDocument {
             case let .viewable(document): upgraded = document
             case let .damaged(error, candidates): throw DocumentRecoveryOffer.error(for: error, candidates: candidates)
             }
+            restoredOffers.supersede()
+            status.setEditCheckpointOffer(nil)
+            undoManager?.removeAllActions()
             store.replaceLoadedModel(upgraded.payload)
             verifiedModel = upgraded.payload
             publication = upgraded.publication
@@ -255,7 +260,7 @@ final class ShowDocument: NSDocument {
         if adopts { status.set(.saving) }
         let candidateBytes = pendingCandidate?.data
         let candidateModel = store.model
-        let restoredAtSaveStart = restoredOfferURLs
+        let restoredAtSaveStart = restoredOffers.startingSave()
         super.save(to: url, ofType: typeName, for: saveOperation) { [weak self] error in
             guard let self else { return completionHandler(error) }
             self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error, url: url, candidateBytes: candidateBytes,
@@ -304,7 +309,7 @@ final class ShowDocument: NSDocument {
 
     private func finishSave(
         saveOperation: NSDocument.SaveOperationType, adopts: Bool, error: Error?, url: URL, candidateBytes: Data?, candidateModel: ShowDocumentModel,
-        restoredAtSaveStart: Set<URL>
+        restoredAtSaveStart: RestoredEditCheckpoints.State<ShowDocumentModel>.SaveStart
     ) {
         let receipt = lastReceipt
         lastReceipt = nil
@@ -333,9 +338,7 @@ final class ShowDocument: NSDocument {
                 scheduler?.cancelPending()
                 try? recovery.discardEditCheckpoints(for: documentKey)
             }
-            resolveOfferRecordsAfterVerifiedSave(
-                restoredAtSaveStart: restoredAtSaveStart, publishedEqualsCurrent: store.model == candidateModel
-            )
+            resolveOfferRecordsAfterVerifiedSave(restoredAtSaveStart: restoredAtSaveStart, published: candidateModel)
             if isAutosaveInPlace, isDocumentEdited {
                 status.set(.edited(autosaveEnabled: gate.isEnabled))
             } else {
@@ -460,13 +463,14 @@ final class ShowDocument: NSDocument {
                 // The window now edits the copy: a new show, so the original's undo history and edit checkpoints
                 // (whose changes the copy now holds) don't carry over.
                 self.store.replaceLoadedModel(copy)
+                self.restoredOffers.supersede()
                 self.undoManager?.removeAllActions()
                 try? self.recovery.discardEditCheckpoints(for: originalKey)
                 self.status.setCopyNotice(Self.copyMessage(copyName: name, folder: url.deletingLastPathComponent().lastPathComponent,
                                                            originalFolder: request.originalFolder))
             }
             self.finishSave(saveOperation: .saveAsOperation, adopts: true, error: error, url: url, candidateBytes: candidateBytes,
-                            candidateModel: copy, restoredAtSaveStart: [])
+                            candidateModel: copy, restoredAtSaveStart: restoredOffers.startingSave())
             completionHandler(error)
         }
     }
@@ -699,7 +703,7 @@ final class ShowDocument: NSDocument {
             documentID: documentKey.rawValue, onDisk: onDiskBase, coder: coder,
             decodeOlder: ShowSchemaMigration.decodeUpgradingOlder,
             belongsToDocument: { $0.show.id == showID }
-        ).excluding(restoredOfferURLs.union(setAsideOfferURLs))
+        ).excluding(restoredOffers.urls.union(setAsideOfferURLs))
         status.setEditCheckpointOffer(offer.isEmpty ? nil : offer)
     }
 
@@ -715,7 +719,7 @@ final class ShowDocument: NSDocument {
         undo?.beginUndoGrouping()
         let restored = store.restoreEditCheckpoint(candidate.payload, basedOn: verifiedModel)
         if restored {
-            markRestored(candidate.url)
+            markRestored(candidate.url, snapshot: store.model, generation: restoredOffers.currentGeneration)
             undo?.setActionName("Restore Unsaved Changes")
         }
         undo?.endUndoGrouping()
@@ -732,18 +736,20 @@ final class ShowDocument: NSDocument {
         }
     }
 
-    private func markRestored(_ url: URL) {
-        restoredOfferURLs.insert(url)
+    private func markRestored(_ url: URL, snapshot: ShowDocumentModel, generation: UInt64) {
+        guard generation == restoredOffers.currentGeneration else { return }
+        restoredOffers.mark(url, snapshot: snapshot, generation: generation)
         undoManager?.registerUndo(withTarget: self) { document in
-            MainActor.assumeIsolated { document.unmarkRestored(url) }
+            MainActor.assumeIsolated { document.unmarkRestored(url, snapshot: snapshot, generation: generation) }
         }
         refreshEditCheckpointOffer()
     }
 
-    private func unmarkRestored(_ url: URL) {
-        restoredOfferURLs.remove(url)
+    private func unmarkRestored(_ url: URL, snapshot: ShowDocumentModel, generation: UInt64) {
+        guard generation == restoredOffers.currentGeneration else { return }
+        restoredOffers.unmark(url, generation: generation)
         undoManager?.registerUndo(withTarget: self) { document in
-            MainActor.assumeIsolated { document.markRestored(url) }
+            MainActor.assumeIsolated { document.markRestored(url, snapshot: snapshot, generation: generation) }
         }
         refreshEditCheckpointOffer()
     }
@@ -776,19 +782,26 @@ final class ShowDocument: NSDocument {
     }
 
     /// A restored record is in effect (until it's saved, undone or discarded with Don't Save).
-    var isEditCheckpointRestoreInEffect: Bool { !restoredOfferURLs.isEmpty }
+    var isEditCheckpointRestoreInEffect: Bool { !restoredOffers.isEmpty }
 
     var editCheckpointProblemURLs: [URL] { status.editCheckpointOffer?.problems.map(\.url) ?? [] }
 
-    /// After a verified publication of this document. A restored record is deleted only when the publication
-    /// contains its restore: the restore was in effect when the save started and still is, and the published
-    /// candidate equals the current model (no undo or edits in between). Otherwise it stays for a later save.
-    private func resolveOfferRecordsAfterVerifiedSave(restoredAtSaveStart: Set<URL>, publishedEqualsCurrent: Bool) {
-        let contained = RestoredEditCheckpoints.resolved(byPublicationStartedWith: restoredAtSaveStart, restoredNow: restoredOfferURLs,
-                                                         publishedEqualsCurrent: publishedEqualsCurrent)
+    /// Only a verified publication of the exact restored snapshot resolves its offered record.
+    private func resolveOfferRecordsAfterVerifiedSave(
+        restoredAtSaveStart: RestoredEditCheckpoints.State<ShowDocumentModel>.SaveStart, published: ShowDocumentModel
+    ) {
+        let contained = restoredOffers.resolved(started: restoredAtSaveStart, published: published, current: store.model)
         if !contained.isEmpty {
-            try? recovery.discardOfferedEditCheckpoints(Array(contained), for: documentKey)
-            restoredOfferURLs.subtract(contained)
+            do {
+                try recovery.discardOfferedEditCheckpoints(Array(contained), for: documentKey)
+                for url in contained { restoredOffers.unmark(url, generation: restoredOffers.currentGeneration) }
+            } catch {
+                _ = presentError(error)
+            }
+        } else if published == store.model, !restoredOffers.isEmpty {
+            // Another model is now disk truth. Keep the offer, but don't let a later Don't Save
+            // or an old undo callback mistake this former restore for an active one.
+            restoredOffers.supersede()
         }
         if let resolution = resolvesOffer {
             resolvesOffer = nil
@@ -820,7 +833,7 @@ final class ShowDocument: NSDocument {
         if isDocumentEdited {
             try? recovery.discardEditCheckpoints(for: documentKey)
             // Don't Save after a restore discards the restored changes too (C2b retention (b)).
-            if !restoredOfferURLs.isEmpty { try? recovery.discardOfferedEditCheckpoints(Array(restoredOfferURLs), for: documentKey) }
+            if !restoredOffers.isEmpty { try? recovery.discardOfferedEditCheckpoints(Array(restoredOffers.urls), for: documentKey) }
         }
         if let resolution = resolvesOffer {
             // A copy closed without saving: the records stay, and the original show offers them again.

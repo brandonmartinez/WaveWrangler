@@ -133,15 +133,51 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
     }
 }
 
-/// Which restored offer records a verified publication resolves (#84 review). A record is deleted only when the
-/// publication contains its restore: the restore was in effect when the save started **and** still is (an Undo
-/// of the restore removes it from `restoredNow`), and the published candidate equals the current model (no
-/// undo or edits during the save). Anything else stays for a later save, or for the next launch.
+/// Tracks an offered restore across undo, reload and verified publication. The offered record is deleted
+/// only when the exact restored model is independently published while the same restore is still in effect.
 public enum RestoredEditCheckpoints {
-    public static func resolved(byPublicationStartedWith atStart: Set<URL>, restoredNow: Set<URL>, publishedEqualsCurrent: Bool) -> Set<URL> {
-        // Only one restore can be in effect (`EditCheckpointOffer.candidateMode`), so the published model is that
-        // record's snapshot plus later edits. If more than one is ever marked, it's ambiguous: delete none.
-        guard publishedEqualsCurrent, atStart.count <= 1, restoredNow.count <= 1 else { return [] }
-        return atStart.intersection(restoredNow)
+    public struct State<Payload: Equatable> {
+        private var snapshots: [URL: Payload] = [:]
+        private var generation: UInt64 = 0
+
+        public init() {}
+
+        public var urls: Set<URL> { Set(snapshots.keys) }
+        public var isEmpty: Bool { snapshots.isEmpty }
+        public var currentGeneration: UInt64 { generation }
+
+        /// A disk read supersedes all in-memory restores, including their old undo callbacks.
+        public mutating func supersede() {
+            generation &+= 1
+            snapshots.removeAll()
+        }
+
+        public mutating func mark(_ url: URL, snapshot: Payload, generation expected: UInt64) {
+            guard generation == expected else { return }
+            snapshots[url] = snapshot
+        }
+
+        public mutating func unmark(_ url: URL, generation expected: UInt64) {
+            guard generation == expected else { return }
+            snapshots.removeValue(forKey: url)
+        }
+
+        public struct SaveStart {
+            fileprivate let snapshots: [URL: Payload]
+            fileprivate let generation: UInt64
+        }
+
+        public func startingSave() -> SaveStart { SaveStart(snapshots: snapshots, generation: generation) }
+
+        /// A verified save may resolve only the one restore whose exact snapshot it published. A later
+        /// edit, revert, undo, or second restore cannot make an unrelated publication resolve it.
+        public func resolved(started: SaveStart, published: Payload, current: Payload) -> Set<URL> {
+            guard generation == started.generation, snapshots.count == 1, started.snapshots.count == 1,
+                  published == current,
+                  let (url, snapshot) = started.snapshots.first,
+                  snapshot == published, snapshots[url] == snapshot
+            else { return [] }
+            return [url]
+        }
     }
 }

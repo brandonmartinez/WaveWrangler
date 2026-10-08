@@ -208,11 +208,14 @@ struct ShowDocumentStoreEditMapTests {
         reopened.document = reopenedDocument
         let undo = try #require(reopenedDocument.undoManager)
         #expect(reopened.restoreEditCheckpoint(candidate.payload, basedOn: base))
+        var restoredOffers = RestoredEditCheckpoints.State<ShowDocumentModel>()
+        restoredOffers.mark(candidate.url, snapshot: reopened.model, generation: restoredOffers.currentGeneration)
         #expect(reopened.model == unsaved)
         #expect(try coder.decode(Data(contentsOf: disk)).payload == base)
         #expect(recovery.offeredEditCheckpoints(for: key).count == 1)
 
         undo.undo()
+        restoredOffers.unmark(candidate.url, generation: restoredOffers.currentGeneration)
         #expect(reopened.model.episode(fixture.mappedID) != nil)
         #expect(reopened.model.editMaps(for: fixture.mappedID)?.selectedRevision == nil)
         #expect(throws: EditMapPublicationError.invalidMap) {
@@ -220,14 +223,13 @@ struct ShowDocumentStoreEditMapTests {
         }
         #expect(recovery.offeredEditCheckpoints(for: key).count == 1)
         undo.redo()
+        restoredOffers.mark(candidate.url, snapshot: reopened.model, generation: restoredOffers.currentGeneration)
         #expect(reopened.model.episode(fixture.mappedID) == nil)
         #expect(reopened.model.editMaps.isEmpty)
 
         let saved = try coder.encode(reopened.model, revision: 3)
         try saved.write(to: disk)
-        let resolved = RestoredEditCheckpoints.resolved(
-            byPublicationStartedWith: [candidate.url], restoredNow: [candidate.url], publishedEqualsCurrent: true
-        )
+        let resolved = restoredOffers.resolved(started: restoredOffers.startingSave(), published: reopened.model, current: reopened.model)
         try recovery.discardOfferedEditCheckpoints(Array(resolved), for: key)
         #expect(recovery.offeredEditCheckpoints(for: key).isEmpty)
         #expect(try coder.decode(Data(contentsOf: disk)).payload == unsaved)
@@ -259,9 +261,8 @@ struct ShowDocumentStoreEditMapTests {
         #expect(!store.restoreEditCheckpoint(candidate.payload, basedOn: base))
         #expect(store.lastEditMapError == .unauthorizedMutation)
         #expect(store.model == base)
-        #expect(RestoredEditCheckpoints.resolved(
-            byPublicationStartedWith: [], restoredNow: [], publishedEqualsCurrent: true
-        ).isEmpty)
+        let restoredOffers = RestoredEditCheckpoints.State<ShowDocumentModel>()
+        #expect(restoredOffers.resolved(started: restoredOffers.startingSave(), published: base, current: base).isEmpty)
         #expect(recovery.offeredEditCheckpoints(for: key).count == 1)
         let newerBytes = try coder.encode(store.model, revision: 3)
         let disk = root.appending(path: "saved.wwshow")
@@ -273,6 +274,63 @@ struct ShowDocumentStoreEditMapTests {
             onDisk: RevisionFingerprint(of: newerBytes), coder: coder,
             belongsToDocument: { $0.show.id == base.show.id }
         ).candidate?.relation == .basedOnOtherRevision)
+    }
+
+    @Test func deletedEpisodeRestoreRevertThenUnrelatedSaveKeepsOffer() throws {
+        let fixture = try savedPersistableShow()
+        let base = fixture.model
+        let key = DocumentKey.show(base.show.id)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let root = FileManager.default.temporaryDirectory.appending(path: "ww-map-revert-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let recovery = RecoveryStore(root: root)
+        let disk = root.appending(path: "show.wwshow")
+        let baseBytes = try coder.encode(base, revision: 2)
+        try baseBytes.write(to: disk)
+        let deleted = try base.deletingEpisode(fixture.mappedID, actionName: "Delete Episode")
+        try recovery.writeEditCheckpoint(
+            snapshot: coder.encode(deleted, revision: 3), base: RevisionFingerprint(of: baseBytes),
+            schemaVersion: SchemaVersion.show, for: key
+        )
+        try recovery.setAsideEditCheckpoints(for: key)
+        let candidate = try #require(EditCheckpointOffer.assess(
+            recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue,
+            onDisk: RevisionFingerprint(of: baseBytes), coder: coder,
+            belongsToDocument: { $0.show.id == base.show.id }
+        ).candidate)
+        let document = ShowDocument()
+        let store = ShowDocumentStore(model: base)
+        store.document = document
+        var restores = RestoredEditCheckpoints.State<ShowDocumentModel>()
+        #expect(store.restoreEditCheckpoint(candidate.payload, basedOn: base))
+        restores.mark(candidate.url, snapshot: store.model, generation: restores.currentGeneration)
+        #expect(store.model.episode(fixture.mappedID) == nil)
+        let oldSave = restores.startingSave()
+
+        // NSDocument's read(from:) replaces the model on Revert to Last Saved.
+        store.replaceLoadedModel(try coder.decode(Data(contentsOf: disk)).payload)
+        restores.supersede()
+        document.undoManager?.removeAllActions()
+        #expect(store.model == base && restores.isEmpty)
+        #expect(restores.resolved(started: oldSave, published: deleted, current: deleted).isEmpty)
+        #expect(store.apply("Rename show") { model throws(DomainError) in
+            try model.renamingShow(to: "Unrelated save")
+        })
+        let unrelated = store.model
+        let save = restores.startingSave()
+        let unrelatedBytes = try coder.encode(unrelated, revision: 3)
+        try unrelatedBytes.write(to: disk)
+        #expect(restores.resolved(started: save, published: unrelated, current: store.model).isEmpty)
+        #expect(recovery.offeredEditCheckpoints(for: key).count == 1)
+        let reopened = try coder.decode(Data(contentsOf: disk)).payload
+        #expect(reopened == unrelated)
+        #expect(reopened.episode(fixture.mappedID) != nil)
+        #expect(EditCheckpointOffer.assess(
+            recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue,
+            onDisk: RevisionFingerprint(of: unrelatedBytes), coder: coder,
+            belongsToDocument: { $0.show.id == base.show.id }
+        ).candidate?.url == candidate.url)
     }
 
     @Test func recoveryRefusesMalformedStaleOrSupersededMapsButKeepsUnrelatedRename() throws {

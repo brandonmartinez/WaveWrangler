@@ -101,7 +101,9 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
   while generic map mutations remain refused. A whole-model edit-checkpoint restore may also remove map
   state, but only for episodes deleted from a current-base snapshot with no intervening live edits; ordinary
   no-map restore still applies as one undoable edit. A refused restore leaves the offered checkpoint available,
-  and saved selections remain inert without fresh proof. No production proof
+  and saved selections remain inert without fresh proof. A restored checkpoint is discarded only after
+  independent verification of a save of that exact restored snapshot; Revert to Last Saved and a later
+  unrelated save leave the checkpoint offer intact. No production proof
   provider or mapped render/speech consumer is wired yet: admission refuses until validated lane coverage,
   inverse/grid/fades, source backing and protected decisions are available. Schema 1, 2 and 3
   shows open as "needs update" and migrate straight to 4 through `ShowSchemaMigration` (C5: backup, C3
