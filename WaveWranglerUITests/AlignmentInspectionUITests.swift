@@ -265,7 +265,8 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(workspaceRoot.waitForExistence(timeout: 2))
         XCTAssertEqual(workspaceRoot.label, "Alignment workspace")
         for identifier in [
-            "ww.alignment.workspace", "ww.alignment.groups", "ww.alignment.anchors", "alignment.analyse"
+            "ww.alignment.workspace", "ww.alignment.groups", "ww.alignment.anchors", "alignment.analyse",
+            "alignment.editAnchor", "alignment.startNewEpoch"
         ] {
             XCTAssertTrue(
                 workspaceRoot.descendants(matching: .any)[identifier].exists,
@@ -550,7 +551,6 @@ final class AlignmentInspectionUITests: XCTestCase {
         )
         if let element {
             print("WW-AXTREE-BEGIN\n\(element.debugDescription)\nWW-AXTREE-END")
-            print("WW-AXAPP-BEGIN\n\(XCUIApplication().debugDescription)\nWW-AXAPP-END")
         }
         return false
     }

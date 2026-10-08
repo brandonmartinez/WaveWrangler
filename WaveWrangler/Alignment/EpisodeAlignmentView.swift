@@ -191,6 +191,8 @@ private struct AlignmentWorkspace: View {
                               : "Select an anchor inside an accepted map's recorded span, not at either end.")
                         .accessibilityIdentifier("alignment.startNewEpoch")
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Alignment actions")
 
                 GroupBox("Audition") {
                     LazyVGrid(
