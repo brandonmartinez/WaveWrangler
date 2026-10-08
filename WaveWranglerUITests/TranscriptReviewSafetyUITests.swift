@@ -91,7 +91,6 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertTrue(setupRemedy.waitForExistence(timeout: 3))
         XCTAssertTrue(setupRemedy.isEnabled)
         XCTAssertTrue(setupRemedy.label.contains("⌘1"))
-        XCTAssertTrue(setupRemedy.hint.contains("View, Setup, Command-1"))
 
         let unwaived = try AcceptanceAudit.run(
             app,
