@@ -46,6 +46,18 @@ verified every staged executable, dylib, backend and model pin; the disposable
 stage was removed afterward. Neither command constructs an `OfflineWhisperPlan`
 or performs inference.
 
+The preflight now installs macOS's **thread-scoped dataless-materialization OFF**
+policy before checking any existing asset or staged file. It refuses an unavailable
+or ineffective policy, and restores the previous policy after checking. Pre-open
+`lstat` refuses dataless files, symlinks and hardlinks; descriptor and pathname
+identities are compared before and after hashing, including staged-link adoption.
+Synthetic negative tests verify no file open or network attempt on a dataless
+placeholder or policy failure, and reject replacement during open/hash or adoption.
+The macOS policy transition and restoration are tested on the host, but **no live
+File Provider trial or monitored cold-restart traffic measurement** is claimed.
+The separate staging shell script's multi-process hash/copy path is not covered
+by this preflight policy and remains a separate offline-admission gap.
+
 Provisioning rejects an absent/changed publisher size or digest, unexpected redirect
 host or scheme, CDN redirect, oversized/truncated/mismatched body, symlinked store or
 model, and altered on-disk bytes. The HEAD request inspects the official commit-pinned
