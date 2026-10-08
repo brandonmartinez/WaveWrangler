@@ -23,6 +23,8 @@
 		A10220000000000000000022 /* WWDecode in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000013 /* WWDecode */; };
 		A10220000000000000000023 /* WWTimeMap in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000014 /* WWTimeMap */; };
 		5C1A9E3B7D2F4A6E8B0C2D42 /* ShowSchema1Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1A9E3B7D2F4A6E8B0C2D41 /* ShowSchema1Fixtures.swift */; };
+		250000000000000000000001 /* ZoomCycleDrift.swift in Sources */ = {isa = PBXBuildFile; fileRef = 250000000000000000000003 /* ZoomCycleDrift.swift */; };
+		250000000000000000000002 /* ZoomCycleDrift.swift in Sources */ = {isa = PBXBuildFile; fileRef = 250000000000000000000003 /* ZoomCycleDrift.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -40,6 +42,7 @@
 		65BA5EA7D383BDC1C1B6760D /* WaveWranglerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WaveWranglerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E932B07FC4428F442F2A99D1 /* WaveWranglerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WaveWranglerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5C1A9E3B7D2F4A6E8B0C2D41 /* ShowSchema1Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Packages/WaveWranglerKit/Tests/WWPersistenceTests/ShowSchema1Fixtures.swift; sourceTree = SOURCE_ROOT; };
+		250000000000000000000003 /* ZoomCycleDrift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestSupport/ZoomCycleDrift.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -138,6 +141,7 @@
 				B28B916FDF2C4DB2572E1227 /* WaveWrangler */,
 				64588220B0AF205B4D9A35D0 /* WaveWranglerTests */,
 				1F7EA7BCA174E803041CF1A9 /* WaveWranglerUITests */,
+				250000000000000000000004 /* Test Support */,
 				5C1A9E3B7D2F4A6E8B0C2D43 /* Shared Fixtures */,
 				CBECE766B90506CB71FA4DEC /* Products */,
 			);
@@ -149,6 +153,14 @@
 				5C1A9E3B7D2F4A6E8B0C2D41 /* ShowSchema1Fixtures.swift */,
 			);
 			name = "Shared Fixtures";
+			sourceTree = "<group>";
+		};
+		250000000000000000000004 /* Test Support */ = {
+			isa = PBXGroup;
+			children = (
+				250000000000000000000003 /* ZoomCycleDrift.swift */,
+			);
+			name = "Test Support";
 			sourceTree = "<group>";
 		};
 		CBECE766B90506CB71FA4DEC /* Products */ = {
@@ -328,6 +340,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				250000000000000000000001 /* ZoomCycleDrift.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -336,6 +349,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				5C1A9E3B7D2F4A6E8B0C2D42 /* ShowSchema1Fixtures.swift in Sources */,
+				250000000000000000000002 /* ZoomCycleDrift.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -477,8 +477,7 @@ final class EpisodeSetupUITests: XCTestCase {
             XCTAssertLessThanOrEqual(column.maxX, outline.frame.maxX + 1, "\(context): no horizontal overflow (\(column) vs \(outline.frame))")
         }
         // Ten cycles: the invariant holds every time, and the layout doesn't compound (see below).
-        var offsets: [Double] = []
-        var widths: [Double] = []
+        var samples: [ZoomCycleSample] = []
         // Each cycle crosses a column tier (#129): at the default size Epoch and Ch are hidden (their values
         // move into the Name cell's VoiceOver value); zoomed, every column shows again.
         let epochInName = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND value CONTAINS 'epoch'")).firstMatch
@@ -489,24 +488,34 @@ final class EpisodeSetupUITests: XCTestCase {
             menu("Window", "Zoom")  // zoomed
             assertFits("zoom cycle \(cycle), zoomed")
             XCTAssertTrue(epochInName.waitForNonExistence(timeout: 2), "zoom cycle \(cycle): zoomed shows Epoch again (tier change)")
-            offsets.append(status.frame.minX - outline.frame.minX)
-            widths.append(outline.frame.width)
+            samples.append(
+                ZoomCycleSample(
+                    cycle: cycle,
+                    offset: status.frame.minX - outline.frame.minX,
+                    tableWidth: outline.frame.width,
+                    tier: "all-columns"
+                )
+            )
         }
-        let record = zip(offsets, widths).enumerated().map { "cycle \($0.offset + 1): Status x \($0.element.0), table \($0.element.1)" }
+        let offsets = samples.map(\.offset)
+        let record = samples.map { "cycle \($0.cycle): Status x \($0.offset), table \($0.tableWidth), tier \($0.tier)" }
         print("ZOOM \(record.joined(separator: "; "))")
         let summary = XCTAttachment(string: record.joined(separator: "\n"))
         summary.name = "zoom cycles"
         summary.lifetime = .keepAlways
         add(summary)
-        // AppKit settles the zoomed columns in one of two layouts (Status x ≈ 895–925 or ≈ 957–979 on a
-        // 1101 pt table; 7 runs on 2 hosts, range ≤ 84.5 pt, no trend), so comparing the first and last
-        // three cycles depended on which layout came first. Compounding grows without bound: the whole
-        // range stays within 100 pt, and the last cycle lands within the first five cycles' range ± 20 pt.
+        // AppKit settles the zoomed columns in a few stable layouts. A layout may first appear late, so
+        // compare repeated cycles within the same width, tier and inferred layout mode rather than assuming
+        // every mode appears in the first five cycles. True compounding still produces a sustained slope.
         func range(_ values: ArraySlice<Double>) -> ClosedRange<Double> { values.min()!...values.max()! }
         let all = range(offsets[...])
         XCTAssertLessThanOrEqual(all.upperBound - all.lowerBound, 100, "no compounding across zooms: \(offsets)")
-        let early = range(offsets.prefix(5))
-        XCTAssertTrue((early.lowerBound - 20...early.upperBound + 20).contains(offsets.last!), "last cycle within the early range: \(offsets)")
+        let drift = checkZoomCycleDrift(samples)
+        XCTAssertTrue(
+            drift.passes,
+            "no within-layout drift (max slope \(drift.maximumAbsoluteSlope) pt/cycle, "
+                + "max median shift \(drift.maximumAbsoluteMedianShift) pt): \(drift.violations); \(offsets)"
+        )
         select("tr2.wav")
 
         // #104: columns follow the width plan only; the header offers no show/hide/reorder menu.
