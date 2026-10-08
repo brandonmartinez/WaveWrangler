@@ -70,29 +70,34 @@ struct CutPolicyTests {
                       backupProtection: ProtectionProof? = nil,
                       otherProtection: ProtectionProof? = nil,
                       mode: CutMode = .shorten, fade: [FrameSpan] = [],
-                      fadeLength: Int64 = 0, backupBacked: Bool = true,
+                      fadeLength: Int64 = 0, fadeInLength: Int64 = 0, backupBacked: Bool = true,
                       backupOrigin: SourceOccurrence = backup, boundary: BoundarySupport = .supported,
                       endpointError: Int64 = 1, sourceBase: Int64 = 100,
                       gridBase: Int64 = 200, coverageEnd: Int64 = 6_000,
+                      fadeOverrides: [String: FadeFootprint] = [:],
                       laneIDs: [String] = ["primary", "backup", "other", "silence"]) -> CutFootprint {
         let fadeFootprint = FadeFootprint(fadeOut: fadeLength > 0 ? fade.first : nil,
+                                          fadeIn: fadeInLength > 0 ? fade.last : nil,
                                           mergedFinal: fade)
         let all: [LaneFootprint] = [
             .audio(id: "primary", origin: primary, coverage: span(1, coverageEnd),
-                   removal: span(sourceBase, sourceBase + 10), fades: fadeFootprint,
+                   removal: span(sourceBase, sourceBase + 10),
+                   fades: fadeOverrides["primary"] ?? fadeFootprint,
                    protection: primaryProtection ?? .verifiedPrimary(primary, revision: "p1", protected: []),
                    backed: true, boundary: boundary, fadeOutOutputFrames: fadeLength,
-                   fadeInOutputFrames: 0, endpointErrorOutputFrames: endpointError),
+                   fadeInOutputFrames: fadeInLength, endpointErrorOutputFrames: endpointError),
             .audio(id: "backup", origin: backupOrigin, coverage: span(1, coverageEnd),
-                   removal: span(sourceBase + 20, sourceBase + 30), fades: fadeFootprint,
+                   removal: span(sourceBase + 20, sourceBase + 30),
+                   fades: fadeOverrides["backup"] ?? fadeFootprint,
                    protection: backupProtection ?? .verifiedIndependentLane(backup, revision: "p2", protected: []),
                    backed: backupBacked, boundary: .supported, fadeOutOutputFrames: fadeLength,
-                   fadeInOutputFrames: 0, endpointErrorOutputFrames: endpointError),
+                   fadeInOutputFrames: fadeInLength, endpointErrorOutputFrames: endpointError),
             .audio(id: "other", origin: other, coverage: span(1, coverageEnd),
-                   removal: span(sourceBase + 40, sourceBase + 50), fades: fadeFootprint,
+                   removal: span(sourceBase + 40, sourceBase + 50),
+                   fades: fadeOverrides["other"] ?? fadeFootprint,
                    protection: otherProtection ?? .verifiedIndependentLane(other, revision: "p3", protected: []),
                    backed: true, boundary: .supported, fadeOutOutputFrames: fadeLength,
-                   fadeInOutputFrames: 0, endpointErrorOutputFrames: endpointError),
+                   fadeInOutputFrames: fadeInLength, endpointErrorOutputFrames: endpointError),
             .intentionalSilence(id: "silence", gridCoverage: span(1, coverageEnd)),
         ]
         return CutFootprint(key: key, manifestRevision: manifest,
@@ -258,10 +263,85 @@ struct CutPolicyTests {
                            proof: Self.proof(
                             backupProtection: .verifiedIndependentLane(Self.backup, revision: "p2",
                                                                         protected: [lastFrame]),
-                            fade: [Self.span(498, 500)], fadeLength: 2))
+                            fade: [Self.span(98, 100), Self.span(498, 500)], fadeLength: 2))
         }
         #expect(throws: CutRefusal.unsupportedFade("primary")) {
             try Self.admit(request: request)
+        }
+    }
+
+    @Test("Half-open fades stay on retained sides without overlaps on every lane in both modes")
+    func fadeSidesAndNonoverlap() throws {
+        let valid: [String: FadeFootprint] = Dictionary(uniqueKeysWithValues:
+            [("primary", Int64(100)), ("backup", 120), ("other", 140)].map { id, start in
+                let out = Self.span(start - 2, start)
+                let fadeInSpan = Self.span(start + 10, start + 12)
+                return (id, FadeFootprint(fadeOut: out, fadeIn: fadeInSpan,
+                                          mergedFinal: [out, fadeInSpan]))
+            })
+        let cases: [(String, FadeFootprint)] = [
+            ("primary", FadeFootprint(fadeOut: Self.span(112, 114),
+                                      fadeIn: Self.span(110, 112),
+                                      mergedFinal: [Self.span(110, 114)])),
+            ("primary", FadeFootprint(fadeOut: Self.span(99, 101),
+                                      fadeIn: Self.span(110, 112),
+                                      mergedFinal: [Self.span(99, 101), Self.span(110, 112)])),
+            ("backup", FadeFootprint(fadeOut: Self.span(118, 120),
+                                     fadeIn: Self.span(116, 118),
+                                     mergedFinal: [Self.span(116, 120)])),
+            ("backup", FadeFootprint(fadeOut: Self.span(118, 120),
+                                     fadeIn: Self.span(129, 131),
+                                     mergedFinal: [Self.span(118, 120), Self.span(129, 131)])),
+            ("other", FadeFootprint(fadeOut: Self.span(152, 154),
+                                    fadeIn: Self.span(150, 153),
+                                    mergedFinal: [Self.span(150, 154)])),
+            ("primary", FadeFootprint(fadeOut: Self.span(98, 100),
+                                      fadeIn: Self.span(110, 112),
+                                      mergedFinal: [Self.span(98, 100), Self.span(98, 99),
+                                                    Self.span(110, 112)])),
+        ]
+        for mode in [CutMode.shorten, .lift] {
+            let request = CutRequest(sourceFrames: Self.span(100, 110), mode: mode,
+                                     fadeOutFrames: 2, fadeInFrames: 2)
+            _ = try Self.admit(request: request,
+                               proof: Self.proof(mode: mode, fadeLength: 2, fadeInLength: 2,
+                                                 fadeOverrides: valid))
+            for (lane, invalid) in cases {
+                var footprints = valid
+                footprints[lane] = invalid
+                #expect(throws: CutRefusal.unsupportedFade(lane)) {
+                    try Self.admit(request: request, proof: Self.proof(
+                        mode: mode, fadeLength: 2, fadeInLength: 2,
+                        fadeOverrides: footprints))
+                }
+            }
+            let outOnly = valid.mapValues { FadeFootprint(fadeOut: $0.fadeOut,
+                                                          mergedFinal: [$0.fadeOut!]) }
+            var wrongOut = outOnly
+            wrongOut["primary"] = FadeFootprint(fadeOut: Self.span(110, 112),
+                                                 mergedFinal: [Self.span(110, 112)])
+            #expect(throws: CutRefusal.unsupportedFade("primary")) {
+                try Self.admit(request: CutRequest(sourceFrames: request.sourceFrames,
+                                                   mode: mode, fadeOutFrames: 2),
+                               proof: Self.proof(mode: mode, fadeLength: 2,
+                                                 fadeOverrides: wrongOut))
+            }
+            let inOnly = valid.mapValues { FadeFootprint(fadeIn: $0.fadeIn,
+                                                         mergedFinal: [$0.fadeIn!]) }
+            var wrongIn = inOnly
+            wrongIn["backup"] = FadeFootprint(fadeIn: Self.span(118, 120),
+                                               mergedFinal: [Self.span(118, 120)])
+            #expect(throws: CutRefusal.unsupportedFade("backup")) {
+                try Self.admit(request: CutRequest(sourceFrames: request.sourceFrames,
+                                                   mode: mode, fadeInFrames: 2),
+                               proof: Self.proof(mode: mode, fadeInLength: 2,
+                                                 fadeOverrides: wrongIn))
+            }
+            _ = try Self.admit(request: CutRequest(sourceFrames: request.sourceFrames, mode: mode),
+                               proof: Self.proof(
+                                primaryProtection: .verifiedPrimary(Self.primary, revision: "p1",
+                                    protected: [Self.span(99, 100), Self.span(110, 111)]),
+                                mode: mode))
         }
     }
 

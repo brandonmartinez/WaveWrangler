@@ -440,12 +440,26 @@ public enum CutPolicy {
                       (fadeIn > 0) == (fades.fadeIn != nil) else {
                     throw CutRefusal.unsupportedFade(id)
                 }
+                if let out = fades.fadeOut, let fadeInSpan = fades.fadeIn,
+                   out.intersects(fadeInSpan) {
+                    throw CutRefusal.unsupportedFade(id)
+                }
+                if let out = fades.fadeOut, out.end > removal.start {
+                    throw CutRefusal.unsupportedFade(id)
+                }
+                if let fadeInSpan = fades.fadeIn, fadeInSpan.start < removal.end {
+                    throw CutRefusal.unsupportedFade(id)
+                }
                 for requested in [fades.fadeOut, fades.fadeIn].compactMap({ $0 }) {
                     guard fades.mergedFinal.contains(where: { $0.contains(requested) }) else {
                         throw CutRefusal.unsupportedFade(id)
                     }
                 }
-                for fade in fades.mergedFinal {
+                let finalFades = fades.mergedFinal.sorted { $0.start < $1.start }
+                for (index, fade) in finalFades.enumerated() {
+                    guard index == 0 || finalFades[index - 1].end <= fade.start else {
+                        throw CutRefusal.unsupportedFade(id)
+                    }
                     guard coverage.contains(fade), !fade.intersects(removal) else {
                         throw CutRefusal.unsupportedFade(id)
                     }
