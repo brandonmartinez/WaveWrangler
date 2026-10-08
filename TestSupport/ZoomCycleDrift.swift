@@ -28,6 +28,7 @@ func checkZoomCycleDrift(
     }
 
     var modes: [[ZoomCycleSample]] = []
+    var detectedModeCount = 0
     let widthTierGroups = Dictionary(grouping: samples) {
         WidthTier(widthBucket: Int(($0.tableWidth / 2).rounded()), tier: $0.tier)
     }
@@ -41,7 +42,14 @@ func checkZoomCycleDrift(
         let layoutModes = Dictionary(grouping: repeatedCycles) { sample in
             boundaries.firstIndex { sample.offset < $0 } ?? boundaries.count
         }
-        modes.append(contentsOf: layoutModes.values)
+        let detectedModes = Array(layoutModes.values)
+        detectedModeCount += detectedModes.count
+        let supportedModes = detectedModes.filter { $0.count >= 4 }
+        if !supportedModes.isEmpty {
+            modes.append(contentsOf: supportedModes)
+        } else {
+            modes.append(Array(repeatedCycles))
+        }
     }
 
     var maximumAbsoluteSlope = 0.0
@@ -49,7 +57,10 @@ func checkZoomCycleDrift(
     var violations: [String] = []
     for mode in modes {
         let ordered = mode.sorted { $0.cycle < $1.cycle }
-        guard ordered.count >= 4 else { continue }
+        guard ordered.count >= 4 else {
+            violations.append("only \(ordered.count) repeated cycles available for drift analysis")
+            continue
+        }
 
         // Use the latest repeated cycles so one-time settling cannot masquerade as ongoing growth.
         let slopeWindow = Array(ordered.suffix(5))
@@ -79,7 +90,7 @@ func checkZoomCycleDrift(
     }
 
     return ZoomCycleDriftCheck(
-        modeCount: modes.count,
+        modeCount: detectedModeCount,
         maximumAbsoluteSlope: maximumAbsoluteSlope,
         maximumAbsoluteMedianShift: maximumAbsoluteMedianShift,
         violations: violations

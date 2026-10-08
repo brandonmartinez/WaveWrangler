@@ -14,6 +14,17 @@ struct ZoomCycleDriftTests {
         #expect(result.maximumAbsoluteMedianShift > 10)
     }
 
+    @Test func rejectsCompoundingOffsetsSplitIntoUndersizedModes() {
+        let samples = (1...10).map {
+            ZoomCycleSample(cycle: $0, offset: 900 + Double($0 - 1) * 11, tableWidth: 1_101, tier: "all-columns")
+        }
+
+        let result = checkZoomCycleDrift(samples)
+
+        #expect(!result.passes)
+        #expect(result.maximumAbsoluteSlope > 1.25)
+    }
+
     @Test func acceptsRecordedStableTraces() {
         let shardB = [895.0, 922.5, 907.0, 911.5, 915.0, 915.5, 917.0, 917.0, 960.0, 962.0]
         let isolatedRerun = [905.5, 910.0, 914.0, 939.5, 914.5, 916.5, 916.5, 912.5, 913.5, 974.5]
