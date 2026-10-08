@@ -55,8 +55,10 @@ final class EpisodeAlignmentModel {
         guard let row = selectedRow else { return false }
         return !isWorking && row.state.remedies.contains("Edit Numerically…")
     }
+    /// Splitting at an endpoint produces an empty span, which the pipeline rejects. Only an anchor
+    /// strictly inside the selected occurrence's span can start a new epoch.
     var canStartNewEpoch: Bool {
-        anchorSelection != nil && acceptedMap != nil && !isWorking
+        !isWorking && selectedAnchorSplit() != nil
     }
     var canAudition: Bool {
         selectedRow?.state.remedies.contains("Audition") == true && !isWorking
@@ -98,9 +100,38 @@ final class EpisodeAlignmentModel {
         editorRequest = .anchors
     }
 
-    func requestSelectedAnchorFocus() {
-        guard let anchorSelection else { return }
-        requestedAnchorFocus = anchorSelection
+    /// Opens the focused single-anchor editor for the selected anchor. The Anchors table itself is
+    /// read-only: an inline editor inside the clipped table proved unreachable by keyboard (#219).
+    func requestSelectedAnchorEditor() {
+        guard let anchorSelection,
+              selectedAnchors.contains(where: { $0.id == anchorSelection })
+        else { return }
+        editorRequest = .anchor(anchorSelection)
+    }
+
+    /// The anchor the single-anchor editor is editing, if that sheet is open.
+    var editedAnchor: AlignmentAnchorRow? {
+        guard case let .anchor(anchorID)? = editorRequest else { return nil }
+        return selectedAnchors.first { $0.id == anchorID }
+    }
+
+    /// One output frame of the selected occurrence, for ↑/↓ nudges in the anchor editor (spec §4.1).
+    var alignedNudgeSeconds: Double {
+        guard let row = selectedRow, let map = acceptedMap,
+              let group = map.groups.first(where: { $0.group == row.groupID }),
+              let placement = group.placements.first(where: {
+                  $0.spans.contains(where: { $0.epoch == row.epochID })
+              })
+        else { return 0.001 }
+        let rate = Double(placement.occurrence.nominalRate.framesPerSecond)
+        return rate > 0 ? 1 / rate : 0.001
+    }
+
+    /// Returns keyboard focus to the anchor row after the single-anchor editor closes.
+    func restoreAnchorFocus(to anchorID: Int) {
+        guard selectedAnchors.contains(where: { $0.id == anchorID }) else { return }
+        anchorSelection = anchorID
+        requestedAnchorFocus = anchorID
     }
 
     func placeAnchorAtPlayhead() {
@@ -146,14 +177,15 @@ final class EpisodeAlignmentModel {
     }
 
     func startNewEpochAtSelectedAnchor() {
-        guard let document, let row = selectedRow, let selectedAnchorID = anchorSelection,
-              let anchor = selectedAnchors.first(where: { $0.id == selectedAnchorID }),
-              let map = acceptedMap, canStartNewEpoch,
-              let group = map.groups.first(where: { $0.group == row.groupID }),
-              let placement = group.placements.first(where: {
-                  $0.spans.contains(where: { $0.epoch == row.epochID })
-              })
-        else { return }
+        guard let document, !isWorking else { return }
+        guard let split = selectedAnchorSplit() else {
+            reportSplitRefusal()
+            return
+        }
+        let row = split.row
+        let placement = split.placement
+        let frame = split.frame
+        let keptAnchorSelection = split.anchor.id
         let prior = document.store.model
         var model = prior
         guard let episodeIndex = model.episodes.firstIndex(where: { $0.id == episodeID }),
@@ -162,8 +194,6 @@ final class EpisodeAlignmentModel {
         let next = model.episodes[episodeIndex].recorderGroups[groupIndex].epochs.count + 1
         let epoch = RecordingEpoch(label: "Epoch \(next)", note: "Started at a manual anchor")
         model.episodes[episodeIndex].recorderGroups[groupIndex].epochs.append(epoch)
-        let rate = Double(placement.occurrence.nominalRate.framesPerSecond)
-        let frame = Int64((anchor.sourceSeconds * rate).rounded())
         isWorking = true
         lastError = nil
         Task {
@@ -194,13 +224,65 @@ final class EpisodeAlignmentModel {
                     )
                     requestedEpochFocus = epoch.id
                     message = "Started \(epoch.label) at the selected anchor. The new epoch is unsupported until you time it."
+                } else {
+                    anchorSelection = keptAnchorSelection
                 }
             } catch {
+                anchorSelection = keptAnchorSelection
                 lastError = String(describing: error)
                 message = "The occurrence was not split."
             }
             isWorking = false
         }
+    }
+
+    /// The selected anchor resolved to a split point, or nil when no anchor can start a new epoch.
+    /// A split needs a frame strictly inside the selected occurrence's span: splitting at either
+    /// endpoint would leave an empty span, which the pipeline rejects.
+    private func selectedAnchorSplit() -> AnchorSplit? {
+        guard let row = selectedRow, let selectedAnchorID = anchorSelection,
+              let anchor = selectedAnchors.first(where: { $0.id == selectedAnchorID }),
+              let map = acceptedMap,
+              let group = map.groups.first(where: { $0.group == row.groupID }),
+              let placement = group.placements.first(where: {
+                  $0.spans.contains(where: { $0.epoch == row.epochID })
+              }),
+              let span = placement.spans.first(where: { $0.epoch == row.epochID })
+        else { return nil }
+        let rate = Double(placement.occurrence.nominalRate.framesPerSecond)
+        guard rate > 0, anchor.sourceSeconds.isFinite else { return nil }
+        let frameValue = (anchor.sourceSeconds * rate).rounded()
+        guard frameValue > Double(span.startFrame), frameValue < Double(span.endFrame) else { return nil }
+        return AnchorSplit(
+            anchor: anchor, row: row, placement: placement, frame: Int64(frameValue)
+        )
+    }
+
+    /// Explains why the selected anchor cannot start a new epoch, so the refusal is never silent.
+    private func reportSplitRefusal() {
+        guard let row = selectedRow else {
+            message = "Select an epoch before starting a new epoch at an anchor."
+            return
+        }
+        guard let selectedAnchorID = anchorSelection,
+              let anchor = selectedAnchors.first(where: { $0.id == selectedAnchorID })
+        else {
+            message = "Select an anchor in the Anchors table before starting a new epoch."
+            return
+        }
+        guard acceptedMap != nil else {
+            message = "Time this epoch before starting a new epoch at an anchor."
+            return
+        }
+        message = "The anchor at \(AlignmentPresentation.formatTime(anchor.sourceSeconds)) is an endpoint of "
+            + "\(row.epochLabel)'s recorded span. Select an anchor inside the span to start a new epoch there."
+    }
+
+    private struct AnchorSplit {
+        var anchor: AlignmentAnchorRow
+        var row: AlignmentRow
+        var placement: OccurrencePlacement
+        var frame: Int64
     }
 
     func auditionSelection() {
@@ -328,7 +410,7 @@ final class EpisodeAlignmentModel {
                   })
             else { return }
             self.anchorSelection = focused.id
-            self.requestedAnchorFocus = focused.id
+            self.editorRequest = .anchor(focused.id)
         }
     }
 
@@ -459,14 +541,17 @@ final class EpisodeAlignmentModel {
         }
     }
 
-    enum AlignmentEditorRequest: Identifiable {
+    enum AlignmentEditorRequest: Identifiable, Equatable {
         case numeric
         case anchors
+        /// Focused single-anchor editor for the anchor with this row id.
+        case anchor(Int)
 
         var id: Int {
             switch self {
-            case .numeric: 1
-            case .anchors: 2
+            case .numeric: -1
+            case .anchors: -2
+            case let .anchor(anchorID): anchorID
             }
         }
     }

@@ -38,7 +38,8 @@ final class AlignmentInspectionUITests: XCTestCase {
         for identifier in [
             "alignment.analyse", "alignment.acceptProposal", "alignment.rejectProposal",
             "alignment.editNumeric", "alignment.placeAnchors", "alignment.placeAnchorAtPlayhead",
-            "alignment.deleteAnchor", "alignment.startNewEpoch", "ww.alignment.audition.play",
+            "alignment.deleteAnchor", "alignment.editAnchor", "alignment.startNewEpoch",
+            "ww.alignment.audition.play",
             "ww.alignment.audition.range.start", "ww.alignment.audition.range.duration",
         ] {
             assertReachable(app.descendants(matching: .any)[identifier], in: window)
@@ -50,7 +51,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         chooseEpisodeMenu("Place Anchors…")
         app.buttons["alignment.anchors.apply"].click()
         XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
-        let anchorsBefore = Set(anchorFields().allElementsBoundByIndex.map(\.identifier))
+        let anchorsBefore = Set(anchorAlignedCells().allElementsBoundByIndex.map(\.identifier))
         replace(app.textFields["ww.alignment.audition.range.start"], with: "0.5")
         replace(app.textFields["ww.alignment.audition.range.duration"], with: "2")
         app.typeKey(.return, modifierFlags: .command)
@@ -58,19 +59,34 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(waitForText("Audition stopped at", in: app.staticTexts["alignment.auditionStatus"]))
         chooseEpisodeMenu("Place Anchor at Playhead")
-        XCTAssertTrue(waitForAnchorFieldCount(anchorsBefore.count + 1, timeout: 15))
-        let anchorsAfter = anchorFields().allElementsBoundByIndex
-        guard let appendedID = anchorsAfter.map(\.identifier).first(where: { !anchorsBefore.contains($0) }),
-              let initial = Double(app.textFields[appendedID].value as? String ?? "")
-        else { return XCTFail("Expected one newly appended numeric anchor field") }
-        let appended = app.textFields[appendedID]
-        XCTAssertTrue(waitForKeyboardFocus(appended), "The new anchor editor must own keyboard focus")
-        XCTAssertTrue(appended.isHittable, "The appended anchor row must be scrolled into view")
-        let replacement = String(format: "%.3f", initial + 0.001)
+
+        // The new anchor is selected and its focused editor opens with "Aligned time" holding keyboard focus.
+        let editor = app.textFields["alignment.anchor.alignedTime"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 15), "The Edit Anchor sheet must open for the new anchor")
+        XCTAssertTrue(waitForKeyboardFocus(editor), "The Aligned time field must own keyboard focus")
+        guard let initial = Double(editor.value as? String ?? "") else {
+            return XCTFail("Expected a numeric aligned time, got \(String(describing: editor.value))")
+        }
+        let replacement = initial + 0.001
         app.typeKey("a", modifierFlags: .command)
-        app.typeText(replacement)
+        app.typeText(String(format: "%.3f", replacement))
         app.typeKey(.return, modifierFlags: [])
-        XCTAssertTrue(waitForValue(replacement, in: appended))
+
+        XCTAssertTrue(waitForAnchorCellCount(anchorsBefore.count + 1, timeout: 15))
+        guard let appendedID = anchorAlignedCells().allElementsBoundByIndex
+            .map(\.identifier).first(where: { !anchorsBefore.contains($0) })
+        else { return XCTFail("Expected one newly appended anchor row") }
+        let appended = app.staticTexts[appendedID]
+        XCTAssertTrue(
+            waitForValue(Self.formatTime(replacement), in: appended),
+            "The committed row must show the typed aligned time"
+        )
+        XCTAssertTrue(appended.isHittable, "The appended anchor row must be scrolled into view")
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(
+            waitForValue(Self.formatTime(initial), in: app.staticTexts[appendedID], timeout: 15),
+            "Undo must restore the anchor's previous aligned time"
+        )
     }
 
     func testTM203EditAnchorTimeNumerically() {
@@ -78,20 +94,26 @@ final class AlignmentInspectionUITests: XCTestCase {
         chooseEpisodeMenu("Place Anchors…")
         app.buttons["alignment.anchors.apply"].click()
         XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
+        let cell = app.staticTexts["ww.alignment.anchor.0.alignedTime"]
+        XCTAssertTrue(cell.waitForExistence(timeout: 5))
+        guard let originalValue = cell.value as? String else {
+            return XCTFail("Expected the aligned-time cell's original value")
+        }
         selectAnchorRow(0)
         app.typeKey(.return, modifierFlags: [])
-        let aligned = app.textFields["ww.alignment.anchor.0.alignedTime"]
-        XCTAssertTrue(aligned.waitForExistence(timeout: 2))
-        guard let originalValue = aligned.value as? String else {
-            return XCTFail("Expected the aligned-time field's original numeric value")
-        }
+
+        let editor = app.textFields["alignment.anchor.alignedTime"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), "Return on the selected row must open the Edit Anchor sheet")
+        XCTAssertTrue(waitForKeyboardFocus(editor), "The Aligned time field must own keyboard focus")
         app.typeKey("a", modifierFlags: .command)
         app.typeText("0.125")
         app.typeKey(.return, modifierFlags: [])
-        XCTAssertTrue(waitForValue("0.125", in: app.textFields["ww.alignment.anchor.0.alignedTime"]))
-        selectAnchorRow(0)
+
+        XCTAssertTrue(waitForValue(Self.formatTime(0.125), in: app.staticTexts["ww.alignment.anchor.0.alignedTime"]))
+        // Escape leaves the row selected, so the undo below acts on the same anchor.
+        XCTAssertTrue(waitForAnchorRowSelected(0, timeout: 15), "Focus must return to the edited anchor's row")
         app.typeKey("z", modifierFlags: .command)
-        XCTAssertTrue(waitForValue(originalValue, in: app.textFields["ww.alignment.anchor.0.alignedTime"]))
+        XCTAssertTrue(waitForValue(originalValue, in: app.staticTexts["ww.alignment.anchor.0.alignedTime"], timeout: 15))
     }
 
     func testTM204DeleteAnchorCommandIsKeyboardReachable() {
@@ -146,6 +168,12 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.buttons["alignment.anchors.apply"].click()
         XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
         selectAnchorRow(1)
+        // The split must run on the interior anchor, never on the span's 0.000 endpoint.
+        XCTAssertEqual(
+            app.staticTexts["ww.alignment.anchor.1.sourceTime"].value as? String,
+            Self.formatTime(0.5),
+            "Anchor 1 must be the interior 0.500 anchor before Start New Epoch at Anchor"
+        )
         chooseEpisodeMenu("Start New Epoch at Anchor")
         XCTAssertTrue(
             waitForText("Started Epoch 3", in: app.staticTexts["alignment.status"], timeout: 15),
@@ -224,6 +252,15 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
         XCTAssertTrue(newEpisode.waitForExistence(timeout: 2))
         XCTAssertTrue(showInfo.waitForExistence(timeout: 2))
+        let workspaceRoot = app.descendants(matching: .any)["ww.alignment.workspaceRoot"]
+        XCTAssertTrue(workspaceRoot.waitForExistence(timeout: 2))
+        XCTAssertEqual(workspaceRoot.label, "Alignment workspace")
+        for identifier in ["ww.alignment.workspace", "ww.alignment.groups", "ww.alignment.anchors"] {
+            XCTAssertTrue(
+                workspaceRoot.descendants(matching: .any)[identifier].exists,
+                "\(identifier) must stay exposed inside the Alignment workspace group"
+            )
+        }
         var layoutContainerFindings = 0
         var showSectionFindings = 0
         try app.performAccessibilityAudit(
@@ -290,25 +327,80 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.menuItems[item].click()
     }
 
-    private func selectAnchorRow(_ index: Int) {
-        let scroll = app.scrollViews["ww.alignment.workspace"]
-        for _ in 0..<12 {
-            scroll.swipeDown()
-        }
+    /// Selects an anchor row by clicking inside the row itself. An identifier-targeted `.click()` on a
+    /// cell cannot resolve a hit point inside the clipped native ScrollView (#219), so the row's own
+    /// normalized coordinate is used and the selection is asserted before any command runs.
+    private func selectAnchorRow(
+        _ index: Int,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
         let table = app.outlines["ww.alignment.anchors"]
-        let window = app.windows["ww.show.window"]
-        for _ in 0..<12 where !table.frame.intersects(window.frame) {
-            scroll.swipeUp()
-        }
-        XCTAssertTrue(table.frame.intersects(window.frame))
+        scrollIntoWindow(table, file: file, line: line)
         let rows = table.descendants(matching: .outlineRow)
-        XCTAssertGreaterThan(rows.count, index)
+        XCTAssertGreaterThan(rows.count, index, file: file, line: line)
         let row = rows.element(boundBy: index)
-        XCTAssertGreaterThan(row.frame.width, 0)
-        let source = app.staticTexts["ww.alignment.anchor.\(index).sourceTime"]
-        XCTAssertTrue(source.waitForExistence(timeout: 2))
-        source.click()
-        XCTAssertTrue(row.isSelected, "Anchor \(index) must be selected before the command")
+        XCTAssertTrue(row.waitForExistence(timeout: 2), file: file, line: line)
+        scrollIntoWindow(row, file: file, line: line)
+        XCTAssertGreaterThan(row.frame.width, 0, file: file, line: line)
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).click()
+        XCTAssertTrue(
+            waitForAnchorRowSelected(index),
+            "Anchor \(index) must be selected before the command",
+            file: file,
+            line: line
+        )
+    }
+
+    /// Scrolls the Alignment workspace until the element's centre sits inside the show window.
+    private func scrollIntoWindow(
+        _ element: XCUIElement,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let scroll = app.scrollViews["ww.alignment.workspace"]
+        let window = app.windows["ww.show.window"]
+        for _ in 0..<16 {
+            guard element.exists else {
+                scroll.swipeUp()
+                continue
+            }
+            let centre = CGPoint(x: element.frame.midX, y: element.frame.midY)
+            if window.frame.contains(centre) { break }
+            if centre.y < window.frame.midY {
+                scroll.swipeDown()
+            } else {
+                scroll.swipeUp()
+            }
+        }
+        XCTAssertTrue(element.exists, "\(element.identifier) exists after scrolling", file: file, line: line)
+        XCTAssertTrue(
+            window.frame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)),
+            "\(element.identifier) is inside the window after scrolling",
+            file: file,
+            line: line
+        )
+    }
+
+    private func waitForAnchorRowSelected(_ index: Int, timeout: TimeInterval = 5) -> Bool {
+        let rows = app.outlines["ww.alignment.anchors"].descendants(matching: .outlineRow)
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if rows.count > index, rows.element(boundBy: index).isSelected { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        } while Date() < deadline
+        return rows.count > index && rows.element(boundBy: index).isSelected
+    }
+
+    /// Mirrors `AlignmentPresentation.formatTime` so committed row values are asserted exactly.
+    private static func formatTime(_ seconds: Double) -> String {
+        let sign = seconds < 0 ? "\u{2212}" : ""
+        let value = abs(seconds)
+        let hours = Int(value / 3600)
+        let minutes = Int(value / 60) % 60
+        let whole = Int(value) % 60
+        let milliseconds = Int((value * 1000).rounded()) % 1000
+        return String(format: "%@%02d:%02d:%02d.%03d", sign, hours, minutes, whole, milliseconds)
     }
 
     private func selectTargetEpoch() {
@@ -472,22 +564,23 @@ final class AlignmentInspectionUITests: XCTestCase {
         return table.descendants(matching: .outlineRow).count == count
     }
 
-    private func anchorFields() -> XCUIElementQuery {
-        app.textFields.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@", "ww.alignment.anchor."
+    private func anchorAlignedCells() -> XCUIElementQuery {
+        app.staticTexts.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+            "ww.alignment.anchor.", ".alignedTime"
         ))
     }
 
-    private func waitForAnchorFieldCount(
+    private func waitForAnchorCellCount(
         _ count: Int,
         timeout: TimeInterval = 5
     ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            if anchorFields().count == count { return true }
+            if anchorAlignedCells().count == count { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         } while Date() < deadline
-        return anchorFields().count == count
+        return anchorAlignedCells().count == count
     }
 
     private func waitForSelectedEpoch(

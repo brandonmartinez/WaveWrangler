@@ -195,6 +195,7 @@ enum MainMenu {
         menu.addItem(routed("Place Anchor at Playhead", #selector(CommandRouter.placeAlignmentAnchorAtPlayhead(_:))))
         menu.addItem(routed("Edit Epoch Timing Numerically…", #selector(CommandRouter.editAlignmentTiming(_:))))
         menu.addItem(routed("Place Anchors…", #selector(CommandRouter.placeAlignmentAnchors(_:))))
+        menu.addItem(routed("Edit Anchor…", #selector(CommandRouter.editAlignmentAnchor(_:))))
         menu.addItem(routed("Start New Epoch at Anchor", #selector(CommandRouter.startNewEpochAtAnchor(_:))))
         menu.addItem(.separator())
         menu.addItem(routed("Audition Selection", #selector(CommandRouter.auditionAlignmentSelection(_:)), .auditionSelection))

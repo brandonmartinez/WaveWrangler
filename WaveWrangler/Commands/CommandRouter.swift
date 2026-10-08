@@ -257,6 +257,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     @objc func editAlignmentTiming(_ sender: Any?) { activeShowState?.alignmentModel?.requestNumericEditor() }
     @objc func placeAlignmentAnchorAtPlayhead(_ sender: Any?) { activeShowState?.alignmentModel?.placeAnchorAtPlayhead() }
     @objc func placeAlignmentAnchors(_ sender: Any?) { activeShowState?.alignmentModel?.requestAnchorEditor() }
+    @objc func editAlignmentAnchor(_ sender: Any?) { activeShowState?.alignmentModel?.requestSelectedAnchorEditor() }
     @objc func startNewEpochAtAnchor(_ sender: Any?) { activeShowState?.alignmentModel?.startNewEpochAtSelectedAnchor() }
     @objc func auditionAlignmentSelection(_ sender: Any?) { activeShowState?.alignmentModel?.auditionSelection() }
     @objc func stopAlignmentAudition(_ sender: Any?) { activeShowState?.alignmentModel?.stopAudition() }
@@ -401,6 +402,8 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
         case #selector(placeAlignmentAnchorAtPlayhead(_:)):
             return show?.destination == .alignment
                 && show?.alignmentModel?.canPlaceAnchorAtPlayhead == true
+        case #selector(editAlignmentAnchor(_:)):
+            return show?.destination == .alignment && show?.alignmentModel?.anchorSelection != nil
         case #selector(startNewEpochAtAnchor(_:)):
             return show?.destination == .alignment && show?.alignmentModel?.canStartNewEpoch == true
         case #selector(auditionAlignmentSelection(_:)):

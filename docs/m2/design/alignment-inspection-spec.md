@@ -184,6 +184,19 @@ epoch, so a gap (U6) never silently mixes anchors across it (M2-C3: "a gap alway
 - Editing an anchor's aligned time is numeric-only (no drag): type the value, or ↑/↓ nudges by one output
   frame (shift-↑/↓ by 100 ms), matching M1's "no drag-only interaction" rule (IA §5).
 
+> **Revision 2026-10-07 (WW-022, #219, Lead design decision).** A focused **Edit Anchor…** sheet replaces
+> inline editing in the Anchors table. Inline "Aligned time" editors inside the clipped native table could
+> not reliably take or hold keyboard focus, so the Anchors table is now selectable but **read-only**: the
+> three time columns are `staticText` with their §5.2 labels and values. Return on the selected anchor row
+> — or Episode › Edit Anchor… — opens the sheet with its labelled "Aligned time" field already focused;
+> the ↑/↓ frame nudges above live in that field. After **Place Anchor at Playhead** is accepted the new
+> anchor row is selected and the sheet opens on it. Return applies one undoable edit and Escape cancels;
+> either way the sheet's dismissal returns keyboard focus to that anchor's row. The keyboard-only path,
+> VoiceOver role/label/value, numeric entry and undo requirements of §4.1, §5.1 (T-M2-02, T-M2-03) and
+> §5.2 are otherwise unchanged. **Start New Epoch at Anchor** is likewise enabled only when the selected
+> anchor's frame lies strictly inside the selected occurrence's span; an endpoint selection is refused in
+> the status line rather than silently, with the pipeline rejection kept as a backstop.
+
 ### 4.2 Numeric rate/offset correction
 
 "Edit Epoch Timing Numerically…" opens a sheet with two fields: **Rate correction (ppm)** and **Offset
@@ -245,8 +258,8 @@ the selected row (consistent with M1's `Return` behaviour in Sources/Speakers ta
 | ID | Task | Keyboard-only path |
 | --- | --- | --- |
 | **T-M2-01** | Open Alignment and read an epoch's state | ⌘2 → arrow to a group row → → to expand → arrow to an epoch row → state is read in the row and the inspector |
-| **T-M2-02** | Place an anchor | Select an occurrence's track/epoch → Menu › Episode › Audition Selection (⌘⏎) → Esc or Stop at the desired instant → Menu › Episode › Place Anchor at Playhead → the new anchor row is focused in the Anchors table |
-| **T-M2-03** | Edit an anchor's time numerically | Arrow to an anchor row → Return focuses "Aligned time" → type a value → Return commits ("Undo Edit Anchor Time" available) |
+| **T-M2-02** | Place an anchor | Select an occurrence's track/epoch → Menu › Episode › Audition Selection (⌘⏎) → Esc or Stop at the desired instant → Menu › Episode › Place Anchor at Playhead → the new anchor row is selected and the Edit Anchor sheet opens with "Aligned time" focused (§4.1 revision) |
+| **T-M2-03** | Edit an anchor's time numerically | Arrow to an anchor row → Return opens the Edit Anchor sheet with "Aligned time" focused → type a value → Return commits ("Undo Edit Anchor Time" available) and focus returns to the row (§4.1 revision) |
 | **T-M2-04** | Delete an anchor | Arrow to an anchor row → ⌫ → confirmation if it would leave <2 anchors → Return confirms |
 | **T-M2-05** | Correct an epoch numerically | Select an epoch row → Menu › Episode › Edit Epoch Timing Numerically… → Tab between Rate (ppm) and Offset (ms) → Return applies, Esc cancels |
 | **T-M2-06** | Accept an acoustic-consistent proposal | Select a U3 epoch row → Menu › Episode › Accept Proposal as Manual → state becomes U4; dependents count updates and is announced |
@@ -264,7 +277,7 @@ the selected row (consistent with M1's `Return` behaviour in Sources/Speakers ta
 | Epoch row | `row` (outline) | "<Epoch n>, <Recorder Group>" | State label from §1.1 (e.g. "Proposed — not confirmed") |
 | State cell | folded into the row's value (ST-03 pattern: no separate AX element for the symbol) | — | Full meaning sentence from §1.1 |
 | Rate / Offset cell | `staticText` | "Rate correction" / "Offset" | "+12.040 ppm" / "+84.2 ms", or "—" (VO "none") when unmapped |
-| Anchor row fields | `textField` | "Source time" / "Group time" / "Aligned time" | Exact timecode string |
+| Anchor row cells | `staticText` (read-only since the §4.1 revision; the editable field lives in the Edit Anchor sheet) | "Source time" / "Group time" / "Aligned time" | Exact timecode string |
 | Audition transport | `button` | "Play" / "Stop" (title reflects state, CMD-05 pattern) | — |
 | Audition range fields | `textField` | "Start" / "Duration" | Exact timecode |
 | Dependents line | `staticText` | "Dependents" | "<n> edits, <m> jobs will become stale" / "No dependent work yet" |
