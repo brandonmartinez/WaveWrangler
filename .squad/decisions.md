@@ -313,3 +313,14 @@
 - **Ready queue:** 4–6 units kept ready.
 - **Warm builds:** reuse is allowed, but the pre-merge run is always fresh.
 - **Coming:** relay-provisioned VMs as additional GUI hosts, each with its own lease.
+
+### 2026-10-08: Cold-launch p95 moves to extended profiling (#255)
+
+**By:** the user (14:44, via the relay), recorded by the M2 coordinator.
+> "I think we can capture the cold launch for follow up. The ongoing testing would show if cold launch didn't work at all or was unusable, this could go into extended profiling instead."
+- The 100-sample cold launch/first-open stratum is not an M2 exit gate. It's extended profiling, not a per-milestone gate, until M5.
+- #255 was retitled "Extended profiling: 100-sample cold launch/first-open p95" (P2, M5, owner Mac). M5 was chosen over Release (WW-052) because it's the MVP qualification pass, right after M4, so a regression is caught before the MVP is called qualified.
+- The acceptance criteria favour a native `open` + signpost collector over XCUITest relaunch loops, with p95 compared against the WW-007 <1 s target, #105, and the M1 post-fix first-open p95 of 461 ms.
+- Launch functionality stays gated through the UI suites' many launches.
+- The incomplete M2 runs at 45cc370 are recorded as they happened: sample 11 didn't open, and the rerun hit a LaunchServices launch failure.
+
