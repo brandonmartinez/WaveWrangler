@@ -74,6 +74,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         let setupRemedy = app.buttons["ww.review.remedy.setup"]
         XCTAssertTrue(setupRemedy.waitForExistence(timeout: 3))
         XCTAssertTrue(setupRemedy.isEnabled)
+        XCTAssertTrue(app.staticTexts["ww.review.remedy.keyboard"].label.contains("View > Setup (⌘1)"))
 
         let unwaived = try AcceptanceAudit.run(
             app,
@@ -83,7 +84,24 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         )
         XCTAssertTrue(unwaived.isEmpty, unwaived.joined(separator: "\n"))
 
-        app.typeKey("1", modifierFlags: .command)
+        filter.click()
+        if UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0 {
+            XCTAssertTrue(tabToFocus(setupRemedy), "Full Keyboard Access makes the inspector remedy tab-reachable")
+            XCTAssertTrue(Acceptance.hasKeyboardFocus(setupRemedy))
+            XCTAssertTrue(setupRemedy.isHittable, "The focused remedy remains visible")
+            app.typeKey(.space, modifierFlags: [])
+        } else {
+            // With Full Keyboard Access off, macOS skips buttons in Tab order; use the visible View > Setup ⌘1 command.
+            app.typeKey("1", modifierFlags: .command)
+        }
         XCTAssertTrue(app.tables["ww.setup.sources"].waitForExistence(timeout: 5))
+    }
+
+    private func tabToFocus(_ element: XCUIElement) -> Bool {
+        for _ in 0..<30 {
+            if Acceptance.hasKeyboardFocus(element) { return true }
+            app.typeKey(.tab, modifierFlags: [])
+        }
+        return Acceptance.hasKeyboardFocus(element)
     }
 }

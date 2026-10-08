@@ -255,8 +255,11 @@ struct TranscriptReviewInspector: View {
                 .accessibilityIdentifier("ww.review.inspector.previewBlockedReason")
 
             Button("Go to Setup", action: goToSetup)
-                .accessibilityHint("Choose or confirm a Primary source in Setup.")
+                .accessibilityHint("Choose or confirm a Primary source in Setup. Keyboard alternative: View, Setup, Command-1.")
                 .accessibilityIdentifier("ww.review.remedy.setup")
+            Text("Keyboard: View > Setup (⌘1).")
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("ww.review.remedy.keyboard")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("ww.review.inspector")
