@@ -120,17 +120,23 @@ struct AdmissionTests {
         let root = URL(fileURLWithPath: "/private/tmp/speech-boundary-\(UUID())")
         let stage = root.appendingPathComponent("stage")
         let scratch = root.appendingPathComponent("scratch")
+        let proxy = root.appendingPathComponent("proxy")
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: proxy, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let input = scratch.appendingPathComponent("input.wav")
+        let input = proxy.appendingPathComponent("input.wav")
         let unrelated = root.appendingPathComponent("other")
         try Data("abc".utf8).write(to: input)
         try Data("private".utf8).write(to: unrelated)
         let cat = URL(fileURLWithPath: "/bin/cat")
-        let readProfile = OfflineWhisperPlan.profile(stage: stage, input: input, scratch: scratch, executable: cat)
+        let readProfile = try OfflineWhisperPlan.profile(stage: stage, input: input, scratch: scratch, executable: cat)
         #expect(readProfile.contains("(deny default)"))
         #expect(readProfile.contains("(deny network*)"))
         #expect(!readProfile.contains("(allow default)"))
+        #expect(throws: SpeechAdmissionRefusal.primaryProxyNotProven) {
+            try OfflineWhisperPlan.profile(stage: stage, input: scratch.appendingPathComponent("input.wav"),
+                                           scratch: scratch, executable: cat)
+        }
         func invoke(_ executable: URL, _ profile: String, _ args: [String]) throws -> Int32 {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
@@ -147,58 +153,74 @@ struct AdmissionTests {
         #expect(FileManager.default.fileExists(atPath: dataAlias))
         #expect(try invoke(cat, readProfile, [dataAlias]) != 0)
         let touch = URL(fileURLWithPath: "/usr/bin/touch")
-        let writeProfile = OfflineWhisperPlan.profile(stage: stage, input: input, scratch: scratch, executable: touch)
+        let writeProfile = try OfflineWhisperPlan.profile(stage: stage, input: input, scratch: scratch, executable: touch)
         #expect(try invoke(touch, writeProfile, [unrelated.path]) != 0)
         #expect(try String(contentsOf: unrelated, encoding: .utf8) == "private")
         let unrelatedNew = root.appendingPathComponent("new")
         #expect(try invoke(touch, writeProfile, [unrelatedNew.path]) != 0)
         #expect(!FileManager.default.fileExists(atPath: unrelatedNew.path))
-        #expect(try invoke(touch, writeProfile, [scratch.appendingPathComponent("result").path]) == 0)
+        #expect(try invoke(touch, writeProfile, [input.path]) != 0)
+        #expect(try invoke(touch, writeProfile, [scratch.appendingPathComponent("other").path]) != 0)
+        #expect(try invoke(touch, writeProfile, [scratch.appendingPathComponent("result.json").path]) == 0)
+
+        let hardlink = scratch.appendingPathComponent("input-alias")
+        let symlink = scratch.appendingPathComponent("input-link")
+        try FileManager.default.linkItem(at: input, to: hardlink)
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: input)
+        #expect(try invoke(touch, writeProfile, [hardlink.path]) != 0)
+        #expect(try invoke(touch, writeProfile, [symlink.path]) != 0)
+        #expect(try String(contentsOf: input, encoding: .utf8) == "abc")
     }
 
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_SPEECH_STAGE_PATH"] != nil),
-          .timeLimit(.minutes(3)))
-    func provisionedCandidateRunsSyntheticOffline() async throws {
-        let stage = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["WW_SPEECH_STAGE_PATH"]))
-        try ApprovedWhisperRuntime.verify(at: stage)
-        let scratch = stage.appendingPathComponent("scratch-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false,
-                                                 attributes: [.posixPermissions: 0o700])
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let input = scratch.appendingPathComponent("synthetic.wav")
-        var wav = Data("RIFF".utf8)
-        func word(_ number: UInt16) { withUnsafeBytes(of: number.littleEndian) { wav.append(contentsOf: $0) } }
-        func doubleWord(_ number: UInt32) { withUnsafeBytes(of: number.littleEndian) { wav.append(contentsOf: $0) } }
-        doubleWord(32_036)
-        wav.append(contentsOf: Data("WAVEfmt ".utf8))
-        doubleWord(16)
-        word(1)
-        word(1)
-        doubleWord(16_000)
-        doubleWord(32_000)
-        word(2)
-        word(16)
-        wav.append(contentsOf: Data("data".utf8))
-        doubleWord(32_000)
-        wav.append(Data(repeating: 0, count: 32_000))
-        try wav.write(to: input)
-        let finalInput = scratch.appendingPathComponent("input.wav")
-        try FileManager.default.moveItem(at: input, to: finalInput)
-        let (episode, speaker) = episode()
-        let selection = try PrimarySpeechSelection(episode: episode, speakerID: speaker)
-        let plan = try OfflineWhisperPlan(selection: selection, stage: stage,
-                                          inputWAV: finalInput, scratch: scratch)
-        #expect(plan.executable.path == "/usr/bin/sandbox-exec")
-        let started = ContinuousClock.now
-        let output = try await plan.run()
-        let elapsed = started.duration(to: .now)
-        let report = try JSONSerialization.jsonObject(with: Data(contentsOf: output)) as? [String: Any]
-        let segments = report?["transcription"] as? [[String: Any]]
-        #expect(segments != nil)
-        #expect(segments?.allSatisfy { $0["offsets"] != nil && $0["timestamps"] != nil } == true)
-        #expect(!FileManager.default.fileExists(atPath: scratch.appendingPathComponent("stdout").path))
-        #expect(!FileManager.default.fileExists(atPath: scratch.appendingPathComponent("stderr").path))
-        await #expect(throws: SpeechAdmissionRefusal.runtimeNotStaged) { try await plan.run() }
-        print("WWSpeech staged synthetic offline: seconds=1 elapsed=\(elapsed) status=0")
+    @Test func unprovenProxyRefusesAliasesSymlinksRacesAndMismatchedSelection() async throws {
+        let root = URL(fileURLWithPath: "/private/tmp/speech-admission-\(UUID())")
+        let scratch = root.appendingPathComponent("scratch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stage = root.appendingPathComponent("stage")
+        let original = root.appendingPathComponent("original")
+        try Data("synthetic".utf8).write(to: original)
+        let hardlink = scratch.appendingPathComponent("input.wav")
+        try FileManager.default.linkItem(at: original, to: hardlink)
+        let (selectedEpisode, speaker) = episode()
+        let selection = try PrimarySpeechSelection(episode: selectedEpisode, speakerID: speaker)
+        func refused(_ input: URL, _ selected: PrimarySpeechSelection) {
+            #expect(throws: SpeechAdmissionRefusal.primaryProxyNotProven) {
+                try OfflineWhisperPlan(selection: selected, stage: stage, inputWAV: input, scratch: scratch)
+            }
+        }
+        refused(hardlink, selection)
+        try FileManager.default.removeItem(at: hardlink)
+        try FileManager.default.createSymbolicLink(at: hardlink, withDestinationURL: original)
+        refused(hardlink, selection)
+        try FileManager.default.removeItem(at: hardlink)
+        try Data("proxy".utf8).write(to: hardlink)
+        refused(hardlink, selection)
+        try FileManager.default.moveItem(at: hardlink, to: scratch.appendingPathComponent("old-input.wav"))
+        try FileManager.default.createSymbolicLink(at: hardlink, withDestinationURL: original)
+        refused(hardlink, selection)
+
+        let (otherEpisode, otherSpeaker) = episode()
+        let otherSelection = try PrimarySpeechSelection(episode: otherEpisode, speakerID: otherSpeaker)
+        #expect(otherSelection != selection)
+        refused(hardlink, otherSelection)
+        let swapping = Task.detached {
+            let files = FileManager.default
+            for _ in 0..<20 {
+                try files.removeItem(at: hardlink)
+                try Data("proxy".utf8).write(to: hardlink)
+                await Task.yield()
+                try files.removeItem(at: hardlink)
+                try files.createSymbolicLink(at: hardlink, withDestinationURL: original)
+                await Task.yield()
+            }
+        }
+        for _ in 0..<80 {
+            refused(hardlink, selection)
+            await Task.yield()
+        }
+        try await swapping.value
+        refused(hardlink, selection)
+        #expect(try String(contentsOf: original, encoding: .utf8) == "synthetic")
     }
 }

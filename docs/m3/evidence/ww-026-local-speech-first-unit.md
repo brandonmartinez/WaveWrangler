@@ -29,9 +29,12 @@ checksums. The typed `ApprovedWhisperRuntime` catalog pins the exact relocated e
 four linked dylibs, four possible dynamically loaded CPU/BLAS backends **and** model.
 The installed sources are whisper.cpp **1.9.4** and ggml **0.25.3** with LLVM OpenMP
 **23.1.2**; their exact original and staged hashes/sizes live in the staging script and
-typed catalog. The ggml backends and whisper.cpp declare MIT, LLVM OpenMP declares MIT;
-the macOS system libraries/frameworks are OS-supplied, not copied or claimed to be
-independently pinned. Only the explicitly selected pinned CPU backend is made available
+typed catalog. The ggml backends and whisper.cpp declare MIT; LLVM OpenMP's
+[pinned upstream runtime source](https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-23.1.2/openmp/runtime/src/kmp_runtime.cpp)
+declares **Apache-2.0 WITH LLVM-exception** (SPDX header). Redistribution and notices
+clearance for the chosen closure remain open. The macOS system libraries/frameworks
+are OS-supplied, not copied or claimed to be independently pinned. Only the explicitly
+selected pinned CPU backend is made available
 through `GGML_BACKEND_PATH`; attempts to discover Homebrew or other backends are denied.
 This is **one local binary closure** and does not establish a portable macOS 26 bundle.
 
@@ -41,16 +44,32 @@ ownership and local volume. A replacement, absent library, altered dependency or
 stage refuses inference. The subprocess uses `/usr/bin/sandbox-exec` with **deny default**
 and **deny network***: literal read grants only for the staged files and the single PCM
 input, ancestor-directory traversal, macOS runtime reads under `/System/Library`
-and `/usr/lib` (never the writable `/System/Volumes/Data` alias), and writes only to a unique
-owner-private scratch directory. Standard output/error are discarded through drained pipes
-without storing diagnostics; a 120-second watchdog refuses a stalled subprocess. No source
-path is writable; there is no `allow default`, downloader,
-tokenizer fallback or inherited environment. The OS-supplied system runtime and same-UID
+and `/usr/lib` (never the writable `/System/Volumes/Data` alias), and writes only
+to the literal result file in a unique owner-private scratch directory. The profile
+refuses an input path under scratch; a pre-existing hardlink alias elsewhere in scratch
+cannot be modified through its write grants. The result path could itself become an
+alias without identity protection, so no runnable plan is admitted. Standard output/error
+are discarded through drained pipes without storing diagnostics; a 120-second watchdog
+refuses a stalled subprocess. No source is submitted while provenance is unproven;
+there is no `allow default`, downloader, tokenizer fallback or inherited environment.
+The OS-supplied system runtime and same-UID
 processes remain outside this sandbox's identity proof. Synthetic negative tests verify
-that an unrelated read and write fail while selected input reads and scratch writes work.
-The freshly staged closure returned JSON shape from a one-second synthetic silent WAV
-under the minimal profile; no transcript text was printed. This does not replace a
-monitored app/system-network cold-restart audit.
+that an unrelated read and write fail while selected input reads and only result-file
+writes work.
+The earlier freshly staged closure returned JSON shape from a one-second synthetic silent WAV
+under the old profile; no transcript text was printed. That observation does not validate
+the tightened profile or replace a monitored app/system-network cold-restart audit.
+
+**Admission is now default-deny even for a regular PCM file.** The package-scoped
+`OfflineWhisperPlan` constructor explicitly refuses with `primaryProxyNotProven`, including
+caller-attested primary metadata, synthetic hardlinks/symlinks, changed paths, and mismatched
+selections. A caller cannot create a runnable plan from an arbitrary file. A future adapter
+must derive an independent proxy through WWDecode's read-only content gateway from the
+specific confirmed source/channel, bind its bytes to that selection, keep it outside
+scratch, and prove the input/output cannot be re-aliased or replaced between admission and
+execution. Until then neither approved real media nor a synthetic fixture is submitted
+through this runtime path. The existing bounded watchdog, drained diagnostics and output
+refusal remain reserved for that gated path.
 
 ## Native status correction
 
@@ -65,7 +84,7 @@ evidence within the approved scope.
 
 ## Remaining WW-026 gates
 
-One-second **synthetic silence** only establishes process execution and JSON shape, not
+The earlier one-second **synthetic silence** only established process execution and JSON shape, not
 word-timing or accuracy. The same approved selected-primary material, native status, app
 adapter, frozen cold/warm/thermal/long-duration timing, word-time coverage, 16 GB/macOS 26
 floor, warm RTF <=1, family peak <=8 GB, update/restart offline and transitive rights

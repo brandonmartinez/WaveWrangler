@@ -38,6 +38,7 @@ public enum SpeechAdmissionRefusal: Error, Sendable, Equatable {
     case assetSizeMismatch
     case assetDigestMismatch
     case assetChangedDuringVerification
+    case primaryProxyNotProven
     case runtimeNotStaged
     case runtimeDependencyMismatch
     case sandboxFailed

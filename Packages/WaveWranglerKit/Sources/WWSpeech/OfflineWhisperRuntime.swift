@@ -21,7 +21,8 @@ public enum ApprovedWhisperRuntime {
             license: "MIT (ggml)", source: "https://github.com/ggml-org/ggml")),
         ("lib/libomp.dylib", .init(name: "libomp.dylib", version: version, sizeBytes: 721_776,
             sha256: "66ea5824d7cf242e3a00e00480d7ccd60e100bd0665bdb69dabb2326728e38f4",
-            license: "MIT (LLVM OpenMP)", source: "https://github.com/llvm/llvm-project/tree/main/openmp")),
+            license: "Apache-2.0 WITH LLVM-exception (redistribution/notices clearance outstanding)",
+            source: "https://github.com/llvm/llvm-project/blob/llvmorg-23.1.2/openmp/runtime/src/kmp_runtime.cpp")),
         ("libexec/libggml-blas.so", .init(name: "libggml-blas.so", version: version, sizeBytes: 59_216,
             sha256: "99ca2ef77f56896b07351ac8a03e242b28201546a417b2ff6ee5a9c395b252e2",
             license: "MIT (ggml)", source: "https://github.com/ggml-org/ggml")),
@@ -70,43 +71,29 @@ public enum ApprovedWhisperRuntime {
 }
 
 /// The sandbox is default-deny: it can read only the staged closure, the one PCM proxy and
-/// macOS system runtime, write only its unique scratch, and cannot create network sockets.
+/// macOS system runtime, write only the designated result file, and cannot create network sockets.
 public struct OfflineWhisperPlan: Sendable {
     public let selection: PrimarySpeechSelection
     public let executable: URL
     public let arguments: [String]
     private let stage: URL
+    private let input: URL
     private let scratch: URL
 
     package init(selection: PrimarySpeechSelection, stage: URL, inputWAV: URL, scratch: URL)
         throws(SpeechAdmissionRefusal)
     {
-        try ApprovedWhisperRuntime.verify(at: stage)
-        let scratchName = scratch.lastPathComponent
-        guard scratch.deletingLastPathComponent() == stage, scratchName.hasPrefix("scratch-"),
-              UUID(uuidString: String(scratchName.dropFirst(8))) != nil,
-              inputWAV.deletingLastPathComponent() == scratch,
-              inputWAV.lastPathComponent == "input.wav" else { throw .runtimeNotStaged }
-        var info = stat()
-        guard lstat(scratch.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
-              info.st_uid == getuid(), info.st_mode & 0o077 == 0 else { throw .runtimeNotStaged }
-        self.selection = selection
-        self.stage = stage
-        self.scratch = scratch
-        executable = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
-        let outputPrefix = scratch.appendingPathComponent("result")
-        arguments = [
-            "-p", Self.profile(stage: stage, input: inputWAV, scratch: scratch,
-                                executable: stage.appendingPathComponent("bin/whisper-cli")),
-            stage.appendingPathComponent("bin/whisper-cli").path,
-            "--model", stage.appendingPathComponent("model/ggml-base.en.bin").path,
-            "--file", inputWAV.path, "--language", "en", "--threads", "4",
-            "--no-gpu", "--output-json", "--output-file", outputPrefix.path, "--no-prints",
-        ]
+        // No WWDecode adapter yet binds PCM bytes to the selected source/channel. Neither a
+        // caller-supplied selection nor a regular-file check can prove that binding.
+        throw .primaryProxyNotProven
     }
 
-    // Package-scoped for synthetic boundary tests; production plans always use the reviewed catalog.
-    package static func profile(stage: URL, input: URL, scratch: URL, executable: URL) -> String {
+    // Package-scoped for synthetic boundary tests; plan construction remains default-deny.
+    package static func profile(stage: URL, input: URL, scratch: URL, executable: URL)
+        throws(SpeechAdmissionRefusal) -> String
+    {
+        guard input.isFileURL, scratch.isFileURL,
+              !input.path.hasPrefix(scratch.path + "/") else { throw .primaryProxyNotProven }
         func quoted(_ path: String) -> String {
             let escaped = path.replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "\"", with: "\\\"")
@@ -131,15 +118,16 @@ public struct OfflineWhisperPlan: Sendable {
             \(allowedFiles.joined(separator: " "))
             \(literal(scratch.path)) \(literal(input.path)) \(literal(executable.path)))
         (allow file-read* (subpath \(quoted(scratch.path))))
-        (allow file-write* (subpath \(quoted(scratch.path))))
+        (allow file-write* \(literal(scratch.appendingPathComponent("result.json").path)))
+        (deny file-write* \(literal(input.path)))
         """
     }
 
     /// No inherited DYLD, proxy, home or tokenizer environment. No transcript text is logged.
-    /// Caller must supply gateway-derived, explicitly selected-primary PCM in private scratch.
+    /// Reserved for a future gateway-derived proxy bound to the selected primary; no caller can
+    /// construct a plan until that adapter exists.
     package func run() async throws(SpeechAdmissionRefusal) -> URL {
         try ApprovedWhisperRuntime.verify(at: stage)
-        let input = scratch.appendingPathComponent("input.wav")
         let output = scratch.appendingPathComponent("result.json")
         var info = stat()
         guard lstat(input.path, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
