@@ -18,6 +18,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         app.launch()
         app.activate()
         XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 5))
+        selectFirstEpisode()
         let reviewDestination = app.buttons["ww.show.destination.review"]
         XCTAssertTrue(reviewDestination.waitForExistence(timeout: 5))
         reviewDestination.click()
@@ -103,5 +104,13 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             app.typeKey(.tab, modifierFlags: [])
         }
         return Acceptance.hasKeyboardFocus(element)
+    }
+
+    private func selectFirstEpisode() {
+        let episode = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "ww.show.sidebar.episode."))
+            .firstMatch
+        XCTAssertTrue(episode.waitForExistence(timeout: 5), "The synthetic show has a selectable episode")
+        episode.click()
     }
 }

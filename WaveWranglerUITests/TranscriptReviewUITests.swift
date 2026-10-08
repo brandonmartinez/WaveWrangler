@@ -17,7 +17,11 @@ final class TranscriptReviewUITests: XCTestCase {
         ]
         app.launch()
         app.activate()
-        app.typeKey("3", modifierFlags: .command)
+        XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 5))
+        selectFirstEpisode()
+        let reviewDestination = app.buttons["ww.show.destination.review"]
+        XCTAssertTrue(reviewDestination.waitForExistence(timeout: 5))
+        reviewDestination.click()
         XCTAssertTrue(app.staticTexts["ww.review.heading"].waitForExistence(timeout: 5))
     }
 
@@ -110,5 +114,13 @@ final class TranscriptReviewUITests: XCTestCase {
         app.buttons["ww.review.remedy.setup"].click()
         XCTAssertTrue(app.buttons["ww.show.destination.setup"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.descendants(matching: .any)["ww.setup.sources"].waitForExistence(timeout: 3))
+    }
+
+    private func selectFirstEpisode() {
+        let episode = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "ww.show.sidebar.episode."))
+            .firstMatch
+        XCTAssertTrue(episode.waitForExistence(timeout: 5), "The synthetic show has a selectable episode")
+        episode.click()
     }
 }
