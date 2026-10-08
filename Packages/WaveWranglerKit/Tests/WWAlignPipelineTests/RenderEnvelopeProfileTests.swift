@@ -38,6 +38,63 @@ struct RenderEnvelopeProfileTests {
         try await profile(fixture, shape: "3 inputs × 2 channels, 48k output, concurrency 2, 16k decoder, 180s segment")
     }
 
+    @Test("Two independent six-channel pipeline instances at the 180-second boundary")
+    func independentInstances() async throws {
+        let config = AlignmentPipelineConfiguration(
+            concurrency: 2, targetExcerptSeconds: 10, searchDeviationSeconds: 2, renderSegmentSeconds: 180
+        )
+        let firstEntered = Latch()
+        let releaseFirst = Latch()
+        let hooks = AlignmentPipelineTestHooks(beforeSegmentPublish: { _, _ in
+            await firstEntered.open()
+            await releaseFirst.wait()
+        })
+        let first = try await PipelineFixture([
+            GroupSpec(name: "reference", sources: [SourceSpec(name: "ref", channels: 2, seconds: 180, signal: .scene(seed: TwoRecorder.seed))]),
+            GroupSpec(name: "target", sources: (0 ..< 3).map {
+                SourceSpec(name: "target-\($0)", channels: 2, seconds: 180, signal: .scene(seed: TwoRecorder.seed))
+            }),
+        ], configuration: config, hooks: hooks, label: "instance-first")
+        let analysis = try await first.analyse(preferredReference: "ref")
+        try await first.acceptAndActivate(analysis, [first.epochs[1]:
+            .numeric(ppm: 0, offsetMilliseconds: 0, note: "synthetic clock truth")])
+        let second = try await RenderEnvelopeTests.fixture(
+            configuration: config, targets: [2, 2, 2], seconds: 180, label: "instance-second"
+        )
+        let sampler = MemorySampler()
+        let firstSources = first.sources.filter { $0.id != first.id("ref") }
+        let firstIDs = Set(firstSources.map(\.id))
+        let firstRender = Task {
+            try await first.pipeline.renderAlignedAssets(
+                model: first.model, episode: first.episodeID, sources: firstSources,
+                authorizations: first.authorizations.filter { firstIDs.contains($0.source) }
+            )
+        }
+        await firstEntered.wait()
+        let secondOpens = second.content.total.opens
+        let secondSources = second.sources.filter { $0.id != second.id("ref") }
+        let secondIDs = Set(secondSources.map(\.id))
+        let secondRender = Task {
+            try await second.pipeline.renderAlignedAssets(
+                model: second.model, episode: second.episodeID, sources: secondSources,
+                authorizations: second.authorizations.filter { secondIDs.contains($0.source) }
+            )
+        }
+        try await ConcurrencyTests.until { await ResourceGate.process.snapshot.waiting > 0 }
+        let held = await ResourceGate.process.snapshot
+        #expect(held.active == 1 && held.activeBytes > 450 << 20)
+        #expect(second.content.total.opens == secondOpens, "second instance cannot open render cursors while first owns admission")
+        await releaseFirst.open()
+        let reports = try await (firstRender.value, secondRender.value)
+        let peaks = sampler.stop()
+        let rss = MemorySampler.maxResident()
+        #expect(reports.0.isComplete && reports.1.isComplete)
+        #expect(reports.0.groups.last?.segmentsRendered == 1 && reports.1.groups.last?.segmentsRendered == 1)
+        #expect(await ResourceGate.process.snapshot.activeBytes == 0)
+        print("[render-envelope] independent 180s six-channel instances: ru_maxrss \(rss), sampled RSS \(peaks.resident), footprint \(peaks.footprint), process admission \(held.activeBytes)")
+        #expect(rss <= 1_073_741_824 && peaks.resident <= 1_073_741_824 && peaks.footprint <= 1_073_741_824)
+    }
+
     @Test("Two simultaneous eight-channel groups, cached rerender")
     func simultaneous() async throws {
         let groups = [

@@ -170,8 +170,6 @@ struct GroupRenderJob: Sendable {
             complexity = sum
         }
         guard complexity <= 64 else { throw .renderEnvelope("map complexity \(complexity) exceeds the provisional render envelope (64)") }
-        guard segmentIndices.count <= 256 else { throw .renderEnvelope("too many rendered segments (\(segmentIndices.count))") }
-
         func add(_ left: Int, _ right: Int) throws(AlignmentWorkFailure) -> Int {
             let (result, overflow) = left.addingReportingOverflow(right)
             guard !overflow else { throw .renderEnvelope("render memory accounting overflow") }
@@ -297,7 +295,6 @@ enum AlignedAssetRun {
             group: job.map.group, outputRate: job.outputRate, outputFrames: job.outputFrames,
             segments: job.segmentIndices.count
         )
-        let coordinator = environment.coordinator
         let bytes: Int
         do throws(AlignmentWorkFailure) {
             bytes = try job.admissionBytes(
@@ -308,6 +305,24 @@ enum AlignedAssetRun {
             report.failure = error
             return report
         }
+        do {
+            return try await environment.withAdmission(bytes: bytes) {
+                await runAdmitted(job, environment: environment)
+            }
+        } catch {
+            report.failure = workFailure(error)
+            return report
+        }
+    }
+
+    /// Cache reads, coordinator adoption, cursors, rendering and publication all retain the same
+    /// process-wide admission. A cached channel can materialize multiple full-payload copies.
+    private static func runAdmitted(_ job: GroupRenderJob, environment: PipelineEnvironment) async -> GroupRenderReport {
+        var report = GroupRenderReport(
+            group: job.map.group, outputRate: job.outputRate, outputFrames: job.outputFrames,
+            segments: job.segmentIndices.count
+        )
+        let coordinator = environment.coordinator
         var toRender: [Int64] = []
         do throws(AlignmentWorkFailure) {
             for segment in job.segmentIndices {
@@ -321,14 +336,14 @@ enum AlignedAssetRun {
                 }
                 var allReady = true
                 for entry in entries where await coordinator.state(of: entry.slot) != .ready(entry.key) { allReady = false }
-                if allReady {
-                    report.segmentsReused += 1
-                    continue
-                }
                 if let reasons = await staleReasons(entries.map(\.key), coordinator: coordinator) {
                     throw .staleInputs(reasons)
                 }
                 if entries.allSatisfy({ coordinator.store.payload(for: $0.key) != nil }) {
+                    if allReady {
+                        report.segmentsReused += 1
+                        continue
+                    }
                     // Adopted by the coordinator without running work; no content is opened.
                     let results = await boundedMap(entries, limit: environment.configuration.concurrency) { entry in
                         await coordinator.run(entry.slot, key: entry.key) { () throws(AlignmentWorkFailure) -> Data in
@@ -336,6 +351,13 @@ enum AlignedAssetRun {
                         }
                     }
                     report.results += results
+                    if let failed = results.first(where: { !$0.isAvailable }) {
+                        switch failed.outcome {
+                        case .cancelled: throw .cancelled
+                        case let .discardedStale(reasons): throw .staleInputs(reasons)
+                        default: throw failed.failure ?? .encoding("a cached aligned segment did not publish")
+                        }
+                    }
                     report.segmentsReused += 1
                     continue
                 }
@@ -349,32 +371,23 @@ enum AlignedAssetRun {
         let segments = toRender
 
         let decoder = environment.decoder
-        let outcome: Result<GroupRenderReport, AlignmentWorkFailure>
         do {
-            let rendered = try await environment.gate.withAdmission(bytes: bytes) { [report] in
-                try await withCursors(job.participants[...], decoder: decoder, opened: [:]) { streams in
-                    var report = report
-                    let provider = CursorSampleProvider(streams: streams)
-                    for segment in segments {
-                        do throws(AlignmentWorkFailure) {
-                            try await renderSegment(segment, job: job, provider: provider, environment: environment, report: &report)
-                        } catch {
-                            report.failure = error
-                            break
-                        }
+            return try await withCursors(job.participants[...], decoder: decoder, opened: [:]) { [report] streams in
+                var report = report
+                let provider = CursorSampleProvider(streams: streams)
+                for segment in segments {
+                    do throws(AlignmentWorkFailure) {
+                        try await renderSegment(segment, job: job, provider: provider, environment: environment, report: &report)
+                    } catch {
+                        report.failure = error
+                        break
                     }
-                    for stream in streams.values { report.peakStreamFrames = Swift.max(report.peakStreamFrames, await stream.peakHeldFrames) }
-                    return report
                 }
+                for stream in streams.values { report.peakStreamFrames = Swift.max(report.peakStreamFrames, await stream.peakHeldFrames) }
+                return report
             }
-            outcome = .success(rendered)
         } catch {
-            outcome = .failure(workFailure(error))
-        }
-        switch outcome {
-        case let .success(rendered): return rendered
-        case let .failure(failure):
-            report.failure = failure
+            report.failure = workFailure(error)
             return report
         }
     }

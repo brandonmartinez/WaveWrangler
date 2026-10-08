@@ -5,6 +5,13 @@ import Foundation
 /// starvation of large units) and never block a thread: waiting is a suspended continuation, and a
 /// cancelled waiter is removed and resumed with `CancellationError`.
 actor ResourceGate {
+    /// All pipeline instances share this admission, including instances with different coordinators.
+    /// Their individual gates still enforce each caller's smaller configured budget and concurrency.
+    static let process = ResourceGate(
+        permits: AlignmentPipelineConfiguration.maximumConcurrency,
+        budgetBytes: AlignmentPipelineConfiguration.maximumMemoryBudgetBytes
+    )
+
     struct Snapshot: Sendable, Equatable {
         var active: Int
         var activeBytes: Int

@@ -11,6 +11,11 @@ struct PipelineEnvironment: Sendable {
     let decoder: SourceDecoder
     let configuration: AlignmentPipelineConfiguration
     let gate: ResourceGate
+    func withAdmission<T: Sendable>(bytes: Int, _ body: @Sendable () async throws -> T) async throws -> T {
+        try await gate.withAdmission(bytes: bytes) {
+            try await ResourceGate.process.withAdmission(bytes: bytes, body)
+        }
+    }
     #if DEBUG
     var hooks = AlignmentPipelineTestHooks()
     #endif
@@ -50,7 +55,7 @@ enum SourceProbe {
     static func run(_ source: AlignmentSource, token: String, environment: PipelineEnvironment) async throws(AlignmentWorkFailure) -> SourceFacts {
         let decoder = environment.decoder
         do {
-            return try await environment.gate.withAdmission(bytes: admissionBytes) {
+            return try await environment.withAdmission(bytes: admissionBytes) {
                 try await decoder.withDecodingCursor(source.url, source: source.id) { cursor in
                     let interpretation = cursor.interpretation
                     try verify(interpretation, source: source.id, token: token)
@@ -222,7 +227,7 @@ struct AnalysisUnit: Sendable {
             let bytes = try estimatedWorkingSetBytes(peers: peers) + retainedBytes
             let unit = self
             do {
-                record = try await environment.gate.withAdmission(bytes: bytes) {
+                record = try await environment.withAdmission(bytes: bytes) {
                     let referenceSamples = try await unit.decodeAnalysisBuffer(unit.reference, facts: unit.referenceFacts, range: referenceRange, decoder: environment.decoder)
                     try Task.checkCancellation()
                     let targetSamples = try await unit.decodeAnalysisBuffer(unit.target, facts: unit.targetFacts, range: targetRange, decoder: environment.decoder)

@@ -97,9 +97,9 @@ stays under 1 GiB. The <=1 GiB gate is not waived for unmeasured configurations.
 The stacked #235 admission follow-up accounts for the full per-segment `CollectingSink` across **all**
 channels, eight simultaneous full-channel copies during encode/derived-store staging and read-back, cursor
 history/render requests/decoder buffers for every source, and fixed headroom. Arithmetic overflow refuses.
-The shared admission budget is bounded at 512 MiB even if the caller requests more; unsupported render
-rates (>48 kHz), concurrency (>2), decoder chunks (>16,384 frames), excessive map complexity/cursors,
-segments and result slots refuse *before opening a render cursor*, with a typed error. Four-input/eight-channel
+Each instance's admission budget is bounded at 512 MiB even if the caller requests more; unsupported render
+rates (>48 kHz), concurrency (>2), decoder chunks (>16,384 frames), excessive map complexity/cursors and
+result slots refuse *before opening a render cursor*, with a typed error. Four-input/eight-channel
 and seven-channel groups remain eligible at small segment sizes. These limits are **provisional engineering
 scope, not approved product caps or proof of a configuration-wide 1 GiB gate**: allocation multipliers and
 process baseline are not mathematical RSS bounds. In particular 96/192 kHz, concurrency 4, maximal decoder
@@ -115,12 +115,45 @@ Swift Testing width 1, each profile filtered into its own process) exercised the
 | Two simultaneous groups × four 2-channel inputs, 48 kHz out, 10 s segment, concurrency 2, 16,384-frame decoder (both group hooks rendezvoused before publication) | 1+1 / 1+1 segments | 120,995,840 B | 120,995,840 B | 79,282,992 B | 119,129,088 B |
 | One group × 4+3 channels, 44.1/48 kHz inputs → 48 kHz output, 2 s segment, concurrency 2, 16,384-frame decoder | 5 / 5 segments | 73,809,920 B | 73,809,920 B | 31,933,160 B | 32,047,552 B |
 
-The former fixture (above) measured the 180 s six-channel boundary at its older SHA only; the new
-`WW_RENDER_ENVELOPE_PROFILE=1` boundary test must still run in isolation on this exact head before claiming
-even this provisional boundary's measured behavior. Unit regressions verify typed zero-cursor refusal for
+The former fixture (above) measured the 180 s six-channel boundary at its older SHA only. Unit regressions verify typed zero-cursor refusal for
 96/192 kHz output, concurrency 4, the 1,048,576-frame decoder buffer, a valid 80-segment map, accounting
 overflow and a budget below the group estimate. These are refusals, **not** measured acceptance of those
 shapes. Repeated cached rerenders above do not qualify map revisions or a long-lived process.
+
+The independent repair to #293 shares one 512 MiB admission across all public pipeline instances
+(in addition to each instance's configured limit), covering analysis, source probes, renders and
+their cache lookup/adoption/publication. The persisted-map revision restoration path also reserves
+the process gate while it materializes cached candidates. A cached ready slot is rechecked against
+its on-disk payload; failed adoption is reported, not counted as reused. The independent 256-segment
+refusal was removed: a default 10 s, 75-minute six-channel render needs about 450 segments/2700
+results, within the retained checked 4096-result whole-episode guard. The per-segment working-set
+estimate and all rate/chunk/map/concurrency refusals remain unchanged. A small synthetic regression
+forces two different public pipeline instances to contend for process admission, and three new
+coordinators concurrently adopt populated cache entries without opening source cursors; an undo-style
+revision restore likewise reuses verified assets. A separate gated test actually renders the default
+75-minute six-channel shape (`WW_PIPELINE_DEFAULT75=1`, `PipelineDefaultRender75Tests/defaultLongForm`);
+it is not part of the routine package suite.
+
+On 2026-10-08, the final source tree was tested locally on the working Mac (macOS 27, Swift 6.4;
+four build jobs, one test worker, one profile per process):
+
+| Focused synthetic case | Build / result | Peak `ru_maxrss` and sampled RSS | Sampled footprint |
+| --- | --- | ---: | ---: |
+| Two *independent* 180 s six-channel instances; the second waits while the first holds its rendered segment at the publication hook | Debug; both complete; **zero additional cursor opens** while the second waits; 507,570,560 B admitted | 442,056,704 B | 400,294,920 B |
+| Three mixed-rate, two-channel recorders × 75 minutes at the default 10 s segment duration | Optimized Release with testing/Debug hooks; **451 segments, 2706 channel results, all complete** in 1096.591 s; 50,610,560 B gate peak | 130,957,312 B | 85,508,888 B |
+
+Focused `WWAlignPipelineTests` (113 tests in 21 suites) and `WWDerivedTests` (42 tests
+in 5 suites) passed; the cold-cache three-coordinator fan-out, undo-style cache restoration,
+4096-result negative control and multiple-instance admission checks are part of the former.
+The commands were `swift test --package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm
+--jobs 4 --filter 'WWAlignPipelineTests'`, with `WW_RENDER_ENVELOPE_PROFILE=1 --no-parallel
+--filter 'RenderEnvelopeProfileTests/independentInstances'` for the Debug boundary profile;
+the 75-minute run used `WW_PIPELINE_DEFAULT75=1`, `--configuration release -Xswiftc
+-enable-testing -Xswiftc -DDEBUG --no-parallel --filter
+'PipelineDefaultRender75Tests/defaultLongForm'`. `SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH`
+was 1 for the profiles and at most 4 otherwise. These measured synthetic cases are below 1 GiB;
+they do **not** establish every admitted shape, concurrent analysis/cache history with large
+real recordings, or the final exact-head full suite. #235 remains open for broader qualification.
 
 ## Tests
 

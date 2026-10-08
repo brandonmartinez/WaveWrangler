@@ -31,7 +31,8 @@ public struct AlignmentPipelineConfiguration: Sendable, Equatable {
     /// Concurrent analysis units / probes. Clamped to `1...maximumConcurrency`; aligned renders
     /// provisionally refuse configurations above 2 pending a whole-process memory qualification.
     public let concurrency: Int
-    /// Upper bound on the estimated working set of all concurrently admitted analysis/render units, bytes.
+    /// Per-instance admission limit, bytes. A separate process-wide 512 MiB gate also bounds the
+    /// combined estimate across pipeline instances, including cached renders.
     public let analysisMemoryBudgetBytes: Int
     /// Longest target excerpt analysed per epoch, seconds (centred in the target). The default (10 min)
     /// keeps one unit's estimated working set (~440 MB at a 120 s search) inside the default memory budget;

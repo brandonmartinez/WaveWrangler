@@ -252,6 +252,10 @@ public actor DerivedJobCoordinator {
 
     /// Why `key` is not current; empty when it is.
     public func staleReasons(for key: DerivedAssetKey) -> Set<StaleReason> {
+        staleReasons(for: key, ready: key.upstream.isEmpty ? [] : readyDigests())
+    }
+
+    private func staleReasons(for key: DerivedAssetKey, ready: Set<String>) -> Set<StaleReason> {
         var reasons = Set<StaleReason>()
         for source in key.sources where inputs.sources[source.source] != source.token {
             reasons.insert(.sourceChanged(source.source))
@@ -261,7 +265,6 @@ public actor DerivedJobCoordinator {
         if let recipe = key.recipe, inputs.recipes[recipe.name] != recipe.revision { reasons.insert(.recipeChanged(recipe.name)) }
         if inputs.assets[key.asset.kind] != key.asset.revision { reasons.insert(.assetRevisionChanged(key.asset.kind)) }
         if !key.upstream.isEmpty {
-            let ready = readyDigests()
             if key.upstream.contains(where: { !ready.contains($0) }) { reasons.insert(.upstreamChanged) }
         }
         return reasons
@@ -360,6 +363,7 @@ public actor DerivedJobCoordinator {
         var changed = true
         while changed {
             changed = false
+            let ready = readyDigests()
             for slot in slots.keys.sorted(by: { $0.name < $1.name }) {
                 guard let record = slots[slot],
                       case let .stale(current, _) = record.state
@@ -367,7 +371,7 @@ public actor DerivedJobCoordinator {
                 let candidates = [current] + (cachedCandidates[slot] ?? [])
                 guard let restored = candidates.first(where: {
                     explicitlyInvalidated[slot]?.contains($0) != true
-                        && staleReasons(for: $0).isEmpty && store.payload(for: $0) != nil
+                        && staleReasons(for: $0, ready: ready).isEmpty && store.payload(for: $0) != nil
                 }) else { continue }
                 rememberCachedCandidate(current, for: slot)
                 var updated = record
@@ -489,13 +493,14 @@ public actor DerivedJobCoordinator {
         var changed = true
         while changed {
             changed = false
+            let ready = readyDigests()
             for (slot, record) in slots.sorted(by: { $0.key.name < $1.key.name }) {
                 let key: DerivedAssetKey
                 switch record.state {
                 case let .ready(k), let .running(k): key = k
                 default: continue
                 }
-                let reasons = staleReasons(for: key)
+                let reasons = staleReasons(for: key, ready: ready)
                 if !reasons.isEmpty {
                     markStale(slot, key: key, reasons: reasons)
                     changed = true

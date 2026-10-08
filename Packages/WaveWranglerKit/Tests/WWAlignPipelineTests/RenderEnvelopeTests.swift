@@ -191,4 +191,136 @@ struct RenderEnvelopeTests {
         }
         #expect(fixture.content.total.opens == opens)
     }
+
+    @Test("Different public pipeline instances cannot jointly admit more than the process budget")
+    func multiInstanceAdmission() async throws {
+        let first = try await Self.fixture(label: "process-first")
+        let second = try await Self.fixture(label: "process-second")
+        let entered = Latch()
+        let release = Latch()
+        let secondEntered = Box(false)
+        let bytes = 300 << 20
+        let firstWork = Task {
+            try await first.pipeline.environment.withAdmission(bytes: bytes) {
+                await entered.open()
+                await release.wait()
+            }
+        }
+        await entered.wait()
+        let secondWork = Task {
+            try await second.pipeline.environment.withAdmission(bytes: bytes) {
+                secondEntered.value = true
+            }
+        }
+        try await ConcurrencyTests.until {
+            let local = await second.pipeline.gate.snapshot
+            let process = await ResourceGate.process.snapshot
+            return local.active == 1 && process.waiting > 0
+        }
+        let held = await ResourceGate.process.snapshot
+        #expect(held.activeBytes >= bytes && held.activeBytes <= AlignmentPipelineConfiguration.maximumMemoryBudgetBytes)
+        #expect(!secondEntered.value)
+        await release.open()
+        try await firstWork.value
+        try await secondWork.value
+        #expect(await first.pipeline.gate.snapshot.activeBytes == 0)
+        #expect(await second.pipeline.gate.snapshot.activeBytes == 0)
+        #expect(secondEntered.value)
+    }
+
+    @Test("Default 10-second segments plan a complete 75-minute six-channel render")
+    func defaultLongFormPlanning() async throws {
+        let fixture = try await Self.fixture(targets: [2, 2, 2], label: "default-long-form")
+        let map = try fixture.model.timeMap(revision: 1, in: fixture.episodeID)
+        let group = try #require(map.groups.first(where: { $0.group == fixture.groups[1] }))
+        let participants = try fixture.sources.filter { $0.id != fixture.id("ref") }.map { source in
+            let key = SourceProbe.key(source: source.id, token: try PipelineFixture.registration(source.id, source.url).token)
+            return GroupRenderJob.Participant(source: source, facts: try SourceFacts.decode(#require(fixture.store.payload(for: key))))
+        }
+        let version = try #require(fixture.model.episode(fixture.episodeID)?.alignment?.map(revision: 1))
+        let reference = MapRevisionReference(episode: fixture.episodeID, revision: 1)
+        let identity = try fixture.pipeline.mapIdentity(
+            revision: reference, version: version, map: map, registered: await fixture.coordinator.inputs.sources
+        )
+        let config = AlignmentPipelineConfiguration()
+        let rate = 48_000
+        let job = GroupRenderJob(
+            episode: fixture.episodeID, revision: reference, identity: identity, map: group,
+            nominalOutputRate: try NominalRate(Int64(rate)), participants: participants,
+            outputFrames: 0 ..< Int64(75 * 60 * rate),
+            segmentFrames: Int64(config.renderSegmentSeconds * rate), recipeBaseName: config.renderRecipeName
+        )
+        #expect(config.renderSegmentSeconds == 10)
+        #expect(job.segmentIndices.count == 450)
+        #expect(job.segmentIndices.count * job.channels.count == 2700)
+        #expect(job.frames(ofSegment: job.segmentIndices.upperBound).upperBound == job.outputFrames.upperBound)
+        let bytes = try job.admissionBytes(chunkFrames: 16_384, recipe: .m2Candidate, concurrency: config.concurrency)
+        #expect(bytes <= config.analysisMemoryBudgetBytes)
+    }
+
+    @Test("The checked episode-wide result guard still refuses excessive one-second segments")
+    func longFormResultGuard() async throws {
+        let config = AlignmentPipelineConfiguration(
+            targetExcerptSeconds: 10, searchDeviationSeconds: 2, renderSegmentSeconds: 1
+        )
+        let fixture = try await Self.fixture(
+            configuration: config, targets: [2, 2, 2], seconds: 75 * 60, label: "long-form-result-guard"
+        )
+        let opens = fixture.content.total.opens
+        do {
+            _ = try await fixture.render()
+            Issue.record("the 4096-result guard must refuse before opening a cursor")
+        } catch let refusal as AlignedAssetRefusal {
+            guard case let .renderEnvelope(reason) = refusal else {
+                Issue.record("expected a typed result-count refusal, got \(refusal)")
+                return
+            }
+            #expect(reason.contains("4096"))
+        }
+        #expect(fixture.content.total.opens == opens)
+    }
+
+    @Test("Simultaneous cold-cache adoption across coordinators opens no render cursors")
+    func cacheFanOut() async throws {
+        let config = AlignmentPipelineConfiguration(
+            targetExcerptSeconds: 10, searchDeviationSeconds: 2, renderSegmentSeconds: 10
+        )
+        let fixture = try await Self.fixture(configuration: config, targets: [4, 3], seconds: 20, label: "cache-fan-out")
+        let initial = try await fixture.render()
+        #expect(initial.isComplete)
+        let opens = fixture.content.total.opens
+        await fixture.coordinator.acceptMap(MapRevisionReference(episode: fixture.episodeID, revision: 2))
+        try await fixture.pipeline.activate(model: fixture.model, episode: fixture.episodeID)
+        let restored = try await fixture.render()
+        #expect(restored.isComplete)
+        #expect(restored.groups.allSatisfy { $0.segmentsReused == $0.segments })
+        #expect(fixture.content.total.opens == opens)
+        var pipelines: [AlignmentPipeline] = []
+        for _ in 0 ..< 3 {
+            let coordinator = DerivedJobCoordinator(store: fixture.store)
+            for source in fixture.sources {
+                await coordinator.updateSource(try PipelineFixture.registration(source.id, source.url))
+            }
+            let pipeline = AlignmentPipeline(coordinator: coordinator, decoder: fixture.decoder, configuration: config)
+            try await pipeline.activate(model: fixture.model, episode: fixture.episodeID)
+            pipelines.append(pipeline)
+        }
+        let reports = await boundedMap(pipelines, limit: 3) { pipeline -> Result<AlignedAssetReport, any Error> in
+            do {
+                return .success(try await pipeline.renderAlignedAssets(
+                    model: fixture.model, episode: fixture.episodeID,
+                    sources: fixture.sources, authorizations: fixture.authorizations
+                ))
+            } catch {
+                return .failure(error)
+            }
+        }
+        for result in reports {
+            let report = try result.get()
+            #expect(report.isComplete)
+            #expect(report.groups.allSatisfy { $0.segmentsReused == $0.segments && $0.segmentsRendered == 0 })
+        }
+        #expect(fixture.content.total.opens == opens)
+        for pipeline in pipelines { #expect(await pipeline.gate.snapshot.activeBytes == 0) }
+    }
 }

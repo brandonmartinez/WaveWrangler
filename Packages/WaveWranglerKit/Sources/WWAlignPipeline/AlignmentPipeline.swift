@@ -712,7 +712,15 @@ public final class AlignmentPipeline: Sendable {
             if await coordinator.isShutdown { throw .coordinatorShutDown }
             throw .invalidMap("the restored map identity did not publish: \(published.outcome)")
         }
-        await coordinator.restoreCachedCurrentSlots()
+        // Undo/redo cache reconciliation reads each candidate's full payload. It must not run beside
+        // admitted renders from this or another pipeline instance outside the process envelope.
+        do {
+            try await ResourceGate.process.withAdmission(bytes: AlignmentPipelineConfiguration.maximumMemoryBudgetBytes) {
+                await coordinator.restoreCachedCurrentSlots()
+            }
+        } catch {
+            throw .invalidMap("cached map restoration was interrupted: \(error)")
+        }
         await ledger.reconcile(
             episode: episodeID,
             snapshot: AcceptanceLedger.Snapshot(alignment: episode.alignment)

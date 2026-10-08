@@ -215,3 +215,47 @@ struct PipelineRender75Tests {
         print("[pipeline-render75] mid-render cancellation \(cancellationElapsed); stopped at source frame \(read.furthestFrame)")
     }
 }
+
+@Suite("Default 75-minute aligned-asset render (local, serialized)", .serialized,
+       .enabled(if: ProcessInfo.processInfo.environment["WW_PIPELINE_DEFAULT75"] == "1",
+                "run in a separate optimized process (WW_PIPELINE_DEFAULT75=1)"))
+struct PipelineDefaultRender75Tests {
+    @Test("Default 10-second segments render every channel and stay inside the measured process envelope")
+    func defaultLongForm() async throws {
+        let config = AlignmentPipelineConfiguration(
+            concurrency: 2, targetExcerptSeconds: 10, searchDeviationSeconds: 2
+        )
+        let fixture = try await PipelineFixture(
+            PipelineRender75Tests.groups(), configuration: config, label: "default-render75"
+        )
+        let analysis = try await fixture.analyse(preferredReference: "reference")
+        try await fixture.acceptAndActivate(analysis, [fixture.epochs[1]: PipelineRender75Tests.truth])
+        let baseline = MemorySampler.now()
+        let sampler = MemorySampler()
+        let report = try await PipelineRender75Tests.renderTargets(fixture)
+        let peaks = sampler.stop()
+        let rss = MemorySampler.maxResident()
+        let group = try #require(report.groups.first)
+        let map = try fixture.model.timeMap(revision: 1, in: fixture.episodeID)
+        let target = try #require(map.groups.first(where: { $0.group == fixture.groups[1] }))
+        let expected = try #require(try GroupRenderJob.hull(
+            map: target,
+            occurrences: PipelineRender75Tests.targetNames.map { alignmentOccurrenceID(for: fixture.id($0)) },
+            outputRate: PipelineRender75Tests.outputRate
+        ))
+        #expect(report.isComplete && report.groups.count == 1)
+        #expect(group.outputFrames == expected)
+        #expect(group.segments > 256 && group.segments >= 450)
+        #expect(group.segmentsRendered == group.segments && group.segmentsReused == 0)
+        #expect(group.results.count == group.segments * 6)
+        #expect(Set(group.results.map(\.key)).count == group.results.count)
+        #expect(group.results.count <= 4096)
+        #expect(fixture.content.openReaders == 0)
+        let gate = await ResourceGate.process.snapshot
+        print("""
+        [pipeline-default75] default 10s, six channels, segments \(group.segments), results \(group.results.count)
+        [pipeline-default75] baseline RSS \(baseline.resident), footprint \(baseline.footprint); ru_maxrss \(rss), sampled RSS \(peaks.resident), footprint \(peaks.footprint); process gate peak \(gate.peakBytes)
+        """)
+        #expect(rss <= 1_073_741_824 && peaks.resident <= 1_073_741_824 && peaks.footprint <= 1_073_741_824)
+    }
+}
