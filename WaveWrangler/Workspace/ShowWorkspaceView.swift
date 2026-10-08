@@ -240,7 +240,9 @@ private struct ShowDetailContent: View {
 
     var body: some View {
         let model = state.store.model
-        if state.sidebarSelection == .showInfo {
+        if state.destination == .review {
+            TranscriptReviewView(state: state.reviewState)
+        } else if state.sidebarSelection == .showInfo {
             ShowInfoSummary(state: state)
         } else if model.episodes.isEmpty {
             ContentUnavailableView {

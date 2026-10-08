@@ -9,7 +9,11 @@ struct InspectorContainer: View {
     var body: some View {
         ScrollView {
             Group {
-                if state.sidebarSelection == .showInfo {
+                if state.destination == .review {
+                    TranscriptReviewInspector(state: state.reviewState) {
+                        state.showReviewSetup()
+                    }
+                } else if state.sidebarSelection == .showInfo {
                     ShowInfoInspector(state: state)
                 } else if state.destination == .alignment, let model = state.alignmentModel {
                     AlignmentInspectorView(model: model)
