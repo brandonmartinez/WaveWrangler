@@ -22,6 +22,7 @@ struct ZoomCycleDriftTests {
         let result = checkZoomCycleDrift(samples)
 
         #expect(!result.passes)
+        #expect(result.modeCount > 1)
         #expect(result.maximumAbsoluteSlope > 1.25)
         #expect(result.maximumAbsoluteMedianShift > 10)
     }
