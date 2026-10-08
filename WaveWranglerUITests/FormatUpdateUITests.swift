@@ -495,8 +495,10 @@ final class FormatUpdateUITests: XCTestCase {
     private func isSelectedTab(named name: String) -> Bool {
         let window = showWindow(named: name)
         let sheet = window.sheets.firstMatch
-        // The format-update prompt is the key surface while attached to its selected document tab.
-        return app.state == .runningForeground && window.exists && (isFocused(window) || isFocused(sheet))
+        // AX exposes the selected native tab as the hittable document window. While its prompt is open,
+        // the sheet is the key surface and must be hittable too.
+        return app.state == .runningForeground && window.exists && window.isHittable
+            && (!sheet.exists || sheet.isHittable)
     }
 
     private func recordTabSelectionFailure(_ name: String, attempts: Int, reason: String) {
@@ -513,6 +515,7 @@ final class FormatUpdateUITests: XCTestCase {
                     "hasKeyboardFocus": isFocused($0),
                     "sheetHasKeyboardFocus": isFocused($0.sheets.firstMatch),
                     "isHittable": $0.isHittable,
+                    "sheetIsHittable": $0.sheets.firstMatch.isHittable,
                 ]
             },
         ], test: self)
