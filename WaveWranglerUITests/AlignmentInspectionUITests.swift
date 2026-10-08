@@ -295,6 +295,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         }
         var layoutContainerFindings = 0
         var inspectorColumnFindings = 0
+        var actionRowFindings = 0
         var showSectionFindings = 0
         var outlineCellFindings = 0
         try app.performAccessibilityAudit(
@@ -318,13 +319,29 @@ final class AlignmentInspectionUITests: XCTestCase {
             // SwiftUI description reaches it: labelling the cell content, combining its children and
             // the value-keypath shorthand all leave this one container undescribed (#219). It is waived
             // only while its own labelled text child is still exposed to assistive technology.
+            // The action buttons' own row is an undescribed layout container: declaring it a containing
+            // element drops its buttons from the tree in a narrow window (#219), so it is waived while
+            // every one of its children is a labelled control.
+            let actionButtons = element.descendants(matching: .button).allElementsBoundByIndex
+            let isActionRow = !actionButtons.isEmpty
+                && actionButtons.allSatisfy { !$0.label.isEmpty }
+                && element.descendants(matching: .any).allElementsBoundByIndex.count == actionButtons.count
+                && element.frame.height <= 40
             let isOutlineCell = outlineCellFrames.contains(element.frame)
                 && element.descendants(matching: .any).allElementsBoundByIndex
                     .contains { !$0.label.isEmpty || !(($0.value as? String) ?? "").isEmpty }
-            guard isContent || isSidebar || isShowSection || isOutlineCell || isInspectorColumn else {
+            guard isContent || isSidebar || isShowSection || isOutlineCell || isInspectorColumn
+                    || isActionRow
+            else {
                 return self.reportUnwaived(issue)
             }
-            if isOutlineCell {
+            if isActionRow {
+                actionRowFindings += 1
+                print(
+                    "AUDIT WAIVED [alignment-action-row] \(issue.compactDescription) \(element.frame) — " +
+                    "layout row holding only labelled alignment buttons"
+                )
+            } else if isOutlineCell {
                 outlineCellFindings += 1
                 print(
                     "AUDIT WAIVED [alignment-outline-cell] \(issue.compactDescription) — " +
@@ -355,6 +372,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         // sidebar adds a third; each is waived only by matching one of those labelled frames exactly.
         XCTAssertLessThanOrEqual(layoutContainerFindings, 3)
         XCTAssertLessThanOrEqual(inspectorColumnFindings, 1)
+        XCTAssertLessThanOrEqual(actionRowFindings, 2)
         XCTAssertLessThanOrEqual(showSectionFindings, 1)
         // At most one finding per cell: each is the container AppKit builds around that cell.
         XCTAssertGreaterThan(outlineCellFrames.count, 0, "The alignment outlines must expose their cells")
@@ -380,7 +398,7 @@ final class AlignmentInspectionUITests: XCTestCase {
                   element.elementType == .staticText,
                   (element.value as? String ?? element.label) == "Empty Alignment",
                   element.frame.maxY <= titlebarBottom
-            else { return false }
+            else { return self.reportUnwaived(issue) }
             titlebarFindings += 1
             print("AUDIT WAIVED [blocked-titlebar] \(issue.compactDescription) — AppKit window title outside the blocked content")
             return true
