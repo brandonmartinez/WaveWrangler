@@ -23,6 +23,7 @@ SHA256 = "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002"
 CDN_HOST = "us.aws.cdn.hf.co"
 SF_DATALESS = 0x40000000
 IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES = 3
+IOPOL_SCOPE_PROCESS = 0
 IOPOL_SCOPE_THREAD = 1
 IOPOL_MATERIALIZE_DATALESS_FILES_OFF = 1
 
@@ -113,7 +114,7 @@ def _parent_identities(path):
     return identities
 
 
-def _check_file(path, size, digest):
+def _check_file(path, size, digest, owner_private=True):
     path = Path(os.path.abspath(path))
     parents_before = _parent_identities(path)
     try:
@@ -131,8 +132,9 @@ def _check_file(path, size, digest):
     try:
         before = os.fstat(fd)
         if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
-                or before.st_mode & 0o077 or before.st_size != size
+                or (owner_private and before.st_mode & 0o077) or before.st_size != size
                 or before.st_nlink != 1 or getattr(before, "st_flags", 0) & SF_DATALESS
+                or before.st_dev != os.stat("/private/tmp").st_dev
                 or _identity(pathname_before) != _identity(before)):
             raise ProvisionError("Model ownership, size or locality mismatch")
         sha = hashlib.sha256()

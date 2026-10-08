@@ -55,8 +55,21 @@ Synthetic negative tests verify no file open or network attempt on a dataless
 placeholder or policy failure, and reject replacement during open/hash or adoption.
 The macOS policy transition and restoration are tested on the host, but **no live
 File Provider trial or monitored cold-restart traffic measurement** is claimed.
-The separate staging shell script's multi-process hash/copy path is not covered
-by this preflight policy and remains a separate offline-admission gap.
+The follow-up stacked staging revision replaces the shell hash/copy path with
+descriptor-pinned Python copying under the same thread policy. Staging verifies
+all ten source files before creating an owner-private temporary directory, then
+rehashes the same open descriptor as it copies each file; it compares source
+pathname, descriptor, parents and output identity before and after the copy.
+Each `install_name_tool`/ad-hoc `codesign` child installs a verified process-scoped
+no-materialization policy **before exec** (which survives exec on the tested dev
+Mac), and every staged output and source is rechecked while the parent thread
+policy is active. An unavailable/ineffective policy, changed/dataless/linked
+asset, unexpected output, subprocess failure or policy restoration failure
+refuses publication and removes the private temporary stage. Synthetic tests
+cover all ten assets, policy failures, intervening dataless status, replacement,
+relink, mutated output and failure cleanup without reading private model bytes
+or running inference. A live File Provider race, Apple cold-restart traffic
+audit, offline rights and actual-media/full-gate qualification remain open.
 
 Provisioning rejects an absent/changed publisher size or digest, unexpected redirect
 host or scheme, CDN redirect, oversized/truncated/mismatched body, symlinked store or
@@ -70,9 +83,10 @@ profile. These structural controls are not a measured cold-restart app/system tr
 audit; system-managed Apple speech provisioning/update traffic and exact binary
 transitive notice clearance remain unknown.
 
-`scripts/stage-speech-candidate.sh <already-provisioned-official-model>` checks the
-reviewed source hashes/sizes, regular-file/symlink-parent/dataless status and local staging
-volume, then copies into a unique owner-private `/private/tmp/ww-speech-XXXXXXXX` directory.
+`scripts/stage-speech-candidate.sh <already-provisioned-official-model>` delegates
+to the protected Python staging implementation, checking the reviewed source
+hashes/sizes, regular-file/symlink-parent/dataless status and local staging
+volume, then copying into a unique owner-private `/private/tmp/ww-speech-XXXXXXXX` directory.
 It relocates Homebrew's absolute dylib references to the private directory, signs the
 changed binaries ad hoc, and rejects any output byte other than the reviewed staged
 checksums. The typed `ApprovedWhisperRuntime` catalog pins the exact relocated executable,

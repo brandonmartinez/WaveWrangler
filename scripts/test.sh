@@ -57,6 +57,8 @@ fi
 
 echo "==> synthetic offline speech provisioning checks"
 /usr/bin/python3 "$ROOT/scripts/test-provision-speech-model.py" -q
+echo "==> synthetic offline speech staging checks"
+/usr/bin/python3 "$ROOT/scripts/test-stage-speech-candidate.py" -q
 
 echo "==> swift test (Packages/WaveWranglerKit)"
 swift test \
