@@ -47,13 +47,14 @@ public struct EvidenceKey: Sendable, Equatable {
     public let protectionRevision: String
     public let outputRecipeRevision: String
     public let otherCutsRevision: String
-    public let lanes: [LaneRevision]
+    public let laneManifestRevision: String
 
     public init(primary: SourceOccurrence, primaryAuthorization: PrimaryAuthorization,
                 sourceRevision: String, modelRevision: String,
                 transcriptRevision: String, correctionRevision: String, alignmentRevision: String,
                 assetRevision: String, formatRevision: String, protectionRevision: String,
-                outputRecipeRevision: String, otherCutsRevision: String, lanes: [LaneRevision]) {
+                outputRecipeRevision: String, otherCutsRevision: String,
+                laneManifestRevision: String) {
         self.primary = primary
         self.primaryAuthorization = primaryAuthorization
         self.sourceRevision = sourceRevision
@@ -66,7 +67,7 @@ public struct EvidenceKey: Sendable, Equatable {
         self.protectionRevision = protectionRevision
         self.outputRecipeRevision = outputRecipeRevision
         self.otherCutsRevision = otherCutsRevision
-        self.lanes = lanes
+        self.laneManifestRevision = laneManifestRevision
     }
 
     public var hasCompleteIdentity: Bool {
@@ -74,13 +75,7 @@ public struct EvidenceKey: Sendable, Equatable {
         !primary.occurrence.isEmpty && !primary.epoch.isEmpty &&
         [sourceRevision, modelRevision, transcriptRevision, correctionRevision,
          alignmentRevision, assetRevision, formatRevision, protectionRevision,
-         outputRecipeRevision, otherCutsRevision].allSatisfy { !$0.isEmpty } &&
-        lanes.allSatisfy { lane in
-            !lane.id.isEmpty && !lane.backingRevision.isEmpty && !lane.mapRevision.isEmpty &&
-            !lane.protectionRevision.isEmpty &&
-            (lane.origin.map { !$0.source.isEmpty && !$0.occurrence.isEmpty &&
-                !$0.epoch.isEmpty && $0.channel >= 0 } ?? true)
-        }
+         outputRecipeRevision, otherCutsRevision, laneManifestRevision].allSatisfy { !$0.isEmpty }
     }
 }
 
@@ -89,20 +84,48 @@ public enum PrimaryAuthorization: Sendable, Equatable {
     case notAuthorized
 }
 
+public enum LaneKind: Sendable, Equatable {
+    case selectedPrimary, backup, otherSpeaker, intentionalSilence
+}
+
 public struct LaneRevision: Sendable, Equatable {
     public let id: String
+    public let kind: LaneKind
     public let origin: SourceOccurrence?
     public let backingRevision: String
     public let mapRevision: String
     public let protectionRevision: String
 
-    public init(id: String, origin: SourceOccurrence?, backingRevision: String,
+    public init(id: String, kind: LaneKind, origin: SourceOccurrence?, backingRevision: String,
                 mapRevision: String, protectionRevision: String) {
         self.id = id
+        self.kind = kind
         self.origin = origin
         self.backingRevision = backingRevision
         self.mapRevision = mapRevision
         self.protectionRevision = protectionRevision
+    }
+}
+
+/// Only a trusted organizer adapter inside this module may mint the complete episode lane set.
+/// A caller's subset of lanes or revision strings cannot certify episode completeness.
+public struct EpisodeLaneManifest: Sendable {
+    public let revision: String
+    public let lanes: [LaneRevision]
+
+    internal init(revision: String, lanes: [LaneRevision]) {
+        self.revision = revision
+        self.lanes = lanes
+    }
+}
+
+public struct VerifiedEpisodeState: Sendable {
+    public let key: EvidenceKey
+    public let manifest: EpisodeLaneManifest
+
+    internal init(key: EvidenceKey, manifest: EpisodeLaneManifest) {
+        self.key = key
+        self.manifest = manifest
     }
 }
 
@@ -175,6 +198,8 @@ public enum CutRefusal: Error, Sendable, Equatable {
     case invalidAdjustment
     case invalidGrid
     case incompleteLanes
+    case missingLaneAuthority
+    case missingHumanReview
     case uninspectableLane(String)
     case protectedFrame(String)
     case unsupportedFade(String)
@@ -189,14 +214,16 @@ public protocol CutFootprintMapping {
 
 public struct CutFootprint: Sendable, Equatable {
     public let key: EvidenceKey
+    public let manifestRevision: String
     public let grid: FrameSpan
     public let outputRate: Int64
     public let effect: CutEffect
     public let lanes: [LaneFootprint]
 
-    public init(key: EvidenceKey, grid: FrameSpan, outputRate: Int64,
+    public init(key: EvidenceKey, manifestRevision: String, grid: FrameSpan, outputRate: Int64,
                 effect: CutEffect, lanes: [LaneFootprint]) {
         self.key = key
+        self.manifestRevision = manifestRevision
         self.grid = grid
         self.outputRate = outputRate
         self.effect = effect
@@ -209,9 +236,43 @@ public enum CutEffect: Sendable, Equatable {
     case lift(reservedOutputFrames: Int64)
 }
 
-public enum ProtectionProof: Sendable, Equatable {
-    case complete([FrameSpan])
-    case unknown
+public struct ProtectionProof: Sendable, Equatable {
+    public enum Status: Sendable, Equatable {
+        case verifiedPrimary, verifiedIndependentLane, unknown, overlap
+        case backupWithoutIndependentProof, unsupportedBoundary
+    }
+
+    public let status: Status
+    public let origin: SourceOccurrence?
+    public let revision: String?
+    public let protected: [FrameSpan]
+
+    private init(_ status: Status, origin: SourceOccurrence? = nil,
+                 revision: String? = nil, protected: [FrameSpan] = []) {
+        self.status = status
+        self.origin = origin
+        self.revision = revision
+        self.protected = protected
+    }
+
+    public static let unknown = Self(.unknown)
+    public static let overlap = Self(.overlap)
+    public static let backupWithoutIndependentProof = Self(.backupWithoutIndependentProof)
+    public static let unsupportedBoundary = Self(.unsupportedBoundary)
+
+    internal static func verifiedPrimary(_ origin: SourceOccurrence, revision: String,
+                                         protected: [FrameSpan]) -> Self {
+        Self(.verifiedPrimary, origin: origin, revision: revision, protected: protected)
+    }
+
+    internal static func verifiedIndependentLane(_ origin: SourceOccurrence, revision: String,
+                                                 protected: [FrameSpan]) -> Self {
+        Self(.verifiedIndependentLane, origin: origin, revision: revision, protected: protected)
+    }
+}
+
+public enum BoundarySupport: Sendable, Equatable {
+    case supported, unsupported, ambiguousInverse, crossesOccurrenceOrEpoch
 }
 
 public struct FadeFootprint: Sendable, Equatable {
@@ -232,7 +293,7 @@ public struct FadeFootprint: Sendable, Equatable {
 public enum LaneFootprint: Sendable, Equatable {
     case audio(id: String, origin: SourceOccurrence, coverage: FrameSpan,
                removal: FrameSpan, fades: FadeFootprint,
-               protection: ProtectionProof, backed: Bool,
+               protection: ProtectionProof, backed: Bool, boundary: BoundarySupport,
                fadeOutOutputFrames: Int64, fadeInOutputFrames: Int64,
                endpointErrorOutputFrames: Int64)
     case intentionalSilence(id: String, gridCoverage: FrameSpan)
@@ -240,7 +301,7 @@ public enum LaneFootprint: Sendable, Equatable {
 
     public var id: String {
         switch self {
-        case let .audio(id, _, _, _, _, _, _, _, _, _), let .intentionalSilence(id, _),
+        case let .audio(id, _, _, _, _, _, _, _, _, _, _), let .intentionalSilence(id, _),
              let .unsupported(id): id
         }
     }
@@ -250,14 +311,43 @@ public struct ApprovedCut: Sendable, Equatable {
     public let request: CutRequest
     public let footprint: CutFootprint
     public let key: EvidenceKey
+    public let review: HumanReviewAction
+}
+
+/// Minted only by a future native person-action adapter, not by proposal generation.
+public struct HumanReviewAction: Sendable, Equatable {
+    public let actionID: String
+    public let proposalID: String
+    public let request: CutRequest
+    public let key: EvidenceKey
+    public let manifestRevision: String
+
+    internal init(actionID: String, proposalID: String, request: CutRequest,
+                  key: EvidenceKey, manifestRevision: String) {
+        self.actionID = actionID
+        self.proposalID = proposalID
+        self.request = request
+        self.key = key
+        self.manifestRevision = manifestRevision
+    }
 }
 
 public enum CutPolicy {
     public static func admit(
-        _ proposal: CutProposal, request: CutRequest, currentKey: EvidenceKey,
-        affectedLanes: [LaneRevision], mapping: any CutFootprintMapping
+        _ proposal: CutProposal, request: CutRequest, current: VerifiedEpisodeState?,
+        review: HumanReviewAction?, mapping: any CutFootprintMapping
     ) throws -> ApprovedCut {
+        guard let current else { throw CutRefusal.missingLaneAuthority }
+        guard let review else { throw CutRefusal.missingHumanReview }
+        let currentKey = current.key
         guard proposal.key == currentKey else { throw CutRefusal.staleEvidence }
+        guard current.manifest.revision == currentKey.laneManifestRevision,
+              !current.manifest.revision.isEmpty else { throw CutRefusal.staleEvidence }
+        guard !review.actionID.isEmpty, review.proposalID == proposal.id,
+              review.request == request, review.key == currentKey,
+              review.manifestRevision == current.manifest.revision else {
+            throw CutRefusal.missingHumanReview
+        }
         guard !proposal.id.isEmpty, currentKey.hasCompleteIdentity,
               proposal.words.allSatisfy({ !$0.tokenID.isEmpty }) else {
             throw CutRefusal.invalidIdentity
@@ -273,7 +363,10 @@ public enum CutPolicy {
         }
 
         let proof = try mapping.footprint(for: request, primary: currentKey.primary)
-        guard proof.key == currentKey else { throw CutRefusal.staleEvidence }
+        guard proof.key == currentKey,
+              proof.manifestRevision == current.manifest.revision else {
+            throw CutRefusal.staleEvidence
+        }
         let duration = proof.grid.end - proof.grid.start
         guard proof.outputRate > 0 else { throw CutRefusal.invalidGrid }
         switch (request.mode, proof.effect) {
@@ -284,16 +377,28 @@ public enum CutPolicy {
         default:
             throw CutRefusal.invalidGrid
         }
-        guard Set(affectedLanes.map(\.id)).count == affectedLanes.count else {
+        let affectedLanes = current.manifest.lanes
+        guard Set(affectedLanes.map(\.id)).count == affectedLanes.count,
+              affectedLanes.allSatisfy({ lane in
+                  !lane.id.isEmpty && !lane.backingRevision.isEmpty &&
+                  !lane.mapRevision.isEmpty && !lane.protectionRevision.isEmpty &&
+                  (lane.origin.map { !$0.source.isEmpty && !$0.occurrence.isEmpty &&
+                      !$0.epoch.isEmpty && $0.channel >= 0 } ?? true) &&
+                  ((lane.kind == .intentionalSilence) == (lane.origin == nil))
+              }),
+              affectedLanes.filter({ $0.kind == .selectedPrimary }).count == 1,
+              affectedLanes.contains(where: {
+                  $0.kind == .selectedPrimary && $0.origin == currentKey.primary
+              }),
+              !affectedLanes.contains(where: {
+                  $0.kind != .selectedPrimary && $0.origin == currentKey.primary
+              }) else {
             throw CutRefusal.incompleteLanes
         }
         let expected = Dictionary(uniqueKeysWithValues: affectedLanes.map { ($0.id, $0) })
-        guard !expected.isEmpty, affectedLanes == currentKey.lanes,
+        guard !expected.isEmpty,
               Set(proof.lanes.map(\.id)) == Set(expected.keys),
               proof.lanes.count == affectedLanes.count else { throw CutRefusal.incompleteLanes }
-        guard affectedLanes.contains(where: { $0.origin == currentKey.primary }) else {
-            throw CutRefusal.incompleteLanes
-        }
 
         for lane in proof.lanes {
             guard let expectedLane = expected[lane.id] else { throw CutRefusal.incompleteLanes }
@@ -301,19 +406,27 @@ public enum CutPolicy {
             case let .unsupported(id):
                 throw CutRefusal.uninspectableLane(id)
             case let .intentionalSilence(id, gridCoverage):
-                guard expectedLane.origin == nil, gridCoverage.contains(proof.grid) else {
+                guard expectedLane.kind == .intentionalSilence,
+                      gridCoverage.contains(proof.grid) else {
                     throw CutRefusal.uninspectableLane(id)
                 }
-            case let .audio(id, origin, coverage, removal, fades, protection, backed, fadeOut, fadeIn, endpointError):
-                guard expectedLane.origin == origin, backed, origin.channel >= 0,
+            case let .audio(id, origin, coverage, removal, fades, protection, backed, boundary, fadeOut, fadeIn, endpointError):
+                guard expectedLane.kind != .intentionalSilence,
+                      expectedLane.origin == origin, backed, boundary == .supported,
+                      origin.channel >= 0,
                       coverage.contains(removal), endpointError >= 0,
                       endpointError <= 1 else { throw CutRefusal.uninspectableLane(id) }
                 if origin == currentKey.primary && removal != request.sourceFrames {
                     throw CutRefusal.uninspectableLane(id)
                 }
-                guard case let .complete(protected) = protection else {
+                let requiredStatus: ProtectionProof.Status =
+                    expectedLane.kind == .selectedPrimary ? .verifiedPrimary : .verifiedIndependentLane
+                guard protection.status == requiredStatus,
+                      protection.origin == origin,
+                      protection.revision == expectedLane.protectionRevision else {
                     throw CutRefusal.uninspectableLane(id)
                 }
+                let protected = protection.protected
                 guard protected.allSatisfy({ coverage.contains($0) }) else {
                     throw CutRefusal.uninspectableLane(id)
                 }
@@ -342,7 +455,7 @@ public enum CutPolicy {
                 }
             }
         }
-        return ApprovedCut(request: request, footprint: proof, key: currentKey)
+        return ApprovedCut(request: request, footprint: proof, key: currentKey, review: review)
     }
 
     public static func supportsWords(_ proposal: CutProposal) -> Bool {
@@ -403,6 +516,9 @@ public struct ReviewEntry: Sendable, Equatable {
 }
 
 public struct ReviewTransition: Sendable, Equatable {
+    public let id: Int
+    public let parentHead: Int?
+    public let branchID: Int
     public let actionName: String
     public let before: ReviewEntry
     public let after: ReviewEntry
@@ -413,17 +529,28 @@ public struct ReviewTransition: Sendable, Equatable {
 public struct ReviewJournal: Sendable, Equatable {
     public private(set) var current: ReviewEntry
     public private(set) var transitions: [ReviewTransition] = []
+    public private(set) var head: Int?
+    public private(set) var branchID = 0
+    private var actionPath: [Int] = []
     public private(set) var cursor = 0
 
     public init(proposal: CutProposal) { current = ReviewEntry(proposal: proposal) }
 
-    public mutating func accept(currentKey: EvidenceKey, affectedLanes: [LaneRevision],
+    public mutating func accept(current state: VerifiedEpisodeState?, review: HumanReviewAction?,
                                 mapping: any CutFootprintMapping) throws {
         guard current.decision == .pending || current.decision == .adjusted else {
             throw CutRefusal.invalidTransition
         }
+        if let review, transitions.contains(where: { transition in
+            if case let .accepted(cut) = transition.after.decision {
+                return cut.review.actionID == review.actionID
+            }
+            return false
+        }) {
+            throw CutRefusal.missingHumanReview
+        }
         let cut = try CutPolicy.admit(current.proposal, request: current.request,
-                                      currentKey: currentKey, affectedLanes: affectedLanes, mapping: mapping)
+                                      current: state, review: review, mapping: mapping)
         record("Accept \(current.proposal.id)", decision: .accepted(cut))
     }
 
@@ -459,30 +586,31 @@ public struct ReviewJournal: Sendable, Equatable {
         record("Restore \(current.proposal.id)", decision: .restored(cut))
     }
 
-    public mutating func undo(currentKey: EvidenceKey, affectedLanes: [LaneRevision],
+    public mutating func undo(current state: VerifiedEpisodeState?,
                               mapping: any CutFootprintMapping) throws {
         guard cursor > 0 else { throw CutRefusal.invalidTransition }
-        let previous = transitions[cursor - 1].before
-        try validateReactivation(previous, currentKey: currentKey, affectedLanes: affectedLanes, mapping: mapping)
-        current = previous
+        let action = transitions[actionPath[cursor - 1]]
+        let previous = action.before
+        try validateReactivation(previous, current: state, mapping: mapping)
+        append("Undo \(action.actionName)", after: previous)
         cursor -= 1
     }
 
-    public mutating func redo(currentKey: EvidenceKey, affectedLanes: [LaneRevision],
+    public mutating func redo(current state: VerifiedEpisodeState?,
                               mapping: any CutFootprintMapping) throws {
-        guard cursor < transitions.count else { throw CutRefusal.invalidTransition }
-        let next = transitions[cursor].after
-        try validateReactivation(next, currentKey: currentKey, affectedLanes: affectedLanes, mapping: mapping)
-        current = next
+        guard cursor < actionPath.count else { throw CutRefusal.invalidTransition }
+        let action = transitions[actionPath[cursor]]
+        let next = action.after
+        try validateReactivation(next, current: state, mapping: mapping)
+        append("Redo \(action.actionName)", after: next)
         cursor += 1
     }
 
-    private func validateReactivation(_ entry: ReviewEntry, currentKey: EvidenceKey,
-                                      affectedLanes: [LaneRevision],
+    private func validateReactivation(_ entry: ReviewEntry, current state: VerifiedEpisodeState?,
                                       mapping: any CutFootprintMapping) throws {
         guard case let .accepted(previous) = entry.decision else { return }
         let fresh = try CutPolicy.admit(entry.proposal, request: entry.request,
-                                        currentKey: currentKey, affectedLanes: affectedLanes, mapping: mapping)
+                                        current: state, review: previous.review, mapping: mapping)
         guard fresh == previous else { throw CutRefusal.staleEvidence }
     }
 
@@ -490,9 +618,21 @@ public struct ReviewJournal: Sendable, Equatable {
                                  decision: ReviewDecision) {
         let after = ReviewEntry(proposal: current.proposal, request: request ?? current.request,
                                 decision: decision)
-        transitions = Array(transitions.prefix(cursor)) +
-            [ReviewTransition(actionName: name, before: current, after: after)]
+        if cursor < actionPath.count {
+            actionPath = Array(actionPath.prefix(cursor))
+            branchID = transitions.count
+        }
+        let id = transitions.count
+        append(name, after: after)
+        actionPath.append(id)
         cursor += 1
+    }
+
+    private mutating func append(_ name: String, after: ReviewEntry) {
+        let id = transitions.count
+        transitions.append(ReviewTransition(id: id, parentHead: head, branchID: branchID,
+                                            actionName: name, before: current, after: after))
+        head = id
         current = after
     }
 }

@@ -1,12 +1,15 @@
 # WW-027 / WW-028: conservative cut-policy precursor and measurement protocol
 
-**Status:** protocol fixed in this commit; synthetic policy precursor only. No recognition, media,
+**Status:** prospective protocol and synthetic policy precursor only. No recognition, media,
 calibration, disjoint holdout, human listening, or precision result has been run or claimed here.
 Refs #21 #25 #27 #41. The pure `WWCutPolicy` target is not connected to the app, renderer, or
 `WWCommonEdit`; it cannot activate or render a cut. The latter's exact rounded pre-edit aligned-output
 frame endpoints (`qStart`, `qEnd`) must be supplied by an Alignment-owned adapter at output rate `R`.
-Do not use native source duration as the common ripple. Until the adapter and every-lane renderer
-integration are reviewed, these tests establish refusal behavior only, not full edit safety.
+Do not use native source duration as the common ripple. No trusted organizer lane-manifest adapter
+or native person-action adapter exists yet. Their snapshot and review-action constructors are
+non-public; **external callers cannot approve a cut**. Missing authority or review action explicitly
+refuses. Until both adapters and every-lane renderer integration are reviewed, these tests establish
+synthetic refusal behavior only, not full edit safety or a usable review workflow.
 
 ## Frozen prospective measurement rules (no holdout attempted)
 
@@ -73,20 +76,33 @@ and hallucinated timing are distinct. Meaningful, overlapping, uncertain and tra
 classifications are blocked. A proposal begins pending and inert. Admission requires an explicitly
 authorized selected Primary and an exact current analysis key (Primary/occurrence/epoch,
 source, model, transcript/correction, format/asset, alignment,
-protection, output recipe and other-cut revisions), exact affected-lane revisions, one shared rounded
-grid interval and output rate, and independently complete proof for **each** affected lane. An
+protection, output recipe, other-cut and immutable episode-lane-manifest revisions). The current key
+and complete affected-lane manifest must come from the trusted organizer adapter, never from a
+caller-provided lane subset. The footprint must have the same manifest revision and exactly one proof
+per manifest lane, with no omissions, duplicates or extras. Admission also requires a unique, typed
+person-initiated review action bound to the proposal, request, evidence key and manifest revision;
+no generated proposal can mint one or automatically accept. The common rounded grid interval and
+output rate must agree for both modes, and proof must cover **each** affected lane. An
 inaccessible, unmapped or ambiguously invertible audio lane must be `unsupported`, not silent. A
 silent lane must have a separately supported timed grid interval. Each audio lane needs current
 backing, matching occurrence/channel/epoch, complete protection coverage, <=1 output-frame endpoint
 error and the actual source-frame removal and **final merged** fade footprint. Intersections at the
 last frame refuse Shorten and Lift alike; Lift is an equal-duration gap alternative, not a waiver.
 No fade is enabled without an Alignment/renderer-verified final footprint and output-frame lengths.
+Proof is typed as selected-Primary or independently reviewed non-Primary protection, tied to that
+lane's source occurrence and protection revision. Unknown, overlap, Backup without independent
+proof, unsupported boundary, mismatched provenance and uninspectable lanes refuse; an empty
+transcript or recognition confidence is never protection evidence. Audio analysis consent remains
+limited to the selected authorized Primary, not to Backups or other speakers.
 
 `ReviewJournal` records named pending/adjusted/accepted/rejected/restored/abstained/blocked states;
 Restore keeps the accepted cut's evidence and removes activity. Undo Restore and redo Accept require
 fresh identical all-lane proof or leave the inactive state and history untouched. The app must
 coordinate one common-map revision change and preview/render invalidation atomically on publication;
-this pure target deliberately does neither. The current synthetic tests include 120 adversarial
-protected-frame placements tested under both modes, plus absent/hallucinated timing, ambiguous
-inverse, uncovered lane, last-frame merged fade, stale keys and identical undo/redo state.
+this pure target deliberately does neither. All journal transitions, including Undo/Redo, append
+with parent-head and branch identity; a new acceptance after Undo forks the active path without
+erasing the prior accepted transition. The current synthetic tests include 120 distinct adversarial
+placements (Primary, Backup, other-speaker and omitted-lane cases) under both modes, plus
+absent/hallucinated timing, ambiguous inverse, uncovered lane, last-frame merged fade, stale keys,
+explicit human-action refusal and append-only Undo/Redo/branch history.
 They are a **bounded precursor**, not the frozen precision or real-material gates.
