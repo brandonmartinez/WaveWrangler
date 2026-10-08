@@ -90,8 +90,9 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         let setupRemedy = app.buttons["ww.review.remedy.setup"]
         XCTAssertTrue(setupRemedy.waitForExistence(timeout: 3))
         XCTAssertTrue(setupRemedy.isEnabled)
-        XCTAssertTrue(
-            app.descendants(matching: .any)["ww.review.remedy.keyboard"].label.contains("View > Setup (⌘1)")
+        XCTAssertEqual(
+            app.descendants(matching: .any)["ww.review.remedy.keyboard"].label,
+            "Keyboard alternative: View > Setup (Command-1)"
         )
 
         let unwaived = try AcceptanceAudit.run(

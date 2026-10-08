@@ -183,6 +183,7 @@ struct TranscriptReviewInspector: View {
                 .accessibilityIdentifier("ww.review.remedy.setup")
             Text("Keyboard: View > Setup (⌘1).")
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("Keyboard alternative: View > Setup (Command-1)")
                 .accessibilityIdentifier("ww.review.remedy.keyboard")
 
             Divider()
