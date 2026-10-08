@@ -37,3 +37,20 @@ every preview/export track including silent tracks. The renderer must implement 
 crossfades and common padding, with separate finite proof of zero protected/meaningful/other-speech
 loss, fade safety, no-dither preview/export null (at most one PCM step), safe lift alternatives and
 deterministic undo/history. None of those audio or human-acceptance gates is established here.
+
+**WW-045 package preflight boundary:** `CommonRenderAdapter.prepare` currently refuses with
+`organizerAuthorityUnavailable`. Its internal, synthetic-only `inspectSynthetic` checks an explicitly
+listed inventory against distinct occurrence/channel lane keys (including full-episode, timed explicit
+silence), full-length declared aligned backing, protection-list presence, removal-list consistency,
+overlapping fades and fade-footprint intersection with every lane's declared protected frames. A
+successful synthetic inspection yields the same immutable `CommonEpisodeEditMap` value for prospective
+preview/render prescriptions, not audio, a publication token, or proof that the caller's claims are
+true. Eleven focused WWCommonEdit tests (seven map, four preflight) use synthetic fixtures only.
+
+To open the production gate, an organizer-owned capability must supply a complete lane snapshot with
+verified backed segments and source revisions, a human-accepted edit/protection decision and exact
+boundary-rounding/fade evidence. A single package adapter must then render all lanes with the accepted
+map, checking source/decision revisions again at atomic NSDocument publication. The current alignment
+job renders one group into M2 aligned segments; neither it nor the frame map can establish complete
+episode lanes or accepted cut/fade authority. Until that integration exists, no product preview, export,
+shorten/lift, real-media proof or no-dither null claim is made here.

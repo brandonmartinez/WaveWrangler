@@ -212,6 +212,153 @@ struct CommonEpisodeEditMapTests {
     }
 }
 
+@Suite("Common render binding (synthetic preflight only)")
+struct CommonRenderAdapterTests {
+    private let fx = Fixture()
+
+    private func fixture() throws -> (CommonEpisodeEditMap, [CommonRenderLaneKey], [CommonRenderLane]) {
+        let other = try SourceOccurrence(source: SourceID(), nominalRate: NominalRate(48_000), frameCount: 480_000)
+        let otherEpoch = RecordingEpochID()
+        let otherGroup = try fx.otherGroup(
+            epochs: [mapped(otherEpoch, [seg(q(0), q(10), .one, .zero)])],
+            placements: [OccurrencePlacement(occurrence: other, spans: [span(0, 480_000, otherEpoch)])]
+        )
+        let map = try CommonEpisodeEditMap(
+            alignment: fx.timeline([otherGroup]), alignmentRevision: 7, editRevision: 8,
+            outputRate: NominalRate(48_000), alignedFrameCount: 480_000,
+            removals: [RemovedFrameSpan(start: 100, end: 200)]
+        )
+        let primary = CommonRenderLaneKey(occurrence: fx.refOccurrence, decodedChannel: 0)
+        let backup = CommonRenderLaneKey(occurrence: other.id, decodedChannel: 0)
+        let silence = CommonRenderLaneKey(occurrence: other.id, decodedChannel: 1)
+        let lanes = [
+            CommonRenderLane(key: primary, backing: .aligned(assetVersion: "primary-7", frames: 0..<480_000)),
+            CommonRenderLane(key: backup, backing: .aligned(assetVersion: "backup-7", frames: 0..<480_000)),
+            CommonRenderLane(key: silence, backing: .explicitSilence(frames: 0..<480_000)),
+        ]
+        return (map, [primary, backup, silence], lanes)
+    }
+
+    private func inspect(
+        _ map: CommonEpisodeEditMap,
+        inventory: [CommonRenderLaneKey],
+        lanes: [CommonRenderLane],
+        protected: [CommonRenderLaneKey: [Range<Int64>]]? = nil,
+        rounded: [RemovedFrameSpan]? = nil,
+        fades: [RemovedFrameSpan]? = nil
+    ) throws -> CommonRenderBinding {
+        try CommonRenderAdapter.inspectSynthetic(
+            map: map, inventory: inventory, lanes: lanes,
+            protectedFrames: protected ?? Dictionary(uniqueKeysWithValues: Set(inventory).map { ($0, []) }),
+            claimedRoundedRemovals: rounded ?? map.removals,
+            fadeFootprints: fades ?? [RemovedFrameSpan(start: 90, end: 210)]
+        )
+    }
+
+    @Test func productionRefusesEvenWithAValidSyntheticSnapshot() throws {
+        let (map, keys, lanes) = try fixture()
+        #expect(throws: CommonRenderRefusal.organizerAuthorityUnavailable) {
+            try CommonRenderAdapter.prepare(map)
+        }
+        let binding = try inspect(map, inventory: keys, lanes: lanes)
+        #expect(binding.lanes == lanes)
+        #expect(binding.previewPrescription == map)
+        #expect(binding.renderPrescription == binding.previewPrescription)
+        #expect(binding.previewPrescription.outputFrameCount == 479_900)
+        #expect(binding.previewPrescription.editRevision == 8)
+        #expect(binding.previewPrescription.alignmentRevision == 7)
+    }
+
+    @Test func missingDuplicateUnexpectedAndUnmappedLanesRefuse() throws {
+        let (map, keys, lanes) = try fixture()
+        #expect(throws: CommonRenderRefusal.emptyLaneInventory) {
+            try inspect(map, inventory: [], lanes: lanes)
+        }
+        #expect(throws: CommonRenderRefusal.duplicateLane(keys[0])) {
+            try inspect(map, inventory: keys + [keys[0]], lanes: lanes)
+        }
+        #expect(throws: CommonRenderRefusal.missingLane(keys[2])) {
+            try inspect(map, inventory: keys, lanes: Array(lanes.dropLast()))
+        }
+        #expect(throws: CommonRenderRefusal.duplicateLane(keys[0])) {
+            try inspect(map, inventory: keys, lanes: lanes + [lanes[0]])
+        }
+        let unknown = CommonRenderLaneKey(occurrence: SourceOccurrenceID(), decodedChannel: 0)
+        #expect(throws: CommonRenderRefusal.unknownOccurrence(unknown.occurrence)) {
+            try inspect(map, inventory: keys + [unknown], lanes: lanes + [
+                CommonRenderLane(key: unknown, backing: .explicitSilence(frames: 0..<480_000)),
+            ])
+        }
+        #expect(throws: CommonRenderRefusal.unexpectedLane(keys[2])) {
+            try inspect(map, inventory: Array(keys.dropLast()), lanes: lanes)
+        }
+        let invalid = CommonRenderLaneKey(occurrence: fx.refOccurrence, decodedChannel: -1)
+        #expect(throws: CommonRenderRefusal.invalidChannel(invalid)) {
+            try inspect(map, inventory: keys + [invalid], lanes: lanes + [
+                CommonRenderLane(key: invalid, backing: .explicitSilence(frames: 0..<480_000)),
+            ])
+        }
+    }
+
+    @Test func backingAndProtectionEvidenceMustBePresentAndFullLength() throws {
+        let (map, keys, lanes) = try fixture()
+        let short = CommonRenderLane(key: keys[1], backing: .aligned(assetVersion: "backup-7", frames: 0..<479_999))
+        #expect(throws: CommonRenderRefusal.invalidBacking(keys[1])) {
+            try inspect(map, inventory: keys, lanes: [lanes[0], short, lanes[2]])
+        }
+        let blank = CommonRenderLane(key: keys[0], backing: .aligned(assetVersion: " ", frames: 0..<480_000))
+        #expect(throws: CommonRenderRefusal.missingBacking(keys[0])) {
+            try inspect(map, inventory: keys, lanes: [blank, lanes[1], lanes[2]])
+        }
+        #expect(throws: CommonRenderRefusal.missingProtection(keys[2])) {
+            try inspect(map, inventory: keys, lanes: lanes, protected: [keys[0]: [], keys[1]: []])
+        }
+        let untimedSilence = CommonRenderLane(key: keys[2], backing: .explicitSilence(frames: 100..<480_000))
+        #expect(throws: CommonRenderRefusal.invalidBacking(keys[2])) {
+            try inspect(map, inventory: keys, lanes: [lanes[0], lanes[1], untimedSilence])
+        }
+        #expect(throws: CommonRenderRefusal.invalidProtection(keys[1])) {
+            try inspect(map, inventory: keys, lanes: lanes, protected: [
+                keys[0]: [], keys[1]: [200..<300, 250..<400], keys[2]: [],
+            ])
+        }
+    }
+
+    @Test func removalConsistencyAndFadeFootprintAreSeparateSyntheticChecksForEveryLane() throws {
+        let (map, keys, lanes) = try fixture()
+        #expect(throws: CommonRenderRefusal.removalMismatch) {
+            try inspect(map, inventory: keys, lanes: lanes, rounded: [RemovedFrameSpan(start: 101, end: 200)])
+        }
+        #expect(throws: CommonRenderRefusal.fadeCountMismatch(expected: 1, actual: 0)) {
+            try inspect(map, inventory: keys, lanes: lanes, fades: [])
+        }
+        #expect(throws: CommonRenderRefusal.invalidFade(RemovedFrameSpan(start: 110, end: 210))) {
+            try inspect(map, inventory: keys, lanes: lanes, fades: [RemovedFrameSpan(start: 110, end: 210)])
+        }
+        #expect(throws: CommonRenderRefusal.unsafeRemoval(keys[1], map.removals[0])) {
+            try inspect(map, inventory: keys, lanes: lanes, protected: [
+                keys[0]: [], keys[1]: [150..<160], keys[2]: [],
+            ])
+        }
+        #expect(throws: CommonRenderRefusal.unsafeFade(keys[2], RemovedFrameSpan(start: 90, end: 210))) {
+            try inspect(map, inventory: keys, lanes: lanes, protected: [
+                keys[0]: [], keys[1]: [], keys[2]: [205..<220],
+            ])
+        }
+        let twoCuts = try CommonEpisodeEditMap(
+            alignment: map.alignment, alignmentRevision: map.alignmentRevision,
+            editRevision: map.editRevision, outputRate: map.outputRate,
+            alignedFrameCount: map.alignedFrameCount,
+            removals: map.removals + [RemovedFrameSpan(start: 220, end: 320)]
+        )
+        let firstFade = RemovedFrameSpan(start: 90, end: 230)
+        let secondFade = RemovedFrameSpan(start: 210, end: 330)
+        #expect(throws: CommonRenderRefusal.overlappingFades(firstFade, secondFade)) {
+            try inspect(twoCuts, inventory: keys, lanes: lanes, fades: [firstFade, secondFade])
+        }
+    }
+}
+
 private extension ExactRational {
     var magnitude: ExactRational { numerator < 0 ? negated() : self }
 }
