@@ -533,7 +533,7 @@ enum AcceptanceAudit {
                 }
                 continue
             }
-            if issueFor[index].auditType == .contrast, !element.isEnabled, inspector.exists,
+            if issueFor[index].auditType == .contrast, element.elementType == .staticText, !element.isEnabled, inspector.exists,
                popoverFrame?.intersects(element.frame) != true,
                Self.isDescendant(element, of: inspector), passesGlyphContrast(measured) {
                 waived.append(["finding": description, "kind": "disabled-inspector-text", "measured": stats,
