@@ -203,11 +203,18 @@ epoch, so a gap (U6) never silently mixes anchors across it (M2-C3: "a gap alway
 > container around each alignment outline cell itself, and no SwiftUI
 > description reaches it (labelling the cell content, combining its children and the value-keypath
 > shorthand were each tried). The waiver is gated on that container still exposing its own labelled
-> text child, and is capped at one finding per cell. The row of alignment action buttons is a named
-> container ("Alignment actions") rather than a waiver. Two further waivers cover chrome the app does not
-> build: the show's split layout (two containers over the content area, plus the episode sidebar) and
+> text child, and is capped at one finding per cell. Three further waivers cover chrome the app does not
+> build: the row of alignment action buttons (naming that container as a containing element drops its
+> buttons from the tree in a 760-point window, so T-M2-01 reachability is kept instead), the show's split
+> layout (two containers over the content area, plus the episode sidebar) and
 > SwiftUI's inspector column around the labelled `ww.inspector` scroll area. Each is matched by the exact
 > frame of a labelled element and capped. **These waivers need Lead sign-off.**
+>
+> Below 900 points of window width the show builds its own content/inspector split instead of SwiftUI's
+> inspector column, so that the Alignment workspace and its inspector are both reachable without the
+> window growing past the 760-point minimum (T-M2-01). The inspector takes 190 points there, which leaves
+> the Setup sources table the width its columns need (#129). The split is chosen by width alone: making
+> it depend on the destination re-enters AppKit's constraint update and aborts the app on macOS 27.
 
 ### 4.2 Numeric rate/offset correction
 

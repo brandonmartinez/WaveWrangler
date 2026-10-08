@@ -77,3 +77,28 @@ The retained `24a02c7` xcresult distinguishes product defects from test defects:
   `LIBDISPATCH_COOPERATIVE_POOL_STRICT=1`.
 - `WW_JOBS=4 WW_TEST_WORKERS=4 scripts/test.sh`: passed, including package, gated
   calibrations, timing passes and unhosted app tests.
+
+## Design revision GUI evidence (2026-10-08, head 8dfc65e)
+
+Mac mini `192.168.18.8`, macOS 27, `test-without-building` from the committed, pushed SHA under the
+`~/ww-uitest-runs` lease. Load stayed between 2.4 and 8.5.
+
+| Test | Result |
+| --- | --- |
+| `AlignmentInspectionUITests` (13 of 14) | passed |
+| `AlignmentInspectionUITests/testTM212NoRecorderGroupBlockedPanel` | skipped (Full Keyboard Access is off) |
+| `EpisodeSetupUITests` (15 of 16, run as a suite) | passed |
+| `EpisodeSetupUITests/testDefaultWindowShowsSeveralSourceRowsWithStatus` | passed alone, failed in suite order |
+| `ResponsivenessUITests/testWarmReopen` | passed |
+
+Two `EpisodeSetupUITests` regressions appeared while this revision was in progress:
+
+- `testColumnsStayStableAcrossRepeatedZoom` and `testDefaultWindowShowsSeveralSourceRowsWithStatus`
+  both failed in isolation and both pass in isolation on the PR base, so the hand-built narrow split
+  was the cause: its 260-point inspector left the Sources table 62 points narrower than its columns.
+  The inspector is now 190 points below 900 points of width and both tests pass in isolation.
+- The remaining suite-order failure is not specific to this PR. The same full
+  `EpisodeSetupUITests` run on the PR base `9f7a0f7` also ends with one failure
+  (`testColumnsStayStableAcrossRepeatedZoom`, "last cycle within the early range"), while each test
+  passes alone on both heads. Text-size state carried between tests is the likely cause; it is
+  recorded here rather than fixed under WW-022.
