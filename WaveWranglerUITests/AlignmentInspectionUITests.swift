@@ -273,6 +273,8 @@ final class AlignmentInspectionUITests: XCTestCase {
                 "\(identifier) must stay exposed inside the Alignment workspace group"
             )
         }
+        let inspector = app.descendants(matching: .any)["ww.inspector"]
+        XCTAssertEqual(inspector.label, "Inspector")
         let groups = app.descendants(matching: .any)["ww.alignment.groups"]
         let anchors = app.descendants(matching: .any)["ww.alignment.anchors"]
         // Cell containers are matched by their place in an outline's subtree rather than by geometry: a
@@ -302,6 +304,11 @@ final class AlignmentInspectionUITests: XCTestCase {
                   element.elementType == .group
             else { return self.reportUnwaived(issue) }
             let isContent = self.approximatelyEqual(element.frame, contentInspector.frame)
+            // SwiftUI owns the inspector column's chrome around our labelled Inspector scroll area, so
+            // no modifier reaches it; it is waived only while that labelled child stays exposed.
+            let isInspectorColumn = inspector.exists
+                && element.frame.contains(inspector.frame)
+                && element.frame.width - inspector.frame.width <= 16
             let isSidebar = self.approximatelyEqual(element.frame, sidebar.frame)
             let isShowSection = sidebar.frame.contains(element.frame)
                 && element.frame.contains(showInfo.frame)
@@ -313,7 +320,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             let isOutlineCell = outlineCellFrames.contains(element.frame)
                 && element.descendants(matching: .any).allElementsBoundByIndex
                     .contains { !$0.label.isEmpty || !(($0.value as? String) ?? "").isEmpty }
-            guard isContent || isSidebar || isShowSection || isOutlineCell else {
+            guard isContent || isSidebar || isShowSection || isOutlineCell || isInspectorColumn else {
                 return self.reportUnwaived(issue)
             }
             if isOutlineCell {
@@ -337,7 +344,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             }
             return true
         }
-        XCTAssertLessThanOrEqual(layoutContainerFindings, 2)
+        XCTAssertLessThanOrEqual(layoutContainerFindings, 3)
         XCTAssertLessThanOrEqual(showSectionFindings, 1)
         // At most one finding per cell: each is the container AppKit builds around that cell.
         XCTAssertGreaterThan(outlineCellFrames.count, 0, "The alignment outlines must expose their cells")
