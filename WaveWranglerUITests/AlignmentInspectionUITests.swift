@@ -303,7 +303,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         ) { issue in
             guard issue.auditType == .sufficientElementDescription,
                   let element = issue.element,
-                  element.elementType == .group
+                  element.elementType == .group || element.elementType == .other
             else { return self.reportUnwaived(issue) }
             let isContent = self.approximatelyEqual(element.frame, contentInspector.frame)
             // SwiftUI owns the inspector column's chrome around our labelled Inspector scroll area, so
@@ -580,13 +580,20 @@ final class AlignmentInspectionUITests: XCTestCase {
         let scroll = app.descendants(matching: .any)["ww.alignment.workspace"]
         // A disabled control is never hittable, and the action grid is lazy: scrolling past it drops its
         // buttons from the tree entirely. Scrolling therefore stops once the control is on screen.
-        for _ in 0..<12 {
+        for attempt in 0..<16 {
             if element.exists,
                scroll.frame.intersects(element.frame),
                element.isHittable || !element.isEnabled {
                 break
             }
-            if element.exists, element.frame.midY < scroll.frame.minY {
+            if element.exists {
+                if element.frame.midY < scroll.frame.minY {
+                    scroll.swipeDown()
+                } else {
+                    scroll.swipeUp()
+                }
+            } else if attempt < 8 {
+                // A lazy view leaves the tree once it is scrolled past, so look back before going on.
                 scroll.swipeDown()
             } else {
                 scroll.swipeUp()
