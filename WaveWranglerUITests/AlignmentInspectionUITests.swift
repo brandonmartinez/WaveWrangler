@@ -255,7 +255,9 @@ final class AlignmentInspectionUITests: XCTestCase {
         let workspaceRoot = app.descendants(matching: .any)["ww.alignment.workspaceRoot"]
         XCTAssertTrue(workspaceRoot.waitForExistence(timeout: 2))
         XCTAssertEqual(workspaceRoot.label, "Alignment workspace")
-        for identifier in ["ww.alignment.workspace", "ww.alignment.groups", "ww.alignment.anchors"] {
+        for identifier in [
+            "ww.alignment.workspace", "ww.alignment.groups", "ww.alignment.anchors", "alignment.analyse"
+        ] {
             XCTAssertTrue(
                 workspaceRoot.descendants(matching: .any)[identifier].exists,
                 "\(identifier) must stay exposed inside the Alignment workspace group"
@@ -358,7 +360,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let scroll = app.scrollViews["ww.alignment.workspace"]
+        let scroll = app.descendants(matching: .any)["ww.alignment.workspace"]
         let window = app.windows["ww.show.window"]
         for _ in 0..<16 {
             guard element.exists else {
@@ -478,7 +480,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let scroll = app.scrollViews["ww.alignment.workspace"]
+        let scroll = app.descendants(matching: .any)["ww.alignment.workspace"]
         for _ in 0..<12 where !element.exists || !element.isHittable {
             if element.exists, element.frame.midY < scroll.frame.minY {
                 scroll.swipeDown()

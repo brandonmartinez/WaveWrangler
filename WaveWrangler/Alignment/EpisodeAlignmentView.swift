@@ -264,7 +264,8 @@ private struct AlignmentWorkspace: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
             }
-            .accessibilityLabel("Alignment workspace")
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Alignment workspace scroll area")
             .accessibilityIdentifier("ww.alignment.workspace")
             .onAppear {
                 AlignmentKeyHandler.install()
