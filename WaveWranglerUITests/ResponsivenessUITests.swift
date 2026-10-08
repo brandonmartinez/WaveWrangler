@@ -40,12 +40,18 @@ final class ResponsivenessUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 30), .completed, "library ready")
     }
 
-    /// Keyboard: Tab from the sidebar into the entry table, ↓ to `row` (0-based), Return opens it.
+    /// Focuses the entry table by click, type-selects `row` (0-based), then presses Return.
+    /// Full Keyboard Access is a host setting, so Tab cannot reliably move from the sidebar to the outline.
     /// Returns the harness wall-clock time from Return to the show window existing, or nil if the row
     /// is one of the three unavailable fixture entries (it doesn't open).
     private func openRow(_ row: Int) -> Double? {
-        app.typeKey("\t", modifierFlags: [])
-        for _ in 0...row { app.typeKey(.downArrow, modifierFlags: []) }
+        let title = String(format: "Synthetic Show %03d", row + 1)
+        entries.click()
+        entries.typeText(title)
+        let selected = entries.staticTexts.matching(
+            NSPredicate(format: "label == %@ OR value == %@", title, title)
+        ).firstMatch
+        guard selected.waitForExistence(timeout: 5) else { return nil }
         return pressReturnAndWaitForShow()
     }
 
