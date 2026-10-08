@@ -62,6 +62,7 @@ public struct ProvisionalLaneInventory: Sendable, Equatable {
             for epoch in group.epochs where !epochs.contains(epoch.epoch) {
                 throw ProvisionalLaneInventoryError.epochMissing(epoch.epoch)
             }
+            var placedGroupEpochs: Set<RecordingEpochID> = []
             for placement in group.placements {
                 let occurrence = placement.occurrence
                 guard let source = sources[occurrence.source] else {
@@ -74,9 +75,13 @@ public struct ProvisionalLaneInventory: Sendable, Equatable {
                 for epoch in placedEpochs where !epochs.contains(epoch) {
                     throw ProvisionalLaneInventoryError.epochMissing(epoch)
                 }
-                if let assignedEpoch = source.placement.epochID, !placedEpochs.contains(assignedEpoch) {
+                guard let assignedEpoch = source.placement.epochID else {
+                    throw ProvisionalLaneInventoryError.sourceEpochUnavailable(source.id)
+                }
+                guard Set(placedEpochs) == Set([assignedEpoch]) else {
                     throw ProvisionalLaneInventoryError.sourceReassignedEpoch(source.id)
                 }
+                placedGroupEpochs.insert(assignedEpoch)
                 guard let count = source.observations.channelCount.value, (1...1_024).contains(count) else {
                     throw ProvisionalLaneInventoryError.channelCountUnavailable(source.id)
                 }
@@ -87,6 +92,9 @@ public struct ProvisionalLaneInventory: Sendable, Equatable {
                         source: source.id, epochs: placedEpochs, sourceRole: source.role
                     ))
                 }
+            }
+            for epoch in group.epochs where !placedGroupEpochs.contains(epoch.epoch) {
+                throw ProvisionalLaneInventoryError.epochNotPlaced(epoch.epoch)
             }
         }
         for source in episode.sources where !placedSources.contains(source.id) {
@@ -100,6 +108,7 @@ public struct ProvisionalLaneInventory: Sendable, Equatable {
 
         var speakers: Set<SpeakerID> = []
         var primaryOwners: [ChannelReference: SpeakerID] = [:]
+        var assignedChannels: Set<ChannelReference> = []
         for assignment in episode.speakerAssignments {
             guard speakers.insert(assignment.speakerID).inserted else {
                 throw ProvisionalLaneInventoryError.duplicateSpeaker(assignment.speakerID)
@@ -114,6 +123,9 @@ public struct ProvisionalLaneInventory: Sendable, Equatable {
                       let count = episode.source(channel.sourceID)?.observations.channelCount.value,
                       index < count, placedSources.contains(channel.sourceID)
                 else { throw ProvisionalLaneInventoryError.ambiguousAssignment(channel) }
+                guard assignedChannels.insert(channel).inserted else {
+                    throw ProvisionalLaneInventoryError.ambiguousAssignment(channel)
+                }
             }
         }
         return Self(episode: episode.id, map: map, requirements: requirements)
@@ -124,6 +136,7 @@ public struct ProvisionalLaneRequirement: Sendable, Equatable {
     public let key: CommonRenderLaneKey
     public let source: SourceID
     public let epochs: [RecordingEpochID]
+    /// Recording-level role, not the role of this channel for any individual speaker.
     public let sourceRole: SourceRole
 }
 
@@ -135,11 +148,13 @@ public enum ProvisionalLaneInventoryError: Error, Equatable, Sendable {
     case recorderGroupMissing(RecorderGroupID)
     case duplicateRecorderGroup(RecorderGroupID)
     case epochMissing(RecordingEpochID)
+    case epochNotPlaced(RecordingEpochID)
     case duplicateEpoch(RecordingEpochID)
     case sourceMissing(SourceID)
     case duplicateSource(SourceID)
     case sourceNotPlaced(SourceID)
     case sourceRegrouped(SourceID)
+    case sourceEpochUnavailable(SourceID)
     case sourceReassignedEpoch(SourceID)
     case channelCountUnavailable(SourceID)
     case duplicateSpeaker(SpeakerID)

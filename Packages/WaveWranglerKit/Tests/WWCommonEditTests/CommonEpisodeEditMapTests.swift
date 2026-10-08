@@ -422,6 +422,22 @@ struct ProvisionalLaneInventoryTests {
         return (episode, map, primarySource, backupSource)
     }
 
+    private func replacingOtherGroup(
+        _ group: GroupTimeMap, in episode: inout Episode, map: CommonEpisodeEditMap,
+        frames: Int64 = 480_000
+    ) throws -> CommonEpisodeEditMap {
+        let alignment = try AlignedTimelineMap(
+            reference: map.alignment.reference, groups: [map.alignment.groups[0], group]
+        )
+        episode.alignment?.maps[0].map = try JSONDecoder().decode(
+            EmbeddedJSON.self, from: JSONEncoder().encode(alignment)
+        )
+        return try CommonEpisodeEditMap(
+            alignment: alignment, alignmentRevision: map.alignmentRevision, editRevision: map.editRevision,
+            outputRate: map.outputRate, alignedFrameCount: frames, removals: map.removals
+        )
+    }
+
     @Test func includesEveryOccurrenceChannelIncludingBackupAndUnassignedSilentCandidate() throws {
         let (episode, map, primary, backup) = try fixture()
         let inventory = try ProvisionalLaneInventory.inspect(episode: episode, map: map)
@@ -515,17 +531,140 @@ struct ProvisionalLaneInventoryTests {
 
     @Test func anotherSpeakersPrimaryCannotBeOmittedFromRequirements() throws {
         var (episode, map, _, backup) = try fixture()
+        let before = try ProvisionalLaneInventory.inspect(episode: episode, map: map).requirements
         episode.speakerAssignments.append(SpeakerAssignment(
             speakerID: SpeakerID(),
             primary: ChannelReference(sourceID: backup, statedChannel: 1)
         ))
         let requirements = try ProvisionalLaneInventory.inspect(episode: episode, map: map).requirements
-        #expect(requirements.count == 3)
+        #expect(requirements == before)
         #expect(requirements.contains {
-            $0.source == backup && $0.key.decodedChannel == 1
+            $0.source == backup && $0.key.decodedChannel == 1 && $0.sourceRole == .backup
         })
         #expect(throws: CommonRenderRefusal.organizerAuthorityUnavailable) {
             try CommonRenderAdapter.prepare(map)
+        }
+    }
+
+    @Test func sourceEpochMustBeStatedAndExactlyMatchEachOccurrence() throws {
+        let (episode, map, primary, backup) = try fixture()
+        for (index, source) in [(0, primary), (1, backup)] {
+            var missing = episode
+            missing.sources[index].placement.epochID = nil
+            #expect(throws: ProvisionalLaneInventoryError.sourceEpochUnavailable(source)) {
+                try ProvisionalLaneInventory.inspect(episode: missing, map: map)
+            }
+        }
+        var changed = episode
+        let otherEpoch = RecordingEpochID()
+        changed.recorderGroups[1].epochs.append(RecordingEpoch(id: otherEpoch, label: "other"))
+        changed.sources[1].placement.epochID = otherEpoch
+        #expect(throws: ProvisionalLaneInventoryError.sourceReassignedEpoch(backup)) {
+            try ProvisionalLaneInventory.inspect(episode: changed, map: map)
+        }
+    }
+
+    @Test func everyMapEpochNeedsAnExactlyPlacedSourceEvenWithRepeatedOccurrences() throws {
+        var (episode, map, _, backup) = try fixture()
+        let group = map.alignment.groups[1]
+        let firstEpoch = group.epochs[0].epoch
+        let secondEpoch = RecordingEpochID()
+        let secondMap = mapped(secondEpoch, [seg(q(10), q(20), .one, .zero)])
+        episode.recorderGroups[1].epochs.append(RecordingEpoch(id: secondEpoch, label: "second"))
+        let unplaced = try GroupTimeMap(
+            group: group.group, reference: map.alignment.reference,
+            epochs: group.epochs + [secondMap], placements: group.placements
+        )
+        map = try replacingOtherGroup(unplaced, in: &episode, map: map)
+        #expect(throws: ProvisionalLaneInventoryError.epochNotPlaced(secondEpoch)) {
+            try ProvisionalLaneInventory.inspect(episode: episode, map: map)
+        }
+
+        let spanning = try GroupTimeMap(
+            group: group.group, reference: map.alignment.reference,
+            epochs: unplaced.epochs,
+            placements: [OccurrencePlacement(
+                occurrence: group.placements[0].occurrence,
+                spans: [
+                    span(0, 240_000, firstEpoch),
+                    EpochSpan(startFrame: 240_000, endFrame: 480_000, epoch: secondEpoch, groupClockOffset: q(5)),
+                ]
+            )]
+        )
+        map = try replacingOtherGroup(spanning, in: &episode, map: map, frames: 960_000)
+        #expect(throws: ProvisionalLaneInventoryError.sourceReassignedEpoch(backup)) {
+            try ProvisionalLaneInventory.inspect(episode: episode, map: map)
+        }
+
+        let repeated = try SourceOccurrence(
+            source: backup, nominalRate: NominalRate(48_000), frameCount: 480_000
+        )
+        let secondSpan = EpochSpan(
+            startFrame: 0, endFrame: 480_000, epoch: secondEpoch, groupClockOffset: q(10)
+        )
+        let repeatedPlacement = OccurrencePlacement(occurrence: repeated, spans: [secondSpan])
+        let mixed = try GroupTimeMap(
+            group: group.group, reference: map.alignment.reference,
+            epochs: unplaced.epochs, placements: group.placements + [repeatedPlacement]
+        )
+        map = try replacingOtherGroup(mixed, in: &episode, map: map, frames: 960_000)
+        #expect(throws: ProvisionalLaneInventoryError.sourceReassignedEpoch(backup)) {
+            try ProvisionalLaneInventory.inspect(episode: episode, map: map)
+        }
+
+        let secondSource = SourceID()
+        let placed = try GroupTimeMap(
+            group: group.group, reference: map.alignment.reference,
+            epochs: unplaced.epochs,
+            placements: group.placements + [OccurrencePlacement(
+                occurrence: try SourceOccurrence(
+                    id: repeated.id, source: secondSource, nominalRate: repeated.nominalRate,
+                    frameCount: repeated.frameCount
+                ),
+                spans: [secondSpan]
+            )]
+        )
+        map = try replacingOtherGroup(placed, in: &episode, map: map, frames: 960_000)
+        episode.sources.append(SourceRecord(
+            id: secondSource, displayNameHint: "second",
+            observations: SourceObservations(channelCount: .known(1)),
+            placement: SourcePlacement(recorderGroupID: group.group, epochID: secondEpoch)
+        ))
+        episode.alignment?.maps[0].inputs.sources.append(TimeMapSourceInput(sourceID: secondSource))
+        let requirements = try ProvisionalLaneInventory.inspect(episode: episode, map: map).requirements
+        #expect(requirements.count == 4)
+        #expect(requirements.filter { $0.source == backup }.allSatisfy { $0.epochs == [firstEpoch] })
+        #expect(requirements.filter { $0.source == secondSource }.map(\.epochs) == [[secondEpoch]])
+    }
+
+    @Test func channelCannotHaveDuplicateRolesOrBelongToTwoSpeakers() throws {
+        let (episode, map, primary, backup) = try fixture()
+        let first = ChannelReference(sourceID: primary, statedChannel: 0)
+        let second = ChannelReference(sourceID: backup, statedChannel: 0)
+        var changed = episode
+        changed.speakerAssignments[0].backups.append(first)
+        #expect(throws: ProvisionalLaneInventoryError.ambiguousAssignment(first)) {
+            try ProvisionalLaneInventory.inspect(episode: changed, map: map)
+        }
+        changed = episode
+        changed.speakerAssignments[0].backups.append(second)
+        #expect(throws: ProvisionalLaneInventoryError.ambiguousAssignment(second)) {
+            try ProvisionalLaneInventory.inspect(episode: changed, map: map)
+        }
+        changed = episode
+        changed.speakerAssignments.append(SpeakerAssignment(speakerID: SpeakerID(), backups: [first]))
+        #expect(throws: ProvisionalLaneInventoryError.ambiguousAssignment(first)) {
+            try ProvisionalLaneInventory.inspect(episode: changed, map: map)
+        }
+        changed = episode
+        changed.speakerAssignments.append(SpeakerAssignment(speakerID: SpeakerID(), primary: second))
+        #expect(throws: ProvisionalLaneInventoryError.ambiguousAssignment(second)) {
+            try ProvisionalLaneInventory.inspect(episode: changed, map: map)
+        }
+        changed = episode
+        changed.speakerAssignments.append(SpeakerAssignment(speakerID: SpeakerID(), backups: [second]))
+        #expect(throws: ProvisionalLaneInventoryError.ambiguousAssignment(second)) {
+            try ProvisionalLaneInventory.inspect(episode: changed, map: map)
         }
     }
 

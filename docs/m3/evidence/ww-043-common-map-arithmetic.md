@@ -52,13 +52,17 @@ actual speech survey.
 derives immutable occurrence/channel requirements from *every* map placement and the episode's
 channel-count metadata. It includes Primary, Backup, other-speaker and unassigned channels (including
 channels a later producer might verify as timed silence); repeated uses of one source have distinct
-occurrence keys and epoch lists. It refuses absent/unplaced/duplicate sources, changed groups/epochs,
-unknown or out-of-range channel counts/assignments, ambiguous primaries, mismatched map inputs, and
-an unaccepted or different persisted alignment revision. The snapshot is **provisional**: a caller
-can construct an `Episode`, and its reported channel count/role is metadata, not decoded proof.
+occurrence keys and epoch lists. Each occurrence must use exactly its source's stated placement epoch,
+and every map epoch must be used by a placed occurrence; an absent placement epoch, an occurrence
+spanning another epoch, or an unplaced map epoch is refused. It refuses absent/unplaced/duplicate
+sources, changed groups/epochs, unknown or out-of-range channel counts/assignments, channels
+assigned more than once across speaker roles (including duplicate primaries and backups), mismatched
+map inputs, and an unaccepted or different persisted alignment revision. `sourceRole` describes the
+whole recording, not a channel's Primary/Backup status for an individual speaker. The snapshot is
+**provisional**: a caller can construct an `Episode`, and its reported channel count/role is
+metadata, not decoded proof.
 It has no promotion path to `CommonRenderBinding`; `prepare` still refuses unconditionally with
-`organizerAuthorityUnavailable`. Sixteen focused WWCommonEdit tests (seven map, four synthetic
-preflight, five inventory) use synthetic fixtures only.
+`organizerAuthorityUnavailable`. Focused WWCommonEdit tests use synthetic fixtures only.
 
 **Producer contract to open the gate:** an organizer-owned, persisted and revision-checked producer
 must enumerate the complete episode from canonical sources and every uniquely keyed occurrence/epoch,
