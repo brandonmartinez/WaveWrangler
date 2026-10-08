@@ -63,6 +63,13 @@ extension ShowDocumentModel {
         return copy
     }
 
+    /// The native delete command publishes the episode, its map state and the named edit together.
+    public func deletingEpisode(_ id: EpisodeID, actionName: String) throws(DomainError) -> ShowDocumentModel {
+        var copy = try removingEpisode(id)
+        copy.history = copy.history.recording(.current(actionName: actionName))
+        return copy
+    }
+
     public func renamingEpisode(_ id: EpisodeID, to title: String) throws(DomainError) -> ShowDocumentModel {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw .emptyTitle }

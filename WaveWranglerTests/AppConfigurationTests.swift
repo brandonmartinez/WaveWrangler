@@ -58,6 +58,15 @@ struct AppConfigurationTests {
         #expect(decoded.revision == 1)
     }
 
+    @Test func nativeEpisodeDeletionUsesStoreOwnedTransactionNotGenericMapMutation() throws {
+        let store = try String(contentsOf: Self.appFolder.appending(path: "Document/ShowDocumentStore.swift"), encoding: .utf8)
+        let command = try String(contentsOf: Self.appFolder.appending(path: "Workspace/ShowWindowState.swift"), encoding: .utf8)
+        #expect(store.contains("let updated = try model.deletingEpisode(id, actionName: actionName)"))
+        #expect(store.contains("guard updated.editMaps == model.editMaps else"))
+        #expect(store.contains("guard newModel.editMaps == model.editMaps else"))
+        #expect(command.contains("store.removeEpisode(episode.id, actionName: UndoActionName.deleteEpisode)"))
+    }
+
     /// #126: windowless error presentation is routed to the opaque panel by `WaveWranglerApplication`, so it
     /// must be the app's NSApp: the principal class in every configuration, and the first `shared` in main().
     @Test func applicationClassIsWaveWranglerApplication() throws {

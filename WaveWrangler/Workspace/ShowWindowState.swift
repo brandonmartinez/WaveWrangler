@@ -125,7 +125,7 @@ final class ShowWindowState {
         Task {
             guard await Dialogs.confirm(in: window, message: wording.message, informative: wording.informative, confirmTitle: wording.button,
                                         destructiveIsDefault: true) else { return }
-            if store.apply(UndoActionName.deleteEpisode, { model throws(DomainError) in try model.removingEpisode(episode.id) }) {
+            if store.removeEpisode(episode.id, actionName: UndoActionName.deleteEpisode) {
                 reconcileSelection(previousOrder: order)
                 announce("Deleted \(episode.title)")
             }

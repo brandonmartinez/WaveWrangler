@@ -150,6 +150,53 @@ struct EditMapAuthorityTests {
             #expect(revoked.refusal == .proofUnavailable && checks == 2)
             #expect(revoked.model.editMaps(for: fixture.episodeID)?.selectedRevision == nil)
         }
+
+        @Test func unrelatedRenamesKeepSavedChoiceButNeverGrantReadAuthority() throws {
+            let selected = try fixture.model().recordingEditMap(
+                fixture.version(), in: fixture.episodeID, actionName: "Shorten"
+            )
+            let renamed = try selected.renamingShow(to: "Renamed")
+                .renamingEpisode(fixture.episodeID, to: "Renamed episode")
+            let snapshot = EditMapSnapshot(model: selected, serial: 3)
+            let kept = EditMapPublication.revalidated(
+                renamed, replacing: selected, current: { snapshot }, prove: nil
+            )
+            #expect(kept.refusal == nil)
+            #expect(kept.model.editMaps == selected.editMaps)
+            #expect(kept.model.history == selected.history)
+            #expect(throws: EditMapPublicationError.proofUnavailable) {
+                try EditMapPublication.selected(
+                    in: fixture.episodeID,
+                    current: { EditMapSnapshot(model: kept.model, serial: 4) }, prove: nil
+                )
+            }
+        }
+
+        @Test func relevantChangesRevokeChoiceWhileRestoreWithoutProofRefuses() throws {
+            let selected = try fixture.model().recordingEditMap(
+                fixture.version(), in: fixture.episodeID, actionName: "Shorten"
+            )
+            var changed = selected
+            changed.episodes[0].sources[0].role = .backup
+            let snapshot = EditMapSnapshot(model: selected, serial: 5)
+            let invalidated = EditMapPublication.revalidated(
+                changed, replacing: selected, current: { snapshot }, prove: nil
+            )
+            #expect(invalidated.model.editMaps(for: fixture.episodeID)?.selectedRevision == nil)
+            #expect(invalidated.model.editMaps(for: fixture.episodeID)?.versions == selected.editMaps(for: fixture.episodeID)?.versions)
+            var missing = selected
+            missing.episodes.removeAll()
+            #expect(missing.invalidatingChangedEditMaps(from: selected)
+                .editMaps(for: fixture.episodeID)?.selectedRevision == nil)
+            var unselected = selected
+            unselected.editMaps[0].selectedRevision = nil
+            let restore = EditMapPublication.revalidated(
+                selected, replacing: unselected,
+                current: { EditMapSnapshot(model: unselected, serial: 6) }, prove: nil
+            )
+            #expect(restore.refusal == .proofUnavailable)
+            #expect(restore.model.editMaps(for: fixture.episodeID)?.selectedRevision == nil)
+        }
     }
 
     func version(_ revision: Int = 1, decision: UUID = UUID()) -> EditMapVersion {
@@ -229,5 +276,42 @@ struct EditMapAuthorityTests {
         let removed = try before.removingEpisode(episodeID)
         #expect(removed.editMaps.isEmpty)
         #expect(removed.validationIssues().isEmpty)
+    }
+
+    @MainActor
+    @Test func deletingEpisodeRecordsAtomicHistoryAndUndoRedoRequiresNewProof() throws {
+        let before = try model().recordingEditMap(version(), in: episodeID, actionName: "Shorten")
+        let deleted = try before.deletingEpisode(episodeID, actionName: "Delete Episode")
+        #expect(deleted.episode(episodeID) == nil)
+        #expect(deleted.editMaps.isEmpty)
+        #expect(deleted.history.entries.count == before.history.entries.count + 1)
+        #expect(deleted.history.undoActionName == "Delete Episode")
+        #expect(deleted.validationIssues().isEmpty)
+
+        let undo = EditMapPublication.revalidated(
+            before, replacing: deleted,
+            current: { EditMapSnapshot(model: deleted, serial: 7) }, prove: nil
+        )
+        #expect(undo.refusal == .proofUnavailable)
+        #expect(undo.model.episode(episodeID) != nil)
+        #expect(undo.model.editMaps(for: episodeID)?.versions == before.editMaps(for: episodeID)?.versions)
+        #expect(undo.model.editMaps(for: episodeID)?.selectedRevision == nil)
+        #expect(undo.model.history.undoActionName == "Invalidate Edit Map")
+        #expect(undo.model.validationIssues().isEmpty)
+
+        let proven = EditMapPublication.revalidated(
+            before, replacing: deleted,
+            current: { EditMapSnapshot(model: deleted, serial: 7) },
+            prove: { _, _, _ in }
+        )
+        #expect(proven.refusal == nil)
+        #expect(proven.model == before)
+
+        let redo = EditMapPublication.revalidated(
+            deleted, replacing: undo.model,
+            current: { EditMapSnapshot(model: undo.model, serial: 8) }, prove: nil
+        )
+        #expect(redo.model == deleted)
+        #expect(redo.model.validationIssues().isEmpty)
     }
 }

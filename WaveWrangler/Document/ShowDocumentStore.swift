@@ -94,6 +94,23 @@ final class ShowDocumentStore {
         )
     }
 
+    /// Deletion is the sole ordinary command allowed to remove map state. Its successor is built
+    /// from the live model here; the generic apply/replacement paths still reject caller map edits.
+    @discardableResult
+    func removeEpisode(_ id: EpisodeID, actionName: String) -> Bool {
+        guard FormatUpdatePolicy.allowsEdits(document?.status.formatUpdate) else { return false }
+        do {
+            let updated = try model.deletingEpisode(id, actionName: actionName)
+            lastError = nil
+            guard replace(with: updated, actionName: actionName) else { return false }
+            Responsiveness.interaction("show.edit")
+            return true
+        } catch {
+            lastError = error
+            return false
+        }
+    }
+
     /// Applies a pure operation immediately so the model (and therefore Save, autosave, Close and Quit)
     /// always sees the latest edit.
     ///

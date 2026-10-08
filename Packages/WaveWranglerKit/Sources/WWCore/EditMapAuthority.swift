@@ -112,8 +112,8 @@ public enum EditMapPublication {
         return selected
     }
 
-    /// Undo/redo and ordinary model replacement can restore a saved choice, not its former proof.
-    /// Revoke it in the very same replacement if any current input or protection check fails.
+    /// An unchanged saved choice survives an unrelated edit without becoming executable authority.
+    /// A newly restored choice must obtain fresh proof; revoke it in the same replacement if proof fails.
     public static func revalidated(
         _ candidate: ShowDocumentModel, replacing previous: ShowDocumentModel,
         current: () -> EditMapSnapshot, prove: Proof?
@@ -123,6 +123,7 @@ public enum EditMapPublication {
         for index in safe.editMaps.indices {
             guard let selected = safe.editMaps[index].selected else { continue }
             let episodeID = safe.editMaps[index].episodeID
+            if previous.editMaps(for: episodeID) == safe.editMaps[index] { continue }
             let serial = current().serial
             do {
                 try safe.checkEditMapInputs(selected, in: episodeID)
@@ -209,15 +210,21 @@ extension ShowDocumentModel {
     }
 
     /// A source/assignment/alignment change revokes the selection in the same model publication.
-    /// Stored versions remain available for review, but can never silently become active again.
+    /// Restoring a deleted episode instead goes through fresh proof in `revalidated`.
     public func invalidatingChangedEditMaps(from previous: ShowDocumentModel) -> ShowDocumentModel {
         var copy = self
         for index in copy.editMaps.indices where copy.editMaps[index].selectedRevision != nil {
             let id = copy.editMaps[index].episodeID
             let before = previous.episode(id)
             let after = episode(id)
-            if before?.sources != after?.sources || before?.speakerAssignments != after?.speakerAssignments
-                || before?.recorderGroups != after?.recorderGroups || before?.alignment != after?.alignment {
+            let changedInputs: Bool
+            if let before, let after {
+                changedInputs = before.sources != after.sources || before.speakerAssignments != after.speakerAssignments
+                    || before.recorderGroups != after.recorderGroups || before.alignment != after.alignment
+            } else {
+                changedInputs = before != nil
+            }
+            if previous.show.id != show.id || changedInputs {
                 copy.editMaps[index].selectedRevision = nil
                 copy.history = copy.history.recording(.current(actionName: "Invalidate Edit Map"))
             }

@@ -60,6 +60,7 @@
 				Document/CopyElsewhereRetryGate.swift,
 				Document/FormatUpdate.swift,
 				Document/SharedModelPublication.swift,
+				Document/ShowDocumentStore.swift,
 				Library/CanonicalLibraryAdoption.swift,
 				Library/LibraryFailureMessage.swift,
 				Library/MoveStepRelay.swift,

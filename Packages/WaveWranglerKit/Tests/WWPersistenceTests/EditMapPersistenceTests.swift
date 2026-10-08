@@ -29,6 +29,37 @@ struct EditMapPersistenceTests {
         #expect(throws: PersistenceError.self) { try coder.encode(invalid, revision: 4) }
     }
 
+    @MainActor
+    @Test func unrelatedRenamesPreserveSavedChoiceAfterReopenWithoutAuthorizingRead() throws {
+        var model = fixture.show(with: EpisodeAlignment(maps: [
+            try fixture.version(1, map: fixture.map())
+        ], acceptedRevision: 1))
+        let version = EditMapVersion(
+            revision: 1, alignmentRevision: 1,
+            sourceIDs: [fixture.host, fixture.guest],
+            removals: [EditRemoval(startFrame: 100, endFrame: 200, decisionID: UUID())]
+        )
+        model = try model.recordingEditMap(version, in: fixture.episodeID, actionName: "Shorten")
+        let renamed = try model.renamingShow(to: "Renamed show")
+            .renamingEpisode(fixture.episodeID, to: "Renamed episode")
+        let checked = EditMapPublication.revalidated(
+            renamed, replacing: model,
+            current: { EditMapSnapshot(model: model, serial: 2) }, prove: nil
+        )
+        #expect(checked.refusal == nil)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let bytes = try coder.encode(checked.model, revision: 2)
+        let reopened = try coder.decode(bytes).payload
+        #expect(reopened.editMaps(for: fixture.episodeID)?.selected == version)
+        #expect(reopened.history == model.history)
+        #expect(throws: EditMapPublicationError.proofUnavailable) {
+            try EditMapPublication.selected(
+                in: fixture.episodeID,
+                current: { EditMapSnapshot(model: reopened, serial: 3) }, prove: nil
+            )
+        }
+    }
+
     @Test func schema3OpensReadOnlyAndMigratesWithExactPayloadPreserved() throws {
         let coder = JSONEnvelopeCoder<ShowSchemaMigration.ShowDocumentModelV3>(
             format: ShowSchemaMigration.schema3Format
