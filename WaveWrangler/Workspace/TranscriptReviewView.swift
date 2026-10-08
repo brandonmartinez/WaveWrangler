@@ -44,7 +44,6 @@ struct TranscriptReviewView: View {
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(nsColor: .controlBackgroundColor))
-                .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Review blocked")
                 .accessibilityValue(TranscriptReviewShellPresentation.noLiveSourceReason)
                 .accessibilityIdentifier("ww.review.blockedReason")
@@ -177,6 +176,7 @@ struct TranscriptReviewInspector: View {
 
             Text("Selection: \(state.selectedOccurrence?.title ?? "No occurrence selected")")
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement()
                 .accessibilityLabel("Selected occurrence")
                 .accessibilityValue(state.selectedOccurrence?.title ?? "No occurrence selected")
                 .accessibilityIdentifier("ww.review.inspector.selection")
