@@ -36,6 +36,7 @@ struct TranscriptReviewView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("ww.review.provisionalNotice")
             }
+            .accessibilityElement(children: .contain)
 
             Text(TranscriptReviewShellPresentation.noLiveSourceReason)
                 .wwFont(.body)
