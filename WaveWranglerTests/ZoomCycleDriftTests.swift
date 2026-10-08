@@ -23,6 +23,7 @@ struct ZoomCycleDriftTests {
 
         #expect(!result.passes)
         #expect(result.maximumAbsoluteSlope > 1.25)
+        #expect(result.maximumAbsoluteMedianShift > 10)
     }
 
     @Test func acceptsRecordedStableTraces() {
