@@ -168,3 +168,19 @@ Ralph tracks resulting issues; Lead retains milestone priority and decision auth
 
 **Agenda:** in-app 200% text plus light and dark on the milestone's windows, reported on its own line in the exit record. Only a finding that makes a core task impossible blocks; the rest become WW-053 follow-ups. System Increase Contrast and Reduce Motion are not part of it (M5). Then write the exit record once ([skill](skills/milestone-exit-record/SKILL.md)).
 
+---
+
+## Child Cleanup Sweep
+
+| Field | Value |
+|-------|-------|
+| **Trigger** | auto |
+| **When** | after |
+| **Condition** | a child goes idle with its unit finished; at least every ~2 h of active work; before every handoff |
+| **Facilitator** | coordinator |
+| **Participants** | none |
+| **Time budget** | ≤10 min |
+| **Enabled** | ✅ yes |
+
+**Agenda (user-directed 2026-10-07 10:01/12:50):** list children and verify each one before archiving: PR merged or closed (or the lane was superseded by a later reviser); no open PR, active Agent merge or session automation; clean worktree with nothing unpushed; `files/` notes copied to the coordinator's `files/archived-children/`. Archive those that pass. Skip anything with open or in-flight work, and report "archived N, skipped M (reasons)" in one line.
+

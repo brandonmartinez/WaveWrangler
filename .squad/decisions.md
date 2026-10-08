@@ -281,3 +281,18 @@
 - **What:** the episode-switch responsiveness failure (#220) is added to M2's pinned waiver baseline as accepted with an issue. It's a pre-existing condition: interleaved, load-matched runs on the quiet Mac mini show it failing equally at the M1 exit SHA `21104e9` and at `main` `348af45`. The M1 exit gate's 5/5 Responsiveness result was the five-sample class, not the 100-sample measurement.
 - **Gate now:** no new regression against today's level. On the quiet mini, the exit SHA's episode-switch p95 must be ≤ 122.5 ms (the six-run `348af45` maximum of 117.459 ms + 5.0 ms). One labelled, paired rerun is allowed, and the full rule is in `docs/m2/evidence/m2-gui-baseline.md` (baseline revision 2026-10-07). All other gates are unchanged.
 - **Follow-up:** #220 stays open, P1, owner Mac, milestone M3 (fix to <100 ms p95 over 100 samples). It will be carried into `docs/planning/kickoffs/m3.md` and the M2 exit record when they're written. An informational Debug-versus-optimised measurement goes in #220 and the M2 exit; it doesn't change this decision.
+
+### 2026-10-07: M2 process decisions (consolidated for M3)
+
+**By:** the user (via the relay) and the M2 Lead, recorded by the M2 coordinator. The rules themselves live in `routing.md`, `ceremonies.md`, the Lead charter and the `gui-lock-mac-mini` skill. This entry records when and why.
+- **09:16 GUI host:** the user's Mac GUI grant ended. UI tests run on the Mac mini only, and the compute budget returned to daytime (load ≤ ~24).
+- **09:18 throughput:** keep 4 writers busy, at least 2 on the required path; required-path GUI tickets come first; use the 3-round timebox, then the Lead.
+- **10:01 / 12:50 session hygiene:** archive finished children after verification, sweep every ~2 h and before handoffs (the Child Cleanup Sweep ceremony).
+- **10:20 GUI leases:** after a lane held the mini about 4 h and empty-PID owners let waiters steal live locks (8 takeovers on 10-07), the user required renewable leases, one run per acquire, priority FIFO and safe reclaim. Delivered in #230 (`9f7a0f7`) after eight independently reviewed revisions, each by a different agent; deployed on the mini 2026-10-07 with the legacy helper backed up.
+- **11:37 compute raise:** load ≤ ~36, ~6 cores per test process (user-granted window; the daytime default stays ≤ ~24).
+- **12:04 config consolidation:** all process decisions since the M2 kickoff are captured in this config and mirrored in the M3 kickoff.
+- **14:29 WW-018 listening:** the user chose option A. The listening gate (≥3 consented listeners, ≤5% objectionable) is TRANSFERRED to M4, receiving issue #232 with the gate unchanged and consent required at M4. #13 and #18 closed in M2 on objective and engineering evidence. The gate is never described as passed.
+- **18:36 corrupted batch:** a working-tree-built GUI batch (`pr219-final-r1`) was environment-invalid. Products must come from a committed SHA, be verified, and be copied atomically into per-run unique folders.
+- **Lead GUI-timebox decisions:** (1) #175 T21 harness flake accepted, with a tracked P2 (#231); (2) #196 transferred to M5 / WW-053 and #229 closed unmerged; (3) #219 moved anchor editing to a focused Edit Anchor sheet, with a narrow spec note. **Model exception:** that lane uses a Claude model, logged because three GPT-led rounds failed the same accessibility unit.
+- **#221:** the 2.29:1 blocked-status contrast was a clipped-row measurement artefact (the real text is 7.35:1). It was corrected in #225 and closed after full run #3 showed no new essential audit findings.
+

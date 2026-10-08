@@ -9,7 +9,9 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
 
 ## Rules
 
-- **GUI hosts:** the user's Mac mini ("Macsimus": Apple M2 Pro, 12 cores, 32 GiB, macOS 27.0.1) has standing user consent for UI, XCUITest, accessibility audits, computer-use, temporary VoiceOver and temporary display/accessibility settings (record originals, restore afterwards). **Never** take over the GUI of the user's main working Mac.
+- **GUI hosts:** the user's Mac mini ("Macsimus": Apple M2 Pro, 12 cores, 32 GiB, macOS 27.0.1) is the default and only standing GUI host. It has user consent for UI, XCUITest, accessibility audits, computer-use, temporary VoiceOver and temporary display/accessibility settings (record originals, restore afterwards). The user's main working Mac is a GUI host only inside an explicitly user-granted away window (its own lock; never computer-use or VoiceOver; stop on user input). Reach the mini by IP (`ssh -o BatchMode=yes brandonmartinez@192.168.18.8`); never edit `known_hosts`.
+- **Products come from a committed, pushed SHA only.** Never label a run with a working-tree name. Before use, verify that the `.xctestrun` names `WaveWranglerUITests`, run `codesign --verify --deep` on the app and the Runner, and check `rsync -c` checksum equality. Copy atomically into a per-run unique folder (`rsync` to `~/ww-uitest-runs/.tmp-<lane>-<sha>-<ts>`, then `mv` to `<lane>-<sha>-<ts>`), and never reuse or overwrite another run's folder. A run that breaks these rules is environment-invalid (2026-10-07: `pr219-final-r1`), not a pass or a product failure.
+- **Performance strata** can't be split, so each `ResponsivenessUITests` method gets its own `perf` ticket of up to 45 minutes, after ≥60 s idle and with the pre-run load below 6.
 - **One GUI run per lease.** `scripts/gui-lock run` owns one `test-without-building` invocation and releases in a trap. Never hold the GUI while analysing, rebuilding, or preparing another round.
 - **Check status before polling lanes.** `gui-lock status` shows the holder, lease age, priority queue, ticket ages and estimated wait.
 - **Priority:** `required` (required path / exit gate), then `pr`, then `full` and `perf`; FIFO within a class.
@@ -54,7 +56,7 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
 
 ## Lock helper reference
 
-`~/ww-uitest-runs/gui-lock` lives on each GUI host, outside the repo (live on the mini since 2026-10-06). Install the same helper before using any other GUI host.
+`~/ww-uitest-runs/gui-lock` lives on each GUI host, outside the repo (the lease helper from `scripts/gui-lock` has been live on the mini since 2026-10-07, after #230 / `9f7a0f7`; the legacy copy is backed up beside it). Install the same helper before using any other GUI host.
 
 | Command | Effect |
 |---|---|
