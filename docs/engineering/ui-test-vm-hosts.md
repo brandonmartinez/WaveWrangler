@@ -13,14 +13,25 @@ The guests are based on Cirrus Labs'
 (macOS 27.0). Each has a local copy of the development Mac's exact Xcode
 27.0 build 27A266a, SSH with a dedicated VM-only key, auto-login, sleep
 and lock disabled, and the same `~/ww-uitest-runs/gui-lock` lease helper
-used on the mini. Tart's [personal-workstation license](https://tart.run/licensing/)
+used on the mini. Each guest's login session runs a persistent `caffeinate -di`
+LaunchAgent (`com.wavewrangler.keep-guest-display-awake`): `pmset -g assertions`
+must show `PreventUserIdleDisplaySleep 1` before dispatching XCUITests.
+The guest's virtual display can otherwise sleep despite `displaysleep 0`,
+preventing XCTest from bringing the app to the foreground.
+The console must also be unlocked: an auto-logged-in guest can retain a
+screen lock across restarts and leave the test app in `Running Background`.
+Tart's [personal-workstation license](https://tart.run/licensing/)
 is royalty-free; Apple's [macOS license](https://www.apple.com/legal/sla/docs/macOSGoldenGate.pdf)
 limits this Mac to two additional macOS virtualized instances.
 
-After a host reboot, start each guest in a persistent process:
+After a host reboot, start each guest in its **own** persistent background
+process. Each `tart run` stays attached while its VM runs, so the two
+commands must not be executed sequentially in one shell:
 
 ```sh
+# Separate persistent process A
 tart run --no-graphics --no-clipboard --no-audio ww-ui-1
+# Separate persistent process B
 tart run --no-graphics --no-clipboard --no-audio ww-ui-2
 ```
 
@@ -32,10 +43,18 @@ the alias's key and pinned host identity. Check
 with `tart stop ww-ui-1` (similarly for `ww-ui-2`). Do not add a third
 macOS VM on this host.
 
+Check the guest's console lock before dispatching a test (substitute `ww-ui-2`
+as needed); `0` means unlocked, `1` means locked:
+
+```sh
+ssh ww-ui-1 "swift -e 'import CoreGraphics; let d = CGSessionCopyCurrentDictionary() as? [String: Any] ?? [:]; print(d[\"CGSSessionScreenIsLocked\"] ?? 0)'"
+```
+
 **Readiness gate:** do not dispatch tests to a VM until its Xcode license is
-accepted, `ssh ww-ui-N 'xcodebuild -checkFirstLaunchStatus'` exits 0, and
-the guest's first functional smoke-test `.xcresult` shows Passed. A configured
-VM without all three checks is not an available GUI host; use the mini instead.
+accepted, `ssh ww-ui-N 'xcodebuild -checkFirstLaunchStatus'` exits 0, the
+console is unlocked, and the guest's first functional smoke-test `.xcresult`
+shows Passed. A configured VM without these checks is not an available GUI
+host; use the mini instead.
 
 Follow the [GUI lease pipeline](../../.squad/skills/gui-lock-mac-mini/SKILL.md):
 build-for-testing on the development Mac from a clean, committed and pushed

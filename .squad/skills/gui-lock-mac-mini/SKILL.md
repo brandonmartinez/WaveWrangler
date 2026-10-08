@@ -21,6 +21,7 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
 - **Batching:** a lane may batch several of its own PRs' classes only at one SHA. Never mix unrelated PR binaries.
 - **GUI timebox:** after 3 failed counted GUI rounds on one PR, stop and hand off to Lead (design decision or follow-up issue). There is no fourth counted round unless a recorded Lead decision (on the PR and in `decisions.md`) restarts the count. Rounds that never ran (lock stolen, quiet-gate rejection, released before `xcodebuild`) or were environment-invalid don't count.
 - **Preflight first:** `.squad/skills/kickoff-preflight` (SSH agent, Automation Mode, clean screen). If SSH to the mini fails because the 1Password agent has no identities, don't loop: report it once as needs_input. VM SSH uses a dedicated key, not the 1Password agent; use a VM only after its Xcode license and first-launch checks pass and the smoke run recorded in its [host guide](../../../docs/engineering/ui-test-vm-hosts.md) has passed. Confirm that VM's own lock is available.
+- **VM display preflight:** check `pmset -g assertions` in the guest for `PreventUserIdleDisplaySleep 1` and confirm its console is unlocked. Auto-login does not clear a previously locked console; XCUITest can launch the app but fail to foreground it as `Running Background`. Do not dispatch tests to a locked VM.
 
 ## Pipeline
 
