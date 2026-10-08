@@ -160,7 +160,10 @@ read-only and blocked/recovery surfaces; only an editable, successfully updated 
 essential audit set. FormatUpdate records FKA-only focus/Tab/Space steps as **Not run** when the
 host has Full Keyboard Access off, while exercising the same actions directly and retaining the
 keyboard assertions on an FKA-on host. Update Later audits the unobscured read-only surface
-before opening its status popover.
+before opening its status popover. A finding wholly covered by that popover records the front
+pixels as covered, not as text contrast; a partly covered finding must pass the same 40-glyph,
+4.5:1 threshold on a crop of its **exposed** window pixels. Other popover audits do not acquire
+this handler without an earlier unobscured audit.
 
 One new contrast artefact handler is limited to a disabled static-text descendant of the identified
 `ww.inspector`, with the element's own screenshot measured at **at least 40 glyph pixels and p75
@@ -170,7 +173,9 @@ the crop and measured values are attached to each audit result.
 
 The T17 recovery test now waits for and selects Show Info before inspecting the recovered title;
 the Alignment availability assertion reflects that Alignment is available but blocked for this
-episode until a recorder group is configured. No blocked-state heading or remedy is removed.
+episode until a recorder group is configured. No blocked-state heading or remedy is removed. The
+blocked Alignment audit can now use the shared Show Info sidebar-row measured artefact rule for
+that exact identifier only, with the unchanged per-element 40-glyph and 4.5:1 threshold.
 
 The following are informational broad-accessibility observations for M5 / WW-053, not entries in the M2 essential-audit waiver baseline: fully offscreen or partly clipped library-cell contrast reports (`notOnScreen` 0–2, cap 5, plus four two-point bottom-edge samples); one library dark-collection-row report measured at p75 15.72:1 where the audit samples sidebar material; and sidebar, table, non-blocked Setup-cell, title, and sheet-text contrast reports within existing per-surface `tableText` caps (import 1/1, Setup 1/4). Pixel evidence meets the 40-glyph / p75 4.5:1 measured-artefact rule, or the content is dimmed or occluded while the audit measures the frontmost surface.
 

@@ -210,6 +210,41 @@ enum PartialClipContrast {
     }
 }
 
+/// Measure only pixels still exposed when a popover partly covers a window element.
+@MainActor
+enum PopoverVisibleContrast {
+    static func measure(_ element: XCUIElement, popover: CGRect, in windows: [XCUIElement]) -> PartialClipContrast.Result? {
+        let frame = element.frame
+        guard frame.intersects(popover), !popover.contains(frame),
+              let window = windows.first(where: { $0.frame.contains(frame) }),
+              let cg = window.screenshot().image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let overlap = frame.intersection(popover)
+        let exposed = [
+            CGRect(x: frame.minX, y: frame.minY, width: frame.width, height: overlap.minY - frame.minY),
+            CGRect(x: frame.minX, y: overlap.maxY, width: frame.width, height: frame.maxY - overlap.maxY),
+            CGRect(x: frame.minX, y: overlap.minY, width: overlap.minX - frame.minX, height: overlap.height),
+            CGRect(x: overlap.maxX, y: overlap.minY, width: frame.maxX - overlap.maxX, height: overlap.height),
+        ].filter { $0.width >= 2 && $0.height >= 2 }
+        let scale = CGFloat(cg.width) / window.frame.width
+        let samples = exposed.compactMap { rect -> (Int, Double, Data)? in
+            let pixels = CGRect(x: (rect.minX - window.frame.minX) * scale,
+                                y: (rect.minY - window.frame.minY) * scale,
+                                width: rect.width * scale, height: rect.height * scale).integral
+                .intersection(CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+            guard let crop = cg.cropping(to: pixels) else { return nil }
+            let measured = ContrastMeter.measure(NSImage(cgImage: crop, size: rect.size)) ?? [:]
+            return (measured["glyphPixels"] as? Int ?? 0, measured["glyphP75"] as? Double ?? 0,
+                    NSBitmapImageRep(cgImage: crop).representation(using: .png, properties: [:]) ?? Data())
+        }
+        guard let best = samples.max(by: { $0.0 < $1.0 }) else { return nil }
+        let waived = best.0 >= AcceptanceAudit.minimumGlyphPixels && best.1 >= 4.5
+        return .init(waived: waived,
+                     record: ["frame": "\(frame)", "popover": "\(popover)", "exposedGlyphPixels": best.0,
+                              "exposedGlyphP75": best.1, "waived": waived],
+                     crop: best.2)
+    }
+}
+
 /// Apple's contrast audit can sample the entire blue selection fill as foreground when a selected Setup status
 /// wraps to two lines. This handler is intentionally limited to the imported, focused "No connection" row and
 /// measures only light glyph pixels against that row's accent fill. A clipped row never qualifies.
@@ -371,6 +406,7 @@ enum AcceptanceAudit {
     @MainActor
     static func run(_ app: XCUIApplication, surface: String, test: XCTestCase,
                     types kinds: XCUIAccessibilityAuditType = types,
+                    preAuditedPopoverContent: Bool = false,
                     additionalWaiver: ((XCUIAccessibilityAuditIssue) -> String?)? = nil) throws -> [String] {
         var unwaived: [String] = []
         var waived: [[String: Any]] = []
@@ -442,6 +478,24 @@ enum AcceptanceAudit {
                 print("AUDIT WAIVED \(description) — dimmed behind a modal sheet; measured \(stats)")
                 continue
             }
+            if preAuditedPopoverContent, let popoverFrame, element.exists,
+               !Self.isDescendant(element, of: popover), popoverFrame.intersects(element.frame) {
+                if popoverFrame.contains(element.frame) {
+                    waived.append(["finding": description, "kind": "covered-by-popover", "measured": stats,
+                                   "rationale": "no exposed text pixels; the unobscured window passed its contrast audit before the popover opened"])
+                    print("AUDIT WAIVED \(description) — fully covered by popover, unobscured surface audited first")
+                } else if let exposed = PopoverVisibleContrast.measure(element, popover: popoverFrame, in: windows) {
+                    if let crop = exposed.crop { Acceptance.attach(test, png: crop, name: "popover-exposed-\(index).png") }
+                    if exposed.waived {
+                        waived.append(["finding": description, "kind": "popover-exposed-text", "measured": exposed.record])
+                    } else {
+                        unwaived.append("\(description) — exposed text fails contrast \(exposed.record)")
+                    }
+                } else {
+                    unwaived.append("\(description) — no measurable exposed text outside popover")
+                }
+                continue
+            }
             // Scrolled out of view: nothing is rendered where the element is (its screenshot has no glyphs).
             if element.exists, !element.isHittable, (stats["glyphPixels"] as? Int ?? 0) < 20 {
                 waived.append(["finding": description, "kind": "offscreen", "measured": stats,
@@ -480,6 +534,7 @@ enum AcceptanceAudit {
                 continue
             }
             if issueFor[index].auditType == .contrast, !element.isEnabled, inspector.exists,
+               popoverFrame?.intersects(element.frame) != true,
                Self.isDescendant(element, of: inspector), passesGlyphContrast(measured) {
                 waived.append(["finding": description, "kind": "disabled-inspector-text", "measured": stats,
                                "rationale": "inactive inspector text; its own visible crop meets the 40-glyph, 4.5:1 threshold"])

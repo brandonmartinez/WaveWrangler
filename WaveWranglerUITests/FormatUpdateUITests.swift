@@ -174,7 +174,7 @@ final class FormatUpdateUITests: XCTestCase {
             } else {
                 needsKeyboardNavigation.append("T21 Update Later: focus and Space on Update… (Not run; needs Full Keyboard Access)")
             }
-            try audit("T21 status popover Update…")
+            try audit("T21 status popover Update…", preAuditedPopoverContent: true)
             if Self.keyboardNavigation {
                 app.typeKey(" ", modifierFlags: [])
             } else if update.exists {
@@ -351,7 +351,8 @@ final class FormatUpdateUITests: XCTestCase {
         }
     }
 
-    private func audit(_ surface: String, types: XCUIAccessibilityAuditType = AcceptanceAudit.types) throws {
+    private func audit(_ surface: String, types: XCUIAccessibilityAuditType = AcceptanceAudit.types,
+                       preAuditedPopoverContent: Bool = false) throws {
         let visible = NSScreen.screens.first?.visibleFrame
         for window in app.windows.matching(identifier: "ww.show.window").allElementsBoundByIndex {
             check(Acceptance.waitFor(timeout: 5) {
@@ -359,7 +360,8 @@ final class FormatUpdateUITests: XCTestCase {
                 return visible.contains(window.frame)
             }, "\(surface): show window must be fully on the primary display: \(window.frame)")
         }
-        let unwaived = try AcceptanceAudit.run(app, surface: surface, test: self, types: types)
+        let unwaived = try AcceptanceAudit.run(app, surface: surface, test: self, types: types,
+                                              preAuditedPopoverContent: preAuditedPopoverContent)
         for finding in unwaived { findings.append("AUDIT \(finding)") }
     }
 

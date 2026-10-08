@@ -94,7 +94,16 @@ final class LibraryWorkspaceUITests: XCTestCase {
                 }
                 continue
             }
-            guard let element = issue.element, element.exists, isLibraryText(element) else {
+            guard let element = issue.element, element.exists else {
+                findings.append(description)
+                continue
+            }
+            let measuredSidebar = surface == "Show window (blocked Alignment)"
+                && element.identifier == "ww.show.sidebar.showInfo"
+                && AcceptanceAudit.measuredArtefact(element, inspectorFrame: nil, episodeInspectorShown: false,
+                                                    entriesFrame: nil, windowFrames: windowRects,
+                                                    popoverFrame: nil, inSheet: false) != nil
+            guard isLibraryText(element) || measuredSidebar else {
                 findings.append(description)
                 continue
             }
