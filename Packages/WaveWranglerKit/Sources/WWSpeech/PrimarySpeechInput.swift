@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import WWCore
@@ -48,18 +49,27 @@ public struct PrimarySpeechInputState: Sendable {
 /// The bytes stay private to WWSpeech; there is no public initializer or file URL.
 public struct ProvisionalPrimarySpeechInput: Sendable {
     public let selection: PrimarySpeechSelection
+    public let declaredAuthorization: PrimarySpeechAuthorization
+    public let showRevision: UInt64
     public let interpretation: FormatInterpretation
     public let sourceRevision: SourceRevision
+    /// SHA-256 over the selected decoded source channel, not the container file.
+    public let selectedSourcePCMHash: String
     public let inputAssetRevision: Int
     package let samples: [Float]
 
     public var frameCount: Int { samples.count }
 
-    fileprivate init(selection: PrimarySpeechSelection, interpretation: FormatInterpretation,
-                     sourceRevision: SourceRevision, samples: [Float]) {
+    fileprivate init(selection: PrimarySpeechSelection, declaredAuthorization: PrimarySpeechAuthorization,
+                     showRevision: UInt64, interpretation: FormatInterpretation,
+                     sourceRevision: SourceRevision, selectedSourcePCMHash: String,
+                     samples: [Float]) {
         self.selection = selection
+        self.declaredAuthorization = declaredAuthorization
+        self.showRevision = showRevision
         self.interpretation = interpretation
         self.sourceRevision = sourceRevision
+        self.selectedSourcePCMHash = selectedSourcePCMHash
         inputAssetRevision = PrimarySpeechInputAdapter.inputAssetRevision
         self.samples = samples
     }
@@ -123,6 +133,43 @@ public struct PrimarySpeechInputAdapter: Sendable {
         }
     }
 
+    #if DEBUG
+    /// Synthetic tests may borrow a sealed, pathname-free input descriptor only while
+    /// the selected source and organizer snapshot are still verified. Release builds
+    /// expose no worker handoff until the real runtime and rights are qualified.
+    package func withSealedSyntheticWorkerInput<T: Sendable>(
+        episodeID: EpisodeID,
+        speakerID: SpeakerID,
+        authorization: PrimarySpeechAuthorization?,
+        availability: SourceAvailabilitySetting,
+        current: @escaping @Sendable () async throws -> PrimarySpeechInputState,
+        workerURL: URL,
+        workerPin: LocalSpeechAssetPin,
+        worker: @escaping @Sendable (BorrowedPrimaryPCMInput) throws(SpeechAdmissionRefusal) -> T
+    ) async throws(SpeechAdmissionRefusal) -> T {
+        guard authorization?.episodeID == episodeID,
+              authorization?.speakerID == speakerID,
+              availability == .on else { throw .sourceIdentityNotConfirmed }
+        do { try workerPin.verify(at: workerURL) }
+        catch { throw .runtimeDependencyMismatch }
+        return try await prepareSelected(
+            episodeID: episodeID, speakerID: speakerID, authorization: authorization,
+            availability: availability, current: current, postConsumeCheck: true,
+            transform: { input throws(SpeechAdmissionRefusal) in
+                try SealedPrimaryPCMWorkerInput(proxy: SelectedPrimaryPCMProxy.make(from: input))
+            },
+            consume: { sealed throws(SpeechAdmissionRefusal) in
+                do { try workerPin.verify(at: workerURL) }
+                catch { throw .runtimeDependencyMismatch }
+                let result = try sealed.withBorrowedDescriptor(worker)
+                do { try workerPin.verify(at: workerURL) }
+                catch { throw .runtimeDependencyMismatch }
+                return result
+            }
+        )
+    }
+    #endif
+
     private func prepareSelected<Product: Sendable>(
         episodeID: EpisodeID,
         speakerID: SpeakerID,
@@ -131,7 +178,25 @@ public struct PrimarySpeechInputAdapter: Sendable {
         current: @escaping @Sendable () async throws -> PrimarySpeechInputState,
         transform: @escaping @Sendable (ProvisionalPrimarySpeechInput) throws(SpeechAdmissionRefusal) -> Product
     ) async throws(SpeechAdmissionRefusal) -> Product {
-        guard authorization?.episodeID == episodeID, authorization?.speakerID == speakerID,
+        try await prepareSelected(
+            episodeID: episodeID, speakerID: speakerID, authorization: authorization,
+            availability: availability, current: current, postConsumeCheck: false,
+            transform: transform, consume: { $0 }
+        )
+    }
+
+    private func prepareSelected<Product: Sendable, Result: Sendable>(
+        episodeID: EpisodeID,
+        speakerID: SpeakerID,
+        authorization: PrimarySpeechAuthorization?,
+        availability: SourceAvailabilitySetting,
+        current: @escaping @Sendable () async throws -> PrimarySpeechInputState,
+        postConsumeCheck: Bool,
+        transform: @escaping @Sendable (ProvisionalPrimarySpeechInput) throws(SpeechAdmissionRefusal) -> Product,
+        consume: @escaping @Sendable (Product) throws(SpeechAdmissionRefusal) -> Result
+    ) async throws(SpeechAdmissionRefusal) -> Result {
+        guard let authorization, authorization.episodeID == episodeID,
+              authorization.speakerID == speakerID,
               availability == .on else { throw .sourceIdentityNotConfirmed }
         let initial: PrimarySpeechInputState
         do { initial = try await current() }
@@ -152,8 +217,10 @@ public struct PrimarySpeechInputAdapter: Sendable {
         do {
             return try await decoder.access.withScopedAccess(to: url) { scopedURL in
                 try await prepareScoped(initial: initial, selection: selection, record: record,
-                                        episodeID: episodeID, url: scopedURL, current: current,
-                                        transform: transform)
+                                        authorization: authorization, episodeID: episodeID,
+                                        url: scopedURL, current: current,
+                                        postConsumeCheck: postConsumeCheck, transform: transform,
+                                        consume: consume)
             }
         } catch let refusal as SpeechAdmissionRefusal {
             throw refusal
@@ -162,15 +229,18 @@ public struct PrimarySpeechInputAdapter: Sendable {
         }
     }
 
-    private func prepareScoped<Product: Sendable>(
+    private func prepareScoped<Product: Sendable, Result: Sendable>(
         initial: PrimarySpeechInputState,
         selection: PrimarySpeechSelection,
         record: DeviceAccessRecord,
+        authorization: PrimarySpeechAuthorization,
         episodeID: EpisodeID,
         url: URL,
         current: @escaping @Sendable () async throws -> PrimarySpeechInputState,
-        transform: @Sendable (ProvisionalPrimarySpeechInput) throws(SpeechAdmissionRefusal) -> Product
-    ) async throws(SpeechAdmissionRefusal) -> Product {
+        postConsumeCheck: Bool,
+        transform: @Sendable (ProvisionalPrimarySpeechInput) throws(SpeechAdmissionRefusal) -> Product,
+        consume: @Sendable (Product) throws(SpeechAdmissionRefusal) -> Result
+    ) async throws(SpeechAdmissionRefusal) -> Result {
         let before = try Self.inspect(url)
         guard case let .success(metadata) = decoder.access.io.metadata(at: url),
               metadata.volumeIsLocal.value == true,
@@ -190,7 +260,7 @@ public struct PrimarySpeechInputAdapter: Sendable {
               initial.inputAssetRevision == Self.inputAssetRevision
         else { throw .sourceRevisionChanged }
 
-        let decoded: (interpretation: FormatInterpretation, samples: [Float])
+        let decoded: (interpretation: FormatInterpretation, samples: [Float], hash: String)
         do {
             decoded = try await decoder.withDecodingCursor(url, source: selection.sourceID) { cursor in
                 let interpretation = cursor.interpretation
@@ -204,10 +274,13 @@ public struct PrimarySpeechInputAdapter: Sendable {
                 guard interpretation.frames.validFrames <= Int64(Self.maximumFrames) else {
                     throw SpeechAdmissionRefusal.inputTooLarge
                 }
-                var sink = SelectedChannelSink(channel: selection.channel, maximumFrames: Self.maximumFrames)
+                var sink = SelectedChannelSink(channel: selection.channel,
+                                               sampleRate: interpretation.sourceSampleRate,
+                                               maximumFrames: Self.maximumFrames)
                 do {
                     while let chunk = try await cursor.next() { try sink.append(chunk) }
-                    return (interpretation, try sink.finish())
+                    let (samples, hash) = try sink.finish()
+                    return (interpretation, samples, hash)
                 } catch {
                     sink.abandon()
                     throw error
@@ -220,9 +293,12 @@ public struct PrimarySpeechInputAdapter: Sendable {
         } catch {
             throw .currentStateUnavailable
         }
+        guard let showRevision = initial.showRevision else { throw .sourceRevisionChanged }
         let input = ProvisionalPrimarySpeechInput(
-            selection: selection, interpretation: decoded.interpretation,
-            sourceRevision: revision, samples: decoded.samples
+            selection: selection, declaredAuthorization: authorization,
+            showRevision: showRevision, interpretation: decoded.interpretation,
+            sourceRevision: revision, selectedSourcePCMHash: decoded.hash,
+            samples: decoded.samples
         )
         let product = try transform(input)
         guard !Task.isCancelled else { throw .decode(.cancelled) }
@@ -252,7 +328,27 @@ public struct PrimarySpeechInputAdapter: Sendable {
         else { throw .sourceRevisionChanged }
         guard Self.sameFile(before, try Self.inspect(url)) else { throw .sourceAliasOrChanged }
         guard !Task.isCancelled else { throw .decode(.cancelled) }
-        return product
+        let result = try consume(product)
+        if postConsumeCheck {
+            guard !Task.isCancelled else { throw .decode(.cancelled) }
+            guard Self.sameFile(before, try Self.inspect(url)),
+                  let bookmark = record.bookmark,
+                  case let .resolved(checkedURL, isStale) = decoder.access.io.resolveBookmark(bookmark),
+                  !isStale, checkedURL == url,
+                  case let .success(checkedMetadata) = decoder.access.io.metadata(at: url),
+                  metadata.fingerprint.compare(to: checkedMetadata.fingerprint) == .matches
+            else { throw .sourceAliasOrChanged }
+            let checked: PrimarySpeechInputState
+            do { checked = try await current() }
+            catch { throw .currentStateUnavailable }
+            guard checked.show == final.show, checked.showRevision == final.showRevision,
+                  checked.accessRecords == final.accessRecords,
+                  checked.sourceRevision == revision,
+                  checked.inputAssetRevision == Self.inputAssetRevision
+            else { throw .sourceRevisionChanged }
+            guard !Task.isCancelled else { throw .decode(.cancelled) }
+        }
+        return result
     }
 
     private static func selection(in show: ShowDocumentModel, episodeID: EpisodeID,
@@ -300,6 +396,16 @@ private struct SelectedChannelSink: DecodedAudioSink {
     let channel: Int
     let maximumFrames: Int
     var samples: [Float] = []
+    private var hasher: SHA256
+
+    init(channel: Int, sampleRate: Int, maximumFrames: Int) {
+        self.channel = channel
+        self.maximumFrames = maximumFrames
+        hasher = SHA256()
+        hasher.update(data: Data("WWSelectedPrimaryPCM1".utf8))
+        Self.update(&hasher, Int64(channel))
+        Self.update(&hasher, Int64(sampleRate))
+    }
 
     mutating func append(_ chunk: DecodedChunk) throws {
         guard channel >= 0, channel < chunk.channelCount,
@@ -307,10 +413,21 @@ private struct SelectedChannelSink: DecodedAudioSink {
               chunk.channel(channel).allSatisfy(\.isFinite)
         else { throw SpeechAdmissionRefusal.sourceRevisionChanged }
         guard chunk.frameCount <= maximumFrames - samples.count else { throw SpeechAdmissionRefusal.inputTooLarge }
-        samples.append(contentsOf: chunk.channel(channel))
+        let selected = chunk.channel(channel)
+        let bits = selected.map { $0.bitPattern.littleEndian }
+        bits.withUnsafeBytes { hasher.update(bufferPointer: $0) }
+        samples.append(contentsOf: selected)
     }
 
-    mutating func finish() throws -> [Float] { samples }
+    mutating func finish() throws -> ([Float], String) {
+        Self.update(&hasher, Int64(samples.count))
+        return (samples, "selected-pcm-sha256:" +
+            hasher.finalize().map { String(format: "%02x", $0) }.joined())
+    }
+
+    private static func update(_ hasher: inout SHA256, _ value: Int64) {
+        withUnsafeBytes(of: value.littleEndian) { hasher.update(bufferPointer: $0) }
+    }
 
     mutating func abandon() {
         samples.withUnsafeMutableBufferPointer { buffer in

@@ -51,6 +51,8 @@ public enum SpeechAdmissionRefusal: Error, Sendable, Equatable {
     case proxyRateUnsupported
     case proxyFrameOverflow
     case proxyChunkOverflow
+    case workerInputNotSealed
+    case workerInputChanged
     case decode(DecodeFailure)
     case runtimeNotStaged
     case runtimeDependencyMismatch

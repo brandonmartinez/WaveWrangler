@@ -72,13 +72,13 @@ the tightened profile or replace a monitored app/system-network cold-restart aud
 **Admission is now default-deny even for a regular PCM file.** The package-scoped
 `OfflineWhisperPlan` constructor explicitly refuses with `primaryProxyNotProven`, including
 caller-attested primary metadata, synthetic hardlinks/symlinks, changed paths, and mismatched
-selections. A caller cannot create a runnable plan from an arbitrary file. A future adapter
-must serialize the proven in-memory proxy to an owner-private read-only descriptor, keep it
-outside scratch, and prove the descriptor and path cannot be re-aliased or replaced between
-admission and execution; it must also qualify the offline runtime. Until then neither
-approved real media nor a synthetic fixture is submitted
-through this runtime path. The existing bounded watchdog, drained diagnostics and output
-refusal remain reserved for that gated path.
+selections. A caller cannot create a runnable plan from an arbitrary file. The separate
+synthetic-worker input boundary below does not accept a pathname or construct an offline
+plan. A future runnable adapter still needs qualified offline runtime and model rights,
+an input format supported by that runtime, and a safe descriptor-only execution contract.
+Neither approved real media nor a synthetic fixture is submitted through this runtime path.
+The existing bounded watchdog, drained diagnostics and output refusal remain reserved for
+that gated path.
 
 **Selected-primary PCM proof unit (2026-10-08):** `preparePCMProxy` uses the same confirmed
 primary, single selected channel, current source/format/asset revision and read-only
@@ -104,9 +104,36 @@ rate mismatch, cancellation, stale live state, alias/path change and decode erro
 typed; staged output is scrubbed on failure and never published partially. The selected
 proxy is memory-only and has no public sample or file-path constructor, no runnable
 `offlinePlan`, and no ASR invocation. Descriptor pinning applies to the original decoder
-read, **not** to a future worker input file; a mutable caller-supplied snapshot alone cannot
-grant organizer-owned authority or durable source-content identity. Offline model/network
-isolation, WAV serialization/identity and end-to-end actual-media inference remain open.
+read and to the synthetic-only worker input below; a mutable caller-supplied snapshot alone
+cannot grant organizer-owned authority or durable source-content identity.
+
+**Sealed synthetic-worker input unit (2026-10-08):** The debug-only, package-scoped
+`withSealedSyntheticWorkerInput` reuses `prepareSelected`, requiring an exact
+episode/speaker caller-declared authorization, confirmed non-backup primary, unique
+user-confirmed source identity, fresh source/format/selected-input/proxy and organizer
+revision, and *no episode maps*. While the verified cursor reads, it hashes only the
+selected decoded source channel (domain-separated SHA-256 including channel, rate and
+frame count), **not** the source file's container bytes or other channels. That hash
+and the format/fingerprint bind the source side of the handoff. The selected channel is resampled
+before canonical native little-endian Float32 mono bytes are written at 16 kHz into a
+mode-0600 file inside a mode-0700 locally mounted private directory. A read-only
+`openat(O_NOFOLLOW)` descriptor is inode/size checked against its private writer,
+and the pathname is unlinked before delivery. The worker callback receives only a
+synchronous borrowed FD plus a SHA-256 verified byte/format/frame/channel/selection,
+declared intent, selected-source PCM hash, source fingerprint, interpretation,
+chunk-coordinate and asset-revision
+record. It has no file URL. Release builds expose no worker handoff. The same FD and digest are checked before and after the
+callback; the retained private writer overwrites and truncates bytes on normal return,
+worker refusal and cancellation, and both descriptors are closed. A synthetic worker
+file is pinned/verified before decode, before callback and after callback; mismatches
+refuse without publishing a result. Source pathname/metadata and the full organizer
+snapshot are rechecked after callback before any result can be returned. Synthetic
+tests cover selected-channel content,
+modified bytes, source/path/revision races, wrong episode, mapped occurrences, worker
+identity changes, cancellation and scrubbed anonymous bytes. This input is **raw f32le**,
+not a runnable Whisper WAV or a grant of actual inference. Real model/native rights,
+actual worker execution and monitored cold-restart offline qualification remain blocked;
+no model, recording or network was used for this unit.
 
 ## Native status correction
 

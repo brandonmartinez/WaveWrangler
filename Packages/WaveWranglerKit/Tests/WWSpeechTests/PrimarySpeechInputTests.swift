@@ -1,4 +1,5 @@
 import Darwin
+import CryptoKit
 import Foundation
 import Testing
 import WWAlignPipeline
@@ -94,6 +95,26 @@ private actor SpeechLateSnapshot {
         calls += 1
         return calls == 3 ? changed : initial
     }
+}
+
+private actor SpeechAfterWorkerSnapshot {
+    let initial: PrimarySpeechInputState
+    let changed: PrimarySpeechInputState
+    private(set) var calls = 0
+
+    init(initial: PrimarySpeechInputState, changed: PrimarySpeechInputState) {
+        self.initial = initial
+        self.changed = changed
+    }
+
+    func read() -> PrimarySpeechInputState {
+        calls += 1
+        return calls >= 4 ? changed : initial
+    }
+}
+
+private final class CapturedSpeechFD: @unchecked Sendable {
+    var descriptor: Int32 = -1
 }
 
 private struct SpeechMidReadContentIO: SourceContentIO {
@@ -225,6 +246,8 @@ struct PrimarySpeechInputTests {
         )
         #expect(proxy.selection.channel == 1)
         #expect(proxy.sourceRevision == snapshot.sourceRevision)
+        #expect(proxy.selectedSourcePCMHash.hasPrefix("selected-pcm-sha256:"))
+        #expect(proxy.selectedSourcePCMHash.count == "selected-pcm-sha256:".count + 64)
         #expect(proxy.inputAssetRevision == PrimarySpeechInputAdapter.inputAssetRevision)
         #expect(proxy.proxyAssetRevision == SelectedPrimaryPCMProxy.proxyAsset.revision)
         #expect(proxy.interpretation.sourceSampleRate == 48_000)
@@ -259,6 +282,254 @@ struct PrimarySpeechInputTests {
         #expect(proxy.chunks.map(\.outputFrames) == [0..<64])
         #expect(proxy.chunks[0].sourceFrames == 0..<64)
         #expect(proxy.samples.allSatisfy { $0 == Float(-200) / 32768 })
+    }
+
+    @Test func sealedWorkerBorrowsOnlySelectedPCMAndScrubsAfterReturn() async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let workerURL = directory.appendingPathComponent("stub")
+        try Data("abc".utf8).write(to: workerURL)
+        let pin = LocalSpeechAssetPin(
+            name: "synthetic-stub", version: "1", sizeBytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            license: "synthetic", source: "fixture")
+        var sourceHasher = SHA256()
+        sourceHasher.update(data: Data("WWSelectedPrimaryPCM1".utf8))
+        for number in [Int64(1), 16_000] {
+            withUnsafeBytes(of: number.littleEndian) { sourceHasher.update(bufferPointer: $0) }
+        }
+        let selectedBits = [UInt32](repeating: (Float(-200) / 32768).bitPattern.littleEndian, count: 64)
+        selectedBits.withUnsafeBytes { sourceHasher.update(bufferPointer: $0) }
+        withUnsafeBytes(of: Int64(64).littleEndian) { sourceHasher.update(bufferPointer: $0) }
+        let selectedHash = "selected-pcm-sha256:" +
+            sourceHasher.finalize().map { String(format: "%02x", $0) }.joined()
+        let duplicate = try await PrimarySpeechInputAdapter(access: access)
+            .withSealedSyntheticWorkerInput(
+                episodeID: episode, speakerID: speaker,
+                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                availability: .on, current: { snapshot }, workerURL: workerURL, workerPin: pin
+            ) { input throws(SpeechAdmissionRefusal) in
+                guard input.selection.episodeID == episode, input.selection.speakerID == speaker,
+                      input.declaredAuthorization
+                        == .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                      input.showRevision == snapshot.showRevision,
+                      input.selection.channel == 1, input.interpretation.channelCount == 2,
+                      input.interpretation.sourceFingerprint
+                        == snapshot.accessRecords[0].recordedIdentity?.fingerprint,
+                      input.sourceRevision == snapshot.sourceRevision,
+                      input.selectedSourcePCMHash == selectedHash,
+                      input.inputAssetRevision == PrimarySpeechInputAdapter.inputAssetRevision,
+                      input.proxyAssetRevision == SelectedPrimaryPCMProxy.proxyAsset.revision,
+                      input.sampleRate == 16_000, input.channelCount == 1,
+                      input.format == "f32le", input.frameCount == 64,
+                      input.sourceFramesPerOutputFrame == 1,
+                      input.chunks.map(\.outputFrames) == [0..<64]
+                else { throw .workerInputChanged }
+                var info = stat()
+                guard fstat(input.descriptor, &info) == 0, info.st_nlink == 0,
+                      info.st_size == 64 * 4,
+                      fcntl(input.descriptor, F_GETFL) & O_ACCMODE == O_RDONLY
+                else { throw .workerInputChanged }
+                var bytes = [UInt8](repeating: 0, count: 64 * 4)
+                let readCount = bytes.withUnsafeMutableBytes {
+                    pread(input.descriptor, $0.baseAddress, $0.count, 0)
+                }
+                guard readCount == bytes.count,
+                      SHA256.hash(data: Data(bytes)).map({ String(format: "%02x", $0) }).joined()
+                        == input.sha256
+                else { throw .workerInputChanged }
+                let bits = UInt32(bytes[0]) | UInt32(bytes[1]) << 8
+                    | UInt32(bytes[2]) << 16 | UInt32(bytes[3]) << 24
+                guard Float(bitPattern: bits) == Float(-200) / 32768 else {
+                    throw .workerInputChanged
+                }
+                return dup(input.descriptor)
+            }
+        defer { _ = close(duplicate) }
+        var after = stat()
+        #expect(fstat(duplicate, &after) == 0)
+        #expect(after.st_size == 0)
+        #expect(after.st_nlink == 0)
+    }
+
+    @Test func sealedWorkerRefusesUnpinnedOrModifiedWorkerWithoutDelivery() async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let workerURL = directory.appendingPathComponent("stub")
+        try Data("abd".utf8).write(to: workerURL)
+        let pin = LocalSpeechAssetPin(
+            name: "synthetic-stub", version: "1", sizeBytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            license: "synthetic", source: "fixture")
+        let adapter = PrimarySpeechInputAdapter(access: access)
+        let grant = PrimarySpeechAuthorization.explicitUserRequest(
+            episodeID: episode, speakerID: speaker)
+        do {
+            _ = try await adapter.withSealedSyntheticWorkerInput(
+                episodeID: episode, speakerID: speaker, authorization: grant,
+                availability: .on, current: { snapshot }, workerURL: workerURL, workerPin: pin
+            ) { _ in Issue.record("unverified worker received PCM"); return 1 }
+            Issue.record("unverified worker was admitted")
+        } catch { #expect(error == .runtimeDependencyMismatch) }
+        try Data("abc".utf8).write(to: workerURL)
+        let correct = LocalSpeechAssetPin(
+            name: "synthetic-stub", version: "1", sizeBytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            license: "synthetic", source: "fixture")
+        do {
+            _ = try await adapter.withSealedSyntheticWorkerInput(
+                episodeID: episode, speakerID: speaker, authorization: grant,
+                availability: .on, current: { snapshot }, workerURL: workerURL, workerPin: correct
+            ) { _ in
+                try? Data("abd".utf8).write(to: workerURL)
+                return 1
+            }
+            Issue.record("modified worker was accepted")
+        } catch { #expect(error == .runtimeDependencyMismatch) }
+    }
+
+    @Test func changedSealedBytesRefuseAndWorkerErrorsScrubAnonymousInput() async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let proxy = try await PrimarySpeechInputAdapter(access: access).preparePCMProxy(
+            episodeID: episode, speakerID: speaker,
+            authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+            availability: .on, current: { snapshot })
+        let sealed = try SealedPrimaryPCMWorkerInput(proxy: proxy)
+        let retained = try sealed.withBorrowedDescriptor { input throws(SpeechAdmissionRefusal) in
+            let duplicate = dup(input.descriptor)
+            guard duplicate >= 0 else { throw .workerInputNotSealed }
+            return duplicate
+        }
+        defer { _ = close(retained) }
+        sealed.overwriteForTesting()
+        #expect(throws: SpeechAdmissionRefusal.workerInputChanged) {
+            try sealed.withBorrowedDescriptor { _ in
+                Issue.record("modified PCM reached worker"); return 0
+            }
+        }
+
+        let workerURL = directory.appendingPathComponent("stub")
+        try Data("abc".utf8).write(to: workerURL)
+        let pin = LocalSpeechAssetPin(
+            name: "synthetic-stub", version: "1", sizeBytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            license: "synthetic", source: "fixture")
+        let caught = CapturedSpeechFD()
+        do {
+            let _: Int = try await PrimarySpeechInputAdapter(access: access).withSealedSyntheticWorkerInput(
+                episodeID: episode, speakerID: speaker,
+                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                availability: .on, current: { snapshot }, workerURL: workerURL, workerPin: pin
+            ) { input throws(SpeechAdmissionRefusal) -> Int in
+                caught.descriptor = dup(input.descriptor)
+                throw .sandboxFailed
+            }
+            Issue.record("worker failure was swallowed")
+        } catch { #expect(error == .sandboxFailed) }
+        defer { if caught.descriptor >= 0 { _ = close(caught.descriptor) } }
+        var after = stat()
+        #expect(caught.descriptor >= 0)
+        #expect(fstat(caught.descriptor, &after) == 0)
+        #expect(after.st_size == 0)
+        #expect(after.st_nlink == 0)
+    }
+
+    @Test func sealedWorkerRefusesLatePrimaryChangeAndWrongOccurrence() async throws {
+        let (directory, url, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let workerURL = directory.appendingPathComponent("stub")
+        try Data("abc".utf8).write(to: workerURL)
+        let pin = LocalSpeechAssetPin(
+            name: "synthetic-stub", version: "1", sizeBytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            license: "synthetic", source: "fixture")
+        let grant = PrimarySpeechAuthorization.explicitUserRequest(
+            episodeID: episode, speakerID: speaker)
+        let changed = PrimarySpeechInputState(
+            show: snapshot.show, showRevision: 2, accessRecords: snapshot.accessRecords,
+            sourceRevision: snapshot.sourceRevision, inputAssetRevision: snapshot.inputAssetRevision)
+        let state = SpeechLateSnapshot(initial: snapshot, changed: changed)
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: access).withSealedSyntheticWorkerInput(
+                episodeID: episode, speakerID: speaker, authorization: grant, availability: .on,
+                current: { await state.read() }, workerURL: workerURL, workerPin: pin
+            ) { _ in Issue.record("stale primary reached worker"); return 0 }
+            Issue.record("late revision was admitted")
+        } catch { #expect(error == .sourceRevisionChanged) }
+        #expect(await state.calls == 3)
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: access).withSealedSyntheticWorkerInput(
+                episodeID: EpisodeID(), speakerID: speaker, authorization: grant, availability: .on,
+                current: { snapshot }, workerURL: workerURL, workerPin: pin
+            ) { _ in Issue.record("wrong episode reached worker"); return 0 }
+            Issue.record("wrong episode was admitted")
+        } catch { #expect(error == .sourceIdentityNotConfirmed) }
+        let swapped = SpeechSwapSnapshot(snapshot, url: url)
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: access).withSealedSyntheticWorkerInput(
+                episodeID: episode, speakerID: speaker, authorization: grant, availability: .on,
+                current: { try await swapped.read() }, workerURL: workerURL, workerPin: pin
+            ) { _ in Issue.record("relinked source reached worker"); return 0 }
+            Issue.record("relinked source was admitted")
+        } catch { #expect(error == .sourceAliasOrChanged) }
+    }
+
+    @Test func cancellationAfterHandoffScrubsBytesAndRefusesPublication() async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stub = directory.appendingPathComponent("stub")
+        try Data("abc".utf8).write(to: stub)
+        let pin = LocalSpeechAssetPin(
+            name: "synthetic-stub", version: "1", sizeBytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            license: "synthetic", source: "fixture")
+        let caught = CapturedSpeechFD()
+        let task = Task { () throws -> Int in
+            try await PrimarySpeechInputAdapter(access: access).withSealedSyntheticWorkerInput(
+                episodeID: episode, speakerID: speaker,
+                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                availability: .on, current: { snapshot }, workerURL: stub, workerPin: pin
+            ) { input in
+                caught.descriptor = dup(input.descriptor)
+                withUnsafeCurrentTask { $0?.cancel() }
+                return 1
+            }
+        }
+        do {
+            _ = try await task.value
+            Issue.record("cancelled handoff returned success")
+        } catch { #expect(error as? SpeechAdmissionRefusal == .decode(.cancelled)) }
+        defer { if caught.descriptor >= 0 { _ = close(caught.descriptor) } }
+        var after = stat()
+        #expect(caught.descriptor >= 0)
+        #expect(fstat(caught.descriptor, &after) == 0)
+        #expect(after.st_nlink == 0)
+        #expect(after.st_size == 0)
+    }
+
+    @Test func workerResultRefusesOrganizerRevisionChangedDuringCallback() async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stub = directory.appendingPathComponent("stub")
+        try Data("abc".utf8).write(to: stub)
+        let pin = LocalSpeechAssetPin(
+            name: "synthetic-stub", version: "1", sizeBytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            license: "synthetic", source: "fixture")
+        let changed = PrimarySpeechInputState(
+            show: snapshot.show, showRevision: 2, accessRecords: snapshot.accessRecords,
+            sourceRevision: snapshot.sourceRevision, inputAssetRevision: snapshot.inputAssetRevision)
+        let state = SpeechAfterWorkerSnapshot(initial: snapshot, changed: changed)
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: access).withSealedSyntheticWorkerInput(
+                episodeID: episode, speakerID: speaker,
+                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                availability: .on, current: { await state.read() }, workerURL: stub, workerPin: pin
+            ) { _ in 1 }
+            Issue.record("stale post-worker result was published")
+        } catch { #expect(error == .sourceRevisionChanged) }
+        #expect(await state.calls == 4)
     }
 
         @Test func proxyFilterPreservesSpeechBandAndSuppressesOutOfBandTone() async throws {
@@ -758,6 +1029,26 @@ struct PrimarySpeechInputTests {
                 availability: .on, current: { fixture.state }
             )
             Issue.record("mapped or repeated placement yielded a proxy")
+        } catch { #expect(error == .occurrenceNotContinuous) }
+    }
+
+    @Test(arguments: ["continuous", "gap", "duplicate"])
+    func mappedOccurrencesCannotReachSealedWorker(_ scenario: String) async throws {
+        let item = try mappedFixture(scenario)
+        defer { try? FileManager.default.removeItem(at: item.directory) }
+        let stub = item.directory.appendingPathComponent("stub")
+        try Data("abc".utf8).write(to: stub)
+        let pin = LocalSpeechAssetPin(
+            name: "synthetic-stub", version: "1", sizeBytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            license: "synthetic", source: "fixture")
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: item.access).withSealedSyntheticWorkerInput(
+                episodeID: item.episode, speakerID: item.speaker,
+                authorization: .explicitUserRequest(episodeID: item.episode, speakerID: item.speaker),
+                availability: .on, current: { item.state }, workerURL: stub, workerPin: pin
+            ) { _ in Issue.record("mapped occurrence reached worker"); return 0 }
+            Issue.record("mapped occurrence was admitted")
         } catch { #expect(error == .occurrenceNotContinuous) }
     }
 

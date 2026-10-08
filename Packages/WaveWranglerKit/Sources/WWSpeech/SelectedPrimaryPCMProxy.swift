@@ -32,8 +32,11 @@ public struct SelectedPrimaryPCMProxy: Sendable {
     public static let chunkFrames = 16_000
 
     public let selection: PrimarySpeechSelection
+    public let declaredAuthorization: PrimarySpeechAuthorization
+    public let showRevision: UInt64
     public let interpretation: FormatInterpretation
     public let sourceRevision: SourceRevision
+    public let selectedSourcePCMHash: String
     public let inputAssetRevision: Int
     public let proxyAssetRevision: Int
     public let sourceFramesPerOutputFrame: Int
@@ -51,8 +54,11 @@ public struct SelectedPrimaryPCMProxy: Sendable {
 
     fileprivate init(input: ProvisionalPrimarySpeechInput, plan: PCMProxyPlan, samples: [Float]) {
         selection = input.selection
+        declaredAuthorization = input.declaredAuthorization
+        showRevision = input.showRevision
         interpretation = input.interpretation
         sourceRevision = input.sourceRevision
+        selectedSourcePCMHash = input.selectedSourcePCMHash
         inputAssetRevision = input.inputAssetRevision
         proxyAssetRevision = Self.proxyAsset.revision
         sourceFramesPerOutputFrame = plan.factor
