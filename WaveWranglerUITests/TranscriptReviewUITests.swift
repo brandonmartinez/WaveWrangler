@@ -22,16 +22,12 @@ final class TranscriptReviewUITests: XCTestCase {
         let reviewDestination = app.buttons["ww.show.destination.review"]
         XCTAssertTrue(reviewDestination.waitForExistence(timeout: 5))
         reviewDestination.click()
-        XCTAssertEqual(
-            app.descendants(matching: .any)["ww.show.destination"].value as? String,
-            "Review",
-            "Selecting Review updates the destination control"
-        )
+        XCTAssertTrue(reviewDestination.isSelected, "Selecting Review updates the destination control")
         XCTAssertFalse(
             app.descendants(matching: .any)["ww.show.showInfoSummary.title"].exists,
             "Selecting an episode leaves the Show Info surface"
         )
-        XCTAssertTrue(app.staticTexts["ww.review.heading"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["ww.review.heading"].waitForExistence(timeout: 5))
     }
 
     override func tearDown() async throws {
