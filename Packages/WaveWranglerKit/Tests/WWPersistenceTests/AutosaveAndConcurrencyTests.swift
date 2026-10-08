@@ -19,6 +19,36 @@ private final class Counter: Sendable {
     var count: Int { value.withLock { $0 } }
 }
 
+private final class CheckpointTimeline: PublicationHooks {
+    struct Event: Sendable {
+        let phase: String
+        let at: ContinuousClock.Instant
+    }
+
+    private let events = Mutex<[Event]>([])
+
+    func mark(_ phase: String, at: ContinuousClock.Instant = .now) {
+        events.withLock { $0.append(Event(phase: phase, at: at)) }
+    }
+
+    func reached(_ boundary: PublicationBoundary) throws {
+        mark(boundary.rawValue)
+    }
+
+    func reset() { events.withLock { $0.removeAll(keepingCapacity: true) } }
+    var snapshot: [Event] { events.withLock { $0 } }
+
+    static func description(_ events: [Event], from start: ContinuousClock.Instant) -> String {
+        var previous = start
+        return events.map { event in
+            let elapsed = Stats.seconds(event.at - start)
+            let delta = Stats.seconds(event.at - previous)
+            previous = event.at
+            return String(format: "%@=%.4fs(+%.4fs)", event.phase, elapsed, delta)
+        }.joined(separator: " ")
+    }
+}
+
 @Suite("Autosave policy ON / configurable / OFF", .serialized)
 struct AutosavePolicyTests {
     @Test func preferenceDefaultsAndBounds() throws {
@@ -121,15 +151,27 @@ struct AutosavePolicyTests {
     /// Headless measurement on this host; it does not establish native NSDocument scheduling timing.
     @Test(.enabled(if: TimingGate.enabled, "timing pass (WW_TIMING_TESTS=1)"))
     func editToQuiescentCheckpointLatency() async throws {
-        let rig = Rig()
+        let timeline = CheckpointTimeline()
+        let rig = Rig(hooks: timeline)
         // Default policy: publication after 1 s quiescence.
         let gate = AutosaveGate(AutosavePreference(enabled: true, delaySeconds: 1))
         let (session, url) = try makeSession(rig, seed: 43, gate: gate)
-        let (stream, continuation) = AsyncStream<ContinuousClock.Instant>.makeStream()
+        await session.observeSaveTiming { entered in timeline.mark(entered ? "session-entry" : "session-return") }
+        struct PublicationCompletion: Sendable {
+            let result: Result<PublicationReceipt, PublicationError>
+            let verified: ContinuousClock.Instant
+            let events: [CheckpointTimeline.Event]
+        }
+        let (stream, continuation) = AsyncStream<PublicationCompletion>.makeStream()
         let scheduler = QuiescenceScheduler(gate: gate, queue: DispatchQueue(label: "ww.test.scheduler")) { kind in
             guard kind == .publish else { return }
+            timeline.mark("timer-callback")
             Task {
-                if case .success = await session.save(automatic: true) { continuation.yield(.now) }
+                timeline.mark("task-entry")
+                timeline.mark("save-request")
+                let result = await session.save(automatic: true)
+                let verified = ContinuousClock.now
+                continuation.yield(PublicationCompletion(result: result, verified: verified, events: timeline.snapshot))
             }
         }
         var iterator = stream.makeAsyncIterator()
@@ -141,13 +183,22 @@ struct AutosavePolicyTests {
                 try await Task.sleep(for: .milliseconds(40))
             }
             try await session.edit { try $0.renamingShow(to: "Sample \(sample) final") }
+            timeline.reset()
             scheduler.noteEdit()
             let lastEdit = ContinuousClock.now
-            let verified = try #require(await iterator.next())
+            timeline.mark("last-edit", at: lastEdit)
+            let completion = try #require(await iterator.next())
+            guard case .success = completion.result else {
+                Issue.record("autosave sample \(sample) failed: \(completion.result); \(CheckpointTimeline.description(completion.events, from: lastEdit))")
+                return
+            }
             // Independent read-back of coherent disk truth.
             let decoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: url))
+            let independentRead = ContinuousClock.now
             #expect(decoded.payload.show.title == "Sample \(sample) final")
-            latencies.append(Stats.seconds(verified - lastEdit))
+            latencies.append(Stats.seconds(completion.verified - lastEdit))
+            let events = completion.events + [.init(phase: "independent-read", at: independentRead)]
+            Evidence.record("autosave publication sample=\(sample) \(CheckpointTimeline.description(events, from: lastEdit))")
         }
         Evidence.record("autosave edit-to-quiescent verified checkpoint (delay 1 s, publication) \(Stats.summary(latencies)) [headless WWPersistence, this host]")
         #expect(Stats.percentile(latencies, 95) <= 2.0)
@@ -155,21 +206,43 @@ struct AutosavePolicyTests {
 
         // Longer configured delay (5 s): the C2b edit checkpoint lands first, at quiescence.
         gate.preference = AutosavePreference(enabled: true, delaySeconds: 5)
-        let (draftStream, draftContinuation) = AsyncStream<ContinuousClock.Instant>.makeStream()
+        struct DraftCompletion: Sendable {
+            let succeeded: Bool
+            let written: ContinuousClock.Instant
+            let events: [CheckpointTimeline.Event]
+        }
+        let (draftStream, draftContinuation) = AsyncStream<DraftCompletion>.makeStream()
         let draftScheduler = QuiescenceScheduler(gate: gate, queue: DispatchQueue(label: "ww.test.scheduler")) { kind in
             guard kind == .editCheckpoint else { return }
-            Task { if await session.writeEditCheckpoint() { draftContinuation.yield(.now) } }
+            timeline.mark("draft-timer-callback")
+            Task {
+                timeline.mark("draft-task-entry")
+                timeline.mark("draft-request")
+                let succeeded = await session.writeEditCheckpoint()
+                let written = ContinuousClock.now
+                timeline.mark("draft-return", at: written)
+                draftContinuation.yield(DraftCompletion(succeeded: succeeded, written: written, events: timeline.snapshot))
+            }
         }
         var draftIterator = draftStream.makeAsyncIterator()
         var draftLatencies: [Double] = []
         for sample in 0..<5 {
             try await session.edit { try $0.renamingShow(to: "Draft sample \(sample)") }
+            timeline.reset()
             draftScheduler.noteEdit()
             let lastEdit = ContinuousClock.now
-            let written = try #require(await draftIterator.next())
+            timeline.mark("last-edit", at: lastEdit)
+            let completion = try #require(await draftIterator.next())
+            guard completion.succeeded else {
+                Issue.record("edit checkpoint sample \(sample) failed: \(CheckpointTimeline.description(completion.events, from: lastEdit))")
+                return
+            }
             let record = try #require(rig.recovery.latestEditCheckpoint(for: session.key))
             #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(record.snapshot).payload.show.title == "Draft sample \(sample)")
-            draftLatencies.append(Stats.seconds(written - lastEdit))
+            let independentRead = ContinuousClock.now
+            draftLatencies.append(Stats.seconds(completion.written - lastEdit))
+            let events = completion.events + [.init(phase: "independent-read", at: independentRead)]
+            Evidence.record("autosave C2b sample=\(sample) \(CheckpointTimeline.description(events, from: lastEdit))")
             draftScheduler.cancelPending()
         }
         Evidence.record("autosave edit-to-quiescent C2b edit checkpoint (delay 5 s configured, quiescence 0.5 s) \(Stats.summary(draftLatencies)) [headless WWPersistence, this host]")
