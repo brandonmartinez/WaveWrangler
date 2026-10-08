@@ -86,9 +86,17 @@ final class TranscriptReviewUITests: XCTestCase {
     }
 
     func testKeyboardOccurrenceSelectionUpdatesTheInspector() {
+        let inspector = app.scrollViews["ww.inspector"]
+        XCTAssertTrue(inspector.waitForExistence(timeout: 3))
+        inspector.swipeUp()
+
         let firstOccurrence = app.descendants(matching: .any)["ww.review.occurrence.synthetic-001"]
         XCTAssertTrue(firstOccurrence.waitForExistence(timeout: 3))
         firstOccurrence.click()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["ww.review.inspector"].exists,
+            "The Review inspector remains selected after choosing an occurrence"
+        )
         let tokenID = app.descendants(matching: .any)["ww.review.inspector.tokenID"]
         XCTAssertEqual(tokenID.value as? String, "token-stub-001")
 

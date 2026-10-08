@@ -105,6 +105,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertTrue(detailAudit.isEmpty, detailAudit.joined(separator: "\n"))
         app.buttons["Show Inspector"].click()
         XCTAssertTrue(setupRemedy.waitForExistence(timeout: 3))
+        filter.click()
 
         let unwaived = try AcceptanceAudit.run(
             app,
