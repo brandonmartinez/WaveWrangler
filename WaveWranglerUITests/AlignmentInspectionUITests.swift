@@ -275,9 +275,12 @@ final class AlignmentInspectionUITests: XCTestCase {
         let groups = app.descendants(matching: .any)["ww.alignment.groups"]
         let anchors = app.descendants(matching: .any)["ww.alignment.anchors"]
         // Cell containers are matched by their place in an outline's subtree rather than by geometry: a
-        // row scrolled under the table's edge reaches outside the outline's own frame.
+        // row scrolled under the table's edge reaches outside the outline's own frame. The identified
+        // elements above are the scroll views; rows hang off their enclosing outlines.
+        let outlines: [XCUIElement] = app.descendants(matching: .outline).allElementsBoundByIndex
+        XCTAssertGreaterThanOrEqual(outlines.count, 2, "Both alignment outlines must be exposed")
         var outlineCellFrames: [CGRect] = []
-        for outline in [groups, anchors] {
+        for outline in outlines {
             let descendants: [XCUIElement] = outline.descendants(matching: .any).allElementsBoundByIndex
             for descendant in descendants {
                 let type: XCUIElement.ElementType = descendant.elementType
