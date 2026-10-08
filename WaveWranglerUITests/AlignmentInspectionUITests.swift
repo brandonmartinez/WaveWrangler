@@ -67,24 +67,29 @@ final class AlignmentInspectionUITests: XCTestCase {
         guard let initial = Double(editor.value as? String ?? "") else {
             return XCTFail("Expected a numeric aligned time, got \(String(describing: editor.value))")
         }
+        // Anchor rows are identified by position, so placing an interior anchor renumbers the rows after
+        // it. The placed anchor is tracked by the source time the sheet reports instead.
+        guard let placedSource = app.staticTexts["alignment.anchor.sourceTime"].value as? String else {
+            return XCTFail("Expected the sheet to report the placed anchor's source time")
+        }
         let replacement = initial + 0.001
         app.typeKey("a", modifierFlags: .command)
         app.typeText(String(format: "%.3f", replacement))
         app.typeKey(.return, modifierFlags: [])
 
         XCTAssertTrue(waitForAnchorCellCount(anchorsBefore.count + 1, timeout: 15))
-        guard let appendedID = anchorAlignedCells().allElementsBoundByIndex
-            .map(\.identifier).first(where: { !anchorsBefore.contains($0) })
-        else { return XCTFail("Expected one newly appended anchor row") }
-        let appended = app.staticTexts[appendedID]
+        guard let placedRow = anchorRow(withSourceTime: placedSource) else {
+            return XCTFail("Expected an anchor row at source time \(placedSource)")
+        }
+        let placed = app.staticTexts["ww.alignment.anchor.\(placedRow).alignedTime"]
         XCTAssertTrue(
-            waitForValue(Self.formatTime(replacement), in: appended),
+            waitForValue(Self.formatTime(replacement), in: placed),
             "The committed row must show the typed aligned time"
         )
-        XCTAssertTrue(appended.isHittable, "The appended anchor row must be scrolled into view")
+        XCTAssertTrue(placed.isHittable, "The placed anchor row must be scrolled into view")
         app.typeKey("z", modifierFlags: .command)
         XCTAssertTrue(
-            waitForValue(Self.formatTime(initial), in: app.staticTexts[appendedID], timeout: 15),
+            waitForValue(Self.formatTime(initial), in: placed, timeout: 15),
             "Undo must restore the anchor's previous aligned time"
         )
     }
@@ -377,6 +382,13 @@ final class AlignmentInspectionUITests: XCTestCase {
             file: file,
             line: line
         )
+    }
+
+    /// Anchor rows are numbered by position, so a row is located by the source time it reports.
+    private func anchorRow(withSourceTime time: String) -> Int? {
+        anchorAlignedCells().allElementsBoundByIndex
+            .compactMap { Int($0.identifier.split(separator: ".").dropLast().last ?? "") }
+            .first { app.staticTexts["ww.alignment.anchor.\($0).sourceTime"].value as? String == time }
     }
 
     private func waitForAnchorRowSelected(_ index: Int, timeout: TimeInterval = 5) -> Bool {

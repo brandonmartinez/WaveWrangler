@@ -306,18 +306,21 @@ private struct AlignmentOutlineTable: View {
 
     var body: some View {
         Table(of: AlignmentOutlineRow.self, selection: $selection) {
-            // Each cell carries its own label so the cell container SwiftUI wraps it in has a
-            // description; the value-keypath shorthand leaves those containers unlabelled (#219 audit).
+            // The first column's cell is collapsed into a single described element: the container SwiftUI
+            // wraps outline cells in is otherwise left without a description, which the audit flags (#219).
+            // The labels stay equal to the text itself so assertions can match a cell by its epoch name.
             TableColumn("Recorder Group") { row in
-                Text(row.groupName).accessibilityLabel("Recorder group. \(row.groupName)")
+                Text(row.groupName)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(row.groupName)
             }
             .width(ideal: 170)
             TableColumn("Epoch") { row in
-                Text(row.epochLabel).accessibilityLabel("Epoch. \(row.epochLabel)")
+                Text(row.epochLabel)
             }
             .width(ideal: 80)
             TableColumn("Sources") { row in
-                Text(row.sourceNames).accessibilityLabel("Sources. \(row.sourceNames)")
+                Text(row.sourceNames)
             }
             .width(ideal: 210)
             TableColumn("State") { row in
