@@ -125,9 +125,17 @@ a 191 × 274 pt popover at `{{1147, 307}, {191, 274}}`, overlapping the inspecto
 `Notes` label at `{{1164, 543}, {36, 16}}`. The T26 full-shard crop shows the
 popover physically covering that label: its p75 1.88:1 was a measurement of
 composited popover pixels, **not** proof that the visible Notes text has low
-contrast. The fix gives the popover a 400 pt minimum width so its detail text
-does not wrap into the inspector's Notes row. Notes remains unwaived; an
-uncovered low-contrast Notes finding still fails.
+contrast. The fix restores the pre-#219 1030 pt default show-window width for
+non-minimum windows, leaving the explicit 760 × 440 Alignment fixture and
+the 760 pt user-resizable minimum intact. The existing width-keyed split
+therefore uses the native inspector at the default size, without switching
+the view structure when destinations change. The popover also has a 400 pt
+minimum width so its detail text cannot wrap into the inspector's Notes
+row at narrower sizes. Notes remains unwaived; an uncovered low-contrast
+Notes finding still fails. Macatron's first post-fix attempt found that
+some document windows landed at x=-40 after the initial fixture placement;
+the test-only placement now rechecks the primary display when the window
+becomes key. No offscreen text is waived.
 
 The repeated T26/T27 audit also flags the empty Setup explanation
 (`Import recordings to reference them in this episode…`) even though its own
