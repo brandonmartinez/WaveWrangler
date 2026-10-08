@@ -359,6 +359,219 @@ struct CommonRenderAdapterTests {
     }
 }
 
+@Suite("Organizer-derived lane requirements (provisional, synthetic)")
+struct ProvisionalLaneInventoryTests {
+    private let fx = Fixture()
+
+    private func fixture() throws -> (Episode, CommonEpisodeEditMap, SourceID, SourceID) {
+        let backupSource = SourceID()
+        let backup = try SourceOccurrence(
+            source: backupSource, nominalRate: NominalRate(48_000), frameCount: 480_000
+        )
+        let backupEpoch = RecordingEpochID()
+        let other = try fx.otherGroup(
+            epochs: [mapped(backupEpoch, [seg(q(0), q(10), .one, .zero)])],
+            placements: [OccurrencePlacement(occurrence: backup, spans: [span(0, 480_000, backupEpoch)])]
+        )
+        let alignment = try fx.timeline([other])
+        let map = try CommonEpisodeEditMap(
+            alignment: alignment, alignmentRevision: 7, editRevision: 8,
+            outputRate: NominalRate(48_000), alignedFrameCount: 480_000,
+            removals: [RemovedFrameSpan(start: 100, end: 200)]
+        )
+        let primarySource = alignment.groups[0].placements[0].occurrence.source
+        let acceptedJSON = try JSONDecoder().decode(
+            EmbeddedJSON.self, from: JSONEncoder().encode(alignment)
+        )
+        let primary = SourceRecord(
+            id: primarySource, displayNameHint: "primary",
+            observations: SourceObservations(channelCount: .known(1)),
+            placement: SourcePlacement(recorderGroupID: fx.group, epochID: fx.refEpoch),
+            role: .primary
+        )
+        let backupRecord = SourceRecord(
+            id: backupSource, displayNameHint: "backup",
+            observations: SourceObservations(channelCount: .known(2)),
+            placement: SourcePlacement(recorderGroupID: other.group, epochID: backupEpoch),
+            role: .backup
+        )
+        let episode = Episode(
+            title: "Synthetic",
+            recorderGroups: [
+                RecorderGroup(id: fx.group, name: "reference", epochs: [RecordingEpoch(id: fx.refEpoch, label: "ref")]),
+                RecorderGroup(id: other.group, name: "other", epochs: [RecordingEpoch(id: backupEpoch, label: "backup")]),
+            ],
+            sources: [primary, backupRecord],
+            speakerAssignments: [
+                SpeakerAssignment(
+                    speakerID: SpeakerID(),
+                    primary: ChannelReference(sourceID: primarySource, statedChannel: 0),
+                    backups: [ChannelReference(sourceID: backupSource, statedChannel: 0)]
+                ),
+            ],
+            alignment: EpisodeAlignment(
+                maps: [TimeMapVersion(
+                    revision: 7, inputs: TimeMapInputs(sources: [
+                        TimeMapSourceInput(sourceID: primarySource),
+                        TimeMapSourceInput(sourceID: backupSource),
+                    ]), map: acceptedJSON
+                )],
+                acceptedRevision: 7
+            )
+        )
+        return (episode, map, primarySource, backupSource)
+    }
+
+    @Test func includesEveryOccurrenceChannelIncludingBackupAndUnassignedSilentCandidate() throws {
+        let (episode, map, primary, backup) = try fixture()
+        let inventory = try ProvisionalLaneInventory.inspect(episode: episode, map: map)
+        #expect(inventory.episode == episode.id)
+        #expect(inventory.alignmentRevision == 7)
+        #expect(inventory.editRevision == 8)
+        #expect(inventory.requirements.count == 3)
+        #expect(Set(inventory.requirements.map(\.key)).count == 3)
+        #expect(inventory.requirements.filter { $0.source == primary }.count == 1)
+        #expect(inventory.requirements.filter { $0.source == backup }.map(\.key.decodedChannel) == [0, 1])
+        #expect(inventory.requirements.filter { $0.source == backup }.allSatisfy { $0.sourceRole == .backup })
+        #expect(inventory.requirements.allSatisfy { $0.epochs.count == 1 })
+        #expect(throws: CommonRenderRefusal.organizerAuthorityUnavailable) {
+            try CommonRenderAdapter.prepare(map)
+        }
+
+        let keys = inventory.requirements.map(\.key)
+        let lanes = keys.dropLast().map {
+            CommonRenderLane(key: $0, backing: .aligned(assetVersion: "synthetic", frames: 0..<480_000))
+        }
+        #expect(throws: CommonRenderRefusal.missingLane(keys[2])) {
+            try CommonRenderAdapter.inspectSynthetic(
+                map: map, inventory: keys, lanes: lanes,
+                protectedFrames: Dictionary(uniqueKeysWithValues: keys.map { ($0, []) }),
+                claimedRoundedRemovals: map.removals,
+                fadeFootprints: [RemovedFrameSpan(start: 90, end: 210)]
+            )
+        }
+    }
+
+    @Test func missingOrNewSourceAndStaleMapRefuseRatherThanNarrowInventory() throws {
+        let (episode, map, _, backup) = try fixture()
+        var missing = episode
+        missing.sources.removeLast()
+        #expect(throws: ProvisionalLaneInventoryError.sourceMissing(backup)) {
+            try ProvisionalLaneInventory.inspect(episode: missing, map: map)
+        }
+        var added = episode
+        let unplaced = SourceRecord(displayNameHint: "other", observations: SourceObservations(channelCount: .known(1)))
+        added.sources.append(unplaced)
+        #expect(throws: ProvisionalLaneInventoryError.sourceNotPlaced(unplaced.id)) {
+            try ProvisionalLaneInventory.inspect(episode: added, map: map)
+        }
+        var stale = episode
+        stale.alignment?.acceptedRevision = nil
+        #expect(throws: ProvisionalLaneInventoryError.alignmentNotAccepted) {
+            try ProvisionalLaneInventory.inspect(episode: stale, map: map)
+        }
+        stale = episode
+        stale.alignment?.maps[0].map = .null
+        #expect(throws: ProvisionalLaneInventoryError.alignmentChanged) {
+            try ProvisionalLaneInventory.inspect(episode: stale, map: map)
+        }
+        stale = episode
+        stale.alignment?.maps[0].inputs.sources.removeLast()
+        #expect(throws: ProvisionalLaneInventoryError.alignmentInputsChanged) {
+            try ProvisionalLaneInventory.inspect(episode: stale, map: map)
+        }
+    }
+
+    @Test func repeatedSourceUsesKeepDistinctOccurrenceKeys() throws {
+        var (episode, map, _, backup) = try fixture()
+        let group = map.alignment.groups[1]
+        let epoch = group.placements[0].spans[0].epoch
+        let repeated = try SourceOccurrence(
+            source: backup, nominalRate: NominalRate(48_000), frameCount: 480_000
+        )
+        let extendedGroup = try GroupTimeMap(
+            group: group.group, reference: map.alignment.reference, epochs: group.epochs,
+            placements: group.placements + [
+                OccurrencePlacement(occurrence: repeated, spans: [span(0, 480_000, epoch)]),
+            ]
+        )
+        let alignment = try AlignedTimelineMap(
+            reference: map.alignment.reference, groups: [map.alignment.groups[0], extendedGroup]
+        )
+        map = try CommonEpisodeEditMap(
+            alignment: alignment, alignmentRevision: 7, editRevision: 8,
+            outputRate: NominalRate(48_000), alignedFrameCount: 480_000,
+            removals: map.removals
+        )
+        episode.alignment?.maps[0].map = try JSONDecoder().decode(
+            EmbeddedJSON.self, from: JSONEncoder().encode(alignment)
+        )
+        let requirements = try ProvisionalLaneInventory.inspect(episode: episode, map: map).requirements
+        let backupKeys = requirements.filter { $0.source == backup }.map(\.key)
+        #expect(backupKeys.count == 4)
+        #expect(Set(backupKeys.map(\.occurrence)).count == 2)
+        #expect(Set(backupKeys).count == 4)
+    }
+
+    @Test func anotherSpeakersPrimaryCannotBeOmittedFromRequirements() throws {
+        var (episode, map, _, backup) = try fixture()
+        episode.speakerAssignments.append(SpeakerAssignment(
+            speakerID: SpeakerID(),
+            primary: ChannelReference(sourceID: backup, statedChannel: 1)
+        ))
+        let requirements = try ProvisionalLaneInventory.inspect(episode: episode, map: map).requirements
+        #expect(requirements.count == 3)
+        #expect(requirements.contains {
+            $0.source == backup && $0.key.decodedChannel == 1
+        })
+        #expect(throws: CommonRenderRefusal.organizerAuthorityUnavailable) {
+            try CommonRenderAdapter.prepare(map)
+        }
+    }
+
+    @Test func changedGroupEpochChannelAndSpeakerAssignmentRefuse() throws {
+        let (episode, map, primary, backup) = try fixture()
+        var changed = episode
+        changed.sources[1].placement.recorderGroupID = fx.group
+        #expect(throws: ProvisionalLaneInventoryError.sourceRegrouped(backup)) {
+            try ProvisionalLaneInventory.inspect(episode: changed, map: map)
+        }
+        changed = episode
+        let staleEpoch = RecordingEpochID()
+        changed.sources[1].placement.epochID = staleEpoch
+        #expect(throws: ProvisionalLaneInventoryError.sourceReassignedEpoch(backup)) {
+            try ProvisionalLaneInventory.inspect(episode: changed, map: map)
+        }
+        changed = episode
+        let missingEpoch = changed.recorderGroups[1].epochs.removeFirst().id
+        #expect(throws: ProvisionalLaneInventoryError.epochMissing(missingEpoch)) {
+            try ProvisionalLaneInventory.inspect(episode: changed, map: map)
+        }
+        changed = episode
+        changed.recorderGroups[1].epochs.append(RecordingEpoch(id: fx.refEpoch, label: "duplicate"))
+        #expect(throws: ProvisionalLaneInventoryError.duplicateEpoch(fx.refEpoch)) {
+            try ProvisionalLaneInventory.inspect(episode: changed, map: map)
+        }
+        changed = episode
+        changed.sources[1].observations.channelCount = .unknown
+        #expect(throws: ProvisionalLaneInventoryError.channelCountUnavailable(backup)) {
+            try ProvisionalLaneInventory.inspect(episode: changed, map: map)
+        }
+        changed = episode
+        let ambiguous = ChannelReference(sourceID: backup, statedChannel: nil)
+        changed.speakerAssignments[0].backups = [ambiguous]
+        #expect(throws: ProvisionalLaneInventoryError.ambiguousAssignment(ambiguous)) {
+            try ProvisionalLaneInventory.inspect(episode: changed, map: map)
+        }
+        changed = episode
+        let duplicate = ChannelReference(sourceID: primary, statedChannel: 0)
+        changed.speakerAssignments.append(SpeakerAssignment(speakerID: SpeakerID(), primary: duplicate))
+        #expect(throws: ProvisionalLaneInventoryError.ambiguousPrimary(duplicate)) {
+            try ProvisionalLaneInventory.inspect(episode: changed, map: map)
+        }
+    }
+}
+
 private extension ExactRational {
     var magnitude: ExactRational { numerator < 0 ? negated() : self }
 }

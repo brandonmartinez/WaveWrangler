@@ -45,12 +45,35 @@ silence), full-length declared aligned backing, protection-list presence, remova
 overlapping fades and fade-footprint intersection with every lane's declared protected frames. A
 successful synthetic inspection yields the same immutable `CommonEpisodeEditMap` value for prospective
 preview/render prescriptions, not audio, a publication token, or proof that the caller's claims are
-true. Eleven focused WWCommonEdit tests (seven map, four preflight) use synthetic fixtures only.
+true. The synthetic preflight accepts empty protection arrays as *test inputs*, not as evidence of an
+actual speech survey.
 
-To open the production gate, an organizer-owned capability must supply a complete lane snapshot with
-verified backed segments and source revisions, a human-accepted edit/protection decision and exact
-boundary-rounding/fade evidence. A single package adapter must then render all lanes with the accepted
-map, checking source/decision revisions again at atomic NSDocument publication. The current alignment
-job renders one group into M2 aligned segments; neither it nor the frame map can establish complete
-episode lanes or accepted cut/fade authority. Until that integration exists, no product preview, export,
-shorten/lift, real-media proof or no-dither null claim is made here.
+**Provisional organizer inventory (stacked M3 unit):** `ProvisionalLaneInventory.inspect(episode:map:)`
+derives immutable occurrence/channel requirements from *every* map placement and the episode's
+channel-count metadata. It includes Primary, Backup, other-speaker and unassigned channels (including
+channels a later producer might verify as timed silence); repeated uses of one source have distinct
+occurrence keys and epoch lists. It refuses absent/unplaced/duplicate sources, changed groups/epochs,
+unknown or out-of-range channel counts/assignments, ambiguous primaries, mismatched map inputs, and
+an unaccepted or different persisted alignment revision. The snapshot is **provisional**: a caller
+can construct an `Episode`, and its reported channel count/role is metadata, not decoded proof.
+It has no promotion path to `CommonRenderBinding`; `prepare` still refuses unconditionally with
+`organizerAuthorityUnavailable`. Sixteen focused WWCommonEdit tests (seven map, four synthetic
+preflight, five inventory) use synthetic fixtures only.
+
+**Producer contract to open the gate:** an organizer-owned, persisted and revision-checked producer
+must enumerate the complete episode from canonical sources and every uniquely keyed occurrence/epoch,
+not from an editor-supplied array, completeness boolean or a protection list. It must match the
+accepted map and current source identity/content/format revisions, supply independently verified
+full-length aligned backing *or* an explicitly timed and evidenced silence interval for each lane,
+and refuse any absent/ambiguous channel, epoch, coverage, source or other-speaker/Backup state.
+A separate human decision/protection producer must bind the accepted edit and protection survey to
+those exact revisions: an empty protected interval list without a completed authoritative survey is
+**unknown**, not safe. For each cut it must check both exact `qStart` and `qEnd` against each occurrence's
+partial inverse, including gaps/unsupported interior coverage, quantise endpoints once on the common
+frame grid, and validate the **final merged fade footprint** against protected/meaningful speech on
+every lane. A single adapter must use that same accepted map for every preview/render lane, then
+recheck episode/map/source/decision revisions at **atomic NSDocument publication**. The current M2
+alignment job renders one group into segments; neither it nor this inventory establishes verified
+backing, protection, human acceptance, full inverse coverage, renderer behavior or publication.
+Until those producers and gates exist, no product preview, export, shorten/lift, real-media proof or
+no-dither null claim is made here.
