@@ -98,7 +98,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
                 findings.append(description)
                 continue
             }
-            let measuredSidebar = surface == "Show window (blocked Alignment)"
+            let measuredSidebar = (surface == "Show window (blocked Alignment)" || surface == "Show window (Setup)")
                 && element.identifier == "ww.show.sidebar.showInfo"
                 && AcceptanceAudit.measuredArtefact(element, inspectorFrame: nil, episodeInspectorShown: false,
                                                     entriesFrame: nil, windowFrames: windowRects,

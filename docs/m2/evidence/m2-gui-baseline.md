@@ -174,8 +174,9 @@ the crop and measured values are attached to each audit result.
 The T17 recovery test now waits for and selects Show Info before inspecting the recovered title;
 the Alignment availability assertion reflects that Alignment is available but blocked for this
 episode until a recorder group is configured. No blocked-state heading or remedy is removed. The
-blocked Alignment audit can now use the shared Show Info sidebar-row measured artefact rule for
-that exact identifier only, with the unchanged per-element 40-glyph and 4.5:1 threshold.
+blocked Alignment and following Setup audits can now use the shared Show Info sidebar-row
+measured artefact rule for that exact identifier only, with the unchanged per-element 40-glyph
+and 4.5:1 threshold.
 
 The following are informational broad-accessibility observations for M5 / WW-053, not entries in the M2 essential-audit waiver baseline: fully offscreen or partly clipped library-cell contrast reports (`notOnScreen` 0–2, cap 5, plus four two-point bottom-edge samples); one library dark-collection-row report measured at p75 15.72:1 where the audit samples sidebar material; and sidebar, table, non-blocked Setup-cell, title, and sheet-text contrast reports within existing per-surface `tableText` caps (import 1/1, Setup 1/4). Pixel evidence meets the 40-glyph / p75 4.5:1 measured-artefact rule, or the content is dimmed or occluded while the audit measures the frontmost surface.
 
