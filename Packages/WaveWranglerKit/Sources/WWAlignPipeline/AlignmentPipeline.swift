@@ -284,11 +284,29 @@ public final class AlignmentPipeline: Sendable {
         let recipes = units.map { unit in unit.recipe(peers: units.filter { $0.targetEpoch != unit.targetEpoch }) }
         for recipe in Set(recipes) { await coordinator.setRecipe(recipe) }
         let cohort = units
-        let cache: CycleExcerptCache? = cohort.count > 1 ? CycleExcerptCache() : nil
-        let analysisResults = await boundedMap(units, limit: cache == nil ? configuration.concurrency : 1) { unit in
-            let peers = cohort.filter { $0.targetEpoch != unit.targetEpoch }
-            return await coordinator.run(PipelineSlots.analysis(unit.targetEpoch), key: unit.key(peers: peers)) { () throws(AlignmentWorkFailure) -> Data in
-                try await unit.run(environment: environment, peers: peers, cache: cache, retainedBytes: cache == nil ? 0 : excerptBytes)
+        let analysisResults: [PipelineJobResult]
+        if cohort.count > 1 {
+            do {
+                analysisResults = try await CycleExcerptCache.withAdmission(
+                    units: cohort, excerptBytes: excerptBytes, environment: environment
+                ) { cache in
+                    await boundedMap(cohort, limit: 1) { unit in
+                        let peers = cohort.filter { $0.targetEpoch != unit.targetEpoch }
+                        return await coordinator.run(PipelineSlots.analysis(unit.targetEpoch), key: unit.key(peers: peers)) { () throws(AlignmentWorkFailure) -> Data in
+                            try await unit.run(environment: environment, peers: peers, cache: cache)
+                        }
+                    }
+                }
+            } catch {
+                for unit in cohort { epochFailures[unit.targetEpoch] = workFailure(error) }
+                units.removeAll()
+                analysisResults = []
+            }
+        } else {
+            analysisResults = await boundedMap(cohort, limit: configuration.concurrency) { unit in
+                await coordinator.run(PipelineSlots.analysis(unit.targetEpoch), key: unit.key) { () throws(AlignmentWorkFailure) -> Data in
+                    try await unit.run(environment: environment)
+                }
             }
         }
         var analyses: [RecordingEpochID: PipelineJobResult] = [:]

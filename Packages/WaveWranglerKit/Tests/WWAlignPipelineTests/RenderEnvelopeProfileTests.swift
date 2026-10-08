@@ -27,6 +27,122 @@ private actor GroupOverlap {
 @Suite("Aligned render whole-process memory profiles", .serialized,
        .enabled(if: RenderEnvelopeProfileGate.enabled, RenderEnvelopeProfileGate.reason))
 struct RenderEnvelopeProfileTests {
+    @Test("Twenty-seven independent retained excerpt caches stay inside process admission")
+    func retainedExcerptsAcrossInstances() async throws {
+        let configuration = AlignmentPipelineConfiguration(
+            targetExcerptSeconds: 20, searchDeviationSeconds: 1,
+            minimumAnalysisRate: 48_000, renderSegmentSeconds: 10
+        )
+        let fixture = try await PipelineFixture([
+            GroupSpec(name: "reference", sources: [
+                SourceSpec(name: "ref", channels: 1, seconds: 20, signal: .scene(seed: TwoRecorder.seed)),
+            ]),
+        ] + (0 ..< 12).map { index in
+            GroupSpec(name: "target-\(index)", sources: [
+                SourceSpec(name: "target-\(index)", channels: 1, seconds: 20, signal: .scene(seed: TwoRecorder.seed)),
+            ])
+        }, configuration: configuration, label: "retained-excerpts-27")
+        let reference = try #require(fixture.sources.first)
+        let referenceFacts = try await SourceProbe.run(
+            reference, token: PipelineFixture.registration(reference.id, reference.url).token,
+            environment: fixture.pipeline.environment
+        )
+        let choice = AlignmentReferenceChoice(
+            group: fixture.groups[0], epoch: fixture.epochs[0], source: reference.id
+        )
+        var units: [AnalysisUnit] = []
+        for index in 0 ..< 12 {
+            let target = try #require(fixture.sources.dropFirst().first {
+                $0.id == fixture.id("target-\(index)")
+            })
+            let facts = try await SourceProbe.run(
+                target, token: PipelineFixture.registration(target.id, target.url).token,
+                environment: fixture.pipeline.environment
+            )
+            units.append(AnalysisUnit(
+                referenceChoice: choice, reference: reference, referenceFacts: referenceFacts,
+                targetGroup: fixture.groups[index + 1], targetEpoch: fixture.epochs[index + 1],
+                target: target, targetFacts: facts, configuration: configuration,
+                chunkFrames: fixture.decoder.configuration.chunkFrames
+            ))
+        }
+        let excerptBytes = units.reduce(0) { $0 + $1.cycleTargetRange.count * MemoryLayout<Float>.size }
+        let cohort = units
+        #expect(excerptBytes == 12 * 3_840_000)
+        let sampler = MemorySampler()
+        let release = Latch()
+        let holders = Box(0)
+        let pipelines = (0 ..< 27).map { _ in
+            AlignmentPipeline(coordinator: fixture.coordinator, decoder: fixture.decoder, configuration: configuration)
+        }
+        let tasks = pipelines.map { pipeline in
+            Task {
+                try await CycleExcerptCache.withAdmission(
+                    units: cohort, excerptBytes: excerptBytes, environment: pipeline.environment
+                ) { cache in
+                    for unit in cohort.dropLast() {
+                        let samples = [Float](repeating: 0.25, count: 20 * 48_000)
+                        await cache.rememberTarget(unit, samples: samples)
+                    }
+                    for unit in cohort.dropLast() {
+                        let samples = try await cache.samples(for: unit, decoder: fixture.decoder)
+                        #expect(samples.count == 20 * 48_000)
+                    }
+                    holders.update { $0 += 1 }
+                    await release.wait()
+                }
+            }
+        }
+        let clock = ContinuousClock()
+        let deadline = clock.now + .seconds(10)
+        while clock.now < deadline {
+            let snapshot = await ResourceGate.process.snapshot
+            if holders.value == 1 && snapshot.waiting == 26 { break }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        let held = await ResourceGate.process.snapshot
+        #expect(holders.value == 1 && held.active == 1 && held.waiting == 26)
+        #expect(held.activeBytes <= AlignmentPipelineConfiguration.maximumMemoryBudgetBytes)
+        #expect(fixture.content.total.opens == 13, "no cold source reads before cohort admission")
+        for task in tasks { task.cancel() }
+        await release.open()
+        for task in tasks {
+            do {
+                try await task.value
+            } catch is CancellationError {
+                // Waiting cohorts are cancelled without ever retaining excerpts.
+            }
+        }
+        struct SyntheticFailure: Error {}
+        await #expect(throws: SyntheticFailure.self) {
+            try await CycleExcerptCache.withAdmission(
+                units: cohort, excerptBytes: excerptBytes, environment: pipelines[0].environment
+            ) { cache in
+                await cache.rememberTarget(cohort[0], samples: [Float](repeating: 0.25, count: 20 * 48_000))
+                throw SyntheticFailure()
+            }
+        }
+        let inBody = Latch()
+        let cancelled = Task {
+            try await CycleExcerptCache.withAdmission(
+                units: cohort, excerptBytes: excerptBytes, environment: pipelines[1].environment
+            ) { cache in
+                await cache.rememberTarget(cohort[0], samples: [Float](repeating: 0.25, count: 20 * 48_000))
+                await inBody.open()
+                try await Task.sleep(for: .seconds(60))
+            }
+        }
+        await inBody.wait()
+        cancelled.cancel()
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        let peaks = sampler.stop()
+        let rss = MemorySampler.maxResident()
+        #expect(await ResourceGate.process.snapshot.activeBytes == 0)
+        for pipeline in pipelines { #expect(await pipeline.gate.snapshot.activeBytes == 0) }
+        print("[render-envelope] 27 independent 20s/48k/12-target cohorts: ru_maxrss \(rss), sampled RSS \(peaks.resident), footprint \(peaks.footprint), admitted \(held.activeBytes), waiters \(held.waiting)")
+        #expect(rss <= 1_073_741_824 && peaks.resident <= 1_073_741_824 && peaks.footprint <= 1_073_741_824)
+    }
+
     @Test("Six channels at the 180-second segment boundary")
     func boundary() async throws {
         let config = AlignmentPipelineConfiguration(

@@ -18,15 +18,18 @@ there was no real recording, no network and no GUI.
 
 - `AlignmentPipelineConfiguration.concurrency` is clamped to 1…4 (default 2) and is never derived from
   the processor count (`ForbiddenAPITests` bans `activeProcessorCount`/`processorCount` in the module).
-- One `ResourceGate` per pipeline admits probes, analysis units and group renders FIFO against both the
-  permit count and a byte budget (default 512 MiB). A unit larger than the whole budget is refused before
-  any decode. Each analysis unit's admission covers its estimated working set: decimated buffers, FFT
-  scratch and decode chunks.
+- One `ResourceGate` per pipeline and one shared process-wide gate admit probes, analysis and group
+  renders FIFO against permit and byte limits (default 512 MiB). A unit larger than either budget
+  is refused before any decode. Each standalone analysis unit's admission covers its estimated
+  working set: decimated buffers, FFT scratch and decode chunks.
 - Decode is streaming. A `DecodingCursor` yields bounded chunks, and the decimator keeps only its filter
   history and the decimated output, then stops decoding at the end of the needed range.
-- Multi-recorder analyses retain only decimated 20 s peer excerpts, scoped to that run. Their aggregate
-  footprint is reserved in each admission and capped at one eighth of the configured memory budget;
-  larger cohorts refuse with a typed memory-budget outcome rather than decoding peers quadratically.
+- Multi-recorder analyses retain only decimated 20 s peer excerpts, scoped to that run. One
+  process-wide and per-instance reservation now spans the entire serial cohort: the largest unit's
+  estimated working set plus every possible copied peer excerpt, including the intervals between units.
+  The cache is cleared before releasing the reservation, including on cancellation and failure.
+  Excerpts are capped at one eighth of the configured memory budget; larger cohorts refuse with
+  a typed memory-budget outcome rather than decoding peers quadratically.
 - Nothing runs on the main actor or main thread (the recording gateway counts main-thread reads; every
   suite asserts zero). There are no semaphores, threads or Dispatch primitives in the module.
 
@@ -154,6 +157,50 @@ the 75-minute run used `WW_PIPELINE_DEFAULT75=1`, `--configuration release -Xswi
 was 1 for the profiles and at most 4 otherwise. These measured synthetic cases are below 1 GiB;
 they do **not** establish every admitted shape, concurrent analysis/cache history with large
 real recordings, or the final exact-head full suite. #235 remains open for broader qualification.
+
+The independent review of #299's head (`7131eed06a0338d59acceeb7e96f874d6c18a2ae`) rejected
+that process-wide claim: `CycleExcerptCache` held copied peer samples after each unit's admission
+ended ([review](https://github.com/brandonmartinez/WaveWrangler/pull/299#issuecomment-6070027425)).
+The next stacked revision reserves the largest analysis unit plus the full possible excerpt cache
+for the **whole serial cohort**, before any peer cursor opens, and drops all retained copies
+before that reservation ends. Other instances' render, probe and analysis work still contend for
+the same process gate. This avoids 27 separately retained 20 s / 48 kHz / 12-target caches
+accumulating uncharged between units. The gated synthetic profile
+`RenderEnvelopeProfileTests/retainedExcerptsAcrossInstances` holds one populated 11-excerpt cache
+while 26 independent instances queue, checks zero cold-cache cursor reads before admission and
+samples whole-process RSS/footprint. The default long-form 75-minute/451-segment path and the
+existing rate, chunk, concurrency, map complexity and result-count refusals remain unchanged.
+The 27-instance profile tests this retained-copy lifetime, **not** all accepted media,
+channel/rate/chunk/segment combinations or all long-lived revision histories; those and the
+full exact-head gate remain unproven until separately measured.
+
+On the working Mac, isolated Debug processes measured the 27-instance cache case at
+94,420,992 B `ru_maxrss`, 94,388,224 B sampled RSS and 54,133,504 B footprint, with
+455,139,328 B reserved by the sole admitted cache cohort and 26 waiting before they could
+read or retain source samples. The same profile verified release after both a thrown work
+error and cancellation, and no active bytes on any of the 27 instance gates afterward.
+The existing two-instance 180 s six-channel render measured 443,482,112 B `ru_maxrss`,
+443,465,728 B sampled RSS and 401,556,512 B footprint, with 507,570,560 B reserved
+while the second instance opened zero additional cursors. These are distinct shapes and
+distinct isolated processes, not a combined worst-case peak or proof of the entire envelope.
+Two simultaneously admitted eight-channel groups at 48 kHz / 10 s segments measured
+121,159,680 B `ru_maxrss` and sampled RSS, 79,135,536 B footprint and 119,129,088 B
+estimated gate peak across two active units; cached rerender completed.
+The default 75-minute, mixed-rate six-channel render completed its 451 segments and 2706
+results in 1066.402 s in an isolated optimized process: 127,057,920 B `ru_maxrss` and sampled
+RSS, 71,025,432 B sampled footprint; no reader remained open. The four commands used
+`--package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm --jobs 4 --no-parallel`:
+the cache, two-instance and simultaneous profiles used `WW_RENDER_ENVELOPE_PROFILE=1` with
+`--filter RenderEnvelopeProfileTests/retainedExcerptsAcrossInstances`,
+`--filter RenderEnvelopeProfileTests/independentInstances` and
+`--filter RenderEnvelopeProfileTests/simultaneous` (Debug), and the default render
+used `WW_PIPELINE_DEFAULT75=1 --configuration release -Xswiftc -enable-testing -Xswiftc
+-DDEBUG --filter PipelineDefaultRender75Tests/defaultLongForm`. Each isolated process set
+`SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1`; these were synthetic, not real media.
+After the cohort-lifetime change, the Debug `WWAlignPipelineTests` filter passed 114 tests
+in 21 suites and `WWDerivedTests` passed 42 tests in 5 suites, each using `--jobs 4` and
+Swift Testing width 4. The full exact-head `scripts/test.sh`, other admitted configurations
+and independent review are still pending; this does not close #235.
 
 ## Tests
 

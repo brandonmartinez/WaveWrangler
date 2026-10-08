@@ -313,7 +313,7 @@ struct ConcurrencyTests {
         // Upper bounds only: overlap itself depends on how many cooperative threads exist (one under
         // LIBDISPATCH_COOPERATIVE_POOL_STRICT); ResourceGateTests prove deterministically that the cap is reached.
         #expect((1...2).contains(gate.peakActive), "probes and analyses ran at most two at a time: \(gate)")
-        #expect(gate.admitted == 6 + 5)
+        #expect(gate.admitted == 6 + 1, "six probes and one reservation spanning all five serial cycle units")
         #expect((1...2).contains(fixture.content.peakOpenReaders), "at most one reader per admitted unit (excerpts decode sequentially)")
 
         var decisions: [RecordingEpochID: EpochMapDecision] = [:]

@@ -210,7 +210,7 @@ struct AnalysisUnit: Sendable {
     /// encoded `EpochAnalysisRecord`.
     func run(
         environment: PipelineEnvironment, peers: [AnalysisUnit] = [],
-        cache: CycleExcerptCache? = nil, retainedBytes: Int = 0
+        cache: CycleExcerptCache? = nil
     ) async throws(AlignmentWorkFailure) -> Data {
         let referenceRange = referenceRange
         let targetRange = targetRange
@@ -224,10 +224,9 @@ struct AnalysisUnit: Sendable {
                 detail: "The search range cannot reach the reference recording from this epoch's excerpt."
             )
         } else {
-            let bytes = try estimatedWorkingSetBytes(peers: peers) + retainedBytes
             let unit = self
             do {
-                record = try await environment.withAdmission(bytes: bytes) {
+                let work: @Sendable () async throws -> EpochAnalysisRecord = {
                     let referenceSamples = try await unit.decodeAnalysisBuffer(unit.reference, facts: unit.referenceFacts, range: referenceRange, decoder: environment.decoder)
                     try Task.checkCancellation()
                     let targetSamples = try await unit.decodeAnalysisBuffer(unit.target, facts: unit.targetFacts, range: targetRange, decoder: environment.decoder)
@@ -254,6 +253,11 @@ struct AnalysisUnit: Sendable {
                         targetSamples: targetSamples, targetParticipant: targetParticipant,
                         peerTracks: peerTracks, recipe: unit.recipe(peers: peers).name
                     )
+                }
+                if cache != nil {
+                    record = try await work()
+                } else {
+                    record = try await environment.withAdmission(bytes: estimatedWorkingSetBytes(peers: peers), work)
                 }
             } catch {
                 throw workFailure(error)
@@ -355,6 +359,37 @@ struct AnalysisUnit: Sendable {
 /// gateway is opened at most once per source revision; nothing persists beyond that analysis run.
 actor CycleExcerptCache {
     private var excerpts: [SourceRevision: [Float]] = [:]
+
+    /// Reserve the largest unit plus every retained peer copy for the entire serial cohort. Clear the
+    /// copies before releasing the reservation, even if coordinator jobs still hold a reference to us.
+    static func withAdmission<T: Sendable>(
+        units: [AnalysisUnit], excerptBytes: Int, environment: PipelineEnvironment,
+        _ body: @Sendable (CycleExcerptCache) async throws -> T
+    ) async throws -> T {
+        var bytes = 0
+        for unit in units {
+            let peers = units.filter { $0.targetEpoch != unit.targetEpoch }
+            let estimate = try unit.estimatedWorkingSetBytes(peers: peers)
+            let (total, overflow) = estimate.addingReportingOverflow(excerptBytes)
+            guard !overflow else {
+                throw AlignmentWorkFailure.memoryBudget(requested: Int.max, budget: environment.configuration.analysisMemoryBudgetBytes)
+            }
+            bytes = max(bytes, total)
+        }
+        return try await environment.withAdmission(bytes: bytes) {
+            let cache = CycleExcerptCache()
+            do {
+                let result = try await body(cache)
+                await cache.clear()
+                return result
+            } catch {
+                await cache.clear()
+                throw error
+            }
+        }
+    }
+
+    private func clear() { excerpts.removeAll() }
 
     func rememberTarget(_ unit: AnalysisUnit, samples: [Float]) {
         let revision = SourceRevision(source: unit.target.id, token: unit.targetFacts.revisionToken)
