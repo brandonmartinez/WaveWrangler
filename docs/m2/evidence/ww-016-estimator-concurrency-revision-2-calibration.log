@@ -1,0 +1,72 @@
+Building for debugging...
+[Computing dependencies]
+[1 / 3] WWAlignSegmentTests-product
+Build complete! (0.78 sec)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Estimator calibration" started.
+◇ Test calibrationAgainstClockTruth() started.
+WW-016 calibration (master seed 0x57571600ca11b000, estimator ww-align-estimate/1)
+stratum | cases | epochs | proposals | abstentions | clock residual p95 ms | clock residual max ms | proposals failing clock gates
+positive | 12 | 12 | 12 | - | 0.9694 | 0.9767 | 0
+positiveRestart | 2 | 4 | 4 | - | 0.9596 | 0.9624 | 0
+positiveThreeGroup | 2 | 4 | 4 | - | 0.9016 | 0.9051 | 0
+constantDelay | 3 | 3 | 3 | - | 35.0078 | 35.0107 | 3
+variableDelay | 3 | 3 | 3 | - | 47.9634 | 49.3176 | 3
+discontinuity | 3 | 3 | 0 | discontinuous=3 | - | - | 0
+unrelated | 3 | 3 | 0 | weak=3 | - | - | 0
+silent | 2 | 2 | 0 | silent=2 | - | - | 0
+periodic | 3 | 3 | 0 | ambiguous=3 | - | - | 0
+disconnected | 2 | 2 | 0 | disconnected=2 | - | - | 0
+cycleConflict | 2 | 4 | 0 | cycleInconsistent=4 | - | - | 0
+  constantDelay#0 truth ppm=-93.267 eligible=16/16 span=1.000 peak=0.914 flags=[] cycle=unavailable -> proposal ppm=-93.440 clockMax=35.0107ms acousticP95=0.0559ms
+  constantDelay#1 truth ppm=42.522 eligible=15/16 span=1.000 peak=0.954 flags=[] cycle=unavailable -> proposal ppm=42.499 clockMax=35.0078ms acousticP95=0.0307ms
+  constantDelay#2 truth ppm=-3.944 eligible=16/16 span=1.000 peak=0.964 flags=[] cycle=unavailable -> proposal ppm=-3.945 clockMax=35.0012ms acousticP95=0.0137ms
+  cycleConflict#0 truth ppm=-40.756 eligible=16/16 span=1.000 peak=0.534 flags=["cycleInconsistent"] cycle=measured(triangles: 1, maximumMilliseconds: 20.069868621998666) -> abstained cycleInconsistent: a cycle through this epoch disagrees by 20.069868621998666 ms (tolerance 2.0 ms)
+  cycleConflict#0 truth ppm=82.704 eligible=15/16 span=0.935 peak=0.506 flags=["cycleInconsistent"] cycle=measured(triangles: 1, maximumMilliseconds: 20.069868621998666) -> abstained cycleInconsistent: a cycle through this epoch disagrees by 20.069868621998666 ms (tolerance 2.0 ms)
+  cycleConflict#1 truth ppm=82.825 eligible=14/16 span=0.935 peak=0.529 flags=["cycleInconsistent"] cycle=measured(triangles: 1, maximumMilliseconds: 20.02646367695604) -> abstained cycleInconsistent: a cycle through this epoch disagrees by 20.02646367695604 ms (tolerance 2.0 ms)
+  cycleConflict#1 truth ppm=30.006 eligible=13/16 span=0.935 peak=0.550 flags=["cycleInconsistent"] cycle=measured(triangles: 1, maximumMilliseconds: 20.02646367695604) -> abstained cycleInconsistent: a cycle through this epoch disagrees by 20.02646367695604 ms (tolerance 2.0 ms)
+  disconnected#0 truth ppm=-58.304 eligible=0/16 span=0.000 peak=0.000 flags=[] cycle=unavailable -> abstained disconnected: 0 of 16 windows eligible (need at least 5 and a fraction of 0.6); most frequent: disconnected in 16
+  disconnected#1 truth ppm=86.706 eligible=0/16 span=0.000 peak=0.000 flags=[] cycle=unavailable -> abstained disconnected: 0 of 16 windows eligible (need at least 5 and a fraction of 0.6); most frequent: disconnected in 16
+  discontinuity#0 truth ppm=37.131 eligible=15/16 span=1.000 peak=0.943 flags=["discontinuity"] cycle=unavailable -> abstained discontinuous: offset steps by 39.99175921780795 ms near group-clock 48.8 s; declare an epoch boundary or anchor manually
+  discontinuity#1 truth ppm=-36.643 eligible=16/16 span=1.000 peak=0.951 flags=["discontinuity"] cycle=unavailable -> abstained discontinuous: offset steps by 40.00762479385456 ms near group-clock 67.466625 s; declare an epoch boundary or anchor manually
+  discontinuity#2 truth ppm=-95.349 eligible=14/16 span=1.000 peak=0.937 flags=["discontinuity"] cycle=unavailable -> abstained discontinuous: offset steps by 39.96827634367284 ms near group-clock 67.466625 s; declare an epoch boundary or anchor manually
+  periodic#0 truth ppm=-76.764 eligible=1/16 span=0.018 peak=0.835 flags=[] cycle=unavailable -> abstained ambiguous: 1 of 16 windows eligible (need at least 5 and a fraction of 0.6); most frequent: ambiguous in 15
+  periodic#1 truth ppm=-42.362 eligible=0/16 span=0.000 peak=0.000 flags=[] cycle=unavailable -> abstained ambiguous: 0 of 16 windows eligible (need at least 5 and a fraction of 0.6); most frequent: ambiguous in 16
+  periodic#2 truth ppm=-16.840 eligible=0/16 span=0.000 peak=0.000 flags=[] cycle=unavailable -> abstained ambiguous: 0 of 16 windows eligible (need at least 5 and a fraction of 0.6); most frequent: ambiguous in 16
+  positive#0 truth ppm=-40.045 eligible=15/16 span=1.000 peak=0.916 flags=[] cycle=unavailable -> proposal ppm=-39.959 clockMax=0.8674ms acousticP95=0.0205ms
+  positive#1 truth ppm=69.143 eligible=16/16 span=1.000 peak=0.944 flags=[] cycle=unavailable -> proposal ppm=69.200 clockMax=0.5797ms acousticP95=0.0392ms
+  positive#2 truth ppm=-90.738 eligible=16/16 span=1.000 peak=0.944 flags=[] cycle=unavailable -> proposal ppm=-90.843 clockMax=0.9767ms acousticP95=0.0681ms
+  positive#3 truth ppm=-90.852 eligible=16/16 span=1.000 peak=0.936 flags=[] cycle=unavailable -> proposal ppm=-91.075 clockMax=0.9654ms acousticP95=0.0689ms
+  positive#4 truth ppm=-29.529 eligible=15/16 span=0.935 peak=0.914 flags=[] cycle=unavailable -> proposal ppm=-29.577 clockMax=0.2438ms acousticP95=0.0255ms
+  positive#5 truth ppm=4.705 eligible=15/16 span=0.935 peak=0.948 flags=[] cycle=unavailable -> proposal ppm=4.784 clockMax=0.7311ms acousticP95=0.0190ms
+  positive#6 truth ppm=74.060 eligible=16/16 span=1.000 peak=0.936 flags=[] cycle=unavailable -> proposal ppm=74.173 clockMax=0.2729ms acousticP95=0.0502ms
+  positive#7 truth ppm=81.028 eligible=15/16 span=1.000 peak=0.940 flags=[] cycle=unavailable -> proposal ppm=81.047 clockMax=0.4822ms acousticP95=0.0533ms
+  positive#8 truth ppm=88.722 eligible=15/16 span=1.000 peak=0.953 flags=[] cycle=unavailable -> proposal ppm=88.558 clockMax=0.6586ms acousticP95=0.0619ms
+  positive#9 truth ppm=52.386 eligible=16/16 span=1.000 peak=0.950 flags=[] cycle=unavailable -> proposal ppm=52.277 clockMax=0.1116ms acousticP95=0.0367ms
+  positive#10 truth ppm=80.889 eligible=16/16 span=1.000 peak=0.946 flags=[] cycle=unavailable -> proposal ppm=80.723 clockMax=0.2951ms acousticP95=0.0607ms
+  positive#11 truth ppm=51.374 eligible=16/16 span=1.000 peak=0.928 flags=[] cycle=unavailable -> proposal ppm=51.353 clockMax=0.0023ms acousticP95=0.0349ms
+  positiveRestart#0 truth ppm=-48.990 eligible=16/16 span=1.000 peak=0.938 flags=["restartedEpoch"] cycle=unavailable -> proposal ppm=-48.735 clockMax=0.9624ms acousticP95=0.0312ms
+  positiveRestart#0 truth ppm=-77.892 eligible=16/16 span=1.000 peak=0.932 flags=["restartedEpoch"] cycle=unavailable -> proposal ppm=-77.913 clockMax=0.3640ms acousticP95=0.0519ms
+  positiveRestart#1 truth ppm=89.484 eligible=16/16 span=1.000 peak=0.943 flags=["restartedEpoch"] cycle=unavailable -> proposal ppm=88.740 clockMax=0.2946ms acousticP95=0.0469ms
+  positiveRestart#1 truth ppm=-17.245 eligible=16/16 span=1.000 peak=0.963 flags=["restartedEpoch"] cycle=unavailable -> proposal ppm=-17.293 clockMax=0.0350ms acousticP95=0.0213ms
+  positiveThreeGroup#0 truth ppm=-85.655 eligible=16/16 span=1.000 peak=0.936 flags=[] cycle=measured(triangles: 1, maximumMilliseconds: 0.04731185077844202) -> proposal ppm=-85.647 clockMax=0.6652ms acousticP95=0.0554ms
+  positiveThreeGroup#0 truth ppm=-48.461 eligible=16/16 span=1.000 peak=0.940 flags=[] cycle=measured(triangles: 1, maximumMilliseconds: 0.04731185077844202) -> proposal ppm=-48.612 clockMax=0.9051ms acousticP95=0.0479ms
+  positiveThreeGroup#1 truth ppm=14.039 eligible=16/16 span=1.000 peak=0.940 flags=[] cycle=measured(triangles: 1, maximumMilliseconds: 0.04017034551173637) -> proposal ppm=13.983 clockMax=0.1931ms acousticP95=0.0213ms
+  positiveThreeGroup#1 truth ppm=86.652 eligible=16/16 span=1.000 peak=0.939 flags=[] cycle=measured(triangles: 1, maximumMilliseconds: 0.04017034551173637) -> proposal ppm=86.578 clockMax=0.3433ms acousticP95=0.0659ms
+  silent#0 truth ppm=-42.073 eligible=0/16 span=0.000 peak=0.000 flags=[] cycle=unavailable -> abstained silent: 0 of 16 windows eligible (need at least 5 and a fraction of 0.6); most frequent: silent in 16
+  silent#1 truth ppm=-66.108 eligible=0/16 span=0.000 peak=0.000 flags=[] cycle=unavailable -> abstained silent: 0 of 16 windows eligible (need at least 5 and a fraction of 0.6); most frequent: silent in 16
+  unrelated#0 truth ppm=-32.740 eligible=0/16 span=0.000 peak=0.000 flags=[] cycle=unavailable -> abstained weak: 0 of 16 windows eligible (need at least 5 and a fraction of 0.6); most frequent: weak in 15
+  unrelated#1 truth ppm=90.074 eligible=0/16 span=0.000 peak=0.000 flags=[] cycle=unavailable -> abstained weak: 0 of 16 windows eligible (need at least 5 and a fraction of 0.6); most frequent: weak in 16
+  unrelated#2 truth ppm=-52.002 eligible=0/16 span=0.000 peak=0.000 flags=[] cycle=unavailable -> abstained weak: 0 of 16 windows eligible (need at least 5 and a fraction of 0.6); most frequent: weak in 16
+  variableDelay#0 truth ppm=-35.457 eligible=16/16 span=1.000 peak=0.825 flags=[] cycle=unavailable -> proposal ppm=-284.468 clockMax=49.2085ms acousticP95=0.4785ms
+  variableDelay#1 truth ppm=-91.772 eligible=16/16 span=1.000 peak=0.762 flags=[] cycle=unavailable -> proposal ppm=-341.963 clockMax=49.3176ms acousticP95=0.3669ms
+  variableDelay#2 truth ppm=-33.557 eligible=16/16 span=1.000 peak=0.760 flags=[] cycle=unavailable -> proposal ppm=-282.774 clockMax=49.2639ms acousticP95=0.3204ms
+gate: PASS
+positives: 20/20 epochs proposed (an abstaining positive fails the window gate); pooled clock residual p95 0.9659 ms, max 0.9767 ms over 2060 grid points
+false accepts: 0 (clockApproved 0, proposals where abstention required 0, acoustic-delay mislabelled 0)
+acoustic-delay negatives: 6/6 emitted as acousticConsistentProposal only; 0 within clock gates if promoted (never promoted)
+✔ Test calibrationAgainstClockTruth() passed after 101.569 seconds.
+✔ Suite "Estimator calibration" passed after 101.569 seconds.
+✔ Test run with 1 test in 1 suite passed after 101.569 seconds.

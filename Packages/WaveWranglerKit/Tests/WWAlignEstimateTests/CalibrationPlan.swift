@@ -80,6 +80,9 @@ enum CalibrationPlan {
         (.constantDelay, 10), (.variableDelay, 10), (.discontinuity, 10), (.unrelated, 10), (.silent, 10), (.periodic, 10),
         (.disconnected, 10), (.cycleConflict, 10),
     ]
+    /// Fresh m2-freeze-estimator-2 holdout seed. Its 140 cases are disjoint from both prior frozen splits.
+    static let revision2HoldoutMasterSeed: UInt64 = 0x5757_1600_1008_0002
+    static let revision2HoldoutCounts = holdoutCounts
     static let referenceDuration = 126.0
     static let targetDuration = 120.0
     static let sceneRange: ClosedRange<Double> = -5...135

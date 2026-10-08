@@ -18,12 +18,11 @@ struct CalibrationTests {
     }
 
     static func runAll(_ cases: [CalibrationCase] = CalibrationPlan.cases()) async throws -> [ScoredEpoch] {
-        try await withThrowingTaskGroup(of: [ScoredEpoch].self) { group in
-            for c in cases { group.addTask { try CalibrationRunner.run(c) } }
-            var all: [ScoredEpoch] = []
-            for try await scored in group { all += scored }
-            return all.sorted { ($0.stratum.rawValue, $0.caseIndex) < ($1.stratum.rawValue, $1.caseIndex) }
+        let maximumConcurrency = try EstimatorTestConcurrency.maximumConcurrency()
+        let scoredCases = try await EstimatorTestConcurrency.map(cases, maximumConcurrency: maximumConcurrency) {
+            try CalibrationRunner.run($0)
         }
+        return scoredCases.flatMap { $0 }.sorted { ($0.stratum.rawValue, $0.caseIndex) < ($1.stratum.rawValue, $1.caseIndex) }
     }
 
     static func summarise(_ scored: [ScoredEpoch]) -> [Stratum: StratumSummary] {
