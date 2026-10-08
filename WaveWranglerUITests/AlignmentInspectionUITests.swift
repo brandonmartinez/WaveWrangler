@@ -42,7 +42,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             "ww.alignment.audition.play",
             "ww.alignment.audition.range.start", "ww.alignment.audition.range.duration",
         ] {
-            assertReachable(app.descendants(matching: .any)[identifier], in: window)
+            assertReachable(identifier, in: window)
         }
     }
 
@@ -572,45 +572,50 @@ final class AlignmentInspectionUITests: XCTestCase {
         return false
     }
 
+    /// Scrolls the workspace until `element` is on screen, naming it even when it never appears.
     private func makeReachable(
         _ element: XCUIElement,
+        named name: String? = nil,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
+        let identifier = name ?? (element.exists ? element.identifier : "control")
         let scroll = app.descendants(matching: .any)["ww.alignment.workspace"]
-        // A disabled control is never hittable, and the action grid is lazy: scrolling past it drops its
-        // buttons from the tree entirely. Scrolling therefore stops once the control is on screen.
-        for attempt in 0..<16 {
-            if element.exists,
-               scroll.frame.intersects(element.frame),
-               element.isHittable || !element.isEnabled {
-                break
-            }
-            if element.exists {
+        // A disabled control is never hittable, so only an enabled control has to be hittable here.
+        func onScreen() -> Bool {
+            element.exists
+                && scroll.frame.intersects(element.frame)
+                && (element.isHittable || !element.isEnabled)
+        }
+        if onScreen() {
+            return
+        }
+        if element.exists {
+            for _ in 0..<16 where !onScreen() {
                 if element.frame.midY < scroll.frame.minY {
                     scroll.swipeDown()
                 } else {
                     scroll.swipeUp()
                 }
-            } else if attempt < 8 {
-                // A lazy view leaves the tree once it is scrolled past, so look back before going on.
-                scroll.swipeDown()
-            } else {
-                scroll.swipeUp()
             }
         }
-        if !element.exists {
-            let buttons = app.descendants(matching: .button).allElementsBoundByIndex
-                .map { "\($0.identifier)|\($0.label)" }
-                .joined(separator: ", ")
-            print("WW-REACH-MISS \(element.identifier) buttons=[\(buttons)]")
-            print("WW-REACH-SCROLL \(scroll.frame) exists=\(scroll.exists)")
+        if !onScreen() {
+            // The action grid is lazy: once it is scrolled past, its buttons leave the tree, so a blind
+            // search can never find them again. Start from the top and walk down in viewport-sized steps.
+            scrollWorkspaceToTop()
+            let probe = app.descendants(matching: .any)["alignment.analyse"]
+            let probeBefore = probe.frame.midY
+            scroll.scroll(byDeltaX: 0, deltaY: -100)
+            let down: CGFloat = probe.frame.midY <= probeBefore ? -100 : 100
+            for _ in 0..<24 where !onScreen() {
+                scroll.scroll(byDeltaX: 0, deltaY: down)
+            }
         }
-        XCTAssertTrue(element.exists, "\(element.identifier) exists after scrolling", file: file, line: line)
+        XCTAssertTrue(element.exists, "\(identifier) exists after scrolling", file: file, line: line)
         if element.isEnabled {
             XCTAssertTrue(
                 element.isHittable,
-                "\(element.identifier) is hittable after scrolling",
+                "\(identifier) is hittable after scrolling",
                 file: file,
                 line: line
             )
@@ -639,21 +644,38 @@ final class AlignmentInspectionUITests: XCTestCase {
             && abs(lhs.height - rhs.height) <= 2
     }
 
+    /// Returns the workspace to the top so a lazily built control is always met on the way down.
+    private func scrollWorkspaceToTop() {
+        let scroll = app.descendants(matching: .any)["ww.alignment.workspace"]
+        let top = app.descendants(matching: .any)["alignment.analyse"]
+        for _ in 0..<20 {
+            guard top.exists else { return }
+            let frame = top.frame
+            if scroll.frame.contains(CGPoint(x: frame.midX, y: frame.midY)) { return }
+            if frame.midY < scroll.frame.minY {
+                scroll.swipeDown()
+            } else {
+                scroll.swipeUp()
+            }
+        }
+    }
+
     private func assertReachable(
-        _ element: XCUIElement,
+        _ identifier: String,
         in window: XCUIElement,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        makeReachable(element, file: file, line: line)
+        let element = app.descendants(matching: .any)[identifier]
+        makeReachable(element, named: identifier, file: file, line: line)
         XCTAssertTrue(
             window.frame.intersects(element.frame),
-            "\(element.identifier) is reachable by scrolling",
+            "\(identifier) is reachable by scrolling",
             file: file,
             line: line
         )
         if element.isEnabled {
-            XCTAssertTrue(element.isHittable, "\(element.identifier) is hittable", file: file, line: line)
+            XCTAssertTrue(element.isHittable, "\(identifier) is hittable", file: file, line: line)
         }
     }
 
