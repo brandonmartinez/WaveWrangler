@@ -198,6 +198,10 @@ their own lease helpers. `scripts/test.sh --ui` launches on the **current
 host** and must not be run on the user's desktop outside an approved window.
 Performance and responsiveness gates stay on the Mac mini.
 
+Per-PR GUI selection and the reviewed conditional flake-quarantine policy (currently only the
+#218 broad synthetic Library contrast test) are documented in [GUI flake quarantine](gui-flake-quarantine.md).
+Capped full GUI suites use `scripts/test.sh --ui` without selectors so every UI test runs.
+
 Environment overrides: `WW_JOBS` (default 4) and `WW_DERIVED_DATA` (default `.build/DerivedData`).
 `WW_SEGMENT_SWEEPS` selects the WW-017 segment pass. `1` runs calibration, the floor sweep and edge silence; `0` runs
 calibration only. It defaults to `1` locally and to `0` when `CI=true`; the CI workflow also sets `0` explicitly, to

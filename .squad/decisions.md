@@ -313,3 +313,21 @@
 - **Ready queue:** 4–6 units kept ready.
 - **Warm builds:** reuse is allowed, but the pre-merge run is always fresh.
 - **Coming:** relay-provisioned VMs as additional GUI hosts, each with its own lease.
+
+### 2026-10-08: Cold-launch p95 moves to extended profiling (#255)
+
+**By:** the user (14:44, via the relay), recorded by the M2 coordinator.
+> "I think we can capture the cold launch for follow up. The ongoing testing would show if cold launch didn't work at all or was unusable, this could go into extended profiling instead."
+- The 100-sample cold launch/first-open stratum is not an M2 exit gate. It's extended profiling, not a per-milestone gate, until M5.
+- #255 was retitled "Extended profiling: 100-sample cold launch/first-open p95" (P2, M5, owner Mac). M5 was chosen over Release (WW-052) because it's the MVP qualification pass, right after M4, so a regression is caught before the MVP is called qualified.
+- The acceptance criteria favour a native `open` + signpost collector over XCUITest relaunch loops, with p95 compared against the WW-007 <1 s target, #105, and the M1 post-fix first-open p95 of 461 ms.
+- Launch functionality stays gated through the UI suites' many launches.
+- The incomplete M2 runs at 45cc370 are recorded as they happened: sample 11 didn't open, and the rerun hit a LaunchServices launch failure.
+
+### 2026-10-08: M3 media and model consents (user grant)
+
+**By:** the user (2026-10-08 00:00, via the relay), recorded by the M2 coordinator for the M3 kickoff.
+1. **Transcription approved:** the user-provided disposable local episode copy (path withheld; the same copy on the dev Mac and the Mac mini) may be transcribed LOCALLY, selected primary tracks only, for M3 speech, filler-proposal and edit-review validation. Handling is unchanged from M2: originals are read-only, any modification uses temp copies, and there is no upload or external service. Never commit or post transcript text, excerpts, file names or paths. Evidence is anonymised and aggregate only (word counts, timing coverage, rates). Automated tests use synthetic fixtures.
+2. **Model downloads approved:** open-weight local speech-recognition models (e.g. Whisper-family) and Apple on-device speech, for local evaluation (WW-026) and use. Download once from the official source with checksums, and record name, version, size, license and source. Inference is fully offline with no tokenizer or network fallback, and the network-fallback risk is kept as a test. Store models outside the repo and never commit model bodies. No recordings or derived data are sent anywhere.
+- **Not granted:** cloud or hosted speech APIs, network-disconnection toggles, consented listeners (WW-018 listening → M4 #232), and any other recordings.
+- This supersedes the M2 exclusion of transcription and models only for M3 and only within this scope.
