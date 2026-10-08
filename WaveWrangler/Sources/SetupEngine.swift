@@ -13,7 +13,7 @@ import WWSources
 ///   states; it never touches the file system.
 @MainActor
 enum SetupEngineProvider {
-    private static let context = SourceAccessContext()
+    static let context = SourceAccessContext()
 
     /// One engine per open show, shared by its windows; the last window to close shuts it down (its
     /// monitor stops and it no longer follows the download preference).
@@ -45,7 +45,7 @@ enum SetupEngineProvider {
         await leases.engine(for: ObjectIdentifier(window), key: show)
     }
 
-    private static let store: any DeviceAccessStore = {
+    static let store: any DeviceAccessStore = {
         // UI-test runs keep source access records with their other isolated storage, never the user's.
         if PersistenceEnvironment.isUITestRun {
             let url = PersistenceEnvironment.applicationSupport("DeviceAccess").appending(path: "source-access-records.json")

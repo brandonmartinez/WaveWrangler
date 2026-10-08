@@ -88,7 +88,7 @@ enum MapDependencies {
         for (source, placement) in placements(of: map).sorted(by: { $0.key.description < $1.key.description }) {
             guard let record = episode.source(source),
                   case let .success((group, epoch))? = episode.alignmentPlacement(of: record),
-                  group == placement.group, placement.epochs == [epoch]
+                  group == placement.group, placement.epochs.contains(epoch)
             else {
                 changes.append(.sourceMoved(source))
                 continue
@@ -235,6 +235,7 @@ actor AcceptanceLedger {
     private var committed: [EpisodeID: Snapshot] = [:]
     private var issued: [EpisodeID: UInt64] = [:]
     private var activated: [EpisodeID: UInt64] = [:]
+    private var activatedHistory: Set<UInt64> = []
     private var nextToken: UInt64 = 0
 
     /// Records an acceptance built on `base`. Refused when `base` is not the state this pipeline last
@@ -250,11 +251,24 @@ actor AcceptanceLedger {
     /// already committed is idempotent (a retry after a failed activation).
     func activate(episode: EpisodeID, token: UInt64, base: Snapshot, result: Snapshot) throws(AlignmentAcceptanceError) {
         if let known = committed[episode], known == result, activated[episode] == token { return }
+        if let known = committed[episode], known == base, activatedHistory.contains(token) {
+            committed[episode] = result
+            activated[episode] = token
+            return
+        }
         if let known = committed[episode], known != base { throw .staleSnapshot }
         guard issued[episode] == token else { throw .supersededAcceptance }
         committed[episode] = result
         issued[episode] = nil
         activated[episode] = token
+        activatedHistory.insert(token)
+    }
+
+    /// Reconciles intentional document history movement (open, undo or redo) with the acceptance base used
+    /// by the next correction. Any unpersisted issued acceptance is superseded by the coherent document.
+    func reconcile(episode: EpisodeID, snapshot: Snapshot) {
+        committed[episode] = snapshot
+        issued[episode] = nil
     }
 }
 

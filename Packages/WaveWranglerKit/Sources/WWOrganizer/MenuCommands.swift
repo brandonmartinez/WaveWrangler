@@ -35,6 +35,8 @@ public struct KeyShortcut: Hashable, Sendable, CustomStringConvertible {
         case Self.upArrow: text += "↑"
         case Self.downArrow: text += "↓"
         case Self.backspace: text += "⌫"
+        case "\r": text += "⏎"
+        case "\u{1b}": text += "Esc"
         default: text += key.uppercased()
         }
         return text
@@ -55,7 +57,7 @@ public enum MenuCommand: String, CaseIterable, Sendable {
     case destinationSetup, destinationAlignment, destinationReview, destinationExport
     case textBigger, textSmaller, textActual, fullScreen
     // Episode
-    case episodeInfo
+    case episodeInfo, auditionSelection, stopAudition
     // Window
     case minimize, library
     // Help
@@ -98,6 +100,8 @@ public enum MenuCommand: String, CaseIterable, Sendable {
         case .textActual: KeyShortcut("0")
         case .fullScreen: KeyShortcut("f", [.command, .control])
         case .episodeInfo: KeyShortcut("i")
+        case .auditionSelection: KeyShortcut("\r")
+        case .stopAudition: KeyShortcut("\u{1b}", [])
         case .minimize: KeyShortcut("m")
         case .library: KeyShortcut("l", [.command, .shift])
         case .help: KeyShortcut("?")
@@ -109,5 +113,6 @@ public enum MenuCommand: String, CaseIterable, Sendable {
         .newEpisode, .importSources, .saveAs, .library,
         .destinationSetup, .destinationAlignment, .destinationReview, .destinationExport,
         .moveUp, .moveDown, .textBigger, .textSmaller, .textActual, .episodeInfo,
+        .auditionSelection, .stopAudition,
     ]
 }

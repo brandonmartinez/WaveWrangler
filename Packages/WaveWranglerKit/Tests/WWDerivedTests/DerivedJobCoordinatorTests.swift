@@ -117,6 +117,94 @@ struct DerivedJobCoordinatorTests {
         #expect(await coordinator.readyPayload(for: slot) == nil)
     }
 
+    @Test func intentionalHistoryMoveRestoresTheCachedKeyThatIsCurrentAgain() async throws {
+        let directory = try TemporaryDirectory("jobs")
+        let coordinator = try coordinator(directory)
+        let first = key(mapRevision: 1)
+        let second = key(mapRevision: 2)
+        #expect(await coordinator.submit(slot, key: first) { Data("first".utf8) }.outcome == .published(first))
+
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 2))
+        #expect(await coordinator.submit(slot, key: second) { Data("second".utf8) }.outcome == .published(second))
+
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 1))
+        await coordinator.restoreCachedCurrentSlots()
+        #expect(await coordinator.state(of: slot) == .ready(first))
+        #expect(await coordinator.readyPayload(for: slot) == Data("first".utf8))
+
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 2))
+        await coordinator.restoreCachedCurrentSlots()
+        #expect(await coordinator.state(of: slot) == .ready(second))
+        #expect(await coordinator.readyPayload(for: slot) == Data("second".utf8))
+    }
+
+    @Test func explicitInvalidationIsNeverUndoneByHistoryReconciliation() async throws {
+        let directory = try TemporaryDirectory("jobs")
+        let coordinator = try coordinator(directory)
+        let key = key()
+        #expect(await coordinator.submit(slot, key: key) { Data("cached".utf8) }.outcome == .published(key))
+        await coordinator.invalidate(slot)
+        await coordinator.restoreCachedCurrentSlots()
+        #expect(await coordinator.state(of: slot) == .stale(key, reasons: [.superseded]))
+        #expect(await coordinator.readyPayload(for: slot) == nil)
+    }
+
+    @Test func explicitInvalidationOfAnAlreadyStaleSlotIsNeverUndone() async throws {
+        let directory = try TemporaryDirectory("jobs")
+        let coordinator = try coordinator(directory)
+        let key = key(mapRevision: 1)
+        #expect(await coordinator.submit(slot, key: key) { Data("cached".utf8) }.outcome == .published(key))
+
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 2))
+        await coordinator.invalidate(slot)
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 1))
+        await coordinator.restoreCachedCurrentSlots()
+
+        guard case .stale = await coordinator.state(of: slot) else {
+            Issue.record("explicit invalidation revived an already-stale slot")
+            return
+        }
+        #expect(await coordinator.readyPayload(for: slot) == nil)
+    }
+
+    @Test func rejectedStaleSubmissionDoesNotReviveExplicitlyInvalidatedCache() async throws {
+        let directory = try TemporaryDirectory("jobs")
+        let coordinator = try coordinator(directory)
+        let original = key()
+        let rejected = key(token: "outdated")
+        #expect(await coordinator.submit(slot, key: original) { Data("cached".utf8) }.outcome == .published(original))
+        await coordinator.invalidate(slot)
+        #expect(await coordinator.submit(slot, key: rejected) { Data("never".utf8) }.outcome
+                == .discardedStale([.sourceChanged(source)]))
+        await coordinator.restoreCachedCurrentSlots()
+        #expect(await coordinator.readyPayload(for: slot) == nil)
+        guard case .stale = await coordinator.state(of: slot) else {
+            Issue.record("rejected stale submission revived explicitly invalidated cache")
+            return
+        }
+    }
+
+    @Test func invalidatedKeyIsRecomputedBeforeItsCachedPayloadCanBeServed() async throws {
+        let directory = try TemporaryDirectory("jobs")
+        let coordinator = try coordinator(directory)
+        let key = key()
+        #expect(await coordinator.submit(slot, key: key) { Data("old".utf8) }.outcome == .published(key))
+        await coordinator.invalidate(slot)
+        let started = Latch()
+        let release = Latch()
+        let recompute = await coordinator.submit(slot, key: key) {
+            await started.open()
+            await release.wait()
+            return Data("new".utf8)
+        }
+        await started.wait()
+        await coordinator.restoreCachedCurrentSlots()
+        #expect(await coordinator.readyPayload(for: slot) == nil)
+        await release.open()
+        #expect(await recompute.outcome == .published(key))
+        #expect(await coordinator.readyPayload(for: slot) == Data("new".utf8))
+    }
+
     @Test func aSupersededJobNeverOverwritesItsSuccessor() async throws {
         let directory = try TemporaryDirectory("jobs")
         let coordinator = try coordinator(directory)

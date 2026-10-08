@@ -28,17 +28,37 @@ private struct ShowWindowContent: View {
     private var store: ShowDocumentStore { state.store }
 
     var body: some View {
-        core
-            // No inspectorColumnWidth(min:ideal:max:): inside an AppKit-hosted window it caused a
-            // re-entrant constraint-update loop (crash) on macOS 27; the default inspector width is used.
-            .inspector(isPresented: $state.inspectorPresented) {
-                InspectorContainer(state: state)
-            }
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    DestinationControl(state: state)
+        GeometryReader { geometry in
+            // The hand-built split keeps content and inspector reachable in a 760-wide window (T-M2-01).
+            // Switching this branch on the destination re-enters AppKit's constraint update and aborts,
+            // so every destination uses it, and the inspector stays narrow enough for the Sources table
+            // to keep its columns' minimum width at the default size (#129).
+            if geometry.size.width < 900 {
+                HStack(spacing: 0) {
+                    core
+                    if state.inspectorPresented {
+                        Divider()
+                        InspectorContainer(state: state)
+                            .frame(width: 190)
+                    }
                 }
+            } else {
+                core
+                    // No inspectorColumnWidth(min:ideal:max:): inside an AppKit-hosted window it caused a
+                    // re-entrant constraint-update loop (crash) on macOS 27; the default inspector width is used.
+                    .inspector(isPresented: $state.inspectorPresented) {
+                        InspectorContainer(state: state)
+                    }
             }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Show content and inspector")
+        .accessibilityIdentifier("ww.show.contentInspector")
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                DestinationControl(state: state)
+            }
+        }
     }
 
     private var core: some View {
@@ -65,7 +85,10 @@ private struct ShowWindowContent: View {
                 .help(state.inspectorPresented ? "Hide Inspector (⌃⌘I)" : "Show Inspector (⌃⌘I)")
             }
         }
-        .frame(minWidth: 760, minHeight: 440)
+        // The NSWindow owns the complete 760×440 minimum. A content-driven minimum here is only for
+        // the pre-inspector split and can re-enter AppKit constraint updates when the inspector is
+        // visible; let the sidebar, detail and inspector lay out inside the window instead.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WindowBinder(state: state))
         .onChange(of: store.model.episodes.map(\.id)) { old, _ in
             state.reconcileSelection(previousOrder: old)
@@ -86,28 +109,32 @@ private struct ShowSidebar: View {
         let episodes = state.store.model.episodes
         List(selection: $state.sidebarSelection) {
             Section {
-                ForEach(episodes) { episode in
-                    EpisodeSidebarRow(state: state, episode: episode)
-                        .tag(ShowWindowState.SidebarSelection.episode(episode.id))
-                        .contextMenu { episodeMenu(episode) }
-                }
-                .onMove { source, destination in state.moveEpisodes(fromOffsets: source, toOffset: destination) }
-            } header: {
                 HStack {
                     Text("Episodes")
                     Spacer()
                     Button {
                         state.newEpisode()
                     } label: {
-                        Image(systemName: "plus").accessibilityLabel("New Episode")
+                        Image(systemName: "plus")
                     }
                     .buttonStyle(.borderless)
                     .help("New Episode (⇧⌘N)")
                     .disabled(!state.canEdit)
+                    .accessibilityLabel("New Episode")
                     .accessibilityIdentifier("ww.show.sidebar.newEpisode")
                 }
+                .listRowSeparator(.hidden)
+
+                ForEach(episodes) { episode in
+                    EpisodeSidebarRow(state: state, episode: episode)
+                        .tag(ShowWindowState.SidebarSelection.episode(episode.id))
+                        .contextMenu { episodeMenu(episode) }
+                }
+                .onMove { source, destination in state.moveEpisodes(fromOffsets: source, toOffset: destination) }
             }
-            Section("Show") {
+            Section {
+                Text("Show")
+                    .listRowSeparator(.hidden)
                 Label("Show Info", systemImage: "info.circle")
                     .wwFont(.body)
                     .emphasizedSelectionForeground(selectedInFocusedList: state.episodeListFocused
@@ -229,7 +256,21 @@ private struct ShowDetailContent: View {
         } else if let panel = state.destination.blockedPanel {
             BlockedDestinationView(destination: state.destination, panel: panel) { state.select(.setup) }
         } else if let episode = state.selectedEpisode {
-            SetupContainerView(state: state, episode: episode)
+            if state.destination == .alignment {
+                if episode.recorderGroups.isEmpty {
+                    BlockedDestinationView(
+                        destination: .alignment,
+                        panel: BlockedPanel(
+                            heading: "Alignment isn't available yet",
+                            body: "Set up at least one recorder group in Setup first. WaveWrangler hasn't read or analysed any audio."
+                        )
+                    ) { state.select(.setup) }
+                } else {
+                    EpisodeAlignmentContent(state: state, episodeID: episode.id)
+                }
+            } else {
+                SetupContainerView(state: state, episode: episode)
+            }
         } else {
             ContentUnavailableView("No Episode Selected", systemImage: "music.mic", description: Text("Select an episode in the sidebar."))
                 .wwFont(.body)

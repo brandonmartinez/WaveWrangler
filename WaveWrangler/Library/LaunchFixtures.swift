@@ -1,7 +1,12 @@
 import AppKit
+import WWAlignPipeline
 import WWCore
+import WWDecode
+import WWDerived
 import WWOrganizer
 import WWPersistence
+import WWSources
+import WWTimeMap
 
 /// Launch-argument fixtures for XCUITests (Debug builds only). Synthetic data only: generated in memory
 /// or in the app container's temporary directory; never user recordings or folders.
@@ -21,6 +26,9 @@ import WWPersistence
 /// - `-WWUITestRetainOlderCheckpoint <base64>`: see `UITestHooks` (#159 F-OLDER-BAD).
 /// - `-WWUITestOpenShow <name>` (+ `-WWUITestShowEpisodes <n>`): create a synthetic show and open it
 ///   (the Library window is then not shown at launch).
+/// - `-WWUITestAlignmentFixture YES`: give the opened synthetic episode two recorder groups and epochs,
+///   with synthetic logical source records only. No recording exists and no source content can be read.
+/// - `-WWUITestMinimumShowWindow YES`: open a synthetic show at the supported 760×440 minimum content size.
 /// - `-WWUITestAppearance aqua|darkAqua|highContrastAqua|highContrastDarkAqua`: app appearance for C04/C07
 ///   checks. The high-contrast names are AppKit's Increase Contrast appearances (labelled "override, not
 ///   system setting" in evidence; implements the `-WWForceIncreaseContrast` idea of the acceptance suite).
@@ -134,10 +142,229 @@ enum LaunchFixtures {
             NSApp.presentError(error)
             return
         }
-        let episodes = (0..<count).map { Episode(title: "Synthetic Episode \($0 + 1)", number: $0 + 1) }
-        NewShowCommand.create(at: folder.appending(path: "\(name).wwshow"), episodes: episodes)
+        let showURL = folder.appending(path: "\(name).wwshow")
+        if defaults.bool(forKey: "WWUITestAlignmentFixture") {
+            let showID = ShowID()
+            let fixtures = (0..<count).map {
+                alignmentEpisode(index: $0, showID: showID, folder: folder)
+            }
+            var model = ShowDocumentModel.untitled(id: showID, title: name)
+            for fixture in fixtures {
+                model = (try? model.addingEpisode(fixture.episode)) ?? model
+            }
+            Task {
+                try? await SetupEngineProvider.store.save(fixtures.flatMap(\.records))
+                NewShowCommand.create(at: showURL, model: model)
+            }
+        } else {
+            let episodes = (0..<count).map {
+                Episode(title: "Synthetic Episode \($0 + 1)", number: $0 + 1)
+            }
+            NewShowCommand.create(at: showURL, episodes: episodes)
+        }
         #endif
     }
+
+    #if DEBUG
+    private struct AlignmentEpisodeFixture {
+        var episode: Episode
+        var records: [DeviceAccessRecord]
+    }
+
+    private static func alignmentEpisode(
+        index: Int,
+        showID: ShowID,
+        folder: URL
+    ) -> AlignmentEpisodeFixture {
+        let referenceEpoch = RecordingEpoch(label: "Reference take")
+        let targetEpoch = RecordingEpoch(label: "Guest take")
+        let targetRestartEpoch = RecordingEpoch(label: "Guest restart")
+        let referenceGroup = RecorderGroup(name: "Studio recorder", epochs: [referenceEpoch])
+        let targetGroup = RecorderGroup(
+            name: "Remote recorder",
+            epochs: [targetEpoch, targetRestartEpoch]
+        )
+        let reference = SourceRecord(
+            displayNameHint: "synthetic-studio.wav",
+            placement: SourcePlacement(recorderGroupID: referenceGroup.id, epochID: referenceEpoch.id)
+        )
+        let target = SourceRecord(
+            displayNameHint: "synthetic-remote.wav",
+            placement: SourcePlacement(recorderGroupID: targetGroup.id, epochID: targetEpoch.id)
+        )
+        var episode = Episode(
+            title: "Synthetic Episode \(index + 1)",
+            number: index + 1,
+            recorderGroups: [referenceGroup, targetGroup],
+            sources: [reference, target]
+        )
+        let rate = try! NominalRate(48_000)
+        let frames: Int64 = 48_000 * 5
+        let sourceFolder = folder.appending(path: "AlignmentSources-\(index)", directoryHint: .isDirectory)
+        try! FileManager.default.createDirectory(at: sourceFolder, withIntermediateDirectories: true)
+        let referenceURL = sourceFolder.appending(path: reference.displayNameHint)
+        let targetURL = sourceFolder.appending(path: target.displayNameHint)
+        writeSyntheticWAV(referenceURL, frames: Int(frames), phase: 0)
+        writeSyntheticWAV(targetURL, frames: Int(frames), phase: 31)
+        let sourceURLs = [(reference, referenceURL), (target, targetURL)]
+        let revisions = sourceURLs.map { source, url -> SourceRevision in
+            guard case let .success(metadata) = SetupEngineProvider.context.io.metadata(at: url) else {
+                preconditionFailure("synthetic Alignment source metadata unavailable")
+            }
+            return .metadata(source.id, fingerprint: metadata.fingerprint)
+        }
+        let referenceOccurrence = try! SourceOccurrence(
+            id: alignmentOccurrenceID(for: reference.id), source: reference.id,
+            nominalRate: rate, frameCount: frames
+        )
+        let targetOccurrence = try! SourceOccurrence(
+            id: alignmentOccurrenceID(for: target.id), source: target.id,
+            nominalRate: rate, frameCount: frames
+        )
+        let referenceID = TimelineReference(
+            group: referenceGroup.id, epoch: referenceEpoch.id,
+            occurrence: referenceOccurrence.id
+        )
+        let end = try! ExactRational(numerator: 5, denominator: 1)
+        let referenceSegment = try! AffineClockSegment(
+            groupClockStart: .zero, groupClockEnd: end,
+            rateRatio: .one, alignedOffset: .zero
+        )
+        let targetSegment = try! AffineClockSegment(
+            groupClockStart: .zero,
+            groupClockEnd: try! ExactRational(numerator: 2, denominator: 1),
+            rateRatio: ExactRational(numerator: 1_000_012_040, denominator: 1_000_000_000),
+            alignedOffset: ExactRational(numerator: 84_200_000, denominator: 1_000_000_000)
+        )
+        let proposal = try! AcousticConsistencyProposal(
+            estimator: "Synthetic alignment fixture", evidenceScore: 7,
+            measurements: AcousticConsistencyMeasurements(
+                windowCount: 7, overlapSpanFraction: 0.86,
+                eligibleWindowFraction: 0.86,
+                acousticResidualP95Milliseconds: 3.1,
+                acousticResidualMaxMilliseconds: 4.4
+            )
+        )
+        let referenceMap = try! GroupTimeMap(
+            group: referenceGroup.id, reference: referenceID,
+            epochs: [EpochClockMap(
+                epoch: referenceEpoch.id,
+                mapping: .mapped(segments: [referenceSegment], provenance: .timelineReference)
+            )],
+            placements: [OccurrencePlacement(
+                occurrence: referenceOccurrence,
+                spans: [EpochSpan(
+                    startFrame: 0, endFrame: frames, epoch: referenceEpoch.id,
+                    groupClockOffset: .zero
+                )]
+            )]
+        )
+        let targetMap = try! GroupTimeMap(
+            group: targetGroup.id, reference: referenceID,
+            epochs: [
+                EpochClockMap(
+                    epoch: targetEpoch.id,
+                    mapping: .mapped(
+                        segments: [targetSegment],
+                        provenance: .acousticConsistentProposal(proposal)
+                    )
+                ),
+                EpochClockMap(
+                    epoch: targetRestartEpoch.id,
+                    mapping: .unsupported(.notAttempted)
+                ),
+            ],
+            placements: [OccurrencePlacement(
+                occurrence: targetOccurrence,
+                spans: [
+                    EpochSpan(
+                        startFrame: 0,
+                        endFrame: 48_000 * 2,
+                        epoch: targetEpoch.id,
+                        groupClockOffset: .zero
+                    ),
+                    EpochSpan(
+                        startFrame: 48_000 * 3,
+                        endFrame: frames,
+                        epoch: targetRestartEpoch.id,
+                        groupClockOffset: try! ExactRational(numerator: -3, denominator: 1)
+                    ),
+                ]
+            )]
+        )
+        let map = try! AlignedTimelineMap(
+            reference: referenceID, groups: [referenceMap, targetMap]
+        )
+        let encoded = try! EmbeddedTimeMapCodec.encode(map)
+        let recipe = AlignmentPipeline.fixtureDependencyRecipe(
+            map: map,
+            revisions: revisions
+        )
+        episode.alignment = EpisodeAlignment(
+            maps: [TimeMapVersion(
+                revision: 1,
+                inputs: TimeMapInputs(sources: [
+                    TimeMapSourceInput(
+                        sourceID: reference.id,
+                        formatInterpretationVersion: FormatRevision.current.interpretationVersion
+                    ),
+                    TimeMapSourceInput(
+                        sourceID: target.id,
+                        formatInterpretationVersion: FormatRevision.current.interpretationVersion
+                    ),
+                ], recipe: recipe),
+                map: encoded
+            )],
+            acceptedRevision: 1
+        )
+        let records = sourceURLs.map { source, url in
+            DeviceAccessRecord(
+                showID: showID,
+                sourceID: source.id,
+                bookmark: try! SetupEngineProvider.context.io.makeReadOnlyBookmark(for: url),
+                lastKnownPath: url.path,
+                createdAt: Date()
+            )
+        }
+        return AlignmentEpisodeFixture(episode: episode, records: records)
+    }
+
+    private static func writeSyntheticWAV(
+        _ url: URL,
+        frames: Int,
+        phase: Int
+    ) {
+        let sampleRate: UInt32 = 48_000
+        let dataByteCount = UInt32(frames * MemoryLayout<Int16>.size)
+        var data = Data()
+        data.reserveCapacity(44 + Int(dataByteCount))
+        data.append(contentsOf: "RIFF".utf8)
+        appendLittleEndian(36 + dataByteCount, to: &data)
+        data.append(contentsOf: "WAVEfmt ".utf8)
+        appendLittleEndian(UInt32(16), to: &data)
+        appendLittleEndian(UInt16(1), to: &data)
+        appendLittleEndian(UInt16(1), to: &data)
+        appendLittleEndian(sampleRate, to: &data)
+        appendLittleEndian(sampleRate * 2, to: &data)
+        appendLittleEndian(UInt16(2), to: &data)
+        appendLittleEndian(UInt16(16), to: &data)
+        data.append(contentsOf: "data".utf8)
+        appendLittleEndian(dataByteCount, to: &data)
+        for frame in 0..<frames {
+            let value = Int16((((frame + phase) % 200) - 100) * 120)
+            appendLittleEndian(value, to: &data)
+        }
+        try! data.write(to: url, options: .atomic)
+    }
+
+    private static func appendLittleEndian<Value: FixedWidthInteger>(
+        _ value: Value,
+        to data: inout Data
+    ) {
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+    }
+    #endif
 }
 
 #if DEBUG

@@ -86,6 +86,88 @@ struct UITestHooksDebugOnlyTests {
         try String(contentsOf: AppConfigurationTests.appFolder.appending(path: path), encoding: .utf8)
     }
 
+    @Suite("Alignment runtime boundaries")
+    struct AlignmentRuntimeBoundaryTests {
+        static let runtimeURL = AppConfigurationTests.appFolder
+            .appending(path: "Alignment/AlignmentRuntime.swift")
+
+        static func runtimeSource() throws -> String {
+            try String(contentsOf: runtimeURL, encoding: .utf8)
+        }
+
+        /// #219 review, finding 1: both whole-model replacements are computed from a snapshot across awaits,
+        /// so neither may publish without the store's `expecting:` check against the live model.
+        @Test func wholeModelReplacementsAreGuardedAgainstConcurrentEdits() throws {
+            let source = try UITestHooksDebugOnlyTests.source("Alignment/EpisodeAlignmentModel.swift")
+            let calls = source.components(separatedBy: "store.applyReplacement(").dropFirst()
+            #expect(calls.count == 2, "the split and the accept are the only whole-model replacements")
+            for call in calls {
+                #expect(call.prefix(200).contains("expecting: prior,"))
+            }
+            let store = try UITestHooksDebugOnlyTests.source("Document/ShowDocumentStore.swift")
+            #expect(store.contains("SharedModelPublication.decide(live: model, expected: expected) == .publish"))
+        }
+
+        @Test func inspectionNeverActivatesTheMutableLiveModel() throws {
+            let source = try Self.runtimeSource()
+            let start = try #require(source.range(of: "func inspect("))
+            let end = try #require(source[start.upperBound...].range(of: "\n    func analyse("))
+            let body = source[start.lowerBound..<end.lowerBound]
+            #expect(!body.contains("activate("))
+        }
+
+        @Test func derivedStoreFilesystemInitializationIsDetachedFromMainActor() throws {
+            let source = try Self.runtimeSource()
+            let store = try #require(source.range(of: "DerivedAssetStore(root:"))
+            let detached = try #require(source[..<store.lowerBound].range(
+                of: "Task.detached(priority: .userInitiated)",
+                options: .backwards
+            ))
+            let factory = try #require(source[..<detached.lowerBound].range(
+                of: "nonisolated static func make(",
+                options: .backwards
+            ))
+            #expect(factory.lowerBound < detached.lowerBound)
+        }
+
+        @Test func uncertainPublicationAdoptionReconcilesItsVerifiedRevision() throws {
+            let source = try UITestHooksDebugOnlyTests.source("Document/ShowDocument.swift")
+            let start = try #require(source.range(of: "private func adoptUncertainPublication()"))
+            let end = try #require(source[start.upperBound...].range(of: "\n    override func writeSafely("))
+            let body = source[start.lowerBound..<end.lowerBound]
+            #expect(body.contains("verifiedModel = document.payload"))
+            #expect(body.contains("AlignmentRuntimeProvider.reconcileActive(for: self)"))
+
+            let runtime = try Self.runtimeSource()
+            #expect(runtime.contains("documentID: ObjectIdentifier(document),\n                publication: publication"))
+            #expect(runtime.contains("let published = try await reconciler.reconcile("))
+            #expect(runtime.contains("openedDocuments.retry(episode: episodeID, documentID: documentID, publication: publication)"))
+            #expect(runtime.contains("if !(error is CancellationError)"))
+            #expect(runtime.contains("if published {"))
+            #expect(runtime.contains("private func publicationReconciler(for episodeID: EpisodeID)"))
+            #expect(runtime.contains("if episode.alignment?.acceptedRevision != nil {"))
+            #expect(!runtime.contains("episode.alignment?.acceptedRevision != nil\n        else { return }"))
+            #expect(!runtime.contains("guard episode.alignment?.acceptedRevision != nil else { return }"))
+
+            let modelActivationStart = try #require(runtime.range(
+                of: "func activate(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws {"
+            ))
+            let acceptedActivationStart = try #require(runtime[modelActivationStart.upperBound...].range(
+                of: "\n    func activate(_ accepted: AcceptedAlignment) async throws {"
+            ))
+            let openedActivationStart = try #require(runtime[acceptedActivationStart.upperBound...].range(
+                of: "\n    /// Reconciles only the model"
+            ))
+            let modelActivation = runtime[modelActivationStart.lowerBound..<acceptedActivationStart.lowerBound]
+            let acceptedActivation = runtime[acceptedActivationStart.lowerBound..<openedActivationStart.lowerBound]
+            #expect(modelActivation.contains("let reconciler = publicationReconciler(for: episodeID)"))
+            #expect(modelActivation.contains("_ = try await reconciler.reconcile("))
+            #expect(acceptedActivation.contains("let reconciler = publicationReconciler(for: episodeID)"))
+            #expect(acceptedActivation.contains("_ = try await reconciler.reconcile("))
+        }
+
+    }
+
     @Test func hooksTypeIsCompiledOnlyInDebug() throws {
         let lines = try Self.source("Document/UITestHooks.swift").split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let code = lines.filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") && !$0.trimmingCharacters(in: .whitespaces).isEmpty && $0 != "import Foundation" }

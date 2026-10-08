@@ -11,6 +11,8 @@ struct InspectorContainer: View {
             Group {
                 if state.sidebarSelection == .showInfo {
                     ShowInfoInspector(state: state)
+                } else if state.destination == .alignment, let model = state.alignmentModel {
+                    AlignmentInspectorView(model: model)
                 } else if let episode = state.selectedEpisode {
                     EpisodeInspector(state: state, episodeID: episode.id)
                         .id(episode.id)

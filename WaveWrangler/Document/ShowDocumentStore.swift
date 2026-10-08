@@ -67,16 +67,56 @@ final class ShowDocumentStore {
         coalescingKey = nil
     }
 
-    private func replace(with newModel: ShowDocumentModel, actionName: String) {
+    /// Applies a complete, already-validated model and runs `afterChange` for the initial edit and every
+    /// undo/redo replacement. Alignment uses this to persist first, then activate the accepted map revision.
+    @discardableResult
+    func applyReplacement(
+        _ actionName: String,
+        model newModel: ShowDocumentModel,
+        afterChange: @escaping @MainActor (ShowDocumentModel) -> Void
+    ) -> Bool {
+        guard FormatUpdatePolicy.allowsEdits(document?.status.formatUpdate) else { return false }
+        guard newModel != model else { return true }
+        lastError = nil
+        replace(with: newModel, actionName: actionName, afterChange: afterChange)
+        Responsiveness.interaction("show.edit")
+        return true
+    }
+
+    /// Applies a replacement that was computed from `expected`, but only while the live model is still
+    /// exactly that snapshot.
+    ///
+    /// Windows share one store, so a replacement prepared across awaits can arrive after another window has
+    /// edited the show; publishing it then would discard that edit. Returns false without touching the model
+    /// when the snapshot has been superseded (#219).
+    @discardableResult
+    func applyReplacement(
+        _ actionName: String,
+        expecting expected: ShowDocumentModel,
+        model newModel: ShowDocumentModel,
+        afterChange: @escaping @MainActor (ShowDocumentModel) -> Void
+    ) -> Bool {
+        guard SharedModelPublication.decide(live: model, expected: expected) == .publish else { return false }
+        return applyReplacement(actionName, model: newModel, afterChange: afterChange)
+    }
+
+    private func replace(
+        with newModel: ShowDocumentModel,
+        actionName: String,
+        afterChange: (@MainActor (ShowDocumentModel) -> Void)? = nil
+    ) {
         let previous = model
         model = newModel
         coalescingKey = nil
-        guard let undoManager = document?.undoManager else { return }
-        undoManager.registerUndo(withTarget: self) { store in
-            MainActor.assumeIsolated {
-                store.replace(with: previous, actionName: actionName)
+        if let undoManager = document?.undoManager {
+            AppUndoRegistration.register(
+                with: undoManager,
+                target: self,
+                actionName: actionName
+            ) { store in
+                store.replace(with: previous, actionName: actionName, afterChange: afterChange)
             }
         }
-        undoManager.setActionName(actionName)
+        afterChange?(newModel)
     }
 }

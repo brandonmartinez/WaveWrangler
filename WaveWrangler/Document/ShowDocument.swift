@@ -45,6 +45,9 @@ final class ShowDocument: NSDocument {
     private var resolvesOffer: OfferResolution?
 
     var revision: Int { publication?.revision ?? 0 }
+    /// The exact model last independently verified on disk. Alignment reconciles verified publications;
+    /// live inspection never treats the mutable in-memory model as persisted truth.
+    private(set) var verifiedModel: ShowDocumentModel?
 
     #if DEBUG
     /// Debug-only fault injection at the C3 boundaries (native holdout runner); `nil` in normal use.
@@ -108,9 +111,19 @@ final class ShowDocument: NSDocument {
         let interval = OpenSignposts.begin("document.makeWindowControllers")
         defer { OpenSignposts.end(interval) }
         let hosting = NSHostingController(rootView: ShowWorkspaceView(store: store))
+        // The complete show window owns its minimum size. SwiftUI's preferred content size includes
+        // the sidebar and inspector and would otherwise expand (or re-enter constraint updates for)
+        // the window instead of laying those columns out inside the permitted 760 pt content width.
+        hosting.sizingOptions = []
         let window = NSWindow(contentViewController: hosting)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 760, height: 520))
+        #if DEBUG
+        let initialHeight = UserDefaults.standard.bool(forKey: "WWUITestMinimumShowWindow") ? 440.0 : 520.0
+        #else
+        let initialHeight = 520.0
+        #endif
+        window.contentMinSize = NSSize(width: 760, height: 440)
+        window.setContentSize(NSSize(width: 760, height: initialHeight))
         window.tabbingMode = .preferred
         addWindowController(NSWindowController(window: window))
     }
@@ -155,6 +168,7 @@ final class ShowDocument: NSDocument {
             formatUpdatePromptPending = false
             status.setFormatUpdate(nil)
             store.replaceLoadedModel(document.payload)
+            verifiedModel = document.payload
             publication = document.publication
             onDiskBase = fingerprint
             status.set(.clean(revision: document.revision))
@@ -178,6 +192,7 @@ final class ShowDocument: NSDocument {
             case let .damaged(error, candidates): throw DocumentRecoveryOffer.error(for: error, candidates: candidates)
             }
             store.replaceLoadedModel(upgraded.payload)
+            verifiedModel = upgraded.payload
             publication = upgraded.publication
             onDiskBase = fingerprint
             formatUpdateOriginal = data
@@ -218,6 +233,7 @@ final class ShowDocument: NSDocument {
             completionHandler(formatUpdateSaveRefusal())
             return
         }
+
         if let request = copyElsewhere, saveOperation == .saveAsOperation {
             saveCopy(request, to: url, ofType: typeName, completionHandler: completionHandler)
             return
@@ -243,6 +259,34 @@ final class ShowDocument: NSDocument {
         }
     }
 
+    /// Publishes `expected` through the ordinary C3 NSDocument path and reports success only after the
+    /// document's independent read-back verification has completed. A newer edit supersedes the request.
+    func persistExpectedModel(
+        _ expected: ShowDocumentModel,
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void
+    ) {
+        guard store.model == expected else {
+            completion(.failure(CocoaError(.userCancelled)))
+            return
+        }
+        guard let url = fileURL else {
+            completion(.failure(CocoaError(.fileNoSuchFile)))
+            return
+        }
+        save(to: url, ofType: fileType ?? DocumentTypes.show, for: .saveOperation) { [weak self] error in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let error {
+                    completion(.failure(error))
+                } else if self.store.model != expected || !self.status.saveStatus.state.isVerifiedOnDisk {
+                    completion(.failure(CocoaError(.userCancelled)))
+                } else {
+                    completion(.success(()))
+                }
+            }
+        }
+    }
+
     /// Only these operations make the written file *this* document's on-disk revision. Save To (export) and
     /// autosave-elsewhere copies never become the base for later in-place saves.
     static func adoptsPublication(_ operation: NSDocument.SaveOperationType) -> Bool {
@@ -265,6 +309,7 @@ final class ShowDocument: NSDocument {
             uncertainCandidate = nil
             publication = receipt.publication
             onDiskBase = receipt.fingerprint
+            verifiedModel = candidateModel
             // #87: AppKit only marks an autosave in place as "autosaved"; clear "— Edited" exactly when the verified
             // publication holds the current model. Edits made during the save keep the document (and status) edited.
             let isAutosaveInPlace = saveOperation == .autosaveInPlaceOperation
@@ -500,6 +545,8 @@ final class ShowDocument: NSDocument {
         uncertainCandidate = nil
         publication = document.publication
         onDiskBase = fingerprint
+        verifiedModel = document.payload
+        AlignmentRuntimeProvider.reconcileActive(for: self)
         fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
         if store.model == document.payload {
             updateChangeCount(.changeCleared)
@@ -901,6 +948,7 @@ final class ShowDocument: NSDocument {
         case .updated:
             guard let adopted else { return }
             store.replaceLoadedModel(adopted.document.payload)
+            verifiedModel = adopted.document.payload
             publication = adopted.document.publication
             onDiskBase = adopted.fingerprint
             fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
