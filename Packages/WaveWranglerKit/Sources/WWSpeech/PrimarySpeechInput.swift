@@ -331,13 +331,6 @@ public struct PrimarySpeechInputAdapter: Sendable {
         let result = try consume(product)
         if postConsumeCheck {
             guard !Task.isCancelled else { throw .decode(.cancelled) }
-            guard Self.sameFile(before, try Self.inspect(url)),
-                  let bookmark = record.bookmark,
-                  case let .resolved(checkedURL, isStale) = decoder.access.io.resolveBookmark(bookmark),
-                  !isStale, checkedURL == url,
-                  case let .success(checkedMetadata) = decoder.access.io.metadata(at: url),
-                  metadata.fingerprint.compare(to: checkedMetadata.fingerprint) == .matches
-            else { throw .sourceAliasOrChanged }
             let checked: PrimarySpeechInputState
             do { checked = try await current() }
             catch { throw .currentStateUnavailable }
@@ -346,6 +339,17 @@ public struct PrimarySpeechInputAdapter: Sendable {
                   checked.sourceRevision == revision,
                   checked.inputAssetRevision == Self.inputAssetRevision
             else { throw .sourceRevisionChanged }
+            guard let checkedRecord = checked.accessRecords.first(where: {
+                      $0.showID == checked.show.show.id && $0.sourceID == selection.sourceID
+                  }),
+                  let bookmark = checkedRecord.bookmark,
+                  case let .resolved(checkedURL, isStale) = decoder.access.io.resolveBookmark(bookmark),
+                  !isStale, checkedURL == url,
+                  case let .success(checkedMetadata) = decoder.access.io.metadata(at: url),
+                  metadata.fingerprint.compare(to: checkedMetadata.fingerprint) == .matches,
+                  checkedRecord.recordedIdentity?.fingerprint.compare(to: checkedMetadata.fingerprint) == .matches,
+                  Self.sameFile(before, try Self.inspect(url))
+            else { throw .sourceAliasOrChanged }
             guard !Task.isCancelled else { throw .decode(.cancelled) }
         }
         return result
