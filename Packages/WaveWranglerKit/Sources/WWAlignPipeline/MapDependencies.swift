@@ -22,9 +22,9 @@ public enum AlignmentDependencyChange: Sendable, Hashable {
     case dependenciesMissing
 }
 
-/// The revisions and placements a map revision was accepted against, persisted as a digest in the map
-/// revision's recipe name and re-verified before activation and before rendering.
-enum MapDependencies {
+/// Re-verifies the revisions and placements persisted in a map recipe before alignment activation,
+/// rendering, or speech occurrence admission.
+public enum MapDependencies {
     /// Where each placed source sits in the map: its group and the epochs of its spans.
     static func placements(of map: AlignedTimelineMap) -> [SourceID: (group: RecorderGroupID, epochs: [RecordingEpochID])] {
         var result: [SourceID: (group: RecorderGroupID, epochs: [RecordingEpochID])] = [:]
@@ -99,7 +99,7 @@ enum MapDependencies {
 
     /// Re-verifies a persisted map revision against the current episode, registered revisions and format.
     /// Empty when the map still describes exactly what it was accepted against.
-    static func verify(
+    public static func verify(
         version: TimeMapVersion,
         map: AlignedTimelineMap,
         episode: Episode,

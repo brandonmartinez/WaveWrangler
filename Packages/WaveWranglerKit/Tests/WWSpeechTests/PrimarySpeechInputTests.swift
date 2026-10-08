@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import Testing
+import WWAlignPipeline
 import WWCore
 import WWDecode
 import WWDerived
@@ -15,8 +16,11 @@ private struct SpeechFixtureIO: SourceIO {
     var provenance: ObservationProvenance { .simulated }
     func metadata(at url: URL) -> MetadataResult { system.metadata(at: url) }
     func listItems(under directory: URL) -> DirectoryListing { system.listItems(under: directory) }
-    func makeReadOnlyBookmark(for url: URL) throws -> Data { Data("fixture".utf8) }
-    func resolveBookmark(_ data: Data) -> BookmarkResolution { .resolved(url, isStale: false) }
+    func makeReadOnlyBookmark(for url: URL) throws -> Data { Data(url.path.utf8) }
+    func resolveBookmark(_ data: Data) -> BookmarkResolution {
+        .resolved(data == Data("fixture".utf8) ? url : URL(fileURLWithPath: String(decoding: data, as: UTF8.self)),
+                  isStale: false)
+    }
     func startAccessingSecurityScope(_ url: URL) -> Bool { false }
     func stopAccessingSecurityScope(_ url: URL) {}
     func requestDownload(of url: URL) throws {}
@@ -112,6 +116,7 @@ struct PrimarySpeechInputTests {
         )
         #expect(input.selection.channel == 1)
         #expect(input.frameCount == 64)
+        #expect(input.occurrence == SourceOccurrenceID(input.selection.sourceID.rawValue))
         #expect(input.interpretation.channelCount == 2)
         #expect(input.samples.allSatisfy { abs($0 - Float(-200) / 32768) < 0.000_01 })
         #expect(input.samples.allSatisfy { abs($0 - Float(100) / 32768) > 0.001 })
@@ -278,10 +283,11 @@ struct PrimarySpeechInputTests {
         }
     }
 
-    @Test(arguments: ["continuous", "gap", "duplicate"])
-    func occurrenceValidation(_ scenario: String) async throws {
+    private func mappedFixture(_ scenario: String = "continuous") throws
+        -> (directory: URL, access: SourceAccessContext, state: PrimarySpeechInputState,
+            episode: EpisodeID, speaker: SpeakerID, occurrence: SourceOccurrenceID, referenceURL: URL)
+    {
         let (directory, _, access, snapshot, episode, speaker) = try fixture()
-        defer { try? FileManager.default.removeItem(at: directory) }
         let duplicate = scenario == "duplicate"
         let gap = scenario == "gap"
         func time(_ frames: Int64) throws -> ExactRational {
@@ -292,7 +298,13 @@ struct PrimarySpeechInputTests {
                                    rateRatio: .one, alignedOffset: .zero)
         }
         let rate = try NominalRate(16_000)
-        let reference = try SourceOccurrence(source: SourceID(), nominalRate: rate, frameCount: 64)
+        let referenceSource = SourceRecord(displayNameHint: "reference")
+        let referenceURL = directory.appendingPathComponent("reference.wav")
+        try wav(channel0: 300).write(to: referenceURL)
+        guard case let .success(referenceMetadata) = access.io.metadata(at: referenceURL),
+              let sourceRevision = snapshot.sourceRevision
+        else { throw SpeechAdmissionRefusal.sourceIdentityNotConfirmed }
+        let reference = try SourceOccurrence(source: referenceSource.id, nominalRate: rate, frameCount: 64)
         let refGroup = RecorderGroupID(), refEpoch = RecordingEpochID()
         let timeline = TimelineReference(group: refGroup, epoch: refEpoch, occurrence: reference.id)
         let refMap = try GroupTimeMap(
@@ -327,32 +339,164 @@ struct PrimarySpeechInputTests {
         let map = try AlignedTimelineMap(reference: timeline, groups: [refMap, target])
         let embedded = try JSONDecoder().decode(EmbeddedJSON.self, from: JSONEncoder().encode(map))
         var show = snapshot.show
+        var referenced = referenceSource
+        referenced.placement.recorderGroupID = refGroup
+        referenced.placement.epochID = refEpoch
+        show.episodes[0].sources.append(referenced)
+        show.episodes[0].recorderGroups = [
+            RecorderGroup(id: refGroup, name: "reference", epochs: [RecordingEpoch(id: refEpoch, label: "reference")]),
+            RecorderGroup(id: targetGroupID, name: "selected", epochs:
+                [RecordingEpoch(id: first, label: "selected")] +
+                (gap ? [RecordingEpoch(id: second, label: "restart")] : []))
+        ]
         show.episodes[0].sources[0].placement.recorderGroupID = targetGroupID
         show.episodes[0].sources[0].placement.epochID = first
+        let referenceRevision = SourceRevision.metadata(referenceSource.id, fingerprint: referenceMetadata.fingerprint)
+        let recipe = AlignmentPipeline.fixtureDependencyRecipe(map: map, revisions: [sourceRevision, referenceRevision])
         show.episodes[0].alignment = EpisodeAlignment(maps: [
-            TimeMapVersion(revision: 1, inputs: TimeMapInputs(sources: []), map: embedded)
+            TimeMapVersion(revision: 1, inputs: TimeMapInputs(sources: [
+                TimeMapSourceInput(sourceID: source, formatInterpretationVersion: FormatRevision.current.interpretationVersion),
+                TimeMapSourceInput(sourceID: referenceSource.id, formatInterpretationVersion: FormatRevision.current.interpretationVersion)
+            ], recipe: recipe), map: embedded)
         ], acceptedRevision: 1)
-        let current = PrimarySpeechInputState(show: show, showRevision: 1, accessRecords: snapshot.accessRecords,
-                                               sourceRevision: snapshot.sourceRevision,
-                                               inputAssetRevision: snapshot.inputAssetRevision)
-        if scenario == "continuous" {
-            let input = try await PrimarySpeechInputAdapter(access: access).prepare(
-                episodeID: episode, speakerID: speaker,
-                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
-                availability: .on, current: { current }
+        let referenceRecord = DeviceAccessRecord(
+            showID: show.show.id, sourceID: referenceSource.id, bookmark: Data(referenceURL.path.utf8),
+            lastKnownPath: referenceURL.path,
+            recordedIdentity: RecordedIdentity(fingerprint: referenceMetadata.fingerprint,
+                                               confirmation: .userConfirmed, recordedAt: Date()),
+            createdAt: Date()
+        )
+        let state = PrimarySpeechInputState(show: show, showRevision: 1,
+                                            accessRecords: snapshot.accessRecords + [referenceRecord],
+                                            sourceRevision: snapshot.sourceRevision,
+                                            inputAssetRevision: snapshot.inputAssetRevision)
+        return (directory, access, state, episode, speaker, chosen.id, referenceURL)
+    }
+
+    private func refusal(_ fixture: (directory: URL, access: SourceAccessContext, state: PrimarySpeechInputState,
+                                     episode: EpisodeID, speaker: SpeakerID, occurrence: SourceOccurrenceID, referenceURL: URL))
+        async -> SpeechAdmissionRefusal?
+    {
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: fixture.access).prepare(
+                episodeID: fixture.episode, speakerID: fixture.speaker,
+                authorization: .explicitUserRequest(episodeID: fixture.episode, speakerID: fixture.speaker),
+                availability: .on, current: { fixture.state }
             )
-            #expect(input.occurrence == chosen.id)
+            return nil
+        } catch { return error }
+    }
+
+    @Test(arguments: ["continuous", "gap", "duplicate"])
+    func occurrenceValidation(_ scenario: String) async throws {
+        let fixture = try mappedFixture(scenario)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        if scenario == "continuous" {
+            let input = try await PrimarySpeechInputAdapter(access: fixture.access).prepare(
+                episodeID: fixture.episode, speakerID: fixture.speaker,
+                authorization: .explicitUserRequest(episodeID: fixture.episode, speakerID: fixture.speaker),
+                availability: .on, current: { fixture.state }
+            )
+            #expect(input.occurrence == fixture.occurrence)
             return
         }
-        do {
-            _ = try await PrimarySpeechInputAdapter(access: access).prepare(
-                episodeID: episode, speakerID: speaker,
-                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
-                availability: .on, current: { current }
-            )
-            Issue.record("ambiguous or gapped occurrence was published")
-        } catch {
-            #expect(error == .occurrenceNotContinuous)
+        #expect(await refusal(fixture) == .occurrenceNotContinuous)
+    }
+
+    @Test func confirmedSameLengthReferenceRelinkInvalidatesAcceptedMap() async throws {
+        let fixture = try mappedFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let relinkedURL = fixture.directory.appendingPathComponent("relinked.wav")
+        try wav(channel0: 500).write(to: relinkedURL)
+        guard case let .success(metadata) = fixture.access.io.metadata(at: relinkedURL) else {
+            Issue.record("relinked metadata unavailable")
+            return
         }
+        var records = fixture.state.accessRecords
+        records[1].bookmark = Data(relinkedURL.path.utf8)
+        records[1].lastKnownPath = relinkedURL.path
+        records[1].recordedIdentity = RecordedIdentity(fingerprint: metadata.fingerprint,
+                                                       confirmation: .userConfirmed, recordedAt: Date())
+        let state = PrimarySpeechInputState(show: fixture.state.show, showRevision: 2, accessRecords: records,
+                                            sourceRevision: fixture.state.sourceRevision,
+                                            inputAssetRevision: fixture.state.inputAssetRevision)
+        #expect(await refusal((fixture.directory, fixture.access, state, fixture.episode, fixture.speaker,
+                               fixture.occurrence, fixture.referenceURL)) == .occurrenceNotContinuous)
+    }
+
+    @Test func confirmedSameLengthPrimaryRelinkInvalidatesAcceptedMap() async throws {
+        let fixture = try mappedFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let relinkedURL = fixture.directory.appendingPathComponent("primary-relinked.wav")
+        try wav(channel1: -400).write(to: relinkedURL)
+        guard case let .success(metadata) = fixture.access.io.metadata(at: relinkedURL) else {
+            Issue.record("relinked metadata unavailable")
+            return
+        }
+        var records = fixture.state.accessRecords
+        records[0].bookmark = Data(relinkedURL.path.utf8)
+        records[0].lastKnownPath = relinkedURL.path
+        records[0].recordedIdentity = RecordedIdentity(fingerprint: metadata.fingerprint,
+                                                       confirmation: .userConfirmed, recordedAt: Date())
+        let state = PrimarySpeechInputState(
+            show: fixture.state.show, showRevision: 2, accessRecords: records,
+            sourceRevision: SourceRevision.metadata(records[0].sourceID, fingerprint: metadata.fingerprint),
+            inputAssetRevision: fixture.state.inputAssetRevision
+        )
+        #expect(await refusal((fixture.directory, fixture.access, state, fixture.episode, fixture.speaker,
+                               fixture.occurrence, fixture.referenceURL)) == .occurrenceNotContinuous)
+    }
+
+    @Test func deletedReferencedSourceInvalidatesAcceptedMap() async throws {
+        let fixture = try mappedFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        var show = fixture.state.show
+        show.episodes[0].sources.removeLast()
+        let state = PrimarySpeechInputState(show: show, showRevision: 2, accessRecords: Array(fixture.state.accessRecords.prefix(1)),
+                                            sourceRevision: fixture.state.sourceRevision,
+                                            inputAssetRevision: fixture.state.inputAssetRevision)
+        #expect(await refusal((fixture.directory, fixture.access, state, fixture.episode, fixture.speaker,
+                               fixture.occurrence, fixture.referenceURL)) == .occurrenceNotContinuous)
+    }
+
+    @Test func missingReferencedFileRefusesOccurrence() async throws {
+        let fixture = try mappedFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        try FileManager.default.removeItem(at: fixture.referenceURL)
+        #expect(await refusal(fixture) == .sourceAliasOrChanged)
+    }
+
+    @Test(arguments: ["missing-input", "stale-format", "unverified-content-digest", "stale-recipe",
+                      "duplicate-revision", "missing-revision", "reordered-revision"])
+    func staleMapInputsAndAmbiguousRevisionsRefuse(_ scenario: String) async throws {
+        let fixture = try mappedFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        var show = fixture.state.show
+        switch scenario {
+        case "missing-input":
+            show.episodes[0].alignment!.maps[0].inputs.sources.removeLast()
+        case "stale-format":
+            show.episodes[0].alignment!.maps[0].inputs.sources[0].formatInterpretationVersion = 0
+        case "unverified-content-digest":
+            show.episodes[0].alignment!.maps[0].inputs.sources[0].contentDigest = "unverified"
+        case "stale-recipe":
+            show.episodes[0].alignment!.maps[0].inputs.recipe = RecipeReference(name: "stale", revision: 2)
+        case "duplicate-revision":
+            show.episodes[0].alignment!.maps.append(show.episodes[0].alignment!.maps[0])
+        case "missing-revision":
+            show.episodes[0].alignment!.acceptedRevision = 2
+        case "reordered-revision":
+            var older = show.episodes[0].alignment!.maps[0]
+            older.revision = 0
+            show.episodes[0].alignment!.maps.append(older)
+        default:
+            Issue.record("unknown scenario")
+            return
+        }
+        let state = PrimarySpeechInputState(show: show, showRevision: 2, accessRecords: fixture.state.accessRecords,
+                                            sourceRevision: fixture.state.sourceRevision,
+                                            inputAssetRevision: fixture.state.inputAssetRevision)
+        #expect(await refusal((fixture.directory, fixture.access, state, fixture.episode, fixture.speaker,
+                               fixture.occurrence, fixture.referenceURL)) == .occurrenceNotContinuous)
     }
 }

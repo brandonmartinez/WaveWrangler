@@ -2,10 +2,18 @@
 
 **2026-10-08; #23 remains PARTIAL.** This is a headless candidate, not app integration or
 permission to infer from arbitrary files. `PrimarySpeechSelection` requires a unique,
-user-confirmed primary channel. The future adapter still must obtain the PCM proxy through
-WWDecode's read-only content gateway and bind that proxy to the selection before calling the
+user-confirmed primary channel. The selected-primary adapter decodes the selected channel through WWDecode's read-only
+content gateway, but still cannot supply an owned, descriptor-pinned PCM proxy to the
 package-scoped executor. No actual episode was opened by this revision. Automated fixtures
 are synthetic.
+
+The stacked adapter repair requires each accepted-map placement to name a unique, currently
+present source with confirmed device-local access. It compares fresh local file metadata
+revisions for **all** placed sources with the persisted alignment dependency recipe, checks
+map inputs/format and continuous selected-channel coverage, and refuses absent or ambiguous
+proof. Accepted maps with decoded-content digests refuse until a consent-gated verification
+path exists. The caller-mintable action marker does not grant production authority; the
+offline plan and worker remain `primaryProxyNotProven`, with no inference or app integration.
 
 ## Reviewed open-weight candidate
 
