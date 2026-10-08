@@ -351,7 +351,9 @@ final class AlignmentInspectionUITests: XCTestCase {
             }
             return true
         }
-        XCTAssertLessThanOrEqual(layoutContainerFindings, 2)
+        // The show's split layout nests two containers over the whole content area, and the episode
+        // sidebar adds a third; each is waived only by matching one of those labelled frames exactly.
+        XCTAssertLessThanOrEqual(layoutContainerFindings, 3)
         XCTAssertLessThanOrEqual(inspectorColumnFindings, 1)
         XCTAssertLessThanOrEqual(showSectionFindings, 1)
         // At most one finding per cell: each is the container AppKit builds around that cell.
