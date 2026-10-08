@@ -306,10 +306,14 @@ private struct AlignmentOutlineTable: View {
 
     var body: some View {
         Table(of: AlignmentOutlineRow.self, selection: $selection) {
-            // Cell contents stay plain text. AppKit owns the container around each row's
-            // disclosure-column cell, and no description applied here reaches it (#219 audit).
+            // An epoch row leaves this column blank because its group is named on the row above, so the
+            // cell is described explicitly rather than left silent (#219 audit).
             TableColumn("Recorder Group") { row in
                 Text(row.groupName)
+                    .accessibilityElement()
+                    .accessibilityLabel(
+                        row.groupName.isEmpty ? "\(row.epochLabel), in the group above" : row.groupName
+                    )
             }
             .width(ideal: 170)
             TableColumn("Epoch") { row in

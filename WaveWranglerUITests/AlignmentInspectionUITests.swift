@@ -294,7 +294,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             // only while its own labelled text child is still exposed to assistive technology.
             let isOutlineCell = groups.frame.contains(element.frame)
                 && element.frame.height <= 32
-                && element.descendants(matching: .staticText).allElementsBoundByIndex
+                && element.descendants(matching: .any).allElementsBoundByIndex
                     .contains { !$0.label.isEmpty || !(($0.value as? String) ?? "").isEmpty }
             guard isContent || isSidebar || isShowSection || isOutlineCell else { return false }
             if isOutlineCell {
