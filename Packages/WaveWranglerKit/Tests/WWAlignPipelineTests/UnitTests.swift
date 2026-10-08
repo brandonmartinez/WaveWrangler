@@ -146,7 +146,18 @@ struct ConfigurationTests {
         #expect(AlignmentPipelineConfiguration(minimumAnalysisRate: 10).minimumAnalysisRate == 8000)
         #expect(AlignmentPipelineConfiguration(minimumAnalysisRate: 96_000).minimumAnalysisRate == 48_000)
         #expect(AlignmentPipelineConfiguration(renderSegmentSeconds: 0).renderSegmentSeconds == 1)
-        #expect(AlignmentPipelineConfiguration(renderSegmentSeconds: 1000).renderSegmentSeconds == 300)
+        #expect(AlignmentPipelineConfiguration(renderSegmentSeconds: 1000).renderSegmentSeconds == 180)
+    }
+
+    @Test("Render segments accept 180 seconds and clamp larger requests to the measured ceiling")
+    func renderSegmentCeiling() {
+        let accepted = AlignmentPipelineConfiguration(renderSegmentSeconds: 180)
+        #expect(accepted.renderSegmentSeconds == 180)
+        for requested in [181, 300, 1000] {
+            let capped = AlignmentPipelineConfiguration(renderSegmentSeconds: requested)
+            #expect(capped.renderSegmentSeconds == 180)
+            #expect(capped.renderRecipeName == accepted.renderRecipeName)
+        }
     }
 
     @Test("Every result-changing parameter is part of the recipe names")
@@ -161,6 +172,7 @@ struct ConfigurationTests {
         for variant in variants { #expect(variant.analysisRecipeName != base.analysisRecipeName) }
         #expect(AlignmentPipelineConfiguration(concurrency: 4).analysisRecipeName == base.analysisRecipeName, "concurrency changes no result")
         #expect(AlignmentPipelineConfiguration(renderSegmentSeconds: 5).renderRecipeName != base.renderRecipeName)
+        #expect(AlignmentPipelineConfiguration(renderSegmentSeconds: 180).renderRecipeName != base.renderRecipeName)
     }
 }
 

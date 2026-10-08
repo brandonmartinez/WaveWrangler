@@ -40,7 +40,9 @@ public struct AlignmentPipelineConfiguration: Sendable, Equatable {
     public let searchCenterSeconds: Int
     /// Analysis buffers are decimated by an integer factor to the lowest exact rate at or above this.
     public let minimumAnalysisRate: Int
-    /// Output seconds rendered per aligned-asset segment (one coordinator slot per channel per segment).
+    /// Output seconds rendered per aligned-asset segment (one coordinator slot per channel per segment),
+    /// clamped to 1...180. The ceiling is measured for the six-channel, 48 kHz, concurrency-2 fixture;
+    /// other channel/rate/concurrency combinations have not been qualified against the 1 GiB gate.
     public let renderSegmentSeconds: Int
     /// How the common output rate of aligned assets is chosen (WW-050 `OutputSettingsPolicy`): by default
     /// 48 kHz when feasible, else derived from the sources; `.matchSources` derives it from the sources.
@@ -63,7 +65,7 @@ public struct AlignmentPipelineConfiguration: Sendable, Equatable {
         self.searchDeviationSeconds = min(max(searchDeviationSeconds, 1), 600)
         self.searchCenterSeconds = searchCenterSeconds
         self.minimumAnalysisRate = min(max(minimumAnalysisRate, 8000), 48_000)
-        self.renderSegmentSeconds = min(max(renderSegmentSeconds, 1), 300)
+        self.renderSegmentSeconds = min(max(renderSegmentSeconds, 1), 180)
         self.outputSettings = outputSettings
     }
 

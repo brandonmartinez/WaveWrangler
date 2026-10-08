@@ -84,10 +84,15 @@ Swift 6.4. Initial load average was 13.29/14.44/14.69. The command was run alone
 | Same-group transform | one accepted-map digest across every segment/channel | exactly 1 |
 | Mid-render cancellation | shutdown returned in 0.00235 s; source stopped before its 216,000,000th frame | < 5 s; incomplete render publishes no successful report |
 
-The final suite passed both tests. A preceding exploratory run with the configuration maximum of 300-second
-segments rendered successfully in 361.536 s but peaked at 1,042 MiB, correctly failing the 1 GiB gate.
-The committed 180-second envelope therefore leaves about 279 MiB of resident headroom; callers must not infer
-that every allowed segment size stays under 1 GiB for this channel count.
+The final suite passed both tests. A preceding exploratory run with the *former* configuration maximum of
+300-second segments rendered successfully in 361.536 s but peaked at 1,042 MiB, correctly failing the
+1 GiB gate. On 2026-10-08, #235 lowered `AlignmentPipelineConfiguration.renderSegmentSeconds` to 1...180:
+requests of 181, 300 or 1000 seconds now render in 180-second segments. The effective segment length
+remains in the render recipe, so a different effective length invalidates cached aligned assets. The measured
+180-second fixture leaves about 279 MiB of resident headroom. This result qualifies **only** the recorded
+three-recorder, six-channel, mixed-rate 48 kHz output, concurrency-2 fixture in the optimized testable build;
+it does not prove that every admitted channel count, output rate, concurrency or simultaneous group render
+stays under 1 GiB. The <=1 GiB gate is not waived for unmeasured configurations.
 
 ## Tests
 
@@ -308,8 +313,9 @@ includes the bounded, decimated peer cache.
   there is no public restore path yet. An out-of-band edit to the episode's alignment (another writer)
   makes this pipeline refuse further acceptances (`staleSnapshot`); a new pipeline instance is needed.
 - The full-length aligned-asset bound is measured locally in an optimized testable build for one mixed-rate,
-  six-channel group at 180-second segments. It is intentionally not a Debug or CI throughput claim, and the
-  300-second configuration maximum exceeded the 1 GiB family bound for this fixture.
+  six-channel group at 180-second segments and concurrency 2. It is intentionally not a Debug or CI
+  throughput claim, nor proof for arbitrary rates/channels/concurrency. The former 300-second configuration
+  maximum exceeded the 1 GiB family bound for this fixture; the current ceiling is 180 seconds.
 - The pipeline streams through the WWDecode pull cursor, `SourceDecoder.withDecodingCursor` /
   `DecodingCursor`. WWRender's provider pulls samples, while the frozen decoder pushes them into a
   synchronous sink, so a bridge would either buffer whole sources or block a cooperative thread. The
