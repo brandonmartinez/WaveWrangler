@@ -307,10 +307,9 @@
 ### 2026-10-08: User-approved delivery speedups
 
 **By:** the user (11:16, via the relay), recorded by the M2 coordinator. The rules are in `routing.md` (Speedups row).
-- **Flake quarantine** for per-PR GUI runs, with a linked skip list. Full suites still run the quarantined tests, and product-logic and essential-accessibility tests are never quarantined. The skip-list mechanism is the first M3 unit.
-- **One-pass reviews:** blocking and nit findings come in one pass, blocking fixes land in one commit, and there are at most 3 rounds before the Lead decides.
+- **Flake quarantine:** only explicitly named, non-product-logic, non-essential-accessibility tests in a merged skip list may be skipped in per-PR GUI runs. Each entry links its named test to #215, #218 or #231; its issue must record an owner and fix target before listing. The first M3 unit creates and classifies the list; nothing is quarantined until it merges. Listed tests still run in full suites.
+- **One-pass reviews:** blocking and nit findings come in one pass; blocking fixes land in one commit. After reviewer rejection, the original author is locked out and a different agent owns the revision. At most 3 rounds precede a Lead decision.
 - **De-chain:** M3 units merge independently behind interfaces or flags.
 - **Ready queue:** 4–6 units kept ready.
 - **Warm builds:** reuse is allowed, but the pre-merge run is always fresh.
 - **Coming:** relay-provisioned VMs as additional GUI hosts, each with its own lease.
-
