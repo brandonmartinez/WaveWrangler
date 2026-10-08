@@ -87,13 +87,14 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertTrue(Acceptance.hasKeyboardFocus(filter), "The review filter shows keyboard focus")
         XCTAssertTrue(filter.isHittable, "The focused control remains visible")
 
+        let keyboardAlternative = app.descendants(matching: .any)["ww.review.remedy.keyboard"]
+        XCTAssertTrue(keyboardAlternative.waitForExistence(timeout: 3))
+        XCTAssertTrue(keyboardAlternative.isHittable)
+        XCTAssertEqual(keyboardAlternative.label, "Keyboard alternative: View > Setup (Command-1)")
+
         let setupRemedy = app.buttons["ww.review.remedy.setup"]
         XCTAssertTrue(setupRemedy.waitForExistence(timeout: 3))
         XCTAssertTrue(setupRemedy.isEnabled)
-        XCTAssertEqual(
-            app.descendants(matching: .any)["ww.review.remedy.keyboard"].label,
-            "Keyboard alternative: View > Setup (Command-1)"
-        )
 
         let unwaived = try AcceptanceAudit.run(
             app,
