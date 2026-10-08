@@ -1018,6 +1018,11 @@ public final class AlignmentPipeline: Sendable {
         if await coordinator.isShutdown { throw .coordinatorShutDown }
         let active = await coordinator.inputs.acceptedMaps[episodeID]
         guard active == revisionNumber else { throw .acceptedMapNotActive(document: revisionNumber, coordinator: active) }
+        do {
+            try await ResourceGate.process.withAdmission(bytes: 0) {}
+        } catch {
+            throw .renderEnvelope("process memory preflight refused: \(workFailure(error))")
+        }
         let map: AlignedTimelineMap
         let applicability: MapApplicability
         do throws(MapHistoryError) {

@@ -202,6 +202,74 @@ in 21 suites and `WWDerivedTests` passed 42 tests in 5 suites, each using `--job
 Swift Testing width 4. The full exact-head `scripts/test.sh`, other admitted configurations
 and independent review are still pending; this does not close #235.
 
+### New whole-process baseline guard (M3 #235, independent unit)
+
+The process-wide gate now checks *current* resident size and physical footprint via `TASK_VM_INFO`
+when admitting every analysis, probe or render unit, including a waiter when it finally reaches the
+front of the queue. It refuses on measurement failure, or when
+`max(RSS, footprint) + already-reserved bytes + requested bytes + 256 MiB > 1 GiB`.
+The same check runs before map/render planning, with zero requested bytes; group admission still
+checks the full requested estimate before opening a render cursor. Refusal is typed
+(`renderEnvelope` for process-envelope/measurement failures), not a successful empty render.
+At the largest prior measured six-channel segment, the existing checked accounting reserves
+`4 F (C + 8) + sum[8 c_i (2h + 4096*64 + 3q)] + 8 MiB` bytes:
+`F = 180*48000`, `C = 6`, three sources each with `c_i = 2`,
+`h = 4164` history frames and `q = 16384` decoder frames, for **507,570,560 B**.
+The `8F` term accounts for one staged channel's copies alongside all `CF` sink frames;
+the summation covers source history, render reach, requests and decode buffers. This formula
+does **not** bound the allocator, AudioToolbox buffers, metadata/history or unrelated process
+work. The extra 256 MiB is empirically motivated: the earlier full 180 s long-form run rose
+from 53 to 745 MiB, ~208 MiB more than the ~484 MiB reservation. This headroom is not
+a mathematical maximum for arbitrary media or fragmentation.
+
+| Admitted/configured axis | Existing enforced boundary | What remains unbounded by a static proof |
+| --- | --- | --- |
+| Output rate; segment; decoder chunk | <=48 kHz; 1...180 s; <=16,384 frames | Cold read-back and codec-specific allocator overhead |
+| Sources/channels; mapped geometry | <=16 cursors/group, <=8 decoded channels/source, map complexity <=64/group; checked <=512 MiB group estimate | Across-group and across-episode retained map/result history |
+| Groups/results; running units | <=16 renderable groups, <=4096 results/call; <=2 renders/instance; process gate <=4 units and <=512 MiB estimates | Unlimited pipeline instances and independently retained reports/other app allocations |
+| Analysis and cache | Excerpt <=3600 s, search <=600 s, source rates <=192 kHz, 20 s peer excerpt, per-cohort reservation and <=1/8 configured cache budget | Estimator scratch/FFT estimates, many cached revisions and host baseline growth |
+
+Deterministic tests check the exact process-baseline boundary, footprint, two competing
+reservations, overflow, a waiter whose baseline rises, failure to measure, and 324 crossed
+render-accounting corners (output 8/44.1/48 kHz; 1/3/4/16 sources; 1/2/8 channels;
+1/10/180 s segments; 1/4096/16384 decoder frames). In the *isolated* Debug synthetic
+`RenderEnvelopeProfileTests/analysisAndRender` process, 11 retained 20 s/48 kHz excerpts,
+a 12-track estimator and a six-channel 10 s render overlapped under **487,841,920 B**
+admission; a cached rerender then completed. The process peaked at **144,097,280 B**
+`ru_maxrss` and sampled RSS, **102,056,776 B** footprint. This is the tested joint corner,
+not an inference that separate two-instance/75-minute profiles combine safely. The dynamic
+baseline check rejects unmeasured high-resident *starting states* before new work, but
+cannot ensure that an already admitted unit never exceeds its estimated allocation.
+The isolated two-instance 180 s boundary now demonstrates the intentional warm-baseline
+refusal: the first instance completes; the second opens **zero** render cursors and gets
+`renderEnvelope` when the first render leaves ~442,384,384 B resident and another
+507,570,560 B reservation plus 256 MiB headroom would cross 1 GiB. This changes the
+earlier #304 profile's second-instance completion, rather than treating its 443 MiB
+measured peak as permission to admit the same shape after arbitrary retained history.
+Two simultaneous eight-channel 10 s groups still complete and rerender from cache in
+one isolated Debug process (118,456,320 B `ru_maxrss`, 76,399,360 B footprint,
+119,129,088 B simultaneous estimates). The default 10 s / 75-minute six-channel
+configuration completed all **451 segments / 2706 channel results** on this head in an
+isolated optimized testable process: 56,393,728 B initial RSS, 123,240,448 B peak
+`ru_maxrss` and sampled RSS, 78,971,672 B sampled footprint, 50,610,560 B peak
+process estimate and 1052.709 s test wall time. It started at one-minute load 13.97,
+used `--jobs 4 --no-parallel`, Swift Testing width 1, and
+`WW_PIPELINE_DEFAULT75=1 --configuration release -Xswiftc -enable-testing -Xswiftc -DDEBUG
+--filter PipelineDefaultRender75Tests/defaultLongForm`. The process's CPU maximum was
+**not continuously sampled**; this run does not certify the separate <=4 effective-core
+test-process constraint. `GroupRenderer` itself runs one serial render engine per group;
+the default analysis cohort is serial, with bounded probe concurrency 2. No internal
+renderer fan-out was identified in this trace, but test-helper/codec CPU bursts remain
+unmeasured.
+The new-head 27-instance retained-excerpt profile also passes in an isolated Debug
+process (94,584,832 B `ru_maxrss`, 54,575,848 B footprint; 455,139,328 B
+admitted and 26 waiting). Focused `WWAlignPipelineTests|WWDerivedTests` passed
+118 pipeline tests in 21 suites and 42 derived tests in 5 suites, with four build
+jobs and Swift Testing width 1. `scripts/build.sh Debug` passed on the working Mac;
+its unrelated existing app warnings were not changed. The independent reviewer and
+exact-head full `scripts/test.sh` are coordinator-owned and remain pending.
+**No configuration-wide <=1 GiB approval or #235 closure follows from this unit.**
+
 ## Tests
 
 Package suites (`swift test --filter "WWAlignPipelineTests|ForbiddenAPITests"`, 70 pipeline tests in 15 suites; synthetic only):

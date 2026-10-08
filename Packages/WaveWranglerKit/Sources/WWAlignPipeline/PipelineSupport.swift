@@ -204,6 +204,9 @@ func workFailure(_ error: any Error) -> AlignmentWorkFailure {
     case let failure as ResourceGate.Refusal:
         switch failure {
         case let .exceedsBudget(requested, budget): .memoryBudget(requested: requested, budget: budget)
+        case .processMemoryUnavailable: .renderEnvelope("process memory could not be measured before admission")
+        case let .processEnvelope(resident, footprint, reserved, limit):
+            .renderEnvelope("process memory admission refused: RSS \(resident), footprint \(footprint), reserved \(reserved), limit \(limit)")
         }
     default: .encoding(String(describing: error))
     }

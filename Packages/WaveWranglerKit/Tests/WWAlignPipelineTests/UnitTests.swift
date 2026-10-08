@@ -85,6 +85,62 @@ struct ResourceGateTests {
         let snapshot = await gate.snapshot
         #expect(snapshot.active == 0 && snapshot.activeBytes == 0 && snapshot.admitted == 2)
     }
+
+    @Test("The process gate checks the live baseline, active reservations, and headroom at the exact boundary")
+    func processEnvelopeBoundary() async throws {
+        let mib = 1 << 20
+        let ceiling = 1 << 30
+        let baseline = 256 * mib
+        #expect(ResourceGate.processEnvelopeRefusal(
+            resident: baseline, footprint: 0, reserved: 0, adding: 512 * mib, limit: ceiling
+        ) == nil)
+        #expect(ResourceGate.processEnvelopeRefusal(
+            resident: baseline + 1, footprint: 0, reserved: 0, adding: 512 * mib, limit: ceiling
+        ) != nil)
+        #expect(ResourceGate.processEnvelopeRefusal(
+            resident: 0, footprint: baseline + 1, reserved: 0, adding: 512 * mib, limit: ceiling
+        ) != nil)
+        #expect(ResourceGate.processEnvelopeRefusal(
+            resident: 300 * mib, footprint: 0, reserved: 300 * mib, adding: 300 * mib, limit: ceiling
+        ) != nil)
+        #expect(ResourceGate.processEnvelopeRefusal(
+            resident: Int.max, footprint: 0, reserved: Int.max, adding: 1, limit: ceiling
+        ) != nil)
+        let gate = ResourceGate(
+            permits: 1, budgetBytes: 512 * mib, processLimitBytes: ceiling,
+            measureProcess: { (baseline + 1, 0) }
+        )
+        await #expect(throws: ResourceGate.Refusal.self) { try await gate.acquire(bytes: 512 * mib) }
+        #expect(await gate.snapshot.activeBytes == 0)
+    }
+
+    @Test("A waiting unit rechecks the process baseline before admission; measurement failure also refuses")
+    func waitingProcessEnvelope() async throws {
+        let mib = 1 << 20
+        let baseline = Box(32 * mib)
+        let gate = ResourceGate(
+            permits: 1, budgetBytes: 512 * mib, processLimitBytes: 1 << 30,
+            measureProcess: { (baseline.value, baseline.value) }
+        )
+        try await gate.acquire(bytes: 200 * mib)
+        let waiting = Task { try await gate.acquire(bytes: 200 * mib) }
+        try await Self.until(gate) { $0.waiting == 1 }
+        baseline.value = 600 * mib
+        await gate.release(bytes: 200 * mib)
+        await #expect(throws: ResourceGate.Refusal.self) { try await waiting.value }
+        let afterRefusal = await gate.snapshot
+        #expect(afterRefusal.active == 0 && afterRefusal.waiting == 0)
+        baseline.value = 32 * mib
+        try await gate.acquire(bytes: 200 * mib)
+        await gate.release(bytes: 200 * mib)
+        let unavailable = ResourceGate(
+            permits: 1, budgetBytes: 512 * mib, processLimitBytes: 1 << 30,
+            measureProcess: { nil }
+        )
+        await #expect(throws: ResourceGate.Refusal.processMemoryUnavailable) {
+            try await unavailable.acquire(bytes: 1)
+        }
+    }
 }
 
 // MARK: - boundedMap

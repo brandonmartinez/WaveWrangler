@@ -27,8 +27,9 @@ private actor GroupOverlap {
 @Suite("Aligned render whole-process memory profiles", .serialized,
        .enabled(if: RenderEnvelopeProfileGate.enabled, RenderEnvelopeProfileGate.reason))
 struct RenderEnvelopeProfileTests {
-    @Test("Twenty-seven independent retained excerpt caches stay inside process admission")
-    func retainedExcerptsAcrossInstances() async throws {
+    private static func cycleCohort(
+        label: String
+    ) async throws -> (fixture: PipelineFixture, units: [AnalysisUnit], excerptBytes: Int) {
         let configuration = AlignmentPipelineConfiguration(
             targetExcerptSeconds: 20, searchDeviationSeconds: 1,
             minimumAnalysisRate: 48_000, renderSegmentSeconds: 10
@@ -41,7 +42,7 @@ struct RenderEnvelopeProfileTests {
             GroupSpec(name: "target-\(index)", sources: [
                 SourceSpec(name: "target-\(index)", channels: 1, seconds: 20, signal: .scene(seed: TwoRecorder.seed)),
             ])
-        }, configuration: configuration, label: "retained-excerpts-27")
+        }, configuration: configuration, label: label)
         let reference = try #require(fixture.sources.first)
         let referenceFacts = try await SourceProbe.run(
             reference, token: PipelineFixture.registration(reference.id, reference.url).token,
@@ -67,8 +68,14 @@ struct RenderEnvelopeProfileTests {
             ))
         }
         let excerptBytes = units.reduce(0) { $0 + $1.cycleTargetRange.count * MemoryLayout<Float>.size }
-        let cohort = units
         #expect(excerptBytes == 12 * 3_840_000)
+        return (fixture, units, excerptBytes)
+    }
+
+    @Test("Twenty-seven independent retained excerpt caches stay inside process admission")
+    func retainedExcerptsAcrossInstances() async throws {
+        let (fixture, cohort, excerptBytes) = try await Self.cycleCohort(label: "retained-excerpts-27")
+        let configuration = fixture.pipeline.configuration
         let sampler = MemorySampler()
         let release = Latch()
         let holders = Box(0)
@@ -143,6 +150,61 @@ struct RenderEnvelopeProfileTests {
         #expect(rss <= 1_073_741_824 && peaks.resident <= 1_073_741_824 && peaks.footprint <= 1_073_741_824)
     }
 
+    @Test("A cached analysis cohort overlaps a six-channel render and a cached rerender")
+    func analysisAndRender() async throws {
+        let (analysis, cohort, excerptBytes) = try await Self.cycleCohort(label: "analysis-render-cohort")
+        let atRenderPublish = Latch()
+        let release = Latch()
+        let rendering = try await PipelineFixture([
+            GroupSpec(name: "reference", sources: [
+                SourceSpec(name: "ref", channels: 2, seconds: 10, signal: .scene(seed: TwoRecorder.seed)),
+            ]),
+            GroupSpec(name: "target", sources: (0 ..< 3).map {
+                SourceSpec(name: "target-\($0)", channels: 2, seconds: 10, signal: .scene(seed: TwoRecorder.seed))
+            }),
+        ], configuration: AlignmentPipelineConfiguration(
+            targetExcerptSeconds: 10, searchDeviationSeconds: 2, renderSegmentSeconds: 10
+        ), hooks: AlignmentPipelineTestHooks(beforeSegmentPublish: { _, _ in
+            await atRenderPublish.open()
+            await release.wait()
+        }), label: "analysis-render-six")
+        let report = try await rendering.analyse(preferredReference: "ref")
+        try await rendering.acceptAndActivate(report, [rendering.epochs[1]:
+            .numeric(ppm: 0, offsetMilliseconds: 0, note: "synthetic clock truth")])
+        let ready = Latch()
+        let sampler = MemorySampler()
+        let analysisWork = Task {
+            try await CycleExcerptCache.withAdmission(
+                units: cohort, excerptBytes: excerptBytes, environment: analysis.pipeline.environment
+            ) { cache in
+                for unit in cohort.dropFirst() {
+                    await cache.rememberTarget(unit, samples: [Float](repeating: 0.25, count: 20 * 48_000))
+                }
+                await ready.open()
+                _ = try await cohort[0].run(
+                    environment: analysis.pipeline.environment, peers: Array(cohort.dropFirst()), cache: cache
+                )
+                await release.wait()
+            }
+        }
+        await ready.wait()
+        let renderWork = Task { try await rendering.render() }
+        await atRenderPublish.wait()
+        let active = await ResourceGate.process.snapshot
+        #expect(active.active == 2 && active.activeBytes <= AlignmentPipelineConfiguration.maximumMemoryBudgetBytes)
+        await release.open()
+        try await analysisWork.value
+        let first = try await renderWork.value
+        let repeated = try await rendering.render()
+        let peaks = sampler.stop()
+        let rss = MemorySampler.maxResident()
+        #expect(first.isComplete && repeated.isComplete)
+        #expect(repeated.groups.allSatisfy { $0.segmentsReused == $0.segments })
+        #expect(await ResourceGate.process.snapshot.activeBytes == 0)
+        print("[render-envelope] simultaneous 11 retained 20s/48k excerpts + 12-track analysis + six-channel 10s render; cached rerender: ru_maxrss \(rss), sampled RSS \(peaks.resident), footprint \(peaks.footprint), reserved \(active.activeBytes)")
+        #expect(rss <= 1_073_741_824 && peaks.resident <= 1_073_741_824 && peaks.footprint <= 1_073_741_824)
+    }
+
     @Test("Six channels at the 180-second segment boundary")
     func boundary() async throws {
         let config = AlignmentPipelineConfiguration(
@@ -204,10 +266,18 @@ struct RenderEnvelopeProfileTests {
         let reports = try await (firstRender.value, secondRender.value)
         let peaks = sampler.stop()
         let rss = MemorySampler.maxResident()
-        #expect(reports.0.isComplete && reports.1.isComplete)
-        #expect(reports.0.groups.last?.segmentsRendered == 1 && reports.1.groups.last?.segmentsRendered == 1)
+        #expect(reports.0.isComplete && reports.0.groups.last?.segmentsRendered == 1)
+        if reports.1.isComplete {
+            #expect(reports.1.groups.last?.segmentsRendered == 1)
+        } else {
+            #expect(reports.1.groups.allSatisfy {
+                guard case let .renderEnvelope(reason)? = $0.failure else { return false }
+                return reason.contains("process memory") && $0.segmentsRendered == 0
+            })
+            #expect(second.content.total.opens == secondOpens, "warm-baseline refusal opens no cursors")
+        }
         #expect(await ResourceGate.process.snapshot.activeBytes == 0)
-        print("[render-envelope] independent 180s six-channel instances: ru_maxrss \(rss), sampled RSS \(peaks.resident), footprint \(peaks.footprint), process admission \(held.activeBytes)")
+        print("[render-envelope] independent 180s six-channel instances: second complete \(reports.1.isComplete), failures \(reports.1.groups.map { String(describing: $0.failure) }), ru_maxrss \(rss), sampled RSS \(peaks.resident), footprint \(peaks.footprint), process admission \(held.activeBytes)")
         #expect(rss <= 1_073_741_824 && peaks.resident <= 1_073_741_824 && peaks.footprint <= 1_073_741_824)
     }
 

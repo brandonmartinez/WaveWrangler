@@ -141,6 +141,56 @@ struct RenderEnvelopeTests {
         }
     }
 
+    @Test("Checked admission enumerates rate, source, channel, chunk and segment corners")
+    func admissionCorners() async throws {
+        let fixture = try await Self.fixture(targets: [2, 2, 2], label: "admission-corners")
+        let map = try fixture.model.timeMap(revision: 1, in: fixture.episodeID)
+        let group = try #require(map.groups.first(where: { $0.group == fixture.groups[1] }))
+        let seed = try #require(fixture.sources.first(where: { $0.id == fixture.id("target-0") }))
+        let key = SourceProbe.key(source: seed.id, token: try PipelineFixture.registration(seed.id, seed.url).token)
+        let baseFacts = try SourceFacts.decode(#require(fixture.store.payload(for: key)))
+        let version = try #require(fixture.model.episode(fixture.episodeID)?.alignment?.map(revision: 1))
+        let reference = MapRevisionReference(episode: fixture.episodeID, revision: 1)
+        let identity = try fixture.pipeline.mapIdentity(
+            revision: reference, version: version, map: map, registered: await fixture.coordinator.inputs.sources
+        )
+        var accepted = 0
+        var refused = 0
+        for rate in [8_000, 44_100, 48_000] {
+            for sources in [1, 3, 4, 16] {
+                for channels in [1, 2, 8] {
+                    var facts = baseFacts
+                    facts.interpretation.channelCount = channels
+                    let participants = Array(repeating: GroupRenderJob.Participant(source: seed, facts: facts), count: sources)
+                    for seconds in [1, 10, 180] {
+                        let frames = Int64(seconds * rate)
+                        let job = GroupRenderJob(
+                            episode: fixture.episodeID, revision: reference, identity: identity, map: group,
+                            nominalOutputRate: try NominalRate(Int64(rate)), participants: participants,
+                            outputFrames: 0 ..< frames, segmentFrames: frames, recipeBaseName: "corners"
+                        )
+                        for chunk in [1, 4_096, 16_384] {
+                            do throws(AlignmentWorkFailure) {
+                                let bytes = try job.admissionBytes(
+                                    chunkFrames: chunk, recipe: .m2Candidate, concurrency: 2
+                                )
+                                #expect(bytes <= AlignmentPipelineConfiguration.maximumMemoryBudgetBytes)
+                                accepted += 1
+                            } catch {
+                                guard case .memoryBudget = error else {
+                                    Issue.record("unexpected corner refusal: \(error)")
+                                    continue
+                                }
+                                refused += 1
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        #expect(accepted > 0 && refused > 0 && accepted + refused == 324)
+    }
+
     @Test("Fragmented but valid maps refuse before any source cursor is opened")
     func fragmentedMap() async throws {
         let fixture = try await Self.fixture(label: "fragmented")
