@@ -27,6 +27,39 @@ struct ZoomCycleDriftTests {
         #expect(result.maximumAbsoluteMedianShift > 10)
     }
 
+    @Test func rejectsDriftingSingletonModesAfterASupportedMode() {
+        let offsets = [900.0, 900, 900, 900, 900, 900, 920, 940, 960, 980]
+        let samples = offsets.enumerated().map {
+            ZoomCycleSample(cycle: $0.offset + 1, offset: $0.element, tableWidth: 1_101, tier: "all-columns")
+        }
+
+        let result = checkZoomCycleDrift(samples)
+
+        #expect(!result.passes)
+        #expect(result.modeCount == 5)
+        #expect(result.maximumAbsoluteSlope > 1.25)
+        #expect(result.maximumAbsoluteMedianShift > 10)
+    }
+
+    @Test func rejectsUnassessedDriftFragmentsRegardlessOfDirectionOrPosition() {
+        let traces = [
+            [900.0, 900, 900, 900, 900, 900, 920, 941, 961, 982],
+            [900.0, 900, 900, 900, 900, 900, 980, 960, 940, 920],
+            [820.0, 840, 860, 880, 900, 920, 980, 980, 980, 980, 980]
+        ]
+
+        for offsets in traces {
+            let samples = offsets.enumerated().map {
+                ZoomCycleSample(cycle: $0.offset + 1, offset: $0.element, tableWidth: 1_101, tier: "all-columns")
+            }
+            let result = checkZoomCycleDrift(samples)
+
+            #expect(!result.passes, "unassessed drift fragment passed: \(offsets)")
+            #expect(result.maximumAbsoluteSlope > 1.25, "fragment slope was not measured: \(offsets)")
+            #expect(result.maximumAbsoluteMedianShift > 10, "fragment shift was not measured: \(offsets)")
+        }
+    }
+
     @Test func acceptsRecordedStableTraces() {
         let shardB = [895.0, 922.5, 907.0, 911.5, 915.0, 915.5, 917.0, 917.0, 960.0, 962.0]
         let isolatedRerun = [905.5, 910.0, 914.0, 939.5, 914.5, 916.5, 916.5, 912.5, 913.5, 974.5]

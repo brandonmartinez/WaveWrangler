@@ -47,6 +47,21 @@ func checkZoomCycleDrift(
         let supportedModes = detectedModes.filter { $0.count >= 4 }
         if !supportedModes.isEmpty {
             modes.append(contentsOf: supportedModes)
+            let supportedCycles = Set(supportedModes.flatMap { $0.map(\.cycle) })
+            var unassessedRun: [ZoomCycleSample] = []
+            for sample in repeatedCycles {
+                if supportedCycles.contains(sample.cycle) {
+                    if unassessedRun.count >= 4 {
+                        modes.append(unassessedRun)
+                    }
+                    unassessedRun.removeAll(keepingCapacity: true)
+                } else {
+                    unassessedRun.append(sample)
+                }
+            }
+            if unassessedRun.count >= 4 {
+                modes.append(unassessedRun)
+            }
         } else {
             modes.append(Array(repeatedCycles))
         }
