@@ -356,6 +356,8 @@ final class AlignmentInspectionUITests: XCTestCase {
     }
 
     /// Scrolls the Alignment workspace until the element's centre sits inside the show window.
+    /// Scroll-wheel deltas are used rather than swipes: a 5000 px/s swipe overshoots the section and the
+    /// correction swipes oscillate without ever settling (#219).
     private func scrollIntoWindow(
         _ element: XCUIElement,
         file: StaticString = #filePath,
@@ -363,20 +365,12 @@ final class AlignmentInspectionUITests: XCTestCase {
     ) {
         let scroll = app.descendants(matching: .any)["ww.alignment.workspace"]
         let window = app.windows["ww.show.window"]
-        for _ in 0..<16 {
-            guard element.exists else {
-                scroll.swipeUp()
-                continue
-            }
+        XCTAssertTrue(element.waitForExistence(timeout: 5), file: file, line: line)
+        for _ in 0..<40 {
             let centre = CGPoint(x: element.frame.midX, y: element.frame.midY)
-            if window.frame.contains(centre) { break }
-            if centre.y < window.frame.midY {
-                scroll.swipeDown()
-            } else {
-                scroll.swipeUp()
-            }
+            if window.frame.insetBy(dx: 0, dy: 24).contains(centre) { return }
+            scroll.scroll(byDeltaX: 0, deltaY: centre.y > window.frame.midY ? -40 : 40)
         }
-        XCTAssertTrue(element.exists, "\(element.identifier) exists after scrolling", file: file, line: line)
         XCTAssertTrue(
             window.frame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)),
             "\(element.identifier) is inside the window after scrolling",

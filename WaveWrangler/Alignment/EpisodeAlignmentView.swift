@@ -306,12 +306,20 @@ private struct AlignmentOutlineTable: View {
 
     var body: some View {
         Table(of: AlignmentOutlineRow.self, selection: $selection) {
-            TableColumn("Recorder Group", value: \.groupName)
-                .width(ideal: 170)
-            TableColumn("Epoch", value: \.epochLabel)
-                .width(ideal: 80)
-            TableColumn("Sources", value: \.sourceNames)
-                .width(ideal: 210)
+            // Each cell carries its own label so the cell container SwiftUI wraps it in has a
+            // description; the value-keypath shorthand leaves those containers unlabelled (#219 audit).
+            TableColumn("Recorder Group") { row in
+                Text(row.groupName).accessibilityLabel("Recorder group. \(row.groupName)")
+            }
+            .width(ideal: 170)
+            TableColumn("Epoch") { row in
+                Text(row.epochLabel).accessibilityLabel("Epoch. \(row.epochLabel)")
+            }
+            .width(ideal: 80)
+            TableColumn("Sources") { row in
+                Text(row.sourceNames).accessibilityLabel("Sources. \(row.sourceNames)")
+            }
+            .width(ideal: 210)
             TableColumn("State") { row in
                 AlignmentStateCell(row: row)
             }
@@ -794,14 +802,15 @@ private struct EditAnchorSheet: View {
     let anchorID: Int
     @Environment(\.dismiss) private var dismiss
     @FocusState private var alignedTimeFocused: Bool
-    @State private var alignedSeconds: Double
+    /// The field is bound to text, not to a `Double` through a formatter: a formatter-bound field only
+    /// writes back when it resigns first responder, so Return would apply the pre-edit value (#219).
+    @State private var alignedText: String
 
     init(model: EpisodeAlignmentModel, anchorID: Int) {
         self.model = model
         self.anchorID = anchorID
-        _alignedSeconds = State(
-            initialValue: model.selectedAnchors.first { $0.id == anchorID }?.alignedSeconds ?? 0
-        )
+        let seconds = model.selectedAnchors.first { $0.id == anchorID }?.alignedSeconds ?? 0
+        _alignedText = State(initialValue: Self.text(for: seconds))
     }
 
     var body: some View {
@@ -821,17 +830,14 @@ private struct EditAnchorSheet: View {
                     .accessibilityIdentifier("alignment.anchor.groupTime")
             }
             LabeledContent("Aligned time (seconds)") {
-                TextField(
-                    "Aligned time",
-                    value: $alignedSeconds,
-                    format: .number.precision(.fractionLength(3))
-                )
+                TextField("Aligned time", text: $alignedText)
                 .frame(width: 140)
                 .focused($alignedTimeFocused)
                 .accessibilityLabel("Aligned time")
                 .accessibilityIdentifier("alignment.anchor.alignedTime")
                 .onKeyPress(.upArrow) { nudge(by: 1) }
                 .onKeyPress(.downArrow) { nudge(by: -1) }
+                .onSubmit(apply)
             }
             Text("↑ and ↓ nudge by one output frame; hold Shift to nudge by 100 ms.")
                 .font(.caption)
@@ -842,10 +848,7 @@ private struct EditAnchorSheet: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                     .accessibilityIdentifier("alignment.anchor.cancel")
-                Button("Apply") {
-                    model.editAnchor(id: anchorID, alignedSeconds: alignedSeconds)
-                    dismiss()
-                }
+                Button("Apply", action: apply)
                 .keyboardShortcut(.defaultAction)
                 .accessibilityIdentifier("alignment.anchor.apply")
             }
@@ -858,6 +861,18 @@ private struct EditAnchorSheet: View {
 
     private var anchor: AlignmentAnchorRow? {
         model.selectedAnchors.first { $0.id == anchorID }
+    }
+
+    private var alignedSeconds: Double? { Double(alignedText.trimmingCharacters(in: .whitespaces)) }
+
+    private static func text(for seconds: Double) -> String {
+        String(format: "%.3f", seconds)
+    }
+
+    private func apply() {
+        guard let alignedSeconds else { return }
+        model.editAnchor(id: anchorID, alignedSeconds: alignedSeconds)
+        dismiss()
     }
 
     /// AppKit mounts the sheet's field editor a frame or two after the sheet appears, so request focus
@@ -873,7 +888,8 @@ private struct EditAnchorSheet: View {
     private func nudge(by steps: Double) -> KeyPress.Result {
         let shift = NSEvent.modifierFlags.contains(.shift)
         let step = shift ? 0.1 : model.alignedNudgeSeconds
-        alignedSeconds = ((alignedSeconds + steps * step) * 1_000_000).rounded() / 1_000_000
+        guard let current = alignedSeconds else { return .ignored }
+        alignedText = Self.text(for: current + steps * step)
         return .handled
     }
 }
