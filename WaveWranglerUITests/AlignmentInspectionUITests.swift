@@ -274,6 +274,12 @@ final class AlignmentInspectionUITests: XCTestCase {
         }
         let groups = app.descendants(matching: .any)["ww.alignment.groups"]
         let anchors = app.descendants(matching: .any)["ww.alignment.anchors"]
+        // Cell containers are matched by their place in an outline's subtree rather than by geometry: a
+        // row scrolled under the table's edge reaches outside the outline's own frame.
+        let outlineCellFrames = [groups, anchors]
+            .flatMap { $0.descendants(matching: .group).allElementsBoundByIndex }
+            .filter { $0.frame.height <= 32 }
+            .map(\.frame)
         var layoutContainerFindings = 0
         var showSectionFindings = 0
         var outlineCellFindings = 0
@@ -293,8 +299,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             // SwiftUI description reaches it: labelling the cell content, combining its children and
             // the value-keypath shorthand all leave this one container undescribed (#219). It is waived
             // only while its own labelled text child is still exposed to assistive technology.
-            let isOutlineCell = (groups.frame.contains(element.frame) || anchors.frame.contains(element.frame))
-                && element.frame.height <= 32
+            let isOutlineCell = outlineCellFrames.contains(element.frame)
                 && element.descendants(matching: .any).allElementsBoundByIndex
                     .contains { !$0.label.isEmpty || !(($0.value as? String) ?? "").isEmpty }
             guard isContent || isSidebar || isShowSection || isOutlineCell else {
@@ -324,10 +329,8 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertLessThanOrEqual(layoutContainerFindings, 2)
         XCTAssertLessThanOrEqual(showSectionFindings, 1)
         // At most one finding per cell: each is the container AppKit builds around that cell.
-        let outlineCells = groups.descendants(matching: .cell).allElementsBoundByIndex.count
-            + anchors.descendants(matching: .cell).allElementsBoundByIndex.count
-        XCTAssertGreaterThan(outlineCells, 0, "The alignment outlines must expose their cells")
-        XCTAssertLessThanOrEqual(outlineCellFindings, outlineCells)
+        XCTAssertGreaterThan(outlineCellFrames.count, 0, "The alignment outlines must expose their cells")
+        XCTAssertLessThanOrEqual(outlineCellFindings, outlineCellFrames.count)
     }
 
     func testBlockedRecoveryContrastAudit() throws {
@@ -531,7 +534,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         let element = issue.element
         print(
             "AUDIT UNWAIVED \(issue.compactDescription) " +
-            "auditType=\(issue.auditType) type=\(String(describing: element?.elementType)) " +
+            "auditType=\(issue.auditType) type=\(element?.elementType.rawValue ?? 0) " +
             "frame=\(String(describing: element?.frame)) id=\(element?.identifier ?? "-") " +
             "label=\(element?.label ?? "-") value=\(String(describing: element?.value))"
         )
