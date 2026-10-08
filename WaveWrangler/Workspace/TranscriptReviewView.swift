@@ -96,6 +96,7 @@ struct TranscriptReviewView: View {
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(occurrence.title)
                         .accessibilityValue(occurrence.note)
+                        .accessibilityAddTraits(.isStaticText)
                         .accessibilityIdentifier("ww.review.occurrence.\(occurrence.id)")
                     }
                 }
@@ -262,10 +263,9 @@ struct TranscriptReviewInspector: View {
         VStack(alignment: .leading, spacing: 4) {
             Button(title) {}
                 .disabled(true)
-                .help(reason)
                 .accessibilityLabel(title)
                 .accessibilityValue(reason)
-                .accessibilityHint("Unavailable in this provisional review shell.")
+                .accessibilityHint(reason)
                 .accessibilityIdentifier("ww.review.action.\(id)")
 
             Text(reason)

@@ -89,16 +89,13 @@ final class TranscriptReviewUITests: XCTestCase {
         let firstOccurrence = app.descendants(matching: .any)["ww.review.occurrence.synthetic-001"]
         XCTAssertTrue(firstOccurrence.waitForExistence(timeout: 3))
         firstOccurrence.click()
-        let firstSelection = app.staticTexts.containing(
-            NSPredicate(format: "label CONTAINS %@", "Synthetic example occurrence 1")
-        ).firstMatch
-        XCTAssertTrue(firstSelection.waitForExistence(timeout: 3))
+        let tokenID = app.descendants(matching: .any)["ww.review.inspector.tokenID"]
+        XCTAssertEqual(tokenID.value as? String, "token-stub-001")
 
         app.typeKey(.downArrow, modifierFlags: [])
-        let secondSelection = app.staticTexts.containing(
-            NSPredicate(format: "label CONTAINS %@", "Synthetic example occurrence 2")
-        ).firstMatch
-        XCTAssertTrue(Acceptance.waitFor(timeout: 3) { secondSelection.exists })
+        XCTAssertTrue(Acceptance.waitFor(timeout: 3) {
+            tokenID.value as? String == "token-stub-002"
+        })
         XCTAssertEqual(
             app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
             "Synthetic example occurrence 2"
