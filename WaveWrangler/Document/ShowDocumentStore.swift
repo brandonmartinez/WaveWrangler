@@ -111,6 +111,35 @@ final class ShowDocumentStore {
         }
     }
 
+    /// Restores a whole checkpoint. A map difference is allowed only when it removes the exact map
+    /// state of episodes absent from the snapshot; no checkpoint may add or rewrite map authority.
+    @discardableResult
+    func restoreEditCheckpoint(_ snapshot: ShowDocumentModel, basedOn onDisk: ShowDocumentModel?) -> Bool {
+        guard FormatUpdatePolicy.allowsEdits(document?.status.formatUpdate) else { return false }
+        guard snapshot.show.id == model.show.id, snapshot.schemaVersion == model.schemaVersion,
+              snapshot.validationIssues().isEmpty else {
+            lastEditMapError = .invalidMap
+            return false
+        }
+        guard let onDisk, model == onDisk else {
+            lastEditMapError = .superseded
+            return false
+        }
+        if snapshot.editMaps == model.editMaps {
+            return apply("Restore Unsaved Changes") { _ in snapshot }
+        }
+        guard snapshot.editMaps == model.editMaps.filter({ snapshot.episode($0.episodeID) != nil }),
+              snapshot.editMaps.count < model.editMaps.count,
+              snapshot.invalidatingChangedEditMaps(from: model) == snapshot else {
+            lastEditMapError = .unauthorizedMutation
+            return false
+        }
+        lastError = nil
+        guard replace(with: snapshot, actionName: "Restore Unsaved Changes") else { return false }
+        Responsiveness.interaction("show.edit")
+        return true
+    }
+
     /// Applies a pure operation immediately so the model (and therefore Save, autosave, Close and Quit)
     /// always sees the latest edit.
     ///

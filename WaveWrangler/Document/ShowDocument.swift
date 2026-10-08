@@ -713,10 +713,23 @@ final class ShowDocument: NSDocument {
         // restore also un-marks the record and offers it again; Redo marks it again.
         let undo = undoManager
         undo?.beginUndoGrouping()
-        store.apply("Restore Unsaved Changes") { _ in candidate.payload }
-        markRestored(candidate.url)
-        undo?.setActionName("Restore Unsaved Changes")
+        let restored = store.restoreEditCheckpoint(candidate.payload, basedOn: verifiedModel)
+        if restored {
+            markRestored(candidate.url)
+            undo?.setActionName("Restore Unsaved Changes")
+        }
         undo?.endUndoGrouping()
+        if !restored {
+            let error = NSError(
+                domain: NSCocoaErrorDomain, code: NSFileReadCorruptFileError,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Unsaved changes could not be restored.",
+                    NSLocalizedRecoverySuggestionErrorKey:
+                        "The checkpoint is still available. Open it as a separate copy or review the current show before trying again."
+                ]
+            )
+            _ = presentError(error)
+        }
     }
 
     private func markRestored(_ url: URL) {
