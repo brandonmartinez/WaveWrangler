@@ -42,12 +42,13 @@ enum SetupFixtures {
     #if DEBUG
     private static var shared: InMemorySourceSetupEngine?
 
+    /// Fixture-only launch override for T30's Downloads Off half. This reads the launch argument without
+    /// writing the app preference, so a DEBUG launch after the test retains the user's setting.
+    static var downloadsAutomatically: Bool {
+        UserDefaults.standard.string(forKey: "WWUITestDownloadSources") != "OFF"
+    }
+
     private static func makeStatesEngine() -> InMemorySourceSetupEngine {
-        // `-WWUITestDownloadSources OFF` (fixture mode only): start with "Download sources automatically" off
-        // (T30's Off half); `-WWUITestResetPreferences YES` restores the default on the next launch.
-        if UserDefaults.standard.string(forKey: "WWUITestDownloadSources") == "OFF" {
-            AppSettingsDownloadPreference.shared.downloadsAutomatically = false
-        }
         let created = Date(timeIntervalSince1970: 1_790_000_000)
         func details(_ name: String, _ folder: String?, size: Int64 = 1_210_000_000) -> FileDetails {
             FileDetails(name: name, size: size, created: created, modified: created, kind: "WAV audio", folderName: folder)
@@ -138,7 +139,7 @@ enum SimulatedNetwork {
         guard let engine = SetupFixtures.statesEngine() else { return }
         engaged = true
         online = true
-        guard AppSettingsDownloadPreference.shared.downloadsAutomatically else { return }
+        guard SetupFixtures.downloadsAutomatically else { return }
         transfer(Set(engine.allStatuses.filter { $0.value.transfer == .noConnection }.keys), in: engine)
     }
 

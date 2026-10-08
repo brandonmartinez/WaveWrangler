@@ -28,4 +28,11 @@ struct SetupFixtureGuardTests {
         }
         #expect(readers >= 2, "guard found the fixture switch and builder")
     }
+
+    @Test func downloadSourcesTestHookDoesNotWriteTheAppPreference() throws {
+        let source = try String(contentsOf: Self.sourcesFolder.appending(path: "SetupFixtures.swift"), encoding: .utf8)
+        #expect(source.contains("static var downloadsAutomatically: Bool"))
+        #expect(source.contains(#"UserDefaults.standard.string(forKey: "WWUITestDownloadSources") != "OFF""#))
+        #expect(!source.contains("AppSettingsDownloadPreference.shared.downloadsAutomatically = false"))
+    }
 }
