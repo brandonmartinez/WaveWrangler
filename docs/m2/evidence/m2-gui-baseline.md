@@ -86,6 +86,36 @@ finding remains unhandled and fails the audit.
 - Classification: framework layout-container artefact; no app control, label, action or content
   description is waived.
 
+### Baseline revision 2026-10-08: PR #219 final waiver register (WW-022)
+
+The independent review of `24a02c7..9f30ca6` required every waiver this PR leaves behind to be recorded
+in one place, each bound to a resolved element identity rather than to a shape. This is that register;
+it supersedes the shape-based wording of the two 2026-10-07 revisions above where they overlap, and it
+removes one waiver outright. All handlers live in `AlignmentInspectionUITests` only. Defining revision
+`fc092ad`; tested SHA — see the GUI table on PR #219 for the revision each round ran.
+
+| # | Waiver | Audit type | Identity | Frame rule | Cap | Rationale |
+| --- | --- | --- | --- | --- | ---: | --- |
+| 1 | Show layout containers | `sufficientElementDescription` | `AXGroup`/`AXOther` inside the show window, excluded from every other handler | Matched against the identified content-inspector frame (±2 pt) | 3 | SwiftUI split-view chrome; no app control, label, action or description is waived. |
+| 2 | Episode sidebar container | `sufficientElementDescription` | Frame equal (±2 pt) to the identified `ww.show.sidebar.episodes` element | Exact sidebar frame | 1 (within #1) | The sidebar's own generated container; its episode rows stay exposed. Reviewer: artefact OK. |
+| 3 | Show sidebar Section group | `sufficientElementDescription` | `AXGroup` wholly inside `ww.show.sidebar.episodes` that contains the identified `ww.show.sidebar.showInfo` child | Inside the sidebar, contains Show Info, height < 80 pt | 1 | Noninteractive SwiftUI `Section`; the labelled Show Info child remains discoverable. |
+| 4 | Alignment action-grid rows | `sufficientElementDescription` | Rows resolved from `ww.alignment.workspace` *before* the audit, each exposing only buttons drawn from the eight `alignment.*` action identifiers | Exact frame equality (width **and** height) against the resolved row, plus height ≤ 40 pt at resolution | 2 | The `LazyVGrid` rows carry no description and declaring them containing elements drops their buttons from the tree (T-M2-01). Each row's buttons stay labelled and are audited unwaived. |
+| 5 | SwiftUI inspector column | `sufficientElementDescription` | The single smallest group resolved before the audit that wraps the labelled `ww.inspector` scroll area, excluding the content and sidebar regions; at audit time the element must still expose `ww.inspector` | Exact frame equality (width **and** height) against the resolved column; width within 16 pt of the inspector at resolution | 1 | SwiftUI owns the inspector column chrome and no modifier reaches it; the labelled Inspector scroll area remains exposed. |
+| 6 | Blocked-window title bar | `contrast` | `StaticText` whose label/value is exactly `Empty Alignment` | `frame.maxY <= window.frame.minY + 56` | 1 | AppKit-drawn window title above the show content; the blocked heading, explanation and `Go to Setup` are audited unwaived. |
+| 7 | Blocked-state sidebar text | `contrast` | `StaticText` inside the identified `ww.show.sidebar.episodes`, **and only with measured proof on that element's own crop**: `ContrastMeter` ≥ 40 glyph pixels and p75 ≥ 4.5 | Containment in the identified sidebar; measurement is per element | 4 | Measured artefact only. Any sidebar element that fails to measure is reported unwaived and fails the audit. |
+| 8 | Outline cell containers | `sufficientElementDescription` | `AXGroup`/`AXOther` whose frame is one of the cell frames collected from the two alignment outlines, and which still exposes a labelled or valued descendant | Exact frame equality against a collected cell frame | one per collected cell | AppKit builds the container around an outline's disclosure-column cell and no SwiftUI description reaches it; the cell's own labelled text child stays exposed. |
+
+Removed by this revision: the former blanket blocked-state handler that waived **any** static text inside
+the episode sidebar without measurement. Waiver 7 replaces it with the per-element measured rule the other
+narrow handlers already use (`LibraryWorkspaceUITests`, `SelectionContrastUITests`), so a genuine sidebar
+contrast regression now fails rather than being absorbed.
+
+Waivers 4 and 5 were previously shape-based: any short group holding four labelled buttons, and any group
+containing the Inspector frame within 16 pt of width. Both are now pinned to one element resolved from the
+live tree immediately before `performAccessibilityAudit`, compared by exact frame and by the identifiers of
+the children it exposes, so an unrelated container of a similar shape is no longer absorbed. The caps are
+unchanged and no audit option was relaxed.
+
 ### Broad (M5) observations
 
 The following are informational broad-accessibility observations for M5 / WW-053, not entries in the M2 essential-audit waiver baseline: fully offscreen or partly clipped library-cell contrast reports (`notOnScreen` 0–2, cap 5, plus four two-point bottom-edge samples); one library dark-collection-row report measured at p75 15.72:1 where the audit samples sidebar material; and sidebar, table, non-blocked Setup-cell, title, and sheet-text contrast reports within existing per-surface `tableText` caps (import 1/1, Setup 1/4). Pixel evidence meets the 40-glyph / p75 4.5:1 measured-artefact rule, or the content is dimmed or occluded while the audit measures the frontmost surface.
