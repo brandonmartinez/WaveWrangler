@@ -89,6 +89,32 @@ assert_contains "$ROOT/single.out" "ACQUIRED lane=single class=pr"
 assert_contains "$ROOT/single.out" "RELEASED lane=single"
 [ "$(cat "$ROOT/order")" = single ] || fail "single run did not execute"
 
+echo "test: locked or unavailable VM console refuses before acquiring"
+for state in locked unavailable; do
+  reset_state
+  if GUI_LOCK_TEST_VM_CONSOLE_STATE="$state" run_lane "console-$state" pr 0 > "$ROOT/console-$state.out" 2>&1; then
+    fail "$state VM console was allowed to run"
+  fi
+  assert_contains "$ROOT/console-$state.out" "VM console locked"
+  [ ! -d "$ROOT/.gui.lock" ] || fail "$state VM console acquired a lease"
+  [ -z "$(find "$ROOT/.gui.queue" -name ticket -print -quit)" ] || fail "$state VM console queued a ticket"
+  [ ! -s "$ROOT/order" ] || fail "$state VM console launched a test"
+done
+reset_state
+GUI_LOCK_TEST_VM_CONSOLE_STATE=unlocked run_lane console-ready pr 0 > "$ROOT/console-ready.out"
+assert_contains "$ROOT/console-ready.out" "ACQUIRED lane=console-ready class=pr"
+assert_contains "$ROOT/console-ready.out" "RELEASED lane=console-ready"
+
+echo "test: console locks while acquisition waits for the guard"
+reset_state
+if GUI_LOCK_TEST_VM_CONSOLE_STATE=locks-after-preflight run_lane console-transition pr 0 > "$ROOT/console-transition.out" 2>&1; then
+  fail "VM console acquired a lease after locking during acquisition"
+fi
+assert_contains "$ROOT/console-transition.out" "VM console locked"
+[ ! -d "$ROOT/.gui.lock" ] || fail "newly locked VM console acquired a lease"
+[ -z "$(find "$ROOT/.gui.queue" -name ticket -print -quit)" ] || fail "newly locked VM console left a ticket"
+[ ! -s "$ROOT/order" ] || fail "newly locked VM console launched a test"
+
 echo "test: concurrent FIFO and priority ordering"
 reset_state
 run_lane holder pr 8 > "$ROOT/holder.out" 2>&1 &

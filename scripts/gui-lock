@@ -480,6 +480,36 @@ status() {
   done
 }
 
+vm_console_preflight() {
+  local model state
+  if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ -n "${GUI_LOCK_TEST_VM_CONSOLE_STATE:-}" ]; then
+    state="$GUI_LOCK_TEST_VM_CONSOLE_STATE"
+    if [ "$state" = locks-after-preflight ]; then
+      VM_CONSOLE_PREFLIGHT_COUNT=$(( ${VM_CONSOLE_PREFLIGHT_COUNT:-0} + 1 ))
+      if [ "$VM_CONSOLE_PREFLIGHT_COUNT" -eq 1 ]; then state=unlocked; else state=locked; fi
+    fi
+  else
+    if ! model=$(/usr/sbin/sysctl -n hw.model 2>/dev/null); then
+      echo "cannot determine GUI host model" >&2
+      return 1
+    fi
+    case "$model" in VirtualMac*) ;; *) return 0;; esac
+    state=$(/usr/bin/swift -e '
+      import CoreGraphics
+      import Darwin
+      guard let session = CGSessionCopyCurrentDictionary() as? [String: Any],
+            session["kCGSSessionOnConsoleKey"] as? Bool == true,
+            session["kCGSessionLoginDoneKey"] as? Bool == true,
+            session["CGSSessionScreenIsLocked"] == nil else { exit(1) }
+      print("unlocked")
+    ' 2>/dev/null) || state=locked
+  fi
+  [ "$state" = unlocked ] && return 0
+  log "ERROR VM console locked lane=$LANE"
+  echo "VM console locked (or console check unavailable)" >&2
+  return 1
+}
+
 acquire_for_run() {
   if ! sequence=$(next_sequence); then
     log "ERROR ticket sequence allocation failed lane=$LANE class=$CLASS"
@@ -526,6 +556,10 @@ acquire_for_run() {
     fi
     if [ "$first" = "$TICKET" ]; then
       acquire_guard
+      if ! vm_console_preflight; then
+        release_guard
+        return 1
+      fi
       if block_if_test_active; then
         release_guard
       else
@@ -601,6 +635,9 @@ run_one() {
   trap cleanup_run EXIT
   trap 'cleanup_run; exit 130' INT
   trap 'cleanup_run; exit 143' TERM
+  if ! vm_console_preflight; then
+    return 1
+  fi
   if ! acquire_for_run; then
     return 1
   fi
