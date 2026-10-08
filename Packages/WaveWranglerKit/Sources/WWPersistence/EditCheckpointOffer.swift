@@ -139,6 +139,7 @@ public enum RestoredEditCheckpoints {
     public struct State<Payload: Equatable> {
         private var snapshots: [URL: Payload] = [:]
         private var generation: UInt64 = 0
+        private var retiredURLs: Set<URL> = []
 
         public init() {}
 
@@ -150,15 +151,26 @@ public enum RestoredEditCheckpoints {
         public mutating func supersede() {
             generation &+= 1
             snapshots.removeAll()
+            retiredURLs.removeAll()
+        }
+
+        /// A deleted offer must not be re-marked by an older Undo/Redo callback in this generation.
+        public mutating func retire(_ url: URL) {
+            snapshots.removeValue(forKey: url)
+            retiredURLs.insert(url)
+        }
+
+        public func acceptsCallback(for url: URL, generation expected: UInt64) -> Bool {
+            generation == expected && !retiredURLs.contains(url)
         }
 
         public mutating func mark(_ url: URL, snapshot: Payload, generation expected: UInt64) {
-            guard generation == expected else { return }
+            guard acceptsCallback(for: url, generation: expected) else { return }
             snapshots[url] = snapshot
         }
 
         public mutating func unmark(_ url: URL, generation expected: UInt64) {
-            guard generation == expected else { return }
+            guard acceptsCallback(for: url, generation: expected) else { return }
             snapshots.removeValue(forKey: url)
         }
 

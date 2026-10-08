@@ -305,6 +305,90 @@ struct EditCheckpointOfferTests {
         #expect(reopened.payload == restored && reopened.publication == published.publication)
     }
 
+    @Test func verifiedSaveRetiresOnlyDeletedRestoreAndKeepsOtherOfferVisible() throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 850)
+        let url = rig.url()
+        let (current, base) = try rig.seedTwoRevisions(model, at: url)
+        let key = DocumentKey.show(model.show.id)
+        let other = try current.renamingShow(to: "Other session")
+        let restored = try current.renamingShow(to: "Restored session")
+        try rig.recovery.writeEditCheckpoint(
+            snapshot: coder.encode(other, revision: 3), base: base,
+            schemaVersion: SchemaVersion.show, for: key, at: Date(timeIntervalSince1970: 1_000)
+        )
+        try rig.recovery.setAsideEditCheckpoints(for: key)
+        try rig.recovery.writeEditCheckpoint(
+            snapshot: coder.encode(restored, revision: 3), base: base,
+            schemaVersion: SchemaVersion.show, for: key, at: Date(timeIntervalSince1970: 2_000)
+        )
+        try rig.recovery.setAsideEditCheckpoints(for: key)
+        let offer = assess(rig, key, current, onDisk: base)
+        let deleted = try #require(offer.candidate)
+        let remaining = try #require(offer.usable.last)
+        #expect(deleted.payload == restored && remaining.payload == other)
+        #expect(remaining.relation == .basedOnCurrent)
+
+        var state = RestoredEditCheckpoints.State<ShowDocumentModel>()
+        let generation = state.currentGeneration
+        state.mark(deleted.url, snapshot: restored, generation: generation)
+        state.unmark(deleted.url, generation: generation)
+        #expect(state.isEmpty && rig.recovery.offeredEditCheckpoints(for: key).count == 2)
+        state.mark(deleted.url, snapshot: restored, generation: generation)
+        let started = state.startingSave()
+        let unrelated = try current.renamingShow(to: "Unrelated edit")
+        #expect(state.resolved(started: started, published: unrelated, current: unrelated).isEmpty)
+        let saved = try rig.publisher.publish(restored, revision: 3, key: key, to: url, target: .inPlace(expectedBase: base))
+        let resolved = state.resolved(started: started, published: restored, current: restored)
+        #expect(resolved == [deleted.url])
+        try rig.recovery.discardOfferedEditCheckpoints(Array(resolved), for: key)
+        state.retire(deleted.url)
+
+        // Old restore Undo/Redo callbacks are inert, while the other record remains visible. A save
+        // advances the disk base, so the other session's previously current-base offer is now copy-only.
+        state.unmark(deleted.url, generation: generation)
+        state.mark(deleted.url, snapshot: restored, generation: generation)
+        #expect(!state.acceptsCallback(for: deleted.url, generation: generation))
+        #expect(state.isEmpty)
+        let next = assess(rig, key, current, onDisk: saved.fingerprint)
+        #expect(next.candidate?.url == remaining.url)
+        #expect(next.candidate?.relation == .basedOnOtherRevision)
+        #expect(next.candidateMode(restoreInEffect: !state.isEmpty) == .copyOnlyOlderRevision)
+        state.mark(remaining.url, snapshot: other, generation: generation)
+        #expect(state.urls == [remaining.url])
+    }
+
+    @Test func failedDiscardKeepsRedoLiveButSuccessfulDiscardRetiresIt() throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 851)
+        let (current, base) = try rig.seedTwoRevisions(model, at: rig.url())
+        let key = DocumentKey.show(model.show.id)
+        let restored = try current.renamingShow(to: "Unsaved")
+        try rig.recovery.writeEditCheckpoint(
+            snapshot: coder.encode(restored, revision: 3), base: base, schemaVersion: SchemaVersion.show, for: key
+        )
+        try rig.recovery.setAsideEditCheckpoints(for: key)
+        let candidate = try #require(assess(rig, key, current, onDisk: base).candidate)
+        var state = RestoredEditCheckpoints.State<ShowDocumentModel>()
+        let generation = state.currentGeneration
+        state.mark(candidate.url, snapshot: restored, generation: generation)
+        state.unmark(candidate.url, generation: generation)
+        let failing = RecoveryStore(root: rig.recovery.root, ops: RefusingOfferedRemoval(url: candidate.url))
+        #expect(throws: POSIXError.self) {
+            try failing.discardOfferedEditCheckpoints([candidate.url], for: key)
+        }
+        #expect(state.acceptsCallback(for: candidate.url, generation: generation))
+        state.mark(candidate.url, snapshot: restored, generation: generation)
+        #expect(state.urls == [candidate.url])
+        #expect(assess(rig, key, current, onDisk: base).candidate?.url == candidate.url)
+
+        state.unmark(candidate.url, generation: generation)
+        try rig.recovery.discardOfferedEditCheckpoints([candidate.url], for: key)
+        state.retire(candidate.url)
+        state.mark(candidate.url, snapshot: restored, generation: generation)
+        #expect(state.isEmpty && assess(rig, key, current, onDisk: base).isEmpty)
+    }
+
     @Test func discardNeverDeletesOutsideTheOfferedRecords() throws {
         let rig = Rig()
         let model = Fixtures.show(seed: 844)
@@ -321,6 +405,26 @@ struct EditCheckpointOfferTests {
         try rig.recovery.setAsideEditCheckpoints(for: key)
         try rig.recovery.setAsideEditCheckpoints(for: key)
         #expect(rig.recovery.offeredEditCheckpoints(for: key).count == 1)
+    }
+
+    private struct RefusingOfferedRemoval: FileOperations {
+        let base = LocalFileOperations()
+        let url: URL
+
+        func read(_ url: URL) throws -> Data { try base.read(url) }
+        func exists(_ url: URL) -> Bool { base.exists(url) }
+        func createDirectory(_ url: URL) throws { try base.createDirectory(url) }
+        func writeNew(_ data: Data, to url: URL) throws { try base.writeNew(data, to: url) }
+        func replace(_ destination: URL, withStaged staged: URL) throws { try base.replace(destination, withStaged: staged) }
+        func moveNew(_ from: URL, to destination: URL) throws { try base.moveNew(from, to: destination) }
+        func remove(_ url: URL) throws {
+            if url == self.url { throw POSIXError(.EIO) }
+            try base.remove(url)
+        }
+        func contentsOfDirectory(_ url: URL) throws -> [URL] { try base.contentsOfDirectory(url) }
+        func makeStagingDirectory(appropriateFor destination: URL) throws -> URL {
+            try base.makeStagingDirectory(appropriateFor: destination)
+        }
     }
 
     static func patch(_ data: Data, _ change: (inout [String: Any]) -> Void) throws -> Data {

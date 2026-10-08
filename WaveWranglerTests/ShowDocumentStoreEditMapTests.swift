@@ -190,9 +190,15 @@ struct ShowDocumentStoreEditMapTests {
         let unsaved = beforeCrash.model
         #expect(unsaved.editMaps.isEmpty)
         #expect(try coder.decode(Data(contentsOf: disk)).payload == base)
+        let other = try base.renamingShow(to: "Other session's changes")
+        try recovery.writeEditCheckpoint(
+            snapshot: coder.encode(other, revision: 3), base: RevisionFingerprint(of: originalBytes),
+            schemaVersion: SchemaVersion.show, for: key, at: Date(timeIntervalSince1970: 1_000)
+        )
+        try recovery.setAsideEditCheckpoints(for: key)
         try recovery.writeEditCheckpoint(
             snapshot: coder.encode(unsaved, revision: 3), base: RevisionFingerprint(of: originalBytes),
-            schemaVersion: SchemaVersion.show, for: key
+            schemaVersion: SchemaVersion.show, for: key, at: Date(timeIntervalSince1970: 2_000)
         )
         try recovery.setAsideEditCheckpoints(for: key)
         let offer = EditCheckpointOffer.assess(
@@ -202,6 +208,8 @@ struct ShowDocumentStoreEditMapTests {
         )
         let candidate = try #require(offer.candidate)
         #expect(candidate.relation == .basedOnCurrent)
+        let otherCandidate = try #require(offer.usable.last)
+        #expect(otherCandidate.payload == other && otherCandidate.relation == .basedOnCurrent)
 
         let reopenedDocument = ShowDocument()
         let reopened = ShowDocumentStore(model: try coder.decode(Data(contentsOf: disk)).payload)
@@ -212,7 +220,7 @@ struct ShowDocumentStoreEditMapTests {
         restoredOffers.mark(candidate.url, snapshot: reopened.model, generation: restoredOffers.currentGeneration)
         #expect(reopened.model == unsaved)
         #expect(try coder.decode(Data(contentsOf: disk)).payload == base)
-        #expect(recovery.offeredEditCheckpoints(for: key).count == 1)
+        #expect(recovery.offeredEditCheckpoints(for: key).count == 2)
 
         undo.undo()
         restoredOffers.unmark(candidate.url, generation: restoredOffers.currentGeneration)
@@ -221,7 +229,7 @@ struct ShowDocumentStoreEditMapTests {
         #expect(throws: EditMapPublicationError.invalidMap) {
             try reopened.selectedEditMap(in: fixture.mappedID)
         }
-        #expect(recovery.offeredEditCheckpoints(for: key).count == 1)
+        #expect(recovery.offeredEditCheckpoints(for: key).count == 2)
         undo.redo()
         restoredOffers.mark(candidate.url, snapshot: reopened.model, generation: restoredOffers.currentGeneration)
         #expect(reopened.model.episode(fixture.mappedID) == nil)
@@ -231,8 +239,23 @@ struct ShowDocumentStoreEditMapTests {
         try saved.write(to: disk)
         let resolved = restoredOffers.resolved(started: restoredOffers.startingSave(), published: reopened.model, current: reopened.model)
         try recovery.discardOfferedEditCheckpoints(Array(resolved), for: key)
-        #expect(recovery.offeredEditCheckpoints(for: key).isEmpty)
+        restoredOffers.retire(candidate.url)
+        #expect(recovery.offeredEditCheckpoints(for: key).count == 1)
         #expect(try coder.decode(Data(contentsOf: disk)).payload == unsaved)
+        undo.undo()
+        restoredOffers.unmark(candidate.url, generation: restoredOffers.currentGeneration)
+        #expect(reopened.model.episode(fixture.mappedID) != nil)
+        undo.redo()
+        restoredOffers.mark(candidate.url, snapshot: reopened.model, generation: restoredOffers.currentGeneration)
+        #expect(reopened.model.episode(fixture.mappedID) == nil)
+        #expect(restoredOffers.isEmpty)
+        let remaining = EditCheckpointOffer.assess(
+            recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue,
+            onDisk: RevisionFingerprint(of: saved), coder: coder,
+            belongsToDocument: { $0.show.id == base.show.id }
+        ).excluding(restoredOffers.urls)
+        #expect(remaining.candidate?.url == otherCandidate.url)
+        #expect(remaining.candidateMode(restoreInEffect: !restoredOffers.isEmpty) == .copyOnlyOlderRevision)
     }
 
     @Test func refusedCheckpointStaysOfferedAfterUnchangedSave() throws {

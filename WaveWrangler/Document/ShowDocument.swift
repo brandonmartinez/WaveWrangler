@@ -737,7 +737,7 @@ final class ShowDocument: NSDocument {
     }
 
     private func markRestored(_ url: URL, snapshot: ShowDocumentModel, generation: UInt64) {
-        guard generation == restoredOffers.currentGeneration else { return }
+        guard restoredOffers.acceptsCallback(for: url, generation: generation) else { return }
         restoredOffers.mark(url, snapshot: snapshot, generation: generation)
         undoManager?.registerUndo(withTarget: self) { document in
             MainActor.assumeIsolated { document.unmarkRestored(url, snapshot: snapshot, generation: generation) }
@@ -746,7 +746,7 @@ final class ShowDocument: NSDocument {
     }
 
     private func unmarkRestored(_ url: URL, snapshot: ShowDocumentModel, generation: UInt64) {
-        guard generation == restoredOffers.currentGeneration else { return }
+        guard restoredOffers.acceptsCallback(for: url, generation: generation) else { return }
         restoredOffers.unmark(url, generation: generation)
         undoManager?.registerUndo(withTarget: self) { document in
             MainActor.assumeIsolated { document.markRestored(url, snapshot: snapshot, generation: generation) }
@@ -770,7 +770,12 @@ final class ShowDocument: NSDocument {
     /// another crashed session) and problem reports stay and are offered next.
     func discardOfferedEditCheckpoint() {
         guard let candidate = status.editCheckpointOffer?.candidate else { return }
-        try? recovery.discardOfferedEditCheckpoints([candidate.url], for: documentKey)
+        do {
+            try recovery.discardOfferedEditCheckpoints([candidate.url], for: documentKey)
+            restoredOffers.retire(candidate.url)
+        } catch {
+            _ = presentError(error)
+        }
         refreshEditCheckpointOffer()
     }
 
@@ -794,7 +799,7 @@ final class ShowDocument: NSDocument {
         if !contained.isEmpty {
             do {
                 try recovery.discardOfferedEditCheckpoints(Array(contained), for: documentKey)
-                for url in contained { restoredOffers.unmark(url, generation: restoredOffers.currentGeneration) }
+                for url in contained { restoredOffers.retire(url) }
             } catch {
                 _ = presentError(error)
             }
