@@ -63,8 +63,12 @@ public enum TranscriptReviewShellPresentation {
 
     public static let noLiveSourceReason =
         "No live Primary or source is connected to this provisional shell. Choose or confirm the Primary in Setup when Review is integrated."
-    public static let editBlockedReason =
-        "Disabled: transcript timing, current alignment, all-lane backing, protection coverage, and an edit policy are not connected."
+    public static let acceptBlockedReason =
+        "Accept is blocked: no current proposal or transcript timing is connected; the alignment map, all-lane backing, protection coverage, and edit policy are unverified."
+    public static let liftBlockedReason =
+        "Lift is blocked: no current proposal or transcript timing is connected; the alignment map, all-lane backing, protection coverage, and edit policy are unverified."
+    public static let rejectBlockedReason =
+        "Reject is blocked: no proposal is connected to this synthetic-only shell."
     public static let fullPreviewBlockedReason =
         "Complete preview is blocked: every affected lane, the common map, source backing, and protection coverage are unverified."
     public static let singleLaneAuditionBlockedReason =

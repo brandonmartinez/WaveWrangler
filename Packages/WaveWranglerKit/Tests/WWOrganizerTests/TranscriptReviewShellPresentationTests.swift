@@ -19,8 +19,11 @@ struct TranscriptReviewShellPresentationTests {
     }
 
     @Test func reviewActionsStayBlockedWithoutSafetyEvidence() {
-        #expect(TranscriptReviewShellPresentation.editBlockedReason.contains("all-lane"))
-        #expect(TranscriptReviewShellPresentation.editBlockedReason.contains("protection"))
+        #expect(TranscriptReviewShellPresentation.acceptBlockedReason.contains("all-lane backing"))
+        #expect(TranscriptReviewShellPresentation.acceptBlockedReason.contains("protection coverage"))
+        #expect(TranscriptReviewShellPresentation.liftBlockedReason.contains("all-lane backing"))
+        #expect(TranscriptReviewShellPresentation.liftBlockedReason.contains("protection coverage"))
+        #expect(TranscriptReviewShellPresentation.rejectBlockedReason.contains("no proposal"))
         #expect(TranscriptReviewShellPresentation.fullPreviewBlockedReason.contains("every affected lane"))
         #expect(TranscriptReviewShellPresentation.singleLaneAuditionBlockedReason.contains("not a full preview"))
         #expect(TranscriptReviewShellPresentation.noLiveSourceReason.contains("Setup"))

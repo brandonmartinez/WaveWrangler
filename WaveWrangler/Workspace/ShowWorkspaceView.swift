@@ -240,10 +240,10 @@ private struct ShowDetailContent: View {
 
     var body: some View {
         let model = state.store.model
-        if state.destination == .review {
-            TranscriptReviewView(state: state.reviewState)
-        } else if state.sidebarSelection == .showInfo {
+        if state.sidebarSelection == .showInfo {
             ShowInfoSummary(state: state)
+        } else if state.destination == .review {
+            TranscriptReviewView(state: state.reviewState)
         } else if model.episodes.isEmpty {
             ContentUnavailableView {
                 Label("No episodes yet", systemImage: "music.mic")
@@ -328,6 +328,7 @@ private struct ShowInfoSummary: View {
                     .wwFont(.title)
                     .accessibilityAddTraits(.isHeader)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("ww.show.showInfoSummary.title")
                 LabeledContent("Episodes") { Text("\(model.episodes.count)") }
                 LabeledContent("Speakers") { Text("\(model.speakers.count)") }
                 LabeledContent("Location") { Text(ShowInfoInspector.locationText(state.store.document?.fileURL)) }

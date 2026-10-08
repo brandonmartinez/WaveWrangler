@@ -9,12 +9,12 @@ struct InspectorContainer: View {
     var body: some View {
         ScrollView {
             Group {
-                if state.destination == .review {
+                if state.sidebarSelection == .showInfo {
+                    ShowInfoInspector(state: state)
+                } else if state.destination == .review {
                     TranscriptReviewInspector(state: state.reviewState) {
                         state.showReviewSetup()
                     }
-                } else if state.sidebarSelection == .showInfo {
-                    ShowInfoInspector(state: state)
                 } else if state.destination == .alignment, let model = state.alignmentModel {
                     AlignmentInspectorView(model: model)
                 } else if let episode = state.selectedEpisode {
@@ -288,6 +288,7 @@ struct ShowInfoInspector: View {
             }
         }
         .disabled(!state.canEdit)
+        .accessibilityIdentifier("ww.inspector.showInfo")
         .onAppear {
             titleDraft = store.model.show.title
             notesDraft = store.model.show.notes

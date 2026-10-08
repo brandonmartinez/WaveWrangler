@@ -231,9 +231,9 @@ struct TranscriptReviewInspector: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("ww.review.inspector.defaultMode")
 
-            actionButton("Accept Shorten when safe", id: "acceptShorten", reason: TranscriptReviewShellPresentation.editBlockedReason)
-            actionButton("Lift — preserve timing", id: "lift", reason: TranscriptReviewShellPresentation.editBlockedReason)
-            actionButton("Reject proposal", id: "reject", reason: TranscriptReviewShellPresentation.editBlockedReason)
+            actionButton("Accept Shorten when safe", id: "acceptShorten", reason: TranscriptReviewShellPresentation.acceptBlockedReason)
+            actionButton("Lift — preserve timing", id: "lift", reason: TranscriptReviewShellPresentation.liftBlockedReason)
+            actionButton("Reject proposal", id: "reject", reason: TranscriptReviewShellPresentation.rejectBlockedReason)
 
             Divider()
 
@@ -263,12 +263,20 @@ struct TranscriptReviewInspector: View {
     }
 
     private func actionButton(_ title: String, id: String, reason: String) -> some View {
-        Button(title) {}
-            .disabled(true)
-            .help(reason)
-            .accessibilityLabel(title)
-            .accessibilityValue(reason)
-            .accessibilityHint("Unavailable in this provisional review shell.")
-            .accessibilityIdentifier("ww.review.action.\(id)")
+        VStack(alignment: .leading, spacing: 4) {
+            Button(title) {}
+                .disabled(true)
+                .help(reason)
+                .accessibilityLabel(title)
+                .accessibilityValue(reason)
+                .accessibilityHint("Unavailable in this provisional review shell.")
+                .accessibilityIdentifier("ww.review.action.\(id)")
+
+            Text(reason)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("\(title) blocked")
+                .accessibilityValue(reason)
+                .accessibilityIdentifier("ww.review.action.\(id).reason")
+        }
     }
 }
