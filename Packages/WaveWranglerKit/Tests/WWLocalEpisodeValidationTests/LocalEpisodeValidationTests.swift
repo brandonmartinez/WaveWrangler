@@ -4,8 +4,11 @@ import Foundation
 import Testing
 import UniformTypeIdentifiers
 import WWAlignEstimate
+import WWAlignPipeline
 import WWCore
 import WWDecode
+import WWDerived
+import WWPersistence
 import WWRender
 import WWSources
 import WWTimeMap
@@ -33,6 +36,7 @@ import WWTimeMap
 private enum Env {
     static let episode = ProcessInfo.processInfo.environment["WW_LOCAL_EPISODE_DIR"]
     static let scratch = ProcessInfo.processInfo.environment["WW_LOCAL_SCRATCH_DIR"]
+    static let manual = ProcessInfo.processInfo.environment["WW_LOCAL_EPISODE_MANUAL"] == "1"
 }
 
 private func log(_ line: String) {
@@ -54,6 +58,19 @@ struct LocalEpisodeValidationTests {
 
         var harness = Harness(episode: episode, scratch: scratch)
         try await harness.run()
+        #expect(harness.findings.isEmpty, "findings: \(harness.findings)")
+    }
+}
+
+@Suite("Local episode manual pipeline (opt-in)", .serialized, .enabled(if: Env.manual && Env.episode != nil))
+struct LocalEpisodeManualTests {
+    @Test(.timeLimit(.minutes(60)))
+    func validateManualPipeline() async throws {
+        let episode = URL(fileURLWithPath: try #require(Env.episode), isDirectory: true).standardizedFileURL
+        let scratchPath = try #require(Env.scratch, "set WW_LOCAL_SCRATCH_DIR to a fresh mktemp -d directory")
+        let scratch = try ConsentGuards.checkScratch(URL(fileURLWithPath: scratchPath, isDirectory: true), episode: episode)
+        var harness = Harness(episode: episode, scratch: scratch)
+        try await harness.runManual()
         #expect(harness.findings.isEmpty, "findings: \(harness.findings)")
     }
 }
@@ -232,12 +249,12 @@ private struct Harness {
         let seconds: Double
     }
 
-    mutating func decode(_ item: Item) async -> Decoded? {
+    mutating func decode(_ item: Item, sliceStartSeconds: Int? = nil) async -> Decoded? {
         let decoder = SourceDecoder(access: SourceAccessContext(io: io))
         let started = Date()
         do throws(DecodeFailure) {
             let result = try await decoder.decode(item.url, source: SourceID()) { interpretation in
-                AnalysisSink(interpretation)
+                AnalysisSink(interpretation, sliceStartSeconds: sliceStartSeconds)
             }
             let seconds = Date().timeIntervalSince(started)
             let i = result.interpretation
@@ -669,14 +686,14 @@ private struct AnalysisSink: DecodedAudioSink {
     var sawMainThread = false
     var mono: [Float] = []
 
-    init(_ interpretation: FormatInterpretation) {
+    init(_ interpretation: FormatInterpretation, sliceStartSeconds: Int? = nil) {
         channelCount = interpretation.channelCount
         totalFrames = interpretation.frames.validFrames
         let rate = interpretation.sourceSampleRate
         let factor = Self.factor(for: rate)
         analysisRate = rate / factor
         decimator = Decimator(factor: factor)
-        sliceStart = (totalFrames * 2 / 5) / 1000 * 1000
+        sliceStart = sliceStartSeconds.map { Int64($0 * rate) } ?? (totalFrames * 2 / 5) / 1000 * 1000
         sliceEnd = min(totalFrames, sliceStart + 36 * Int64(rate))
         slice = Array(repeating: [], count: channelCount)
     }
@@ -847,6 +864,270 @@ private struct FileSink: RenderOutputSink {
     mutating func abandon() {
         try? handle.close()
         try? FileManager.default.removeItem(at: url)
+    }
+}
+
+// The manual run uses gateway-decoded, channel-preserving short copies. No original is opened by
+// the pipeline's renderer; its source inputs are the disposable copies.
+private extension Harness {
+    func writeSlice(_ decoded: Decoded, to url: URL) throws {
+        let channels = decoded.product.slice
+        let frames = channels.first?.count ?? 0
+        guard frames > 0, channels.count == decoded.interpretation.channelCount,
+              channels.allSatisfy({ $0.count == frames }),
+              frames * channels.count * 4 < Int(UInt32.max) - 36 else {
+            throw HarnessError("invalid slice shape")
+        }
+        let rate = decoded.interpretation.sourceSampleRate
+        let bytes = UInt32(frames * channels.count * 4)
+        var wave = Data(capacity: 44 + Int(bytes))
+        func ascii(_ text: String) { wave.append(contentsOf: text.utf8) }
+        func u16(_ value: UInt16) { withUnsafeBytes(of: value.littleEndian) { wave.append(contentsOf: $0) } }
+        func u32(_ value: UInt32) { withUnsafeBytes(of: value.littleEndian) { wave.append(contentsOf: $0) } }
+        ascii("RIFF"); u32(36 + bytes); ascii("WAVEfmt ")
+        u32(16); u16(3); u16(UInt16(channels.count)); u32(UInt32(rate))
+        u32(UInt32(rate * channels.count * 4)); u16(UInt16(channels.count * 4)); u16(32)
+        ascii("data"); u32(bytes)
+        for frame in 0 ..< frames {
+            for channel in channels {
+                u32(channel[frame].bitPattern)
+            }
+        }
+        try wave.write(to: url, options: .atomic)
+    }
+
+    mutating func runManual() async throws {
+        let started = Date()
+        log("manual pipeline host: \(Host.summary)")
+        var items = try enumerate()
+        let before = try snapshot(items)
+        items = number(items, snapshots: before)
+        var stepFailure: HarnessError?
+        do {
+            try await manualSteps(items)
+        } catch {
+            stepFailure = HarnessError("manual pipeline step failed: \(type(of: error))")
+            findings.append("manual pipeline step failed")
+            log("manual pipeline step failed: \(type(of: error))")
+        }
+        let remaining = try FileManager.default.contentsOfDirectory(atPath: scratch.path)
+        if !remaining.isEmpty {
+            findings.append("temporary manual inputs or derived assets not deleted")
+            log("manual scratch cleanup: FAILED (\(remaining.count) entries)")
+        } else {
+            log("manual scratch cleanup: empty")
+        }
+        let after = try snapshot(items)
+        verifyUnchanged(items, before: before, after: after)
+        log("manual pipeline wall \(f(Date().timeIntervalSince(started), 1)) s; process peak RSS \(Host.peakRSSMegabytes) MB")
+        if let stepFailure { throw stepFailure }
+        if !findings.isEmpty { throw HarnessError("manual pipeline findings: \(findings.joined(separator: "; "))") }
+    }
+
+    mutating func manualSteps(_ items: [Item]) async throws {
+        var decoded: [Int: Decoded] = [:]
+        for item in items where item.isAudio {
+            let start: Int
+            switch item.number {
+            case 7, 10: start = 1702
+            case 11: start = 1704
+            case 12: start = 1706
+            default: start = 1700
+            }
+            if let result = await decode(item, sliceStartSeconds: start) { decoded[item.number] = result }
+        }
+        let groups = proposeGroups(decoded)
+        guard groups.count == 4, groups.map(\.members) == [[1, 2, 3, 4, 5, 6, 8, 9], [7, 10], [11], [12]],
+              decoded.count == items.filter(\.isAudio).count - 1 else {
+            throw HarnessError("unexpected supported-source or group count")
+        }
+        let copies = scratch.appendingPathComponent("manual-inputs", isDirectory: true)
+        try FileManager.default.createDirectory(at: copies, withIntermediateDirectories: false)
+        defer {
+            do {
+                try FileManager.default.removeItem(at: copies)
+                log("manual temporary copies: deleted")
+            } catch {
+                log("manual temporary copies: deletion FAILED")
+            }
+        }
+        let cache = scratch.appendingPathComponent("manual-cache", isDirectory: true)
+        defer {
+            do {
+                try FileManager.default.removeItem(at: cache)
+                log("manual derived assets: deleted")
+            } catch {
+                log("manual derived assets: deletion FAILED")
+            }
+        }
+        let store = try DerivedAssetStore(root: cache, sourceLocations: [episode])
+        let coordinator = DerivedJobCoordinator(store: store)
+        let decoder = SourceDecoder(access: SourceAccessContext(io: io))
+        let pipeline = AlignmentPipeline(
+            coordinator: coordinator, decoder: decoder,
+            configuration: AlignmentPipelineConfiguration(concurrency: 1, targetExcerptSeconds: 20,
+                searchDeviationSeconds: 5, renderSegmentSeconds: 6)
+        )
+
+        let episodeID = EpisodeID()
+        var recorderGroups: [RecorderGroup] = []
+        var records: [SourceRecord] = []
+        var sources: [AlignmentSource] = []
+        var originalSources: [AlignmentSource] = []
+        var authorizations: [ContentWorkAuthorization] = []
+        var epochs: [RecordingEpochID] = []
+        var expectedChannels: [[String]] = []
+        for group in groups {
+            let groupID = RecorderGroupID()
+            let epoch = RecordingEpochID()
+            epochs.append(epoch)
+            recorderGroups.append(RecorderGroup(id: groupID, name: group.label, epochs: [RecordingEpoch(id: epoch, label: "Take 1")]))
+            var channelKeys: [String] = []
+            for member in group.members {
+                let source = SourceID()
+                let url = copies.appendingPathComponent("\(sLabel(member)).wav")
+                try writeSlice(decoded[member]!, to: url)
+                records.append(SourceRecord(id: source, displayNameHint: sLabel(member), placement: SourcePlacement(recorderGroupID: groupID, epochID: epoch)))
+                sources.append(AlignmentSource(id: source, url: url, availability: .on))
+                let original = try #require(items.first { $0.number == member })
+                originalSources.append(AlignmentSource(id: source, url: original.url, availability: .on))
+                channelKeys += (0 ..< decoded[member]!.interpretation.channelCount).map { "\(source.rawValue)/\($0)" }
+                authorizations.append(.explicitUserRequest(for: source))
+                guard case let .success(metadata) = io.metadata(at: url) else { throw HarnessError("temporary copy metadata unavailable") }
+                await coordinator.updateSource(SourceRevision.metadata(source, fingerprint: metadata.fingerprint))
+            }
+            expectedChannels.append(channelKeys)
+        }
+        var model = ShowDocumentModel(
+            show: Show(title: "Local validation"),
+            episodes: [Episode(id: episodeID, title: "Local validation", recorderGroups: recorderGroups, sources: records)]
+        )
+        let reference = sources[0].id
+        let originalCache = scratch.appendingPathComponent("original-analysis-cache", isDirectory: true)
+        defer {
+            do {
+                try FileManager.default.removeItem(at: originalCache)
+                log("full-source analysis cache: deleted")
+            } catch {
+                log("full-source analysis cache: deletion FAILED")
+            }
+        }
+        let originalStore = try DerivedAssetStore(root: originalCache, sourceLocations: [episode])
+        let originalCoordinator = DerivedJobCoordinator(store: originalStore)
+        for source in originalSources {
+            guard case let .success(metadata) = io.metadata(at: source.url) else {
+                throw HarnessError("original source registration metadata unavailable")
+            }
+            await originalCoordinator.updateSource(SourceRevision.metadata(source.id, fingerprint: metadata.fingerprint))
+        }
+        let originalPipeline = AlignmentPipeline(
+            coordinator: originalCoordinator, decoder: decoder,
+            configuration: AlignmentPipelineConfiguration(concurrency: 1, targetExcerptSeconds: 600,
+                searchDeviationSeconds: 120, renderSegmentSeconds: 6)
+        )
+        let fullAnalysis = try #require(await originalPipeline.analyse(model: model, episode: episodeID,
+            sources: originalSources, authorizations: authorizations, preferredReference: reference))
+        guard fullAnalysis.plan.epochs.count == groups.count, fullAnalysis.sourceFailures.isEmpty,
+              fullAnalysis.epochFailures.isEmpty, fullAnalysis.facts.count == decoded.count else {
+            throw HarnessError("full-source pipeline analysis failed")
+        }
+        for (index, epoch) in epochs.enumerated() where index > 0 {
+            guard let record = fullAnalysis.records[epoch] else { throw HarnessError("full-source epoch missing") }
+            log("\(groups[index].label) full-source analysis: \(record.abstention.map { "ABSTAINED \($0.reason)" } ?? "PROPOSAL (not clock-approved)"); eligible \(record.coverage.eligibleCount)/\(record.coverage.windowCount)")
+        }
+        await originalPipeline.shutdown()
+        let plan = try #require(await pipeline.plan(model: model, episode: episodeID, sources: sources,
+            authorizations: authorizations, preferredReference: reference))
+        guard plan.epochs.count == groups.count, plan.ineligible.isEmpty else { throw HarnessError("manual plan incomplete") }
+        log("manual plan: \(groups.count) groups, \(decoded.count) eligible sources; all channels copied from gateway-decoded 36 s excerpts")
+        let analysis = try #require(await pipeline.analyse(model: model, episode: episodeID, sources: sources,
+            authorizations: authorizations, preferredReference: reference))
+        guard analysis.sourceFailures.isEmpty, analysis.epochFailures.isEmpty, analysis.facts.count == decoded.count else {
+            throw HarnessError("manual analysis probe or epoch failed")
+        }
+        for (index, epoch) in epochs.enumerated() where index > 0 {
+            guard let record = analysis.records[epoch] else { throw HarnessError("manual analysis missing epoch") }
+            log("\(groups[index].label) pipeline analysis: \(record.abstention.map { "ABSTAINED \($0.reason)" } ?? "PROPOSAL (not clock-approved)"); eligible \(record.coverage.eligibleCount)/\(record.coverage.windowCount)")
+        }
+        let referenceStart = Double(decoded[groups[0].members[0]]!.product.sliceStart) / Double(groups[0].rate)
+        var decisions: [RecordingEpochID: EpochMapDecision] = [:]
+        for index in 1 ..< groups.count {
+            let group = groups[index]
+            let start = Double(decoded[group.members[0]]!.product.sliceStart) / Double(group.rate)
+            let offsetMilliseconds = (start - referenceStart) * 1000
+            decisions[epochs[index]] = .numeric(ppm: 0, offsetMilliseconds: offsetMilliseconds,
+                note: "Operator equal-origin placement of gateway-decoded excerpts; no clock truth")
+            log("\(group.label) operator entry: 0 ppm, \(f(offsetMilliseconds, 3)) ms (difference of excerpt start frame/rate)")
+        }
+        let accepted = try await pipeline.accept(model: model, episode: episodeID, report: analysis, decisions: decisions)
+        model = accepted.model
+        try await pipeline.activate(accepted)
+        let states = await pipeline.states(model: model, episode: episodeID, report: analysis)
+        guard states.count == groups.count,
+              states[0].status == .reference,
+              states.dropFirst().allSatisfy({ $0.status == .manual(.numericEntry, revision: accepted.revision.revision) }) else {
+            throw HarnessError("accepted states do not match reference and manual decisions")
+        }
+        log("manual acceptance: U1 reference, 3 U4 numeric manual epochs, revision \(accepted.revision.revision), one map digest; no clock approval")
+
+        let cancelledStarted = Date()
+        let renderModel = model
+        let renderSources = sources
+        let renderAuthorizations = authorizations
+        let cancelledTask = Task.detached(priority: .utility) { [pipeline, renderModel, renderSources, renderAuthorizations, episodeID] in
+            try await pipeline.renderAlignedAssets(model: renderModel, episode: episodeID,
+                sources: renderSources, authorizations: renderAuthorizations)
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        cancelledTask.cancel()
+        let cancelled = try await cancelledTask.value
+        let cancellationSeconds = Date().timeIntervalSince(cancelledStarted)
+        guard !cancelled.isComplete, cancellationSeconds < 5 else {
+            throw HarnessError("active render cancellation did not stop within 5 s")
+        }
+        log("active render cancellation: incomplete, returned in \(f(cancellationSeconds, 3)) s")
+        let renderStarted = Date()
+        let rendered = try await pipeline.renderAlignedAssets(model: model, episode: episodeID,
+            sources: sources, authorizations: authorizations)
+        guard rendered.isComplete, rendered.notRendered.isEmpty, rendered.groups.count == groups.count else {
+            throw HarnessError("manual aligned render incomplete")
+        }
+        for (index, group) in rendered.groups.enumerated() {
+            let results = group.results.filter(\.isAvailable)
+            var channelSpans: [String: [Range<Int64>]] = [:]
+            var digests = Set<String>()
+            for result in results {
+                guard let payload = store.payload(for: result.key) else { throw HarnessError("missing aligned asset payload") }
+                let header = try AlignedAudioSegment.decode(payload).header
+                let key = "\(header.source.rawValue)/\(header.decodedChannel)"
+                channelSpans[key, default: []].append(header.firstOutputFrame ..< (header.firstOutputFrame + Int64(header.frameCount)))
+                digests.insert(header.mapDigest)
+                guard header.group == group.group, header.outputRate == group.outputRate,
+                      header.map == accepted.revision else {
+                    throw HarnessError("aligned asset header disagrees with accepted map")
+                }
+            }
+            guard group.outputRate == 48_000, group.outputFrames.count == 1_728_000,
+                  Set(channelSpans.keys) == Set(expectedChannels[index]),
+                  digests == [accepted.mapContentDigest] else {
+                throw HarnessError("aligned asset channel, frame or digest mismatch")
+            }
+            for spans in channelSpans.values {
+                var next = group.outputFrames.lowerBound
+                for span in spans.sorted(by: { $0.lowerBound < $1.lowerBound }) {
+                    guard span.lowerBound == next else { throw HarnessError("aligned channel has a gap or overlap") }
+                    next = span.upperBound
+                }
+                guard next == group.outputFrames.upperBound else { throw HarnessError("aligned channel frame count mismatch") }
+            }
+            log("\(groups[index].label) assets: \(expectedChannels[index].count) channels, \(group.outputFrames.count) frames/channel, \(results.count) segment assets, one accepted map digest")
+        }
+        log("manual render: \(f(Date().timeIntervalSince(renderStarted), 2)) s, \(rendered.groups.count) groups, \(rendered.groups.reduce(0) { $0 + $1.results.count }) assets")
+        let shutdownStarted = Date()
+        await pipeline.shutdown()
+        let shutdownSeconds = Date().timeIntervalSince(shutdownStarted)
+        log("pipeline cancellation/shutdown idle response: \(f(shutdownSeconds, 3)) s")
+        guard shutdownSeconds < 5 else { throw HarnessError("pipeline shutdown exceeded 5 s") }
     }
 }
 
