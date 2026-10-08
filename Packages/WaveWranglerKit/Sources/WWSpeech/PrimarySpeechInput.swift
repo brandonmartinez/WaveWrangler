@@ -1,11 +1,9 @@
 import Darwin
 import Foundation
-import WWAlignPipeline
 import WWCore
 import WWDecode
 import WWDerived
 import WWSources
-import WWTimeMap
 
 /// Caller-declared intent for this episode and speaker, not production consent or permission
 /// inferred from an import, preference, or another speaker's selected primary.
@@ -23,8 +21,8 @@ public struct PrimarySpeechAuthorization: Sendable, Equatable {
     }
 }
 
-/// The current, authoritative organizer and device-local source state. The owner supplies a fresh
-/// snapshot before and after the decode; never substitute a captured show or a location hint here.
+/// A caller-supplied snapshot of organizer and device-local source state. This does not attest
+/// persistence, map activation, or organizer ownership; the caller must read it afresh on each request.
 public struct PrimarySpeechInputState: Sendable {
     public let show: ShowDocumentModel
     /// Monotonic organizer mutation serial, including unsaved edits and undo/redo. A persisted
@@ -45,25 +43,23 @@ public struct PrimarySpeechInputState: Sendable {
     }
 }
 
-/// Decoded samples of exactly the selected channel; not an executable WAV or a worker credential.
-/// The bytes stay private to WWSpeech. There is deliberately no public initializer or file URL.
-public struct VerifiedPrimarySpeechInput: Sendable {
+/// Provisional decoded samples of a selected channel in an episode with no maps. Caller-supplied
+/// state cannot certify organizer authority or an accepted occurrence. This is not a worker credential.
+/// The bytes stay private to WWSpeech; there is no public initializer or file URL.
+public struct ProvisionalPrimarySpeechInput: Sendable {
     public let selection: PrimarySpeechSelection
     public let interpretation: FormatInterpretation
     public let sourceRevision: SourceRevision
-    public let occurrence: SourceOccurrenceID
     public let inputAssetRevision: Int
     package let samples: [Float]
 
     public var frameCount: Int { samples.count }
 
     fileprivate init(selection: PrimarySpeechSelection, interpretation: FormatInterpretation,
-                     sourceRevision: SourceRevision, occurrence: SourceOccurrenceID,
-                     samples: [Float]) {
+                     sourceRevision: SourceRevision, samples: [Float]) {
         self.selection = selection
         self.interpretation = interpretation
         self.sourceRevision = sourceRevision
-        self.occurrence = occurrence
         inputAssetRevision = PrimarySpeechInputAdapter.inputAssetRevision
         self.samples = samples
     }
@@ -77,7 +73,7 @@ public struct VerifiedPrimarySpeechInput: Sendable {
 
 public struct PrimarySpeechInputAdapter: Sendable {
     /// Bump when selected-channel samples, envelope checks, or occurrence interpretation change.
-    public static let inputAsset = AssetSpec(kind: "ww.speech-selected-channel", revision: 1)
+    public static let inputAsset = AssetSpec(kind: "ww.speech-selected-channel", revision: 2)
     public static let inputAssetRevision = inputAsset.revision
     public static let maximumFrames = 16_000 * 60 * 10
 
@@ -91,15 +87,16 @@ public struct PrimarySpeechInputAdapter: Sendable {
         decoder = SourceDecoder(access: access)
     }
 
-    /// Caller intent alone is not authority to transcribe. `current` must read the live show and
-    /// complete access records on every invocation; no worker can launch from the result.
+    /// Caller intent and snapshots cannot certify an accepted map. Only unmapped episodes may
+    /// produce provisional decoded samples; mapped episodes refuse until an organizer-owned,
+    /// content-bound active-map authority exists. No worker can launch from the result.
     public func prepare(
         episodeID: EpisodeID,
         speakerID: SpeakerID,
         authorization: PrimarySpeechAuthorization?,
         availability: SourceAvailabilitySetting,
         current: @escaping @Sendable () async throws -> PrimarySpeechInputState
-    ) async throws(SpeechAdmissionRefusal) -> VerifiedPrimarySpeechInput {
+    ) async throws(SpeechAdmissionRefusal) -> ProvisionalPrimarySpeechInput {
         guard authorization?.episodeID == episodeID, authorization?.speakerID == speakerID,
               availability == .on else { throw .sourceIdentityNotConfirmed }
         let initial: PrimarySpeechInputState
@@ -107,6 +104,7 @@ public struct PrimarySpeechInputAdapter: Sendable {
         catch { throw .currentStateUnavailable }
         guard initial.showRevision != nil else { throw .sourceRevisionChanged }
         let selection = try Self.selection(in: initial.show, episodeID: episodeID, speakerID: speakerID)
+        try Self.requireUnmapped(initial.show, episodeID: episodeID)
         let matching = initial.accessRecords.filter {
             $0.showID == initial.show.show.id && $0.sourceID == selection.sourceID
         }
@@ -136,7 +134,7 @@ public struct PrimarySpeechInputAdapter: Sendable {
         episodeID: EpisodeID,
         url: URL,
         current: @escaping @Sendable () async throws -> PrimarySpeechInputState
-    ) async throws(SpeechAdmissionRefusal) -> VerifiedPrimarySpeechInput {
+    ) async throws(SpeechAdmissionRefusal) -> ProvisionalPrimarySpeechInput {
         let before = try Self.inspect(url)
         guard case let .success(metadata) = decoder.access.io.metadata(at: url),
               metadata.volumeIsLocal.value == true,
@@ -197,12 +195,18 @@ public struct PrimarySpeechInputAdapter: Sendable {
               metadata.fingerprint.compare(to: finalMetadata.fingerprint) == .matches,
               record.recordedIdentity?.fingerprint.compare(to: finalMetadata.fingerprint) == .matches
         else { throw .sourceAliasOrChanged }
-        let occurrence = try await occurrence(in: latest, selection: selection,
-                                              frames: decoded.interpretation.frames.validFrames,
-                                              rate: decoded.interpretation.sourceSampleRate)
-        return VerifiedPrimarySpeechInput(
+        try Self.requireUnmapped(latest.show, episodeID: episodeID)
+        let final: PrimarySpeechInputState
+        do { final = try await current() }
+        catch { throw .currentStateUnavailable }
+        guard final.show == latest.show, final.showRevision == latest.showRevision,
+              final.accessRecords == latest.accessRecords, final.sourceRevision == revision,
+              final.inputAssetRevision == Self.inputAssetRevision
+        else { throw .sourceRevisionChanged }
+        guard Self.sameFile(before, try Self.inspect(url)) else { throw .sourceAliasOrChanged }
+        return ProvisionalPrimarySpeechInput(
             selection: selection, interpretation: decoded.interpretation,
-            sourceRevision: revision, occurrence: occurrence, samples: decoded.samples
+            sourceRevision: revision, samples: decoded.samples
         )
     }
 
@@ -214,86 +218,13 @@ public struct PrimarySpeechInputAdapter: Sendable {
         return try PrimarySpeechSelection(episode: episode, speakerID: speakerID)
     }
 
-    private func occurrence(in state: PrimarySpeechInputState, selection: PrimarySpeechSelection,
-                            frames: Int64, rate: Int) async throws(SpeechAdmissionRefusal) -> SourceOccurrenceID {
-        guard let episode = state.show.episode(selection.episodeID) else { throw .occurrenceNotContinuous }
-        guard let alignment = episode.alignment else { return SourceOccurrenceID(selection.sourceID.rawValue) }
-        guard let revision = alignment.acceptedRevision, revision > 0,
-              alignment.maps.allSatisfy({ $0.revision > 0 }),
-              alignment.maps.filter({ $0.revision == revision }).count == 1,
-              zip(alignment.maps, alignment.maps.dropFirst()).allSatisfy({ earlier, later in
-                  earlier.revision < later.revision
-              }),
-              let accepted = alignment.acceptedMap,
-              let bytes = try? JSONEncoder().encode(accepted.map),
-              let map = try? JSONDecoder().decode(AlignedTimelineMap.self, from: bytes)
-        else { throw .occurrenceNotContinuous }
-        let placed = map.groups.flatMap(\.placements).map(\.occurrence.source)
-        let inputs = accepted.inputs.sources
-        guard Set(placed).count == placed.count,
-              Set(inputs.map(\.sourceID)) == Set(placed), inputs.count == placed.count,
-              // Content digests require a separate consent-gated decode of every referenced source.
-              inputs.allSatisfy({
-                  $0.formatInterpretationVersion == FormatRevision.current.interpretationVersion &&
-                  $0.contentDigest == nil
-              }),
-              (try? episode.applicability(ofMapRevision: revision))?.isCurrent == true
-        else { throw .occurrenceNotContinuous }
-        var registered: [SourceID: String] = [:]
-        for sourceID in placed {
-            guard episode.sources.filter({ $0.id == sourceID }).count == 1,
-                  let source = episode.source(sourceID),
-                  state.accessRecords.filter({ $0.sourceID == sourceID }).count == 1,
-                  let record = state.accessRecords.first(where: { $0.sourceID == sourceID }),
-                  record.showID == state.show.show.id,
-                  record.recordedIdentity?.confirmation == .userConfirmed,
-                  let bookmark = record.bookmark, let path = record.lastKnownPath,
-                  case let .resolved(url, isStale) = decoder.access.io.resolveBookmark(bookmark),
-                  !isStale, url.isFileURL, url.path == path
-            else { throw .occurrenceNotContinuous }
-            let token: String
-            do {
-                token = try decoder.access.withScopedAccess(to: url) { scopedURL in
-                    let before = try Self.inspect(scopedURL)
-                    guard case let .success(metadata) = decoder.access.io.metadata(at: scopedURL),
-                          metadata.volumeIsLocal.value == true, metadata.isDataless.value == false,
-                          metadata.isRegularFile.value == true, metadata.isSymbolicLink.value == false,
-                          metadata.fingerprint.fileIdentifier.value == UInt64(before.st_ino),
-                          record.recordedIdentity?.fingerprint.compare(to: metadata.fingerprint) == .matches
-                    else { throw SpeechAdmissionRefusal.occurrenceNotContinuous }
-                    let after = try Self.inspect(scopedURL)
-                    guard Self.sameFile(before, after) else { throw SpeechAdmissionRefusal.occurrenceNotContinuous }
-                    return SourceRevision.metadata(source.id, fingerprint: metadata.fingerprint).token
-                }
-            } catch let refusal as SpeechAdmissionRefusal {
-                throw refusal
-            } catch {
-                throw .currentStateUnavailable
-            }
-            registered[sourceID] = token
+    private static func requireUnmapped(_ show: ShowDocumentModel, episodeID: EpisodeID)
+        throws(SpeechAdmissionRefusal)
+    {
+        guard let alignment = show.episode(episodeID)?.alignment else { return }
+        guard alignment.maps.isEmpty, alignment.acceptedRevision == nil else {
+            throw .occurrenceNotContinuous
         }
-        guard MapDependencies.verify(version: accepted, map: map, episode: episode,
-                                     registered: registered, format: .current).isEmpty
-        else { throw .occurrenceNotContinuous }
-        let placements = map.groups.flatMap(\.placements).filter { $0.occurrence.source == selection.sourceID }
-        guard placements.count == 1, let placement = placements.first,
-              placement.occurrence.frameCount == frames,
-              placement.occurrence.nominalRate.framesPerSecond == Int64(rate),
-              placement.spans.count == 1, let span = placement.spans.first,
-              span.startFrame == 0, span.endFrame == frames,
-              let group = map.group(containing: placement.occurrence.id),
-              let source = episode.source(selection.sourceID),
-              source.placement.recorderGroupID == group.group,
-              source.placement.epochID == span.epoch,
-              group.epochs.contains(where: { epoch in
-                  guard epoch.epoch == span.epoch, case .mapped = epoch.mapping else { return false }
-                  return true
-              })
-        else { throw .occurrenceNotContinuous }
-        guard case .aligned? = try? map.alignedTime(ofFrame: 0, in: placement.occurrence.id),
-              case .aligned? = try? map.alignedTime(ofFrame: frames - 1, in: placement.occurrence.id)
-        else { throw .occurrenceNotContinuous }
-        return placement.occurrence.id
     }
 
     private static func inspect(_ url: URL) throws(SpeechAdmissionRefusal) -> stat {

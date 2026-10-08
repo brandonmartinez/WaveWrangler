@@ -56,6 +56,22 @@ private actor SpeechSwapSnapshot {
     }
 }
 
+private actor SpeechLateSnapshot {
+    let initial: PrimarySpeechInputState
+    let changed: PrimarySpeechInputState
+    private(set) var calls = 0
+
+    init(initial: PrimarySpeechInputState, changed: PrimarySpeechInputState) {
+        self.initial = initial
+        self.changed = changed
+    }
+
+    func read() -> PrimarySpeechInputState {
+        calls += 1
+        return calls == 3 ? changed : initial
+    }
+}
+
 @Suite("Selected primary source bytes")
 struct PrimarySpeechInputTests {
     private func wav(channel0: Int16 = 100, channel1: Int16 = -200, frames: Int = 64) -> Data {
@@ -116,7 +132,6 @@ struct PrimarySpeechInputTests {
         )
         #expect(input.selection.channel == 1)
         #expect(input.frameCount == 64)
-        #expect(input.occurrence == SourceOccurrenceID(input.selection.sourceID.rawValue))
         #expect(input.interpretation.channelCount == 2)
         #expect(input.samples.allSatisfy { abs($0 - Float(-200) / 32768) < 0.000_01 })
         #expect(input.samples.allSatisfy { abs($0 - Float(100) / 32768) > 0.001 })
@@ -218,6 +233,44 @@ struct PrimarySpeechInputTests {
         } catch {
             #expect(error == .sourceAliasOrChanged)
         }
+    }
+
+    @Test(arguments: ["source-deleted", "source-relinked", "revision-changed", "access-revoked"])
+    func finalStateCheckRefusesLateMutation(_ scenario: String) async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var show = snapshot.show
+        var records = snapshot.accessRecords
+        var revision = snapshot.showRevision
+        switch scenario {
+        case "source-deleted":
+            show.episodes[0].sources.removeAll()
+        case "source-relinked":
+            records[0].lastKnownPath = directory.appendingPathComponent("other.wav").path
+        case "revision-changed":
+            revision = 2
+        case "access-revoked":
+            records.removeAll()
+        default:
+            Issue.record("unknown scenario")
+            return
+        }
+        let changed = PrimarySpeechInputState(
+            show: show, showRevision: revision, accessRecords: records,
+            sourceRevision: snapshot.sourceRevision, inputAssetRevision: snapshot.inputAssetRevision
+        )
+        let state = SpeechLateSnapshot(initial: snapshot, changed: changed)
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: access).prepare(
+                episodeID: episode, speakerID: speaker,
+                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                availability: .on, current: { await state.read() }
+            )
+            Issue.record("state changed during validation was published")
+        } catch {
+            #expect(error == .sourceRevisionChanged)
+        }
+        #expect(await state.calls == 3)
     }
 
     @Test func truncatedContainerCannotBecomeSpeechInput() async throws {
@@ -388,22 +441,59 @@ struct PrimarySpeechInputTests {
     }
 
     @Test(arguments: ["continuous", "gap", "duplicate"])
-    func occurrenceValidation(_ scenario: String) async throws {
+    func callerMintedMapsCannotAuthorizeOccurrence(_ scenario: String) async throws {
         let fixture = try mappedFixture(scenario)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        if scenario == "continuous" {
-            let input = try await PrimarySpeechInputAdapter(access: fixture.access).prepare(
-                episodeID: fixture.episode, speakerID: fixture.speaker,
-                authorization: .explicitUserRequest(episodeID: fixture.episode, speakerID: fixture.speaker),
-                availability: .on, current: { fixture.state }
-            )
-            #expect(input.occurrence == fixture.occurrence)
-            return
-        }
         #expect(await refusal(fixture) == .occurrenceNotContinuous)
     }
 
-    @Test func confirmedSameLengthReferenceRelinkInvalidatesAcceptedMap() async throws {
+    @Test func mappedRefusalPrecedesDecode() async throws {
+        let fixture = try mappedFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let selected = fixture.directory.appendingPathComponent("source.wav")
+        try Data(repeating: 0, count: 300).write(to: selected)
+        #expect(await refusal(fixture) == .occurrenceNotContinuous)
+    }
+
+    @Test func unacceptedMapCannotBecomeAnUnmappedInput() async throws {
+        let fixture = try mappedFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        var show = fixture.state.show
+        show.episodes[0].alignment?.acceptedRevision = nil
+        let state = PrimarySpeechInputState(
+            show: show, showRevision: 2, accessRecords: fixture.state.accessRecords,
+            sourceRevision: fixture.state.sourceRevision, inputAssetRevision: fixture.state.inputAssetRevision
+        )
+        #expect(await refusal((fixture.directory, fixture.access, state, fixture.episode, fixture.speaker,
+                               fixture.occurrence, fixture.referenceURL)) == .occurrenceNotContinuous)
+    }
+
+    @Test(arguments: ["reference", "selected-primary"])
+    func sameInodeSameLengthRewriteCannotAuthorizeMappedInput(_ source: String) async throws {
+        let fixture = try mappedFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let url = source == "reference" ? fixture.referenceURL
+            : fixture.directory.appendingPathComponent("source.wav")
+        let original = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard let modified = original[.modificationDate] as? Date,
+              let inode = original[.systemFileNumber] as? NSNumber,
+              case let .success(before) = fixture.access.io.metadata(at: url)
+        else { Issue.record("source metadata unavailable"); return }
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.write(contentsOf: wav(channel0: 800, channel1: -400))
+        try handle.close()
+        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+        let rewritten = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard let rewrittenInode = rewritten[.systemFileNumber] as? NSNumber,
+              case let .success(after) = fixture.access.io.metadata(at: url)
+        else { Issue.record("rewritten source metadata unavailable"); return }
+        #expect(inode == rewrittenInode)
+        #expect(original[.size] as? NSNumber == rewritten[.size] as? NSNumber)
+        #expect(before.fingerprint.compare(to: after.fingerprint) == .matches)
+        #expect(await refusal(fixture) == .occurrenceNotContinuous)
+    }
+
+    @Test func confirmedSameLengthReferenceRelinkCannotAuthorizeMappedInput() async throws {
         let fixture = try mappedFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let relinkedURL = fixture.directory.appendingPathComponent("relinked.wav")
@@ -424,7 +514,7 @@ struct PrimarySpeechInputTests {
                                fixture.occurrence, fixture.referenceURL)) == .occurrenceNotContinuous)
     }
 
-    @Test func confirmedSameLengthPrimaryRelinkInvalidatesAcceptedMap() async throws {
+    @Test func confirmedSameLengthPrimaryRelinkCannotAuthorizeMappedInput() async throws {
         let fixture = try mappedFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let relinkedURL = fixture.directory.appendingPathComponent("primary-relinked.wav")
@@ -447,7 +537,7 @@ struct PrimarySpeechInputTests {
                                fixture.occurrence, fixture.referenceURL)) == .occurrenceNotContinuous)
     }
 
-    @Test func deletedReferencedSourceInvalidatesAcceptedMap() async throws {
+    @Test func deletedReferencedSourceCannotAuthorizeMappedInput() async throws {
         let fixture = try mappedFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         var show = fixture.state.show
@@ -459,16 +549,16 @@ struct PrimarySpeechInputTests {
                                fixture.occurrence, fixture.referenceURL)) == .occurrenceNotContinuous)
     }
 
-    @Test func missingReferencedFileRefusesOccurrence() async throws {
+    @Test func missingReferencedFileCannotAuthorizeMappedInput() async throws {
         let fixture = try mappedFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         try FileManager.default.removeItem(at: fixture.referenceURL)
-        #expect(await refusal(fixture) == .sourceAliasOrChanged)
+        #expect(await refusal(fixture) == .occurrenceNotContinuous)
     }
 
     @Test(arguments: ["missing-input", "stale-format", "unverified-content-digest", "stale-recipe",
                       "duplicate-revision", "missing-revision", "reordered-revision"])
-    func staleMapInputsAndAmbiguousRevisionsRefuse(_ scenario: String) async throws {
+    func callerAuthoredMapVariationsRemainRefused(_ scenario: String) async throws {
         let fixture = try mappedFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         var show = fixture.state.show
