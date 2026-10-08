@@ -276,10 +276,17 @@ final class AlignmentInspectionUITests: XCTestCase {
         let anchors = app.descendants(matching: .any)["ww.alignment.anchors"]
         // Cell containers are matched by their place in an outline's subtree rather than by geometry: a
         // row scrolled under the table's edge reaches outside the outline's own frame.
-        let outlineCellFrames = [groups, anchors]
-            .flatMap { $0.descendants(matching: .group).allElementsBoundByIndex }
-            .filter { $0.frame.height <= 32 }
-            .map(\.frame)
+        var outlineCellFrames: [CGRect] = []
+        for outline in [groups, anchors] {
+            let descendants: [XCUIElement] = outline.descendants(matching: .any).allElementsBoundByIndex
+            for descendant in descendants {
+                let type: XCUIElement.ElementType = descendant.elementType
+                guard type == .group || type == .other else { continue }
+                let frame: CGRect = descendant.frame
+                guard frame.height <= 32 else { continue }
+                outlineCellFrames.append(frame)
+            }
+        }
         var layoutContainerFindings = 0
         var showSectionFindings = 0
         var outlineCellFindings = 0
