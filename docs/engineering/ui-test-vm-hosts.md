@@ -105,5 +105,17 @@ reports **2 passed, 0 failed, 0 skipped**:
 
 No TCC or damaged-app prompts were observed. `ww-ui-2` required a one-time
 manual unlock of a persisted guest-console lock before its successful run;
-it stayed unlocked through a subsequent headless restart. Recheck the
-console and display-awake assertion after future restarts.
+it stayed unlocked through two subsequent cold headless restarts. Both
+guests retained auto-login, `DisableScreenLockImmediate`, their display-awake
+assertion, and an unlocked console after **two cold restarts each**. A fresh
+leased `testNoNoticeWithoutConflicts` app-launch smoke passed **1/1** after
+each boot:
+
+| Evidence label | Cold boot 1 result | Cold boot 2 result |
+| --- | --- | --- |
+| VM ww-ui-1 (Virtualization.framework, macOS 27, 4 vCPU) | `~/ww-uitest-runs/smoke-5ae7fa4-20261008-cold1/result.xcresult` | `~/ww-uitest-runs/smoke-5ae7fa4-20261008-cold2/result.xcresult` |
+| VM ww-ui-2 (Virtualization.framework, macOS 27, 4 vCPU) | `~/ww-uitest-runs/smoke-5ae7fa4-20261008-cold1/result.xcresult` | `~/ww-uitest-runs/smoke-5ae7fa4-20261008-cold2/result.xcresult` |
+
+Recheck the console and display-awake assertion after future restarts. A
+locked or unavailable VirtualMac console is rejected by `gui-lock run`
+before starting the test or acquiring a lease.
