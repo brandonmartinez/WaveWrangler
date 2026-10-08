@@ -10,6 +10,7 @@ struct CommonEpisodeEditMapTests {
 
     private func make(
         _ alignment: AlignedTimelineMap,
+        origin: Int64 = 0,
         frames: Int64 = 480_000,
         rate: Int64 = 48_000,
         removals: [RemovedFrameSpan] = [],
@@ -18,8 +19,177 @@ struct CommonEpisodeEditMapTests {
     ) throws -> CommonEpisodeEditMap {
         try CommonEpisodeEditMap(
             alignment: alignment, alignmentRevision: alignmentRevision, editRevision: editRevision,
-            outputRate: NominalRate(rate), alignedFrameCount: frames, removals: removals
+            outputRate: NominalRate(rate), alignedFrameOrigin: origin, alignedFrameCount: frames,
+            removals: removals
         )
+    }
+
+    @Test func negativeLeadingPlacementSurvivesWithoutRemovalsAndOccurrencesStayDistinct() throws {
+        let source = SourceID()
+        let rate = try NominalRate(48_000)
+        let negativeEpoch = RecordingEpochID(), positiveEpoch = RecordingEpochID()
+        let earlyA = try SourceOccurrence(source: source, nominalRate: rate, frameCount: 480_000)
+        let earlyB = try SourceOccurrence(source: source, nominalRate: rate, frameCount: 480_000)
+        let late = try SourceOccurrence(source: source, nominalRate: rate, frameCount: 480_000)
+        let earlyGroup = try fx.otherGroup(
+            epochs: [mapped(negativeEpoch, [seg(q(0), q(10), .one, q(-1, 10))])],
+            placements: [earlyA, earlyB].map {
+                OccurrencePlacement(occurrence: $0, spans: [span(0, 480_000, negativeEpoch)])
+            }
+        )
+        let lateGroup = try fx.otherGroup(
+            epochs: [mapped(positiveEpoch, [seg(q(0), q(10), .one, q(1, 20))])],
+            placements: [OccurrencePlacement(occurrence: late, spans: [span(0, 480_000, positiveEpoch)])]
+        )
+        let map = try make(fx.timeline([earlyGroup, lateGroup]), origin: -4_800, frames: 487_200)
+        #expect(map.alignedFrameOrigin == -4_800)
+        #expect(map.alignedFrameEnd == 482_400)
+        #expect(map.outputFrameCount == 487_200)
+        #expect(map.keptSpans == [KeptFrameSpan(alignedStart: -4_800, alignedEnd: 482_400, outputStart: 0)])
+        #expect(map.alignedInstant(atOutputFrame: 0) == q(-1, 10))
+        #expect(map.alignedInstant(atOutputFrame: 4_800) == .zero)
+        #expect(map.outputDuration == q(203, 20))
+        for sourceFrame: Int64 in 0..<4_800 {
+            for occurrence in [earlyA.id, earlyB.id] {
+                guard case .mapped(let position, let aligned) = try map.outputFrame(ofSourceFrame: sourceFrame, in: occurrence),
+                      case .source(let inverse) = try map.sourceFrame(atOutputFrame: sourceFrame, in: occurrence)
+                else {
+                    Issue.record("negative-leading source frame \(sourceFrame) lost its occurrence")
+                    continue
+                }
+                #expect(position.exactFrame == ExactRational(sourceFrame))
+                #expect(position.nearestFrame == sourceFrame)
+                #expect(aligned.instant == rate.instant(ofFrame: sourceFrame - 4_800))
+                #expect(inverse.occurrence == occurrence)
+                #expect(inverse.frame == sourceFrame)
+            }
+        }
+        #expect(try map.sourceFrame(atOutputFrame: 0, in: fx.refOccurrence) == .outsideCoverage)
+        #expect(try map.sourceFrame(atOutputFrame: 0, in: late.id) == .outsideCoverage)
+        if case .mapped(let position, _) = try map.outputFrame(ofSourceFrame: 0, in: late.id) {
+            #expect(position.exactFrame == q(7_200))
+        } else { Issue.record("positive-offset occurrence lost its placement") }
+        if case .mapped(let position, _) = try map.outputFrame(ofSourceFrame: 479_999, in: late.id) {
+            #expect(position.nearestFrame == 487_199)
+            if case .source(let inverse) = try map.sourceFrame(atOutputFrame: 487_199, in: late.id) {
+                #expect(inverse.frame == 479_999)
+            } else { Issue.record("late trailing frame lost its inverse") }
+        } else { Issue.record("late trailing frame was clipped by the episode domain") }
+        if case .mapped(let position, let aligned) = try map.outputFrame(ofSourceFrame: 0, in: fx.refOccurrence) {
+            #expect(position.exactFrame == q(4_800))
+            #expect(position.nearestFrame == 4_800)
+            #expect(aligned.instant == .zero)
+            #expect(aligned.epoch == fx.refEpoch)
+        } else { Issue.record("reference origin did not move on the output grid") }
+    }
+
+    @Test func signedDisjointRemovalsKeepAbsoluteAlignedCoordinates() throws {
+        let epoch = RecordingEpochID()
+        let early = fx.occurrence(frames: 480_000)
+        let group = try fx.otherGroup(
+            epochs: [mapped(epoch, [seg(q(0), q(10), .one, q(-1, 10))])],
+            placements: [OccurrencePlacement(occurrence: early, spans: [span(0, 480_000, epoch)])]
+        )
+        let cuts = [RemovedFrameSpan(start: -2_400, end: -1_200), RemovedFrameSpan(start: 4_800, end: 9_600)]
+        let map = try make(fx.timeline([group]), origin: -4_800, frames: 484_800, removals: cuts)
+        #expect(map.keptSpans == [
+            KeptFrameSpan(alignedStart: -4_800, alignedEnd: -2_400, outputStart: 0),
+            KeptFrameSpan(alignedStart: -1_200, alignedEnd: 4_800, outputStart: 2_400),
+            KeptFrameSpan(alignedStart: 9_600, alignedEnd: 480_000, outputStart: 8_400),
+        ])
+        #expect(map.outputFrameCount == 478_800)
+        #expect(map.alignedInstant(atOutputFrame: 2_400) == q(-1_200, 48_000))
+        #expect(map.alignedInstant(atOutputFrame: 8_400) == q(9_600, 48_000))
+        #expect(try map.outputPosition(atAlignedInstant: q(-2_400, 48_000)) == .removed(cuts[0]))
+        #expect(try map.outputPosition(atAlignedInstant: q(4_800, 48_000)) == .removed(cuts[1]))
+        if case .removed(let aligned, let span) = try map.outputFrame(ofSourceFrame: 2_400, in: early.id) {
+            #expect(aligned.instant == q(-2_400, 48_000))
+            #expect(aligned.epoch == epoch)
+            #expect(span == cuts[0])
+        } else { Issue.record("negative removal gained an inverse") }
+        if case .removed(let aligned, let span) = try map.outputFrame(ofSourceFrame: 9_600, in: early.id) {
+            #expect(aligned.instant == q(4_800, 48_000))
+            #expect(aligned.epoch == epoch)
+            #expect(span == cuts[1])
+        } else { Issue.record("positive removal gained an inverse") }
+        for output in [Int64(0), 2_399, 2_400, 8_399, 8_400, map.outputFrameCount - 1] {
+            let instant = try #require(map.alignedInstant(atOutputFrame: output))
+            #expect(try map.outputPosition(atAlignedInstant: instant) == .mapped(
+                CommonOutputPosition(exactFrame: ExactRational(output), nearestFrame: output)
+            ))
+        }
+    }
+
+    @Test func signedGridLimitsAndOffGridPositionsAreExplicit() throws {
+        let alignment = try fx.timeline([])
+        let rate = try NominalRate(48_000)
+        let map = try make(alignment, origin: -4_800, frames: 484_800)
+        #expect(try map.outputPosition(atAlignedInstant: q(-9_601, 96_000)) == .outsideCoverage)
+        #expect(try map.outputPosition(atAlignedInstant: q(10)) == .outsideCoverage)
+        #expect(try map.outputPosition(atAlignedInstant: q(-9_599, 96_000)) == .mapped(
+            CommonOutputPosition(exactFrame: q(1, 2), nearestFrame: 1)
+        ))
+        #expect(try map.outputPosition(atAlignedInstant: q(959_999, 96_000)) == .mapped(
+            CommonOutputPosition(exactFrame: q(969_599, 2), nearestFrame: 484_800)
+        ))
+        #expect(map.alignedInstant(atOutputFrame: -1) == nil)
+        #expect(map.alignedInstant(atOutputFrame: map.outputFrameCount) == nil)
+        #expect(throws: CommonEpisodeEditMapError.invalidRemoval(RemovedFrameSpan(start: -4_801, end: -4_800))) {
+            try make(alignment, origin: -4_800, frames: 484_800, removals: [RemovedFrameSpan(start: -4_801, end: -4_800)])
+        }
+        #expect(throws: CommonEpisodeEditMapError.invalidRemoval(RemovedFrameSpan(start: 480_000, end: 480_001))) {
+            try make(alignment, origin: -4_800, frames: 484_800, removals: [RemovedFrameSpan(start: 480_000, end: 480_001)])
+        }
+        #expect(throws: CommonEpisodeEditMapError.alignedFrameEndOverflow(origin: .max, count: 1)) {
+            try make(alignment, origin: .max, frames: 1)
+        }
+        #expect(throws: CommonEpisodeEditMapError.invalidTimelineLength(-1)) {
+            try make(alignment, origin: -4_800, frames: -1)
+        }
+        let tooLong = TimeMapEnvelope.maxFrameCount + 1
+        #expect(throws: CommonEpisodeEditMapError.invalidTimelineLength(tooLong)) {
+            try make(alignment, origin: -4_800, frames: tooLong)
+        }
+        let extreme = try make(alignment, origin: .min, frames: 2)
+        #expect(extreme.alignedFrameEnd == Int64.min + 2)
+        #expect(extreme.alignedInstant(atOutputFrame: 0) == rate.instant(ofFrame: .min))
+        #expect(try extreme.outputPosition(atAlignedInstant: rate.instant(ofFrame: .min)) == .mapped(
+            CommonOutputPosition(exactFrame: .zero, nearestFrame: 0)
+        ))
+    }
+
+    @Test func negativeOriginDoesNotBridgeGapsOrUnsupportedRegions() throws {
+        let first = RecordingEpochID(), last = RecordingEpochID(), unknown = RecordingEpochID()
+        let gapped = fx.occurrence(frames: 144_000)
+        let uncertain = fx.occurrence(frames: 144_000)
+        let firstMap = mapped(first, [seg(q(0), q(1), .one, q(-1, 10))])
+        let lastMap = mapped(last, [seg(q(2), q(3), .one, q(-1, 10))])
+        let gapGroup = try fx.otherGroup(
+            epochs: [firstMap, lastMap],
+            placements: [OccurrencePlacement(occurrence: gapped, spans: [
+                span(0, 48_000, first), span(96_000, 144_000, last),
+            ])]
+        )
+        let unsupportedGroup = try fx.otherGroup(
+            epochs: [firstMap, EpochClockMap(epoch: unknown, mapping: .unsupported(.estimatorAbstained)), lastMap],
+            placements: [OccurrencePlacement(occurrence: uncertain, spans: [
+                span(0, 48_000, first), span(48_000, 96_000, unknown), span(96_000, 144_000, last),
+            ])]
+        )
+        let gapMap = try make(fx.timeline([gapGroup]), origin: -4_800, frames: 148_800)
+        let unsupportedMap = try make(fx.timeline([unsupportedGroup]), origin: -4_800, frames: 148_800)
+        if case .source(let position) = try gapMap.sourceFrame(atOutputFrame: 0, in: gapped.id) {
+            #expect(position.frame == 0)
+        } else { Issue.record("negative leading frame should invert") }
+        if case .gap(let boundary) = try gapMap.sourceFrame(atOutputFrame: 60_000, in: gapped.id) {
+            #expect(boundary.precedingEpoch == first)
+            #expect(boundary.followingEpoch == last)
+            #expect(try gapMap.outputFrame(ofSourceFrame: 60_000, in: gapped.id) == .gap(boundary))
+        } else { Issue.record("signed domain bridged a known gap") }
+        #expect(try unsupportedMap.sourceFrame(atOutputFrame: 60_000, in: uncertain.id).regionState == .unsupported(.estimatorAbstained))
+        #expect(try unsupportedMap.outputFrame(ofSourceFrame: 60_000, in: uncertain.id) == .unsupported(
+            epoch: unknown, reason: .estimatorAbstained
+        ))
     }
 
     @Test func everyOccurrenceSharesTheSameExactGridAndPadding() throws {
@@ -193,18 +363,20 @@ struct CommonEpisodeEditMapTests {
 
     @Test func allSmallNonIntersectingIntervalsRoundTripWithoutRipple() throws {
         let alignment = try fx.timeline([])
-        for count: Int64 in 0...16 {
-            for start: Int64 in 0...count {
-                for end: Int64 in start...count {
-                    let removals = start < end ? [RemovedFrameSpan(start: start, end: end)] : []
-                    let map = try make(alignment, frames: count, removals: removals)
-                    #expect(map.outputFrameCount == count - (end - start))
-                    #expect(map.keptSpans.reduce(Int64(0)) { $0 + $1.outputEnd - $1.outputStart } == map.outputFrameCount)
-                    for output in 0..<map.outputFrameCount {
-                        let instant = try #require(map.alignedInstant(atOutputFrame: output))
-                        #expect(try map.outputPosition(atAlignedInstant: instant) == .mapped(
-                            CommonOutputPosition(exactFrame: ExactRational(output), nearestFrame: output)
-                        ))
+        for origin: Int64 in [-5, 0, 7] {
+            for count: Int64 in 0...16 {
+                for start: Int64 in 0...count {
+                    for end: Int64 in start...count {
+                        let removals = start < end ? [RemovedFrameSpan(start: origin + start, end: origin + end)] : []
+                        let map = try make(alignment, origin: origin, frames: count, removals: removals)
+                        #expect(map.outputFrameCount == count - (end - start))
+                        #expect(map.keptSpans.reduce(Int64(0)) { $0 + $1.outputEnd - $1.outputStart } == map.outputFrameCount)
+                        for output in 0..<map.outputFrameCount {
+                            let instant = try #require(map.alignedInstant(atOutputFrame: output))
+                            #expect(try map.outputPosition(atAlignedInstant: instant) == .mapped(
+                                CommonOutputPosition(exactFrame: ExactRational(output), nearestFrame: output)
+                            ))
+                        }
                     }
                 }
             }

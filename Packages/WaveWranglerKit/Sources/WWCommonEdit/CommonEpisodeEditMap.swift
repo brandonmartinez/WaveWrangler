@@ -24,6 +24,7 @@ public struct KeptFrameSpan: Sendable, Hashable {
 
 public enum CommonEpisodeEditMapError: Error, Equatable, Sendable {
     case invalidTimelineLength(Int64)
+    case alignedFrameEndOverflow(origin: Int64, count: Int64)
     case invalidRemoval(RemovedFrameSpan)
     case removalsOutOfOrder
     case overlappingRemovals
@@ -51,9 +52,11 @@ public enum CommonSourceOutputMapping: Sendable, Hashable {
 
 /// Pure WW-043 frame prescription; no cut approval, fade, sample copying, or independent per-track ripple.
 ///
-/// `alignedFrameCount` and removals use ONE output rate/grid for the whole episode. Each kept span is
-/// copied at the same output offsets for every track, including silent tracks; uncovered occurrence
-/// regions remain gaps/unsupported as classified by `AlignedTimelineMap`, never invented samples.
+/// `alignedFrameOrigin` is a signed frame index relative to the M2 reference's t=0. Together with
+/// `alignedFrameCount` it defines `[origin, origin + count)` on ONE output-rate grid. Removals and kept
+/// aligned endpoints use those absolute indices; output frames start at zero. Each kept span is copied
+/// at the same output offsets for every track, including silent tracks; uncovered occurrence regions
+/// remain gaps/unsupported as classified by `AlignedTimelineMap`, never invented samples.
 /// The two revision tokens are caller-owned dependency keys, not evidence of acceptance. Compare the
 /// complete value (including the upstream map and removals) for deterministic undo/identity.
 public struct CommonEpisodeEditMap: Sendable, Equatable {
@@ -61,7 +64,9 @@ public struct CommonEpisodeEditMap: Sendable, Equatable {
     public let alignmentRevision: UInt64
     public let editRevision: UInt64
     public let outputRate: NominalRate
+    public let alignedFrameOrigin: Int64
     public let alignedFrameCount: Int64
+    public let alignedFrameEnd: Int64
     public let removals: [RemovedFrameSpan]
     public let keptSpans: [KeptFrameSpan]
     public let outputFrameCount: Int64
@@ -71,17 +76,22 @@ public struct CommonEpisodeEditMap: Sendable, Equatable {
         alignmentRevision: UInt64,
         editRevision: UInt64,
         outputRate: NominalRate,
+        alignedFrameOrigin: Int64,
         alignedFrameCount: Int64,
         removals: [RemovedFrameSpan]
     ) throws(CommonEpisodeEditMapError) {
         guard alignedFrameCount >= 0, alignedFrameCount <= TimeMapEnvelope.maxFrameCount else {
             throw .invalidTimelineLength(alignedFrameCount)
         }
+        let (end, overflow) = alignedFrameOrigin.addingReportingOverflow(alignedFrameCount)
+        guard !overflow else {
+            throw .alignedFrameEndOverflow(origin: alignedFrameOrigin, count: alignedFrameCount)
+        }
         var kept: [KeptFrameSpan] = []
-        var cursor: Int64 = 0
+        var cursor = alignedFrameOrigin
         var output: Int64 = 0
         for (index, span) in removals.enumerated() {
-            guard span.start >= 0, span.start < span.end, span.end <= alignedFrameCount else {
+            guard span.start >= alignedFrameOrigin, span.start < span.end, span.end <= end else {
                 throw .invalidRemoval(span)
             }
             if index > 0, span.start < removals[index - 1].start { throw .removalsOutOfOrder }
@@ -92,21 +102,23 @@ public struct CommonEpisodeEditMap: Sendable, Equatable {
             }
             cursor = span.end
         }
-        if cursor < alignedFrameCount {
-            kept.append(KeptFrameSpan(alignedStart: cursor, alignedEnd: alignedFrameCount, outputStart: output))
-            output += alignedFrameCount - cursor
+        if cursor < end {
+            kept.append(KeptFrameSpan(alignedStart: cursor, alignedEnd: end, outputStart: output))
+            output += end - cursor
         }
         self.alignment = alignment
         self.alignmentRevision = alignmentRevision
         self.editRevision = editRevision
         self.outputRate = outputRate
+        self.alignedFrameOrigin = alignedFrameOrigin
         self.alignedFrameCount = alignedFrameCount
+        self.alignedFrameEnd = end
         self.removals = removals
         self.keptSpans = kept
         self.outputFrameCount = output
     }
 
-    /// Exact grid duration, including any silent padding the caller supplies in `alignedFrameCount`.
+    /// Exact shortened duration, including any silent padding the caller supplies in the aligned domain.
     public var outputDuration: ExactRational { outputRate.instant(ofFrame: outputFrameCount) }
 
     /// Output sample -> original aligned time. The seam belongs to the following kept span.
@@ -120,7 +132,8 @@ public struct CommonEpisodeEditMap: Sendable, Equatable {
     /// Partial inverse: removed instants are reported, never mapped to a neighbouring seam. Off-grid
     /// positions stay exact until HALF-UP quantisation; the rounded value is a position, not a sample.
     public func outputPosition(atAlignedInstant instant: ExactRational) throws(TimeMapError) -> CommonAlignedOutputMapping {
-        guard instant >= .zero, instant < outputRate.instant(ofFrame: alignedFrameCount) else { return .outsideCoverage }
+        guard instant >= outputRate.instant(ofFrame: alignedFrameOrigin),
+              instant < outputRate.instant(ofFrame: alignedFrameEnd) else { return .outsideCoverage }
         let frame = try instant.multiplied(by: ExactRational(outputRate.framesPerSecond))
         if let removal = removals.first(where: { frame >= ExactRational($0.start) && frame < ExactRational($0.end) }) {
             return .removed(removal)
