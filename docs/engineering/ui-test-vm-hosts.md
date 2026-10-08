@@ -32,16 +32,18 @@ After a host reboot, start each guest in its **own** detached,
 session-independent background process. The VM service must not be owned by
 an app/agent session that can be archived later; otherwise archiving that
 session can stop the host. Use the Copilot app's background command mode for
-each guest separately: run the command with `async: true` and `detach: true`.
-That mode requires the platform approval for an independently running process.
-Do not use `nohup`, `&`, or `disown`; those do not establish a host service
-independent of the launching disposable session.
+each guest separately: submit each `tart run` command as its own
+`functions.bash` invocation with `mode: "async"` and `detach: true` after the
+platform approves the independently running process. Do not combine the two
+guest launches into one attached shell snippet. Do not use `nohup`, `&`, or
+`disown`; those do not establish a host service independent of the launching
+disposable session.
 
 ```sh
-# Submit as a separate Copilot background command with async: true, detach: true.
+# Submit as a separate `functions.bash` invocation with mode: "async", detach: true.
 tart run --no-graphics --no-clipboard --no-audio ww-ui-1
 
-# Submit as a separate Copilot background command with async: true, detach: true.
+# Submit as a separate `functions.bash` invocation with mode: "async", detach: true.
 tart run --no-graphics --no-clipboard --no-audio ww-ui-2
 ```
 
