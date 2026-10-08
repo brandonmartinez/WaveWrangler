@@ -42,8 +42,9 @@ stage refuses inference. The subprocess uses `/usr/bin/sandbox-exec` with **deny
 and **deny network***: literal read grants only for the staged files and the single PCM
 input, ancestor-directory traversal, macOS runtime reads under `/System/Library`
 and `/usr/lib` (never the writable `/System/Volumes/Data` alias), and writes only to a unique
-owner-private scratch directory. Standard output/error are private scratch files removed
-after execution. No source path is writable; there is no `allow default`, downloader,
+owner-private scratch directory. Standard output/error are discarded through drained pipes
+without storing diagnostics; a 120-second watchdog refuses a stalled subprocess. No source
+path is writable; there is no `allow default`, downloader,
 tokenizer fallback or inherited environment. The OS-supplied system runtime and same-UID
 processes remain outside this sandbox's identity proof. Synthetic negative tests verify
 that an unrelated read and write fail while selected input reads and scratch writes work.

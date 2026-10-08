@@ -158,7 +158,7 @@ struct AdmissionTests {
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_SPEECH_STAGE_PATH"] != nil),
           .timeLimit(.minutes(3)))
-    func provisionedCandidateRunsSyntheticOffline() throws {
+    func provisionedCandidateRunsSyntheticOffline() async throws {
         let stage = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["WW_SPEECH_STAGE_PATH"]))
         try ApprovedWhisperRuntime.verify(at: stage)
         let scratch = stage.appendingPathComponent("scratch-\(UUID().uuidString)", isDirectory: true)
@@ -190,12 +190,15 @@ struct AdmissionTests {
                                           inputWAV: finalInput, scratch: scratch)
         #expect(plan.executable.path == "/usr/bin/sandbox-exec")
         let started = ContinuousClock.now
-        let output = try plan.run()
+        let output = try await plan.run()
         let elapsed = started.duration(to: .now)
         let report = try JSONSerialization.jsonObject(with: Data(contentsOf: output)) as? [String: Any]
         let segments = report?["transcription"] as? [[String: Any]]
         #expect(segments != nil)
         #expect(segments?.allSatisfy { $0["offsets"] != nil && $0["timestamps"] != nil } == true)
+        #expect(!FileManager.default.fileExists(atPath: scratch.appendingPathComponent("stdout").path))
+        #expect(!FileManager.default.fileExists(atPath: scratch.appendingPathComponent("stderr").path))
+        await #expect(throws: SpeechAdmissionRefusal.runtimeNotStaged) { try await plan.run() }
         print("WWSpeech staged synthetic offline: seconds=1 elapsed=\(elapsed) status=0")
     }
 }

@@ -137,42 +137,72 @@ public struct OfflineWhisperPlan: Sendable {
 
     /// No inherited DYLD, proxy, home or tokenizer environment. No transcript text is logged.
     /// Caller must supply gateway-derived, explicitly selected-primary PCM in private scratch.
-    package func run() throws(SpeechAdmissionRefusal) -> URL {
+    package func run() async throws(SpeechAdmissionRefusal) -> URL {
         try ApprovedWhisperRuntime.verify(at: stage)
         let input = scratch.appendingPathComponent("input.wav")
+        let output = scratch.appendingPathComponent("result.json")
         var info = stat()
         guard lstat(input.path, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
               info.st_flags & UInt32(SF_DATALESS) == 0 else { throw .runtimeNotStaged }
+        guard lstat(output.path, &info) != 0, errno == ENOENT else { throw .runtimeNotStaged }
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
         process.environment = ["HOME": scratch.path, "TMPDIR": scratch.path, "PATH": "/usr/bin:/bin",
                                "GGML_BACKEND_PATH": stage.appendingPathComponent("libexec/libggml-cpu-apple_m1.so").path]
-        let stdout = scratch.appendingPathComponent("stdout")
-        let stderr = scratch.appendingPathComponent("stderr")
-        let outFD = open(stdout.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard outFD >= 0 else { throw .runtimeNotStaged }
-        let errFD = open(stderr.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard errFD >= 0 else {
-            _ = close(outFD)
-            try? FileManager.default.removeItem(at: stdout)
-            throw .runtimeNotStaged
+        let stdout = Pipe()
+        let stderr = Pipe()
+        for pipe in [stdout, stderr] {
+            pipe.fileHandleForReading.readabilityHandler = { handle in
+                if handle.availableData.isEmpty { handle.readabilityHandler = nil }
+            }
         }
         defer {
-            try? FileManager.default.removeItem(at: stdout)
-            try? FileManager.default.removeItem(at: stderr)
+            stdout.fileHandleForReading.readabilityHandler = nil
+            stderr.fileHandleForReading.readabilityHandler = nil
+        }
+        process.standardOutput = stdout
+        process.standardError = stderr
+        let finished = AsyncStream<Void> { continuation in
+            process.terminationHandler = { _ in
+                continuation.yield()
+                continuation.finish()
+            }
         }
         do {
-            let out = FileHandle(fileDescriptor: outFD, closeOnDealloc: true)
-            let err = FileHandle(fileDescriptor: errFD, closeOnDealloc: true)
-            defer { try? out.close(); try? err.close() }
-            process.standardOutput = out
-            process.standardError = err
             try process.run()
-            process.waitUntilExit()
         } catch { throw .sandboxFailed }
+        let watchdog = Task {
+            var timedOut = false
+            do {
+                try await Task.sleep(for: .seconds(120))
+                guard process.isRunning else { return false }
+                timedOut = true
+                process.terminate()
+                try await Task.sleep(for: .seconds(5))
+                if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
+            } catch is CancellationError {
+                return timedOut
+            } catch {
+                if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
+                return true
+            }
+            return timedOut
+        }
+        for await _ in finished { break }
+        watchdog.cancel()
+        let timedOut = await watchdog.value
+        if Task.isCancelled {
+            if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
+            throw .sandboxFailed
+        }
         try ApprovedWhisperRuntime.verify(at: stage)
-        guard process.terminationStatus == 0 else { throw .sandboxFailed }
-        return scratch.appendingPathComponent("result.json")
+        var outputState = stat()
+        guard !timedOut, process.terminationStatus == 0,
+              lstat(output.path, &outputState) == 0,
+              outputState.st_mode & S_IFMT == S_IFREG, outputState.st_size > 0,
+              outputState.st_flags & UInt32(SF_DATALESS) == 0
+        else { throw .sandboxFailed }
+        return output
     }
 }
