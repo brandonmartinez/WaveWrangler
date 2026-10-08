@@ -95,6 +95,19 @@ struct UITestHooksDebugOnlyTests {
             try String(contentsOf: runtimeURL, encoding: .utf8)
         }
 
+        /// #219 review, finding 1: both whole-model replacements are computed from a snapshot across awaits,
+        /// so neither may publish without the store's `expecting:` check against the live model.
+        @Test func wholeModelReplacementsAreGuardedAgainstConcurrentEdits() throws {
+            let source = try UITestHooksDebugOnlyTests.source("Alignment/EpisodeAlignmentModel.swift")
+            let calls = source.components(separatedBy: "store.applyReplacement(").dropFirst()
+            #expect(calls.count == 2, "the split and the accept are the only whole-model replacements")
+            for call in calls {
+                #expect(call.prefix(200).contains("expecting: prior,"))
+            }
+            let store = try UITestHooksDebugOnlyTests.source("Document/ShowDocumentStore.swift")
+            #expect(store.contains("SharedModelPublication.decide(live: model, expected: expected) == .publish"))
+        }
+
         @Test func inspectionNeverActivatesTheMutableLiveModel() throws {
             let source = try Self.runtimeSource()
             let start = try #require(source.range(of: "func inspect("))

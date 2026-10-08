@@ -212,6 +212,7 @@ final class EpisodeAlignmentModel {
                 )
                 if document.store.applyReplacement(
                     UndoActionName.startNewEpochAtAnchor,
+                    expecting: prior,
                     model: accepted.model,
                     afterChange: persistenceCallback(document: document, accepted: accepted)
                 ) {
@@ -226,6 +227,12 @@ final class EpisodeAlignmentModel {
                     message = "Started \(epoch.label) at the selected anchor. The new epoch is unsupported until you time it."
                 } else {
                     anchorSelection = keptAnchorSelection
+                    // `accepted.model` replaces the whole show, and every window shares this store: the
+                    // activation and the split above each suspend, so an edit made meanwhile is already
+                    // live. The store refuses the stale replacement; say so rather than fail silently.
+                    if SharedModelPublication.decide(live: document.store.model, expected: prior) == .superseded {
+                        message = SharedModelPublication.supersededSplitMessage
+                    }
                 }
             } catch {
                 anchorSelection = keptAnchorSelection
@@ -570,6 +577,7 @@ final class EpisodeAlignmentModel {
                 let accepted = try await runtime.accept(model: prior, episode: episodeID, decisions: decisions)
                 let applied = document.store.applyReplacement(
                     actionName,
+                    expecting: prior,
                     model: accepted.model,
                     afterChange: persistenceCallback(document: document, accepted: accepted)
                 )
@@ -588,6 +596,12 @@ final class EpisodeAlignmentModel {
                     } else if actionName == UndoActionName.rejectProposal {
                         announce("Rejected proposal for \(selectedRow?.epochLabel ?? "selected epoch")")
                     }
+                } else if SharedModelPublication.decide(
+                    live: document.store.model, expected: prior
+                ) == .superseded {
+                    // `accepted.model` replaces the whole show and the accept above suspends, so an edit
+                    // made in another window meanwhile is already live. Refuse rather than overwrite it.
+                    message = SharedModelPublication.supersededCorrectionMessage
                 }
             } catch {
                 lastError = String(describing: error)

@@ -83,6 +83,23 @@ final class ShowDocumentStore {
         return true
     }
 
+    /// Applies a replacement that was computed from `expected`, but only while the live model is still
+    /// exactly that snapshot.
+    ///
+    /// Windows share one store, so a replacement prepared across awaits can arrive after another window has
+    /// edited the show; publishing it then would discard that edit. Returns false without touching the model
+    /// when the snapshot has been superseded (#219).
+    @discardableResult
+    func applyReplacement(
+        _ actionName: String,
+        expecting expected: ShowDocumentModel,
+        model newModel: ShowDocumentModel,
+        afterChange: @escaping @MainActor (ShowDocumentModel) -> Void
+    ) -> Bool {
+        guard SharedModelPublication.decide(live: model, expected: expected) == .publish else { return false }
+        return applyReplacement(actionName, model: newModel, afterChange: afterChange)
+    }
+
     private func replace(
         with newModel: ShowDocumentModel,
         actionName: String,

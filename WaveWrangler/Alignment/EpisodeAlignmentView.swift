@@ -806,14 +806,15 @@ private struct EditAnchorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @FocusState private var alignedTimeFocused: Bool
     /// The field is bound to text, not to a `Double` through a formatter: a formatter-bound field only
-    /// writes back when it resigns first responder, so Return would apply the pre-edit value (#219).
-    @State private var alignedText: String
+    /// writes back when it resigns first responder, so Return would apply the pre-edit value (#219). The
+    /// frame-exact value of record lives in `AnchorTimeEditing`, which the text only renders.
+    @State private var editing: AnchorTimeEditing
 
     init(model: EpisodeAlignmentModel, anchorID: Int) {
         self.model = model
         self.anchorID = anchorID
         let seconds = model.selectedAnchors.first { $0.id == anchorID }?.alignedSeconds ?? 0
-        _alignedText = State(initialValue: Self.text(for: seconds))
+        _editing = State(initialValue: AnchorTimeEditing(seconds: seconds))
     }
 
     var body: some View {
@@ -833,7 +834,10 @@ private struct EditAnchorSheet: View {
                     .accessibilityIdentifier("alignment.anchor.groupTime")
             }
             LabeledContent("Aligned time (seconds)") {
-                TextField("Aligned time", text: $alignedText)
+                TextField("Aligned time", text: Binding(
+                    get: { editing.text },
+                    set: { editing.typed($0) }
+                ))
                 .frame(width: 140)
                 .focused($alignedTimeFocused)
                 .accessibilityLabel("Aligned time")
@@ -866,15 +870,12 @@ private struct EditAnchorSheet: View {
         model.selectedAnchors.first { $0.id == anchorID }
     }
 
-    private var alignedSeconds: Double? { Double(alignedText.trimmingCharacters(in: .whitespaces)) }
-
-    private static func text(for seconds: Double) -> String {
-        String(format: "%.3f", seconds)
-    }
-
+    /// Return commits only a value the user actually changed: an untouched field (or one edited back to
+    /// the anchor's own value) dismisses without an edit, leaving the anchor bit-identical (#219).
     private func apply() {
-        guard let alignedSeconds else { return }
-        model.editAnchor(id: anchorID, alignedSeconds: alignedSeconds)
+        if let committed = editing.committedValue {
+            model.editAnchor(id: anchorID, alignedSeconds: committed)
+        }
         dismiss()
     }
 
@@ -889,10 +890,9 @@ private struct EditAnchorSheet: View {
     }
 
     private func nudge(by steps: Double) -> KeyPress.Result {
+        guard editing.isParsable else { return .ignored }
         let shift = NSEvent.modifierFlags.contains(.shift)
-        let step = shift ? 0.1 : model.alignedNudgeSeconds
-        guard let current = alignedSeconds else { return .ignored }
-        alignedText = Self.text(for: current + steps * step)
+        editing.nudge(steps: steps, step: shift ? 0.1 : model.alignedNudgeSeconds)
         return .handled
     }
 }

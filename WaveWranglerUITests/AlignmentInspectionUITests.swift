@@ -275,8 +275,17 @@ final class AlignmentInspectionUITests: XCTestCase {
         }
         let inspector = app.descendants(matching: .any)["ww.inspector"]
         XCTAssertEqual(inspector.label, "Inspector")
-        let groups = app.descendants(matching: .any)["ww.alignment.groups"]
-        let anchors = app.descendants(matching: .any)["ww.alignment.anchors"]
+        // Resolve every container the audit may waive *before* the audit runs, so each waiver is pinned to
+        // one element's exact frame and to the identified children it exposes, rather than to any group of
+        // roughly the right shape (#219 review).
+        let inspectorColumn = resolveInspectorColumn(
+            around: inspector, excluding: [contentInspector.frame, sidebar.frame]
+        )
+        let actionRows = resolveActionRows(in: workspaceRoot)
+        XCTAssertLessThanOrEqual(
+            actionRows.count, 2,
+            "Only the alignment action grid's own rows may be waived"
+        )
         // Cell containers are matched by their place in an outline's subtree rather than by geometry: a
         // row scrolled under the table's edge reaches outside the outline's own frame. The identified
         // elements above are the scroll views; rows hang off their enclosing outlines.
@@ -306,11 +315,13 @@ final class AlignmentInspectionUITests: XCTestCase {
                   element.elementType == .group || element.elementType == .other
             else { return self.reportUnwaived(issue) }
             let isContent = self.approximatelyEqual(element.frame, contentInspector.frame)
-            // SwiftUI owns the inspector column's chrome around our labelled Inspector scroll area, so
-            // no modifier reaches it; it is waived only while that labelled child stays exposed.
+            // SwiftUI owns the inspector column's chrome around our labelled Inspector scroll area, so no
+            // modifier reaches it. It is waived only as the one container resolved above: the same exact
+            // frame (width and height) and still exposing the labelled `ww.inspector` scroll area.
+            let exposedInspector = element.descendants(matching: .any)["ww.inspector"].exists
+                ? ["ww.inspector"] : []
             let isInspectorColumn = inspector.exists
-                && element.frame.contains(inspector.frame)
-                && element.frame.width - inspector.frame.width <= 16
+                && inspectorColumn?.matches(element, exposing: exposedInspector) == true
             let isSidebar = self.approximatelyEqual(element.frame, sidebar.frame)
             let isShowSection = sidebar.frame.contains(element.frame)
                 && element.frame.contains(showInfo.frame)
@@ -319,13 +330,15 @@ final class AlignmentInspectionUITests: XCTestCase {
             // SwiftUI description reaches it: labelling the cell content, combining its children and
             // the value-keypath shorthand all leave this one container undescribed (#219). It is waived
             // only while its own labelled text child is still exposed to assistive technology.
-            // The action buttons' own row is an undescribed layout container: declaring it a containing
-            // element drops its buttons from the tree in a narrow window (#219), so it is waived while
-            // every one of its children is a labelled control.
-            let actionButtons = element.descendants(matching: .button).allElementsBoundByIndex
-            let isActionRow = actionButtons.count >= 4
-                && actionButtons.allSatisfy { !$0.label.isEmpty }
-                && element.frame.height <= 40
+            // The action buttons' own grid rows are undescribed layout containers: declaring one a
+            // containing element drops its buttons from the tree in a narrow window (#219). Each is waived
+            // only as a row resolved above: the same exact frame, exposing exactly the same alignment
+            // action buttons by identifier.
+            let exposedActionButtons = element.descendants(matching: .button)
+                .allElementsBoundByIndex.map(\.identifier)
+            let isActionRow = actionRows.contains {
+                $0.matches(element, exposing: exposedActionButtons)
+            }
             let isOutlineCell = outlineCellFrames.contains(element.frame)
                 && element.descendants(matching: .any).allElementsBoundByIndex
                     .contains { !$0.label.isEmpty || !(($0.value as? String) ?? "").isEmpty }
@@ -400,15 +413,27 @@ final class AlignmentInspectionUITests: XCTestCase {
             else { return self.reportUnwaived(issue) }
             let isTitle = (element.value as? String ?? element.label) == "Empty Alignment"
                 && element.frame.maxY <= titlebarBottom
-            // The episode sidebar is standard list chrome beside the blocked content, and AppKit dims it
-            // while the window is inactive; the blocked content itself is audited unwaived.
-            let isSidebar = sidebar.exists && sidebar.frame.contains(element.frame)
-            guard isTitle || isSidebar else { return self.reportUnwaived(issue) }
-            if isSidebar {
+            // #219 review, finding 4: the former blanket "anything in the sidebar" waiver is gone. Sidebar
+            // text is waived one element at a time, and only on measured proof that it is legible now —
+            // the same `ContrastMeter` p75 ≥ 4.5 bar the other narrow handlers use. Anything that fails to
+            // measure is a real finding and fails the audit.
+            if !isTitle {
+                guard sidebar.exists, sidebar.frame.contains(element.frame), element.exists else {
+                    return self.reportUnwaived(issue)
+                }
+                let measured = ContrastMeter.measure(element.screenshot().image) ?? [:]
+                let count = measured["glyphPixels"] as? Int ?? 0
+                let p75 = measured["glyphP75"] as? Double ?? 0
+                let stats = "glyphPixels \(count), p75 \(p75), max \(measured["ratio"] ?? 0), " +
+                    "\(measured["text"] ?? "") on \(measured["background"] ?? "")"
+                guard count >= AcceptanceAudit.minimumGlyphPixels, p75 >= 4.5 else {
+                    print("AUDIT UNWAIVED [blocked-sidebar] \(issue.compactDescription) — measured \(stats)")
+                    return self.reportUnwaived(issue)
+                }
                 sidebarFindings += 1
                 print(
-                    "AUDIT WAIVED [blocked-sidebar] \(issue.compactDescription) — " +
-                    "episode sidebar chrome beside the blocked content"
+                    "AUDIT WAIVED [blocked-sidebar-measured] \(issue.compactDescription) " +
+                    "id=\(element.identifier) label=\(element.label) — measured legible: \(stats)"
                 )
                 return true
             }
@@ -635,6 +660,62 @@ final class AlignmentInspectionUITests: XCTestCase {
             print("WW-AXTREE-BEGIN\n\(element.debugDescription)\nWW-AXTREE-END")
         }
         return false
+    }
+
+    /// One container the audit may waive. It is resolved from the tree *before* the audit runs, so the
+    /// waiver is bound to that element's own identity — its exact frame (width and height) and the exact
+    /// set of identified children it exposes — instead of to any element of a similar shape (#219 review).
+    private struct WaivableContainer {
+        let frame: CGRect
+        let exposedIdentifiers: [String]
+
+        func matches(_ element: XCUIElement, exposing identifiers: [String]) -> Bool {
+            element.frame == frame && identifiers == exposedIdentifiers
+        }
+    }
+
+    /// The alignment action grid's buttons. A grid row is waivable only while every button it exposes is
+    /// one of these, by identifier.
+    private static let actionButtonIdentifiers: Set<String> = [
+        "alignment.acceptProposal", "alignment.rejectProposal", "alignment.editNumeric",
+        "alignment.placeAnchors", "alignment.placeAnchorAtPlayhead", "alignment.deleteAnchor",
+        "alignment.editAnchor", "alignment.startNewEpoch",
+    ]
+
+    /// The undescribed layout rows the action grid builds, pinned by frame and by the buttons they expose.
+    private func resolveActionRows(in root: XCUIElement) -> [WaivableContainer] {
+        var rows: [WaivableContainer] = []
+        for element in root.descendants(matching: .any).allElementsBoundByIndex {
+            let type: XCUIElement.ElementType = element.elementType
+            guard type == .group || type == .other, element.frame.height <= 40 else { continue }
+            let identifiers = element.descendants(matching: .button).allElementsBoundByIndex.map(\.identifier)
+            guard identifiers.count >= 4,
+                  identifiers.allSatisfy({ Self.actionButtonIdentifiers.contains($0) })
+            else { continue }
+            rows.append(WaivableContainer(frame: element.frame, exposedIdentifiers: identifiers))
+        }
+        return rows
+    }
+
+    /// SwiftUI's own inspector column: the smallest container that wraps the labelled `ww.inspector` scroll
+    /// area without being the content or sidebar region. Resolved to exactly one element, or none.
+    private func resolveInspectorColumn(
+        around inspector: XCUIElement,
+        excluding excluded: [CGRect]
+    ) -> WaivableContainer? {
+        guard inspector.exists else { return nil }
+        let target = inspector.frame
+        var best: CGRect?
+        for element in app.descendants(matching: .any).allElementsBoundByIndex {
+            let type: XCUIElement.ElementType = element.elementType
+            guard type == .group || type == .other else { continue }
+            let frame: CGRect = element.frame
+            guard frame.contains(target), frame.width - target.width <= 16 else { continue }
+            guard !excluded.contains(where: { self.approximatelyEqual(frame, $0) }) else { continue }
+            if let current = best, current.width * current.height <= frame.width * frame.height { continue }
+            best = frame
+        }
+        return best.map { WaivableContainer(frame: $0, exposedIdentifiers: ["ww.inspector"]) }
     }
 
     private func approximatelyEqual(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
