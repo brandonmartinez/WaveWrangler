@@ -809,6 +809,9 @@ private struct EditAnchorSheet: View {
     /// writes back when it resigns first responder, so Return would apply the pre-edit value (#219). The
     /// frame-exact value of record lives in `AnchorTimeEditing`, which the text only renders.
     @State private var editing: AnchorTimeEditing
+    /// Set when Apply refuses the field's current text (#219 review finding 2), so the sheet stays open
+    /// with an accessible error instead of silently dismissing over unparsed or stale input.
+    @State private var showsInvalidTimeError = false
 
     init(model: EpisodeAlignmentModel, anchorID: Int) {
         self.model = model
@@ -834,17 +837,29 @@ private struct EditAnchorSheet: View {
                     .accessibilityIdentifier("alignment.anchor.groupTime")
             }
             LabeledContent("Aligned time (seconds)") {
-                TextField("Aligned time", text: Binding(
-                    get: { editing.text },
-                    set: { editing.typed($0) }
-                ))
-                .frame(width: 140)
-                .focused($alignedTimeFocused)
-                .accessibilityLabel("Aligned time")
-                .accessibilityIdentifier("alignment.anchor.alignedTime")
-                .onKeyPress(.upArrow) { nudge(by: 1) }
-                .onKeyPress(.downArrow) { nudge(by: -1) }
-                .onSubmit(apply)
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField("Aligned time", text: Binding(
+                        get: { editing.text },
+                        set: {
+                            editing.typed($0)
+                            showsInvalidTimeError = false
+                        }
+                    ))
+                    .frame(width: 140)
+                    .focused($alignedTimeFocused)
+                    .accessibilityLabel("Aligned time")
+                    .accessibilityIdentifier("alignment.anchor.alignedTime")
+                    .onKeyPress(.upArrow) { nudge(by: 1) }
+                    .onKeyPress(.downArrow) { nudge(by: -1) }
+                    .onSubmit(apply)
+                    if showsInvalidTimeError {
+                        Text("Enter a valid number of seconds.")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .accessibilityLabel("Aligned time is invalid. Enter a valid number of seconds.")
+                            .accessibilityIdentifier("alignment.anchor.alignedTimeError")
+                    }
+                }
             }
             Text("↑ and ↓ nudge by one output frame; hold Shift to nudge by 100 ms.")
                 .font(.caption)
@@ -870,13 +885,24 @@ private struct EditAnchorSheet: View {
         model.selectedAnchors.first { $0.id == anchorID }
     }
 
-    /// Return commits only a value the user actually changed: an untouched field (or one edited back to
-    /// the anchor's own value) dismisses without an edit, leaving the anchor bit-identical (#219).
+    /// Return/Apply validates the field's current text first (#219 review finding 2): invalid or empty
+    /// text keeps the sheet open with an accessible error and refocuses the field instead of dismissing
+    /// over a stale or unparsed value. Otherwise it commits only a value the user actually changed: an
+    /// untouched field (or one edited back to the anchor's own value) dismisses without an edit, leaving
+    /// the anchor bit-identical.
     private func apply() {
-        if let committed = editing.committedValue {
-            model.editAnchor(id: anchorID, alignedSeconds: committed)
+        switch editing.apply() {
+        case .invalid:
+            showsInvalidTimeError = true
+            alignedTimeFocused = true
+        case .unchanged:
+            showsInvalidTimeError = false
+            dismiss()
+        case .committed(let value):
+            showsInvalidTimeError = false
+            model.editAnchor(id: anchorID, alignedSeconds: value)
+            dismiss()
         }
-        dismiss()
     }
 
     /// AppKit mounts the sheet's field editor a frame or two after the sheet appears, so request focus

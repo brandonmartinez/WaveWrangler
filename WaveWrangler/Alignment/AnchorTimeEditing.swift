@@ -26,15 +26,45 @@ struct AnchorTimeEditing: Equatable {
         text = Self.text(for: seconds)
     }
 
-    /// The value Return should commit, or nil when there is nothing to commit. An untouched field and a
-    /// field edited back to the anchor's own value both leave the anchor exactly as it was.
+    /// The value Return should commit, or nil when there is nothing to commit. An untouched field, a
+    /// field edited back to the anchor's own value, and a field whose current text doesn't parse all
+    /// leave the anchor exactly as it was.
     var committedValue: Double? {
-        guard hasEdited, seconds != original else { return nil }
-        return seconds
+        guard hasEdited, let value = currentValue, value != original else { return nil }
+        return value
     }
 
     /// Whether the text currently in the field is a number, so a nudge never discards half-typed input.
     var isParsable: Bool { Self.parse(text) != nil }
+
+    /// What Apply/Return should do with the field right now (#219 review finding 2). Invalid or empty
+    /// text always refuses and reports `.invalid`, even when an earlier edit in this same session already
+    /// parsed to a real value: committing that stale `seconds` over text the user has since overwritten
+    /// is exactly the bug this closes. Only a value actually parsed from the *current* text can commit.
+    enum ApplyOutcome: Equatable {
+        case committed(Double)
+        case unchanged
+        case invalid
+    }
+
+    /// Validates the current text and decides the Apply outcome, keeping `seconds` in sync with a
+    /// successful parse so a later nudge starts from it.
+    mutating func apply() -> ApplyOutcome {
+        guard let value = currentValue else { return .invalid }
+        seconds = value
+        guard hasEdited, value != original else { return .unchanged }
+        return .committed(value)
+    }
+
+    /// The value represented by the field's current text: the full-precision value of record when the
+    /// text still matches its own rendering (as it does right after a nudge), otherwise whatever the text
+    /// parses to, or nil when it doesn't parse. This is the same starting point `nudge` uses, so an edit
+    /// immediately overwritten with unparsable text never falls back to an earlier, superseded edit.
+    private var currentValue: Double? {
+        let value = text == Self.text(for: seconds) ? seconds : Self.parse(text)
+        guard let value, value.isFinite else { return nil }
+        return value
+    }
 
     /// Moves the value of record by `steps` frames (or by a coarse step), never the rounded text.
     mutating func nudge(steps: Double, step: Double) {

@@ -85,6 +85,55 @@ struct AnchorTimeEditingTests {
         #expect(editing.text == "abc", "a nudge must not discard half-typed input")
     }
 
+    // MARK: - Apply (#219 review finding 2)
+
+    @Test func applyRefusesInvalidTextTypedAfterAValidEdit() {
+        var editing = AnchorTimeEditing(seconds: Self.anchor)
+        editing.typed("5.0")
+        editing.typed("abc")
+        #expect(editing.apply() == .invalid, "invalid text must refuse, not commit the earlier valid edit")
+        #expect(editing.committedValue == nil)
+    }
+
+    @Test func applyRefusesEmptyTextTypedAfterAValidEdit() {
+        var editing = AnchorTimeEditing(seconds: Self.anchor)
+        editing.typed("5.0")
+        editing.typed("")
+        #expect(editing.apply() == .invalid, "an emptied field must refuse, not commit the earlier valid edit")
+        #expect(editing.committedValue == nil)
+    }
+
+    @Test func applyRefusesInvalidTextTypedDirectlyOverTheOriginalValue() {
+        var editing = AnchorTimeEditing(seconds: Self.anchor)
+        editing.typed("abc")
+        #expect(editing.apply() == .invalid, "invalid text must refuse apply instead of dismissing silently")
+    }
+
+    @Test func applyIsANoOpForAnUntouchedField() {
+        var editing = AnchorTimeEditing(seconds: Self.anchor)
+        #expect(editing.apply() == .unchanged)
+        #expect(editing.seconds == Self.anchor)
+    }
+
+    @Test func applyIsANoOpForAValueEditedBackToTheOriginal() {
+        var editing = AnchorTimeEditing(seconds: Self.anchor)
+        editing.typed("0.5")
+        editing.typed(AnchorTimeEditing.text(for: Self.anchor))
+        #expect(editing.apply() == .unchanged)
+    }
+
+    @Test func applyCommitsANudgedValue() {
+        var editing = AnchorTimeEditing(seconds: Self.anchor)
+        editing.nudge(steps: 1, step: Self.rate48k)
+        #expect(editing.apply() == .committed(Self.anchor + Self.rate48k))
+    }
+
+    @Test func applyCommitsATypedValueAtFullPrecision() {
+        var editing = AnchorTimeEditing(seconds: Self.anchor)
+        editing.typed(" 0.000020833 ")
+        #expect(editing.apply() == .committed(0.000_020_833))
+    }
+
     @Test func wholeMillisecondValuesStillReadLikeTheAnchorsTable() {
         #expect(AnchorTimeEditing.text(for: 0.125) == "0.125")
         #expect(AnchorTimeEditing.text(for: 0) == "0.000")
