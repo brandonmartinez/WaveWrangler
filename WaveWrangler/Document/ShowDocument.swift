@@ -118,12 +118,17 @@ final class ShowDocument: NSDocument {
         let window = NSWindow(contentViewController: hosting)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         #if DEBUG
-        let initialHeight = UserDefaults.standard.bool(forKey: "WWUITestMinimumShowWindow") ? 440.0 : 520.0
+        let minimumFixture = UserDefaults.standard.bool(forKey: "WWUITestMinimumShowWindow")
+        let initialHeight = minimumFixture ? 440.0 : 520.0
+        let initialWidth = minimumFixture ? 760.0 : 1030.0
         #else
         let initialHeight = 520.0
+        let initialWidth = 1030.0
         #endif
+        // The Setup table needs the native inspector's original default room; the 760 pt
+        // minimum remains available for the compact Alignment workspace and explicit resizing.
         window.contentMinSize = NSSize(width: 760, height: 440)
-        window.setContentSize(NSSize(width: 760, height: initialHeight))
+        window.setContentSize(NSSize(width: initialWidth, height: initialHeight))
         window.tabbingMode = .preferred
         addWindowController(NSWindowController(window: window))
     }

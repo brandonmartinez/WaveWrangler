@@ -307,7 +307,7 @@ enum AcceptanceAudit {
     /// low-contrast instance (e.g. a selected row measured 4.02:1) stays unwaived.
     @MainActor
     static func measuredArtefact(_ element: XCUIElement, inspectorFrame: CGRect?, episodeInspectorShown: Bool,
-                                 entriesFrame: CGRect?, windowFrames: [CGRect], inSheet: Bool) -> String? {
+                                 entriesFrame: CGRect?, windowFrames: [CGRect], popoverFrame: CGRect?, inSheet: Bool) -> String? {
         let id = element.identifier
         let text = (element.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? element.label
         let mid = CGPoint(x: element.frame.midX, y: element.frame.midY)
@@ -352,6 +352,11 @@ enum AcceptanceAudit {
         if id == "ww.show.saveStatus.popover" {
             return "save-status popover text, system text (mini #197 round 3, 0d99329: p75 9.14:1, max 9.47:1)"
         }
+        if id == "ww.setup.empty.importExplanation", let popoverFrame,
+           element.isHittable, windowFrames.contains(where: { $0.contains(element.frame) }),
+           !popoverFrame.intersects(element.frame) {
+            return "fully visible empty-Setup explanation beside the save-status popover (#240: 12,074 glyph pixels, p75 12.39:1)"
+        }
         return nil
     }
 
@@ -379,6 +384,8 @@ enum AcceptanceAudit {
         let entriesFrame: CGRect? = entries.exists ? entries.frame : nil
         let windows = app.windows.allElementsBoundByIndex
         let windowFrames = windows.map(\.frame)
+        let popover = app.popovers.firstMatch
+        let popoverFrame: CGRect? = popover.exists ? popover.frame : nil
         var contrast: [(XCUIElement, String)] = []
         var issueFor: [XCUIAccessibilityAuditIssue] = []
         func describe(_ issue: XCUIAccessibilityAuditIssue) -> String {
@@ -473,7 +480,8 @@ enum AcceptanceAudit {
                 continue
             }
             if let artefact = measuredArtefact(element, inspectorFrame: inspectorFrame, episodeInspectorShown: episodeInspectorShown,
-                                               entriesFrame: entriesFrame, windowFrames: windowFrames, inSheet: inSheet),
+                                               entriesFrame: entriesFrame, windowFrames: windowFrames,
+                                               popoverFrame: popoverFrame, inSheet: inSheet),
                passesGlyphContrast(measured) {
                 waived.append(["finding": description, "kind": "measured-artefact", "measured": stats, "rationale": artefact])
                 print("AUDIT WAIVED \(description) — \(artefact); measured now \(stats)")

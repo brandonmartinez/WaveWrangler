@@ -307,6 +307,13 @@ final class ShowWindowState {
         ) { [weak self, weak window] _ in
             MainActor.assumeIsolated {
                 guard let self, let window, self.window === window else { return }
+                #if DEBUG
+                if let visible = NSScreen.screens.first?.visibleFrame, !visible.contains(window.frame) {
+                    DispatchQueue.main.async { [weak window] in
+                        if let window, window.isVisible { LaunchFixtures.placeForTesting(window) }
+                    }
+                }
+                #endif
                 self.store.document?.presentFormatUpdatePromptIfNeeded(preferring: window)
             }
         })
