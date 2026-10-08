@@ -29,16 +29,17 @@ private struct ShowWindowContent: View {
 
     var body: some View {
         GeometryReader { geometry in
-            // Only Alignment needs the hand-built split: its workspace and inspector must both stay
-            // reachable in a 760-wide window (T-M2-01). Setup keeps SwiftUI's inspector column, whose
-            // width the Sources table's columns are sized against (#129).
-            if geometry.size.width < 900, state.destination == .alignment {
+            // The hand-built split keeps content and inspector reachable in a 760-wide window (T-M2-01).
+            // Switching this branch on the destination re-enters AppKit's constraint update and aborts,
+            // so every destination uses it, and the inspector stays narrow enough for the Sources table
+            // to keep its columns' minimum width at the default size (#129).
+            if geometry.size.width < 900 {
                 HStack(spacing: 0) {
                     core
                     if state.inspectorPresented {
                         Divider()
                         InspectorContainer(state: state)
-                            .frame(width: 260)
+                            .frame(width: 190)
                     }
                 }
             } else {
