@@ -33,7 +33,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             "selected=\(reviewDestination.isSelected)",
             "notice=\(app.descendants(matching: .any)["ww.review.provisionalNotice"].exists)",
             "timeline=\(app.descendants(matching: .any)["ww.review.timelinePane"].exists)",
-            "inspector=\(app.descendants(matching: .any)["ww.review.inspector"].exists)",
+            "inspector=\(app.staticTexts["ww.review.inspector.heading"].exists)",
             "showInfo=\(app.descendants(matching: .any)["ww.show.showInfoSummary.title"].exists)",
             "setup=\(app.descendants(matching: .any)["ww.setup.sources"].exists)",
         ].joined(separator: "; ")
@@ -52,7 +52,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["ww.show.showInfoSummary.title"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.descendants(matching: .any)["ww.inspector.showInfo"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.staticTexts["ww.review.heading"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["ww.review.inspector"].exists)
+        XCTAssertFalse(app.staticTexts["ww.review.inspector.heading"].exists)
     }
 
     func testEachDisabledEditActionShowsItsOwnRefusalReason() {

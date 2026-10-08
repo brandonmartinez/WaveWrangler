@@ -32,7 +32,7 @@ struct TranscriptReviewView: View {
                     .accessibilityIdentifier("ww.review.heading")
                 Text("Provisional UI shell · synthetic fixture only · no media read or speech analysis.")
                     .wwFont(.body)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("ww.review.provisionalNotice")
             }
@@ -134,7 +134,7 @@ struct TranscriptReviewView: View {
                             .fontWeight(.medium)
                         Text(lane.state)
                             .wwFont(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.primary)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel(lane.label)
@@ -152,6 +152,7 @@ struct TranscriptReviewView: View {
                     .accessibilityLabel(domain.1)
                     .accessibilityValue(TranscriptReviewShellPresentation.timeNotEstablished)
                     .accessibilityIdentifier("ww.review.timeline.domain.\(domain.0)")
+                    .foregroundStyle(.primary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -173,6 +174,7 @@ struct TranscriptReviewInspector: View {
             Text("Review Inspector")
                 .wwFont(.headline)
                 .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("ww.review.inspector.heading")
 
             Text("Selected occurrence: \(state.selectedOccurrence?.title ?? "No occurrence selected")")
                 .fixedSize(horizontal: false, vertical: true)
@@ -213,13 +215,16 @@ struct TranscriptReviewInspector: View {
             .accessibilityIdentifier("ww.review.inspector.proposal")
 
             Text("Analysis state: None")
+                .foregroundStyle(.primary)
                 .accessibilityLabel("Analysis state")
                 .accessibilityValue("None — this shell contains no analysis")
                 .accessibilityIdentifier("ww.review.inspector.analysisState")
 
             Text("Primary role: synthetic example, not analyzed")
+                .foregroundStyle(.primary)
                 .accessibilityIdentifier("ww.review.inspector.primaryState")
             Text("Backup role: synthetic example, not analyzed; no transcript")
+                .foregroundStyle(.primary)
                 .accessibilityIdentifier("ww.review.inspector.backupState")
 
             ForEach(TranscriptReviewShellPresentation.timeDomains, id: \.0) { domain in
@@ -255,8 +260,6 @@ struct TranscriptReviewInspector: View {
                 .accessibilityIdentifier("ww.review.inspector.previewBlockedReason")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("ww.review.inspector")
     }
 
     private func actionButton(_ title: String, id: String, reason: String) -> some View {

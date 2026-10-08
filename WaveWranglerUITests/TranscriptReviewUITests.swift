@@ -33,7 +33,7 @@ final class TranscriptReviewUITests: XCTestCase {
             "selected=\(reviewDestination.isSelected)",
             "notice=\(app.descendants(matching: .any)["ww.review.provisionalNotice"].exists)",
             "timeline=\(app.descendants(matching: .any)["ww.review.timelinePane"].exists)",
-            "inspector=\(app.descendants(matching: .any)["ww.review.inspector"].exists)",
+            "inspector=\(app.staticTexts["ww.review.inspector.heading"].exists)",
             "showInfo=\(app.descendants(matching: .any)["ww.show.showInfoSummary.title"].exists)",
             "setup=\(app.descendants(matching: .any)["ww.setup.sources"].exists)",
         ].joined(separator: "; ")
@@ -86,15 +86,14 @@ final class TranscriptReviewUITests: XCTestCase {
     }
 
     func testKeyboardOccurrenceSelectionUpdatesTheInspector() {
-        let inspector = app.scrollViews["ww.inspector"]
-        XCTAssertTrue(inspector.waitForExistence(timeout: 3))
-        inspector.swipeUp()
+        let inspectorHeading = app.staticTexts["ww.review.inspector.heading"]
+        XCTAssertTrue(inspectorHeading.waitForExistence(timeout: 3))
 
         let firstOccurrence = app.descendants(matching: .any)["ww.review.occurrence.synthetic-001"]
         XCTAssertTrue(firstOccurrence.waitForExistence(timeout: 3))
         firstOccurrence.click()
         XCTAssertTrue(
-            app.descendants(matching: .any)["ww.review.inspector"].exists,
+            inspectorHeading.exists,
             "The Review inspector remains selected after choosing an occurrence"
         )
         let tokenID = app.descendants(matching: .any)["ww.review.inspector.tokenID"]
