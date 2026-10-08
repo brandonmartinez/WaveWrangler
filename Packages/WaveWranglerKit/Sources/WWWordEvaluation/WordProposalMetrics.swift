@@ -176,6 +176,7 @@ public enum WordProposalScorer {
             referenceByID[word.id] = word
         }
         var observationIDs = Set<String>()
+        var claimedReferenceIDs = Set<String>()
         var matched: [String: ObservedWord] = [:]
         var validObservedIDs = Set<String>()
         var hallucinations: [EvaluationStratum: Int] = [:]
@@ -192,7 +193,12 @@ public enum WordProposalScorer {
             if case .supported(let start) = word.start, case .supported(let end) = word.end, end <= start {
                 throw EvaluationError.invalidObservation
             }
-            guard let id = word.matchedReferenceID, let reference = referenceByID[id] else {
+            guard let id = word.matchedReferenceID else {
+                hallucinations[word.stratum, default: 0] += 1
+                continue
+            }
+            guard claimedReferenceIDs.insert(id).inserted else { throw EvaluationError.duplicateIdentifier }
+            guard let reference = referenceByID[id] else {
                 hallucinations[word.stratum, default: 0] += 1
                 continue
             }
@@ -202,7 +208,6 @@ public enum WordProposalScorer {
                 hallucinations[word.stratum, default: 0] += 1
                 continue
             }
-            guard matched[id] == nil else { throw EvaluationError.duplicateIdentifier }
             guard let ordinal = ordinalByID[id],
                   ordinal > lastObservedOrdinal[word.occurrenceID, default: -1] else {
                 throw EvaluationError.invalidObservation
@@ -236,13 +241,18 @@ public enum WordProposalScorer {
                                               maximumAbsoluteErrorMilliseconds: errors.max())
         }
         var truth: [String: ReferenceProposal] = [:]
+        var targetSequences = Set<[String]>()
         for target in targets {
+            let ordinals = target.wordIDs.compactMap { ordinalByID[$0] }
             guard !target.id.isEmpty, !target.wordIDs.isEmpty,
                   Set(target.wordIDs).count == target.wordIDs.count,
+                  ordinals.count == target.wordIDs.count,
+                  zip(ordinals, ordinals.dropFirst()).allSatisfy({ $0.0 < $0.1 }),
                   target.wordIDs.allSatisfy({ referenceByID[$0]?.stratum == target.stratum }),
                   Set(target.wordIDs.compactMap { referenceByID[$0]?.occurrenceID }).count == 1
             else { throw EvaluationError.invalidReference }
             guard truth.updateValue(target, forKey: target.id) == nil else { throw EvaluationError.duplicateIdentifier }
+            guard targetSequences.insert(target.wordIDs).inserted else { throw EvaluationError.duplicateIdentifier }
         }
         let observedByID = Dictionary(uniqueKeysWithValues: observations.map { ($0.id, $0) })
         var proposalIDs = Set<String>(), credited = Set<String>()

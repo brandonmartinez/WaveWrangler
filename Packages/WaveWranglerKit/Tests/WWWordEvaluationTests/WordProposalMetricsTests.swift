@@ -146,6 +146,62 @@ struct WordProposalMetricsTests {
         #expect(report.proposals.abstentions == 4)
     }
 
+    @Test func distinctTargetIDsCannotDoubleCreditTheSameAnnotatedWords() throws {
+        let (words, observed, targets, proposals) = Self.fixture()
+        let duplicateTargets = targets.map {
+            ReferenceProposal(id: "duplicate-\($0.id)", stratum: $0.stratum, wordIDs: $0.wordIDs)
+        }
+        let duplicateProposals = targets.map {
+            ObservedProposal(id: "duplicate-\($0.id)", targetID: "duplicate-\($0.id)",
+                             stratum: $0.stratum, wordIDs: $0.wordIDs)
+        }
+        #expect(throws: EvaluationError.duplicateIdentifier) {
+            try WordProposalScorer.score(words: words, observations: observed,
+                                         targets: targets + duplicateTargets,
+                                         proposals: proposals + duplicateProposals, abstentions: 0)
+        }
+    }
+
+    @Test func nonchronologicalAnnotatedTargetsAreInvalidTruth() throws {
+        let (words, observed, targets, proposals) = Self.fixture()
+        for wordIDs in [["0-1", "0-0"], ["0-0", "0-2", "0-1"]] {
+            let nonchronological = ReferenceProposal(id: "out-of-order", stratum: .shortClean, wordIDs: wordIDs)
+            #expect(throws: EvaluationError.invalidReference) {
+                try WordProposalScorer.score(words: words, observations: observed,
+                                             targets: targets + [nonchronological],
+                                             proposals: proposals, abstentions: 0)
+            }
+        }
+    }
+
+    @Test func duplicateReferenceClaimsFailEvenWhenSecondClaimMismatches() throws {
+        let (words, observed, targets, proposals) = Self.fixture()
+        let mismatches: [(String, EvaluationStratum, String)] = [
+            ("different", .shortClean, "um"),
+            ("occ-0", .noise, "um"),
+            ("occ-0", .shortClean, "different"),
+        ]
+        for (occurrenceID, stratum, text) in mismatches {
+            let duplicate = ObservedWord(id: "duplicate", matchedReferenceID: "0-0",
+                                         occurrenceID: occurrenceID, stratum: stratum, text: text,
+                                         start: .supported(milliseconds: 0), end: .supported(milliseconds: 150))
+            #expect(throws: EvaluationError.duplicateIdentifier) {
+                try WordProposalScorer.score(words: words, observations: observed + [duplicate],
+                                             targets: targets, proposals: proposals, abstentions: 0)
+            }
+        }
+        let unknown = ObservedWord(id: "unknown", matchedReferenceID: "not-in-truth",
+                                   occurrenceID: "occ-0", stratum: .shortClean, text: "um",
+                                   start: .missing, end: .missing)
+        let repeatedUnknown = ObservedWord(id: "repeated-unknown", matchedReferenceID: "not-in-truth",
+                                           occurrenceID: "occ-0", stratum: .shortClean, text: "um",
+                                           start: .missing, end: .missing)
+        #expect(throws: EvaluationError.duplicateIdentifier) {
+            try WordProposalScorer.score(words: words, observations: observed + [unknown, repeatedUnknown],
+                                         targets: targets, proposals: proposals, abstentions: 0)
+        }
+    }
+
     @Test func precisionAndWilsonUseSameEmittedDenominator() throws {
         let (words, observed, targets, original) = Self.fixture()
         let proposals = original.map { proposal in
