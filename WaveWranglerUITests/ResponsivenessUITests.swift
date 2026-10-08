@@ -46,8 +46,12 @@ final class ResponsivenessUITests: XCTestCase {
     /// is one of the three unavailable fixture entries (it doesn't open).
     private func openRow(_ row: Int) -> Double? {
         let title = String(format: "Synthetic Show %03d", row + 1)
-        entries.click()
-        entries.typeText(title)
+        let firstVisibleName = entries.staticTexts.matching(
+            NSPredicate(format: "label == 'Synthetic Show 001' OR value == 'Synthetic Show 001'")
+        ).firstMatch
+        guard firstVisibleName.waitForExistence(timeout: 5) else { return nil }
+        firstVisibleName.click()
+        app.typeText(title)
         let selected = entries.staticTexts.matching(
             NSPredicate(format: "label == %@ OR value == %@", title, title)
         ).firstMatch
