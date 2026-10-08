@@ -66,11 +66,16 @@ private struct AlignmentContentHost: NSViewRepresentable {
         init(model: EpisodeAlignmentModel) {
             hostingView = NSHostingView(rootView: AlignmentWorkspace(model: model))
             hostingView.sizingOptions = []
-            hostingView.setAccessibilityElement(false)
+            // The hosting view is the single labelled container for the workspace. Labelling it on the
+            // AppKit side keeps the SwiftUI tree untouched: `accessibilityElement(children: .contain)`
+            // on the SwiftUI root absorbed the scroll area's identifier and hid it from assistive
+            // clients entirely (#219). `HostedView` itself stays a pass-through so only one group exists.
+            hostingView.setAccessibilityElement(true)
+            hostingView.setAccessibilityRole(.group)
+            hostingView.setAccessibilityLabel("Alignment workspace")
+            hostingView.setAccessibilityIdentifier("ww.alignment.workspaceRoot")
             super.init(frame: .zero)
-            setAccessibilityElement(true)
-            setAccessibilityRole(.group)
-            setAccessibilityLabel("Alignment workspace")
+            setAccessibilityElement(false)
             hostingView.frame = bounds
             hostingView.autoresizingMask = [.width, .height]
             addSubview(hostingView)
@@ -264,7 +269,6 @@ private struct AlignmentWorkspace: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
             }
-            .accessibilityElement(children: .contain)
             .accessibilityLabel("Alignment workspace scroll area")
             .accessibilityIdentifier("ww.alignment.workspace")
             .onAppear {
@@ -291,9 +295,6 @@ private struct AlignmentWorkspace: View {
                 }
             }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Alignment workspace")
-        .accessibilityIdentifier("ww.alignment.workspaceRoot")
     }
 
 }

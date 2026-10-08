@@ -252,6 +252,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
         XCTAssertTrue(newEpisode.waitForExistence(timeout: 2))
         XCTAssertTrue(showInfo.waitForExistence(timeout: 2))
+        print("WW-AXTREE-BEGIN\n" + app.windows["ww.show.window"].debugDescription + "\nWW-AXTREE-END")
         let workspaceRoot = app.descendants(matching: .any)["ww.alignment.workspaceRoot"]
         XCTAssertTrue(workspaceRoot.waitForExistence(timeout: 2))
         XCTAssertEqual(workspaceRoot.label, "Alignment workspace")
