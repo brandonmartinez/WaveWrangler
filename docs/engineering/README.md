@@ -90,9 +90,15 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
   SwiftUI views (`NSHostingController`). No storyboard and no SwiftUI `DocumentGroup`.
 - **Portable show document** (`.wwshow`, UTI `com.brandonmartinez.wavewrangler.show`): one canonical
   JSON value, `ShowDocumentModel` — show, all episodes, recorder groups/epochs, logical source records,
-  speakers and per-episode assignments, edit-history skeleton, and (WW-020, show schema 3) an optional
-  per-episode `alignment`: append-only versioned time maps plus the accepted revision. Schema 1 and 2
-  shows open as "needs update" and migrate straight to 3 through `ShowSchemaMigration` (C5: backup, C3
+  speakers and per-episode assignments, edit-history skeleton, and (WW-020) an optional
+  per-episode `alignment`: append-only versioned time maps plus the accepted revision. Show schema 4
+  adds provisional episode-wide `editMaps` revisions and a persisted selected revision; neither a
+  saved selection nor a caller-supplied map authorizes execution. `ShowDocumentStore` guards map/history
+  publication with its live mutation serial and a fresh source/access/protected-decision proof, and
+  invalidates selections on dependency changes or failed proof during undo/redo. No production proof
+  provider or mapped render/speech consumer is wired yet: admission refuses until validated lane coverage,
+  inverse/grid/fades, source backing and protected decisions are available. Schema 1, 2 and 3
+  shows open as "needs update" and migrate straight to 4 through `ShowSchemaMigration` (C5: backup, C3
   publication, unknown-newer refusal). An embedded map from a newer time-map schema is refused as
   unknown-newer, never as damaged; a time-map schema bump requires a show schema bump.
 - **Canonical library document** (`.wwlibrary`, UTI `com.brandonmartinez.wavewrangler.library`):

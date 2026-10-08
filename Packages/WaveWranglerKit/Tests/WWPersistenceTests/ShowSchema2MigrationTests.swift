@@ -45,7 +45,7 @@ struct ShowSchema2MigrationTests {
         }
         let decoded = try ShowSchemaMigration.decodeSchema2(golden.bytes)
         #expect(decoded.revision == golden.revision)
-        #expect(decoded.payload.schemaVersion == 3)
+        #expect(decoded.payload.schemaVersion == SchemaVersion.show)
         #expect(decoded.payload.episodes.allSatisfy { $0.alignment == nil })
         #expect(decoded.payload == (try ShowSchemaMigration.decodeSchema1(Self.schema1Bytes(golden)).payload), "the same show as its schema 1 ancestor")
         #expect(try ShowSchemaMigration.decodeUpgradingOlder(golden.bytes).payload == decoded.payload)
@@ -132,7 +132,7 @@ struct ShowSchema2MigrationTests {
         #expect(receipt.publication.revision == golden.revision + 1)
         #expect(receipt.publication.priorCheckpoint == nil)
 
-        #expect(RevisionFingerprint(of: try Data(contentsOf: url)).schemaVersion == 3)
+        #expect(RevisionFingerprint(of: try Data(contentsOf: url)).schemaVersion == SchemaVersion.show)
         guard case let .editable(document, fingerprint) = V1.opener(rig).open(url, key: golden.key) else {
             Issue.record("migrated show is not editable")
             return
@@ -147,7 +147,7 @@ struct ShowSchema2MigrationTests {
     }
 
     @Test(arguments: ShowSchemaMigrationTests.goldens)
-    func aSchema1ShowMigratesStraightToSchema3(_ golden: Golden) throws {
+    func aSchema1ShowMigratesStraightToCurrentSchema(_ golden: Golden) throws {
         let hooks = ShowSchemaMigrationTests.RecordingHooks()
         let rig = Rig(hooks: hooks)
         let url = rig.url()
@@ -158,7 +158,7 @@ struct ShowSchema2MigrationTests {
         #expect(try Data(contentsOf: receipt.backup) == golden.bytes)
         #expect(receipt.backup.lastPathComponent.hasPrefix("schema1-"))
         let published = try Data(contentsOf: url)
-        #expect(RevisionFingerprint(of: published).schemaVersion == 3)
+        #expect(RevisionFingerprint(of: published).schemaVersion == SchemaVersion.show)
         let document = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(published)
         #expect(document.payload == (try ShowSchemaMigration.decodeSchema1(golden.bytes).payload))
     }
@@ -212,8 +212,8 @@ struct ShowSchema2MigrationTests {
         _ = try DocumentMigrator.show(publisher: rig.publisher).migrate(url, key: golden.key)
         let migrated = try Data(contentsOf: url)
 
-        #expect(throws: PersistenceError.unknownNewerSchema(found: 3, supported: 2)) { try Self.schema2Reader.decode(migrated) }
-        guard case .refusedNewerFormat(found: 3, supported: 2, _) = DocumentOpener(coder: Self.schema2Reader, recovery: rig.recovery).open(url) else {
+        #expect(throws: PersistenceError.unknownNewerSchema(found: SchemaVersion.show, supported: 2)) { try Self.schema2Reader.decode(migrated) }
+        guard case .refusedNewerFormat(found: SchemaVersion.show, supported: 2, _) = DocumentOpener(coder: Self.schema2Reader, recovery: rig.recovery).open(url) else {
             Issue.record("a schema 2 build must refuse schema 3 as unknown-newer, never as damaged")
             return
         }
@@ -221,14 +221,14 @@ struct ShowSchema2MigrationTests {
         let fixture = AlignmentPersistenceFixture()
         let withMaps = try JSONEnvelopeCoder<ShowDocumentModel>.show.encode(
             fixture.show(with: EpisodeAlignment(maps: [try fixture.version(1, map: try fixture.map())], acceptedRevision: 1)), revision: 1)
-        #expect(throws: PersistenceError.unknownNewerSchema(found: 3, supported: 2)) { try Self.schema2Reader.decode(withMaps) }
+        #expect(throws: PersistenceError.unknownNewerSchema(found: SchemaVersion.show, supported: 2)) { try Self.schema2Reader.decode(withMaps) }
 
         let record = try rig.recovery.writeEditCheckpoint(snapshot: migrated, base: nil, schemaVersion: SchemaVersion.show, for: golden.key,
                                                           at: Date(timeIntervalSince1970: 1_790_000_000))
         let offer = EditCheckpointOffer.assess([StoredEditCheckpoint(url: url, record: .success(record))], documentID: golden.key.rawValue,
                                                onDisk: nil, coder: Self.schema2Reader, belongsToDocument: { _ in true })
         #expect(offer.usable.isEmpty)
-        #expect(offer.problems == [.newerFormat(url, found: 3, supported: 2)])
+        #expect(offer.problems == [.newerFormat(url, found: SchemaVersion.show, supported: 2)])
     }
 
     // MARK: - Recovery records written before the format change

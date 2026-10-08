@@ -13,7 +13,9 @@ public enum SchemaVersion {
     /// as strict `WWTimeMap` JSON). Schema 1 and 2 shows are upgraded only through the same consented migration.
     /// An embedded map's `timeMapSchemaVersion` is part of this schema: a time-map schema bump requires a show
     /// schema bump (pinned by `AlignmentPersistenceTests.schemaVersionsArePinned`).
-    public static let show = 3
+    /// 4: the show owns provisional episode edit-map revisions and a selected revision. Older shows
+    /// require an explicit C5 migration before any edit; a selection is never source/protection proof.
+    public static let show = 4
     /// Canonical library document payload (`LibraryModel`).
     /// 2: adds `libraryID`. Schema 1 libraries are upgraded with a derived, stable ID (see WWPersistence
     /// `LibraryCoder`); the original bytes are kept as a backup before the first schema 2 publication.
@@ -32,19 +34,22 @@ public struct ShowDocumentModel: Sendable, Equatable, Codable {
     public var speakers: [Speaker]
     public var episodes: [Episode]
     public var history: EditHistory
+    public var editMaps: [EpisodeEditMaps]
 
     public init(
         schemaVersion: Int = SchemaVersion.show,
         show: Show,
         speakers: [Speaker] = [],
         episodes: [Episode] = [],
-        history: EditHistory = EditHistory()
+        history: EditHistory = EditHistory(),
+        editMaps: [EpisodeEditMaps] = []
     ) {
         self.schemaVersion = schemaVersion
         self.show = show
         self.speakers = speakers
         self.episodes = episodes
         self.history = history
+        self.editMaps = editMaps
     }
 
     /// A new, empty untitled show.

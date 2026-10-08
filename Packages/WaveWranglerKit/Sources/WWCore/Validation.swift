@@ -14,6 +14,7 @@ public struct ValidationIssue: Sendable, Equatable, CustomStringConvertible {
         case emptyTitle
         /// A structurally inconsistent `EpisodeAlignment` (revision order, accepted/derived references, map bytes).
         case invalidAlignment
+        case invalidEditMap
     }
 
     public var code: Code
@@ -54,6 +55,7 @@ extension ShowDocumentModel {
         if history.cursor < 0 || history.cursor > history.entries.count {
             issues.append(.init(.historyCursorOutOfRange, "cursor \(history.cursor) of \(history.entries.count)"))
         }
+        issues += editMapIssues()
         return issues
     }
 

@@ -37,4 +37,10 @@ public struct EditRecord: Sendable, Equatable, Codable, Identifiable {
         self.actionName = actionName
         self.timestamp = timestamp
     }
+
+    /// Match the canonical show's millisecond date encoding so save/reopen preserves value equality.
+    public static func current(actionName: String) -> EditRecord {
+        let millis = Int64((Date().timeIntervalSince1970 * 1_000).rounded())
+        return EditRecord(actionName: actionName, timestamp: Date(timeIntervalSince1970: Double(millis) / 1_000))
+    }
 }

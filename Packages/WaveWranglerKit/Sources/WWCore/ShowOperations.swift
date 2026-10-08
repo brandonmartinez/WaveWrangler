@@ -59,6 +59,7 @@ extension ShowDocumentModel {
         guard let index = episodes.firstIndex(where: { $0.id == id }) else { throw .episodeNotFound(id) }
         var copy = self
         copy.episodes.remove(at: index)
+        copy.editMaps.removeAll { $0.episodeID == id }
         return copy
     }
 

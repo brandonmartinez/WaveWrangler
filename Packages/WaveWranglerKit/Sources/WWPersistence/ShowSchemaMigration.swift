@@ -1,12 +1,15 @@
 import Foundation
 import WWCore
 
-/// Show schema migrations (C5): 1 → current (issue #63) and 2 → current (WW-020).
+/// Show schema migrations (C5): 1 → current (#63), 2 → current (WW-020), 3 → current (M3).
 ///
-/// **2 → 3** (WW-020): schema 3 adds the optional `Episode.alignment` (versioned positive maps). A schema 2 show
-/// has none, so the upgrade sets `schemaVersion` to 3 and changes nothing else; a schema 2 file that already
+/// **3 → 4**: the show owns provisional edit-map revisions. Older files have no such state;
+/// migration adds an empty list and preserves every existing episode and alignment.
+///
+/// **2 → current** (WW-020): schema 3 introduced optional `Episode.alignment` (versioned positive maps). A schema 2 show
+/// has none, so the upgrade sets `schemaVersion` to the current version; a schema 2 file that already
 /// carries `alignment` is refused (schema 2 never had it). The bump exists so that a schema 2 build refuses a
-/// schema 3 show as unknown-newer instead of mis-reporting its maps as damaged content.
+/// newer show as unknown-newer instead of mis-reporting its maps as damaged content.
 ///
 /// **1 → current** (#63): Schema 1 stored each speaker channel reference as a bare zero-based index and used index 0 as a
 /// placeholder when the user had not stated a channel. Schema 2 stores an explicit `Knowledge<Int>`.
@@ -27,9 +30,9 @@ import WWCore
 /// (retained checkpoints, unpublished edit checkpoints) offerable as whole values.
 public enum ShowSchemaMigration {
     /// Older show schemas this build can migrate.
-    public static let migratableSchemas: Set<Int> = [1, 2]
+    public static let migratableSchemas: Set<Int> = [1, 2, 3]
 
-    /// The registered migration steps (schema 1 → current, schema 2 → current). Each goes straight to the
+    /// The registered migration steps (schemas 1, 2, 3 → current). Each goes straight to the
     /// current schema, so a schema 1 show is never published as an intermediate schema 2 revision.
     public static var steps: [MigrationStep<ShowDocumentModel>] {
         [
@@ -49,6 +52,14 @@ public enum ShowSchemaMigration {
                 },
                 expectations: { original, migrated in schema2ExpectationFailures(original: original, migrated: migrated) }
             ),
+            MigrationStep(
+                fromSchema: 3,
+                migrate: { data in
+                    let decoded = try decodeSchema3(data)
+                    return (decoded.payload, decoded.revision)
+                },
+                expectations: { original, migrated in schema3ExpectationFailures(original: original, migrated: migrated) }
+            ),
         ]
     }
 
@@ -61,6 +72,8 @@ public enum ShowSchemaMigration {
             return try decodeSchema1(data)
         } catch .unsupportedOlderSchema(found: 2, minimum: _) {
             return try decodeSchema2(data)
+        } catch .unsupportedOlderSchema(found: 3, minimum: _) {
+            return try decodeSchema3(data)
         }
     }
 
@@ -163,6 +176,7 @@ public enum ShowSchemaMigration {
             return episode
         }
         payload["schemaVersion"] = SchemaVersion.show
+        payload["editMaps"] = []
         guard failures.isEmpty else { return failures }
         guard let migratedBytes = try? JSONEnvelopeCoder<ShowDocumentModel>.canonicalBytes(of: migrated),
               let actual = try? JSONSerialization.jsonObject(with: migratedBytes) as? [String: Any]
@@ -227,12 +241,57 @@ public enum ShowSchemaMigration {
               var payload = envelope["payload"] as? [String: Any]
         else { return ["original payload is not a JSON object"] }
         payload["schemaVersion"] = SchemaVersion.show
+        payload["editMaps"] = []
         guard let migratedBytes = try? JSONEnvelopeCoder<ShowDocumentModel>.canonicalBytes(of: migrated),
               let actual = try? JSONSerialization.jsonObject(with: migratedBytes) as? [String: Any]
         else { return ["migrated payload could not be encoded"] }
         return NSDictionary(dictionary: payload).isEqual(to: actual)
             ? []
-            : ["migrated payload differs from the schema 2 payload beyond the schema version"]
+            : ["migrated payload differs from the schema 2 payload beyond the version and empty edit maps"]
+    }
+
+    // MARK: - Schema 3 reader
+
+    static let schema3Format = DocumentFormat(
+        identifier: DocumentFormat.show.identifier,
+        filenameExtension: DocumentFormat.show.filenameExtension,
+        currentSchemaVersion: 3,
+        minimumReadableSchemaVersion: 3
+    )
+
+    static func decodeSchema3(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> {
+        let old = JSONEnvelopeCoder<ShowDocumentModelV3>(format: schema3Format) { payload, schema in
+            payload.schemaVersion == schema ? [] : [ValidationIssue(.schemaVersionMismatch, "payload \(payload.schemaVersion) != expected \(schema)")]
+        }
+        let decoded = try old.decode(data)
+        let upgraded = ShowDocumentModel(
+            show: decoded.payload.show, speakers: decoded.payload.speakers,
+            episodes: decoded.payload.episodes, history: decoded.payload.history
+        )
+        let issues = upgraded.validationIssues() + upgraded.embeddedMapIssues()
+        guard issues.isEmpty else { throw .invalidPayload(issues) }
+        return DecodedDocument(payload: upgraded, publication: decoded.publication)
+    }
+
+    static func schema3ExpectationFailures(original: Data, migrated: ShowDocumentModel) -> [String] {
+        guard let envelope = try? JSONSerialization.jsonObject(with: original) as? [String: Any],
+              var payload = envelope["payload"] as? [String: Any] else { return ["original payload missing"] }
+        payload["schemaVersion"] = SchemaVersion.show
+        payload["editMaps"] = []
+        guard let bytes = try? JSONEnvelopeCoder<ShowDocumentModel>.canonicalBytes(of: migrated),
+              let actual = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any]
+        else { return ["migrated payload could not be encoded"] }
+        return NSDictionary(dictionary: payload).isEqual(to: actual)
+            ? [] : ["migrated payload differs from schema 3 beyond the version and empty edit maps"]
+    }
+
+    /// Frozen schema-3 payload shape: edit maps did not exist.
+    struct ShowDocumentModelV3: Sendable, Codable {
+        var schemaVersion: Int
+        var show: Show
+        var speakers: [Speaker]
+        var episodes: [Episode]
+        var history: EditHistory
     }
 
     // MARK: - Schema 2 payload (mirror of the #175 types; only `Episode.alignment` is new in schema 3)
