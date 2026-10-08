@@ -463,17 +463,57 @@ final class FormatUpdateUITests: XCTestCase {
     /// Window-menu items target a document by title, unlike AX window order or `isHittable` (both tabs can be hittable).
     private func selectTab(named name: String) -> Bool {
         guard waitForForegroundApp() else { return false }
-        app.menuBars.menuBarItems["Window"].click()
-        let item = windowMenuItem(named: name)
-        guard item.exists && item.isEnabled else { return false }
-        item.click()
-        return Acceptance.waitFor(timeout: 5) { self.showWindow(named: name).exists && self.app.state == .runningForeground }
+        let deadline = Date().addingTimeInterval(5)
+        var attempts = 0
+        while Date() < deadline && attempts < 2 {
+            attempts += 1
+            app.menuBars.menuBarItems["Window"].click()
+            let item = windowMenuItem(named: name)
+            let remaining = max(0, deadline.timeIntervalSinceNow)
+            guard item.waitForExistence(timeout: remaining), item.isEnabled else {
+                recordTabSelectionFailure(name, attempts: attempts, reason: "Window menu item was unavailable or disabled")
+                return false
+            }
+            item.click()
+            if Acceptance.waitFor(timeout: min(2, max(0, deadline.timeIntervalSinceNow)), {
+                self.isSelectedTab(named: name)
+            }) {
+                return true
+            }
+            app.typeKey(.escape, modifierFlags: [])
+        }
+        recordTabSelectionFailure(name, attempts: attempts, reason: "selection did not make the named tab the key window")
+        return false
     }
 
     private func windowMenuItem(named name: String) -> XCUIElement {
         app.menuBars.menuItems.matching(
             NSPredicate(format: "title == %@ OR title == %@", name, "\(name).wwshow")
         ).firstMatch
+    }
+
+    private func isSelectedTab(named name: String) -> Bool {
+        let window = showWindow(named: name)
+        return app.state == .runningForeground && window.exists && isFocused(window)
+    }
+
+    private func recordTabSelectionFailure(_ name: String, attempts: Int, reason: String) {
+        let windows = app.windows.matching(identifier: "ww.show.window").allElementsBoundByIndex
+        Acceptance.writeEvidence("format-update-T21-tab-selection-failure", [
+            "expectedSelectedTab": name,
+            "attempts": attempts,
+            "reason": reason,
+            "appState": app.state.rawValue,
+            "windows": windows.map {
+                [
+                    "title": $0.title,
+                    "exists": $0.exists,
+                    "hasKeyboardFocus": isFocused($0),
+                    "isHittable": $0.isHittable,
+                ]
+            },
+        ], test: self)
+        add(XCTAttachment(screenshot: app.screenshot()))
     }
 
     /// After Window › Merge All Windows, either the tab bar AX nodes name both documents or the Window menu proves
