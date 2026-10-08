@@ -27,6 +27,8 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
 1. **Build on the dev Mac** (counts toward the 3-native-build limit, `-jobs 4`, isolated DerivedData):
    ```sh
    source "$HOME/.shell/exports-core.sh"
+   # Run the clean-tree check before build-for-testing.
+   test -z "$(git status --porcelain --untracked-files=all)" || { echo "Working tree not clean"; exit 1; }
    xcodebuild build-for-testing -project WaveWrangler.xcodeproj -scheme WaveWranglerUITests \
      -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/DerivedData-ui -jobs 4
    ```
@@ -34,15 +36,14 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
    ```sh
    PRODUCTS=.build/DerivedData-ui/Build/Products
    COMMIT=$(git rev-parse HEAD); SHA=${COMMIT:0:12}
-   git diff --quiet && git diff --cached --quiet
    git fetch origin
    git branch -r --contains "$COMMIT" | grep -q 'origin/' ||
      { echo "Commit $COMMIT is not pushed"; exit 1; }
    find "$PRODUCTS" -maxdepth 1 -name 'WaveWranglerUITests_*.xctestrun' -print -quit |
      grep -q 'WaveWranglerUITests' ||
      { echo "Missing WaveWranglerUITests xctestrun"; exit 1; }
-   codesign --verify --deep "$PRODUCTS/WaveWrangler.app"
-   codesign --verify --deep "$PRODUCTS/WaveWranglerUITests-Runner.app"
+   codesign --verify --deep "$PRODUCTS/Debug/WaveWrangler.app"
+   codesign --verify --deep "$PRODUCTS/Debug/WaveWranglerUITests-Runner.app"
 
    TS=$(date +%Y%m%dT%H%M%S)
    TMP=~/ww-uitest-runs/.tmp-<lane>-"$SHA"-"$TS"
