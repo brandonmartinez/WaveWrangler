@@ -548,6 +548,10 @@ final class AlignmentInspectionUITests: XCTestCase {
             "frame=\(String(describing: element?.frame)) id=\(element?.identifier ?? "-") " +
             "label=\(element?.label ?? "-") value=\(String(describing: element?.value))"
         )
+        if let element {
+            print("WW-AXTREE-BEGIN\n\(element.debugDescription)\nWW-AXTREE-END")
+            print("WW-AXAPP-BEGIN\n\(XCUIApplication().debugDescription)\nWW-AXAPP-END")
+        }
         return false
     }
 
