@@ -27,7 +27,17 @@ final class TranscriptReviewUITests: XCTestCase {
             app.descendants(matching: .any)["ww.show.showInfoSummary.title"].exists,
             "Selecting an episode leaves the Show Info surface"
         )
-        XCTAssertTrue(app.descendants(matching: .any)["ww.review.heading"].waitForExistence(timeout: 5))
+        let reviewHeading = app.descendants(matching: .any)["ww.review.heading"]
+        let reviewHeadingFound = reviewHeading.waitForExistence(timeout: 5)
+        let reviewState = [
+            "selected=\(reviewDestination.isSelected)",
+            "notice=\(app.descendants(matching: .any)["ww.review.provisionalNotice"].exists)",
+            "timeline=\(app.descendants(matching: .any)["ww.review.timelinePane"].exists)",
+            "inspector=\(app.descendants(matching: .any)["ww.review.inspector"].exists)",
+            "showInfo=\(app.descendants(matching: .any)["ww.show.showInfoSummary.title"].exists)",
+            "setup=\(app.descendants(matching: .any)["ww.setup.sources"].exists)",
+        ].joined(separator: "; ")
+        XCTAssertTrue(reviewHeadingFound, "Review heading missing after selection: \(reviewState)")
     }
 
     override func tearDown() async throws {
