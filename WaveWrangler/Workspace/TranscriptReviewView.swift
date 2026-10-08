@@ -173,12 +173,8 @@ struct TranscriptReviewInspector: View {
                 .wwFont(.headline)
                 .accessibilityAddTraits(.isHeader)
 
-            Text("Selection: \(state.selectedOccurrence?.title ?? "No occurrence selected")")
+            Text("Selected occurrence: \(state.selectedOccurrence?.title ?? "No occurrence selected")")
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Selected occurrence: \(state.selectedOccurrence?.title ?? "No occurrence selected")")
-                .accessibilityAddTraits(.isStaticText)
-                .accessibilityIdentifier("ww.review.inspector.selection")
 
             actionButton("Accept Shorten when safe", id: "acceptShorten", reason: TranscriptReviewShellPresentation.acceptBlockedReason)
             actionButton("Lift — preserve timing", id: "lift", reason: TranscriptReviewShellPresentation.liftBlockedReason)

@@ -92,6 +92,20 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertTrue(setupRemedy.isEnabled)
         XCTAssertTrue(setupRemedy.label.contains("⌘1"))
 
+        let hideInspector = app.buttons["Hide Inspector"]
+        XCTAssertTrue(hideInspector.waitForExistence(timeout: 3))
+        hideInspector.click()
+        XCTAssertTrue(app.buttons["Show Inspector"].waitForExistence(timeout: 3))
+        let detailAudit = try AcceptanceAudit.run(
+            app,
+            surface: "transcript-review-blocked-detail",
+            test: self,
+            types: .parentChild
+        )
+        XCTAssertTrue(detailAudit.isEmpty, detailAudit.joined(separator: "\n"))
+        app.buttons["Show Inspector"].click()
+        XCTAssertTrue(setupRemedy.waitForExistence(timeout: 3))
+
         let unwaived = try AcceptanceAudit.run(
             app,
             surface: "transcript-review-blocked",
