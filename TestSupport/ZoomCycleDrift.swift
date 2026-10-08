@@ -32,11 +32,13 @@ func checkZoomCycleDrift(
         WidthTier(widthBucket: Int(($0.tableWidth / 2).rounded()), tier: $0.tier)
     }
     for group in widthTierGroups.values {
-        let sortedOffsets = group.map(\.offset).sorted()
+        // The first two Window Zoom cycles are AppKit warm-up; drift is repeated movement after settling.
+        let repeatedCycles = group.sorted { $0.cycle < $1.cycle }.dropFirst(2)
+        let sortedOffsets = repeatedCycles.map(\.offset).sorted()
         let boundaries = zip(sortedOffsets, sortedOffsets.dropFirst()).compactMap { lower, upper in
             upper - lower > modeGap ? (lower + upper) / 2 : nil
         }
-        let layoutModes = Dictionary(grouping: group) { sample in
+        let layoutModes = Dictionary(grouping: repeatedCycles) { sample in
             boundaries.firstIndex { sample.offset < $0 } ?? boundaries.count
         }
         modes.append(contentsOf: layoutModes.values)
@@ -49,12 +51,14 @@ func checkZoomCycleDrift(
         let ordered = mode.sorted { $0.cycle < $1.cycle }
         guard ordered.count >= 4 else { continue }
 
+        // Use the latest repeated cycles so one-time settling cannot masquerade as ongoing growth.
+        let slopeWindow = Array(ordered.suffix(5))
         var slopes: [Double] = []
-        for start in ordered.indices {
-            for end in ordered.indices where end > start {
+        for start in slopeWindow.indices {
+            for end in slopeWindow.indices where end > start {
                 slopes.append(
-                    (ordered[end].offset - ordered[start].offset)
-                        / Double(ordered[end].cycle - ordered[start].cycle)
+                    (slopeWindow[end].offset - slopeWindow[start].offset)
+                        / Double(slopeWindow[end].cycle - slopeWindow[start].cycle)
                 )
             }
         }
