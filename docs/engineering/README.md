@@ -192,6 +192,12 @@ scripts/test.sh --package-only
 scripts/test.sh --ui        # XCUITests only (launches the app); needs GUI permission + the coordinator's GUI lock
 ```
 
+For headless functional XCUITests, build on the development Mac and run the
+signed Products inside the [macOS VM GUI hosts](ui-test-vm-hosts.md) through
+their own lease helpers. `scripts/test.sh --ui` launches on the **current
+host** and must not be run on the user's desktop outside an approved window.
+Performance and responsiveness gates stay on the Mac mini.
+
 Per-PR GUI selection and the reviewed conditional flake-quarantine policy (currently only the
 #218 broad synthetic Library contrast test) are documented in [GUI flake quarantine](gui-flake-quarantine.md).
 Capped full GUI suites use `scripts/test.sh --ui` without selectors so every UI test runs.
@@ -234,8 +240,8 @@ tests are gated.
 - At most one `xcodebuild` per session and at most three concurrently on the host, each `-jobs 4`
   with its own DerivedData (the scripts do this).
 - Run test suites serially per lane (`scripts/test.sh` disables parallel xcodebuild testing).
-- Don't run UI tests or launch the app without GUI permission; take the coordinator's GUI lock first
-  (one agent drives the screen at a time) and release it right after.
+- Don't run UI tests or launch the app without GUI permission; take the chosen host's GUI lock first
+  (one agent drives each host's screen at a time) and release it right after.
 
 ### Local host prerequisite
 

@@ -1,0 +1,120 @@
+{
+  "freezeID": "m2-freeze-estimator-2",
+  "date": "2026-10-08",
+  "status": "FROZEN 2026-10-08 on the commit that adds this record. HOLDOUT NOT RUN.",
+  "supersedesForExecution": "m2-freeze-estimator",
+  "calibrationEvidence": "docs/m2/evidence/ww-016-estimator-concurrency-revision-2-calibration.md",
+  "issues": [
+    "https://github.com/brandonmartinez/WaveWrangler/issues/237"
+  ],
+  "scope": "A test-harness-only concurrency revision. The WWAlignEstimate implementation, estimator parameters, synthetic calibration recipes, independent clock truth, scoring, counts and gate are unchanged from m2-freeze-estimator. The original freeze, M2 holdout, and evidence remain intact.",
+  "pinnedTrees": {
+    "Sources/WWAlignEstimate": "8efd588a6b57dc56bf7eafa1ccf2c7709253f3a9",
+    "Tests/WWAlignEstimateTests": "70664a686bb1b630f2a67aafdc2c0b5b7db8837e"
+  },
+  "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit. The source tree must remain byte-identical to m2-freeze-estimator. HoldoutTests recomputes both working-tree IDs. Any future source or test-tree change requires another dated freeze revision and fresh disjoint holdout.",
+  "testConcurrency": {
+    "defaultMaximumInFlightCases": 2,
+    "hardMaximumInFlightCases": 4,
+    "raisedWindow": "A requested value above the default requires WW_ESTIMATOR_CONCURRENCY_GRANT to exactly match WW_ESTIMATOR_MAX_CONCURRENCY. Values above four are rejected.",
+    "scheduling": "Calibration adds at most the configured number of cases to its task group and replenishes one slot per completed case. Scenario tests are serialized, and scripts/test.sh disables parallel test execution during the estimator pass.",
+    "processorCountDiscovery": "Not used."
+  },
+  "estimator": {
+    "identifier": "ww-align-estimate/1",
+    "parameters": {
+      "proxyRate": 4000,
+      "proxyCutoffFraction": 0.45,
+      "windowSeconds": 2,
+      "windowCount": 16,
+      "minimumPeakScore": 0.35,
+      "ambiguityRatio": 0.8,
+      "periodicityThreshold": 0.5,
+      "lobeExclusionMilliseconds": 5,
+      "silenceRMS": 0.0001,
+      "consistencyToleranceMilliseconds": 1,
+      "maximumAbsolutePPM": 500,
+      "cycleToleranceMilliseconds": 2
+    },
+    "outputs": "Unchanged: acousticConsistentProposal or typed abstention with an unsupported map; never clockApproved."
+  },
+  "recipeAndTruth": {
+    "canonicalRecord": "m2-freeze-estimator.json",
+    "recipe": "Unchanged synthetic deterministic in-memory generator, strata, track durations, sample rates, overlap, acoustic delays, noise distributions, and group-clock starts from the original freeze.",
+    "truth": "Unchanged independent affine clock truth with the same offset, ppm, and discontinuity distributions. Every scored residual remains against clock truth, never the estimator fit.",
+    "seedDerivation": "Unchanged SplitMix64.caseSeed: first output from master XOR FNV-1a64(UTF-8 stratum name) XOR (case index &* 0x9E3779B97F4A7C15).",
+    "disjointness": "Revision-2 holdout seeds are asserted unique and disjoint from the original calibration and the passed m2-freeze-estimator holdout before the new holdout renders or estimates cases."
+  },
+  "split": {
+    "calibration": {
+      "masterSeed": "0x57571600CA11B000",
+      "counts": {
+        "positive": 12,
+        "positiveRestart": 2,
+        "positiveThreeGroup": 2,
+        "constantDelay": 3,
+        "variableDelay": 3,
+        "discontinuity": 3,
+        "unrelated": 3,
+        "silent": 2,
+        "periodic": 3,
+        "disconnected": 2,
+        "cycleConflict": 2
+      },
+      "totalCases": 37,
+      "totalEpochs": 43
+    },
+    "priorHoldout": {
+      "masterSeed": "0x57571600401D0000",
+      "counts": {
+        "positive": 40,
+        "positiveRestart": 10,
+        "positiveThreeGroup": 10,
+        "constantDelay": 10,
+        "variableDelay": 10,
+        "discontinuity": 10,
+        "unrelated": 10,
+        "silent": 10,
+        "periodic": 10,
+        "disconnected": 10,
+        "cycleConflict": 10
+      },
+      "status": "Previously passed under m2-freeze-estimator; preserved and not rerun."
+    },
+    "holdout": {
+      "masterSeed": "0x5757160010080002",
+      "counts": {
+        "positive": 40,
+        "positiveRestart": 10,
+        "positiveThreeGroup": 10,
+        "constantDelay": 10,
+        "variableDelay": 10,
+        "discontinuity": 10,
+        "unrelated": 10,
+        "silent": 10,
+        "periodic": 10,
+        "disconnected": 10,
+        "cycleConflict": 10
+      },
+      "totalCases": 140,
+      "totalEpochs": 170,
+      "status": "NOT RUN. Run once on the clean commit containing this record."
+    }
+  },
+  "gate": {
+    "values": {
+      "maximumResidualP95Milliseconds": 5,
+      "maximumResidualMaxMilliseconds": 10,
+      "minimumWindows": 5,
+      "minimumOverlapSpanFraction": 0.8,
+      "minimumEligibleWindowFraction": 0.6,
+      "maximumFalseAccepts": 0
+    },
+    "authority": "Identical to m2-freeze-estimator. No gate is lowered or weakened."
+  },
+  "holdoutProcedure": {
+    "when": "Once only, after this record and its pinned test tree are committed cleanly.",
+    "command": "WW_ESTIMATOR_HOLDOUT=1 WW_ESTIMATOR_MAX_CONCURRENCY=2 swift test --package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm --jobs 4 --no-parallel --filter HoldoutTests",
+    "report": "Preserve the unedited log, commit SHA, host/toolchain, start load, test/helper CPU, exact counts, every case line, clock-residual p95/max and GateEvaluation summary. Do not rerun or lower counts after failure."
+  }
+}
