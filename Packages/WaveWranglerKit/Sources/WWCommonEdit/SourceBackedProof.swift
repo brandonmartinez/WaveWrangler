@@ -104,10 +104,33 @@ public struct ProvisionalSourceBackedProof: Sendable {
                 }
                 guard end >= gridEnd else { throw SourceProofRefusal.uncovered(occurrence.id) }
                 guard end == gridEnd else { throw SourceProofRefusal.outsideEpisodeCoverage(occurrence.id) }
+                // Each projected piece is positive affine, and the grid positions inside it are
+                // consecutive. Inverting its first and last retained positions bounds every
+                // intervening position without iterating over the episode's frames.
+                for kept in map.keptSpans {
+                    for interval in ordered {
+                        let first = max(
+                            Int128(kept.alignedStart),
+                            try interval.lowerBound.multiplied(by: ExactRational(map.outputRate.framesPerSecond)).ceil()
+                        )
+                        let afterLast = min(
+                            Int128(kept.alignedEnd),
+                            try interval.upperBound.multiplied(by: ExactRational(map.outputRate.framesPerSecond)).ceil()
+                        )
+                        guard first < afterLast else { continue }
+                        for frame in [Int64(first), Int64(afterLast - 1)] {
+                            let instant = map.outputRate.instant(ofFrame: frame)
+                            guard case .source(let position) = try map.alignment.sourceFrame(at: instant, in: occurrence.id),
+                                  position.frame >= 0, position.frame < occurrence.frameCount
+                            else { throw SourceProofRefusal.retainedFrameNotInvertible(occurrence.id, frame) }
+                        }
+                    }
+                }
                 for cut in map.removals {
-                    for boundary in [cut.start, cut.end] {
+                    for boundary in [cut.start, cut.end] where boundary < map.alignedFrameCount {
                         let instant = map.outputRate.instant(ofFrame: boundary)
-                        guard case .source = try map.alignment.sourceFrame(at: instant, in: occurrence.id)
+                        guard case .source(let position) = try map.alignment.sourceFrame(at: instant, in: occurrence.id),
+                              position.frame >= 0, position.frame < occurrence.frameCount
                         else { throw SourceProofRefusal.boundaryNotInvertible(occurrence.id, boundary) }
                     }
                 }
@@ -224,6 +247,7 @@ public enum SourceProofRefusal: Error, Equatable, Sendable {
     case uncovered(SourceOccurrenceID)
     case outsideEpisodeCoverage(SourceOccurrenceID)
     case nonuniqueCoverage(SourceOccurrenceID)
+    case retainedFrameNotInvertible(SourceOccurrenceID, Int64)
     case boundaryNotInvertible(SourceOccurrenceID, Int64)
     case invalidFade(RemovedFrameSpan)
     case fadeCountMismatch

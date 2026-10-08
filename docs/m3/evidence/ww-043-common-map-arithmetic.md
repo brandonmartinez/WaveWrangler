@@ -96,7 +96,13 @@ is available to bind that path to the accepted M2 map or to recheck it after ins
 
 The recipe projects each complete source-frame span through its supported affine clock pieces using
 exact rational arithmetic; it refuses gaps, unsupported pieces, overlapping mapped coverage, missing
-or extra episode-grid coverage and non-invertible cut endpoints for any occurrence. Ordinary
+or extra episode-grid coverage and non-invertible cut endpoints for any occurrence. Equal projected
+duration alone is insufficient: every retained output-grid position must invert to a valid source
+frame in every occurrence/channel. For each kept-span/affine-piece intersection, the first and last
+grid positions are inverted exactly; positive affine monotonicity and contiguous grid positions
+bound the intervening positions without a frame-by-frame scan. An exclusive cut end at the episode
+length is boundary geometry, not a source sample to invert; its preceding retained frames and the
+other in-domain cut boundary are still checked. Ordinary
 shorter/longer source placements and padding **abstain** until timed authoritative backing/silence
 is available; they are not interpreted as zero-filled samples. All removed endpoints are
 already on the ONE common output grid. Every nonzero decoded source sample, on *every* channel, is
@@ -107,7 +113,9 @@ speech survey and can never authorize a render. This unusually conservative digi
 abstain on harmless noise, and neither a zero sample nor a supplied fade extent proves a human
 decision, intentional silence policy or actual renderer footprint. Synthetic WAV tests cover
 Primary, Backup, unassigned channels, repeated uses, 44.1/48-kHz grid quantisation, source/format
-drift, unsupported coverage, nonzero speech proxies, protected silence and overlapping fades.
+drift, unsupported coverage, nonzero speech proxies, protected silence and overlapping fades,
+including a 44.1-to-48-kHz equal-duration last-frame counterexample, a valid trailing cut,
+a shifted repeated occurrence, and a source gap refused before decoded silence can be inferred.
 
 The current nonnegative common-grid domain refuses negative-leading placements rather than silently
 dropping them. **#302** is the separate signed-grid correction, required before these coordinates
