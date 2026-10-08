@@ -296,3 +296,20 @@
 - **Lead GUI-timebox decisions:** (1) #175 T21 harness flake accepted, with a tracked P2 (#231); (2) #196 transferred to M5 / WW-053 and #229 closed unmerged; (3) #219 moved anchor editing to a focused Edit Anchor sheet, with a narrow spec note. **Model exception:** that lane uses a Claude model, logged because three GPT-led rounds failed the same accessibility unit.
 - **#221:** the 2.29:1 blocked-status contrast was a clipped-row measurement artefact (the real text is 7.35:1). It was corrected in #225 and closed after full run #3 showed no new essential audit findings.
 
+### 2026-10-08: Local-only CI gate until after the MVP
+
+**By:** the user (11:12, via the relay), recorded by the M2 coordinator.
+- **What:** "keep the CI running in one place, probably locally, for now, then re-enable the GH actions run later after we've gotten to MVP." `.github/workflows/ci.yml` is `workflow_dispatch` only, and the file is kept intact. No repo settings changed.
+- **Why:** CI took a median of about 34 min per run, and every PR ran the heavy suites twice (locally and on CI).
+- **Rule:** the merge gate is one full local `scripts/test.sh` on the exact PR head SHA, recorded with SHA, host, load and counts, plus mini GUI classes when the UI changed (see `routing.md`). Docs/config-only PRs are exempt (coordinator interpretation, consistent with the re-enable issue's docs-only skip).
+- **Risk:** macOS 26 / Xcode 26.x compile and runtime coverage is lost until #252 (P2, M5) restores triggers with fast PR suites, path-filtered heavy suites, split jobs and caching.
+
+### 2026-10-08: User-approved delivery speedups
+
+**By:** the user (11:16, via the relay), recorded by the M2 coordinator. The rules are in `routing.md` (Speedups row).
+- **Flake quarantine:** only explicitly named, non-product-logic, non-essential-accessibility tests in a merged skip list may be skipped in per-PR GUI runs. Each entry links its named test to #215, #218 or #231; its issue must record an owner and fix target before listing. The first M3 unit creates and classifies the list; nothing is quarantined until it merges. Listed tests still run in full suites.
+- **One-pass reviews:** blocking and nit findings come in one pass; blocking fixes land in one commit. After reviewer rejection, the original author is locked out and a different agent owns the revision. At most 3 rounds precede a Lead decision.
+- **De-chain:** M3 units merge independently behind interfaces or flags.
+- **Ready queue:** 4–6 units kept ready.
+- **Warm builds:** reuse is allowed, but the pre-merge run is always fresh.
+- **Coming:** relay-provisioned VMs as additional GUI hosts, each with its own lease.

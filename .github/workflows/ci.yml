@@ -1,10 +1,10 @@
 # Ordinary M1 build/test CI. Read-only: no deploy, upload, release, signing, secrets, labels or issue automation.
 name: CI
 
+# Manual only (user-directed 2026-10-08 11:12): local `scripts/test.sh` on the exact PR head SHA is the
+# only CI gate until after the MVP (M4 exit). Restore pull_request/push triggers under #252.
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
