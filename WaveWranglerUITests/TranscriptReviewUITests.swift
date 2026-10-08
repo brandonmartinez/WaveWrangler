@@ -46,6 +46,7 @@ final class TranscriptReviewUITests: XCTestCase {
 
     func testReviewShellExposesSyntheticPrimaryBackupAndBlockedStates() {
         XCTAssertTrue(app.descendants(matching: .any)["ww.review.provisionalNotice"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.review.blockedReason"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["ww.review.lane.speaker-a-primary"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["ww.review.lane.speaker-a-backup"].exists)
         XCTAssertTrue(app.staticTexts["ww.review.inspector.analysisState"].exists)

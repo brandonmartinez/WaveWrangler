@@ -38,6 +38,16 @@ struct TranscriptReviewView: View {
             }
             .accessibilityElement(children: .contain)
 
+            Text(TranscriptReviewShellPresentation.noLiveSourceReason)
+                .wwFont(.body)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .accessibilityLabel("Review blocked")
+                .accessibilityValue(TranscriptReviewShellPresentation.noLiveSourceReason)
+                .accessibilityIdentifier("ww.review.blockedReason")
+
             GeometryReader { geometry in
                 if geometry.size.width < 620 {
                     ScrollView {
@@ -61,6 +71,7 @@ struct TranscriptReviewView: View {
         .wwFont(.body)
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityElement(children: .contain)
     }
 
     private var transcriptPane: some View {
@@ -82,7 +93,7 @@ struct TranscriptReviewView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .tag(occurrence.id)
-                        .accessibilityElement(children: .combine)
+                        .accessibilityElement(children: .ignore)
                         .accessibilityLabel(occurrence.title)
                         .accessibilityValue(occurrence.note)
                         .accessibilityIdentifier("ww.review.occurrence.\(occurrence.id)")
@@ -164,7 +175,9 @@ struct TranscriptReviewInspector: View {
 
             Text("Selection: \(state.selectedOccurrence?.title ?? "No occurrence selected")")
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Selected occurrence: \(state.selectedOccurrence?.title ?? "No occurrence selected")")
+                .accessibilityAddTraits(.isStaticText)
                 .accessibilityIdentifier("ww.review.inspector.selection")
 
             actionButton("Accept Shorten when safe", id: "acceptShorten", reason: TranscriptReviewShellPresentation.acceptBlockedReason)
