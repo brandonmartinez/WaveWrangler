@@ -19,7 +19,7 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
 - **Reviewers never take the lock or run UI tests.** They review diffs, CI and the evidence the author posts (a reviewer's run collided with the regression runner in M1, #149).
 - **Per-PR runs** cover only the UI test classes the PR affects. PRs that change no app UI or test code skip GUI runs.
 - **Batching:** a lane may batch several of its own PRs' classes only at one SHA. Never mix unrelated PR binaries.
-- **GUI timebox:** after 3 failed GUI rounds on one PR, stop and hand off to Lead (design decision or follow-up issue). No fourth round.
+- **GUI timebox:** after 3 failed counted GUI rounds on one PR, stop and hand off to Lead (design decision or follow-up issue). There is no fourth counted round unless a recorded Lead decision (on the PR and in `decisions.md`) restarts the count. Rounds that never ran (lock stolen, quiet-gate rejection, released before `xcodebuild`) or were environment-invalid don't count.
 - **Preflight first:** `.squad/skills/kickoff-preflight` (SSH agent, Automation Mode, clean screen). If SSH to the mini fails because the 1Password agent has no identities, don't loop: report it once as needs_input.
 
 ## Pipeline
@@ -32,9 +32,27 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
    ```
 2. **Copy to the mini** (SSH needs `source "$HOME/.shell/exports.sh"` for the 1Password agent):
    ```sh
-   RUN=~/ww-uitest-runs/<lane>-<pr>-<shortsha>
-   ssh brandonmartinez@<mini> "mkdir -p $RUN"
-   rsync -a .build/DerivedData-ui/Build/Products/ brandonmartinez@<mini>:$RUN/Products/
+   PRODUCTS=.build/DerivedData-ui/Build/Products
+   COMMIT=$(git rev-parse HEAD); SHA=${COMMIT:0:12}
+   git diff --quiet && git diff --cached --quiet
+   git fetch origin
+   git branch -r --contains "$COMMIT" | grep -q 'origin/' ||
+     { echo "Commit $COMMIT is not pushed"; exit 1; }
+   find "$PRODUCTS" -maxdepth 1 -name 'WaveWranglerUITests_*.xctestrun' -print -quit |
+     grep -q 'WaveWranglerUITests' ||
+     { echo "Missing WaveWranglerUITests xctestrun"; exit 1; }
+   codesign --verify --deep "$PRODUCTS/WaveWrangler.app"
+   codesign --verify --deep "$PRODUCTS/WaveWranglerUITests-Runner.app"
+
+   TS=$(date +%Y%m%dT%H%M%S)
+   TMP=~/ww-uitest-runs/.tmp-<lane>-"$SHA"-"$TS"
+   RUN=~/ww-uitest-runs/<lane>-"$SHA"-"$TS"
+   MINI=brandonmartinez@<mini>
+   ssh "$MINI" "test ! -e '$TMP' && test ! -e '$RUN' && mkdir -p '$TMP/Products'"
+   rsync -a "$PRODUCTS/" "$MINI:$TMP/Products/"
+   CHANGES=$(rsync -a -c --dry-run --itemize-changes "$PRODUCTS/" "$MINI:$TMP/Products/")
+   test -z "$CHANGES" || { printf '%s\n' "$CHANGES"; exit 1; }
+   ssh "$MINI" "mv '$TMP' '$RUN'"
    ```
 3. **Run one command under a lease** on the mini:
    ```sh
