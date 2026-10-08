@@ -220,11 +220,38 @@ tasks. A sampled helper reached 1180.8% CPU at 19:13:58 on 2026-10-08 (raw local
 
 The new [`m2-freeze-render-2`](../fixtures/m2-freeze-render-2.json) pins the unchanged renderer source and a
 test-only two-case scheduler. It preserves all 16 calibration cases, 48 holdout cases, the fixed multi-span
-case, the recipe, independent truth, gate values and canonical record order. A new `holdout-2` split uses
-disjoint seeds and **must run once only after the new freeze is committed**; until then it is **NOT RUN**, not
-inferred from the original holdout. `scripts/test.sh` also runs ordinary package tests without top-level case
-parallelism so short alignment-pipeline tests cannot overlap their internal work, caps segment cases at three
-and decode/time-map calibration cases at two. The 75-minute pipeline render remains full length.
+case, the recipe, independent truth, gate values and canonical record order. The fresh `holdout-2` split was
+run once on clean head `6f385b2af25d7302e83d6a5613812a73b57fed08`; its renderer and test tree IDs were
+`94604633d6464391ade116b363f8874675381bf5` and
+`073754414e1ee52c638d48e64a2e4a262c2ba30e`, exactly the freeze pins. The original holdout remains unchanged.
+
+The canonical [`holdout-2.jsonl`](ww-018/holdout-2.jsonl) contains 1,370 records for 48 seeded cases plus
+the fixed multi-span regression case (49 unique case indices; nine strata including multi-span). SHA-256:
+`495f9d0a93b3aefa847fdb1aab27bf67343cc86e744b76d839502d58bb857db9`. The records use only `holdout-2`;
+their 48 seed identities are unique and disjoint from the 16 calibration and 48 original holdout seeds.
+The retained unedited run log `render-holdout-2-on-6f385b2.log` (SHA-256
+`87a20620f5ebab5821ebb5654d0f3d5cbd1147dad927e9917ba953c5ddfb53bd`) reports
+`holdoutSplitMeetsEveryFrozenGate()` passing in 16.989 s.
+
+| Gate | Limit | Rev-2 measured result | Outcome |
+| --- | --- | --- | --- |
+| Landmarks | ≤1 output frame | 0.169676 frames worst absolute error (588 measurements) | **PASS** |
+| Passband | ±0.1 dB through 80% of lower Nyquist | 0.000147 dB worst absolute gain error (288 tones) | **PASS** |
+| Alias | ≤−80 dBc | −93.080 dBc worst residual across passband/stopband (396 tones) | **PASS** |
+| Interchannel skew | ≤1 output frame | 0.053658 frames landmark; 0.0000154 frames phase-derived (98 measurements) | **PASS** |
+| Inversions/swaps | 0 | 0 / 588 landmark measurements | **PASS** |
+| Inactive output | ≤−80 dBFS | −∞ dBFS (exact zero; 240 measurements) | **PASS** |
+| Phase | ≤0.001° | 0.000105° worst absolute error (288 tones) | **PASS** |
+| Family peak | ≤1 GiB resident | 38.5 MiB (`ru_maxrss`), 198,632-byte renderer working set, 704 chunks, 34.92 s | **PASS — existing same-source measurement** |
+| License/notices | Native or self-written code only | Self-written; no third-party code, package dependency or notice; unchanged | **PASS — existing calibration finding** |
+| Listening | ≥3 consented listeners, ≤5% objectionable | Not granted or measured | **BLOCKED — never passed** |
+
+The family-peak result is the existing `holdout-timing.txt` measurement, not a new revision-2 timing run;
+the pinned renderer source tree is unchanged from that measurement. The retained revision-2 log records the
+test duration but no host identifier or CPU sample, so neither is asserted here. `scripts/test.sh` also runs
+ordinary package tests without top-level case parallelism so short alignment-pipeline tests cannot overlap
+their internal work, caps segment cases at three and decode/time-map calibration cases at two. The 75-minute
+pipeline render remains full length.
 
 Focused local working-Mac checks (SwiftPM helpers sampled per PID at 0.25 s, stopping on >400%):
 bounded `WWRenderTests` including all 16 calibration cases peaked at **199.3%** (45 tests passed);

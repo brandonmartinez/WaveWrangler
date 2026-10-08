@@ -90,7 +90,7 @@
    "fixtures": [
     "M2-RENDER-001"
    ],
-   "status": "new test-only concurrency freeze; old holdout preserved; fresh disjoint holdout-2 NOT RUN; listening BLOCKED",
+   "status": "new test-only concurrency freeze; old holdout preserved; disjoint holdout-2 passed once; listening BLOCKED",
    "supersedesForExecution": "m2-freeze-render",
    "counts": {
     "fixtures": 1,
@@ -121,7 +121,7 @@
       "unit": "cases",
       "multiSpanCasePerSplit": 1
      },
-     "evidenceStatus": "old holdout retained; new holdout-2 pending a clean committed freeze"
+     "evidenceStatus": "calibration passed; holdout-2 passed once on 6f385b2af25d7302e83d6a5613812a73b57fed08 (1370 records; SHA-256 495f9d0a93b3aefa847fdb1aab27bf67343cc86e744b76d839502d58bb857db9); see ww-018-render-calibration.md; listening BLOCKED"
     }
    ]
   },
