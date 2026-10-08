@@ -1,11 +1,12 @@
 import Foundation
 import Testing
 import WWCore
-@testable import WWTimeMap
+import WWTimeMap
+@testable import WWCommonEdit
 
 @Suite("Common episode edit map (synthetic, provisional)")
 struct CommonEpisodeEditMapTests {
-    let fx = Fixture()
+    private let fx = Fixture()
 
     private func make(
         _ alignment: AlignedTimelineMap,
@@ -138,9 +139,14 @@ struct CommonEpisodeEditMapTests {
             placements: [OccurrencePlacement(occurrence: gapped, spans: [span(0, 48_000, before), span(96_000, 144_000, after)])]
         )
         let gapMap = try make(fx.timeline([gapGroup]), removals: [RemovedFrameSpan(start: 24_000, end: 36_000)])
-        let boundary = GapBoundary(occurrence: gapped.id, precedingEpoch: before, precedingLastFrame: 47_999, followingEpoch: after, followingFirstFrame: 96_000)
-        #expect(try gapMap.sourceFrame(atOutputFrame: 60_000, in: gapped.id) == .gap(boundary))
-        #expect(try gapMap.outputFrame(ofSourceFrame: 60_000, in: gapped.id) == .gap(boundary))
+        if case .gap(let boundary) = try gapMap.sourceFrame(atOutputFrame: 60_000, in: gapped.id) {
+            #expect(boundary.occurrence == gapped.id)
+            #expect(boundary.precedingEpoch == before)
+            #expect(boundary.precedingLastFrame == 47_999)
+            #expect(boundary.followingEpoch == after)
+            #expect(boundary.followingFirstFrame == 96_000)
+            #expect(try gapMap.outputFrame(ofSourceFrame: 60_000, in: gapped.id) == .gap(boundary))
+        } else { Issue.record("gap acquired an inverse") }
         if case .source(let source) = try gapMap.sourceFrame(atOutputFrame: 84_000, in: gapped.id) {
             #expect(source.epoch == after)
             #expect(source.frame == 96_000)
@@ -208,4 +214,52 @@ struct CommonEpisodeEditMapTests {
 
 private extension ExactRational {
     var magnitude: ExactRational { numerator < 0 ? negated() : self }
+}
+
+private func q(_ numerator: Int64, _ denominator: Int64 = 1) -> ExactRational {
+    try! ExactRational(numerator, denominator)
+}
+
+private func seg(_ first: ExactRational, _ last: ExactRational, _ ratio: ExactRational, _ offset: ExactRational) -> AffineClockSegment {
+    try! AffineClockSegment(groupClockStart: first, groupClockEnd: last, rateRatio: ratio, alignedOffset: offset)
+}
+
+private func mapped(_ epoch: RecordingEpochID, _ segments: [AffineClockSegment]) -> EpochClockMap {
+    EpochClockMap(epoch: epoch, mapping: .mapped(segments: segments, provenance: .manual(ManualCorrection(basis: .numericEntry))))
+}
+
+private func span(_ first: Int64, _ last: Int64, _ epoch: RecordingEpochID) -> EpochSpan {
+    EpochSpan(startFrame: first, endFrame: last, epoch: epoch, groupClockOffset: .zero)
+}
+
+private struct Fixture {
+    let group = RecorderGroupID()
+    let refEpoch = RecordingEpochID()
+    let refOccurrence = SourceOccurrenceID()
+    let refFrames: Int64 = 480_000
+
+    var reference: TimelineReference {
+        TimelineReference(group: group, epoch: refEpoch, occurrence: refOccurrence)
+    }
+
+    func occurrence(_ id: SourceOccurrenceID = SourceOccurrenceID(), frames: Int64, rate: Int64 = 48_000) -> SourceOccurrence {
+        try! SourceOccurrence(id: id, source: SourceID(), nominalRate: NominalRate(rate), frameCount: frames)
+    }
+
+    func otherGroup(epochs: [EpochClockMap], placements: [OccurrencePlacement]) throws -> GroupTimeMap {
+        try GroupTimeMap(group: RecorderGroupID(), reference: reference, epochs: epochs, placements: placements)
+    }
+
+    func timeline(_ others: [GroupTimeMap]) throws -> AlignedTimelineMap {
+        let own = try GroupTimeMap(
+            group: group, reference: reference,
+            epochs: [EpochClockMap(epoch: refEpoch, mapping: .mapped(
+                segments: [seg(q(0), q(10), .one, .zero)], provenance: .timelineReference
+            ))],
+            placements: [OccurrencePlacement(occurrence: occurrence(refOccurrence, frames: refFrames), spans: [
+                span(0, refFrames, refEpoch),
+            ])]
+        )
+        return try AlignedTimelineMap(reference: reference, groups: [own] + others)
+    }
 }

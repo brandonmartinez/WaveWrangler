@@ -1,5 +1,6 @@
 import Foundation
 import WWCore
+import WWTimeMap
 
 /// A half-open interval on the episode's shared, aligned output-frame grid.
 public struct RemovedFrameSpan: Sendable, Hashable {

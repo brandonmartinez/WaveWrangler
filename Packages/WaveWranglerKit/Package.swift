@@ -17,6 +17,8 @@ let package = Package(
         .library(name: "WWOrganizer", targets: ["WWOrganizer"]),
         // Pure exact clock-epoch / coordinate maps (WW-015). No I/O, no decoding.
         .library(name: "WWTimeMap", targets: ["WWTimeMap"]),
+        // Provisional M3 common episode edit-frame prescription, outside the frozen M2 WWTimeMap tree.
+        .library(name: "WWCommonEdit", targets: ["WWCommonEdit"]),
         .library(name: "WWDecode", targets: ["WWDecode"]),
         // Versioned-map API, consent-gated content digest and the cancellable derived-asset/job layer (WW-020).
         .library(name: "WWDerived", targets: ["WWDerived"]),
@@ -41,6 +43,7 @@ let package = Package(
         .target(name: "WWEpisodeSetup", dependencies: ["WWCore", "WWSources"]),
         .target(name: "WWOrganizer", dependencies: ["WWCore"]),
         .target(name: "WWTimeMap", dependencies: ["WWCore"]),
+        .target(name: "WWCommonEdit", dependencies: ["WWCore", "WWTimeMap"]),
         .target(name: "WWDecode", dependencies: ["WWCore", "WWSources"]),
         .target(name: "WWDerived", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWPersistence"]),
         .target(name: "WWAlignEstimate", dependencies: ["WWCore", "WWTimeMap"]),
@@ -54,6 +57,7 @@ let package = Package(
         .testTarget(name: "WWEpisodeSetupTests", dependencies: ["WWEpisodeSetup", "WWCore", "WWSources"]),
         .testTarget(name: "WWOrganizerTests", dependencies: ["WWOrganizer", "WWCore", "WWPersistence"]),
         .testTarget(name: "WWTimeMapTests", dependencies: ["WWTimeMap", "WWCore"]),
+        .testTarget(name: "WWCommonEditTests", dependencies: ["WWCommonEdit", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWDecodeTests", dependencies: ["WWDecode", "WWSources", "WWCore"]),
         .testTarget(name: "WWDerivedTests", dependencies: ["WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWCore"]),
         .testTarget(name: "WWAlignEstimateTests", dependencies: ["WWAlignEstimate", "WWTimeMap", "WWCore"]),

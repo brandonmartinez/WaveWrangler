@@ -19,7 +19,7 @@ struct PurityTests {
 
     /// Map arithmetic files: no floating point at all (Double is allowed only for measurement values and
     /// the display-only `approximateDouble`).
-    static let exactFiles: Set<String> = ["GroupTimeMap.swift", "AlignedTimelineMap.swift", "ClockConventions.swift", "TimeMapCoding.swift", "CommonEpisodeEditMap.swift"]
+    static let exactFiles: Set<String> = ["GroupTimeMap.swift", "AlignedTimelineMap.swift", "ClockConventions.swift", "TimeMapCoding.swift"]
 
     static func code(_ source: String) -> String {
         source.split(separator: "\n", omittingEmptySubsequences: false)
