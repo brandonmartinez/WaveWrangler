@@ -55,6 +55,9 @@ if [[ "$UI" == 1 ]]; then
   exit 0
 fi
 
+echo "==> synthetic offline speech provisioning checks"
+/usr/bin/python3 "$ROOT/scripts/test-provision-speech-model.py" -q
+
 echo "==> swift test (Packages/WaveWranglerKit)"
 swift test \
   --package-path "$ROOT/Packages/WaveWranglerKit" \

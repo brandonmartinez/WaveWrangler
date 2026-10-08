@@ -11,7 +11,7 @@ are synthetic.
 
 The *only* production model pin is `LocalSpeechAssetPin.whisperBaseEnglish`, not
 caller-supplied name/version/URL/license/hash strings. Its English ggml model contains the
-tokenizer. The official [whisper.cpp model instructions](https://github.com/ggml-org/whisper.cpp/blob/v1.9.5/models/README.md)
+tokenizer. The official [whisper.cpp model instructions](https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/models/README.md)
 link the [publisher's model repository](https://huggingface.co/ggerganov/whisper.cpp);
 repository revision `5359861c739e955e79d9a303bcbc70fb988958b1`,
 `ggml-base.en.bin`, **147,964,211 bytes**, SHA-256
@@ -19,6 +19,44 @@ repository revision `5359861c739e955e79d9a303bcbc70fb988958b1`,
 The model repository declares MIT. This is an artifact-specific catalog admission,
 **not** a rights conclusion for redistribution or bundled product release. No model body is
 in the repository; no implicit download is implemented.
+
+### Explicit model provisioning and offline preflight (2026-10-08)
+
+With the M3 model consent, `python3 scripts/provision-speech-model.py` performs an
+**explicit, one-time** fetch of this exact commit-pinned publisher artifact. The
+[v1.9.4 project model index](https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/models/README.md)
+points to the publisher's `ggerganov/whisper.cpp` repository. The publisher revision
+declares **MIT**; the model's underlying redistribution rights and the complete binary
+closure's transitive notices remain **unqualified**. This is not release clearance.
+
+The pinned HTTPS resolver returned a single redirect to the publisher's Hugging Face
+CDN host `us.aws.cdn.hf.co`, `X-Linked-Size: 147964211` and
+`X-Linked-Etag: a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002`.
+The CDN returned the same content length. The **one downloaded body** was locally
+measured as **147,964,211 bytes**, SHA-256
+`a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002`;
+it is owner-private in the local asset store outside the repository. Neither the
+signed redirect URL nor the private absolute store path is recorded here. Subsequent
+`python3 scripts/provision-speech-model.py --check` rehashes it **without network**
+(including after cold restart); re-running the provision command on a present model
+rehashes instead of downloading again, and refuses a changed or broken asset.
+`scripts/stage-speech-candidate.sh` accepts the already-provisioned file separately
+when all exact local runtime pins are available. On this Mac, one offline trial
+verified every staged executable, dylib, backend and model pin; the disposable
+stage was removed afterward. Neither command constructs an `OfflineWhisperPlan`
+or performs inference.
+
+Provisioning rejects an absent/changed publisher size or digest, unexpected redirect
+host or scheme, CDN redirect, oversized/truncated/mismatched body, symlinked store or
+model, and altered on-disk bytes. The HEAD request inspects the official commit-pinned
+resolver first; the single GET targets only its approved HTTPS CDN destination and
+never follows a further redirect. `scripts/test-provision-speech-model.py` uses synthetic
+responses with **no network** to check these failures and the offline second check.
+The package speech boundary suite additionally verifies that its default-deny
+`sandbox-exec` profile blocks a loopback TCP connect that succeeds without the
+profile. These structural controls are not a measured cold-restart app/system traffic
+audit; system-managed Apple speech provisioning/update traffic and exact binary
+transitive notice clearance remain unknown.
 
 `scripts/stage-speech-candidate.sh <already-provisioned-official-model>` checks the
 reviewed source hashes/sizes, regular-file/symlink-parent/dataless status and local staging

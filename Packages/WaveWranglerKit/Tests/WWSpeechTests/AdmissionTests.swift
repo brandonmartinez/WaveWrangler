@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 import WWCore
@@ -162,6 +163,43 @@ struct AdmissionTests {
         #expect(try invoke(touch, writeProfile, [input.path]) != 0)
         #expect(try invoke(touch, writeProfile, [scratch.appendingPathComponent("other").path]) != 0)
         #expect(try invoke(touch, writeProfile, [scratch.appendingPathComponent("result.json").path]) == 0)
+
+        let listener = socket(AF_INET, SOCK_STREAM, 0)
+        #expect(listener >= 0)
+        guard listener >= 0 else { return }
+        defer { _ = close(listener) }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr = in_addr(s_addr: in_addr_t(INADDR_LOOPBACK).bigEndian)
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(listener, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        #expect(bound == 0)
+        guard bound == 0 else { return }
+        #expect(listen(listener, 2) == 0)
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(listener, $0, &length)
+            }
+        }
+        #expect(named == 0)
+        guard named == 0 else { return }
+        let port = String(UInt16(bigEndian: address.sin_port))
+        let nc = URL(fileURLWithPath: "/usr/bin/nc")
+        let networkProfile = try OfflineWhisperPlan.profile(stage: stage, input: input, scratch: scratch, executable: nc)
+        #expect(try invoke(nc, networkProfile, ["-z", "-G", "2", "127.0.0.1", port]) != 0)
+        let baseline = Process()
+        baseline.executableURL = nc
+        baseline.arguments = ["-z", "-G", "2", "127.0.0.1", port]
+        baseline.standardOutput = Pipe()
+        baseline.standardError = Pipe()
+        try baseline.run()
+        baseline.waitUntilExit()
+        #expect(baseline.terminationStatus == 0)
 
         let hardlink = scratch.appendingPathComponent("input-alias")
         let symlink = scratch.appendingPathComponent("input-link")
