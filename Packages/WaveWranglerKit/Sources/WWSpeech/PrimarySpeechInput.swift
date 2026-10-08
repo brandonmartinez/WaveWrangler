@@ -87,6 +87,10 @@ public struct PrimarySpeechInputAdapter: Sendable {
         decoder = SourceDecoder(access: access)
     }
 
+    package init(access: SourceAccessContext, content: any SourceContentIO) {
+        decoder = SourceDecoder(access: access, content: content)
+    }
+
     /// Caller intent and snapshots cannot certify an accepted map. Only unmapped episodes may
     /// produce provisional decoded samples; mapped episodes refuse until an organizer-owned,
     /// content-bound active-map authority exists. No worker can launch from the result.
@@ -97,6 +101,36 @@ public struct PrimarySpeechInputAdapter: Sendable {
         availability: SourceAvailabilitySetting,
         current: @escaping @Sendable () async throws -> PrimarySpeechInputState
     ) async throws(SpeechAdmissionRefusal) -> ProvisionalPrimarySpeechInput {
+        try await prepareSelected(episodeID: episodeID, speakerID: speakerID,
+                                  authorization: authorization, availability: availability,
+                                  current: current) { $0 }
+    }
+
+    /// In-memory, selected-channel-only 16 kHz PCM from the verified read-only decode. This
+    /// provisional proxy has no file URL or worker authority. The final live-state checks run
+    /// after resampling as well as after decoding; mapped episodes remain refused.
+    public func preparePCMProxy(
+        episodeID: EpisodeID,
+        speakerID: SpeakerID,
+        authorization: PrimarySpeechAuthorization?,
+        availability: SourceAvailabilitySetting,
+        current: @escaping @Sendable () async throws -> PrimarySpeechInputState
+    ) async throws(SpeechAdmissionRefusal) -> SelectedPrimaryPCMProxy {
+        try await prepareSelected(episodeID: episodeID, speakerID: speakerID,
+                                  authorization: authorization, availability: availability,
+                                  current: current) { input throws(SpeechAdmissionRefusal) in
+            try SelectedPrimaryPCMProxy.make(from: input)
+        }
+    }
+
+    private func prepareSelected<Product: Sendable>(
+        episodeID: EpisodeID,
+        speakerID: SpeakerID,
+        authorization: PrimarySpeechAuthorization?,
+        availability: SourceAvailabilitySetting,
+        current: @escaping @Sendable () async throws -> PrimarySpeechInputState,
+        transform: @escaping @Sendable (ProvisionalPrimarySpeechInput) throws(SpeechAdmissionRefusal) -> Product
+    ) async throws(SpeechAdmissionRefusal) -> Product {
         guard authorization?.episodeID == episodeID, authorization?.speakerID == speakerID,
               availability == .on else { throw .sourceIdentityNotConfirmed }
         let initial: PrimarySpeechInputState
@@ -118,7 +152,8 @@ public struct PrimarySpeechInputAdapter: Sendable {
         do {
             return try await decoder.access.withScopedAccess(to: url) { scopedURL in
                 try await prepareScoped(initial: initial, selection: selection, record: record,
-                                        episodeID: episodeID, url: scopedURL, current: current)
+                                        episodeID: episodeID, url: scopedURL, current: current,
+                                        transform: transform)
             }
         } catch let refusal as SpeechAdmissionRefusal {
             throw refusal
@@ -127,14 +162,15 @@ public struct PrimarySpeechInputAdapter: Sendable {
         }
     }
 
-    private func prepareScoped(
+    private func prepareScoped<Product: Sendable>(
         initial: PrimarySpeechInputState,
         selection: PrimarySpeechSelection,
         record: DeviceAccessRecord,
         episodeID: EpisodeID,
         url: URL,
-        current: @escaping @Sendable () async throws -> PrimarySpeechInputState
-    ) async throws(SpeechAdmissionRefusal) -> ProvisionalPrimarySpeechInput {
+        current: @escaping @Sendable () async throws -> PrimarySpeechInputState,
+        transform: @Sendable (ProvisionalPrimarySpeechInput) throws(SpeechAdmissionRefusal) -> Product
+    ) async throws(SpeechAdmissionRefusal) -> Product {
         let before = try Self.inspect(url)
         guard case let .success(metadata) = decoder.access.io.metadata(at: url),
               metadata.volumeIsLocal.value == true,
@@ -169,8 +205,13 @@ public struct PrimarySpeechInputAdapter: Sendable {
                     throw SpeechAdmissionRefusal.inputTooLarge
                 }
                 var sink = SelectedChannelSink(channel: selection.channel, maximumFrames: Self.maximumFrames)
-                while let chunk = try await cursor.next() { try sink.append(chunk) }
-                return (interpretation, try sink.finish())
+                do {
+                    while let chunk = try await cursor.next() { try sink.append(chunk) }
+                    return (interpretation, try sink.finish())
+                } catch {
+                    sink.abandon()
+                    throw error
+                }
             }
         } catch let failure as DecodeFailure {
             throw .decode(failure)
@@ -179,6 +220,12 @@ public struct PrimarySpeechInputAdapter: Sendable {
         } catch {
             throw .currentStateUnavailable
         }
+        let input = ProvisionalPrimarySpeechInput(
+            selection: selection, interpretation: decoded.interpretation,
+            sourceRevision: revision, samples: decoded.samples
+        )
+        let product = try transform(input)
+        guard !Task.isCancelled else { throw .decode(.cancelled) }
         let after = try Self.inspect(url)
         guard Self.sameFile(before, after) else { throw .sourceAliasOrChanged }
         let latest: PrimarySpeechInputState
@@ -204,10 +251,8 @@ public struct PrimarySpeechInputAdapter: Sendable {
               final.inputAssetRevision == Self.inputAssetRevision
         else { throw .sourceRevisionChanged }
         guard Self.sameFile(before, try Self.inspect(url)) else { throw .sourceAliasOrChanged }
-        return ProvisionalPrimarySpeechInput(
-            selection: selection, interpretation: decoded.interpretation,
-            sourceRevision: revision, samples: decoded.samples
-        )
+        guard !Task.isCancelled else { throw .decode(.cancelled) }
+        return product
     }
 
     private static func selection(in show: ShowDocumentModel, episodeID: EpisodeID,
@@ -267,5 +312,10 @@ private struct SelectedChannelSink: DecodedAudioSink {
 
     mutating func finish() throws -> [Float] { samples }
 
-    mutating func abandon() { samples.removeAll() }
+    mutating func abandon() {
+        samples.withUnsafeMutableBufferPointer { buffer in
+            buffer.baseAddress?.update(repeating: 0, count: buffer.count)
+        }
+        samples.removeAll(keepingCapacity: false)
+    }
 }

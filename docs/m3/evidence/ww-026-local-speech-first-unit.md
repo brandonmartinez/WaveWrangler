@@ -3,17 +3,18 @@
 **2026-10-08; #23 remains PARTIAL.** This is a headless candidate, not app integration or
 permission to infer from arbitrary files. `PrimarySpeechSelection` requires a unique,
 user-confirmed primary channel. The selected-primary adapter decodes the selected channel through WWDecode's read-only
-content gateway, but still cannot supply an owned, descriptor-pinned PCM proxy to the
-package-scoped executor. No actual episode was opened by this revision. Automated fixtures
+content gateway. The separate `preparePCMProxy` path derives a private, immutable in-memory
+16 kHz Float32 mono proxy from that descriptor-verified decode for **unmapped** episodes,
+with no source writes or output file. No actual episode was opened by this revision. Automated fixtures
 are synthetic.
 
-The stacked adapter repair requires each accepted-map placement to name a unique, currently
-present source with confirmed device-local access. It compares fresh local file metadata
-revisions for **all** placed sources with the persisted alignment dependency recipe, checks
-map inputs/format and continuous selected-channel coverage, and refuses absent or ambiguous
-proof. Accepted maps with decoded-content digests refuse until a consent-gated verification
-path exists. The caller-mintable action marker does not grant production authority; the
-offline plan and worker remain `primaryProxyNotProven`, with no inference or app integration.
+An earlier stacked adapter attempted accepted-map placement validation with fresh metadata
+and the alignment dependency recipe. That was insufficient: caller-supplied snapshots
+cannot attest organizer-owned activation, content-bound currency for all referenced
+sources, all-lane inverse/coverage or same-fade authority. The #294 repair now refuses
+**every recorded or accepted map before decoding**, including an unaccepted recorded map.
+The caller-mintable action marker does not grant production authority; the offline plan
+and worker remain `primaryProxyNotProven`, with no inference or app integration.
 
 ## Reviewed open-weight candidate
 
@@ -72,12 +73,40 @@ the tightened profile or replace a monitored app/system-network cold-restart aud
 `OfflineWhisperPlan` constructor explicitly refuses with `primaryProxyNotProven`, including
 caller-attested primary metadata, synthetic hardlinks/symlinks, changed paths, and mismatched
 selections. A caller cannot create a runnable plan from an arbitrary file. A future adapter
-must derive an independent proxy through WWDecode's read-only content gateway from the
-specific confirmed source/channel, bind its bytes to that selection, keep it outside
-scratch, and prove the input/output cannot be re-aliased or replaced between admission and
-execution. Until then neither approved real media nor a synthetic fixture is submitted
+must serialize the proven in-memory proxy to an owner-private read-only descriptor, keep it
+outside scratch, and prove the descriptor and path cannot be re-aliased or replaced between
+admission and execution; it must also qualify the offline runtime. Until then neither
+approved real media nor a synthetic fixture is submitted
 through this runtime path. The existing bounded watchdog, drained diagnostics and output
 refusal remain reserved for that gated path.
+
+**Selected-primary PCM proof unit (2026-10-08):** `preparePCMProxy` uses the same confirmed
+primary, single selected channel, current source/format/asset revision and read-only
+`SourceDecoder.withDecodingCursor` as `prepare`. It refuses every recorded/accepted map
+before content access: no accepted occurrence, all-lane map inverse/coverage or same-fade
+authority is inferred. The original descriptor is checked against metadata at open and
+against descriptor/path identity after the last read; the selected file, bookmark, show
+mutation serial and complete access-record set are rechecked **after** resampling and
+before returning. The immutable proxy carries selection, full format interpretation
+(including fingerprint, codec delay and channel layout), source revision, selected-channel
+asset revision 2, proxy asset revision 1, and one-second-at-16-kHz chunk offsets. Each chunk
+records half-open output/source frame spans and the clamped contributing source-frame span.
+Exact center mapping is
+`sourceFrame = outputFrame * (sourceRate / 16000)`; source times use the interpretation's
+integer rate, not floating-point timestamps. Source frames beyond valid content contribute
+zero only at filter edges. The 8-factor-per-side Blackman sinc lowpass (`0.45/factor`
+cycles/source frame) follows the analysis-decimator recipe but is a separate unqualified
+speech-proxy filter, proxy asset revision 1; 16 kHz is exact passthrough. Only envelope-supported
+integral multiples of 16 kHz through 192 kHz are admitted; 44.1 kHz and other fractional
+ratios **refuse**, not silently interpolate. Raw selected input is capped at 9,600,000
+frames (at most ten minutes only at 16 kHz), and proxy chunks at 16,000 frames. Overflow,
+rate mismatch, cancellation, stale live state, alias/path change and decode errors refuse
+typed; staged output is scrubbed on failure and never published partially. The selected
+proxy is memory-only and has no public sample or file-path constructor, no runnable
+`offlinePlan`, and no ASR invocation. Descriptor pinning applies to the original decoder
+read, **not** to a future worker input file; a mutable caller-supplied snapshot alone cannot
+grant organizer-owned authority or durable source-content identity. Offline model/network
+isolation, WAV serialization/identity and end-to-end actual-media inference remain open.
 
 ## Native status correction
 

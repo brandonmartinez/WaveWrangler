@@ -27,6 +27,30 @@ private struct SpeechFixtureIO: SourceIO {
     func downloadFraction(of url: URL) async -> Knowledge<Double> { .unknown }
 }
 
+private struct SpeechUnavailableIO: SourceIO {
+    enum Failure: Sendable { case permission, dataless }
+    let base: SpeechFixtureIO
+    let failure: Failure
+
+    var provenance: ObservationProvenance { .simulated }
+    func metadata(at url: URL) -> MetadataResult {
+        switch failure {
+        case .permission: return .failure(.permissionDenied)
+        case .dataless:
+            guard case var .success(metadata) = base.metadata(at: url) else { return .failure(.notFound) }
+            metadata.isDataless = .known(true)
+            return .success(metadata)
+        }
+    }
+    func listItems(under directory: URL) -> DirectoryListing { base.listItems(under: directory) }
+    func makeReadOnlyBookmark(for url: URL) throws -> Data { try base.makeReadOnlyBookmark(for: url) }
+    func resolveBookmark(_ data: Data) -> BookmarkResolution { base.resolveBookmark(data) }
+    func startAccessingSecurityScope(_ url: URL) -> Bool { base.startAccessingSecurityScope(url) }
+    func stopAccessingSecurityScope(_ url: URL) { base.stopAccessingSecurityScope(url) }
+    func requestDownload(of url: URL) throws { try base.requestDownload(of: url) }
+    func downloadFraction(of url: URL) async -> Knowledge<Double> { await base.downloadFraction(of: url) }
+}
+
 private actor SpeechSnapshot {
     var value: PrimarySpeechInputState
     var replacement: PrimarySpeechInputState?
@@ -72,9 +96,54 @@ private actor SpeechLateSnapshot {
     }
 }
 
+private struct SpeechMidReadContentIO: SourceContentIO {
+    let url: URL
+
+    func openForDecoding(_ url: URL) throws(DecodeFailure) -> any DecodingContentReader {
+        let reader = try SystemSourceContentIO().openForDecoding(url)
+        return SpeechMidReadReader(reader: reader, url: self.url)
+    }
+}
+
+private final class SpeechMidReadReader: DecodingContentReader {
+    let reader: any DecodingContentReader
+    let url: URL
+    var reads = 0
+    var facts: EncodedStreamFacts { reader.facts }
+
+    init(reader: any DecodingContentReader, url: URL) {
+        self.reader = reader
+        self.url = url
+    }
+
+    func readRawFrames(into buffer: RawDecodeBuffer) throws(DecodeFailure) -> Int {
+        let count = try reader.readRawFrames(into: buffer)
+        reads += 1
+        if reads == 1 {
+            do {
+                let handle = try FileHandle(forWritingTo: url)
+                try handle.seek(toOffset: 46)
+                try handle.write(contentsOf: Data([0x11, 0x22]))
+                try handle.close()
+            } catch {
+                throw .readFailed(errno: EIO)
+            }
+        }
+        return count
+    }
+
+    func currentOpenedFileState() throws(DecodeFailure) -> OpenedFileState {
+        try reader.currentOpenedFileState()
+    }
+
+    func close() { reader.close() }
+}
+
 @Suite("Selected primary source bytes")
 struct PrimarySpeechInputTests {
-    private func wav(channel0: Int16 = 100, channel1: Int16 = -200, frames: Int = 64) -> Data {
+    private func wav(channel0: Int16 = 100, channel1: Int16 = -200, frames: Int = 64,
+                     rate: Int = 16_000, selectedSamples: [Int16]? = nil) -> Data {
+        precondition(selectedSamples == nil || selectedSamples?.count == frames)
         var data = Data()
         func ascii(_ text: String) { data.append(Data(text.utf8)) }
         func u16(_ value: UInt16) { data.append(UInt8(truncatingIfNeeded: value)); data.append(UInt8(truncatingIfNeeded: value >> 8)) }
@@ -82,17 +151,22 @@ struct PrimarySpeechInputTests {
             for shift in stride(from: 0, to: 32, by: 8) { data.append(UInt8(truncatingIfNeeded: value >> shift)) }
         }
         ascii("RIFF"); u32(UInt32(36 + frames * 4)); ascii("WAVEfmt "); u32(16)
-        u16(1); u16(2); u32(16_000); u32(64_000); u16(4); u16(16)
+        u16(1); u16(2); u32(UInt32(rate)); u32(UInt32(rate * 4)); u16(4); u16(16)
         ascii("data"); u32(UInt32(frames * 4))
-        for _ in 0..<frames { u16(UInt16(bitPattern: channel0)); u16(UInt16(bitPattern: channel1)) }
+        for frame in 0..<frames {
+            u16(UInt16(bitPattern: channel0))
+            u16(UInt16(bitPattern: selectedSamples?[frame] ?? channel1))
+        }
         return data
     }
 
-    private func fixture() throws -> (URL, URL, SourceAccessContext, PrimarySpeechInputState, EpisodeID, SpeakerID) {
+    private func fixture(rate: Int = 16_000, frames: Int = 64, selectedSamples: [Int16]? = nil)
+        throws -> (URL, URL, SourceAccessContext, PrimarySpeechInputState, EpisodeID, SpeakerID)
+    {
         let directory = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("ww-speech-input-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent("source.wav")
-        try wav().write(to: url)
+        try wav(frames: frames, rate: rate, selectedSamples: selectedSamples).write(to: url)
         let io = SpeechFixtureIO(url: url)
         guard case let .success(metadata) = io.metadata(at: url) else {
             throw SpeechAdmissionRefusal.sourceIdentityNotConfirmed
@@ -138,6 +212,232 @@ struct PrimarySpeechInputTests {
         #expect(throws: SpeechAdmissionRefusal.primaryProxyNotProven) {
             try input.offlinePlan(stage: directory, scratch: directory)
         }
+    }
+
+    @Test func selectedPrimaryProxyTracksExactSourceAndChunkCoordinates() async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture(
+            rate: 48_000, frames: 48_003)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let proxy = try await PrimarySpeechInputAdapter(access: access).preparePCMProxy(
+            episodeID: episode, speakerID: speaker,
+            authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+            availability: .on, current: { snapshot }
+        )
+        #expect(proxy.selection.channel == 1)
+        #expect(proxy.sourceRevision == snapshot.sourceRevision)
+        #expect(proxy.inputAssetRevision == PrimarySpeechInputAdapter.inputAssetRevision)
+        #expect(proxy.proxyAssetRevision == SelectedPrimaryPCMProxy.proxyAsset.revision)
+        #expect(proxy.interpretation.sourceSampleRate == 48_000)
+        #expect(
+            proxy.interpretation.sourceFingerprint
+                == snapshot.accessRecords[0].recordedIdentity?.fingerprint)
+        #expect(proxy.sourceFramesPerOutputFrame == 3)
+        #expect(proxy.frameCount == 16_001)
+        #expect(proxy.chunks.count == 2)
+        #expect(proxy.chunks[0].outputFrames == 0..<16_000)
+        #expect(proxy.chunks[0].sourceFrames == 0..<48_000)
+        #expect(proxy.chunks[0].filterSourceFrames == 0..<48_003)
+        #expect(proxy.chunks[1].outputFrames == 16_000..<16_001)
+        #expect(proxy.chunks[1].sourceFrames == 48_000..<48_003)
+        #expect(proxy.chunks[1].filterSourceFrames == 47_976..<48_003)
+        #expect(abs(proxy.samples[100] - Float(-200) / 32768) < 0.000_1)
+        #expect(abs(proxy.samples[100] - Float(100) / 32768) > 0.001)
+        #expect(throws: SpeechAdmissionRefusal.primaryProxyNotProven) {
+            try proxy.offlinePlan(stage: directory, scratch: directory)
+        }
+    }
+
+    @Test func proxyPassthroughPreservesSelectedChannel() async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let proxy = try await PrimarySpeechInputAdapter(access: access).preparePCMProxy(
+            episodeID: episode, speakerID: speaker,
+            authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+            availability: .on, current: { snapshot }
+        )
+        #expect(proxy.frameCount == 64)
+        #expect(proxy.chunks.map(\.outputFrames) == [0..<64])
+        #expect(proxy.chunks[0].sourceFrames == 0..<64)
+        #expect(proxy.samples.allSatisfy { $0 == Float(-200) / 32768 })
+    }
+
+        @Test func proxyFilterPreservesSpeechBandAndSuppressesOutOfBandTone() async throws {
+            func tone(_ frequency: Int) -> [Int16] {
+                (0..<4_800).map { frame in
+                    Int16((10_000 * sin(2 * .pi * Double(frame * frequency) / 48_000)).rounded())
+                }
+            }
+            func amplitude(_ frequency: Int) async throws -> Double {
+                let (directory, _, access, snapshot, episode, speaker) = try fixture(
+                    rate: 48_000, frames: 4_800, selectedSamples: tone(frequency))
+                defer { try? FileManager.default.removeItem(at: directory) }
+                let proxy = try await PrimarySpeechInputAdapter(access: access).preparePCMProxy(
+                    episodeID: episode, speakerID: speaker,
+                    authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                    availability: .on, current: { snapshot }
+                )
+                return sqrt(proxy.samples[100..<1_500].reduce(0.0) { $0 + Double($1 * $1) } / 1_400)
+            }
+            let speechBand = try await amplitude(1_000)
+            let aliasedBand = try await amplitude(12_000)
+            #expect(speechBand > 0.20)
+            #expect(aliasedBand < 0.005)
+        }
+
+    @Test func proxyPlanRefusesUnsupportedRateBoundsAndChunkOverflow() throws {
+        let passthrough = try PCMProxyPlan(
+            sourceFrames: 16_001, sourceRate: 16_000, chunkFrames: 16_000)
+        #expect(passthrough.chunks[0].filterSourceFrames == 0..<16_000)
+        #expect(passthrough.chunks[1].filterSourceFrames == 16_000..<16_001)
+        #expect(throws: SpeechAdmissionRefusal.proxyRateUnsupported) {
+            try PCMProxyPlan(sourceFrames: 64, sourceRate: 44_100, chunkFrames: 16_000)
+        }
+        #expect(throws: SpeechAdmissionRefusal.proxyRateUnsupported) {
+            try PCMProxyPlan(sourceFrames: 64, sourceRate: 0, chunkFrames: 16_000)
+        }
+        #expect(throws: SpeechAdmissionRefusal.proxyFrameOverflow) {
+            try PCMProxyPlan(sourceFrames: Int64.max, sourceRate: 16_000, chunkFrames: 16_000)
+        }
+        #expect(throws: SpeechAdmissionRefusal.proxyFrameOverflow) {
+            try PCMProxyPlan(sourceFrames: -1, sourceRate: 16_000, chunkFrames: 16_000)
+        }
+        #expect(throws: SpeechAdmissionRefusal.inputTooLarge) {
+            try PCMProxyPlan(
+                sourceFrames: Int64(PrimarySpeechInputAdapter.maximumFrames + 1),
+                sourceRate: 16_000, chunkFrames: 16_000)
+        }
+        #expect(throws: SpeechAdmissionRefusal.proxyChunkOverflow) {
+            try PCMProxyPlan(sourceFrames: 64, sourceRate: 16_000, chunkFrames: Int.max)
+        }
+        #expect(throws: SpeechAdmissionRefusal.proxyChunkOverflow) {
+            try PCMProxyPlan(sourceFrames: 64, sourceRate: 16_000, chunkFrames: 0)
+        }
+    }
+
+    @Test func proxyRefusesChannelCountMismatchAndUnsupportedResampling() async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let grant = PrimarySpeechAuthorization.explicitUserRequest(
+            episodeID: episode, speakerID: speaker)
+        var show = snapshot.show
+        show.episodes[0].sources[0].observations.channelCount = .known(3)
+        let mismatchedShow = show
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: access).preparePCMProxy(
+                episodeID: episode, speakerID: speaker, authorization: grant, availability: .on,
+                current: {
+                    .init(
+                        show: mismatchedShow, showRevision: snapshot.showRevision,
+                        accessRecords: snapshot.accessRecords,
+                        sourceRevision: snapshot.sourceRevision,
+                        inputAssetRevision: snapshot.inputAssetRevision)
+                }
+            )
+            Issue.record("channel mismatch yielded a proxy")
+        } catch { #expect(error == .sourceRevisionChanged) }
+        let (otherDirectory, _, otherAccess, otherState, otherEpisode, otherSpeaker) = try fixture(
+            rate: 44_100)
+        defer { try? FileManager.default.removeItem(at: otherDirectory) }
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: otherAccess).preparePCMProxy(
+                episodeID: otherEpisode, speakerID: otherSpeaker,
+                authorization: .explicitUserRequest(
+                    episodeID: otherEpisode, speakerID: otherSpeaker),
+                availability: .on, current: { otherState }
+            )
+            Issue.record("unsupported rate yielded a proxy")
+        } catch { #expect(error == .proxyRateUnsupported) }
+    }
+
+    @Test func proxyRefusesLateRevisionAndCancellation() async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let grant = PrimarySpeechAuthorization.explicitUserRequest(
+            episodeID: episode, speakerID: speaker)
+        let changed = PrimarySpeechInputState(
+            show: snapshot.show, showRevision: 2, accessRecords: snapshot.accessRecords,
+            sourceRevision: snapshot.sourceRevision, inputAssetRevision: snapshot.inputAssetRevision
+        )
+        let state = SpeechLateSnapshot(initial: snapshot, changed: changed)
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: access).preparePCMProxy(
+                episodeID: episode, speakerID: speaker, authorization: grant, availability: .on,
+                current: { await state.read() }
+            )
+            Issue.record("late revision yielded a proxy")
+        } catch { #expect(error == .sourceRevisionChanged) }
+        #expect(await state.calls == 3)
+        let cancelled = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await PrimarySpeechInputAdapter(access: access).preparePCMProxy(
+                episodeID: episode, speakerID: speaker, authorization: grant, availability: .on,
+                current: { snapshot }
+            )
+        }
+        do {
+            _ = try await cancelled.value
+            Issue.record("cancelled decode yielded a proxy")
+        } catch { #expect(error as? SpeechAdmissionRefusal == .decode(.cancelled)) }
+    }
+
+    @Test func proxyRefusesMidReadSourceChange() async throws {
+        let (directory, url, access, snapshot, episode, speaker) = try fixture(frames: 20_000)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        do {
+            _ = try await PrimarySpeechInputAdapter(
+                access: access, content: SpeechMidReadContentIO(url: url)
+            ).preparePCMProxy(
+                episodeID: episode, speakerID: speaker,
+                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                availability: .on, current: { snapshot }
+            )
+            Issue.record("mid-read source mutation yielded a proxy")
+        } catch {
+            #expect(error == .decode(.sourceChangedDuringDecode))
+        }
+    }
+
+    @Test(arguments: ["missing", "relink", "revoked"])
+    func proxyRefusesLateSourceOrAccessChange(_ scenario: String) async throws {
+            let (directory, _, access, snapshot, episode, speaker) = try fixture()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            var show = snapshot.show
+            var records = snapshot.accessRecords
+            switch scenario {
+            case "missing": show.episodes[0].sources.removeAll()
+            case "relink": records[0].lastKnownPath = directory.appendingPathComponent("other.wav").path
+            case "revoked": records.removeAll()
+            default: Issue.record("unknown fixture scenario"); return
+            }
+            let changed = PrimarySpeechInputState(
+                show: show, showRevision: 2, accessRecords: records,
+                sourceRevision: snapshot.sourceRevision, inputAssetRevision: snapshot.inputAssetRevision
+            )
+            let state = SpeechLateSnapshot(initial: snapshot, changed: changed)
+            do {
+                _ = try await PrimarySpeechInputAdapter(access: access).preparePCMProxy(
+                    episodeID: episode, speakerID: speaker,
+                    authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                    availability: .on, current: { await state.read() }
+                )
+                Issue.record("late source or access change yielded a proxy")
+            } catch { #expect(error == .sourceRevisionChanged) }
+    }
+
+    @Test(arguments: [SpeechUnavailableIO.Failure.permission, .dataless])
+    private func proxyRefusesUnreadableOrDatalessSource(_ failure: SpeechUnavailableIO.Failure) async throws {
+            let (directory, url, _, snapshot, episode, speaker) = try fixture()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let access = SourceAccessContext(io: SpeechUnavailableIO(base: SpeechFixtureIO(url: url),
+                                                                     failure: failure))
+            do {
+                _ = try await PrimarySpeechInputAdapter(access: access).preparePCMProxy(
+                    episodeID: episode, speakerID: speaker,
+                    authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                    availability: .on, current: { snapshot }
+                )
+                Issue.record("unreadable or dataless source yielded a proxy")
+            } catch { #expect(error == .sourceIdentityNotConfirmed) }
     }
 
     @Test func absentConsentBackupUnknownChannelAndRevisionRefuseBeforeDecode() async throws {
@@ -445,6 +745,46 @@ struct PrimarySpeechInputTests {
         let fixture = try mappedFixture(scenario)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         #expect(await refusal(fixture) == .occurrenceNotContinuous)
+    }
+
+    @Test(arguments: ["continuous", "gap", "duplicate"])
+    func repeatedOrMappedPlacementsCannotProducePCMProxy(_ scenario: String) async throws {
+        let fixture = try mappedFixture(scenario)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: fixture.access).preparePCMProxy(
+                episodeID: fixture.episode, speakerID: fixture.speaker,
+                authorization: .explicitUserRequest(episodeID: fixture.episode, speakerID: fixture.speaker),
+                availability: .on, current: { fixture.state }
+            )
+            Issue.record("mapped or repeated placement yielded a proxy")
+        } catch { #expect(error == .occurrenceNotContinuous) }
+    }
+
+    @Test func backupAndOfflineSourcesCannotProducePCMProxy() async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let grant = PrimarySpeechAuthorization.explicitUserRequest(episodeID: episode, speakerID: speaker)
+        var show = snapshot.show
+        show.episodes[0].sources[0].role = .backup
+        let backup = PrimarySpeechInputState(
+            show: show, showRevision: snapshot.showRevision, accessRecords: snapshot.accessRecords,
+            sourceRevision: snapshot.sourceRevision, inputAssetRevision: snapshot.inputAssetRevision
+        )
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: access).preparePCMProxy(
+                episodeID: episode, speakerID: speaker, authorization: grant, availability: .on,
+                current: { backup }
+            )
+            Issue.record("backup yielded a proxy")
+        } catch { #expect(error == .primaryNotConfirmed) }
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: access).preparePCMProxy(
+                episodeID: episode, speakerID: speaker, authorization: grant, availability: .off,
+                current: { snapshot }
+            )
+            Issue.record("offline source yielded a proxy")
+        } catch { #expect(error == .sourceIdentityNotConfirmed) }
     }
 
     @Test func mappedRefusalPrecedesDecode() async throws {

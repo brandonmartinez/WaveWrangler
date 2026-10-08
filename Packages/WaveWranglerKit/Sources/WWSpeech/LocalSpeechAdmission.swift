@@ -48,6 +48,9 @@ public enum SpeechAdmissionRefusal: Error, Sendable, Equatable {
     case sourceRevisionChanged
     case occurrenceNotContinuous
     case inputTooLarge
+    case proxyRateUnsupported
+    case proxyFrameOverflow
+    case proxyChunkOverflow
     case decode(DecodeFailure)
     case runtimeNotStaged
     case runtimeDependencyMismatch
