@@ -1,11 +1,15 @@
 import Accelerate
+import CryptoKit
 import Darwin
 import Foundation
 import Testing
 import UniformTypeIdentifiers
 import WWAlignEstimate
+import WWAlignPipeline
 import WWCore
 import WWDecode
+import WWDerived
+import WWPersistence
 import WWRender
 import WWSources
 import WWTimeMap
@@ -33,6 +37,9 @@ import WWTimeMap
 private enum Env {
     static let episode = ProcessInfo.processInfo.environment["WW_LOCAL_EPISODE_DIR"]
     static let scratch = ProcessInfo.processInfo.environment["WW_LOCAL_SCRATCH_DIR"]
+    static let manual = ProcessInfo.processInfo.environment["WW_LOCAL_EPISODE_MANUAL"] == "1"
+    static let phase = ProcessInfo.processInfo.environment["WW_LOCAL_EPISODE_MEMORY_PHASE"]
+    static let labelMap = ProcessInfo.processInfo.environment["WW_LOCAL_EPISODE_LABEL_MAP"]
 }
 
 private func log(_ line: String) {
@@ -55,6 +62,72 @@ struct LocalEpisodeValidationTests {
         var harness = Harness(episode: episode, scratch: scratch)
         try await harness.run()
         #expect(harness.findings.isEmpty, "findings: \(harness.findings)")
+    }
+}
+
+@Suite("Local episode manual pipeline (opt-in)", .serialized, .enabled(if: Env.manual && Env.episode != nil))
+struct LocalEpisodeManualTests {
+    @Test(.timeLimit(.minutes(60)))
+    func validateManualPipeline() async throws {
+        let episode = URL(fileURLWithPath: try #require(Env.episode), isDirectory: true).standardizedFileURL
+        let scratchPath = try #require(Env.scratch, "set WW_LOCAL_SCRATCH_DIR to a fresh mktemp -d directory")
+        let scratch = try ConsentGuards.checkScratch(URL(fileURLWithPath: scratchPath, isDirectory: true), episode: episode)
+        var harness = Harness(episode: episode, scratch: scratch)
+        try await harness.runManual()
+        #expect(harness.findings.isEmpty, "findings: \(harness.findings)")
+    }
+}
+
+@Suite("Local episode isolated memory (opt-in)", .serialized,
+    .enabled(if: Env.episode != nil && Env.phase.map { ["snapshot", "original", "render"].contains($0) } == true))
+struct LocalEpisodeMemoryTests {
+    @Test(.timeLimit(.minutes(30)))
+    func measureIsolatedPhase() async throws {
+        let episode = URL(fileURLWithPath: try #require(Env.episode), isDirectory: true).standardizedFileURL
+        let phase = try #require(Env.phase)
+        if phase == "snapshot" {
+            let harness = Harness(episode: episode, scratch: episode)
+            let items = try harness.enumerate()
+            let snapshot = try harness.snapshot(items)
+            let numbered = harness.number(items, snapshots: snapshot)
+            let labels = numbered.filter(\.isAudio).map {
+                "\($0.number):\(snapshot[$0.url]!.inode)"
+            }.joined(separator: "\n") + "\n"
+            let mapPath = try #require(Env.labelMap, "set a temporary label-map path outside the repository")
+            let mapURL = URL(fileURLWithPath: mapPath)
+            if FileManager.default.fileExists(atPath: mapURL.path) {
+                let previous: String
+                do {
+                    previous = try String(contentsOf: mapURL, encoding: .utf8)
+                } catch {
+                    throw HarnessError("temporary label map unreadable")
+                }
+                guard previous == labels else { throw HarnessError("original source label order changed") }
+            } else {
+                let directory = try ConsentGuards.checkScratch(mapURL.deletingLastPathComponent(), episode: episode)
+                guard ConsentGuards.realPath(mapURL.deletingLastPathComponent()) == directory else {
+                    throw HarnessError("temporary label map is not in guarded scratch")
+                }
+                do {
+                    try labels.write(to: mapURL, atomically: true, encoding: .utf8)
+                } catch {
+                    throw HarnessError("temporary label map write failed")
+                }
+            }
+            var hasher = SHA256()
+            for entry in snapshot.values.map({
+                "\($0.size):\($0.mtime):\($0.ctime):\($0.inode):\($0.sha256 ?? "-")"
+            }).sorted() {
+                hasher.update(data: Data(entry.utf8))
+                hasher.update(data: Data([10]))
+            }
+            log("memory snapshot: \(items.count) items, \(items.filter(\.isAudio).count) audio; aggregate SHA-256 \(hasher.finalize().map { String(format: "%02x", $0) }.joined())")
+            return
+        }
+        let scratchPath = try #require(Env.scratch, "set WW_LOCAL_SCRATCH_DIR to a fresh mktemp -d directory")
+        let scratch = try ConsentGuards.checkScratch(URL(fileURLWithPath: scratchPath, isDirectory: true), episode: episode)
+        var harness = Harness(episode: episode, scratch: scratch)
+        try await harness.runIsolatedMemoryPhase(phase)
     }
 }
 
@@ -232,12 +305,12 @@ private struct Harness {
         let seconds: Double
     }
 
-    mutating func decode(_ item: Item) async -> Decoded? {
+    mutating func decode(_ item: Item, sliceStartSeconds: Int? = nil) async -> Decoded? {
         let decoder = SourceDecoder(access: SourceAccessContext(io: io))
         let started = Date()
         do throws(DecodeFailure) {
             let result = try await decoder.decode(item.url, source: SourceID()) { interpretation in
-                AnalysisSink(interpretation)
+                AnalysisSink(interpretation, sliceStartSeconds: sliceStartSeconds)
             }
             let seconds = Date().timeIntervalSince(started)
             let i = result.interpretation
@@ -669,14 +742,14 @@ private struct AnalysisSink: DecodedAudioSink {
     var sawMainThread = false
     var mono: [Float] = []
 
-    init(_ interpretation: FormatInterpretation) {
+    init(_ interpretation: FormatInterpretation, sliceStartSeconds: Int? = nil) {
         channelCount = interpretation.channelCount
         totalFrames = interpretation.frames.validFrames
         let rate = interpretation.sourceSampleRate
         let factor = Self.factor(for: rate)
         analysisRate = rate / factor
         decimator = Decimator(factor: factor)
-        sliceStart = (totalFrames * 2 / 5) / 1000 * 1000
+        sliceStart = sliceStartSeconds.map { Int64($0 * rate) } ?? (totalFrames * 2 / 5) / 1000 * 1000
         sliceEnd = min(totalFrames, sliceStart + 36 * Int64(rate))
         slice = Array(repeating: [], count: channelCount)
     }
@@ -719,6 +792,42 @@ private struct AnalysisSink: DecodedAudioSink {
         guard decoded == totalFrames else { throw HarnessError("frame count mismatch") }
         let analysis = decimator.finish(inputFrames: Int(totalFrames))
         return AnalysisProduct(analysis: analysis, analysisRate: analysisRate, sliceStart: sliceStart, slice: slice, peak: peak, sawMainThread: sawMainThread)
+    }
+}
+
+private struct CopySliceSink: DecodedAudioSink {
+    let channelCount: Int
+    let start: Int64
+    let end: Int64
+    var decoded: Int64 = 0
+    var channels: [[Float]]
+
+    init(_ format: FormatInterpretation, startSeconds: Int) {
+        channelCount = format.channelCount
+        start = Int64(startSeconds) * Int64(format.sourceSampleRate)
+        end = min(format.frames.validFrames, start + 36 * Int64(format.sourceSampleRate))
+        channels = Array(repeating: [], count: channelCount)
+    }
+
+    mutating func append(_ chunk: DecodedChunk) throws {
+        let lo = max(decoded, start)
+        let hi = min(decoded + Int64(chunk.frameCount), end)
+        if lo < hi {
+            for channel in 0 ..< channelCount {
+                let base = channel * chunk.frameCount
+                channels[channel].append(contentsOf: chunk.samples[
+                    base + Int(lo - decoded) ..< base + Int(hi - decoded)
+                ])
+            }
+        }
+        decoded += Int64(chunk.frameCount)
+    }
+
+    mutating func finish() throws -> [[Float]] {
+        guard channels.allSatisfy({ $0.count == Int(end - start) }) else {
+            throw HarnessError("short copy frame count mismatch")
+        }
+        return channels
     }
 }
 
@@ -850,7 +959,520 @@ private struct FileSink: RenderOutputSink {
     }
 }
 
+// The manual run uses gateway-decoded, channel-preserving short copies. No original is opened by
+// the pipeline's renderer; its source inputs are the disposable copies.
+private extension Harness {
+    func writeSlice(_ channels: [[Float]], rate: Int, to url: URL) throws {
+        let frames = channels.first?.count ?? 0
+        guard frames > 0,
+              channels.allSatisfy({ $0.count == frames }),
+              frames * channels.count * 4 < Int(UInt32.max) - 36 else {
+            throw HarnessError("invalid slice shape")
+        }
+        let bytes = UInt32(frames * channels.count * 4)
+        var wave = Data(capacity: 44 + Int(bytes))
+        func ascii(_ text: String) { wave.append(contentsOf: text.utf8) }
+        func u16(_ value: UInt16) { withUnsafeBytes(of: value.littleEndian) { wave.append(contentsOf: $0) } }
+        func u32(_ value: UInt32) { withUnsafeBytes(of: value.littleEndian) { wave.append(contentsOf: $0) } }
+        ascii("RIFF"); u32(36 + bytes); ascii("WAVEfmt ")
+        u32(16); u16(3); u16(UInt16(channels.count)); u32(UInt32(rate))
+        u32(UInt32(rate * channels.count * 4)); u16(UInt16(channels.count * 4)); u16(32)
+        ascii("data"); u32(bytes)
+        for frame in 0 ..< frames {
+            for channel in channels {
+                u32(channel[frame].bitPattern)
+            }
+        }
+        try wave.write(to: url, options: .atomic)
+    }
+
+    func writeSlice(_ decoded: Decoded, to url: URL) throws {
+        guard decoded.product.slice.count == decoded.interpretation.channelCount else {
+            throw HarnessError("invalid slice channel count")
+        }
+        try writeSlice(decoded.product.slice, rate: decoded.interpretation.sourceSampleRate, to: url)
+    }
+
+    mutating func runManual() async throws {
+        let started = Date()
+        log("manual pipeline host: \(Host.summary)")
+        var items = try enumerate()
+        let before = try snapshot(items)
+        items = number(items, snapshots: before)
+        var stepFailure: HarnessError?
+        do {
+            try await manualSteps(items)
+        } catch {
+            stepFailure = HarnessError("manual pipeline step failed: \(type(of: error))")
+            findings.append("manual pipeline step failed")
+            log("manual pipeline step failed: \(type(of: error))")
+        }
+        let remaining = try FileManager.default.contentsOfDirectory(atPath: scratch.path)
+        if !remaining.isEmpty {
+            findings.append("temporary manual inputs or derived assets not deleted")
+            log("manual scratch cleanup: FAILED (\(remaining.count) entries)")
+        } else {
+            log("manual scratch cleanup: empty")
+        }
+        let after = try snapshot(items)
+        verifyUnchanged(items, before: before, after: after)
+        log("manual pipeline wall \(f(Date().timeIntervalSince(started), 1)) s; process peak RSS \(Host.peakRSSMegabytes) MB")
+        if let stepFailure { throw stepFailure }
+        if !findings.isEmpty { throw HarnessError("manual pipeline findings: \(findings.joined(separator: "; "))") }
+    }
+
+    mutating func manualSteps(_ items: [Item]) async throws {
+        var decoded: [Int: Decoded] = [:]
+        for item in items where item.isAudio {
+            let start: Int
+            switch item.number {
+            case 7, 10: start = 1702
+            case 11: start = 1704
+            case 12: start = 1706
+            default: start = 1700
+            }
+            if let result = await decode(item, sliceStartSeconds: start) { decoded[item.number] = result }
+        }
+        let groups = proposeGroups(decoded)
+        guard groups.count == 4, groups.map(\.members) == [[1, 2, 3, 4, 5, 6, 8, 9], [7, 10], [11], [12]],
+              decoded.count == items.filter(\.isAudio).count - 1 else {
+            throw HarnessError("unexpected supported-source or group count")
+        }
+        let copies = scratch.appendingPathComponent("manual-inputs", isDirectory: true)
+        try FileManager.default.createDirectory(at: copies, withIntermediateDirectories: false)
+        defer {
+            do {
+                try FileManager.default.removeItem(at: copies)
+                log("manual temporary copies: deleted")
+            } catch {
+                log("manual temporary copies: deletion FAILED")
+            }
+        }
+        let cache = scratch.appendingPathComponent("manual-cache", isDirectory: true)
+        defer {
+            do {
+                try FileManager.default.removeItem(at: cache)
+                log("manual derived assets: deleted")
+            } catch {
+                log("manual derived assets: deletion FAILED")
+            }
+        }
+        let store = try DerivedAssetStore(root: cache, sourceLocations: [episode])
+        let coordinator = DerivedJobCoordinator(store: store)
+        let decoder = SourceDecoder(access: SourceAccessContext(io: io))
+        let pipeline = AlignmentPipeline(
+            coordinator: coordinator, decoder: decoder,
+            configuration: AlignmentPipelineConfiguration(concurrency: 1, targetExcerptSeconds: 20,
+                searchDeviationSeconds: 5, renderSegmentSeconds: 6)
+        )
+
+        let episodeID = EpisodeID()
+        var recorderGroups: [RecorderGroup] = []
+        var records: [SourceRecord] = []
+        var sources: [AlignmentSource] = []
+        var originalSources: [AlignmentSource] = []
+        var authorizations: [ContentWorkAuthorization] = []
+        var epochs: [RecordingEpochID] = []
+        var expectedChannels: [[String]] = []
+        for group in groups {
+            let groupID = RecorderGroupID()
+            let epoch = RecordingEpochID()
+            epochs.append(epoch)
+            recorderGroups.append(RecorderGroup(id: groupID, name: group.label, epochs: [RecordingEpoch(id: epoch, label: "Take 1")]))
+            var channelKeys: [String] = []
+            for member in group.members {
+                let source = SourceID()
+                let url = copies.appendingPathComponent("\(sLabel(member)).wav")
+                try writeSlice(decoded[member]!, to: url)
+                records.append(SourceRecord(id: source, displayNameHint: sLabel(member), placement: SourcePlacement(recorderGroupID: groupID, epochID: epoch)))
+                sources.append(AlignmentSource(id: source, url: url, availability: .on))
+                let original = try #require(items.first { $0.number == member })
+                originalSources.append(AlignmentSource(id: source, url: original.url, availability: .on))
+                channelKeys += (0 ..< decoded[member]!.interpretation.channelCount).map { "\(source.rawValue)/\($0)" }
+                authorizations.append(.explicitUserRequest(for: source))
+                guard case let .success(metadata) = io.metadata(at: url) else { throw HarnessError("temporary copy metadata unavailable") }
+                await coordinator.updateSource(SourceRevision.metadata(source, fingerprint: metadata.fingerprint))
+            }
+            expectedChannels.append(channelKeys)
+        }
+        var model = ShowDocumentModel(
+            show: Show(title: "Local validation"),
+            episodes: [Episode(id: episodeID, title: "Local validation", recorderGroups: recorderGroups, sources: records)]
+        )
+        let reference = sources[0].id
+        let originalCache = scratch.appendingPathComponent("original-analysis-cache", isDirectory: true)
+        defer {
+            do {
+                try FileManager.default.removeItem(at: originalCache)
+                log("full-source analysis cache: deleted")
+            } catch {
+                log("full-source analysis cache: deletion FAILED")
+            }
+        }
+        let originalStore = try DerivedAssetStore(root: originalCache, sourceLocations: [episode])
+        let originalCoordinator = DerivedJobCoordinator(store: originalStore)
+        for source in originalSources {
+            guard case let .success(metadata) = io.metadata(at: source.url) else {
+                throw HarnessError("original source registration metadata unavailable")
+            }
+            await originalCoordinator.updateSource(SourceRevision.metadata(source.id, fingerprint: metadata.fingerprint))
+        }
+        let originalPipeline = AlignmentPipeline(
+            coordinator: originalCoordinator, decoder: decoder,
+            configuration: AlignmentPipelineConfiguration(concurrency: 1, targetExcerptSeconds: 600,
+                searchDeviationSeconds: 120, renderSegmentSeconds: 6)
+        )
+        let fullAnalysis = try #require(await originalPipeline.analyse(model: model, episode: episodeID,
+            sources: originalSources, authorizations: authorizations, preferredReference: reference))
+        guard fullAnalysis.plan.epochs.count == groups.count, fullAnalysis.sourceFailures.isEmpty,
+              fullAnalysis.epochFailures.isEmpty, fullAnalysis.facts.count == decoded.count else {
+            throw HarnessError("full-source pipeline analysis failed")
+        }
+        for (index, epoch) in epochs.enumerated() where index > 0 {
+            guard let record = fullAnalysis.records[epoch] else { throw HarnessError("full-source epoch missing") }
+            log("\(groups[index].label) full-source analysis: \(record.abstention.map { "ABSTAINED \($0.reason)" } ?? "PROPOSAL (not clock-approved)"); eligible \(record.coverage.eligibleCount)/\(record.coverage.windowCount)")
+        }
+        await originalPipeline.shutdown()
+        let plan = try #require(await pipeline.plan(model: model, episode: episodeID, sources: sources,
+            authorizations: authorizations, preferredReference: reference))
+        guard plan.epochs.count == groups.count, plan.ineligible.isEmpty else { throw HarnessError("manual plan incomplete") }
+        log("manual plan: \(groups.count) groups, \(decoded.count) eligible sources; all channels copied from gateway-decoded 36 s excerpts")
+        let analysis = try #require(await pipeline.analyse(model: model, episode: episodeID, sources: sources,
+            authorizations: authorizations, preferredReference: reference))
+        guard analysis.sourceFailures.isEmpty, analysis.epochFailures.isEmpty, analysis.facts.count == decoded.count else {
+            throw HarnessError("manual analysis probe or epoch failed")
+        }
+        for (index, epoch) in epochs.enumerated() where index > 0 {
+            guard let record = analysis.records[epoch] else { throw HarnessError("manual analysis missing epoch") }
+            log("\(groups[index].label) pipeline analysis: \(record.abstention.map { "ABSTAINED \($0.reason)" } ?? "PROPOSAL (not clock-approved)"); eligible \(record.coverage.eligibleCount)/\(record.coverage.windowCount)")
+        }
+        let referenceStart = Double(decoded[groups[0].members[0]]!.product.sliceStart) / Double(groups[0].rate)
+        var decisions: [RecordingEpochID: EpochMapDecision] = [:]
+        for index in 1 ..< groups.count {
+            let group = groups[index]
+            let start = Double(decoded[group.members[0]]!.product.sliceStart) / Double(group.rate)
+            let offsetMilliseconds = (start - referenceStart) * 1000
+            decisions[epochs[index]] = .numeric(ppm: 0, offsetMilliseconds: offsetMilliseconds,
+                note: "Operator equal-origin placement of gateway-decoded excerpts; no clock truth")
+            log("\(group.label) operator entry: 0 ppm, \(f(offsetMilliseconds, 3)) ms (difference of excerpt start frame/rate)")
+        }
+        let accepted = try await pipeline.accept(model: model, episode: episodeID, report: analysis, decisions: decisions)
+        model = accepted.model
+        try await pipeline.activate(accepted)
+        let states = await pipeline.states(model: model, episode: episodeID, report: analysis)
+        guard states.count == groups.count,
+              states[0].status == .reference,
+              states.dropFirst().allSatisfy({ $0.status == .manual(.numericEntry, revision: accepted.revision.revision) }) else {
+            throw HarnessError("accepted states do not match reference and manual decisions")
+        }
+        log("manual acceptance: U1 reference, 3 U4 numeric manual epochs, revision \(accepted.revision.revision), one map digest; no clock approval")
+
+        let cancelledStarted = Date()
+        let renderModel = model
+        let renderSources = sources
+        let renderAuthorizations = authorizations
+        let cancelledTask = Task.detached(priority: .utility) { [pipeline, renderModel, renderSources, renderAuthorizations, episodeID] in
+            try await pipeline.renderAlignedAssets(model: renderModel, episode: episodeID,
+                sources: renderSources, authorizations: renderAuthorizations)
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        cancelledTask.cancel()
+        let cancelled = try await cancelledTask.value
+        let cancellationSeconds = Date().timeIntervalSince(cancelledStarted)
+        guard !cancelled.isComplete, cancellationSeconds < 5 else {
+            throw HarnessError("active render cancellation did not stop within 5 s")
+        }
+        log("active render cancellation: incomplete, returned in \(f(cancellationSeconds, 3)) s")
+        let renderStarted = Date()
+        let rendered = try await pipeline.renderAlignedAssets(model: model, episode: episodeID,
+            sources: sources, authorizations: authorizations)
+        guard rendered.isComplete, rendered.notRendered.isEmpty, rendered.groups.count == groups.count else {
+            throw HarnessError("manual aligned render incomplete")
+        }
+        for (index, group) in rendered.groups.enumerated() {
+            let results = group.results.filter(\.isAvailable)
+            var channelSpans: [String: [Range<Int64>]] = [:]
+            var digests = Set<String>()
+            for result in results {
+                guard let payload = store.payload(for: result.key) else { throw HarnessError("missing aligned asset payload") }
+                let header = try AlignedAudioSegment.decode(payload).header
+                let key = "\(header.source.rawValue)/\(header.decodedChannel)"
+                channelSpans[key, default: []].append(header.firstOutputFrame ..< (header.firstOutputFrame + Int64(header.frameCount)))
+                digests.insert(header.mapDigest)
+                guard header.group == group.group, header.outputRate == group.outputRate,
+                      header.map == accepted.revision else {
+                    throw HarnessError("aligned asset header disagrees with accepted map")
+                }
+            }
+            guard group.outputRate == 48_000, group.outputFrames.count == 1_728_000,
+                  Set(channelSpans.keys) == Set(expectedChannels[index]),
+                  digests == [accepted.mapContentDigest] else {
+                throw HarnessError("aligned asset channel, frame or digest mismatch")
+            }
+            for spans in channelSpans.values {
+                var next = group.outputFrames.lowerBound
+                for span in spans.sorted(by: { $0.lowerBound < $1.lowerBound }) {
+                    guard span.lowerBound == next else { throw HarnessError("aligned channel has a gap or overlap") }
+                    next = span.upperBound
+                }
+                guard next == group.outputFrames.upperBound else { throw HarnessError("aligned channel frame count mismatch") }
+            }
+            log("\(groups[index].label) assets: \(expectedChannels[index].count) channels, \(group.outputFrames.count) frames/channel, \(results.count) segment assets, one accepted map digest")
+        }
+        log("manual render: \(f(Date().timeIntervalSince(renderStarted), 2)) s, \(rendered.groups.count) groups, \(rendered.groups.reduce(0) { $0 + $1.results.count }) assets")
+        let shutdownStarted = Date()
+        await pipeline.shutdown()
+        let shutdownSeconds = Date().timeIntervalSince(shutdownStarted)
+        log("pipeline cancellation/shutdown idle response: \(f(shutdownSeconds, 3)) s")
+        guard shutdownSeconds < 5 else { throw HarnessError("pipeline shutdown exceeded 5 s") }
+    }
+}
+
+private extension Harness {
+    static let memoryMembers = [[1, 2, 3, 4, 5, 6, 8, 9], [7, 10], [11], [12]]
+
+    mutating func runIsolatedMemoryPhase(_ phase: String) async throws {
+        let listed = try enumerate()
+        let withInodes: [(Item, UInt64)] = try listed.map { item in
+            var status = stat()
+            guard lstat(item.url.path, &status) == 0 else {
+                throw HarnessError("source metadata unavailable for numbering")
+            }
+            return (item, UInt64(status.st_ino))
+        }
+        let mapPath = try #require(Env.labelMap, "set the temporary pre-snapshot label map")
+        let labels: String
+        do {
+            labels = try String(contentsOfFile: mapPath, encoding: .utf8)
+        } catch {
+            throw HarnessError("temporary label map unreadable")
+        }
+        var byInode: [UInt64: Int] = [:]
+        for entry in labels.split(separator: "\n") {
+            let pair = entry.split(separator: ":")
+            guard pair.count == 2, let number = Int(pair[0]), let inode = UInt64(pair[1]),
+                  byInode.updateValue(number, forKey: inode) == nil else {
+                throw HarnessError("temporary label map malformed")
+            }
+        }
+        let items = try withInodes.filter { $0.0.isAudio }.map { item, inode in
+            guard let number = byInode[inode] else { throw HarnessError("source label map changed") }
+            var numbered = item
+            numbered.number = number
+            return numbered
+        }
+        guard items.count == 13, byInode.count == 13, Set(items.map(\.number)) == Set(1 ... 13) else {
+            throw HarnessError("temporary label map incomplete")
+        }
+        guard items.filter(\.isAudio).count == 13 else { throw HarnessError("unexpected audio item count") }
+        let phaseDirectory = scratch.appendingPathComponent("phase-work", isDirectory: true)
+        var failure: HarnessError?
+        do {
+            try await isolatedMemoryWork(phase, items: items, root: phaseDirectory)
+        } catch {
+            failure = error as? HarnessError ?? HarnessError("isolated \(phase) phase failed: \(type(of: error))")
+        }
+        if FileManager.default.fileExists(atPath: phaseDirectory.path) {
+            do {
+                try FileManager.default.removeItem(at: phaseDirectory)
+            } catch {
+                throw HarnessError("phase scratch cleanup failed: \(ConsentGuards.errnoDescription(error))")
+            }
+        }
+        guard try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty else {
+            throw HarnessError("phase scratch not empty after cleanup")
+        }
+        if let failure { throw failure }
+        log("memory \(phase): scratch empty; run separate before/after snapshot processes to check originals")
+    }
+
+    func isolatedMemoryWork(_ phase: String, items: [Item], root: URL) async throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        let copies = root.appendingPathComponent("inputs", isDirectory: true)
+        if phase == "render" {
+            try FileManager.default.createDirectory(at: copies, withIntermediateDirectories: false)
+        }
+        let cache = root.appendingPathComponent("cache", isDirectory: true)
+        let store = try DerivedAssetStore(root: cache, sourceLocations: [episode])
+        let coordinator = DerivedJobCoordinator(store: store)
+        let decoder = SourceDecoder(access: SourceAccessContext(io: io))
+        let pipeline = AlignmentPipeline(coordinator: coordinator, decoder: decoder,
+            configuration: AlignmentPipelineConfiguration(concurrency: 1,
+                targetExcerptSeconds: phase == "original" ? 600 : 20,
+                searchDeviationSeconds: phase == "original" ? 120 : 5, renderSegmentSeconds: 6))
+        let episodeID = EpisodeID()
+        var groups: [RecorderGroup] = []
+        var records: [SourceRecord] = []
+        var sources: [AlignmentSource] = []
+        var authorizations: [ContentWorkAuthorization] = []
+        var epochs: [RecordingEpochID] = []
+        var rates: [Int] = []
+        var channelCounts: [Int] = []
+
+        for (groupIndex, members) in Self.memoryMembers.enumerated() {
+            let groupID = RecorderGroupID()
+            let epoch = RecordingEpochID()
+            epochs.append(epoch)
+            groups.append(RecorderGroup(id: groupID, name: "G\(groupIndex + 1)",
+                epochs: [RecordingEpoch(id: epoch, label: "Take 1")]))
+            for member in members {
+                guard let original = items.first(where: { $0.number == member && $0.isAudio }) else {
+                    throw HarnessError("supported-source layout changed")
+                }
+                let source = SourceID()
+                let url: URL
+                if phase == "render" {
+                    let start = [1700, 1702, 1704, 1706][groupIndex]
+                    let result: (FormatInterpretation, [[Float]])
+                    do throws(DecodeFailure) {
+                        let decoded = try await decoder.decode(original.url, source: source) {
+                            CopySliceSink($0, startSeconds: start)
+                        }
+                        result = (decoded.interpretation, decoded.product)
+                    } catch {
+                        throw HarnessError("short-copy decode refused \(sLabel(member)): \(Self.describe(error))")
+                    }
+                    guard result.1.count == result.0.channelCount else {
+                        throw HarnessError("short-copy channel mismatch")
+                    }
+                    rates.append(result.0.sourceSampleRate)
+                    channelCounts.append(result.0.channelCount)
+                    url = copies.appendingPathComponent("\(sLabel(member)).wav")
+                    try writeSlice(result.1, rate: result.0.sourceSampleRate, to: url)
+                } else {
+                    url = original.url
+                }
+                records.append(SourceRecord(id: source, displayNameHint: sLabel(member),
+                    placement: SourcePlacement(recorderGroupID: groupID, epochID: epoch)))
+                sources.append(AlignmentSource(id: source, url: url, availability: .on))
+                authorizations.append(.explicitUserRequest(for: source))
+                guard case let .success(metadata) = io.metadata(at: url) else {
+                    throw HarnessError("phase source registration metadata unavailable")
+                }
+                await coordinator.updateSource(SourceRevision.metadata(source, fingerprint: metadata.fingerprint))
+            }
+        }
+        let model = ShowDocumentModel(show: Show(title: "Local validation"),
+            episodes: [Episode(id: episodeID, title: "Local validation",
+                recorderGroups: groups, sources: records)])
+        let reference = sources[0].id
+        if phase == "original" {
+            let baseline = try PhaseMemorySampler.now()
+            let sampler = PhaseMemorySampler(baseline: baseline)
+            let started = Date()
+            let analysis = await pipeline.analyse(model: model, episode: episodeID,
+                sources: sources, authorizations: authorizations, preferredReference: reference)
+            let peak = try sampler.stop()
+            log("memory original: idle \(baseline.megabytes); peak \(peak.megabytes); elapsed \(f(Date().timeIntervalSince(started), 2)) s")
+            guard let analysis, analysis.plan.epochs.count == 4, analysis.facts.count == 12,
+                  analysis.sourceFailures.isEmpty, analysis.epochFailures.isEmpty,
+                  epochs.dropFirst().allSatisfy({ analysis.records[$0] != nil }) else {
+                throw HarnessError("full-original pipeline analysis incomplete")
+            }
+            for index in 1 ..< epochs.count {
+                let record = analysis.records[epochs[index]]!
+                log("memory original G\(index + 1): \(record.abstention.map { "ABSTAINED \($0.reason)" } ?? "PROPOSAL (not clock-approved)"); eligible \(record.coverage.eligibleCount)/\(record.coverage.windowCount)")
+            }
+        } else {
+            guard rates.count == 12, channelCounts.reduce(0, +) == 19 else {
+                throw HarnessError("short-copy source layout changed")
+            }
+            let analysis = try #require(await pipeline.analyse(model: model, episode: episodeID,
+                sources: sources, authorizations: authorizations, preferredReference: reference))
+            guard analysis.sourceFailures.isEmpty, analysis.epochFailures.isEmpty,
+                  analysis.facts.count == 12 else { throw HarnessError("copy pipeline analysis incomplete") }
+            var decisions: [RecordingEpochID: EpochMapDecision] = [:]
+            for index in 1 ..< epochs.count {
+                decisions[epochs[index]] = .numeric(ppm: 0,
+                    offsetMilliseconds: Double(2 * index * 1000),
+                    note: "Operator equal-origin short-copy placement; no clock truth")
+            }
+            let accepted = try await pipeline.accept(model: model, episode: episodeID,
+                report: analysis, decisions: decisions)
+            try await pipeline.activate(accepted)
+            let baseline = try PhaseMemorySampler.now()
+            let sampler = PhaseMemorySampler(baseline: baseline)
+            let started = Date()
+            let rendered = try await pipeline.renderAlignedAssets(model: accepted.model,
+                episode: episodeID, sources: sources, authorizations: authorizations)
+            let peak = try sampler.stop()
+            log("memory render: idle \(baseline.megabytes); peak \(peak.megabytes); elapsed \(f(Date().timeIntervalSince(started), 2)) s")
+            guard rendered.isComplete, rendered.notRendered.isEmpty, rendered.groups.count == 4,
+                  rendered.groups.reduce(0, { $0 + $1.results.count }) == 118,
+                  rendered.groups.allSatisfy({ $0.outputRate == 48_000 && $0.outputFrames.count == 1_728_000 }) else {
+                throw HarnessError("short-copy aligned render incomplete")
+            }
+            log("memory render: 36 s/channel, 19 channels, 118 assets; copy preparation excluded from measurement")
+        }
+        await pipeline.shutdown()
+    }
+}
+
 // MARK: - Host facts
+
+private final class PhaseMemorySampler: @unchecked Sendable {
+    struct Reading {
+        let resident: Int
+        let footprint: Int
+        var megabytes: String { "RSS \(resident >> 20) MiB, footprint \(footprint >> 20) MiB" }
+    }
+
+    private let condition = NSCondition()
+    private var running = true
+    private var finished = false
+    private var samplingFailed = false
+    private var peak: Reading
+
+    static func now() throws -> Reading {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let status = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard status == KERN_SUCCESS else { throw HarnessError("task VM memory measurement failed") }
+        return Reading(resident: Int(info.resident_size), footprint: Int(info.phys_footprint))
+    }
+
+    init(baseline: Reading) {
+        peak = baseline
+        let thread = Thread { [self] in
+            condition.lock()
+            while running {
+                condition.unlock()
+                if let sample = try? Self.now() {
+                    condition.lock()
+                    peak = Reading(resident: max(peak.resident, sample.resident),
+                                   footprint: max(peak.footprint, sample.footprint))
+                } else {
+                    condition.lock()
+                    samplingFailed = true
+                }
+                _ = condition.wait(until: Date().addingTimeInterval(0.002))
+            }
+            finished = true
+            condition.broadcast()
+            condition.unlock()
+        }
+        thread.stackSize = 1 << 20
+        thread.start()
+    }
+
+    func stop() throws -> Reading {
+        condition.lock()
+        running = false
+        condition.broadcast()
+        while !finished { condition.wait() }
+        let sampled = peak
+        let failed = samplingFailed
+        condition.unlock()
+        guard !failed else { throw HarnessError("task VM memory sampling failed") }
+        let final = try Self.now()
+        return Reading(resident: max(sampled.resident, final.resident),
+                       footprint: max(sampled.footprint, final.footprint))
+    }
+}
 
 private enum Host {
     static var summary: String {
