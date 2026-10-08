@@ -304,3 +304,13 @@
 - **Rule:** the merge gate is one full local `scripts/test.sh` on the exact PR head SHA, recorded with SHA, host, load and counts, plus mini GUI classes when the UI changed (see `routing.md`). Docs/config-only PRs are exempt (coordinator interpretation, consistent with the re-enable issue's docs-only skip).
 - **Risk:** macOS 26 / Xcode 26.x compile and runtime coverage is lost until #252 (P2, M5) restores triggers with fast PR suites, path-filtered heavy suites, split jobs and caching.
 
+### 2026-10-08: User-approved delivery speedups
+
+**By:** the user (11:16, via the relay), recorded by the M2 coordinator. The rules are in `routing.md` (Speedups row).
+- **Flake quarantine** for per-PR GUI runs, with a linked skip list. Full suites still run the quarantined tests, and product-logic and essential-accessibility tests are never quarantined. The skip-list mechanism is the first M3 unit.
+- **One-pass reviews:** blocking and nit findings come in one pass, blocking fixes land in one commit, and there are at most 3 rounds before the Lead decides.
+- **De-chain:** M3 units merge independently behind interfaces or flags.
+- **Ready queue:** 4–6 units kept ready.
+- **Warm builds:** reuse is allowed, but the pre-merge run is always fresh.
+- **Coming:** relay-provisioned VMs as additional GUI hosts, each with its own lease.
+
