@@ -78,6 +78,12 @@ struct AdmissionTests {
         let link = root.appendingPathComponent("link")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
         #expect(throws: SpeechAdmissionRefusal.assetNotLocalRegularFile) { try pin.verify(at: link) }
+        let parentLink = root.deletingLastPathComponent().appendingPathComponent("speech-link-\(UUID())")
+        try FileManager.default.createSymbolicLink(at: parentLink, withDestinationURL: root)
+        defer { try? FileManager.default.removeItem(at: parentLink) }
+        #expect(throws: SpeechAdmissionRefusal.assetNotLocalRegularFile) {
+            try pin.verify(at: parentLink.appendingPathComponent("synthetic-model"))
+        }
     }
 
     @Test func dependencyReplacementAndMissingTransitiveFailClosed() throws {
@@ -137,11 +143,16 @@ struct AdmissionTests {
         }
         #expect(try invoke(cat, readProfile, [input.path]) == 0)
         #expect(try invoke(cat, readProfile, [unrelated.path]) != 0)
-        #expect(try invoke(cat, readProfile, ["/System/Volumes/Data" + unrelated.path]) != 0)
+        let dataAlias = "/System/Volumes/Data" + unrelated.path
+        #expect(FileManager.default.fileExists(atPath: dataAlias))
+        #expect(try invoke(cat, readProfile, [dataAlias]) != 0)
         let touch = URL(fileURLWithPath: "/usr/bin/touch")
         let writeProfile = OfflineWhisperPlan.profile(stage: stage, input: input, scratch: scratch, executable: touch)
         #expect(try invoke(touch, writeProfile, [unrelated.path]) != 0)
         #expect(try String(contentsOf: unrelated, encoding: .utf8) == "private")
+        let unrelatedNew = root.appendingPathComponent("new")
+        #expect(try invoke(touch, writeProfile, [unrelatedNew.path]) != 0)
+        #expect(!FileManager.default.fileExists(atPath: unrelatedNew.path))
         #expect(try invoke(touch, writeProfile, [scratch.appendingPathComponent("result").path]) == 0)
     }
 
