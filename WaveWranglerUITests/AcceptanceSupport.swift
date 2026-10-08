@@ -479,6 +479,13 @@ enum AcceptanceAudit {
                 }
                 continue
             }
+            if issueFor[index].auditType == .contrast, !element.isEnabled, inspector.exists,
+               Self.isDescendant(element, of: inspector), passesGlyphContrast(measured) {
+                waived.append(["finding": description, "kind": "disabled-inspector-text", "measured": stats,
+                               "rationale": "inactive inspector text; its own visible crop meets the 40-glyph, 4.5:1 threshold"])
+                print("AUDIT WAIVED \(description) — disabled inspector text measured \(stats)")
+                continue
+            }
             if let artefact = measuredArtefact(element, inspectorFrame: inspectorFrame, episodeInspectorShown: episodeInspectorShown,
                                                entriesFrame: entriesFrame, windowFrames: windowFrames,
                                                popoverFrame: popoverFrame, inSheet: inSheet),
