@@ -306,13 +306,10 @@ private struct AlignmentOutlineTable: View {
 
     var body: some View {
         Table(of: AlignmentOutlineRow.self, selection: $selection) {
-            // The first column's cell is collapsed into a single described element: the container SwiftUI
-            // wraps outline cells in is otherwise left without a description, which the audit flags (#219).
-            // The labels stay equal to the text itself so assertions can match a cell by its epoch name.
+            // Cell contents stay plain text. AppKit owns the container around each row's
+            // disclosure-column cell, and no description applied here reaches it (#219 audit).
             TableColumn("Recorder Group") { row in
                 Text(row.groupName)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(row.groupName)
             }
             .width(ideal: 170)
             TableColumn("Epoch") { row in

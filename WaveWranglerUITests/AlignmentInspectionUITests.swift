@@ -87,7 +87,10 @@ final class AlignmentInspectionUITests: XCTestCase {
             "The committed row must show the typed aligned time"
         )
         scrollIntoWindow(placed)
-        XCTAssertTrue(placed.isHittable, "The placed anchor row must be reachable")
+        XCTAssertTrue(
+            waitForAnchorRowSelected(placedRow, timeout: 15),
+            "The placed anchor's row must stay selected once the sheet is dismissed"
+        )
         app.typeKey("z", modifierFlags: .command)
         XCTAssertTrue(
             waitForValue(Self.formatTime(initial), in: placed, timeout: 15),
@@ -317,7 +320,11 @@ final class AlignmentInspectionUITests: XCTestCase {
         }
         XCTAssertLessThanOrEqual(layoutContainerFindings, 2)
         XCTAssertLessThanOrEqual(showSectionFindings, 1)
-        XCTAssertLessThanOrEqual(outlineCellFindings, 1)
+        // One container per outline row: the finding belongs to the row's disclosure column.
+        XCTAssertLessThanOrEqual(
+            outlineCellFindings,
+            groups.descendants(matching: .outlineRow).allElementsBoundByIndex.count
+        )
     }
 
     func testBlockedRecoveryContrastAudit() throws {

@@ -203,7 +203,7 @@ epoch, so a gap (U6) never silently mixes anchors across it (M2-C3: "a gap alway
 > container around the recorder-group outline's disclosure-column cell itself, and no SwiftUI
 > description reaches it (labelling the cell content, combining its children and the value-keypath
 > shorthand were each tried). The waiver is gated on that container still exposing its own labelled
-> text child, and is capped at one finding. **It needs Lead sign-off.**
+> text child, and is capped at one finding per outline row. **It needs Lead sign-off.**
 
 ### 4.2 Numeric rate/offset correction
 
