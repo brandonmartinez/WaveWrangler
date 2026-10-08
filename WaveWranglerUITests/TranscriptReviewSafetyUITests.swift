@@ -12,13 +12,15 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             "-WWUITestHooks", "YES",
             "-WWUITestResetPreferences", "YES",
             "-WWUITestCenterWindows", "YES",
-            "-WWUITestMinimumShowWindow", "YES",
-            "-WWUITestOpenShow", "Synthetic Review Safety Fixture",
+            "-WWUITestOpenShow", "Synthetic Review Fixture",
             "-WWUITestShowEpisodes", "1",
         ]
         app.launch()
         app.activate()
-        app.typeKey("3", modifierFlags: .command)
+        XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 5))
+        let reviewDestination = app.buttons["ww.show.destination.review"]
+        XCTAssertTrue(reviewDestination.waitForExistence(timeout: 5))
+        reviewDestination.click()
         XCTAssertTrue(app.staticTexts["ww.review.heading"].waitForExistence(timeout: 5))
     }
 
