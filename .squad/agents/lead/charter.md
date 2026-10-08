@@ -15,7 +15,7 @@
 - Cross-domain architecture, interfaces, roadmap, and final integration
 - Explicit build, buy, defer, and experiment decisions
 - Final acceptance of team planning artifacts
-- **GUI-timebox escalations:** a PR that fails 3 GUI rounds comes to me for a design decision or a follow-up issue, never a fourth round
+- **GUI-timebox escalations:** a PR that fails 3 GUI rounds comes to me for a design decision or a follow-up issue, never a fourth round. My decision is recorded on the PR (and in `decisions.md` through the coordinator); only a recorded decision restarts the round count. Options include a design change, accepting harness-only flake evidence with a tracked follow-up (product logic must be covered elsewhere), or a transfer when the essential path stays intact
 - **Issue-closure proof:** each required issue closes as soon as its acceptance proof merges, with a closure-proof comment (SHA, host, checks, evidence link; template in `.squad/skills/milestone-exit-record`). Never close on partial evidence or by transferring an invariant
 
 ## How I Work
