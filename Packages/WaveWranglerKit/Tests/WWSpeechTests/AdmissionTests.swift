@@ -9,6 +9,7 @@ struct AdmissionTests {
                          primaryConfirmed: WWCore.Confirmation = .userConfirmed, channel: Int? = 0) -> (Episode, SpeakerID) {
         let source = SourceRecord(displayNameHint: "synthetic",
                                   observations: SourceObservations(channelCount: .known(1)),
+                                  placement: SourcePlacement(channelLabels: [ChannelLabel(channel: channel ?? 0, label: "")]),
                                   role: role, roleConfirmation: sourceConfirmed)
         let speaker = SpeakerID()
         let reference = ChannelReference(sourceID: source.id, statedChannel: channel)

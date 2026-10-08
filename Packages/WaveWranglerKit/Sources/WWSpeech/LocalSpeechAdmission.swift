@@ -2,6 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 import WWCore
+import WWDecode
 
 /// Only an explicitly confirmed primary channel may be submitted to a speech engine. This is
 /// metadata admission, not proof that a future decoded PCM proxy came from that channel.
@@ -20,6 +21,8 @@ public struct PrimarySpeechSelection: Sendable, Equatable {
               let source = episode.source(primary.sourceID),
               episode.sources.filter({ $0.id == primary.sourceID }).count == 1,
               let channelCount = source.observations.channelCount.value, channel < channelCount,
+              source.placement.channelLabels.count == 1,
+              source.placement.channelLabels[0].channel == channel,
               source.role == .primary, source.roleConfirmation == .userConfirmed,
               !assignment.backups.contains(primary),
               !episode.speakerAssignments.contains(where: { $0.backups.contains(primary) }),
@@ -39,6 +42,13 @@ public enum SpeechAdmissionRefusal: Error, Sendable, Equatable {
     case assetDigestMismatch
     case assetChangedDuringVerification
     case primaryProxyNotProven
+    case sourceIdentityNotConfirmed
+    case currentStateUnavailable
+    case sourceAliasOrChanged
+    case sourceRevisionChanged
+    case occurrenceNotContinuous
+    case inputTooLarge
+    case decode(DecodeFailure)
     case runtimeNotStaged
     case runtimeDependencyMismatch
     case sandboxFailed
