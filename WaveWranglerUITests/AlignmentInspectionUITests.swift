@@ -599,6 +599,13 @@ final class AlignmentInspectionUITests: XCTestCase {
                 scroll.swipeUp()
             }
         }
+        if !element.exists {
+            let buttons = app.descendants(matching: .button).allElementsBoundByIndex
+                .map { "\($0.identifier)|\($0.label)" }
+                .joined(separator: ", ")
+            print("WW-REACH-MISS \(element.identifier) buttons=[\(buttons)]")
+            print("WW-REACH-SCROLL \(scroll.frame) exists=\(scroll.exists)")
+        }
         XCTAssertTrue(element.exists, "\(element.identifier) exists after scrolling", file: file, line: line)
         if element.isEnabled {
             XCTAssertTrue(
