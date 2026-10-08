@@ -294,6 +294,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             }
         }
         var layoutContainerFindings = 0
+        var inspectorColumnFindings = 0
         var showSectionFindings = 0
         var outlineCellFindings = 0
         try app.performAccessibilityAudit(
@@ -329,6 +330,12 @@ final class AlignmentInspectionUITests: XCTestCase {
                     "AUDIT WAIVED [alignment-outline-cell] \(issue.compactDescription) — " +
                     "AppKit-owned outline cell container; its labelled text child remains exposed"
                 )
+            } else if isInspectorColumn && !isContent && !isSidebar {
+                inspectorColumnFindings += 1
+                print(
+                    "AUDIT WAIVED [show-inspector-column] \(issue.compactDescription) \(element.frame) — " +
+                    "SwiftUI-owned inspector column; the labelled Inspector scroll area remains exposed"
+                )
             } else if isShowSection {
                 showSectionFindings += 1
                 print(
@@ -338,13 +345,14 @@ final class AlignmentInspectionUITests: XCTestCase {
             } else {
                 layoutContainerFindings += 1
                 print(
-                    "AUDIT WAIVED [show-layout-container] \(issue.compactDescription) — " +
+                    "AUDIT WAIVED [show-layout-container] \(issue.compactDescription) \(element.frame) — " +
                     "noninteractive container whose labeled children remain exposed"
                 )
             }
             return true
         }
-        XCTAssertLessThanOrEqual(layoutContainerFindings, 3)
+        XCTAssertLessThanOrEqual(layoutContainerFindings, 2)
+        XCTAssertLessThanOrEqual(inspectorColumnFindings, 1)
         XCTAssertLessThanOrEqual(showSectionFindings, 1)
         // At most one finding per cell: each is the container AppKit builds around that cell.
         XCTAssertGreaterThan(outlineCellFrames.count, 0, "The alignment outlines must expose their cells")
