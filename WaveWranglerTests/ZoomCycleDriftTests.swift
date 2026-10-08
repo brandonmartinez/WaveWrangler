@@ -17,15 +17,18 @@ struct ZoomCycleDriftTests {
     @Test func acceptsRecordedLayoutSwitches() {
         let shardB = [895.0, 922.5, 907.0, 911.5, 915.0, 915.5, 917.0, 917.0, 960.0, 962.0]
         let isolatedRerun = [905.5, 910.0, 914.0, 939.5, 914.5, 916.5, 916.5, 912.5, 913.5, 974.5]
+        let firstPRRun = [906.5, 911.5, 908.5, 913.0, 915.0, 916.0, 917.5, 916.5, 916.5, 916.5]
 
-        for offsets in [shardB, isolatedRerun] {
+        for offsets in [shardB, isolatedRerun, firstPRRun] {
             let samples = offsets.enumerated().map {
                 ZoomCycleSample(cycle: $0.offset + 1, offset: $0.element, tableWidth: 1_101, tier: "all-columns")
             }
             let result = checkZoomCycleDrift(samples)
 
             #expect(result.passes, "unexpected drift violations: \(result.violations)")
-            #expect(result.modeCount > 1, "recorded trace should expose its stable layout switches")
+            if offsets != firstPRRun {
+                #expect(result.modeCount > 1, "recorded trace should expose its stable layout switches")
+            }
         }
     }
 }

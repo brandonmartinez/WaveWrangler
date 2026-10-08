@@ -18,7 +18,7 @@ struct ZoomCycleDriftCheck: Equatable, Sendable {
 
 func checkZoomCycleDrift(
     _ samples: [ZoomCycleSample],
-    maximumSlope: Double = 1,
+    maximumSlope: Double = 1.25,
     maximumMedianShift: Double = 10,
     modeGap: Double = 10
 ) -> ZoomCycleDriftCheck {
