@@ -93,10 +93,10 @@ struct TranscriptReviewView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .tag(occurrence.id)
-                        .accessibilityElement(children: .ignore)
+                        .focusable()
+                        .accessibilityElement(children: .combine)
                         .accessibilityLabel(occurrence.title)
                         .accessibilityValue(occurrence.note)
-                        .accessibilityAddTraits(.isStaticText)
                         .accessibilityIdentifier("ww.review.occurrence.\(occurrence.id)")
                     }
                 }
@@ -215,7 +215,7 @@ struct TranscriptReviewInspector: View {
             .accessibilityIdentifier("ww.review.inspector.proposal")
 
             Text("Analysis state: None")
-                .foregroundStyle(.primary)
+                .foregroundStyle(Color(nsColor: .labelColor))
                 .accessibilityLabel("Analysis state")
                 .accessibilityValue("None — this shell contains no analysis")
                 .accessibilityIdentifier("ww.review.inspector.analysisState")
@@ -260,6 +260,8 @@ struct TranscriptReviewInspector: View {
                 .accessibilityIdentifier("ww.review.inspector.previewBlockedReason")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Review Inspector")
     }
 
     private func actionButton(_ title: String, id: String, reason: String) -> some View {

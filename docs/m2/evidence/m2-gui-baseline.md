@@ -149,6 +149,28 @@ else in Setup or the inspector inherits this treatment. Source bundles:
 `~/ww-uitest-runs/m2-exit-mini-final-3b56f8f19426-20261008T030815/`
 (failing), both on Macsimus.
 
+### Baseline revision 2026-10-08: WW-029 blocked review text (PR #270)
+
+On the synthetic blocked-review surface, XCTest's contrast audit reported four
+text elements whose own crops met the existing per-element floor of 40 glyph
+pixels and p75 contrast of 4.5:1. These are pixel-measurement artefacts, not a
+waiver for the blocked state: each run recaptures the exact element and leaves
+it unwaived if either threshold fails. The handler is restricted to the four
+identifiers below; all other contrast findings remain unwaived.
+
+| Identifier | Finding SHA | Glyph pixels | p75 contrast |
+| --- | --- | ---: | ---: |
+| `ww.review.lane.speaker-b-primary` | `284dd1336fcd952cb0be5ec30f963701330e8028` | 16,139 | 4.71:1 |
+| `ww.review.timeline.domain.source` | `284dd1336fcd952cb0be5ec30f963701330e8028` | 16,435 | 10.23:1 |
+| `ww.review.inspector.primaryState` | `284dd1336fcd952cb0be5ec30f963701330e8028` | 22,045 | 9.17:1 |
+| `ww.review.inspector.backupState` | `284dd1336fcd952cb0be5ec30f963701330e8028` | 17,930 | 10.72:1 |
+
+Evidence: `VM ww-ui-2 (Virtualization.framework, macOS 27, 4 vCPU)`,
+`~/ww-uitest-runs/ww029-pr270-284dd1336fcd-20261008T193456/TranscriptReviewSafetyUITests.xcresult`.
+The separate `ww.review.inspector.analysisState` finding measured 853 glyph
+pixels at p75 2.66:1 and is **not waived**; the UI uses the system label color
+for that text. The AX parent/child mismatch is also not waived.
+
 ### Broad (M5) observations
 
 ### Baseline revision 2026-10-08: Format-update fixture and inactive inspector text (#242, #245, #246)
