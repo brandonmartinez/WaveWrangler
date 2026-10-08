@@ -494,7 +494,9 @@ final class FormatUpdateUITests: XCTestCase {
 
     private func isSelectedTab(named name: String) -> Bool {
         let window = showWindow(named: name)
-        return app.state == .runningForeground && window.exists && isFocused(window)
+        let sheet = window.sheets.firstMatch
+        // The format-update prompt is the key surface while attached to its selected document tab.
+        return app.state == .runningForeground && window.exists && (isFocused(window) || isFocused(sheet))
     }
 
     private func recordTabSelectionFailure(_ name: String, attempts: Int, reason: String) {
@@ -509,6 +511,7 @@ final class FormatUpdateUITests: XCTestCase {
                     "title": $0.title,
                     "exists": $0.exists,
                     "hasKeyboardFocus": isFocused($0),
+                    "sheetHasKeyboardFocus": isFocused($0.sheets.firstMatch),
                     "isHittable": $0.isHittable,
                 ]
             },
