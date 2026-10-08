@@ -283,7 +283,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             guard issue.auditType == .sufficientElementDescription,
                   let element = issue.element,
                   element.elementType == .group
-            else { return false }
+            else { return self.reportUnwaived(issue) }
             let isContent = self.approximatelyEqual(element.frame, contentInspector.frame)
             let isSidebar = self.approximatelyEqual(element.frame, sidebar.frame)
             let isShowSection = sidebar.frame.contains(element.frame)
@@ -297,7 +297,9 @@ final class AlignmentInspectionUITests: XCTestCase {
                 && element.frame.height <= 32
                 && element.descendants(matching: .any).allElementsBoundByIndex
                     .contains { !$0.label.isEmpty || !(($0.value as? String) ?? "").isEmpty }
-            guard isContent || isSidebar || isShowSection || isOutlineCell else { return false }
+            guard isContent || isSidebar || isShowSection || isOutlineCell else {
+                return self.reportUnwaived(issue)
+            }
             if isOutlineCell {
                 outlineCellFindings += 1
                 print(
@@ -522,6 +524,18 @@ final class AlignmentInspectionUITests: XCTestCase {
         }
         XCTAssertTrue(element.exists, "\(element.identifier) exists after scrolling", file: file, line: line)
         XCTAssertTrue(element.isHittable, "\(element.identifier) is hittable after scrolling", file: file, line: line)
+    }
+
+    /// Describes a finding the audit does not waive, so a failing run names the element it found.
+    private func reportUnwaived(_ issue: XCUIAccessibilityAuditIssue) -> Bool {
+        let element = issue.element
+        print(
+            "AUDIT UNWAIVED \(issue.compactDescription) " +
+            "auditType=\(issue.auditType) type=\(String(describing: element?.elementType)) " +
+            "frame=\(String(describing: element?.frame)) id=\(element?.identifier ?? "-") " +
+            "label=\(element?.label ?? "-") value=\(String(describing: element?.value))"
+        )
+        return false
     }
 
     private func approximatelyEqual(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
