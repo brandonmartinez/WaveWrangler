@@ -261,6 +261,7 @@ final class ShowWindowState {
         self.window = window
         ShowWindowRegistry.register(self, for: window)
         observeBecomingKey(window)
+        observeFixturePlacement(window)
         // Window chrome and bridging must not change while AppKit/SwiftUI are attaching and laying out the
         // view (re-entrant constraint updates); apply them on the next main-queue turn.
         DispatchQueue.main.async { [weak self, weak window] in
@@ -298,6 +299,25 @@ final class ShowWindowState {
     }
 
     @ObservationIgnored private var becameKeyObserver: NotificationObservation?
+    @ObservationIgnored private var fixturePlacementObservers: [NotificationObservation] = []
+
+    private func observeFixturePlacement(_ window: NSWindow) {
+        #if DEBUG
+        fixturePlacementObservers = [
+            NSWindow.didMoveNotification, NSWindow.didResizeNotification, NSWindow.didEndSheetNotification
+        ].map { name in
+            NotificationObservation(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) {
+                [weak window] _ in
+                DispatchQueue.main.async { [weak window] in
+                    guard let window, window.isVisible,
+                          let visible = NSScreen.screens.first?.visibleFrame,
+                          !visible.contains(window.frame) else { return }
+                    LaunchFixtures.placeForTesting(window)
+                }
+            })
+        }
+        #endif
+    }
 
     /// #159: an older-format show whose D14 sheet couldn't appear yet (a background tab, a minimized or restored
     /// window) is asked when this window becomes key: its tab is selected, it's un-minimized or brought forward.

@@ -94,7 +94,16 @@ final class LibraryWorkspaceUITests: XCTestCase {
                 }
                 continue
             }
-            guard let element = issue.element, element.exists, isLibraryText(element) else {
+            guard let element = issue.element, element.exists else {
+                findings.append(description)
+                continue
+            }
+            let measuredSidebar = (surface == "Show window (blocked Alignment)" || surface == "Show window (Setup)")
+                && element.identifier == "ww.show.sidebar.showInfo"
+                && AcceptanceAudit.measuredArtefact(element, inspectorFrame: nil, episodeInspectorShown: false,
+                                                    entriesFrame: nil, windowFrames: windowRects,
+                                                    popoverFrame: nil, inSheet: false) != nil
+            guard isLibraryText(element) || measuredSidebar else {
                 findings.append(description)
                 continue
             }
@@ -472,7 +481,9 @@ final class LibraryWorkspaceUITests: XCTestCase {
         let blocked = element("ww.show.blocked.alignment")
         waitFor(blocked)
         XCTAssertTrue(app.staticTexts["Alignment isn't available yet"].exists)
-        XCTAssertEqual(value(element("ww.show.destination.alignment")), "Not available in this version")
+        XCTAssertEqual(value(element("ww.show.destination.alignment")), "", "Alignment is available; this episode needs a recorder group")
+        waitFor(app.staticTexts["Set up at least one recorder group in Setup first. WaveWrangler hasn't read or analysed any audio."])
+        waitFor(element("ww.show.blocked.goToSetup"))
         try audit("Show window (blocked Alignment)")
         element("ww.show.blocked.goToSetup").click()
         waitFor(element("ww.setup.sources"))

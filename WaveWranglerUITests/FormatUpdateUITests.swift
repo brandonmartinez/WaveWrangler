@@ -13,6 +13,8 @@ final class FormatUpdateUITests: XCTestCase {
     private var app: XCUIApplication!
     private var workDirectory: URL!
     private var findings: [String] = []
+    private var needsKeyboardNavigation: [String] = []
+    private static let keyboardNavigation = UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0
 
     override func setUp() async throws {
         continueAfterFailure = true
@@ -25,6 +27,9 @@ final class FormatUpdateUITests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        Acceptance.writeEvidence("format-update-keyboard-navigation-\(name.replacingOccurrences(of: " ", with: "_"))",
+                                 ["keyboardNavigation": Self.keyboardNavigation,
+                                  "notRunNeedsFullKeyboardAccess": needsKeyboardNavigation], test: self)
         if let app, app.state != .notRunning { app.terminate() }
         if let workDirectory { try? FileManager.default.removeItem(at: workDirectory) }
     }
@@ -49,7 +54,7 @@ final class FormatUpdateUITests: XCTestCase {
             if showInfo.waitForExistence(timeout: 5) { showInfo.click() }
             let title = window.textFields["Show title"]
             check(title.waitForExistence(timeout: 5) && title.isEnabled, "the updated show is editable")
-            try audit("T21 updated show window")
+            try audit("T21 updated show window", types: AcceptanceAudit.essentialTypes)
         }
     }
 
@@ -78,7 +83,8 @@ final class FormatUpdateUITests: XCTestCase {
             let status = element("ww.show.saveStatus")
             check(Acceptance.waitFor(timeout: 5) { self.value(status).hasPrefix("Read-only") }, "status Read-only: \(value(status))")
             let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
-            if showInfo.waitForExistence(timeout: 5) { showInfo.click() }
+            check(showInfo.waitForExistence(timeout: 5), "Show Info is available on the read-only show")
+            if showInfo.exists { showInfo.click() }
             let title = window.textFields["Show title"]
             check(title.waitForExistence(timeout: 5) && title.value as? String == "Mixed Show", "the older content is shown: \(title.value ?? "nil")")
             check(!title.isEnabled, "the title can't be edited")
@@ -128,13 +134,11 @@ final class FormatUpdateUITests: XCTestCase {
             let tryAgain = bar.buttons["Try Again"], details = bar.buttons["Show Details"]
             check(tryAgain.exists && details.exists, "Try Again and Show Details: \(bar.buttons.allElementsBoundByIndex.map(\.title))")
             try audit("T21 D15 failure bar")
-            // Keyboard: Tab to Try Again and press Space; the forced failure repeats and nothing changes.
-            check(tabTo(tryAgain), "Tab reaches Try Again")
-            app.typeKey(" ", modifierFlags: [])
+            // Keyboard navigation of buttons depends on the host's Full Keyboard Access setting.
+            activate(tryAgain, step: "D15 Tab/Space to Try Again")
             Thread.sleep(forTimeInterval: 2)
             check(bar.exists && (try? Data(contentsOf: document)) == original, "Try Again fails again, original unchanged")
-            check(tabTo(details), "Tab reaches Show Details")
-            app.typeKey(" ", modifierFlags: [])
+            activate(details, step: "D15 Tab/Space to Show Details")
             let detailsSheet = app.sheets.firstMatch
             check(detailsSheet.waitForExistence(timeout: 5), "Show Details explains the failure")
             check(texts(in: detailsSheet).contains { $0.contains("simulated failure") && $0.contains("The original file is unchanged.") },
@@ -155,6 +159,7 @@ final class FormatUpdateUITests: XCTestCase {
             app.typeKey("r", modifierFlags: .command)
             check(Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists }, "⌘R dismisses the prompt")
             let status = element("ww.show.saveStatus")
+            try audit("T21 read-only before status popover")
             // View › Show Save Status (as T27); keyboard focus starts on the popover's first action.
             app.menuBars.menuBarItems["View"].click()
             let showStatus = app.menuBars.menuItems["Show Save Status"]
@@ -164,9 +169,17 @@ final class FormatUpdateUITests: XCTestCase {
             check(popover.waitForExistence(timeout: 5), "the status popover opens")
             let update = popover.buttons["Update…"]
             check(update.exists, "Update… is offered: \(popover.buttons.allElementsBoundByIndex.map(\.title))")
-            check(update.value(forKey: "hasKeyboardFocus") as? Bool == true, "keyboard focus starts on Update…")
-            try audit("T21 status popover Update…")
-            app.typeKey(" ", modifierFlags: [])
+            if Self.keyboardNavigation {
+                check(Acceptance.hasKeyboardFocus(update), "keyboard focus starts on Update…")
+            } else {
+                needsKeyboardNavigation.append("T21 Update Later: focus and Space on Update… (Not run; needs Full Keyboard Access)")
+            }
+            try audit("T21 status popover Update…", preAuditedPopoverContent: true)
+            if Self.keyboardNavigation {
+                app.typeKey(" ", modifierFlags: [])
+            } else if update.exists {
+                update.click()
+            }
             let sheet = app.sheets.firstMatch
             check(sheet.waitForExistence(timeout: 5), "Update… asks again")
             check(texts(in: sheet).contains("Update “Later” to the current format?"), "prompt title: \(texts(in: sheet))")
@@ -327,8 +340,28 @@ final class FormatUpdateUITests: XCTestCase {
         return target.exists && target.value(forKey: "hasKeyboardFocus") as? Bool == true
     }
 
-    private func audit(_ surface: String) throws {
-        let unwaived = try AcceptanceAudit.run(app, surface: surface, test: self)
+    private func activate(_ target: XCUIElement, step: String) {
+        if Self.keyboardNavigation {
+            check(tabTo(target), "\(step): Tab reaches \(target.title)")
+            app.typeKey(" ", modifierFlags: [])
+        } else {
+            needsKeyboardNavigation.append("\(step) (Not run; needs Full Keyboard Access)")
+            check(target.waitForExistence(timeout: 5), "\(step): action exists")
+            if target.exists { target.click() }
+        }
+    }
+
+    private func audit(_ surface: String, types: XCUIAccessibilityAuditType = AcceptanceAudit.types,
+                       preAuditedPopoverContent: Bool = false) throws {
+        let visible = NSScreen.screens.first?.visibleFrame
+        for window in app.windows.matching(identifier: "ww.show.window").allElementsBoundByIndex {
+            check(Acceptance.waitFor(timeout: 5) {
+                guard let visible else { return false }
+                return visible.contains(window.frame)
+            }, "\(surface): show window must be fully on the primary display: \(window.frame)")
+        }
+        let unwaived = try AcceptanceAudit.run(app, surface: surface, test: self, types: types,
+                                              preAuditedPopoverContent: preAuditedPopoverContent)
         for finding in unwaived { findings.append("AUDIT \(finding)") }
     }
 

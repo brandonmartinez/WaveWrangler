@@ -223,7 +223,9 @@ final class CoreTasksKeyboardUITests: XCTestCase {
                 check(copy.waitForExistence(timeout: 10), "the complete version opens")
                 let title = copy.textFields["Show title"]
                 let info = copy.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
+                check(info.waitForExistence(timeout: 5), "Show Info is available on the recovered copy")
                 if info.exists { info.click() }
+                check(title.waitForExistence(timeout: 5), "Show title appears after selecting Show Info")
                 check(title.waitForExistence(timeout: 5) && title.value as? String == "Complete Version", "opened the last complete version: \(title.value ?? "nil")")
                 Acceptance.record(self, "T17 opened window title: \(copy.title)")
             }
