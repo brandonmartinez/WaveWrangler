@@ -28,14 +28,15 @@ Tart's [personal-workstation license](https://tart.run/licensing/)
 is royalty-free; Apple's [macOS license](https://www.apple.com/legal/sla/docs/macOSGoldenGate.pdf)
 limits this Mac to two additional macOS virtualized instances.
 
-After a host reboot, start each guest in its **own** persistent background
-process. Each `tart run` stays attached while its VM runs, so the two
-commands must not be executed sequentially in one shell:
+After a host reboot, start each guest in its **own** detached,
+session-independent background process. The VM service must not be owned by
+an app/agent session that can be archived later; otherwise archiving that
+session can stop the host. Start the two guests separately:
 
 ```sh
-# Separate persistent process A
+# Detached host service A
 tart run --no-graphics --no-clipboard --no-audio ww-ui-1
-# Separate persistent process B
+# Detached host service B
 tart run --no-graphics --no-clipboard --no-audio ww-ui-2
 ```
 
