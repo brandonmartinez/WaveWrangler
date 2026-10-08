@@ -16,8 +16,8 @@ Run each check; record PASS / FAIL / NOT CHECKED (with reason) and the host.
 | # | Check | How | If it fails |
 |---|---|---|---|
 | 1 | Xcode first launch on every build/GUI host | `xcodebuild -checkFirstLaunchStatus` → exit 0 | User runs `sudo xcodebuild -runFirstLaunch`. Never run it yourself |
-| 2 | SSH to each GUI host | `source "$HOME/.shell/exports.sh"; ssh -o BatchMode=yes -o ConnectTimeout=8 <host> true`; `ssh-add -l` | "The agent has no identities" = 1Password locked/quit: user unlocks it. Check once; don't loop |
-| 3 | Automation Mode without authentication on each GUI host | `automationmodetool` status over SSH | User runs `sudo automationmodetool enable-automationmode-without-authentication` |
+| 2 | SSH to each GUI host | `source "$HOME/.shell/exports.sh"; ssh -o BatchMode=yes -o ConnectTimeout=8 <host> true` (direct reachability probe); `ssh-add -l` is informational only | PASS when the direct BatchMode SSH probe succeeds. If it fails, report the host as unreachable or auth-blocked. An empty `ssh-add -l` listing alone never means 1Password is locked. Check once; don't loop |
+| 3 | Automation Mode without authentication on each GUI host | `automationmodetool` status over SSH | PASS when status says `Automation Mode is disabled` and `This device DOES NOT REQUIRE user authentication to enable Automation Mode` (XCUITest enables it at start). Only fail if status says `requires user authentication` or a run reports `Timed out while enabling automation mode`. Do not change OS settings or enable it manually |
 | 4 | Clean GUI host | Unlocked, awake, no alerts/update prompts/banners, Focus/Do Not Disturb on; `pgrep -fl 'WaveWrangler|xctest'` empty; audited windows on the primary display | User clears prompts / enables Focus |
 | 5 | Computer Use armed | A `get_window_state` probe on the GUI host before scheduling any computer-use step | User grants Accessibility and Screen Recording / restarts the helper |
 | 6 | Full Keyboard Access state | `defaults read -g AppleKeyboardUIMode` on each host — **record only**, agents never toggle it | — |
