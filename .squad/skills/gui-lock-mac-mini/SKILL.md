@@ -46,34 +46,44 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
    codesign --verify --deep "$PRODUCTS/Debug/WaveWrangler.app"
    codesign --verify --deep "$PRODUCTS/Debug/WaveWranglerUITests-Runner.app"
 
-   GUI_HOST=brandonmartinez@<mini> # for a VM, use ww-ui-1 or ww-ui-2
+   GUI_HOST=brandonmartinez@192.168.18.8 # for a VM, use ww-ui-1 or ww-ui-2
+   LANE=your-lane
    REMOTE_HOME=$(ssh "$GUI_HOST" 'printf %s "$HOME"')
    TS=$(date +%Y%m%dT%H%M%S)
-   TMP="$REMOTE_HOME/ww-uitest-runs/.tmp-<lane>-$SHA-$TS"
-   RUN="$REMOTE_HOME/ww-uitest-runs/<lane>-$SHA-$TS"
+   TMP="$REMOTE_HOME/ww-uitest-runs/.tmp-$LANE-$SHA-$TS"
+   RUN="$REMOTE_HOME/ww-uitest-runs/$LANE-$SHA-$TS"
    ssh "$GUI_HOST" "test ! -e '$TMP' && test ! -e '$RUN' && mkdir -p '$TMP/Products'"
    rsync -a "$PRODUCTS/" "$GUI_HOST:$TMP/Products/"
    CHANGES=$(rsync -a -c --dry-run --itemize-changes "$PRODUCTS/" "$GUI_HOST:$TMP/Products/")
    test -z "$CHANGES" || { printf '%s\n' "$CHANGES"; exit 1; }
    ssh "$GUI_HOST" "mv '$TMP' '$RUN'"
    ```
-3. **Run one command under a lease** on the selected host (with `RUN` set to
-   the absolute guest path from step 2):
+3. **Run one command under a lease on the selected host**, not on the
+   development Mac. Keep `RUN`, `LANE`, `SHA`, and `GUI_HOST` from step 2:
    ```sh
+   PR=123
+   TEST_CLASS=YourUITestClass
+   printf -v REMOTE_ARGS ' %q' "$RUN" "$LANE" "$SHA" "$PR" "$TEST_CLASS"
+   ssh "$GUI_HOST" "bash -s --$REMOTE_ARGS" <<'REMOTE'
+   set -euo pipefail
+   RUN=$1; LANE=$2; SHA=$3; PR=$4; TEST_CLASS=$5
    ~/ww-uitest-runs/gui-lock status
    ~/ww-uitest-runs/gui-lock run \
-     --lane <lane> --class pr --pr <N> --sha <sha> --dir "$RUN" \
+     --lane "$LANE" --class pr --pr "$PR" --sha "$SHA" --dir "$RUN" \
      --result "$RUN/result.xcresult" --lease-minutes 30 --queue-timeout 3600 -- \
      xcodebuild test-without-building \
        -xctestrun "$RUN"/Products/WaveWranglerUITests_*.xctestrun \
        -destination 'platform=macOS,arch=arm64' -parallel-testing-enabled NO \
-       -only-testing:WaveWranglerUITests/<Class> \
+       -only-testing:"WaveWranglerUITests/$TEST_CLASS" \
        -resultBundlePath "$RUN/result.xcresult"
+   REMOTE
    ```
    The helper renews the lease only while the wrapped PID is alive and its output log advances. It verifies the
    xcresult, restores `$RUN/restore-settings.sh` when present, kills only recorded run PIDs, and releases on
    `EXIT`, `INT`, or `TERM`. A queue timeout keeps the ticket in place and continues waiting.
-4. **Copy the xcresult back** and analyse it here (`xcrun xcresulttool`).
+4. **Copy the xcresult back** from `"$GUI_HOST:$RUN/result.xcresult/"`
+   to a unique local `.xcresult` directory and analyse it here
+   (`xcrun xcresulttool`).
 5. **Post on the PR:** SHA, host, classes, pass/fail/skip counts, xcresult location, and any new audit finding versus the pinned waiver baseline.
 
 For VM runs, use only synthetic fixtures; never mount or copy the user's recordings or test media.
