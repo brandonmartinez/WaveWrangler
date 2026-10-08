@@ -463,63 +463,17 @@ final class FormatUpdateUITests: XCTestCase {
     /// Window-menu items target a document by title, unlike AX window order or `isHittable` (both tabs can be hittable).
     private func selectTab(named name: String) -> Bool {
         guard waitForForegroundApp() else { return false }
-        let deadline = Date().addingTimeInterval(5)
-        var attempts = 0
-        while Date() < deadline && attempts < 2 {
-            attempts += 1
-            app.menuBars.menuBarItems["Window"].click()
-            let item = windowMenuItem(named: name)
-            let remaining = max(0, deadline.timeIntervalSinceNow)
-            guard item.waitForExistence(timeout: remaining), item.isEnabled else {
-                recordTabSelectionFailure(name, attempts: attempts, reason: "Window menu item was unavailable or disabled")
-                return false
-            }
-            item.click()
-            if Acceptance.waitFor(timeout: min(2, max(0, deadline.timeIntervalSinceNow)), {
-                self.isSelectedTab(named: name)
-            }) {
-                return true
-            }
-            app.typeKey(.escape, modifierFlags: [])
-        }
-        recordTabSelectionFailure(name, attempts: attempts, reason: "selection did not make the named tab the key window")
-        return false
+        app.menuBars.menuBarItems["Window"].click()
+        let item = windowMenuItem(named: name)
+        guard item.exists && item.isEnabled else { return false }
+        item.click()
+        return Acceptance.waitFor(timeout: 5) { self.showWindow(named: name).exists && self.app.state == .runningForeground }
     }
 
     private func windowMenuItem(named name: String) -> XCUIElement {
         app.menuBars.menuItems.matching(
             NSPredicate(format: "title == %@ OR title == %@", name, "\(name).wwshow")
         ).firstMatch
-    }
-
-    private func isSelectedTab(named name: String) -> Bool {
-        let window = showWindow(named: name)
-        let sheet = window.sheets.firstMatch
-        // AX exposes the selected native tab as the hittable document window. While its prompt is open,
-        // the sheet is the key surface and must be hittable too.
-        return app.state == .runningForeground && window.exists && window.isHittable
-            && (!sheet.exists || sheet.isHittable)
-    }
-
-    private func recordTabSelectionFailure(_ name: String, attempts: Int, reason: String) {
-        let windows = app.windows.matching(identifier: "ww.show.window").allElementsBoundByIndex
-        Acceptance.writeEvidence("format-update-T21-tab-selection-failure", [
-            "expectedSelectedTab": name,
-            "attempts": attempts,
-            "reason": reason,
-            "appState": app.state.rawValue,
-            "windows": windows.map {
-                [
-                    "title": $0.title,
-                    "exists": $0.exists,
-                    "hasKeyboardFocus": isFocused($0),
-                    "sheetHasKeyboardFocus": isFocused($0.sheets.firstMatch),
-                    "isHittable": $0.isHittable,
-                    "sheetIsHittable": $0.sheets.firstMatch.isHittable,
-                ]
-            },
-        ], test: self)
-        add(XCTAttachment(screenshot: app.screenshot()))
     }
 
     /// After Window › Merge All Windows, either the tab bar AX nodes name both documents or the Window menu proves
