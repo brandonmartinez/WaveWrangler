@@ -263,6 +263,7 @@ struct TranscriptReviewInspector: View {
                 .accessibilityIdentifier("ww.review.remedy.keyboard")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ww.review.inspector")
     }
 
