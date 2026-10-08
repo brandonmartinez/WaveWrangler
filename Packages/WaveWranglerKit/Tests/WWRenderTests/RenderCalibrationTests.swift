@@ -13,9 +13,9 @@ import WWTimeMap
 // separate multi-span case covers segment kinks, gaps, unsupported epochs and two occurrences.
 // Truth is the WWTimeMap itself (`sourceFrame` / `alignedTime`), never the render plan.
 //
-// Gates are `RenderGates` (frozen as m2-freeze-render). The holdout split runs only when
-// WW_M2_RENDER_HOLDOUT=1 and has NOT been run: the renderer remains a calibrated candidate, not
-// qualified. Listening evaluation is BLOCKED (no consented listeners) and is not measured here.
+// Gates are `RenderGates` (frozen as m2-freeze-render). The original holdout passed once; the
+// revision-2 holdout uses disjoint seeds and runs only with WW_M2_RENDER_2_HOLDOUT=1.
+// Listening evaluation is still BLOCKED (no consented listeners).
 
 /// The objective render gates. Frozen at m2-freeze-render (docs/m2/fixtures/m2-freeze-render.json;
 /// RenderFreezeTests fails on drift).
@@ -44,11 +44,13 @@ enum RenderFixture {
     static let fixtureID = "M2-RENDER-001"
     static let calibrationCases = 16
     static let holdoutCases = 48
-    static let holdoutEnabled = ProcessInfo.processInfo.environment["WW_M2_RENDER_HOLDOUT"] == "1"
+    static let holdoutEnabled = ProcessInfo.processInfo.environment["WW_M2_RENDER_2_HOLDOUT"] == "1"
+    static let holdoutSplit = "holdout-2"
     /// The calibration split is CPU-bound for tens of seconds, so it runs in its own serialized pass
     /// (scripts/test.sh) instead of starving the time-limited suites of the parallel package run.
     static let calibrationEnabled = ProcessInfo.processInfo.environment["WW_RENDER_CALIBRATION"] == "1"
     static let recordsDirectory = ProcessInfo.processInfo.environment["WW_RENDER_RECORDS_DIR"]
+    static let maximumConcurrentCases = 2
 
     static func seed(split: String, index: Int) -> UInt64 {
         let digest = SHA256.hash(data: Data("ww-m2-fixture|v1|\(fixtureID)|\(split)|\(index)".utf8))
@@ -441,13 +443,33 @@ func measureMultiSpan(split: String) async throws -> [RenderMeasurement] {
     return records
 }
 
-func runSplit(_ split: String, cases: Int) async throws -> [RenderMeasurement] {
-    var records = try await withThrowingTaskGroup(of: [RenderMeasurement].self) { group in
-        for index in 0 ..< cases {
-            group.addTask { try await RenderCase(split: split, index: index).measure() }
+func boundedRenderCases<Result: Sendable>(
+    _ cases: Int, limit: Int = RenderFixture.maximumConcurrentCases,
+    measure: @escaping @Sendable (Int) async throws -> Result
+) async throws -> [Result] {
+    precondition(cases >= 0 && (1...RenderFixture.maximumConcurrentCases).contains(limit))
+    return try await withThrowingTaskGroup(of: (Int, Result).self) { group in
+        var next = 0
+        func enqueueNext() {
+            guard next < cases else { return }
+            let index = next
+            next += 1
+            group.addTask { (index, try await measure(index)) }
         }
-        return try await group.reduce(into: []) { $0 += $1 }
+        for _ in 0..<min(limit, cases) { enqueueNext() }
+        var results: [(Int, Result)] = []
+        while let result = try await group.next() {
+            results.append(result)
+            enqueueNext()
+        }
+        return results.sorted { $0.0 < $1.0 }.map(\.1)
     }
+}
+
+func runSplit(_ split: String, cases: Int) async throws -> [RenderMeasurement] {
+    var records = try await boundedRenderCases(cases) { index in
+        try await RenderCase(split: split, index: index).measure()
+    }.flatMap { $0 }
     records += try await measureMultiSpan(split: split)
     let ordered = try canonicalRecordLines(records)
     if let directory = RenderFixture.recordsDirectory {
@@ -481,12 +503,33 @@ struct RenderCalibrationTests {
         }
     }
 
-    /// Frozen holdout: runs once, only with WW_M2_RENDER_HOLDOUT=1, after m2-freeze-render.
+    /// Revision-2 holdout: disjoint seeds, run once on a clean revision-2 freeze commit.
     @Test(.enabled(if: RenderFixture.holdoutEnabled))
     func holdoutSplitMeetsEveryFrozenGate() async throws {
-        let records = try await runSplit("holdout", cases: RenderFixture.holdoutCases)
+        let records = try await runSplit(RenderFixture.holdoutSplit, cases: RenderFixture.holdoutCases)
         for outcome in RenderGateEvaluation.evaluate(records) {
             #expect(outcome.passed, "\(outcome)")
+        }
+    }
+
+    @Test func caseSchedulerBoundsInflightWorkAndKeepsAllCasesInOrder() async throws {
+        actor Activity {
+            var active = 0
+            var peak = 0
+            func enter() { active += 1; peak = max(peak, active) }
+            func leave() { active -= 1 }
+        }
+        #expect(RenderFixture.maximumConcurrentCases == 2)
+        for limit in 1...RenderFixture.maximumConcurrentCases {
+            let activity = Activity()
+            let result = try await boundedRenderCases(RenderFixture.holdoutCases, limit: limit) { index in
+                await activity.enter()
+                for _ in 0..<10 { await Task.yield() }
+                await activity.leave()
+                return index
+            }
+            #expect(result == Array(0..<RenderFixture.holdoutCases))
+            #expect(await activity.peak == limit)
         }
     }
 

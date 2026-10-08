@@ -26,9 +26,11 @@ if (( ESTIMATOR_MAX_CONCURRENCY > 2 )) && [[ "$ESTIMATOR_CONCURRENCY_GRANT" != "
 fi
 export WW_ESTIMATOR_MAX_CONCURRENCY="$ESTIMATOR_MAX_CONCURRENCY"
 export WW_ESTIMATOR_CONCURRENCY_GRANT="$ESTIMATOR_CONCURRENCY_GRANT"
-# Compute budget: Swift Testing runs at most this many tests at once (its default is unbounded). `--num-workers`
-# bounds XCTest only, so the width goes through Swift Testing's own environment switch.
-export SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH="${WW_TEST_WORKERS:-4}"
+# Test processes can start their own bounded tasks. Keep one test case at a time so separate pipeline
+# cases cannot stack their internal work; --jobs limits compilation, not the test process.
+TEST_WORKERS="${WW_TEST_WORKERS:-1}"
+SEGMENT_MAX_CONCURRENCY="${WW_SEGMENT_MAX_CONCURRENCY:-3}"
+FREEZE_MAX_CONCURRENCY="${WW_M2_FREEZE_MAX_CONCURRENCY:-2}"
 DERIVED_DATA="${WW_DERIVED_DATA:-$ROOT/.build/DerivedData}"
 PACKAGE_ONLY=0
 UI=0
@@ -45,6 +47,19 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+if [[ "$UI" == 0 ]]; then
+  for setting in "WW_TEST_WORKERS:$TEST_WORKERS:1" "WW_SEGMENT_MAX_CONCURRENCY:$SEGMENT_MAX_CONCURRENCY:3" "WW_M2_FREEZE_MAX_CONCURRENCY:$FREEZE_MAX_CONCURRENCY:2"; do
+    IFS=: read -r name value maximum <<<"$setting"
+    if [[ ! "$value" =~ ^[1-3]$ ]] || (( value > maximum )); then
+      echo "$name must be an integer from 1 to $maximum (got '$value')" >&2
+      exit 2
+    fi
+  done
+  export SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH="$TEST_WORKERS"
+  export WW_SEGMENT_MAX_CONCURRENCY="$SEGMENT_MAX_CONCURRENCY"
+  export WW_M2_FREEZE_MAX_CONCURRENCY="$FREEZE_MAX_CONCURRENCY"
+fi
 
 if [[ "$UI" == 1 ]]; then
   echo "==> swift build wwpersist-probe (synthetic fixtures for UI tests)"
@@ -78,9 +93,10 @@ echo "==> swift test (Packages/WaveWranglerKit)"
 swift test \
   --package-path "$ROOT/Packages/WaveWranglerKit" \
   --scratch-path "$ROOT/.build/swiftpm" \
-  --jobs "$JOBS"
+  --jobs "$JOBS" \
+  --no-parallel
 
-# The CPU-heavy WW-016 estimator suites run alone after the parallel suite. Calibration schedules at most
+# The CPU-heavy WW-016 estimator suites run alone after the ordinary package suite. Calibration schedules at most
 # WW_ESTIMATOR_MAX_CONCURRENCY cases in flight (default 2, hard maximum 4); higher values require a matching
 # explicit WW_ESTIMATOR_CONCURRENCY_GRANT. Scenario tests are serialized and this pass disables test parallelism.
 echo "==> swift test estimator pass: ScenarioTests, CalibrationTests (max ${WW_ESTIMATOR_MAX_CONCURRENCY} cases)"
@@ -102,7 +118,7 @@ rm -f "$ESTIMATOR_LOG"
 
 # WW-017 discontinuity segmentation (calibration against planted truth, detection-floor sweep, steps beside
 # target silence) is CPU-heavy for minutes; it runs alone for the same reason, its suites one after another
-# (--no-parallel), each with at most WW_SEGMENT_MAX_CONCURRENCY (default 4) cases in flight. The log check fails
+# (--no-parallel), each with at most WW_SEGMENT_MAX_CONCURRENCY (default 3 here) cases in flight. The log check fails
 # the script if the selected suites were skipped.
 # On CI (CI=true) WW_SEGMENT_SWEEPS defaults to 0: only the gated calibration runs, keeping the job well inside its
 # timeout. The floor and edge-silence sweeps are skipped there, but the always-on cheap test
@@ -217,8 +233,9 @@ if ! grep -q 'Test calibrationSplitMeetsEveryObjectiveGate() passed' "$CALIBRATI
 fi
 rm -f "$CALIBRATION_LOG"
 
-# WW-050 decode (M2-DECODE-001) and WW-015 time-map (M2-TIMEMAP-001) calibration splits run alone, one after the
-# other: the decode split decodes real files and the time-map split runs hundreds of thousands of exact round trips.
+# WW-050 decode (M2-DECODE-002) and WW-015 time-map (M2-TIMEMAP-001) calibration splits run alone, one after the
+# other: the decode split decodes synthetic files and the time-map split runs exact round trips.
+# Both use WW_M2_FREEZE_MAX_CONCURRENCY (default 2 here), below their test-side maximum of 4.
 for freeze_pass in "WW_DECODE_CALIBRATION DecodeCalibrationTests" "WW_TIMEMAP_CALIBRATION TimeMapCalibrationTests"; do
   read -r switch suite <<<"$freeze_pass"
   echo "==> swift test calibration pass: $suite"

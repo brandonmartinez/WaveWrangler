@@ -209,3 +209,28 @@ swift test --filter WWRenderTests`, and the same with `WW_RENDER_CALIBRATION=1` 
 - No persistence or job invalidation (WW-020), UI or export.
 
 Refs #13 #18.
+
+## M3 test-process CPU budget (#310; revision-2 freeze)
+
+The original `m2-freeze-render` record and its once-only passed holdout above remain unchanged historical
+evidence. During an M3 full test run, the *serialized* render-calibration pass still enqueued all 16 synthetic
+cases concurrently inside one SwiftPM helper; `--jobs 4` and top-level test serialization did not limit those
+tasks. A sampled helper reached 1180.8% CPU at 19:13:58 on 2026-10-08 (raw local-host `full.log` and
+`swiftpm-testing-helper-cpu.log` from the #272 exact-head run named in #310).
+
+The new [`m2-freeze-render-2`](../fixtures/m2-freeze-render-2.json) pins the unchanged renderer source and a
+test-only two-case scheduler. It preserves all 16 calibration cases, 48 holdout cases, the fixed multi-span
+case, the recipe, independent truth, gate values and canonical record order. A new `holdout-2` split uses
+disjoint seeds and **must run once only after the new freeze is committed**; until then it is **NOT RUN**, not
+inferred from the original holdout. `scripts/test.sh` also runs ordinary package tests without top-level case
+parallelism so short alignment-pipeline tests cannot overlap their internal work, caps segment cases at three
+and decode/time-map calibration cases at two. The 75-minute pipeline render remains full length.
+
+Focused local working-Mac checks (SwiftPM helpers sampled per PID at 0.25 s, stopping on >400%):
+bounded `WWRenderTests` including all 16 calibration cases peaked at **199.3%** (45 tests passed);
+serialized `WWAlignPipelineTests` cycle/end-to-end/output-settings peaked at **181.4%** (12 passed);
+two-case decode calibration peaked at **193.6%** and two-case time-map calibration at **188.1%**
+(their full frozen calibration counts passed). The bounded render calibration still emits **466 records**
+with SHA-256 `f8a1ee31900ba9526879242f5e0d218e7aaf16e1155890ad17ba351092d27889`,
+byte-identical to the original committed calibration. These focused checks are **not** a full-suite or
+75-minute render CPU qualification; the final clean-head process-specific full gate remains outstanding.

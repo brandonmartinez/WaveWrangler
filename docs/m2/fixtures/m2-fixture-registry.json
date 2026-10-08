@@ -40,7 +40,8 @@
    "fixtures": [
     "M2-RENDER-001"
    ],
-   "status": "frozen; holdout not run; renderer a calibrated candidate, not qualified; listening BLOCKED",
+   "status": "frozen; original holdout passed once (see ww-018-render-calibration.md); superseded for execution by m2-freeze-render-2; listening BLOCKED",
+   "supersededBy": "m2-freeze-render-2",
    "counts": {
     "fixtures": 1,
     "calibrationCases": 16,
@@ -79,7 +80,48 @@
       "multiSpanNote": "fixed, identical in both splits; a regression case, not held out"
      },
      "supportedClaimLimits": "Synthetic, single-host evidence (Apple M5 Max, macOS 27.0.1, Xcode 27, debug build). Float32 linear PCM buffers at 12/16/44.1/48/96 kHz only; no compressed-codec, BWF or real-recording claim; no listening claim (BLOCKED).",
-     "evidenceStatus": "calibration executed pre-freeze; frozen in m2-freeze-render (2026-10-06); holdout NOT RUN"
+     "evidenceStatus": "calibration and once-only original holdout passed (see ww-018-render-calibration.md); historical record unchanged"
+    }
+   ]
+  },
+  {
+   "freezeID": "m2-freeze-render-2",
+   "record": "docs/m2/fixtures/m2-freeze-render-2.json",
+   "fixtures": [
+    "M2-RENDER-001"
+   ],
+   "status": "new test-only concurrency freeze; old holdout preserved; fresh disjoint holdout-2 NOT RUN; listening BLOCKED",
+   "supersedesForExecution": "m2-freeze-render",
+   "counts": {
+    "fixtures": 1,
+    "calibrationCases": 16,
+    "calibrationMultiSpanCases": 1,
+    "holdoutCases": 48,
+    "holdoutMultiSpanCases": 1
+   },
+   "fixtureEntries": [
+    {
+     "id": "M2-RENDER-001",
+     "family": "render",
+     "role": "objective-gates",
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-render-2.seedDerivation (holdout-2, disjoint from calibration and original holdout)",
+      "recipe": "m2-freeze-render-2.generator (same eight strata and fixed multi-span regression case)"
+     },
+     "expectedTruth": "Unchanged original WWTimeMap forward/inverse and every objective gate in m2-freeze-render-2.gateValues.",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by WWRenderTests; no recordings, user files, network or models."
+     },
+     "split": {
+      "calibration": 16,
+      "holdout": 48,
+      "unit": "cases",
+      "multiSpanCasePerSplit": 1
+     },
+     "evidenceStatus": "old holdout retained; new holdout-2 pending a clean committed freeze"
     }
    ]
   },
