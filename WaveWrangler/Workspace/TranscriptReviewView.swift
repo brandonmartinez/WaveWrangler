@@ -71,6 +71,7 @@ struct TranscriptReviewView: View {
         .wwFont(.body)
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ww.review.workspace")
     }
 

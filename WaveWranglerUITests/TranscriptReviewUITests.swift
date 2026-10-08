@@ -45,7 +45,7 @@ final class TranscriptReviewUITests: XCTestCase {
     }
 
     func testReviewShellExposesSyntheticPrimaryBackupAndBlockedStates() {
-        XCTAssertTrue(app.staticTexts["ww.review.provisionalNotice"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.review.provisionalNotice"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["ww.review.blockedReason"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["ww.review.lane.speaker-a-primary"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["ww.review.lane.speaker-a-backup"].exists)
@@ -86,6 +86,10 @@ final class TranscriptReviewUITests: XCTestCase {
     }
 
     func testKeyboardOccurrenceSelectionUpdatesTheInspector() {
+        let inspector = app.scrollViews["ww.inspector"]
+        XCTAssertTrue(inspector.waitForExistence(timeout: 3))
+        for _ in 0..<3 { inspector.swipeUp() }
+
         let firstOccurrence = app.descendants(matching: .any)["ww.review.occurrence.synthetic-001"]
         XCTAssertTrue(firstOccurrence.waitForExistence(timeout: 3))
         firstOccurrence.click()
