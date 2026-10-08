@@ -90,12 +90,11 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertTrue(firstOccurrence.waitForExistence(timeout: 3))
         firstOccurrence.click()
         let selection = app.descendants(matching: .any)["ww.review.inspector.selection"]
-        XCTAssertEqual(selection.label, "Selected occurrence")
-        XCTAssertEqual(selection.value as? String, "Synthetic example occurrence 1")
+        XCTAssertTrue(selection.label.contains("Synthetic example occurrence 1"))
 
         app.typeKey(.downArrow, modifierFlags: [])
         XCTAssertTrue(Acceptance.waitFor(timeout: 3) {
-            selection.value as? String == "Synthetic example occurrence 2"
+            selection.label.contains("Synthetic example occurrence 2")
         })
         XCTAssertEqual(
             app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,

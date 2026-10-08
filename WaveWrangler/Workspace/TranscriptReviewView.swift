@@ -44,6 +44,7 @@ struct TranscriptReviewView: View {
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(nsColor: .controlBackgroundColor))
+                .accessibilityElement()
                 .accessibilityLabel("Review blocked")
                 .accessibilityValue(TranscriptReviewShellPresentation.noLiveSourceReason)
                 .accessibilityIdentifier("ww.review.blockedReason")
@@ -71,7 +72,6 @@ struct TranscriptReviewView: View {
         .wwFont(.body)
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ww.review.workspace")
     }
 
@@ -177,7 +177,7 @@ struct TranscriptReviewInspector: View {
             Text("Selection: \(state.selectedOccurrence?.title ?? "No occurrence selected")")
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityElement()
-                .accessibilityLabel("Selected occurrence")
+                .accessibilityLabel("Selected occurrence: \(state.selectedOccurrence?.title ?? "No occurrence selected")")
                 .accessibilityValue(state.selectedOccurrence?.title ?? "No occurrence selected")
                 .accessibilityIdentifier("ww.review.inspector.selection")
 
