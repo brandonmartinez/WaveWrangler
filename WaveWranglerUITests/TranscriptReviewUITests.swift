@@ -22,6 +22,15 @@ final class TranscriptReviewUITests: XCTestCase {
         let reviewDestination = app.buttons["ww.show.destination.review"]
         XCTAssertTrue(reviewDestination.waitForExistence(timeout: 5))
         reviewDestination.click()
+        XCTAssertEqual(
+            app.descendants(matching: .any)["ww.show.destination"].value as? String,
+            "Review",
+            "Selecting Review updates the destination control"
+        )
+        XCTAssertFalse(
+            app.descendants(matching: .any)["ww.show.showInfoSummary.title"].exists,
+            "Selecting an episode leaves the Show Info surface"
+        )
         XCTAssertTrue(app.staticTexts["ww.review.heading"].waitForExistence(timeout: 5))
     }
 
@@ -117,10 +126,19 @@ final class TranscriptReviewUITests: XCTestCase {
     }
 
     private func selectFirstEpisode() {
+        let showInfo = app.descendants(matching: .any)["ww.show.sidebar.showInfo"]
+        XCTAssertTrue(showInfo.waitForExistence(timeout: 5))
+        showInfo.click()
+        XCTAssertTrue(app.staticTexts["ww.show.showInfoSummary.title"].waitForExistence(timeout: 5))
+
         let episode = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "ww.show.sidebar.episode."))
             .firstMatch
         XCTAssertTrue(episode.waitForExistence(timeout: 5), "The synthetic show has a selectable episode")
         episode.click()
+        XCTAssertFalse(
+            app.descendants(matching: .any)["ww.show.showInfoSummary.title"].exists,
+            "Selecting the synthetic episode leaves Show Info"
+        )
     }
 }
