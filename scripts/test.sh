@@ -7,6 +7,25 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JOBS="${WW_JOBS:-4}"
+ESTIMATOR_MAX_CONCURRENCY="${WW_ESTIMATOR_MAX_CONCURRENCY:-2}"
+ESTIMATOR_CONCURRENCY_GRANT="${WW_ESTIMATOR_CONCURRENCY_GRANT:-}"
+
+case "$ESTIMATOR_MAX_CONCURRENCY" in
+  ''|*[!0-9]*)
+    echo "WW_ESTIMATOR_MAX_CONCURRENCY must be an integer from 1 to 4 (got '$ESTIMATOR_MAX_CONCURRENCY')" >&2
+    exit 2
+    ;;
+esac
+if (( ESTIMATOR_MAX_CONCURRENCY < 1 || ESTIMATOR_MAX_CONCURRENCY > 4 )); then
+  echo "WW_ESTIMATOR_MAX_CONCURRENCY must be an integer from 1 to 4 (got '$ESTIMATOR_MAX_CONCURRENCY')" >&2
+  exit 2
+fi
+if (( ESTIMATOR_MAX_CONCURRENCY > 2 )) && [[ "$ESTIMATOR_CONCURRENCY_GRANT" != "$ESTIMATOR_MAX_CONCURRENCY" ]]; then
+  echo "WW_ESTIMATOR_MAX_CONCURRENCY above the default of 2 requires WW_ESTIMATOR_CONCURRENCY_GRANT to match the requested value" >&2
+  exit 2
+fi
+export WW_ESTIMATOR_MAX_CONCURRENCY="$ESTIMATOR_MAX_CONCURRENCY"
+export WW_ESTIMATOR_CONCURRENCY_GRANT="$ESTIMATOR_CONCURRENCY_GRANT"
 # Compute budget: Swift Testing runs at most this many tests at once (its default is unbounded). `--num-workers`
 # bounds XCTest only, so the width goes through Swift Testing's own environment switch.
 export SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH="${WW_TEST_WORKERS:-4}"
@@ -61,14 +80,25 @@ swift test \
   --scratch-path "$ROOT/.build/swiftpm" \
   --jobs "$JOBS"
 
-# The CPU-heavy WW-016 estimator suites (scenarios, calibration) run alone after the parallel suite so their
-# signal processing never starves other suites' liveness waits on a small CI runner.
-echo "==> swift test estimator pass: ScenarioTests, CalibrationTests"
+# The CPU-heavy WW-016 estimator suites run alone after the parallel suite. Calibration schedules at most
+# WW_ESTIMATOR_MAX_CONCURRENCY cases in flight (default 2, hard maximum 4); higher values require a matching
+# explicit WW_ESTIMATOR_CONCURRENCY_GRANT. Scenario tests are serialized and this pass disables test parallelism.
+echo "==> swift test estimator pass: ScenarioTests, CalibrationTests (max ${WW_ESTIMATOR_MAX_CONCURRENCY} cases)"
+ESTIMATOR_LOG="$(mktemp)"
 WW_ESTIMATOR_TESTS=1 swift test \
   --package-path "$ROOT/Packages/WaveWranglerKit" \
   --scratch-path "$ROOT/.build/swiftpm" \
   --jobs "$JOBS" \
-  --filter 'WWAlignEstimateTests\.(ScenarioTests|CalibrationTests)'
+  --no-parallel \
+  --filter 'WWAlignEstimateTests\.(ScenarioTests|CalibrationTests)' 2>&1 | tee "$ESTIMATOR_LOG"
+for estimator_suite in 'Estimator scenarios' 'Estimator calibration'; do
+  if ! grep -q "Suite \"$estimator_suite\" passed" "$ESTIMATOR_LOG"; then
+    echo "estimator pass: '$estimator_suite' did not run and pass" >&2
+    rm -f "$ESTIMATOR_LOG"
+    exit 1
+  fi
+done
+rm -f "$ESTIMATOR_LOG"
 
 # WW-017 discontinuity segmentation (calibration against planted truth, detection-floor sweep, steps beside
 # target silence) is CPU-heavy for minutes; it runs alone for the same reason, its suites one after another
