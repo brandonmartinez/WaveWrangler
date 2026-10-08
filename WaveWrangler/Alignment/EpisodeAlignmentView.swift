@@ -309,8 +309,7 @@ private struct AlignmentOutlineTable: View {
             // An epoch row leaves this column blank because its group is named on the row above, so the
             // cell is described explicitly rather than left silent (#219 audit).
             TableColumn("Recorder Group") { row in
-                Text(row.groupName)
-                    .accessibilityElement()
+                Text(row.groupName.isEmpty ? " " : row.groupName)
                     .accessibilityLabel(
                         row.groupName.isEmpty ? "\(row.epochLabel), in the group above" : row.groupName
                     )
