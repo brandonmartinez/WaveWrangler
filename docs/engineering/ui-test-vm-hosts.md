@@ -31,24 +31,33 @@ limits this Mac to two additional macOS virtualized instances.
 After a host reboot, start each guest in its **own** detached,
 session-independent background process. The VM service must not be owned by
 an app/agent session that can be archived later; otherwise archiving that
-session can stop the host. Start the two guests separately:
+session can stop the host. Use the Copilot app's background command mode for
+each guest separately: run the command with `async: true` and `detach: true`.
+That mode requires the platform approval for an independently running process.
+Do not use `nohup`, `&`, or `disown`; those do not establish a host service
+independent of the launching disposable session.
 
 ```sh
-# Detached host service A
+# Submit as a separate Copilot background command with async: true, detach: true.
 tart run --no-graphics --no-clipboard --no-audio ww-ui-1
-# Detached host service B
+
+# Submit as a separate Copilot background command with async: true, detach: true.
 tart run --no-graphics --no-clipboard --no-audio ww-ui-2
 ```
 
-Use `tart list` and `tart ip ww-ui-1` (or `ww-ui-2`) for status and address.
-The local SSH aliases are `ww-ui-1` and `ww-ui-2`. If an address changes,
-probe it with `ssh -o HostName="$(tart ip ww-ui-1)" ww-ui-1`, then update
-that alias's `HostName` in `~/.ssh/config` **before** copying Products or
-running the pipeline; the one-off override does not change later SSH or
-rsync commands. Keep its key and pinned host identity unchanged. Check
-`ssh ww-ui-1 '~/ww-uitest-runs/gui-lock status'` before each run, and stop
-with `tart stop ww-ui-1` (similarly for `ww-ui-2`). Do not add a third
-macOS VM on this host.
+For each guest, verify after launch and again after the launching session is
+shut down or archived: `tart list` reports it running; its SSH alias connects;
+the console check below reports unlocked; and
+`ssh ww-ui-N '~/ww-uitest-runs/gui-lock status'` succeeds. Archiving a launch
+session must neither own nor stop either host service. Use `tart ip ww-ui-1`
+(or `ww-ui-2`) for its address. The local SSH aliases are `ww-ui-1` and
+`ww-ui-2`. If an address changes, probe it with
+`ssh -o HostName="$(tart ip ww-ui-1)" ww-ui-1`, then update that alias's
+`HostName` in `~/.ssh/config` **before** copying Products or running the
+pipeline; the one-off override does not change later SSH or rsync commands.
+Keep its key and pinned host identity unchanged. Stop a guest only with
+`tart stop ww-ui-1` (similarly for `ww-ui-2`). Do not add a third macOS VM on
+this host.
 
 Check the guest's console lock before dispatching a test (substitute `ww-ui-2`
 as needed). The command succeeds only when a console user has finished logging
@@ -86,6 +95,11 @@ or lease, reporting `VM console locked`; it does not change the physical
 mini's preflight. Only synthetic fixtures are allowed inside the VMs: never
 mount or copy the user's recordings or test media. Label the result
 `VM ww-ui-N (Virtualization.framework, macOS 27, 4 vCPU)` with the SHA.
+If a GUI run loses its VM because a launching session was interrupted or
+archived, classify that run as **environment-invalid**, not a pass or product
+failure. Restore the detached host service before retrying. Reclaim a lease
+only through the `gui-lock` helper when its recorded PID is stale or dead;
+never unlink the lock guard.
 
 **VM timings are not valid for performance gates.** Run
 `ResponsivenessUITests` and other performance measurements on the Mac mini,
