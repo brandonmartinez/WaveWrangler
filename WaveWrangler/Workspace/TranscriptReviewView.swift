@@ -173,6 +173,19 @@ struct TranscriptReviewInspector: View {
                 .wwFont(.headline)
                 .accessibilityAddTraits(.isHeader)
 
+            actionButton("Accept Shorten when safe", id: "acceptShorten", reason: TranscriptReviewShellPresentation.acceptBlockedReason)
+            actionButton("Lift — preserve timing", id: "lift", reason: TranscriptReviewShellPresentation.liftBlockedReason)
+            actionButton("Reject proposal", id: "reject", reason: TranscriptReviewShellPresentation.rejectBlockedReason)
+
+            Button("Go to Setup", action: goToSetup)
+                .accessibilityHint("Choose or confirm a Primary source in Setup. Keyboard alternative: View, Setup, Command-1.")
+                .accessibilityIdentifier("ww.review.remedy.setup")
+            Text("Keyboard: View > Setup (⌘1).")
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("ww.review.remedy.keyboard")
+
+            Divider()
+
             LabeledContent("Selection") {
                 Text(state.selectedOccurrence?.title ?? "No occurrence selected")
                     .fixedSize(horizontal: false, vertical: true)
@@ -232,12 +245,6 @@ struct TranscriptReviewInspector: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("ww.review.inspector.defaultMode")
 
-            actionButton("Accept Shorten when safe", id: "acceptShorten", reason: TranscriptReviewShellPresentation.acceptBlockedReason)
-            actionButton("Lift — preserve timing", id: "lift", reason: TranscriptReviewShellPresentation.liftBlockedReason)
-            actionButton("Reject proposal", id: "reject", reason: TranscriptReviewShellPresentation.rejectBlockedReason)
-
-            Divider()
-
             actionButton(
                 "Single-lane audition — not a full preview",
                 id: "singleLaneAudition",
@@ -254,13 +261,6 @@ struct TranscriptReviewInspector: View {
                 .accessibilityLabel("Complete preview blocked")
                 .accessibilityValue(TranscriptReviewShellPresentation.fullPreviewBlockedReason)
                 .accessibilityIdentifier("ww.review.inspector.previewBlockedReason")
-
-            Button("Go to Setup", action: goToSetup)
-                .accessibilityHint("Choose or confirm a Primary source in Setup. Keyboard alternative: View, Setup, Command-1.")
-                .accessibilityIdentifier("ww.review.remedy.setup")
-            Text("Keyboard: View > Setup (⌘1).")
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("ww.review.remedy.keyboard")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
