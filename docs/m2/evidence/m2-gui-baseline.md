@@ -116,6 +116,31 @@ live tree immediately before `performAccessibilityAudit`, compared by exact fram
 the children it exposes, so an unrelated container of a similar shape is no longer absorbed. The caps are
 unchanged and no audit option was relaxed.
 
+### Baseline revision 2026-10-08: Offline save-status popover (#240)
+
+The last passing T26 audit at `4cb25bd` showed a 414 × 178 pt popover at
+`{{1170, 307}, {414, 178}}`; its inspector `Notes` label was below the popover.
+After #219 changed the shared narrow-window split, the exit SHA `3b56f8f` showed
+a 191 × 274 pt popover at `{{1147, 307}, {191, 274}}`, overlapping the inspector's
+`Notes` label at `{{1164, 543}, {36, 16}}`. The T26 full-shard crop shows the
+popover physically covering that label: its p75 1.88:1 was a measurement of
+composited popover pixels, **not** proof that the visible Notes text has low
+contrast. The fix gives the popover a 400 pt minimum width so its detail text
+does not wrap into the inspector's Notes row. Notes remains unwaived; an
+uncovered low-contrast Notes finding still fails.
+
+The repeated T26/T27 audit also flags the empty Setup explanation
+(`Import recordings to reference them in this episode…`) even though its own
+crop shows 12,074 glyph pixels at p75 12.39:1 with the text fully visible.
+The measured-artefact handler is restricted to this text's new exact
+`ww.setup.empty.importExplanation` identifier, a visible frame fully inside
+the window and outside the popover, audit type `.contrast`, and the existing
+per-element threshold of at least 40 glyph pixels and p75 4.5:1. Nothing
+else in Setup or the inspector inherits this treatment. Source bundles:
+`~/ww-uitest-runs/m2-full3-4cb25bd/shard-a.xcresult` (passing) and
+`~/ww-uitest-runs/m2-exit-mini-final-3b56f8f19426-20261008T030815/`
+(failing), both on Macsimus.
+
 ### Broad (M5) observations
 
 The following are informational broad-accessibility observations for M5 / WW-053, not entries in the M2 essential-audit waiver baseline: fully offscreen or partly clipped library-cell contrast reports (`notOnScreen` 0–2, cap 5, plus four two-point bottom-edge samples); one library dark-collection-row report measured at p75 15.72:1 where the audit samples sidebar material; and sidebar, table, non-blocked Setup-cell, title, and sheet-text contrast reports within existing per-surface `tableText` caps (import 1/1, Setup 1/4). Pixel evidence meets the 40-glyph / p75 4.5:1 measured-artefact rule, or the content is dimmed or occluded while the audit measures the frontmost surface.

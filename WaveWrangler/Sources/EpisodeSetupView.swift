@@ -278,6 +278,7 @@ private struct SourcesSection: View {
                                 .setupFont(.body)
                                 .multilineTextAlignment(.center)
                                 .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("ww.setup.empty.importExplanation")
                             Button("Import Sources…") { model.beginImport() }
                         }
                         .padding()

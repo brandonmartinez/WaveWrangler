@@ -124,6 +124,7 @@ private struct SaveStatusPopover: View {
             }
         }
         .padding(14)
+        .frame(minWidth: 400)
         .accessibilityIdentifier("ww.show.saveStatus.popover")
         // The popover itself (AppKit's frame around this content) needs a description too (A11Y audit, #157).
         .background(PopoverAccessibilityLabel(label: "Save status details"))
