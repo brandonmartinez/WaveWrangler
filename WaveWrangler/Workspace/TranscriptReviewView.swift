@@ -44,6 +44,7 @@ struct TranscriptReviewView: View {
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(nsColor: .controlBackgroundColor))
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Review blocked")
                 .accessibilityValue(TranscriptReviewShellPresentation.noLiveSourceReason)
                 .accessibilityIdentifier("ww.review.blockedReason")
@@ -71,7 +72,6 @@ struct TranscriptReviewView: View {
         .wwFont(.body)
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ww.review.workspace")
     }
 
@@ -174,7 +174,9 @@ struct TranscriptReviewInspector: View {
                 .wwFont(.headline)
                 .accessibilityAddTraits(.isHeader)
 
-            LabeledContent("Selection") {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Selection")
+                    .wwFont(.caption)
                 Text(state.selectedOccurrence?.title ?? "No occurrence selected")
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -185,7 +187,6 @@ struct TranscriptReviewInspector: View {
 
             Text("Keyboard: View > Setup (⌘1).")
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Keyboard alternative: View > Setup (Command-1)")
                 .accessibilityIdentifier("ww.review.remedy.keyboard")
 
