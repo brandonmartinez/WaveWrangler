@@ -21,16 +21,26 @@ source-content access is supplied to the C bridge.
   `ggml-common.h`, and `ggml-impl.h`. Their ordered SHA-256 listing
   (`shasum -a 256` of those paths in that order, then SHA-256 of that listing)
   is `b4a7363a36dfeb9812b4d68d91f1b01f16af80edf4c9803aaf985f26033a9942`.
-  `bash scripts/verify-whisper-native.sh` rejects changed or extra files.
+  `bash scripts/verify-whisper-native.sh` checks the exact top-level path set,
+  requires 14 regular non-symlink files in a real `upstream/` directory, then
+  verifies the ordered digest. `bash scripts/test-verify-whisper-native.sh`
+  tests extra symlink/hidden/directory/special inputs, an equal-count path
+  substitution, a changed pinned header, and symlinks replacing a pinned
+  header or the source directory in a disposable copy.
 - The included [MIT license](../../../Packages/WaveWranglerKit/Sources/WWWhisperNative/upstream/LICENSE)
-  carries the ggml authors' copyright and permission notice; the additional
-  MIT notice for Jeffrey Quesnelle and Bowen Peng remains in `ggml.c`. This
-  notice is also copied byte-for-byte to
-  `WaveWrangler/WhisperCPULICENSE.txt` for the app's resource bundle. This
-  CPU-only subset has no bundled model, binary artifact or other upstream
-  dependency. **Model weights have separate, still-unverified exact-artifact
-  rights and hashes**; the user's one-time model-download approval is for a
-  later unit, not used here.
+  carries the ggml authors' copyright and permission notice. The separate
+  `ggml.c:13698-13699` attribution identifies the YaRN contribution as MIT
+  licensed, copyright 2023 Jeffrey Quesnelle and Bowen Peng; the
+  [first-party YaRN LICENSE](https://github.com/jquesnelle/yarn/blob/995db5b575e75230b3384d658f8b944c9662f775/LICENSE)
+  supplies its complete copyright, permission and warranty text.
+  `WaveWrangler/WhisperCPULICENSE.txt` bundles **both** full notices: its first
+  section remains byte-identical to upstream `LICENSE`, but the entire app
+  resource is intentionally no longer byte-identical to that single notice.
+  The inline upstream attribution remains untouched. Earlier signed-bundle
+  checks established only the ggml notice, not complete YaRN attribution.
+  This CPU-only subset has no bundled model or binary artifact. **Model weights
+  have separate, still-unverified exact-artifact rights and hashes**; the
+  user's one-time model-download approval is for a later unit, not used here.
 
 The newer official v1.9.5 (`d1be6fde11ac6e0407606b4e42fe72d34add8037`)
 unconditionally lists ANEForge in `src/CMakeLists.txt` and reads
@@ -68,8 +78,12 @@ include Network and Accelerate; **this is not a whole-app no-network proof**.
 The signed Debug executable's headless synthetic argument reported four
 frames, zero words, `backup=refused`, and `native=linked`; the eight focused
 speech package tests passed in Debug and optimized Release without skips.
-The 12 recursive source-content gateway tests also passed. The identical
-MIT notice was present in both signed app resource bundles. These are
+The 12 recursive source-content gateway tests also passed. The earlier
+bundles contained only the ggml MIT notice. For this correction, the working-
+tree Debug app passed `codesign --verify --deep --strict`, and its signed
+`Contents/Resources/WhisperCPULICENSE.txt` matched the new two-notice source
+byte-for-byte. The verifier's positive and adversarial regressions passed.
+These are
 precommit targeted checks, **not** a clean exact-head full `scripts/test.sh`
 gate. Upstream source emits compiler conversion warnings; no vendored bytes
 were changed to suppress them.
