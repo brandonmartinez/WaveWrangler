@@ -261,6 +261,47 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
         XCTAssertTrue(newEpisode.waitForExistence(timeout: 2))
         XCTAssertTrue(showInfo.waitForExistence(timeout: 2))
+        let episodeRows = sidebar.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "ww.show.sidebar.episode."
+        ))
+        XCTAssertEqual(episodeRows.count, 1, "The synthetic fixture exposes exactly one episode row")
+        let episodeRow = episodeRows.firstMatch
+        XCTAssertTrue(episodeRow.waitForExistence(timeout: 2), "The synthetic episode row must be exposed")
+        let episodeRowLabel = episodeRow.label
+        XCTAssertFalse(episodeRowLabel.isEmpty, "The episode row must retain its accessible label")
+        print(
+            "EPISODE ROW AX before audit type=\(episodeRow.elementType.rawValue) " +
+            "id=\(episodeRow.identifier) label=\(episodeRowLabel) " +
+            "value=\(String(describing: episodeRow.value)) frame=\(episodeRow.frame)"
+        )
+        let neutralPoint = CGPoint(x: showInfo.frame.midX, y: showInfo.frame.midY)
+        XCTAssertTrue(window.frame.contains(neutralPoint), "The neutral pointer target must stay inside the show window")
+        XCTAssertFalse(
+            episodeRow.frame.contains(neutralPoint),
+            "The neutral Show Info pointer target must not overlap the episode row"
+        )
+        print(
+            "POINTER PROBE before-neutral last target=window.doubleClick center " +
+            "\(CGPoint(x: window.frame.midX, y: window.frame.midY)); current cursor position is not exposed by XCTest"
+        )
+        let helpTagSeenBeforeNeutral = logHelpTagAXState("before-neutral-pointer")
+        showInfo.hover()
+        let helpTagClearedAfterNeutral = helpTagSeenBeforeNeutral
+            && Acceptance.waitFor(timeout: 2, { !app.debugDescription.contains("HelpTag") })
+        let helpTagSeenAfterNeutral = logHelpTagAXState("after-neutral-pointer")
+        print(
+            "POINTER PROBE after-neutral target=Show Info center \(neutralPoint) " +
+            "HelpTagSeenBefore=\(helpTagSeenBeforeNeutral) clearedAfterNeutral=\(helpTagClearedAfterNeutral) " +
+            "HelpTagSeenAfter=\(helpTagSeenAfterNeutral); " +
+            "current cursor position is not exposed by XCTest"
+        )
+        XCTAssertTrue(episodeRow.exists, "The labelled episode row must remain reachable after pointer movement")
+        XCTAssertEqual(episodeRow.label, episodeRowLabel, "Pointer movement must not alter the episode row label")
+        print(
+            "EPISODE ROW AX after pointer move type=\(episodeRow.elementType.rawValue) " +
+            "id=\(episodeRow.identifier) label=\(episodeRow.label) " +
+            "value=\(String(describing: episodeRow.value)) frame=\(episodeRow.frame)"
+        )
         let workspaceRoot = app.descendants(matching: .any)["ww.alignment.workspaceRoot"]
         XCTAssertTrue(workspaceRoot.waitForExistence(timeout: 2))
         XCTAssertEqual(workspaceRoot.label, "Alignment workspace")
@@ -660,6 +701,21 @@ final class AlignmentInspectionUITests: XCTestCase {
             print("WW-AXTREE-BEGIN\n\(element.debugDescription)\nWW-AXTREE-END")
         }
         return false
+    }
+
+    private func logHelpTagAXState(_ phase: String) -> Bool {
+        let lines = app.debugDescription.components(separatedBy: .newlines)
+        let helpTagIndices = lines.indices.filter { lines[$0].contains("HelpTag") }
+        print("HELP-TAG PROBE [\(phase)] count=\(helpTagIndices.count)")
+        for index in helpTagIndices {
+            let start = max(0, index - 2)
+            let end = min(lines.count - 1, index + 2)
+            print(lines[start...end].joined(separator: "\n"))
+        }
+        if helpTagIndices.isEmpty {
+            print("HELP-TAG PROBE [\(phase)] no HelpTag in the current XCUI accessibility snapshot")
+        }
+        return !helpTagIndices.isEmpty
     }
 
     /// One container the audit may waive. It is resolved from the tree *before* the audit runs, so the
