@@ -30,6 +30,61 @@ static double elapsed_seconds(struct timespec start, struct timespec end) {
            (double) (end.tv_nsec - start.tv_nsec) / 1000000000.0;
 }
 
+int32_t ww_whisper_classify_token_timing(int32_t enabled, int64_t t0, int64_t t1) {
+    return enabled == 1 && t0 >= 0 && t1 > t0 ? 1 : 0;
+}
+
+static WWTokenTimingObservation observe_tokens(struct whisper_context *context, int32_t enabled) {
+    WWTokenTimingObservation observation = { 0 };
+    const int segments = whisper_full_n_segments(context);
+    for (int i = 0; i < segments; ++i) {
+        int previous_text_token = 0;
+        int previous_ended_in_whitespace = 0;
+        const int tokens = whisper_full_n_tokens(context, i);
+        observation.token_count += tokens;
+        for (int j = 0; j < tokens; ++j) {
+            const whisper_token_data token = whisper_full_get_token_data(context, i, j);
+            if (token.id >= whisper_token_eot(context)) {
+                previous_text_token = 0;
+                continue;
+            }
+            const unsigned char *text =
+                (const unsigned char *) whisper_full_get_token_text(context, i, j);
+            if (!text || !*text) {
+                previous_text_token = 0;
+                continue;
+            }
+            int has_non_whitespace = 0;
+            int internal_whitespace = 0;
+            int whitespace_after_content = 0;
+            int ended_in_whitespace = 0;
+            for (const unsigned char *p = text; *p; ++p) {
+                ended_in_whitespace = isspace(*p) != 0;
+                internal_whitespace |= whitespace_after_content && !ended_in_whitespace;
+                whitespace_after_content |= has_non_whitespace && ended_in_whitespace;
+                has_non_whitespace |= !ended_in_whitespace;
+            }
+            if (!has_non_whitespace) {
+                previous_text_token = 0;
+                continue;
+            }
+            ++observation.text_token_count;
+            observation.leading_whitespace_token_count += isspace(*text) != 0;
+            observation.internal_whitespace_token_count += internal_whitespace;
+            observation.unseparated_adjacent_token_count +=
+                previous_text_token && !previous_ended_in_whitespace && !isspace(*text);
+            previous_text_token = 1;
+            previous_ended_in_whitespace = ended_in_whitespace;
+            if (ww_whisper_classify_token_timing(enabled, token.t0, token.t1)) {
+                ++observation.experimental_text_token_count;
+            } else {
+                ++observation.absent_text_token_count;
+            }
+        }
+    }
+    return observation;
+}
+
 WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe(void *model_bytes, size_t model_size) {
     WWTinyPCMProbeResult result = { 0 };
     if (!model_bytes || model_size != 77704715) {
@@ -63,6 +118,7 @@ WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe(void *model_bytes, size_t model_s
     full_params.duration_ms = 2000;
     full_params.no_context = true;
     full_params.no_timestamps = false;
+    full_params.token_timestamps = false;
     full_params.single_segment = true;
     full_params.max_tokens = 16;
     full_params.greedy.best_of = 1;
@@ -81,6 +137,7 @@ WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe(void *model_bytes, size_t model_s
         result.inferred = 1;
         result.segment_count = whisper_full_n_segments(context);
         result.segment_timing_available = result.segment_count > 0;
+        result.disabled_token_timing = observe_tokens(context, 0);
         for (int i = 0; i < result.segment_count; ++i) {
             if (whisper_full_get_segment_t1(context, i) <= whisper_full_get_segment_t0(context, i)) {
                 result.segment_timing_available = 0;
@@ -95,6 +152,16 @@ WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe(void *model_bytes, size_t model_s
                     in_word = 1;
                 }
             }
+        }
+        full_params.token_timestamps = true;
+        clock_gettime(CLOCK_MONOTONIC, &before);
+        const int enabled_status = whisper_full(context, full_params, pcm, sample_count);
+        clock_gettime(CLOCK_MONOTONIC, &after);
+        result.enabled_inference_seconds = elapsed_seconds(before, after);
+        if (enabled_status == 0) {
+            result.enabled_token_timing = observe_tokens(context, 1);
+        } else {
+            result.inferred = 0;
         }
     }
     whisper_free(context);

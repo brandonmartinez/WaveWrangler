@@ -16,6 +16,20 @@ typedef struct {
 WWWhisperCPUProbeResult ww_whisper_cpu_probe(void);
 
 typedef struct {
+    int32_t token_count;
+    int32_t text_token_count;
+    int32_t absent_text_token_count;
+    int32_t experimental_text_token_count;
+    int32_t leading_whitespace_token_count;
+    int32_t internal_whitespace_token_count;
+    int32_t unseparated_adjacent_token_count;
+} WWTokenTimingObservation;
+
+// 0 = absent/invalid, 1 = experimental/unsupported. Neither is a word boundary.
+// Enabled token times may have been interpolated or adjusted by upstream code.
+int32_t ww_whisper_classify_token_timing(int32_t enabled, int64_t t0, int64_t t1);
+
+typedef struct {
     int32_t loaded;
     int32_t inferred;
     int32_t sample_count;
@@ -25,9 +39,13 @@ typedef struct {
     int32_t segment_timing_available;
     double load_seconds;
     double inference_seconds;
+    double enabled_inference_seconds;
+    WWTokenTimingObservation disabled_token_timing;
+    WWTokenTimingObservation enabled_token_timing;
 } WWTinyPCMProbeResult;
 
-// Only the separate headless probe invokes this. The caller validates the complete model bytes first.
+// Only the separate headless probe invokes this on generated PCM after model validation.
+// Both modes have DTW disabled; observations are never source-frame word timings.
 WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe(void *model_bytes, size_t model_size);
 
 #endif

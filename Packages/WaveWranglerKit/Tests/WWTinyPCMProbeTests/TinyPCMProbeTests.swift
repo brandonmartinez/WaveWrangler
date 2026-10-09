@@ -96,6 +96,44 @@ struct TinyPCMProbeTests {
         }
     }
 
+    @Test func nativeTokenTimingClassificationNeverProducesSupportedWordEvidence() {
+        #expect(TinyModelProbe.classifyTokenTiming(enabled: false, start: 10, end: 20) == "absent")
+        #expect(TinyModelProbe.classifyTokenTiming(enabled: true, start: -1, end: -1) == "absent")
+        #expect(TinyModelProbe.classifyTokenTiming(enabled: true, start: -1, end: 20) == "absent")
+        #expect(TinyModelProbe.classifyTokenTiming(enabled: true, start: 10, end: -1) == "absent")
+        #expect(TinyModelProbe.classifyTokenTiming(enabled: true, start: 20, end: 10) == "absent")
+        #expect(TinyModelProbe.classifyTokenTiming(enabled: true, start: 10, end: 10) == "absent")
+        #expect(TinyModelProbe.classifyTokenTiming(enabled: true, start: 0, end: 20) ==
+                "experimental/unsupported")
+    }
+
+    @Test func generatedProbeJSONHasOnlyAggregateUnsupportedTokenEvidence() throws {
+        let disabled = TinyTokenTimingObservation(
+            mode: "disabled", provenance: "experimental/unsupported", tokenCount: 4,
+            textTokenCount: 3, absentTextTokenCount: 3, experimentalTextTokenCount: 0,
+            leadingWhitespaceTokenCount: 1, internalWhitespaceTokenCount: 0,
+            unseparatedAdjacentTokenCount: 1
+        )
+        let enabled = TinyTokenTimingObservation(
+            mode: "experimental-enabled", provenance: "experimental/unsupported", tokenCount: 4,
+            textTokenCount: 3, absentTextTokenCount: 2, experimentalTextTokenCount: 1,
+            leadingWhitespaceTokenCount: 1, internalWhitespaceTokenCount: 0,
+            unseparatedAdjacentTokenCount: 1
+        )
+        let result = TinyProbeResult(
+            loaded: true, inferred: true, sampleCount: 32_000, threads: 2,
+            segmentCount: 1, whitespaceWordCount: 2, segmentTimingAvailable: true,
+            loadSeconds: 0.25, inferenceSeconds: 0.5, enabledInferenceSeconds: 0.75,
+            tokenTimingDisabled: disabled, tokenTimingEnabled: enabled
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let json = try String(decoding: encoder.encode(result), as: UTF8.self)
+        let expectedDisabled = #"{"absentTextTokenCount":3,"experimentalTextTokenCount":0,"internalWhitespaceTokenCount":0,"leadingWhitespaceTokenCount":1,"mode":"disabled","provenance":"experimental/unsupported","textTokenCount":3,"tokenCount":4,"unseparatedAdjacentTokenCount":1}"#
+        let expectedEnabled = #"{"absentTextTokenCount":2,"experimentalTextTokenCount":1,"internalWhitespaceTokenCount":0,"leadingWhitespaceTokenCount":1,"mode":"experimental-enabled","provenance":"experimental/unsupported","textTokenCount":3,"tokenCount":4,"unseparatedAdjacentTokenCount":1}"#
+        #expect(json == #"{"enabledInferenceSeconds":0.75,"inferenceSeconds":0.5,"inferred":true,"loadSeconds":0.25,"loaded":true,"sampleCount":32000,"segmentCount":1,"segmentTimingAvailable":true,"supportedWordBoundaryCount":0,"threads":2,"tokenTimingDisabled":\#(expectedDisabled),"tokenTimingEnabled":\#(expectedEnabled),"whitespaceWordCount":2,"wordTimingAvailable":false,"wordTimingProvenance":"experimental/unsupported"}"#)
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_TINY_MODEL_PATH"] != nil))
     func modelBackedSyntheticInferenceWhenExplicitlyOptedIn() throws {
         let path = try #require(ProcessInfo.processInfo.environment["WW_TINY_MODEL_PATH"])
@@ -106,6 +144,16 @@ struct TinyPCMProbeTests {
         #expect(result.threads == 2)
         #expect(result.loadSeconds >= 0)
         #expect(result.inferenceSeconds >= 0)
-        #expect(result.wordCount >= 0)
+        #expect(result.enabledInferenceSeconds >= 0)
+        #expect(result.whitespaceWordCount >= 0)
+        #expect(result.wordTimingAvailable == false)
+        #expect(result.supportedWordBoundaryCount == 0)
+        #expect(result.tokenTimingDisabled.mode == "disabled")
+        #expect(result.tokenTimingDisabled.experimentalTextTokenCount == 0)
+        #expect(result.tokenTimingDisabled.absentTextTokenCount == result.tokenTimingDisabled.textTokenCount)
+        #expect(result.tokenTimingEnabled.mode == "experimental-enabled")
+        #expect(result.tokenTimingEnabled.absentTextTokenCount +
+                result.tokenTimingEnabled.experimentalTextTokenCount ==
+                result.tokenTimingEnabled.textTokenCount)
     }
 }

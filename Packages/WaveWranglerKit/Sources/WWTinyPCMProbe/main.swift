@@ -18,21 +18,58 @@ enum ProbeError: Error, Equatable {
     case inferenceFailed
 }
 
-struct TinyProbeResult {
+struct TinyTokenTimingObservation: Encodable {
+    let mode: String
+    let provenance: String
+    let tokenCount: Int
+    let textTokenCount: Int
+    let absentTextTokenCount: Int
+    let experimentalTextTokenCount: Int
+    let leadingWhitespaceTokenCount: Int
+    let internalWhitespaceTokenCount: Int
+    let unseparatedAdjacentTokenCount: Int
+
+    static func fromNative(_ native: WWTokenTimingObservation, enabled: Bool) -> Self {
+        Self(
+            mode: enabled ? "experimental-enabled" : "disabled",
+            provenance: "experimental/unsupported",
+            tokenCount: Int(native.token_count),
+            textTokenCount: Int(native.text_token_count),
+            absentTextTokenCount: Int(native.absent_text_token_count),
+            experimentalTextTokenCount: Int(native.experimental_text_token_count),
+            leadingWhitespaceTokenCount: Int(native.leading_whitespace_token_count),
+            internalWhitespaceTokenCount: Int(native.internal_whitespace_token_count),
+            unseparatedAdjacentTokenCount: Int(native.unseparated_adjacent_token_count)
+        )
+    }
+}
+
+struct TinyProbeResult: Encodable {
     let loaded: Bool
     let inferred: Bool
     let sampleCount: Int
     let threads: Int
     let segmentCount: Int
-    let wordCount: Int
+    let whitespaceWordCount: Int
     let segmentTimingAvailable: Bool
     let loadSeconds: Double
     let inferenceSeconds: Double
+    let enabledInferenceSeconds: Double
+    let tokenTimingDisabled: TinyTokenTimingObservation
+    let tokenTimingEnabled: TinyTokenTimingObservation
+    let wordTimingAvailable = false
+    let wordTimingProvenance = "experimental/unsupported"
+    let supportedWordBoundaryCount = 0
 }
 
 enum TinyModelProbe {
     private static let modelSize = 77_704_715
     private static let modelSHA256 = "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f"
+
+    static func classifyTokenTiming(enabled: Bool, start: Int64, end: Int64) -> String {
+        ww_whisper_classify_token_timing(enabled ? 1 : 0, start, end) == 1
+            ? "experimental/unsupported" : "absent"
+    }
 
     static func run(path: String) throws -> TinyProbeResult {
         let policy = IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES
@@ -54,9 +91,12 @@ enum TinyModelProbe {
         return TinyProbeResult(
             loaded: true, inferred: true,
             sampleCount: Int(native.sample_count), threads: Int(native.threads),
-            segmentCount: Int(native.segment_count), wordCount: Int(native.word_count),
+            segmentCount: Int(native.segment_count), whitespaceWordCount: Int(native.word_count),
             segmentTimingAvailable: native.segment_timing_available == 1,
-            loadSeconds: native.load_seconds, inferenceSeconds: native.inference_seconds
+            loadSeconds: native.load_seconds, inferenceSeconds: native.inference_seconds,
+            enabledInferenceSeconds: native.enabled_inference_seconds,
+            tokenTimingDisabled: TinyTokenTimingObservation.fromNative(native.disabled_token_timing, enabled: false),
+            tokenTimingEnabled: TinyTokenTimingObservation.fromNative(native.enabled_token_timing, enabled: true)
         )
     }
 
@@ -125,7 +165,13 @@ struct TinyPCMProbeCLI {
         }
         do {
             let result = try TinyModelProbe.run(path: CommandLine.arguments[2])
-            print("loaded=\(result.loaded) inferred=\(result.inferred) samples=\(result.sampleCount) threads=\(result.threads) segments=\(result.segmentCount) words=\(result.wordCount) segmentTimingAvailable=\(result.segmentTimingAvailable) wordTimingAvailable=false loadSeconds=\(result.loadSeconds) inferenceSeconds=\(result.inferenceSeconds)")
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let data = try encoder.encode(result)
+            guard let output = String(data: data, encoding: .utf8) else {
+                throw ProbeError.inferenceFailed
+            }
+            print(output)
         } catch let error as ProbeError {
             fputs("probe refused: \(error)\n", stderr)
             exit(1)
