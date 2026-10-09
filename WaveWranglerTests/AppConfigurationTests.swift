@@ -111,9 +111,14 @@ struct AppConfigurationTests {
                 #expect(forbidden.firstMatch(in: text, range: range) == nil, "\(file.lastPathComponent) has a launch/relay token")
             }
         }
-        // An empty list is NOT evidence of a safe speech implementation. The scanner includes future speech
-        // paths automatically, but engine/path acceptance remains pending until one exists and is tested.
-        #expect(speechFiles.isEmpty, "A speech path now exists: inspect its runtime boundary independently")
+        let reviewedPaths: Set<String> = [
+            "WaveWrangler/Support/SpeechProbe.swift",
+            "WaveWrangler/Workspace/TranscriptReviewView.swift",
+            "Packages/WaveWranglerKit/Sources/WWSpeech/SpeechInference.swift",
+            "Packages/WaveWranglerKit/Sources/WWOrganizer/TranscriptReviewShellPresentation.swift",
+        ]
+        #expect(Set(speechFiles.map { String($0.path.dropFirst(root.path.count + 1)) }) == reviewedPaths,
+                "Inspect newly added speech paths and their runtime boundary independently")
     }
 
     @Test func showDocumentRoundTripsThroughAFileInATemporaryDirectory() throws {

@@ -95,6 +95,26 @@ proof, unsupported boundary, mismatched provenance and uninspectable lanes refus
 transcript or recognition confidence is never protection evidence. Audio analysis consent remains
 limited to the selected authorized Primary, not to Backups or other speakers.
 
+The public package `EpisodeSourceInventorySurveyor` yields an **untrusted metadata inventory**:
+its caller-controlled document callback is not evidence of which show is open. Only the app-owned
+`OpenEpisodeSourceSnapshot` issuer can bind that inventory to the registered `ShowDocument` object,
+its real `fileURL`, clean verified model and private on-disk base. It independently coordinates a
+read-back of that canonical file, rejects duplicate open documents with the same ShowID, and
+rechecks the active accepted-map **content** key. The inventory enumerates mapped source/occurrence/epoch
+coverage and its declared channels. Partial or unused epochs and physical aliases refuse. It
+rechecks each device-local bookmark, grant, confirmed file identity and fresh metadata revision
+against both the registered token and the map dependencies, including non-Primary sources;
+it checks records and the ready key again after the last awaited document callback **and** after
+the final awaited store read; cancellation refuses after suspension. A missing
+grant, changed publication or incompatible source refuses; the app-private snapshot is not
+a lock on a future provider update or an authorization for work after another await.
+non-Primary sources are only observed through already granted metadata access, never decoded or
+downloaded. The channel count is still a recorded declaration, **not** a freshly certified physical
+channel survey. Its witness reports protection survey absent and complete-cut preparation refused
+until independent lane protection, final merged fade and atomic map/history/preview publication
+are certified. Reverify after awaits and before any future admission; it does not mint the
+policy's sealed verified types or enable a cut.
+
 `ReviewJournal` records named pending/adjusted/accepted/rejected/restored/abstained/blocked states;
 Restore keeps the accepted cut's evidence and removes activity. Undo Restore and redo Accept require
 fresh identical all-lane proof or leave the inactive state and history untouched. The app must

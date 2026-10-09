@@ -37,6 +37,8 @@ final class ShowWindowState {
     @ObservationIgnored var explicitSavePending = false
     /// The Alignment workspace currently displayed in this window, for inspector and menu routing.
     var alignmentModel: EpisodeAlignmentModel?
+    /// Provisional Review-shell selection shared by the linked transcript and inspector panes.
+    let reviewState = TranscriptReviewState()
     /// Selection changes count as user interactions (WW-007 timing) only after the window's first passes.
     @ObservationIgnored private var reportsInteractions = false
 
@@ -153,6 +155,9 @@ final class ShowWindowState {
     func showEpisodeInfo() {
         if selectedEpisodeID == nil, let first = store.model.episodes.first { sidebarSelection = .episode(first.id) }
         guard selectedEpisodeID != nil else { return }
+        if destination == .review || destination == .alignment {
+            select(.setup)
+        }
         inspectorPresented = true
         titleFocusRequest += 1
     }
@@ -165,6 +170,13 @@ final class ShowWindowState {
         if changed, let panel = destination.blockedPanel {
             announce(panel.heading)
         }
+    }
+
+    func showReviewSetup() {
+        if selectedEpisodeID == nil {
+            sidebarSelection = store.model.episodes.first.map { .episode($0.id) }
+        }
+        select(.setup)
     }
 
     func toggleSidebar() {

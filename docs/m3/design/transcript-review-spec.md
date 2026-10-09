@@ -21,6 +21,8 @@ The Review destination lets a person inspect a local transcript and conservative
 
 Use the existing show window's Review destination (`Cmd+3`), keeping the episode sidebar and inspector conventions. Do not add a second review window or a modal-first workflow. The main area has three linked regions: a selectable transcript occurrence list, a timeline with speaker/source lanes, and the selection-driven inspector. The exact split and columns may adapt to the available width; they must remain navigable and must not hide a control or state.
 
+Episode > Episode Info (`Cmd+I`) remains available with an episode selected in Review. It opens that episode's editable Title in the Setup inspector and moves keyboard focus there; returning to Review (`Cmd+3`) restores the review inspector and its occurrence selection.
+
 The following logical context is the single selection model shared by all three regions:
 
 | Field | Meaning |
