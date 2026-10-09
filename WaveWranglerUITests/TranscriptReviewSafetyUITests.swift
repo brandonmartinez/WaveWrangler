@@ -210,6 +210,9 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertTrue(detailAudit.isEmpty, detailAudit.joined(separator: "\n"))
         app.buttons["Show Inspector"].click()
         XCTAssertTrue(setupRemedy.waitForExistence(timeout: 3))
+        filter.click()
+        app.typeKey(.tab, modifierFlags: [])
+        XCTAssertFalse(Acceptance.hasKeyboardFocus(filter), "Move focus off the filter and the pointer off toolbar help")
 
         let unwaived = try AcceptanceAudit.run(
             app,

@@ -56,7 +56,6 @@ private struct ReviewInspectorViewport: NSViewRepresentable {
     func updateNSView(_ view: ReviewInspectorPanel, context: Context) {
         view.update(selectedOccurrence: selectedOccurrence, textSize: textSize)
     }
-
 }
 
 private final class ReviewInspectorPanel: NSView {
@@ -65,7 +64,6 @@ private final class ReviewInspectorPanel: NSView {
     private let setup = NSButton(title: "Go to Setup (⌘1)", target: nil, action: nil)
     private let scroll = NSScrollView()
     private let document = ReviewInspectorDocument()
-    private var textSize = TextSize.actual
 
     init(state: ShowWindowState) {
         self.state = state
@@ -101,24 +99,12 @@ private final class ReviewInspectorPanel: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var isFlipped: Bool { true }
-    override var isOpaque: Bool { true }
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
     }
     override var fittingSize: NSSize { .zero }
 
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
-        dirtyRect.fill()
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        needsDisplay = true
-    }
-
     func update(selectedOccurrence: TranscriptReviewShellOccurrence?, textSize: TextSize) {
-        self.textSize = textSize
         heading.font = .systemFont(ofSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.headline.baseSize)), weight: .semibold)
         setup.font = .systemFont(ofSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize)))
         document.update(selectedOccurrence: selectedOccurrence, textSize: textSize)
@@ -149,7 +135,6 @@ private final class ReviewInspectorDocument: NSView {
     private let occurrenceID = ReviewInspectorDocument.makeLabel("Occurrence ID: None", identifier: "ww.review.inspector.occurrenceID", label: "Occurrence ID")
     private let tokenID = ReviewInspectorDocument.makeLabel("Token stub ID: None", identifier: "ww.review.inspector.tokenID", label: "Token stub ID")
     private let rows: [(NSView, CGFloat)]
-    private var textSize = TextSize.actual
 
     init() {
         var content: [(NSView, CGFloat)] = []
@@ -205,23 +190,11 @@ private final class ReviewInspectorDocument: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var isFlipped: Bool { true }
-    override var isOpaque: Bool { true }
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
-        dirtyRect.fill()
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        needsDisplay = true
-    }
-
     func update(selectedOccurrence: TranscriptReviewShellOccurrence?, textSize: TextSize) {
-        self.textSize = textSize
         selected.stringValue = "Selected occurrence: \(selectedOccurrence?.title ?? "No occurrence selected")"
         occurrenceID.stringValue = "Occurrence ID: \(selectedOccurrence?.id ?? "None")"
         occurrenceID.accessibilityValueOverride = selectedOccurrence?.id ?? "None"
