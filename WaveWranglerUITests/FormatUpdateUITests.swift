@@ -83,10 +83,11 @@ final class FormatUpdateUITests: XCTestCase {
             let bar = window.descendants(matching: .any).matching(identifier: "ww.show.messageBar").firstMatch
             check(bar.waitForExistence(timeout: 10), "identity refusal is shown in the read-only window")
             check(bar.label == "This show is read-only" &&
-                  texts(in: bar).contains { $0.contains("originating file's identity") && $0.contains("Reopen") },
+                  texts(in: bar).contains { $0.contains("originating file was replaced") && $0.contains("Reopen") },
                   "a changed originating item requires reopening, not a retry: \(bar.label) \(texts(in: bar))")
             check(!texts(in: bar).contains { $0.contains("The original is unchanged") } && !bar.buttons["Try Again"].exists,
                   "byte-identical replacement is not reported as the original unchanged")
+            check(value(element("ww.show.saveStatus")).hasPrefix("Read-only"), "the replacement remains read-only")
             check(diskSchemaVersion(document) == 1 && diskSchemaVersion(moved) == 1, "neither original nor replacement was overwritten")
             check((try? Data(contentsOf: document)) == original && (try? Data(contentsOf: moved)) == original,
                   "both exact schema 1 files remain unchanged")
@@ -405,6 +406,11 @@ final class FormatUpdateUITests: XCTestCase {
 
     private func checkMessageBarAccessibility(_ bar: XCUIElement, surface: String) {
         check(!bar.label.isEmpty, "\(surface): recovery message has a VoiceOver heading")
+        let actionGroup = bar.descendants(matching: .any)
+            .matching(identifier: "ww.show.messageBar.actions").firstMatch
+        check(actionGroup.exists && actionGroup.label == "\(bar.label) actions" &&
+              actionGroup.value as? String == "\(bar.buttons.count) actions",
+              "\(surface): actions have a labelled group and an accessible count")
         let undescribed = bar.descendants(matching: .other).allElementsBoundByIndex.filter {
             $0.label.isEmpty && ($0.value as? String ?? "").isEmpty
         }

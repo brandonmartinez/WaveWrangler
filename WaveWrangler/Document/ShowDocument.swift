@@ -1076,7 +1076,9 @@ final class ShowDocument: NSDocument {
     func updateFormat() {
         guard FormatUpdatePolicy.allowsUpdateAttempt(status.formatUpdate), let url = fileURL, let original = formatUpdateOriginal else { return }
         guard let openedItem = originatingItem, FileItemIdentity.observe(at: url) == openedItem else {
-            status.setFormatUpdate(.failed(detail: "The originating file's identity is missing or has changed. Reopen the show before updating it."))
+            status.setFormatUpdate(.interrupted(
+                reason: "the originating file was replaced or its identity could not be verified. Reopen the show before updating it"
+            ))
             return
         }
         status.setFormatUpdate(.updating)
@@ -1227,7 +1229,7 @@ enum DocumentRecoveryOffer {
                 ? .verifiedCurrent : .priorCheckpoint
             if let selected = try? recovery.selectRecord(kind, at: candidate.checkpoint.url,
                                                          for: candidate.checkpoint.key, allowingDamagedRecord: true) {
-                actions.append(.copy(selected, unpublished: false))
+                actions.append(.prior(selected, revision: candidate.document.revision))
             } else {
                 actions.append(.reveal(candidate.checkpoint.url))
             }
@@ -1264,7 +1266,7 @@ enum DocumentRecoveryOffer {
                     )
                     for candidate in offer.usable {
                         if let selected = try? recovery.selectRecord(.offeredEditCheckpoint, at: candidate.url, for: key) {
-                            actions.append(.copy(selected, unpublished: true))
+                            actions.append(.unsaved(selected))
                         } else {
                             damagedURLs.append(candidate.url)
                         }
@@ -1278,12 +1280,28 @@ enum DocumentRecoveryOffer {
         }
         actions += damagedURLs.map(RecoveryAttempter.Action.reveal)
         if !actions.isEmpty {
-            let priorCount = actions.filter { if case .copy(_, false) = $0 { return true }; return false }.count
-            let copyCount = actions.filter { if case .copy(_, true) = $0 { return true }; return false }.count
+            let priorCount = actions.filter {
+                if case let .prior(record, _) = $0 { return record.kind == .priorCheckpoint }
+                return false
+            }.count
+            let verifiedCount = actions.filter {
+                if case let .prior(record, _) = $0 { return record.kind == .verifiedCurrent }
+                return false
+            }.count
+            let copyCount = actions.filter { if case .unsaved = $0 { return true }; return false }.count
+            var priorNumber = 0
+            var copyNumber = 0
             let names = actions.enumerated().map { index, action in
                 switch action {
-                case .copy(_, false): priorCount == 1 ? "Open Recovered Copy" : "Open Prior Copy \(index + 1)"
-                case .copy(_, true): copyCount == 1 ? "Open Unsaved Copy" : "Open Unsaved Copy \(index + 1)"
+                case let .prior(record, revision):
+                    if record.kind == .verifiedCurrent { return "Open Last Verified Copy (revision \(revision))" }
+                    priorNumber += 1
+                    if priorCount == 1 && verifiedCount == 0 { return "Open Recovered Copy" }
+                    return priorNumber == 1 ? "Open Newest Prior Copy (revision \(revision))"
+                        : "Open Prior Copy \(priorNumber) (revision \(revision))"
+                case .unsaved:
+                    copyNumber += 1
+                    return copyCount == 1 ? "Open Unsaved Copy" : "Open Unsaved Copy \(copyNumber)"
                 case .reveal: "Show in Finder \(index + 1)"
                 case .cancel: "Cancel"
                 }
@@ -1293,7 +1311,9 @@ enum DocumentRecoveryOffer {
         }
         let damaged = damagedURLs.isEmpty ? "" :
             " The recovery copy is damaged and cannot be restored. Its raw bytes are kept; use Show in Finder to export them."
-        let available = actions.contains { if case .copy = $0 { return true }; return false }
+        let available = actions.contains {
+            switch $0 { case .prior, .unsaved: true; case .reveal, .cancel: false }
+        }
             ? " Complete recovery copies can be opened as separate unsaved shows. The damaged file is not changed."
             : ""
         let scan = scanFailures.isEmpty ? "" :
@@ -1305,7 +1325,8 @@ enum DocumentRecoveryOffer {
     /// NSErrorRecoveryAttempting: AppKit calls this on the main thread from error presentation.
     final class RecoveryAttempter: NSObject {
         enum Action {
-            case copy(SelectedRecoveryRecord, unpublished: Bool)
+            case prior(SelectedRecoveryRecord, revision: Int)
+            case unsaved(SelectedRecoveryRecord)
             case reveal(URL)
             case cancel
         }
@@ -1323,11 +1344,11 @@ enum DocumentRecoveryOffer {
             let recovery = recovery
             return MainActor.assumeIsolated {
                 switch action {
-                case let .copy(selected, unpublished):
+                case let .prior(selected, _), let .unsaved(selected):
                     do {
                         let bytes = try recovery.readSelectedRecord(selected)
                         let snapshot: Data
-                        if unpublished {
+                        if selected.kind == .offeredEditCheckpoint {
                             let record = try EditCheckpointRecord.decode(bytes)
                             guard record.documentID == selected.key.rawValue,
                                   EnvelopeHeaderInfo.peek(record.snapshot)?.checksum == record.payloadChecksum

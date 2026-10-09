@@ -222,16 +222,23 @@ final class CoreTasksKeyboardUITests: XCTestCase {
                       "VoiceOver identifies the actionable newest prior, not another generic Open: \(offer.buttons.allElementsBoundByIndex.map(\.label))")
                 check(older.exists && older.isEnabled && older.label == older.title,
                       "the older prior has its own distinct VoiceOver action")
-                if newest.exists { app.typeKey(.return, modifierFlags: []) }
-                let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
-                check(newest.exists && copy.waitForExistence(timeout: 10), "Return opens the newest prior copy")
-                let title = copy.textFields["Show title"]
-                let info = copy.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
-                check(info.waitForExistence(timeout: 5), "Show Info is available on the recovered copy")
-                if info.exists { info.click() }
-                check(title.waitForExistence(timeout: 5), "Show title appears after selecting Show Info")
-                check(title.waitForExistence(timeout: 5) && title.value as? String == "Complete Version", "opened the last complete version: \(title.value ?? "nil")")
-                Acceptance.record(self, "T17 opened window title: \(copy.title)")
+                if newest.exists {
+                    app.typeKey(.return, modifierFlags: [])
+                    let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
+                    if copy.waitForExistence(timeout: 10) {
+                        let title = copy.textFields["Show title"]
+                        let info = copy.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
+                        check(info.waitForExistence(timeout: 5), "Show Info is available on the recovered copy")
+                        if info.exists { info.click() }
+                        check(title.waitForExistence(timeout: 5), "Show title appears after selecting Show Info")
+                        if title.exists {
+                            check(title.value as? String == "Complete Version", "opened the last complete version: \(title.value ?? "nil")")
+                        }
+                        Acceptance.record(self, "T17 opened window title: \(copy.title)")
+                    } else {
+                        check(false, "Return opens the newest prior copy")
+                    }
+                }
             }
             check(data.prefix(data.count / 2) == (try? Data(contentsOf: document)), "the damaged file is left unchanged")
         }

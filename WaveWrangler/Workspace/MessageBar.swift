@@ -34,6 +34,10 @@ struct MessageBar: View {
                         }
                     }
                     .padding(.top, 2)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("\(heading) actions")
+                    .accessibilityValue("\(actions.count) actions")
+                    .accessibilityIdentifier("\(identifier).actions")
                 }
             }
             Spacer(minLength: 0)

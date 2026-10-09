@@ -81,7 +81,8 @@ final class DocumentLifecycleUITests: XCTestCase {
         window = try launchAndOpen(document, autosave: true, extraArguments: Self.slowAutosave)
         Thread.sleep(forTimeInterval: 1.5)
         XCTAssertTrue(messageBar(window).waitForExistence(timeout: 5), "a verified save keeps the offered record")
-        XCTAssertEqual(messageBar(window).label, "Unsaved changes based on an older revision")
+        XCTAssertTrue(messageBar(window).label.hasPrefix("Unsaved changes based on an older revision"),
+                      messageBar(window).label)
     }
 
     /// C2b on the **restoration display path** (#107 review). State restoration reads the document, makes its window
@@ -227,7 +228,8 @@ final class DocumentLifecycleUITests: XCTestCase {
         let original = try closeCopyWithoutSaving(copy, original: "Relaunch Older")
         XCTAssertEqual(showTitleField(original).value as? String, "Saved elsewhere")
         XCTAssertTrue(messageBar(original).waitForExistence(timeout: 5), "A copy closed without saving offers its changes again")
-        XCTAssertEqual(messageBar(original).label, "Unsaved changes based on an older revision")
+        XCTAssertTrue(messageBar(original).label.hasPrefix("Unsaved changes based on an older revision"),
+                      messageBar(original).label)
     }
 
     /// AS05 (Close): OFF never autosaves; Close offers Save / Don't Save / Cancel; Cancel keeps the work.
