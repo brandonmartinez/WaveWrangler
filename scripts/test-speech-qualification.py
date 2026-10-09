@@ -3,8 +3,12 @@
 
 import importlib.util
 import json
+import os
+import signal
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +21,96 @@ SPEC.loader.exec_module(qualification)
 
 
 class QualificationTests(unittest.TestCase):
+    def nested_command(self, marker, *, ignore_term=False):
+        child = (
+            "import os, pathlib, signal, time\n"
+            + ("signal.signal(signal.SIGTERM, signal.SIG_IGN)\n" if ignore_term else "")
+            + f"pathlib.Path({str(marker)!r}).write_text(str(os.getpid()))\n"
+            + "while True: time.sleep(1)\n"
+        )
+        parent = (
+            "import subprocess, sys\n"
+            f"child = subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+            "child.wait()\n"
+        )
+        return [sys.executable, "-c", parent]
+
+    def assert_child_gone(self, marker):
+        pid = int(marker.read_text())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+
+    def test_timeout_reaps_nested_child_before_temporary_input_cleanup(self):
+        with tempfile.TemporaryDirectory() as base:
+            marker = Path(base) / "child.pid"
+            with tempfile.TemporaryDirectory(dir=base) as scratch:
+                input_path = Path(scratch) / "synthetic-input"
+                input_path.write_text("synthetic")
+                with patch.object(qualification.os, "killpg", wraps=os.killpg) as kill_group:
+                    with self.assertRaisesRegex(qualification.QualificationError, "timed out"):
+                        qualification.run(self.nested_command(marker, ignore_term=True), timeout=2)
+                self.assertIn(signal.SIGKILL, [call.args[1] for call in kill_group.call_args_list])
+                self.assert_child_gone(marker)
+                self.assertTrue(input_path.exists())
+            self.assertFalse(input_path.exists())
+
+    def test_interrupt_reaps_nested_child_before_temporary_input_cleanup(self):
+        with tempfile.TemporaryDirectory() as base:
+            marker = Path(base) / "child.pid"
+            original = subprocess.Popen.communicate
+            interrupted = False
+
+            def interrupt_once(process, *args, **kwargs):
+                nonlocal interrupted
+                if not interrupted:
+                    deadline = time.monotonic() + 3
+                    while not marker.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    interrupted = True
+                    raise KeyboardInterrupt
+                return original(process, *args, **kwargs)
+
+            with tempfile.TemporaryDirectory(dir=base) as scratch:
+                input_path = Path(scratch) / "synthetic-input"
+                input_path.write_text("synthetic")
+                with patch.object(subprocess.Popen, "communicate", interrupt_once):
+                    with self.assertRaises(KeyboardInterrupt):
+                        qualification.run(self.nested_command(marker))
+                self.assert_child_gone(marker)
+                self.assertTrue(input_path.exists())
+            self.assertFalse(input_path.exists())
+
+    def test_command_io_error_stops_nested_child(self):
+        with tempfile.TemporaryDirectory() as base:
+            marker = Path(base) / "child.pid"
+            original = subprocess.Popen.communicate
+            failed = False
+
+            def fail_once(process, *args, **kwargs):
+                nonlocal failed
+                if not failed:
+                    deadline = time.monotonic() + 3
+                    while not marker.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    failed = True
+                    raise OSError("synthetic pipe failure")
+                return original(process, *args, **kwargs)
+
+            with patch.object(subprocess.Popen, "communicate", fail_once):
+                with self.assertRaisesRegex(qualification.QualificationError, "I/O failed"):
+                    qualification.run(self.nested_command(marker))
+            self.assert_child_gone(marker)
+
+    def test_command_exit_status_and_diagnostics_are_preserved(self):
+        result = qualification.run(
+            [sys.executable, "-c", "import sys; print('output'); print('failure', file=sys.stderr); sys.exit(17)"]
+        )
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (17, "output\n", "failure\n"))
+        result = qualification.run([sys.executable, "-c", "print('success')"])
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "success\n", ""))
+        with self.assertRaisesRegex(qualification.QualificationError, "command unavailable"):
+            qualification.run(["/definitely/missing/command"])
+
     def test_word_error_rate_counts_substitutions_and_deletions(self):
         self.assertEqual(qualification.word_error_rate("A blue folder.", "A red folder"), 1 / 3)
         self.assertEqual(qualification.word_error_rate("A blue folder", "blue folder"), 1 / 3)

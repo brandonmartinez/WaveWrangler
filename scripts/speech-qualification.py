@@ -4,8 +4,10 @@
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -35,11 +37,63 @@ class QualificationError(Exception):
     pass
 
 
+def _group_alive(process):
+    process.poll()
+    try:
+        os.killpg(process.pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # macOS may report EPERM for zombies; wait for the group to disappear.
+        return True
+    return True
+
+
+def _stop_group(process):
+    def wait_for_exit(seconds):
+        deadline = time.monotonic() + seconds
+        while _group_alive(process):
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.01)
+        return True
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    if not wait_for_exit(1):
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            # Zombie-only groups cannot be signaled; the bounded wait must still see ESRCH.
+            pass
+        if not wait_for_exit(2):
+            raise QualificationError("command process group survived SIGKILL; temporary inputs are unsafe to remove")
+    process.communicate(timeout=2)
+
+
 def run(argv, *, timeout=TIMEOUT_SECONDS):
     try:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
-    except (OSError, subprocess.TimeoutExpired) as error:
+        process = subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True,
+        )
+    except OSError as error:
         raise QualificationError(f"command unavailable or timed out: {Path(argv[0]).name}") from error
+    with process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt, OSError) as error:
+            _stop_group(process)
+            if isinstance(error, KeyboardInterrupt):
+                raise
+            if isinstance(error, OSError):
+                raise QualificationError(f"command I/O failed: {Path(argv[0]).name}") from error
+            raise QualificationError(f"command unavailable or timed out: {Path(argv[0]).name}") from error
+        return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
 
 
 def guarded(argv, *, timeout=TIMEOUT_SECONDS):

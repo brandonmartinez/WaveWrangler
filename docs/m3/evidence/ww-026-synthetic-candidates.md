@@ -71,6 +71,14 @@ Whisper's single ggml file avoids the known WhisperKit
 `download:false` tokenizer fallback; it does not establish a general
 WhisperKit offline guarantee.
 
+Each subprocess starts in its own process group, including `/usr/bin/time -l`
+around sandboxed Whisper. A timeout or keyboard interrupt terminates the
+group, escalates to SIGKILL if necessary, and reaps the direct child before
+the temporary PCM and JSON are removed. The synthetic Python regression
+stalls a nested child that ignores SIGTERM and verifies it is gone before
+temporary input cleanup. This is process-lifetime safety, not a new
+inference, offline-service, or WW-026 acceptance result.
+
 The Swift probe checks en-US `supportedLocale`, `installedLocales` and
 `AssetInventory.status(forModules:) == .installed`, in that order. It does
 not call `AssetInventory.reserve` or download assets. `.supported` without
