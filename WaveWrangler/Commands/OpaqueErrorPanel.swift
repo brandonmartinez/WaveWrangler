@@ -8,12 +8,16 @@ import AppKit
 ///
 /// Wording and buttons are the ones `NSAlert(error:)` shows: message = `localizedDescription`, informative
 /// text = `localizedRecoverySuggestion`, buttons = `localizedRecoveryOptions` (or OK), first button trailing.
-/// Keys follow A13: the first option is the default (Return); a button titled "Cancel" (or the only button)
-/// answers Esc. Recovery goes through the error's own recovery attempter, exactly as `presentError` does.
+/// Keys follow A13: the first option is the default (Return) unless the error requires an explicit choice; a
+/// button titled "Cancel" (or the only button) answers Esc. Recovery goes through the error's own recovery
+/// attempter, exactly as `presentError` does.
 ///
 /// Also compiled into the unhosted WaveWranglerTests target, so content, keys and opacity are checked
 /// without launching the app.
 struct OpaqueErrorContent: Equatable {
+    static let requiresExplicitChoiceUserInfoKey =
+        "com.brandonmartinez.wavewrangler.opaqueError.requiresExplicitChoice"
+
     var message: String
     var informative: String
     var options: [String]
@@ -30,7 +34,8 @@ struct OpaqueErrorContent: Equatable {
         options = recoveryOptions.isEmpty ? [String(localized: "OK")] : recoveryOptions
         let cancel = options.firstIndex(of: String(localized: "Cancel"))
         cancelIndex = cancel ?? (options.count == 1 ? 0 : nil)
-        defaultIndex = cancel == 0 && options.count > 1 ? nil : 0
+        let requiresExplicitChoice = error.userInfo[Self.requiresExplicitChoiceUserInfoKey] as? Bool == true
+        defaultIndex = requiresExplicitChoice ? nil : (cancel == 0 && options.count > 1 ? nil : 0)
     }
 }
 

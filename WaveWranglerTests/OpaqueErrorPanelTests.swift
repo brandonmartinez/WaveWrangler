@@ -18,10 +18,15 @@ struct OpaqueErrorPanelTests {
                 "A complete earlier revision (3) is kept on this Mac. You can open it as a new, unsaved copy. The damaged file is left unchanged.",
             NSLocalizedRecoveryOptionsErrorKey: ["Open Recovered Copy", "Cancel"],
             NSRecoveryAttempterErrorKey: attempter,
+            OpaqueErrorContent.requiresExplicitChoiceUserInfoKey: true,
         ])
     }
 
     private static let refusal = PersistenceError.unknownNewerSchema(found: 99, supported: 1)
+    private static let genericRetry = NSError(domain: "test", code: 2, userInfo: [
+        NSLocalizedDescriptionKey: "The operation failed.",
+        NSLocalizedRecoveryOptionsErrorKey: ["Try Again", "Cancel"],
+    ])
 
     /// Records the option AppKit-style presentation hands to the recovery attempter.
     final class Attempter: NSObject {
@@ -43,8 +48,15 @@ struct OpaqueErrorPanelTests {
         #expect(content.options == alert.buttons.map(\.title))
         #expect(content.options == ["Open Recovered Copy", "Cancel"])
         #expect(!content.message.contains("Saved") && !content.informative.contains("Saved"), "never claims Saved")
-        #expect(content.defaultIndex == 0, "Return opens the recovered copy (chosen, non-destructive)")
+        #expect(content.defaultIndex == nil, "Return cannot open a recovery candidate")
         #expect(content.cancelIndex == 1, "Esc cancels")
+    }
+
+    @Test func genericErrorKeepsFirstOptionAsReturnDefault() {
+        let content = OpaqueErrorContent(error: Self.genericRetry)
+        #expect(content.options == ["Try Again", "Cancel"])
+        #expect(content.defaultIndex == 0)
+        #expect(content.cancelIndex == 1)
     }
 
     @Test func refusalKeepsNSAlertWordingAndDismissesWithReturnOrEsc() {
@@ -62,7 +74,7 @@ struct OpaqueErrorPanelTests {
     @Test func panelButtonsCarryTheKeysInNSAlertOrder() {
         let panel = OpaqueErrorPanel(error: Self.recoveryOffer(attempter: Attempter()))
         #expect(panel.optionButtons.map(\.title) == ["Open Recovered Copy", "Cancel"])
-        #expect(panel.optionButtons[0].keyEquivalent == "\r")
+        #expect(panel.optionButtons[0].keyEquivalent.isEmpty)
         #expect(panel.optionButtons[1].keyEquivalent == "\u{1b}")
         #expect(panel.optionButtons.filter(\.hasDestructiveAction).isEmpty)
         #expect(panel.initialFirstResponder === panel.optionButtons[0])
@@ -71,6 +83,10 @@ struct OpaqueErrorPanelTests {
         let open = panel.optionButtons[0].convert(panel.optionButtons[0].bounds, to: nil)
         let cancel = panel.optionButtons[1].convert(panel.optionButtons[1].bounds, to: nil)
         #expect(open.minX > cancel.maxX)
+
+        let generic = OpaqueErrorPanel(error: Self.genericRetry)
+        #expect(generic.optionButtons[0].keyEquivalent == "\r")
+        #expect(generic.optionButtons[1].keyEquivalent == "\u{1b}")
     }
 
     @Test func clicksReturnAndEscReportTheChosenOption() {

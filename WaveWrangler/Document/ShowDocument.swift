@@ -1033,6 +1033,7 @@ enum DocumentRecoveryOffer {
                 "A complete earlier revision (\(newest.document.revision)) is kept on this Mac. You can open it as a new, unsaved copy. The damaged file is left unchanged."
             userInfo[NSLocalizedRecoveryOptionsErrorKey] = ["Open Recovered Copy", "Cancel"]
             userInfo[NSRecoveryAttempterErrorKey] = RecoveryAttempter(model: newest.document.payload)
+            userInfo[OpaqueErrorContent.requiresExplicitChoiceUserInfoKey] = true
         } else {
             userInfo[NSLocalizedRecoverySuggestionErrorKey] = error.recoverySuggestion ?? ""
         }
