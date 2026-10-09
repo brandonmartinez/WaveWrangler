@@ -56,14 +56,27 @@ struct SpeechBoundaryTests {
         let firstOutOfRange = ChannelReference(sourceID: f.primary.sourceID, statedChannel: 1)
 
         for invalidChannel in [negative, firstOutOfRange] {
+            var modelSelectingInvalidChannel = f.model
+            modelSelectingInvalidChannel.episodes[0].speakerAssignments[0].primary = invalidChannel
+
             #expect(throws: SpeechRefusal.unselectedPrimary) {
                 try SpeechInference().infer(
-                    model: f.model,
+                    model: modelSelectingInvalidChannel,
                     episodeID: f.episodeID,
                     speakerID: f.speakerID,
                     channel: invalidChannel
                 )
             }
+            #if DEBUG
+            #expect(throws: SpeechRefusal.unselectedPrimary) {
+                try SpeechInference().syntheticProbe(
+                    model: modelSelectingInvalidChannel,
+                    episodeID: f.episodeID,
+                    speakerID: f.speakerID,
+                    channel: invalidChannel
+                )
+            }
+            #endif
         }
     }
 
