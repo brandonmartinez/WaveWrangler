@@ -218,8 +218,11 @@ final class CoreTasksKeyboardUITests: XCTestCase {
                 try audit("T17 recovery offer")
                 let open = offer.buttons.matching(NSPredicate(format: "title CONTAINS[c] 'Open' OR title CONTAINS[c] 'Copy' OR title CONTAINS[c] 'Earlier'")).firstMatch
                 check(open.exists, "an action opens the kept complete version")
-                if open.exists { open.click() }
                 let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
+                app.typeKey(.return, modifierFlags: [])
+                check(!copy.waitForExistence(timeout: 10), "Return does not open a recovered show")
+                check(offer.exists, "Return leaves the recovery offer open")
+                if open.exists { open.click() }
                 check(copy.waitForExistence(timeout: 10), "the complete version opens")
                 let title = copy.textFields["Show title"]
                 let info = copy.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
