@@ -259,6 +259,55 @@ struct EpisodeSourceAccessTests {
         #expect(calls.value >= 4)
     }
 
+    @Test func fourthAccessStoreReadCannotOutliveReadyKey() async throws {
+        let (fixture, store, _) = try await fixture()
+        let accessStore = FinalReadInvalidatingStore(
+            backing: store, coordinator: fixture.coordinator, source: fixture.id("backup")
+        )
+        let verifier = EpisodeSourceAccessVerifier(
+            showID: fixture.model.show.id, coordinator: fixture.coordinator,
+            accessStore: accessStore, access: SourceAccessContext(io: SystemSourceIO())
+        )
+        await #expect(throws: EpisodeSourceAccessRefusal.acceptedMapNotActive) {
+            try await verifier.verify(episode: fixture.episodeID) { Self.document(fixture.model) }
+        }
+        #expect(await accessStore.reads == 4)
+    }
+
+    @Test func copiedOldShowCannotAssertItIsTheOpenShow() async throws {
+        let (fixture, _, verifier) = try await fixture()
+        let openURL = fixture.directory.url.appendingPathComponent("open.wwshow")
+        let oldCopy = fixture.directory.url.appendingPathComponent("old-copy.wwshow")
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let original = try coder.encodeDocument(fixture.model, revision: 1, publicationID: UUID())
+        try original.data.write(to: openURL)
+        try original.data.write(to: oldCopy)
+        let replacement = try coder.encodeDocument(fixture.model, revision: 2, publicationID: UUID())
+        try replacement.data.write(to: openURL, options: [.atomic])
+        let forgedBase = RevisionFingerprint(of: original.data)
+        await #expect(throws: EpisodeSourceAccessRefusal.changedDuringVerification) {
+            try await verifier.verify(episode: fixture.episodeID) {
+                try EpisodeSourceDocument.current(
+                    at: oldCopy, expectedModel: fixture.model, expectedBase: forgedBase
+                )
+            }
+        }
+    }
+
+    @Test func cancellingFourthDocumentCallbackCannotIssueWitness() async throws {
+        let (fixture, _, verifier) = try await fixture()
+        let calls = Box(0)
+        await #expect(throws: CancellationError.self) {
+            try await verifier.verify(episode: fixture.episodeID) {
+                if calls.update({ $0 += 1; return $0 }) == 4 {
+                    withUnsafeCurrentTask { $0?.cancel() }
+                }
+                return Self.document(fixture.model)
+            }
+        }
+        #expect(calls.value >= 4)
+    }
+
     @Test func partialPlacementRefusesUnmappedTail() async throws {
         let (fixture, _, verifier) = try await fixture()
         let map = try fixture.model.timeMap(revision: 1, in: fixture.episodeID)
@@ -334,6 +383,36 @@ struct EpisodeSourceAccessTests {
         }
         #expect(original.0.content.total.opens == opens)
     }
+}
+
+private actor FinalReadInvalidatingStore: DeviceAccessStore {
+    let backing: InMemoryDeviceAccessStore
+    let coordinator: DerivedJobCoordinator
+    let source: SourceID
+    private(set) var reads = 0
+
+    init(backing: InMemoryDeviceAccessStore, coordinator: DerivedJobCoordinator, source: SourceID) {
+        self.backing = backing
+        self.coordinator = coordinator
+        self.source = source
+    }
+
+    func record(for key: DeviceAccessKey) async throws -> DeviceAccessRecord? {
+        await backing.record(for: key)
+    }
+
+    func records(in showID: ShowID) async throws -> [DeviceAccessRecord] {
+        let unchanged = await backing.records(in: showID)
+        reads += 1
+        if reads == 4 { await coordinator.removeSource(source) }
+        return unchanged
+    }
+
+    func allRecords() async throws -> [DeviceAccessRecord] { await backing.allRecords() }
+    func save(_ record: DeviceAccessRecord) async throws { await backing.save(record) }
+    func save(_ records: [DeviceAccessRecord]) async throws { await backing.save(records) }
+    func removeRecord(for key: DeviceAccessKey) async throws { await backing.removeRecord(for: key) }
+    func removeRecords(in showID: ShowID) async throws { await backing.removeRecords(in: showID) }
 }
 
 private actor DocumentSequence {
