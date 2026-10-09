@@ -44,6 +44,81 @@ struct ShowDocumentOriginGuardTests {
         }
     }
 
+    @Test func copyDestinationRefusesCaseVariantWithoutOriginIdentity() throws {
+        let folder = try directory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let origin = folder.appending(path: "Original.wwshow")
+        try Data("original".utf8).write(to: origin)
+        let caseVariant = folder.appending(path: "ORIGINAL.WWSHOW")
+
+        #expect(ShowDocumentOriginGuard.isOriginatingDestination(caseVariant, originURL: origin, originatingItem: nil),
+                "An iCloud-like unavailable identity must not let a case variant replace the originating show")
+
+        let unavailableOrigin = folder.appending(path: "Cloud Placeholder.wwshow")
+        let unavailableVariant = folder.appending(path: "CLOUD PLACEHOLDER.WWSHOW")
+        #expect(FileItemIdentity.observe(at: unavailableOrigin) == nil)
+        #expect(ShowDocumentOriginGuard.isOriginatingDestination(
+            unavailableVariant, originURL: unavailableOrigin, originatingItem: nil
+        ), "A path-only identity check must refuse a case variant even without file-system metadata")
+    }
+
+    @Test func copyDestinationRefusesUnicodeVariantWithoutOriginIdentity() throws {
+        let folder = try directory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let origin = folder.appending(path: "Caf\u{00E9}.wwshow")
+        try Data("original".utf8).write(to: origin)
+        let composed = try #require(URL(string: folder.absoluteString + "Caf%C3%A9.wwshow"))
+        #expect(!origin.path.utf8.elementsEqual(composed.path.utf8))
+
+        #expect(ShowDocumentOriginGuard.isOriginatingDestination(composed, originURL: origin, originatingItem: nil),
+                "An iCloud-like unavailable identity must not let a Unicode variant replace the originating show")
+        let alias = folder.appending(path: "Finder Alias.wwshow")
+        try URL.writeBookmarkData(
+            origin.bookmarkData(options: .suitableForBookmarkFile, includingResourceValuesForKeys: nil, relativeTo: nil),
+            to: alias
+        )
+        #expect(ShowDocumentOriginGuard.isOriginatingDestination(composed, originURL: alias, originatingItem: nil))
+    }
+
+    @Test func copyDestinationResolvesLinksAndFinderAliasesWithoutOriginIdentity() throws {
+        let folder = try directory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let origin = folder.appending(path: "Original.wwshow")
+        try Data("original".utf8).write(to: origin)
+        let symlink = folder.appending(path: "Linked.wwshow")
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: origin)
+        let alias = folder.appending(path: "Finder Alias.wwshow")
+        try URL.writeBookmarkData(
+            origin.bookmarkData(options: .suitableForBookmarkFile, includingResourceValuesForKeys: nil, relativeTo: nil),
+            to: alias
+        )
+        let different = folder.appending(path: "Different.wwshow")
+        try Data("different".utf8).write(to: different)
+
+        for link in [symlink, alias] {
+            #expect(ShowDocumentOriginGuard.isOriginatingDestination(link, originURL: origin, originatingItem: nil),
+                    "\(link.lastPathComponent) must not replace the originating show")
+            #expect(ShowDocumentOriginGuard.isOriginatingDestination(origin, originURL: link, originatingItem: nil),
+                    "A show opened through \(link.lastPathComponent) must not be replaced through its target")
+        }
+        #expect(!ShowDocumentOriginGuard.isOriginatingDestination(different, originURL: origin, originatingItem: nil))
+        #expect(!ShowDocumentOriginGuard.isOriginatingDestination(
+            folder.appending(path: "New Copy.wwshow"), originURL: origin, originatingItem: nil
+        ))
+    }
+
+    @Test func copyDestinationRefusesWhenUnavailableOriginMayHaveMoved() throws {
+        let folder = try directory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let origin = folder.appending(path: "Original.wwshow")
+        let moved = folder.appending(path: "Moved.wwshow")
+        try Data("original".utf8).write(to: origin)
+        try FileManager.default.moveItem(at: origin, to: moved)
+
+        #expect(ShowDocumentOriginGuard.isOriginatingDestination(moved, originURL: origin, originatingItem: nil),
+                "Without a pinned identity or reachable origin, a different path cannot prove this is a separate copy")
+    }
+
     @Test func byteIdenticalSubstitutionBetweenReadAndIdentityPinIsRefusedWithoutLosingCheckpoint() throws {
         let folder = try directory()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -101,6 +176,7 @@ struct ShowDocumentOriginGuardTests {
         #expect(source.components(separatedBy: "ShowDocumentOriginGuard.isOriginatingDestination(").count == 3,
                 "check before Save a Copy and again at the safe-write boundary")
         #expect(source.contains("status.set(.originConflict(message: Self.copyOriginRefusal))"))
+        #expect(source.contains("Choose another name/location, or reopen the original if it moved."))
         #expect(source.contains("if !isDocumentEdited { updateChangeCount(.changeDone) }"))
         #expect(source.contains("migrator.migrate(url, key: key, originatingItem: openedItem)"))
     }

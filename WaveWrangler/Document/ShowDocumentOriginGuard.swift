@@ -14,18 +14,44 @@ enum ShowDocumentOriginGuard {
 
     static func isOriginatingDestination(_ destination: URL, originURL: URL?, originatingItem: FileItemIdentity?) -> Bool {
         guard let originURL else { return false }
-        let originalPath = originURL.resolvingSymlinksInPath().standardizedFileURL
-        let destinationPath = destination.resolvingSymlinksInPath().standardizedFileURL
-        if destinationPath == originalPath || FileItemIdentity.observe(at: destinationPath) == originatingItem && originatingItem != nil {
+        guard let original = resolvedPath(at: originURL, allowMissing: false),
+              let target = resolvedPath(at: destination, allowMissing: true) else {
             return true
         }
-        if (try? destination.resourceValues(forKeys: [.isAliasFileKey]))?.isAliasFile == true {
-            guard let target = try? URL(resolvingAliasFileAt: destination, options: [.withoutUI, .withoutMounting]) else {
-                return true
+        return target.path == original.path ||
+            (originatingItem != nil && FileItemIdentity.observe(at: target.url) == originatingItem)
+    }
+
+    private static func resolvedPath(at url: URL, allowMissing: Bool) -> (url: URL, path: String)? {
+        var resolved = url.standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
+        var visited = Set<URL>()
+        for _ in 0..<8 {
+            guard visited.insert(resolved).inserted else { return nil }
+            let values: URLResourceValues?
+            do {
+                values = try resolved.resourceValues(forKeys: [.isAliasFileKey, .canonicalPathKey])
+            } catch {
+                let error = error as NSError
+                guard allowMissing, error.domain == NSCocoaErrorDomain, error.code == NSFileReadNoSuchFileError else {
+                    return nil
+                }
+                values = nil
             }
-            let resolved = target.resolvingSymlinksInPath().standardizedFileURL
-            return resolved == originalPath || FileItemIdentity.observe(at: resolved) == originatingItem && originatingItem != nil
+            if values?.isAliasFile == true {
+                guard let target = try? URL(resolvingAliasFileAt: resolved, options: [.withoutUI, .withoutMounting]) else {
+                    return nil
+                }
+                resolved = target.standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
+                continue
+            }
+            if let values, values.isAliasFile == nil { return nil }
+            let path = values?.canonicalPath ?? resolved.path(percentEncoded: false)
+            guard !path.isEmpty else { return nil }
+            let canonical = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
+            let folded = canonical.path(percentEncoded: false).precomposedStringWithCanonicalMapping
+                .folding(options: .caseInsensitive, locale: Locale(identifier: "en_US_POSIX"))
+            return (canonical, folded)
         }
-        return false
+        return nil
     }
 }

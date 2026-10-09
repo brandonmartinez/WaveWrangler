@@ -430,7 +430,7 @@ final class ShowDocument: NSDocument {
         let completion: ((Bool) -> Void)?
     }
 
-    private static let copyOriginRefusal = "Save a Copy Elsewhere needs a different file. WaveWrangler did not overwrite the original show or discard recovery copies."
+    private static let copyOriginRefusal = "Save a Copy Elsewhere cannot safely use this destination because it may be the original show. Choose another name/location, or reopen the original if it moved. WaveWrangler did not overwrite the original show or discard recovery copies."
 
     /// Opens the native save panel named "<Show> copy" and saves the show there as a new, separate show (new show
     /// ID, titled after the chosen name), like Save As: the window then edits the copy. The original file and its
