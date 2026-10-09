@@ -94,9 +94,9 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             "The AX scroll viewport must be bounded by the window: scroll \(inspector.frame), content \(content.frame), window \(window.frame)"
         )
         XCTAssertLessThan(inspector.frame.height, 440, "The inspector must not report its document height as its viewport")
-        let clip = app.descendants(matching: .any)["ww.inspector.clip"]
-        XCTAssertTrue(clip.waitForExistence(timeout: 3), "The clip owns the visible scroll region")
-        XCTAssertTrue(inspector.frame.contains(clip.frame), "The AX clip must stay inside its scroll viewport")
+        XCTAssertTrue(inspector.isHittable, "The native scroll viewport has an in-window hit point")
+        let analysis = app.staticTexts["ww.review.inspector.analysisState"]
+        XCTAssertTrue(inspector.frame.contains(analysis.frame), "Visible document text is clipped to the scroll viewport")
 
         let setup = app.buttons["ww.review.remedy.setup"]
         XCTAssertTrue(setup.waitForExistence(timeout: 3))
@@ -191,6 +191,8 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertTrue(hideInspector.waitForExistence(timeout: 3))
         hideInspector.click()
         XCTAssertTrue(app.buttons["Show Inspector"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.scrollViews["ww.inspector"].exists, "The old AX scroll tree is gone before auditing the detail")
+        filter.click()
         let detailAudit = try AcceptanceAudit.run(
             app,
             surface: "transcript-review-blocked-detail",

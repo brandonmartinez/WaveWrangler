@@ -59,10 +59,6 @@ private struct ReviewInspectorViewport: NSViewRepresentable {
 
 }
 
-private final class ReviewInspectorClipView: NSClipView {
-    override func isAccessibilityElement() -> Bool { true }
-}
-
 private final class ReviewInspectorPanel: NSView {
     private weak var state: ShowWindowState?
     private let heading = EntryLabel(wrappingLabelWithString: "Review Inspector")
@@ -91,7 +87,6 @@ private final class ReviewInspectorPanel: NSView {
         setup.setAccessibilityIdentifier("ww.review.remedy.setup")
         addSubview(setup)
 
-        scroll.contentView = ReviewInspectorClipView()
         scroll.documentView = document
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
@@ -99,10 +94,6 @@ private final class ReviewInspectorPanel: NSView {
         scroll.backgroundColor = .windowBackgroundColor
         scroll.setAccessibilityLabel("Inspector")
         scroll.setAccessibilityIdentifier("ww.inspector")
-        scroll.contentView.setAccessibilityElement(true)
-        scroll.contentView.setAccessibilityRole(.group)
-        scroll.contentView.setAccessibilityLabel("Inspector visible area")
-        scroll.contentView.setAccessibilityIdentifier("ww.inspector.clip")
         addSubview(scroll)
     }
 
