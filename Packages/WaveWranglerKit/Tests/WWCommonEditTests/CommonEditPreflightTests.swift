@@ -214,6 +214,61 @@ struct CommonEditPreflightTests {
         )
         #expect(throws: CommonEditAttestationRefusal.inspectionLimit) { try fx.check() }
     }
+
+    @Test func aggregateLaneAndInverseBudgetsRefuseBeforeInspecting() throws {
+        var fx = try Fixture()
+        for channel in 1..<16 {
+            fx.addSecondaryChannel(channel)
+        }
+        #expect(fx.manifest.lanes.count == 17)
+        #expect(throws: CommonEditAttestationRefusal.inspectionLimit) { try fx.check() }
+
+        fx = try Fixture()
+        for channel in 1..<8 {
+            fx.addSecondaryChannel(channel)
+        }
+        fx.map = try CommonEpisodeEditMap(
+            alignment: fx.map.alignment, alignmentRevision: 2, editRevision: 3,
+            outputRate: NominalRate(48_000), alignedFrameOrigin: -2,
+            alignedFrameCount: CommonEditPreflight.maximumInspectedFrames, removals: []
+        )
+        #expect(fx.manifest.lanes.count == 9)
+        #expect(throws: CommonEditAttestationRefusal.inspectionLimit) { try fx.check() }
+    }
+
+    @Test func aggregateIntervalBudgetRefusesWithoutSkippingAnyLane() throws {
+        var fx = try Fixture()
+        for channel in 1..<6 {
+            fx.addSecondaryChannel(channel)
+        }
+        fx.splitCoverageIntoSingleFrames()
+        #expect(try fx.check().audioLanes == 7)
+        fx.addSecondaryChannel(6)
+        fx.splitCoverageIntoSingleFrames()
+        #expect(fx.surveys.count == 8)
+        #expect(throws: CommonEditAttestationRefusal.inspectionLimit) { try fx.check() }
+
+        fx = try Fixture()
+        for channel in 1..<8 {
+            fx.addSecondaryChannel(channel)
+        }
+        fx.addNarrowProtectedAndFades()
+        #expect(try fx.check().audioLanes == 9)
+        fx.addSecondaryChannel(8)
+        fx.addNarrowProtectedAndFades()
+        #expect(fx.surveys.count == 10)
+        #expect(throws: CommonEditAttestationRefusal.inspectionLimit) { try fx.check() }
+    }
+
+    @Test func nonemptyRevisionMutationCannotMintAnAttestation() throws {
+        var fx = try Fixture()
+        #expect(try fx.check().audioLanes == 2)
+        fx.manifest = .init(revision: "different-untrusted-revision", lanes: fx.manifest.lanes)
+        #expect(try fx.check().audioLanes == 2)
+        #expect(throws: CommonEditAttestationRefusal.trustedAuthorityUnavailable) {
+            try CommonEditAttestation.prepare(map: fx.map, manifest: fx.manifest, surveys: fx.surveys)
+        }
+    }
 }
 
 private struct Fixture {
@@ -246,6 +301,42 @@ private struct Fixture {
 
     func check() throws -> ProvisionalCommonEditCheck {
         try CommonEditPreflight.check(map: map, manifest: manifest, surveys: surveys)
+    }
+
+    mutating func addSecondaryChannel(_ channel: Int) {
+        let key = CommonEditLaneKey(
+            source: secondary.source, occurrence: secondary.occurrence, channel: channel
+        )
+        let lane = CommonEditManifestLane.audio(key)
+        manifest = .init(revision: manifest.revision, lanes: manifest.lanes + [lane])
+        let original = survey(secondary)
+        surveys.append(.init(
+            lane: lane, coverage: original.coverage, intentionalSilence: original.intentionalSilence
+        ))
+    }
+
+    mutating func splitCoverageIntoSingleFrames() {
+        surveys = surveys.map { original in
+            .init(
+                lane: original.lane,
+                coverage: original.coverage.flatMap { span in
+                    (span.start..<span.end).map { RemovedFrameSpan(start: $0, end: $0 + 1) }
+                },
+                intentionalSilence: original.intentionalSilence
+            )
+        }
+    }
+
+    mutating func addNarrowProtectedAndFades() {
+        let protected = (0..<8).map { RemovedFrameSpan(start: Int64($0), end: Int64($0 + 1)) }
+        let fades = (20..<28).map { RemovedFrameSpan(start: Int64($0), end: Int64($0 + 1)) }
+        surveys = surveys.map { original in
+            .init(
+                lane: original.lane, coverage: original.coverage,
+                intentionalSilence: original.intentionalSilence,
+                protected: protected, requestedFades: fades, finalMergedFades: fades
+            )
+        }
     }
 
     func survey(

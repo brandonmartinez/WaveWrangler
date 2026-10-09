@@ -82,12 +82,20 @@ public struct ProvisionalCommonEditCheck: Sendable {
 public enum CommonEditPreflight {
     /// A finite exhaustive structural check; longer episodes refuse until an interval proof exists.
     public static let maximumInspectedFrames: Int64 = 8_192
+    public static let maximumInspectedLanes = 16
+    public static let maximumInspectedWork: Int64 = 65_536
+    public static let maximumInverseEvaluations: Int64 = 131_072
+    public static let maximumInspectedIntervals = 32
+    public static let maximumAggregateIntervals = 256
 
     public static func check(
         map: CommonEpisodeEditMap, manifest: CommonEditLaneManifest,
         surveys: [CommonEditLaneSurvey]
     ) throws(CommonEditAttestationRefusal) -> ProvisionalCommonEditCheck {
-        guard map.alignedFrameCount <= maximumInspectedFrames else { throw CommonEditAttestationRefusal.inspectionLimit }
+        guard withinInspectionBudget(map: map, laneCount: manifest.lanes.count, surveyCount: surveys.count),
+              withinSurveyIntervalBudget(surveys) else {
+            throw CommonEditAttestationRefusal.inspectionLimit
+        }
         let placements = map.alignment.groups.flatMap(\.placements)
         let occurrences = Dictionary(uniqueKeysWithValues: placements.map { ($0.occurrence.id, $0.occurrence) })
         let audio = manifest.lanes.compactMap { lane -> CommonEditLaneKey? in
@@ -184,6 +192,48 @@ public enum CommonEditPreflight {
             }
         }
         return ProvisionalCommonEditCheck(inspectedFrames: map.alignedFrameCount, audioLanes: audio.count)
+    }
+
+    private static func withinInspectionBudget(
+        map: CommonEpisodeEditMap, laneCount: Int, surveyCount: Int
+    ) -> Bool {
+        guard map.alignedFrameCount <= maximumInspectedFrames,
+              laneCount <= maximumInspectedLanes, surveyCount <= maximumInspectedLanes,
+              map.removals.count <= maximumInspectedIntervals,
+              map.alignment.groups.count <= maximumInspectedLanes
+        else { return false }
+        let (work, overflow) = map.alignedFrameCount.multipliedReportingOverflow(by: Int64(surveyCount))
+        guard !overflow, work <= maximumInspectedWork else { return false }
+        let (inverseEvaluations, inverseOverflow) = work.multipliedReportingOverflow(by: 2)
+        guard !inverseOverflow, inverseEvaluations <= maximumInverseEvaluations else { return false }
+        var occurrences = 0
+        for group in map.alignment.groups {
+            guard group.placements.count <= maximumInspectedLanes - occurrences,
+                  group.epochs.count <= maximumInspectedIntervals,
+                  group.epochs.allSatisfy({ epoch in
+                      if case let .mapped(segments, _) = epoch.mapping {
+                          return segments.count <= maximumInspectedIntervals
+                      }
+                      return true
+                  }),
+                  group.placements.allSatisfy({ $0.spans.count <= maximumInspectedIntervals })
+            else { return false }
+            occurrences += group.placements.count
+        }
+        return true
+    }
+
+    private static func withinSurveyIntervalBudget(_ surveys: [CommonEditLaneSurvey]) -> Bool {
+        var remaining = maximumAggregateIntervals
+        for survey in surveys {
+            for count in [survey.coverage.count, survey.intentionalSilence.count,
+                          survey.protected.count, survey.requestedFades.count,
+                          survey.finalMergedFades.count] {
+                guard count <= maximumInspectedIntervals, count <= remaining else { return false }
+                remaining -= count
+            }
+        }
+        return true
     }
 
     private static func intersects(_ a: RemovedFrameSpan, _ b: RemovedFrameSpan) -> Bool {

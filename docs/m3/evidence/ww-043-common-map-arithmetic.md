@@ -80,6 +80,15 @@ common-map round-trip and per-occurrence inverse/coverage, refuses gaps/unsuppor
 protected removals and unsafe final merged fade spans. A missing survey, duplicated lane, missing
 grid coverage or >8,192-frame domain refuses; this limit is deliberately **not** a real-episode
 qualification. Off-grid rounded end positions remain positions, not sample addresses.
+Before collecting placements or traversing a supplied lane/interval, the structural check refuses
+more than 16 manifest lanes or surveys, more than 65,536 grid-frame/survey checks or 131,072
+worst-case inverse evaluations (checked multiplication, counting both common-output and audio-source
+inverses per frame), more than 32 intervals in any one survey array, or more than 256
+intervals **across all five survey arrays and all lanes**. It also bounds map removals, groups,
+placements, epochs, segments and placement spans before the grid walk (32 intervals per map
+component, 16 groups/placements total). These are deliberately conservative finite inspection
+budgets, aligned with the provisional keyed-cut limits; they refuse rather than omit a lane or
+truncate an interval. They do not establish a real-episode capacity or a trusted channel inventory.
 `CommonEditAttestation.prepare` always refuses, including after structural success. No renderer,
 accepted-map history or preview is published by this package. The synthetic tests exercise
 structural success followed by mandatory refusal and negative mismatched supplied keys/revision,
@@ -88,7 +97,10 @@ merged-fade cases. They do **not** decode a source or verify a live grant.
 The corrected inverse quantizes on the source-frame grid for mixed sample rates; protection and
 final-fade containment treats adjacent validated intervals as contiguous but never bridges a
 positive gap. Synthetic tests exercise both mixed-rate coverage and adjacent spans, plus negative
-unavailable-source-frame and gap refusals.
+unavailable-source-frame and gap refusals. Synthetic budget tests exercise over-limit lanes,
+inverse evaluations and aggregate coverage/protection/fade counts, as well as in-limit multi-lane
+checks; changing only a nonempty caller-supplied manifest revision remains provisional, while
+attestation still refuses.
 
 **Interface decision needed before removing that refusal:** Mac must supply a fresh, trusted
 organizer/source-access witness for every selected Primary, Backup, other-speaker and explicitly
