@@ -40,13 +40,20 @@ audio and explicit silence: negative origin, prior/adjacent and overlapping cuts
 multi-chunk equivalence, Lift padding, exact fades and neighbouring frames, stale
 revisions, changed protection after mapping, missing/changed lane content, reversed,
 split, altered and adjacent merged fades, protected intervals and mandatory authority
-refusal. They do not establish speech preservation, real-media acceptance, a null
-preview/export comparison or full-episode size support.
+refusal. Synthetic Backup-lane adversarial cases exercise structural safety only:
+they neither verify Backup files nor authorize their inclusion in M3 cut proof,
+preview, or render. They do not establish speech preservation, real-media acceptance,
+a null preview/export comparison or full-episode size support.
 
-**Open dependency:** #41/#43 require independent complete-source/channel and
-protection proof, a current trusted organizer/access witness, accepted cut and review
-action, final fade authorization, atomic map/history publication and invalidation, and
-an independently reviewed production renderer/provider integration. This preparatory
-bridge does not supply any of those gates or change the existing `GroupRenderer` input
-and channel-integrity contract. Its `SyntheticPCMChunk` is not a production
+**Open dependency:** M3 #41/#43 are rescoped to admitted selected-Primary tracks.
+Backup files must not be opened in M3; the product must visibly flag
+`backup not verified; excluded from cut proof` and fail closed rather than silently
+include Backup in cut proof, preview, or render. Primary source immutability,
+protected-speech checks, a current trusted organizer/access witness, accepted cut
+and review action, final fade authorization, atomic map/history publication and
+invalidation, and independently reviewed production renderer/provider integration
+remain hard gates. Positive Backup access and all-lane source/no-revoked-open proof
+move to M4 #420 with separate exact Backup consent. This preparatory bridge does
+not supply any of those gates or change the existing `GroupRenderer` input and
+channel-integrity contract. Its `SyntheticPCMChunk` is not a production
 `WWRender.RenderedChunk` or a render/export admission.
