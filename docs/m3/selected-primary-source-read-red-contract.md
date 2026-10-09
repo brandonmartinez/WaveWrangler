@@ -68,6 +68,42 @@ positive publication. The app issuer still returns `Never` and throws
 actual registered document/window plus access store and decoder. Adding
 success-shaped fake issuance here would bypass the very boundary under test.
 
+An independent Fact Checker approved **tests-only RED preparation**, not
+positive issuance. `WaveWranglerHostedTests/SelectedPrimaryIssuerRedTests.swift`
+now specifies the missing internal app-owned `readCheckedPrimaryWindow` bridge
+and its `SelectedPrimaryPCMWindow` result. This is intentionally a compile RED:
+`requireSourceReadAuthority` still returns `Never`. The hosted fixture refuses
+to touch `SetupEngineProvider.store` or create bookmarks unless
+`PersistenceEnvironment.isUITestRun` was set at app launch. It registers an
+actual `ShowDocument`, runs `makeWindowControllers`/`showWindows`, waits for the
+key Setup window's real registered controller, and selects its Primary row and
+speaker. Generated 16 kHz WAV Primary and Backup have independent keyed
+access records, metadata, and accepted-map placements; Backup metadata survey
+is permitted, but its content descriptor must never open.
+
+The RED bridge takes only the live document, live window, and source-frame
+start; the app derives selected source, channel, access record and expected
+identity itself. The future internal result exposes a checked channel, source
+frame range and 32,000 samples only after the descriptor-gateway check and
+last publication revalidation. `VerifiedSourcePCMWindow` is package-scoped:
+an app client cannot call or return that type directly, and cannot manufacture
+an unverified result. DEBUG-only `debugPhaseObserver` (after authority capture,
+before descriptor open, before publication) and `debugSourceOpenObserver`
+observe phase/source ID without supplying a URL, identity, receipt, PCM or
+alternative read path. The source-open observation must be emitted from the
+single content gateway for **every** opened source, not from an intent-only
+preflight. Phase observers may suspend, mutate app state/access records or
+cancel the current task to assert refusals at those boundaries.
+The RED issuer owns a monotonic actor-instance access-revision witness; an
+equal-looking remove/restore must refuse even if the cached record matches.
+Neither that witness nor these tests prove freshness against other store
+instances/processes or external OS scope revocation (#430).
+
+This hosted RED suite has **not** had native compilation or GUI execution:
+that requires a separately authorized JIT/GUI lease. Its intended compile
+failure on missing app-private symbols is not a test pass and does not change
+the refusal-only production issuer or authorize Backup, inference, or edits.
+
 Before a positive release, add these **behavioral** RED cases against the
 reviewed private seam (not just source-text assertions):
 
