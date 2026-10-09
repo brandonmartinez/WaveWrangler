@@ -147,6 +147,7 @@ final class DocumentLifecycleUITests: XCTestCase {
                                           ["-WWUITestRetainDamagedEditCheckpoint", canonical.base64EncodedString()])
         let bar = messageBar(window)
         XCTAssertTrue(bar.waitForExistence(timeout: 10))
+        XCTAssertTrue(bar.label.contains("damaged and cannot be restored"))
         XCTAssertTrue(bar.buttons["Show in Finder"].exists, "the damaged newest record is offered with raw reveal")
         XCTAssertFalse(bar.buttons["Restore Unsaved Changes"].exists, "damaged data is never restored")
         XCTAssertTrue(bar.buttons["Next Recovery Copy"].exists, "the older usable session is reachable without Discard")

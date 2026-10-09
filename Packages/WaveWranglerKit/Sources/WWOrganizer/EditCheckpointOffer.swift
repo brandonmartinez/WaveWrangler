@@ -85,7 +85,7 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
             symbolName = "exclamationmark.triangle"
             actions = [.checkAgain]
         case let .unusable(damaged, newerFormat):
-            heading = "Unsaved changes couldn't be restored"
+            heading = damaged > 0 ? "Recovery copy is damaged and cannot be restored" : "Unsaved changes couldn't be restored"
             let reason = switch (damaged > 0, newerFormat > 0) {
             case (true, true): "Some couldn't be read and some were kept by a newer version of WaveWrangler."
             case (false, true): "They were kept by a newer version of WaveWrangler."
