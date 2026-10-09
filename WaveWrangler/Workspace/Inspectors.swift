@@ -56,6 +56,15 @@ private struct ReviewInspectorViewport: NSViewRepresentable {
     func updateNSView(_ view: ReviewInspectorPanel, context: Context) {
         view.update(selectedOccurrence: selectedOccurrence, textSize: textSize)
     }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: ReviewInspectorPanel, context: Context) -> CGSize? {
+        // The scroll document has no say in the split's ideal height; the panel fills only its proposed slot.
+        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+}
+
+private final class ReviewInspectorClipView: NSClipView {
+    override func isAccessibilityElement() -> Bool { true }
 }
 
 private final class ReviewInspectorPanel: NSView {
@@ -81,10 +90,12 @@ private final class ReviewInspectorPanel: NSView {
         setup.bezelStyle = .rounded
         setup.cell?.wraps = true
         setup.cell?.lineBreakMode = .byWordWrapping
+        setup.setAccessibilityLabel("Go to Setup (⌘1)")
         setup.setAccessibilityHelp("Choose or confirm a Primary source in Setup. Keyboard alternative: View, Setup, Command-1.")
         setup.setAccessibilityIdentifier("ww.review.remedy.setup")
         addSubview(setup)
 
+        scroll.contentView = ReviewInspectorClipView()
         scroll.documentView = document
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
