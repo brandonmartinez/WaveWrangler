@@ -1,5 +1,6 @@
 import WWCommonEdit
 import WWCore
+import WWDecode
 import WWDerived
 import WWPersistence
 import WWTimeMap
@@ -24,7 +25,7 @@ public enum OrganizerCutLaneRefusal: Error, Equatable, Sendable {
     case noAcceptedMap
     case staleMap
     case incompleteEpisode
-    /// The recorded count is unknown or has no independent, current source-backed proof.
+    /// The count is unknown or disagrees with a current, keyed stored source-probe snapshot.
     case unverifiedChannels
     case unmappedLane
     case ambiguousSelectedPrimary
@@ -33,8 +34,8 @@ public enum OrganizerCutLaneRefusal: Error, Equatable, Sendable {
     case independentProtectionUnavailable
 }
 
-/// A provisional metadata shape, not a CommonEditLaneManifest or an admission witness.
-/// The current inspection API never returns one: organizer counts cannot prove lane completeness.
+/// All channels of every placed episode source in the stored probe snapshot, not a live-backing
+/// witness, CommonEditLaneManifest or admission proof.
 public struct ProvisionalOrganizerCutLanes: Sendable {
     public let episode: EpisodeID
     public let acceptedAlignmentRevision: Int
@@ -51,9 +52,9 @@ public struct ProvisionalOrganizerCutLanes: Sendable {
 }
 
 extension AlignmentPipeline {
-    /// Checks recorded source/channel/occurrence structure without opening content, then refuses.
-    /// An accepted map and registered revisions cannot certify the caller's mutable channel counts.
-    /// No source-backed, consent-gated all-source count witness is available at this boundary.
+    /// Inventories every placed channel only when its organizer count agrees with the previously
+    /// consent-gated, current keyed SourceFacts for that source. Opens no source; a stored probe
+    /// cannot certify that the live backing or any lane's speech protection is still current.
     public func inspectCutLanes(
         model: ShowDocumentModel, episode episodeID: EpisodeID, selectedSpeaker: SpeakerID
     ) async throws(OrganizerCutLaneRefusal) -> ProvisionalOrganizerCutLanes {
@@ -115,6 +116,41 @@ extension AlignmentPipeline {
             }
             let matches = placements.filter { $0.placement.occurrence.source == source.id }
             guard !matches.isEmpty else { throw .incompleteEpisode }
+            guard let token = inputs.sources[source.id], token.hasPrefix("metadata:") else {
+                throw .unverifiedChannels
+            }
+            let key = SourceProbe.key(source: source.id, token: token)
+            let slot = PipelineSlots.sourceFacts(source.id)
+            guard await coordinator.state(of: slot) == .ready(key),
+                  let payload = await coordinator.readyPayload(for: slot),
+                  let facts = try? SourceFacts.decode(payload),
+                  facts.source == source.id, facts.revisionToken == token,
+                  (try? SourceProbe.verify(facts.interpretation, source: source.id, token: token)) != nil,
+                  facts.interpretation.container.typeCode == facts.interpretation.container.kind.typeCode,
+                  facts.interpretation.codec.formatID == facts.interpretation.codec.kind.formatID,
+                  DecodeEnvelope.entries.contains(where: {
+                      $0.container == facts.interpretation.container.kind
+                          && $0.codec == facts.interpretation.codec.kind
+                          && $0.sampleFormats.contains(facts.interpretation.sampleFormat)
+                          && $0.sampleRates.contains(facts.sampleRate)
+                          && $0.channelCounts.contains(facts.channelCount)
+                  }),
+                  facts.interpretation.output.sampleType == "float32",
+                  facts.interpretation.output.isPlanar,
+                  facts.interpretation.output.channelOrder == "file",
+                  facts.interpretation.output.sampleRate == facts.sampleRate,
+                  facts.interpretation.output.channelCount == facts.channelCount,
+                  facts.interpretation.output.representsSourceSamplesExactly
+                    == facts.interpretation.sampleFormat.isExactInFloat32,
+                  facts.interpretation.origin.sourceSampleRate == facts.sampleRate,
+                  facts.interpretation.origin.decodedFrameCount == facts.frameCount,
+                  facts.interpretation.origin.sourceFrameOfFirstDecodedFrame == 0,
+                  facts.interpretation.origin.discardedLeadingStreamFrames
+                    == facts.interpretation.frames.primingFrames,
+                  facts.interpretation.origin.declaredTrailingStreamFrames
+                    == facts.interpretation.frames.remainderFrames,
+                  facts.frameCount > 0, facts.channelCount == count
+            else { throw .unverifiedChannels }
             for (group, placement) in matches {
                 guard placement.spans.count == 1,
                       let span = placement.spans.first,
@@ -126,7 +162,10 @@ extension AlignmentPipeline {
                           return false
                       })
                 else { throw .unmappedLane }
-                guard let token = inputs.sources[source.id], !token.isEmpty else { throw .staleMap }
+                guard placement.occurrence.id == alignmentOccurrenceID(for: source.id),
+                      placement.occurrence.nominalRate.framesPerSecond == Int64(facts.sampleRate),
+                      placement.occurrence.frameCount == facts.frameCount
+                else { throw .unverifiedChannels }
                 for channel in 0..<count {
                     guard lanes.count < CommonEditPreflight.maximumInspectedLanes else {
                         throw .inspectionLimit
@@ -154,8 +193,18 @@ extension AlignmentPipeline {
         guard lanes.filter({ $0.kind == .selectedPrimary }).count == 1 else {
             throw .ambiguousSelectedPrimary
         }
-        // A valid organizer count can still omit a real unassigned channel. The coordinator's source
-        // revision is not a live format probe, so these recorded coordinates cannot be returned as complete.
-        throw .unverifiedChannels
+        guard await coordinator.inputs == inputs,
+              !(await coordinator.isShutdown),
+              await coordinator.state(of: identity.slot) == .ready(identity.key)
+        else { throw .staleMap }
+        for source in episode.sources {
+            guard let token = inputs.sources[source.id],
+                  await coordinator.state(of: PipelineSlots.sourceFacts(source.id))
+                    == .ready(SourceProbe.key(source: source.id, token: token))
+            else { throw .unverifiedChannels }
+        }
+        return ProvisionalOrganizerCutLanes(
+            episode: episodeID, acceptedAlignmentRevision: revision, lanes: lanes
+        )
     }
 }

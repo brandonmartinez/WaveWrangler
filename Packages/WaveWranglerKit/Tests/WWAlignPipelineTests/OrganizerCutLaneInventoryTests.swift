@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 import WWCore
 import WWDerived
@@ -6,12 +7,21 @@ import WWTimeMap
 
 @Suite("Organizer cut-lane inventory (synthetic, non-authorizing)")
 struct OrganizerCutLaneInventoryTests {
-    @Test func knownOrganizerCountsStillCannotProveCompleteLanes() async throws {
+    @Test func previouslyProbedSourcesProduceProvisionalEveryChannelInventory() async throws {
         let fixture = try await InventoryFixture()
-        await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
-            try await fixture.inspect()
+        let before = fixture.fixture.content.total
+        let lanes = try await fixture.inspect()
+        #expect(lanes.episode == fixture.fixture.episodeID)
+        #expect(lanes.lanes.map(\.kind) == [.selectedPrimary, .unassigned, .backup, .backup])
+        #expect(lanes.lanes.map(\.key.channel) == [0, 1, 0, 1])
+        #expect(Set(lanes.lanes.map(\.key)).count == 4)
+        for lane in lanes.lanes {
+            #expect(lane.registeredSourceRevision == (await fixture.fixture.coordinator.inputs.sources[lane.key.source]))
         }
-        #expect(fixture.fixture.content.total.opens == 0)
+        #expect(fixture.fixture.content.total == before)
+        #expect(throws: OrganizerCutLaneRefusal.backupWithoutIndependentProof) {
+            try lanes.mappingInputs()
+        }
     }
 
     @Test func mappingInputsAlwaysRefusesEvenForProvisionalValues() throws {
@@ -70,14 +80,103 @@ struct OrganizerCutLaneInventoryTests {
         }
     }
 
-    @Test func staleKnownChannelCountCannotOmitAnUnassignedPrimaryLane() async throws {
+    @Test func understatedAndOverstatedOrganizerCountsBothRefuse() async throws {
         let fixture = try await InventoryFixture()
-        var stale = fixture.model
-        stale.episodes[0].sources[0].observations.channelCount = .known(1)
+        let before = fixture.fixture.content.total
+        var understated = fixture.model
+        understated.episodes[0].sources[0].observations.channelCount = .known(1)
         await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
-            try await fixture.inspect(model: stale)
+            try await fixture.inspect(model: understated)
         }
-        #expect(fixture.fixture.content.total.opens == 0)
+        var overstated = fixture.model
+        overstated.episodes[0].sources[0].observations.channelCount = .known(3)
+        await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
+            try await fixture.inspect(model: overstated)
+        }
+        #expect(fixture.fixture.content.total == before)
+    }
+
+    @Test func missingDamagedAndWrongSourceFactsRefuse() async throws {
+        let missing = try await InventoryFixture(probe: false)
+        await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
+            try await missing.inspect()
+        }
+        #expect(missing.fixture.content.total.opens == 0)
+
+        let fixture = try await InventoryFixture()
+        let before = fixture.fixture.content.total
+        let backup = fixture.id("backup")
+        let token = try #require(await fixture.fixture.coordinator.inputs.sources[backup])
+        let key = SourceProbe.key(source: backup, token: token)
+        let slot = PipelineSlots.sourceFacts(backup)
+        await fixture.fixture.coordinator.invalidate(slot)
+        let damaged = await fixture.fixture.coordinator.run(slot, key: key) {
+            Data("not source facts".utf8)
+        }
+        #expect(damaged.isAvailable)
+        await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
+            try await fixture.inspect()
+        }
+
+        await fixture.fixture.coordinator.invalidate(slot)
+        let primary = fixture.id("primary")
+        let primaryToken = try #require(await fixture.fixture.coordinator.inputs.sources[primary])
+        let payload = try #require(fixture.fixture.store.payload(for: SourceProbe.key(source: primary, token: primaryToken)))
+        let wrongSource = await fixture.fixture.coordinator.run(slot, key: key) { payload }
+        #expect(wrongSource.isAvailable)
+        await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
+            try await fixture.inspect()
+        }
+        #expect(fixture.fixture.content.total == before)
+    }
+
+    @Test func primaryOnlyProbeCannotSilentlyOmitUnprobedBackup() async throws {
+        let fixture = try await InventoryFixture(probe: false)
+        let primary = fixture.id("primary")
+        let report = try #require(await fixture.fixture.pipeline.analyse(
+            model: fixture.model, episode: fixture.fixture.episodeID,
+            sources: fixture.fixture.sources,
+            authorizations: [.explicitUserRequest(for: primary)]
+        ))
+        #expect(Set(report.facts.keys) == [primary])
+        let before = fixture.fixture.content.total
+        await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
+            try await fixture.inspect()
+        }
+        #expect(fixture.fixture.content.total == before)
+        #expect(fixture.fixture.content.record(fixture.fixture.url("backup")).opens == 0)
+    }
+
+    @Test func invalidatedOrMismatchedFactsRefuse() async throws {
+        let fixture = try await InventoryFixture()
+        let backup = fixture.id("backup")
+        let token = try #require(await fixture.fixture.coordinator.inputs.sources[backup])
+        let key = SourceProbe.key(source: backup, token: token)
+        let slot = PipelineSlots.sourceFacts(backup)
+        let original = try SourceFacts.decode(try #require(fixture.fixture.store.payload(for: key)))
+        await fixture.fixture.coordinator.invalidate(slot)
+        await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
+            try await fixture.inspect()
+        }
+        var wrongChannels = original
+        wrongChannels.interpretation.channelCount = 3
+        var wrongFrames = original
+        wrongFrames.interpretation.frames.validFrames += 1
+        var wrongToken = original
+        wrongToken.revisionToken += "changed"
+        var wrongEnvelope = original
+        wrongEnvelope.interpretation.envelopeVersion += 1
+        var wrongContainer = original
+        wrongContainer.interpretation.container.typeCode = "m4af"
+        for facts in [wrongChannels, wrongFrames, wrongToken, wrongEnvelope, wrongContainer] {
+            let payload = try SourceFacts.encode(facts)
+            let mismatched = await fixture.fixture.coordinator.run(slot, key: key) { payload }
+            #expect(mismatched.isAvailable)
+            await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
+                try await fixture.inspect()
+            }
+            await fixture.fixture.coordinator.invalidate(slot)
+        }
     }
 
     @Test func changedSourceAndAcceptedMapRefuseStaleInventory() async throws {
@@ -95,13 +194,16 @@ struct OrganizerCutLaneInventoryTests {
         }
     }
 
-    @Test func registeredRevisionAloneCannotProveAnUnchangedSource() async throws {
+    @Test func registeredRevisionAndStoredProbeDoNotProveLiveBacking() async throws {
         let fixture = try await InventoryFixture()
         try fixture.fixture.rewrite("backup")
-        await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
-            try await fixture.inspect()
+        let before = fixture.fixture.content.total
+        let lanes = try await fixture.inspect()
+        #expect(lanes.lanes.count == 4)
+        #expect(fixture.fixture.content.total == before)
+        #expect(throws: OrganizerCutLaneRefusal.backupWithoutIndependentProof) {
+            try lanes.mappingInputs()
         }
-        #expect(fixture.fixture.content.total.opens == 0)
     }
 
     @Test func unmappedOrUnknownBackingAndPrimaryOnlyProofRefuse() async throws {
@@ -130,8 +232,10 @@ struct OrganizerCutLaneInventoryTests {
         var unassigned = fixture.model
         unassigned.episodes[0].speakerAssignments[0].backups = []
         unassigned.episodes[0].sources[1].role = .unassigned
-        await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
-            try await fixture.inspect(model: unassigned)
+        let lanes = try await fixture.inspect(model: unassigned)
+        #expect(lanes.lanes.map(\.kind) == [.selectedPrimary, .unassigned, .unassigned, .unassigned])
+        #expect(throws: OrganizerCutLaneRefusal.independentProtectionUnavailable) {
+            try lanes.mappingInputs()
         }
     }
 }
@@ -141,7 +245,7 @@ private struct InventoryFixture {
     let model: ShowDocumentModel
     let speaker: SpeakerID
 
-    init(unsupportedBackup: Bool = false) async throws {
+    init(unsupportedBackup: Bool = false, probe: Bool = true) async throws {
         fixture = try await PipelineFixture([
             .init(name: "Primary recorder", sources: [
                 .init(name: "primary", seconds: 0.01, signal: .scene(seed: 8)),
@@ -222,6 +326,13 @@ private struct InventoryFixture {
             revision: recorded.revision.revision, in: fixture.episodeID
         )
         try await fixture.pipeline.activate(model: model, episode: fixture.episodeID)
+        if probe {
+            let report = try #require(await fixture.pipeline.analyse(
+                model: model, episode: fixture.episodeID, sources: fixture.sources,
+                authorizations: fixture.authorizations
+            ))
+            #expect(report.facts.count == 2)
+        }
     }
 
     func id(_ name: String) -> SourceID { fixture.id(name) }

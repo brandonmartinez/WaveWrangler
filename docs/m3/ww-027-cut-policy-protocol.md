@@ -28,19 +28,20 @@ same entry limits on occurrences, epochs, segments and removal intervals.
 Its caller-supplied manifest and protection remain untrusted, and it
 does not implement `CutFootprintMapping` or mint `ProtectionProof`.
 Do not use native source duration as the common ripple.
-`WWAlignPipeline.inspectCutLanes` is a **fail-closed, metadata-only structural check**,
-not a complete episode inventory. It checks the active accepted map, recorded
-source/occurrence/epoch structure, organizer counts and coordinator registrations but
-ultimately refuses with `unverifiedChannels` rather than return a lane list: the caller
-can lower a two-channel source's recorded count to one while leaving the Primary channel
-and accepted map valid, silently omitting its unassigned second channel. The existing
-consent-gated `SourceProbe.run` (`WWAlignPipeline/AnalysisJob.swift`) reads the format
-through `WWDecode/SourceDecoder.withDecodingCursor` and its read-only
-`WWDecode/SystemSourceContentIO` gateway,
-but this inspection API has neither current authorized locations for every source nor
-a live source-backed all-channel witness; cached facts and registration tokens alone do
-not authenticate current media. It still refuses missing/duplicate organizer records,
-changed map dependencies, unknown counts and unmapped lanes with their specific errors.
+`WWAlignPipeline.inspectCutLanes` returns a **provisional, metadata-only inventory**
+of every placed episode source/channel only when every organizer channel count matches
+that source's previously admitted `SourceProbe` facts. The consent-gated header probe
+uses `WWDecode/SourceDecoder.withDecodingCursor` through the read-only gateway; inspection
+itself never opens media, triggers a probe or decodes samples. It requires each current,
+ready coordinator source-facts slot and keyed, intact payload to match the registered
+metadata revision, source ID, format/envelope, supported channel/rate, decoded output and
+map occurrence length/rate. Missing, damaged, invalidated, stale, understated and overstated
+facts/counts refuse rather than omit or invent a channel. This is complete **for the
+stored probe snapshot only**: a source may change on disk after probing without a token
+update, and inspection does not detect that change. The returned lanes do not certify
+current backing or protected speech, even when the selected Primary was authorized.
+Missing/duplicate organizer records, changed map dependencies, unknown counts and unmapped
+lanes still refuse with their specific errors.
 `mappingInputs()` always refuses even for a provisional value, specifically identifying
 a Backup without independent proof. No Backup content is read under Primary consent. It does not
 mint a trusted `CommonEditLaneManifest`, `KeyedLaneFootprintInput`, `ProtectionProof`,
