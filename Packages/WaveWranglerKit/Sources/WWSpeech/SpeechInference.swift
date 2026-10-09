@@ -22,7 +22,7 @@ public struct SpeechInference: Sendable {
         throw .engineUnavailable
     }
 
-    private func requireSelectedPrimary(
+    func requireSelectedPrimary(
         model: ShowDocumentModel, episodeID: EpisodeID, speakerID: SpeakerID,
         channel: ChannelReference
     ) throws(SpeechRefusal) {
