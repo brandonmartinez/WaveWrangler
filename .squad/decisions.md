@@ -516,7 +516,7 @@
 
 **By:** Scribe, recorded from the current M3 safety disposition summary and referenced review comments.
 - [#360](https://github.com/brandonmartinez/WaveWrangler/pull/360) source approval applies only to the standalone per-proposal audit; the corrected reviewer finding is no numeric history cap, not an endorsement of an append-only `ReviewJournal` cycle.
-- [#375](https://github.com/brandonmartinez/WaveWrangler/pull/375) native Review source approval is only provisional: exact-head full gate, physical-Mini GUI/AX evidence, and human VoiceOver remain required.
+- [#375](https://github.com/brandonmartinez/WaveWrangler/pull/375) native Review source approval is only provisional: human VoiceOver remains unrun; essential core keyboard/AX/VoiceOver and physical-Mini UI stay hard where applicable, while broad listening/contrast belongs to M5.
 - [#377](https://github.com/brandonmartinez/WaveWrangler/pull/377) third-author keyed source approval remains provisional prepare refusal until its own full gate and renderer evidence exist.
 - [#376](https://github.com/brandonmartinez/WaveWrangler/pull/376) CPU source is rejected for symlink integrity/YaRN notice reasons; [#379](https://github.com/brandonmartinez/WaveWrangler/pull/379) is the different-author replacement and remains model-free with a full gate pending.
 - [#378](https://github.com/brandonmartinez/WaveWrangler/pull/378) organizer inventory is rejected because mutable channel-count underreports the unassigned lane; [#380](https://github.com/brandonmartinez/WaveWrangler/pull/380) is pending independent review.
