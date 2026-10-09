@@ -380,7 +380,7 @@ struct SelectedPrimarySourceIntentTests {
             try setup.captureSelectedPrimarySource()
         }
         setup.speakerSelection = [speaker]
-        #expect(try setup.captureSelectedPrimarySource().channel.statedChannel == 1)
+        #expect(try setup.captureSelectedPrimarySource().channel == ChannelReference(sourceID: primary, statedChannel: 1))
     }
 
     @Test func sourceRemovalAndAlignmentDocumentABANeverRestoreOldGeneration() throws {
