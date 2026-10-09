@@ -284,3 +284,61 @@ helper samples, gaps >1 s or missing start/end coverage make the run **INCOMPLET
 gate or sampled per-PID CPU >400% is **FAIL**, never rerun. The unaltered renderer's prior family-peak
 measurement is reused and identified as such, not passed off as new timing evidence. Listening
 remains BLOCKED; the full final-head suite is separate, coordinator-owned evidence.
+
+### Once-only revision-3 result: objective gates passed; overall protocol INCOMPLETE
+
+The sole `holdout-3` invocation ran on clean prospective freeze commit
+`25c54151a089635a0738dbafdffd2a6dc23ff749` (source tree
+`94604633d6464391ade116b363f8874675381bf5`, test tree
+`125b552184db93f506e193dd08fd9610d5c7fabe`). Host `Macatron.local`:
+macOS 27.0.1 (26A434), Xcode 27.0 (27A266a), Swift 6.4. Preflight one-minute
+load 10.29; one other native build, zero other test helpers. Start
+2026-10-09T00:11:46Z, end 00:12:12Z, exit 0; full command 26.657 s, the render
+holdout test 17.358 s. The [unaltered test log](ww-018/holdout-3-run.log)
+reports the render holdout test passed; the unrelated filtered decode/time-map
+tests skipped. This is not a full-suite result.
+
+The [canonical case records](ww-018/holdout-3.jsonl) have **1,370 lines**,
+48 `holdout-3` indices plus one shared fixed multi-span regression case (49
+indices, nine strata). SHA-256:
+`a85be57ed284db16ef5fdf6c654b5f6be230867683a7a1ef7398234db7c1b965`.
+The 48 new 64-bit seed identities are unique and disjoint from all 112 prior
+calibration/holdout/holdout-2 identities. All seven objective gates were
+recalculated directly from every raw record; nearest-rank p95 and worst are
+reported in each gate's failure direction (higher is worse, even for negative dB):
+
+| Objective gate | Frozen limit | Nearest-rank p95 | Worst | n | Result |
+| --- | --- | --- | --- | --- | --- |
+| Landmark error | ≤1 frame | 0.166879 frames | 0.169678 frames | 588 | **PASS** |
+| Passband absolute gain error | ≤0.1 dB through 80% lower Nyquist | 0.00013010 dB | 0.00014689 dB | 288 | **PASS** |
+| Alias residual | ≤−80 dBc | −98.1035 dBc | −93.0370 dBc | 396 | **PASS** |
+| Interchannel skew | ≤1 frame | 0.00000201 frames | 0.053658 frames | 98 | **PASS** |
+| Inversions/swaps | 0 | 0 | 0 / 588 landmarks | 588 | **PASS** |
+| Inactive output | ≤−80 dBFS | −∞ dBFS | −∞ dBFS (exact zero) | 240 | **PASS** |
+| Phase absolute error | ≤0.001° | 0.00000296° | 0.00001990° | 288 | **PASS** |
+
+The existing original same-source family-peak measurement (38.5 MiB resident,
+198,632-byte renderer working set versus ≤1 GiB) and self-written-only license
+finding are carried forward, **not** newly measured in revision 3. Listening
+still has no granted participants or rubric and remains **BLOCKED**.
+
+The [raw per-PID telemetry](ww-018/holdout-3-cpu.tsv) has 69 PID samples over
+37 distinct timestamps, including 25 samples of the SwiftPM testing helper
+in its *own* process group. Its observed peak was **199.1%** (sampled helper
+nearest-rank p95 199.1%), below the frozen 400% cap **at sampled instants only**.
+The first sample followed launch by 0.017 s; the last preceded exit by 0.376 s; `ps`
+reported no errors. But **five adjacent snapshot gaps exceeded the frozen
+1-second maximum**, the largest **2.010 s**. CPU use in those gaps is unknown;
+neither this run nor the separate focused calibration samples establish
+≤400% for the *entire* holdout. The [preflight](ww-018/holdout-3-preflight.txt),
+[timing/exit](ww-018/holdout-3-timing.txt),
+[CPU summary](ww-018/holdout-3-cpu-summary.txt), empty
+[sampler-error log](ww-018/holdout-3-telemetry-errors.log) and original
+[verdict](ww-018/holdout-3-verdict.txt) are retained without alteration.
+Run log SHA-256 `a463ee568581637ff3a92ad5ef265e4332149a16f25fe6315f4fcf75f8f36cb4`;
+CPU TSV SHA-256 `a66735191a30c6730e1b28e908d2e6330edd16c6d7aa2fe8c0dc7abfc2065ec0`.
+
+**Overall frozen revision-3 protocol: INCOMPLETE, not passed; no rerun.**
+Revisions 1 and 2, their pins and original records remain untouched. No full
+`scripts/test.sh`, Mini or GUI result is claimed; the final-head full test
+process CPU gate is still coordinator-owned and outstanding. #310 stays open.

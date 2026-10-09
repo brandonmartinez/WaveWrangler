@@ -1,0 +1,27 @@
+Building for debugging...
+[Computing dependencies]
+[Using on-disk description]
+[1 / 5]
+Build complete! (3.16 sec)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Time-map calibration (M2-TIMEMAP-001)" started.
+➜ Test holdoutSplitMeetsEveryFrozenGate() skipped.
+✔ Suite "Time-map calibration (M2-TIMEMAP-001)" passed after 0.001 seconds.
+✔ Test run with 1 test in 1 suite passed after 0.001 seconds.
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Render calibration (M2-RENDER-001)" started.
+◇ Test holdoutSplitMeetsEveryFrozenGate() started.
+✔ Test holdoutSplitMeetsEveryFrozenGate() passed after 17.358 seconds.
+✔ Suite "Render calibration (M2-RENDER-001)" passed after 17.358 seconds.
+✔ Test run with 1 test in 1 suite passed after 17.358 seconds.
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Decode calibration (M2-DECODE-002)" started.
+➜ Test holdoutSplitMeetsEveryFrozenGate() skipped.
+✔ Suite "Decode calibration (M2-DECODE-002)" passed after 0.001 seconds.
+✔ Test run with 1 test in 1 suite passed after 0.001 seconds.

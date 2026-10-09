@@ -1,7 +1,7 @@
 {
  "registryVersion": "m2-fixtures-v6-decode-and-discontinuity-revision-2",
- "date": "2026-10-06",
- "owner": "Alignment (WW-016/WW-021, WW-018/WW-023, WW-017), Mac (WW-050, m2-freeze-decode, m2-freeze-decode-2 and m2-freeze-timemap for WW-015); protocol pattern from docs/m1/ww-003-fixture-protocol.md",
+ "date": "2026-10-08",
+ "owner": "Alignment (WW-016/WW-021, WW-018/WW-023, WW-017), Mac (WW-050, m2-freeze-decode, m2-freeze-decode-2 and m2-freeze-timemap for WW-015), Lead (independent WW-018/#310 render holdout protocol correction); protocol pattern from docs/m1/ww-003-fixture-protocol.md",
  "issues": [
   "https://github.com/brandonmartinez/WaveWrangler/issues/15",
   "https://github.com/brandonmartinez/WaveWrangler/issues/24",
@@ -10,10 +10,11 @@
   "https://github.com/brandonmartinez/WaveWrangler/issues/45",
   "https://github.com/brandonmartinez/WaveWrangler/issues/10",
   "https://github.com/brandonmartinez/WaveWrangler/issues/11",
-  "https://github.com/brandonmartinez/WaveWrangler/issues/209"
+  "https://github.com/brandonmartinez/WaveWrangler/issues/209",
+  "https://github.com/brandonmartinez/WaveWrangler/issues/310"
  ],
  "protocol": "docs/m2/ww-019-m2-contracts.md §4 (freeze plan) and §5 (gates)",
- "status": "All listed records are frozen 2026-10-06 and effective at their merge commits. m2-freeze-decode holdout passed once in PR #202 and is retained unchanged as historical evidence; it is superseded for the pull-cursor trees by m2-freeze-decode-2, whose calibration passed and whose holdout has NOT RUN. m2-freeze-timemap holdout passed once in PR #202. Discontinuity revision status and evidence remain recorded on their entries and evidence note.",
+ "status": "Records are dated individually; read each entry for its effective freeze and holdout status. The original render holdout passed, but revisions 2 and 3 have valid objective rows and INCOMPLETE frozen CPU protocols (no full holdout CPU pass). m2-freeze-decode holdout passed once in PR #202 and is retained unchanged as historical evidence; it is superseded for the pull-cursor trees by m2-freeze-decode-2, whose calibration passed and whose holdout has NOT RUN. m2-freeze-timemap holdout passed once in PR #202. Discontinuity revision status and evidence remain recorded on their entries and evidence note.",
  "freezeRule": "Each family is frozen (recipe, truth, split and counts, gate, generator tree IDs) in a dated freeze record under docs/m2/fixtures/ before its first holdout case runs. Counts may increase before a freeze and never decrease after one without an explicit, dated user decision.",
  "freezes": [
   {
@@ -131,7 +132,7 @@
    "fixtures": [
     "M2-RENDER-001"
    ],
-   "status": "prospective test-tree and CPU-telemetry freeze; fresh disjoint holdout-3 NOT RUN until clean freeze commit; revision-2 protocol INCOMPLETE; listening BLOCKED",
+   "status": "frozen; disjoint holdout-3 objective gates passed once on 25c54151a089635a0738dbafdffd2a6dc23ff749, but overall frozen protocol INCOMPLETE (five CPU sampling gaps >1 s; full <=400% proof unavailable); revision-2 protocol INCOMPLETE; listening BLOCKED",
    "supersedesForExecution": "m2-freeze-render-2",
    "counts": {
     "fixtures": 1,
@@ -162,7 +163,7 @@
       "unit": "cases",
       "multiSpanCasePerSplit": 1
      },
-     "evidenceStatus": "prospectively frozen; holdout-3 NOT RUN, no objective or CPU pass asserted; original and revision-2 results retained unchanged"
+     "evidenceStatus": "once-only holdout-3 on clean pre-run freeze 25c54151a089635a0738dbafdffd2a6dc23ff749: objective gates passed, 1370 records SHA-256 a85be57ed284db16ef5fdf6c654b5f6be230867683a7a1ef7398234db7c1b965; sampled helper peak 199.1% but five >1 s gaps (max 2.010 s) leave CPU coverage and overall frozen protocol INCOMPLETE, no rerun; raw records/CPU/run log in ww-018/; listening BLOCKED"
     }
    ]
   },

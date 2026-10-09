@@ -1,0 +1,16 @@
+freezeSHA=25c54151a089635a0738dbafdffd2a6dc23ff749
+sourceTree=94604633d6464391ade116b363f8874675381bf5
+testTree=125b552184db93f506e193dd08fd9610d5c7fabe
+runnerSHA256=26273bca1e3621f36d8b218dd0fc0b33d83eed15bcd9ae8085060fe6810ead58
+host=Macatron.local
+ProductName:		macOS
+ProductVersion:		27.0.1
+BuildVersion:		26A434
+Xcode 27.0
+Build version 27A266a
+Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)
+Target: arm64-apple-macosx27.0.0
+oneMinuteLoad=10.29
+otherNativeBuilds=1
+otherTestHelpers=0
+command=WW_M2_RENDER_3_HOLDOUT=1 WW_RENDER_RECORDS_DIR=<evidence directory> SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 swift test --package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm --jobs 4 --no-parallel --filter holdoutSplitMeetsEveryFrozenGate

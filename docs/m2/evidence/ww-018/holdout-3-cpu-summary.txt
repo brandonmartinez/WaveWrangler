@@ -1,0 +1,5 @@
+pidSamples=69
+helperSamples=25
+peakPIDCPUPercent=199.1
+peakPID=79711
+peakCommand=/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/libexec/swift/pm/swiftpm-testing-helper
