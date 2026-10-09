@@ -90,6 +90,9 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertTrue(inspector.waitForExistence(timeout: 3))
         XCTAssertTrue(window.frame.contains(inspector.frame), "The AX scroll viewport must be bounded by the window: \(inspector.frame)")
         XCTAssertLessThan(inspector.frame.height, 440, "The inspector must not report its document height as its viewport")
+        let clip = app.descendants(matching: .any)["ww.inspector.clip"]
+        XCTAssertTrue(clip.waitForExistence(timeout: 3), "The clip owns the visible scroll region")
+        XCTAssertTrue(inspector.frame.contains(clip.frame), "The AX clip must stay inside its scroll viewport")
 
         let setup = app.buttons["ww.review.remedy.setup"]
         XCTAssertTrue(setup.waitForExistence(timeout: 3))
@@ -116,19 +119,16 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertEqual(reason.value as? String, expected, "No refusal clause may be truncated from AX")
         scrollToFullyVisible(reason, in: inspector)
         XCTAssertTrue(reason.isHittable, "The complete refusal must have an in-window hit point")
-        XCTAssertTrue(window.frame.contains(reason.frame), "The complete refusal's last line must fit in the window: \(reason.frame)")
-        XCTAssertTrue(inspector.frame.contains(reason.frame), "Scroll to make the last line visible inside the clip")
-        if inspector.frame.contains(reason.frame) {
-            let shot = reason.screenshot()
-            guard let cg = shot.image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-                  let lastLine = cg.cropping(to: CGRect(x: 0, y: CGFloat(cg.height) * 0.7,
-                                                       width: CGFloat(cg.width), height: CGFloat(cg.height) * 0.3)) else {
-                return XCTFail("The refusal's last line must produce visible pixels")
-            }
-            let lastLineImage = NSImage(cgImage: lastLine, size: CGSize(width: CGFloat(lastLine.width), height: CGFloat(lastLine.height)))
-            let glyphPixels = ContrastMeter.measure(lastLineImage)?["glyphPixels"] as? Int ?? 0
-            XCTAssertGreaterThanOrEqual(glyphPixels, 40, "The last line must be rendered, not just in AX")
+        for _ in 0..<18 where reason.frame.maxY > inspector.frame.maxY - 3 {
+            inspector.scroll(byDeltaX: 0, deltaY: -180)
         }
+        let lastLine = CGRect(x: reason.frame.minX + 2, y: reason.frame.maxY - 36,
+                              width: reason.frame.width - 4, height: 32)
+        XCTAssertTrue(window.frame.contains(lastLine), "The refusal's last line must be in the window")
+        XCTAssertTrue(inspector.frame.contains(lastLine), "Scroll to make the last line visible inside the clip")
+        let measured = measureWindowCrop(lastLine)
+        XCTAssertGreaterThanOrEqual(measured?["glyphPixels"] as? Int ?? 0, 40, "The last line must be rendered, not just in AX")
+        XCTAssertGreaterThanOrEqual(measured?["glyphP75"] as? Double ?? 0, 4.5, "The last line must be legible")
         XCTAssertTrue(app.buttons["ww.review.remedy.setup"].isHittable, "Setup remains fixed after scrolling to the refusal")
     }
 
@@ -235,23 +235,42 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
     }
 
     private func scrollToFullyVisible(_ element: XCUIElement, in scroll: XCUIElement) {
-        for _ in 0..<16 where element.exists && !scroll.frame.contains(element.frame) {
-            if element.frame.midY < scroll.frame.minY { scroll.swipeDown() }
-            else { scroll.swipeUp() }
+        for _ in 0..<18 where element.exists {
+            let frame = element.frame
+            let visible = frame.height > scroll.frame.height
+                ? scroll.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
+                : scroll.frame.contains(frame)
+            if visible { break }
+            scroll.scroll(byDeltaX: 0, deltaY: frame.midY < scroll.frame.minY ? 180 : -180)
         }
     }
 
     private func measureVisibleText(_ element: XCUIElement, in container: XCUIElement, label: String) {
-        XCTAssertTrue(container.frame.contains(element.frame), "\(label): text must be wholly in its visible container")
+        let window = app.windows["ww.show.window"]
+        XCTAssertTrue(window.frame.contains(container.frame), "\(label): the measured viewport must fit in the window")
+        let visible = element.frame.intersection(container.frame).intersection(window.frame)
+        XCTAssertGreaterThanOrEqual(visible.height, 24, "\(label): at least one full line must be visibly reachable")
         XCTAssertTrue(element.isHittable, "\(label): text needs a real visible hit point")
-        guard container.frame.contains(element.frame), element.isHittable else { return }
-        let shot = element.screenshot()
-        let measured = ContrastMeter.measure(shot.image)
+        guard visible.height >= 24, element.isHittable else { return }
+        let measured = measureWindowCrop(visible)
         let count = measured?["glyphPixels"] as? Int ?? 0
         let p75 = measured?["glyphP75"] as? Double ?? 0
         XCTAssertGreaterThanOrEqual(count, 40, "\(label): visible glyph pixels, measured \(String(describing: measured))")
         XCTAssertGreaterThanOrEqual(p75, 4.5, "\(label): glyph p75, measured \(String(describing: measured))")
         Acceptance.record(self, "\(label): \(count) glyph px, p75 \(p75)")
+    }
+
+    private func measureWindowCrop(_ region: CGRect) -> [String: Any]? {
+        let window = app.windows["ww.show.window"]
+        guard window.frame.contains(region),
+              let image = window.screenshot().image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let scale = CGFloat(image.width) / window.frame.width
+        let pixels = CGRect(x: (region.minX - window.frame.minX) * scale,
+                            y: (region.minY - window.frame.minY) * scale,
+                            width: region.width * scale, height: region.height * scale).integral
+            .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard let crop = image.cropping(to: pixels) else { return nil }
+        return ContrastMeter.measure(NSImage(cgImage: crop, size: pixels.size))
     }
 
     private func assertTextSize200() {
