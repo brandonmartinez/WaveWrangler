@@ -22,6 +22,8 @@ import Foundation
 /// - `-WWUITestSaveRetryInterval <seconds>` shortens the automatic retry after a failed save (ST-11; 30 s).
 /// - `-WWUITestFailFormatUpdate YES` (#159 D15, T21 failure case): every format update fails at M3 (after the
 ///   backup is preserved and the update validated, before anything is published), so the original stays unchanged.
+/// - `-WWUITestReplaceVerifiedCopy YES` with `-WWUITestOfflineFolder`: after a copy into another folder passes
+///   independent readback, replace its destination before adoption to exercise an uncertain Save a Copy.
 ///
 /// - `-WWUITestRetainOlderCheckpoint <base64 schema 1 show>` (#159 F-OLDER-BAD): before the first show file is read,
 ///   keeps those bytes as a retained recovery checkpoint of their show, located at that file, as an M1 save would
@@ -112,6 +114,7 @@ enum UITestHooks {
             ShowDocument.debugPublicationHooks = UITestOfflineHooks.shared
             UITestOfflineHooks.shared.unreachableFolder = UserDefaults.standard.string(forKey: "WWUITestOfflineFolder")
                 .map { URL(filePath: $0, directoryHint: .isDirectory) }
+            UITestOfflineHooks.shared.replaceVerifiedCopy = UserDefaults.standard.bool(forKey: "WWUITestReplaceVerifiedCopy")
             UITestOfflineHooks.shared.publish()
             for (name, offline) in [(UITestOfflineHooks.onNotification, true), (UITestOfflineHooks.offNotification, false)] {
                 observers.append(center.addObserver(forName: name, object: nil, queue: .main) { _ in
@@ -139,10 +142,16 @@ final class UITestOfflineHooks: PublicationHooks, @unchecked Sendable {
     private var events: [String] = []
     /// When set, only publications into this folder fail while offline.
     var unreachableFolder: URL?
+    var replaceVerifiedCopy = false
     /// The publication about to run (set by `ShowDocument` before it publishes; saves run on the main thread).
     var target: URL?
 
     func reached(_ boundary: PublicationBoundary) throws {
+        if boundary == .readBackVerified, replaceVerifiedCopy, let target,
+           let unreachableFolder, target.deletingLastPathComponent().standardizedFileURL != unreachableFolder.standardizedFileURL {
+            try Data("competing destination".utf8).write(to: target, options: .atomic)
+            return
+        }
         guard boundary == .candidateValidated else { return }
         let inUnreachableFolder = unreachableFolder.map { folder in
             target.map { Self.canonicalPath($0.deletingLastPathComponent()) } == Self.canonicalPath(folder)

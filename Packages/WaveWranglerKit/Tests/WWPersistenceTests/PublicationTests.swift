@@ -31,6 +31,15 @@ struct Rig {
     }
 }
 
+private struct ReplaceAtBaseChecked: PublicationHooks {
+    let url: URL
+    let bytes: Data
+
+    func reached(_ boundary: PublicationBoundary) throws {
+        if boundary == .baseChecked { try bytes.write(to: url, options: .atomic) }
+    }
+}
+
 @Suite("Publication protocol")
 struct PublicationTests {
     @Test func publishesVerifiesAndRetainsPrior() throws {
@@ -84,6 +93,36 @@ struct PublicationTests {
         // Disk still holds theirs, untouched.
         guard case let .editable(document, _) = rig.opener.open(url) else { Issue.record("not editable"); return }
         #expect(document.payload == theirs)
+    }
+
+    @Test func changeAfterBaseCheckPreservesCandidateBeforeOriginRefusal() throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 301)
+        let key = DocumentKey.show(model.show.id)
+        let url = rig.url()
+        let first = try rig.publisher.publish(model, revision: 1, key: key, to: url, target: .newLocation)
+        let originalItem = try #require(FileItemIdentity.observe(at: url))
+        let competingBytes = try JSONEnvelopeCoder<ShowDocumentModel>.show.encode(
+            model.renamingShow(to: "Other writer"), revision: 2
+        )
+        let hooks = ReplaceAtBaseChecked(url: url, bytes: competingBytes)
+        let publisher = DocumentPublisher(coder: JSONEnvelopeCoder<ShowDocumentModel>.show,
+                                          recovery: rig.recovery, hooks: hooks)
+        let mine = try model.renamingShow(to: "Unsaved candidate")
+        do {
+            _ = try publisher.publish(mine, revision: 2, key: key, to: url,
+                                      target: .inPlace(expectedBase: first.fingerprint),
+                                      expectedOriginItem: originalItem)
+            Issue.record("The replacement was overwritten")
+        } catch {
+            guard case let .conflict(conflict) = error as? PublicationError else {
+                Issue.record("The competing edit was not preserved: \(error)")
+                return
+            }
+            let candidate = try #require(conflict.preservedCandidate)
+            #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: candidate)).payload == mine)
+        }
+        #expect(try Data(contentsOf: url) == competingBytes)
     }
 
     @Test func missingDocumentIsConflictNotSilentRecreate() throws {

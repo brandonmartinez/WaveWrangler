@@ -40,6 +40,27 @@ struct CheckpointRetirementTests {
         #expect(rig.recovery.keys(forLocation: destination) == [key])
     }
 
+    @Test func unrelatedLocationFilesDoNotHideRetainedUnsavedCopies() throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 2715)
+        let key = DocumentKey.show(model.show.id)
+        let location = rig.url("Damaged.wwshow")
+        let snapshot = try coder.encode(model.renamingShow(to: "Unsaved"), revision: 2)
+        try rig.recovery.writeEditCheckpoint(snapshot: snapshot, base: nil,
+                                             schemaVersion: coder.format.currentSchemaVersion, for: key)
+        try rig.recovery.setAsideEditCheckpoints(for: key)
+        try rig.recovery.recordLocation(location, for: key)
+        let locations = rig.recovery.root.appending(path: "locations")
+        try Data("Finder metadata".utf8).write(to: locations.appending(path: ".DS_Store"))
+        try Data("unrelated".utf8).write(to: locations.appending(path: "unrelated.txt"))
+
+        #expect(try rig.recovery.checkedKeys(forLocation: location) == [key])
+        let offered = try #require(try rig.recovery.checkedOfferedEditCheckpoints(for: key).first)
+        let selected = try rig.recovery.selectRecord(.offeredEditCheckpoint, at: offered.url, for: key)
+        let retained = try EditCheckpointRecord.decode(rig.recovery.readSelectedRecord(selected))
+        #expect(retained.snapshot == snapshot)
+    }
+
     @Test func failedLocationHintAfterPublicationReportsUncertaintyNotSuccess() throws {
         let rig = Rig()
         let model = Fixtures.show(seed: 2714)
@@ -166,6 +187,59 @@ struct CheckpointRetirementTests {
         #expect(try Data(contentsOf: origin) == originalBytes)
     }
 
+    @Test func changedOriginPreservesExplicitSaveWithoutAnyEditCheckpoint() async throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 2716)
+        let url = rig.url()
+        let initial = try rig.publisher.publish(model, revision: 1, key: .show(model.show.id),
+                                                to: url, target: .newLocation)
+        let session = CanonicalDocumentSession(key: .show(model.show.id), url: url, payload: model,
+                                               base: initial.fingerprint, revision: 1, publisher: rig.publisher,
+                                               gate: AutosaveGate(AutosavePreference(enabled: false)))
+        let competing = try model.renamingShow(to: "Another writer")
+        _ = try rig.publisher.publish(competing, revision: 2, key: session.key, to: url,
+                                      target: .inPlace(expectedBase: initial.fingerprint))
+        let competingBytes = try Data(contentsOf: url)
+        let mine = try model.renamingShow(to: "My explicit Save")
+        try await session.edit { _ in mine }
+        #expect(rig.recovery.latestEditCheckpoint(for: session.key) == nil)
+
+        guard case let .failure(.conflict(conflict)) = await session.save() else {
+            Issue.record("The changed-origin Save must preserve the competing candidate as a conflict")
+            return
+        }
+        let candidate = try #require(conflict.preservedCandidate)
+        #expect(try coder.decode(Data(contentsOf: candidate)).payload == mine)
+        #expect(try Data(contentsOf: url) == competingBytes)
+        #expect(await session.isDirty)
+        #expect(await session.status.state == .conflict(onDiskRevision: 2, missing: false))
+    }
+
+    @Test func failedConflictPreservationIsReportedAsFailureNotAPreservedConflict() throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 2717)
+        let key = DocumentKey.show(model.show.id)
+        let url = rig.url()
+        let original = try rig.publisher.publish(model, revision: 1, key: key, to: url, target: .newLocation)
+        let competing = try model.renamingShow(to: "Competing")
+        _ = try rig.publisher.publish(competing, revision: 2, key: key, to: url,
+                                      target: .inPlace(expectedBase: original.fingerprint))
+        let competingBytes = try Data(contentsOf: url)
+        let failedRecovery = RecoveryStore(root: rig.recovery.root, ops: FaultingFileOperations(writeNewFails: true))
+        let publisher = DocumentPublisher(coder: coder, recovery: failedRecovery)
+        do {
+            _ = try publisher.publish(model.renamingShow(to: "Mine"), revision: 2, key: key, to: url,
+                                      target: .inPlace(expectedBase: original.fingerprint))
+            Issue.record("A conflict with no recoverable candidate was reported as saved")
+        } catch {
+            guard case .failed(stage: .priorRetained, _, _) = error as? PublicationError else {
+                Issue.record("The missing conflict backup was hidden: \(error)")
+                return
+            }
+        }
+        #expect(try Data(contentsOf: url) == competingBytes)
+    }
+
     @Test func unknownOriginIdentityRefusesSaveAndSubsequentVerifiedSavesRefreshIdentity() async throws {
         let rig = Rig()
         let model = Fixtures.show(seed: 2704)
@@ -175,7 +249,12 @@ struct CheckpointRetirementTests {
         let unknown = CanonicalDocumentSession(key: key, url: rig.url("Missing.wwshow"), payload: model,
                                                base: receipt.fingerprint, revision: 1, publisher: rig.publisher)
         try await unknown.edit { try $0.renamingShow(to: "Keep dirty") }
-        guard case .failure(.originConflict) = await unknown.save() else { Issue.record("missing identity accepted"); return }
+        guard case let .failure(.conflict(conflict)) = await unknown.save(), conflict.onDisk == nil,
+              let preserved = conflict.preservedCandidate,
+              try coder.decode(Data(contentsOf: preserved)).payload.show.title == "Keep dirty" else {
+            Issue.record("missing origin was not refused with a preserved candidate")
+            return
+        }
         #expect(await unknown.isDirty)
         let session = CanonicalDocumentSession(key: key, url: url, payload: model, base: receipt.fingerprint, revision: 1,
                                                publisher: rig.publisher)

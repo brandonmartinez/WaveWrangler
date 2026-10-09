@@ -211,6 +211,55 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
         }
     }
 
+    func testT28ChangedCopyAfterReadbackKeepsOriginalWindowDirtyAndUndoable() throws {
+        let unreachable = try folder("Unreachable"), elsewhere = try folder("Elsewhere")
+        let original = try makeDocument("Unverified Copy", in: unreachable)
+        let originalBytes = try Data(contentsOf: original)
+        try task("T28-copy-changed-after-readback") {
+            let window = try launchAndOpen(original, autosave: false, retryInterval: nil,
+                                           offlineFolder: unreachable, replaceVerifiedCopy: true,
+                                           retainedSnapshot: originalBytes)
+            let offer = element("ww.show.messageBar")
+            check(offer.waitForExistence(timeout: 10) && offer.label.contains("damaged and cannot be restored"),
+                  "the original's retained recovery offer is visible before Save a Copy")
+            let episodes = element("ww.show.sidebar.episodes")
+            let before = value(episodes)
+            addEpisodeByKeyboard(window)
+            let afterEdit = value(episodes)
+            check(afterEdit != before, "the unsaved edit appears in the live show")
+            app.typeKey("s", modifierFlags: .command)
+            dismissErrorSheetIfAny("T28 before copy")
+            app.typeKey("w", modifierFlags: .command)
+            check(app.sheets.firstMatch.waitForExistence(timeout: 5), "failed-save close asks for a copy")
+            app.typeKey(.return, modifierFlags: [])
+            let destination = try saveCopyThroughPanel(named: "Unverified Copy copy", into: elsewhere,
+                                                        surface: "T28 changed copy")
+            check(Acceptance.waitFor(timeout: 10) {
+                (try? Data(contentsOf: destination)) == Data("competing destination".utf8)
+            }, "the replacement occurred after independent readback")
+            dismissErrorSheetIfAny("T28 changed copy")
+            check(Acceptance.waitFor(timeout: 5) {
+                window.exists && window.title.hasPrefix("Unverified Copy")
+                    && !window.title.hasPrefix("Unverified Copy copy")
+            },
+                  "a failed copy cannot switch the live window or close it")
+            check(value(element("ww.show.saveStatus")).hasPrefix("Save may have completed"),
+                  "the late replacement is reported as uncertainty, never Saved")
+            check(unsavedIndicator(window) != nil, "the original document remains dirty")
+            check(value(episodes) == afterEdit, "the live unsaved model was not replaced by the copy")
+            check(!element("ww.show.messageBar").label.hasPrefix("You're now editing"),
+                  "no success notice for the unverified copy")
+            check(offer.exists && offer.label.contains("damaged and cannot be restored"),
+                  "the original's recovery offer remains selected after the failed copy")
+            check(try Data(contentsOf: original) == originalBytes, "the original on disk was not written")
+            check(try Data(contentsOf: destination) == Data("competing destination".utf8),
+                  "the destination was replaced after independent readback")
+            app.typeKey("z", modifierFlags: .command)
+            check(Acceptance.waitFor(timeout: 5) { self.value(episodes) == before },
+                  "Undo still reverses the original edit after the failed copy")
+        }
+    }
+
     /// T23 D7 (K20): closing while the folder can't be reached asks "“…” couldn't be saved: …" with Save a Copy
     /// Elsewhere… (default, Return), Cancel (Esc) and Don't Save (⌘⌫). Esc keeps the window; Return saves a copy and
     /// then closes; the original is byte-unchanged.
@@ -282,13 +331,16 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func launchAndOpen(_ document: URL, autosave: Bool, retryInterval: Double?, offlineFolder: URL? = nil) throws -> XCUIElement {
+    private func launchAndOpen(_ document: URL, autosave: Bool, retryInterval: Double?, offlineFolder: URL? = nil,
+                               replaceVerifiedCopy: Bool = false, retainedSnapshot: Data? = nil) throws -> XCUIElement {
         app = XCUIApplication()
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
                                "-WWUITestResetStorage", "YES", "-WWUITestCenterWindows", "YES",
                                "-WWUITestAutosave", autosave ? "ON" : "OFF", "-WWUITestOffline", "YES"]
             + (retryInterval.map { ["-WWUITestSaveRetryInterval", "\($0)"] } ?? [])
             + (offlineFolder.map { ["-WWUITestOfflineFolder", $0.path(percentEncoded: false)] } ?? [])
+            + (replaceVerifiedCopy ? ["-WWUITestReplaceVerifiedCopy", "YES"] : [])
+            + (retainedSnapshot.map { ["-WWUITestRetainDamagedEditCheckpoint", $0.base64EncodedString()] } ?? [])
         // One launch only: see `XCUIApplication.launchOnce(opening:)`.
         app.launchOnce(opening: document)
         let name = document.deletingPathExtension().lastPathComponent

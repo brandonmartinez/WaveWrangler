@@ -56,6 +56,22 @@ struct CheckpointRetirementNativeTests {
         #expect(implementation.contains("NSRecoveryAttempterErrorKey"))
     }
 
+    @Test func saveCopyDoesNotAdoptUnverifiedDestinationOrClearUndoAndOffers() throws {
+        let source = try String(contentsOf: Self.documentSource, encoding: .utf8)
+        let start = try #require(source.range(of: "private func saveCopy("))
+        let end = try #require(source.range(of: "override func canClose(", range: start.upperBound..<source.endIndex))
+        let copyFlow = source[start.lowerBound..<end.lowerBound]
+        #expect(!copyFlow.contains("store.replaceLoadedModel(copy)"))
+        #expect(!copyFlow.contains("undoManager?.removeAllActions()"))
+        #expect(!copyFlow.contains("restoredOfferURLs.removeAll()"))
+        #expect(!copyFlow.contains("status.setCopyNotice("))
+        let finish = try #require(source.range(of: "private func finishSave("))
+        let next = try #require(source.range(of: "private func acknowledgeToLibrary(", range: finish.upperBound..<source.endIndex))
+        let finishFlow = source[finish.lowerBound..<next.lowerBound]
+        #expect(finishFlow.contains("if let adoptingCopy"))
+        #expect(finishFlow.contains("if result == nil, adopts, let receipt"))
+    }
+
     @Test(arguments: [true, false])
     func nativeSafeWriteVerificationErrorDoesNotClearDirtyState(initiallyDirty: Bool) async throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "WWNativeRecovery-\(UUID().uuidString)", directoryHint: .isDirectory)
