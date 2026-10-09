@@ -15,6 +15,7 @@ extension ShowDocument: EditCheckpointOfferProviding {
         guard let offer = status.editCheckpointOffer else { return nil }
         if let candidate = offer.candidate, let mode = offer.candidateMode(restoreInEffect: isEditCheckpointRestoreInEffect) {
             let createdAt = candidate.record.createdAt
+            if isEditCheckpointCopyOnly(candidate.url) { return .stale(createdAt: createdAt) }
             return switch mode {
             case .restore: .restore(createdAt: createdAt)
             case .copyOnlyWhileAnotherRestoreIsInEffect: .anotherSession(createdAt: createdAt)

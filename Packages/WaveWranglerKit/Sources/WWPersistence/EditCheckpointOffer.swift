@@ -11,6 +11,18 @@ public struct StoredEditCheckpoint: Sendable, Equatable {
     }
 }
 
+extension EditCheckpointRecord {
+    /// A cached open fingerprint is not disk truth: check the record against fresh, coordinated file bytes.
+    public func isBasedOnCurrentFile(
+        at url: URL, expected: RevisionFingerprint, coordination: any FileCoordinating
+    ) throws -> Bool {
+        let actual = try coordination.coordinateReading(at: url) {
+            RevisionFingerprint(of: try LocalFileOperations().read($0))
+        }
+        return actual == expected && relation(to: actual) == .basedOnCurrent
+    }
+}
+
 /// C2b recovery presentation, decided on open/relaunch (contracts C2b, #84). Pure: no I/O.
 ///
 /// - If a usable record is based on exactly the on-disk publication (same bytes, so the same revision and

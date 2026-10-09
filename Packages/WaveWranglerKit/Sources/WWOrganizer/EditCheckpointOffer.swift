@@ -7,6 +7,8 @@ public enum EditCheckpointOfferState: Sendable, Equatable {
     case restore(createdAt: Date)
     /// Based on another (older) version: open only as a separate untitled copy; never merged or published.
     case olderRevision(createdAt: Date)
+    /// A failed in-place preflight: keep the original and offer only a separate untitled copy.
+    case stale(createdAt: Date)
     /// Another session's unsaved changes, while a restore is already in effect in this window: open only as a
     /// separate untitled copy, so a second restore never replaces the first.
     case anotherSession(createdAt: Date)
@@ -48,6 +50,13 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
                 + "as a separate untitled copy, which you can compare with this show."
             symbolName = "exclamationmark.triangle"
             actions = [.openAsCopy, .discard]
+        case let .stale(createdAt):
+            heading = "Unsaved changes need a separate copy"
+            body = "WaveWrangler couldn't safely restore the changes to “\(showName)” from \(formatTime(createdAt)) in place. "
+                + "The saved show or its edit-map inputs changed or couldn't be verified. The original checkpoint stays on this Mac; "
+                + "open it as a separate untitled copy to compare without replacing the saved show."
+            symbolName = "exclamationmark.triangle"
+            actions = [.openAsCopy, .discard]
         case let .anotherSession(createdAt):
             heading = "More unsaved changes from \(formatTime(createdAt))"
             body = "WaveWrangler kept another set of changes to “\(showName)” from \(formatTime(createdAt)) on this Mac that were never saved. "
@@ -77,7 +86,8 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
         formatTime: (Date) -> String = SaveStatusPresentation.defaultTime
     ) -> (message: String, informative: String, button: String)? {
         switch (action, state) {
-        case let (.discard, .restore(createdAt)), let (.discard, .olderRevision(createdAt)), let (.discard, .anotherSession(createdAt)):
+        case let (.discard, .restore(createdAt)), let (.discard, .olderRevision(createdAt)),
+             let (.discard, .stale(createdAt)), let (.discard, .anotherSession(createdAt)):
             ("Discard unsaved changes from \(formatTime(createdAt))?",
              "These changes were never saved. If you discard them, they can't be restored.",
              "Discard")

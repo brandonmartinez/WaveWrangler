@@ -67,6 +67,19 @@ struct AppConfigurationTests {
         #expect(command.contains("store.removeEpisode(episode.id, actionName: UndoActionName.deleteEpisode)"))
     }
 
+    @Test func recoveryCopyAndDontSaveCannotAutomaticallyDeleteOriginalOffer() throws {
+        let document = try String(contentsOf: Self.appFolder.appending(path: "Document/ShowDocument.swift"), encoding: .utf8)
+        let saveResolution = try #require(document.range(of: "private func resolveOfferRecordsAfterVerifiedSave("))
+        let afterResolution = try #require(document[saveResolution.upperBound...].range(of: "\n    fileprivate func offerCopyWasSaved("))
+        let body = document[saveResolution.lowerBound..<afterResolution.lowerBound]
+        #expect(body.contains("restoredOffers.resolved(started: restoredAtSaveStart, published: published, current: store.model)"))
+        #expect(body.contains("try recovery.discardOfferedEditCheckpoints(Array(contained), for: documentKey)"))
+        #expect(!body.contains("discardOfferedEditCheckpoints(resolution.urls"))
+        let close = try #require(document.range(of: "override func close()"))
+        let afterClose = try #require(document[close.upperBound...].range(of: "\n    // MARK: - Provider versions"))
+        #expect(!document[close.lowerBound..<afterClose.lowerBound].contains("discardOfferedEditCheckpoints"))
+    }
+
     /// #126: windowless error presentation is routed to the opaque panel by `WaveWranglerApplication`, so it
     /// must be the app's NSApp: the principal class in every configuration, and the first `shared` in main().
     @Test func applicationClassIsWaveWranglerApplication() throws {

@@ -111,12 +111,13 @@ final class ShowDocumentStore {
         }
     }
 
-    /// Restores a whole checkpoint. A map difference is allowed only when it removes the exact map
-    /// state of episodes absent from the snapshot; no checkpoint may add or rewrite map authority.
+    /// Restores a whole checkpoint only when its exact decoded model can be adopted. Deleting an episode
+    /// may remove its map state, but retained maps and all their selected inputs must match the saved base.
     @discardableResult
     func restoreEditCheckpoint(_ snapshot: ShowDocumentModel, basedOn onDisk: ShowDocumentModel?) -> Bool {
         guard FormatUpdatePolicy.allowsEdits(document?.status.formatUpdate) else { return false }
-        guard snapshot.show.id == model.show.id, snapshot.schemaVersion == model.schemaVersion,
+        guard snapshot.show.id == model.show.id, snapshot.schemaVersion == SchemaVersion.show,
+              snapshot.schemaVersion == model.schemaVersion,
               snapshot.validationIssues().isEmpty else {
             lastEditMapError = .invalidMap
             return false
@@ -125,17 +126,27 @@ final class ShowDocumentStore {
             lastEditMapError = .superseded
             return false
         }
-        if snapshot.editMaps == model.editMaps {
-            return apply("Restore Unsaved Changes") { _ in snapshot }
+        guard snapshot.editMaps == model.editMaps.filter({ snapshot.episode($0.episodeID) != nil }) else {
+            lastEditMapError = .unauthorizedMutation
+            return false
         }
-        guard snapshot.editMaps == model.editMaps.filter({ snapshot.episode($0.episodeID) != nil }),
-              snapshot.editMaps.count < model.editMaps.count,
-              snapshot.invalidatingChangedEditMaps(from: model) == snapshot else {
+        for state in snapshot.editMaps where state.selectedRevision != nil {
+            guard let before = model.episode(state.episodeID), let after = snapshot.episode(state.episodeID),
+                  before.sources == after.sources,
+                  before.speakerAssignments == after.speakerAssignments,
+                  before.recorderGroups == after.recorderGroups,
+                  before.alignment == after.alignment else {
+                lastEditMapError = .unauthorizedMutation
+                return false
+            }
+        }
+        guard snapshot.invalidatingChangedEditMaps(from: model) == snapshot else {
             lastEditMapError = .unauthorizedMutation
             return false
         }
         lastError = nil
-        guard replace(with: snapshot, actionName: "Restore Unsaved Changes") else { return false }
+        lastEditMapError = nil
+        guard replace(with: snapshot, actionName: "Restore Unsaved Changes", selectionAlreadyProven: true) else { return false }
         Responsiveness.interaction("show.edit")
         return true
     }

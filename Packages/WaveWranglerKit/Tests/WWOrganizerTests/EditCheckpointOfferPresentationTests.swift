@@ -26,6 +26,15 @@ struct EditCheckpointOfferPresentationTests {
         #expect(!p.actions.contains(.restore))
     }
 
+    @Test func refusedInPlaceRestoreKeepsClearlyLabeledCopyOnlyRoute() {
+        let state = EditCheckpointOfferState.stale(createdAt: date)
+        let p = EditCheckpointOfferPresentation(state, showName: "Show", formatTime: time)
+        #expect(p.heading == "Unsaved changes need a separate copy")
+        #expect(p.body.contains("original checkpoint stays") && p.body.contains("couldn't be verified"))
+        #expect(p.actions == [.openAsCopy, .discard])
+        #expect(EditCheckpointOfferPresentation.confirmation(for: .discard, state: state, formatTime: time) != nil)
+    }
+
     @Test func anotherSessionWhileARestoreIsInEffectOpensOnlyAsCopy() {
         let p = EditCheckpointOfferPresentation(.anotherSession(createdAt: date), showName: "Show", formatTime: time)
         #expect(p.heading == "More unsaved changes from 10:42 PM")

@@ -35,13 +35,15 @@ final class ShowDocument: NSDocument {
     private var pendingCandidate: EncodedDocument?
     private var lastReceipt: PublicationReceipt?
     private var scheduler: QuiescenceScheduler?
-    /// Offered C2b restores stay on disk until their exact snapshot is verified on disk, or an explicit
-    /// Don't Save. Reload supersedes both the marks and their undo callbacks.
+    /// Offered C2b restores stay on disk until their exact snapshot is verified on disk or the user
+    /// explicitly discards the offer. Reload supersedes both the marks and their undo callbacks.
     private var restoredOffers = RestoredEditCheckpoints.State<ShowDocumentModel>()
     /// Offered records opened as a separate copy (kept until that copy is saved) or hidden by the user.
     private var setAsideOfferURLs: Set<URL> = []
-    /// Set on a separate copy opened from another show's offer: its first verified save resolves those records.
-    private var resolvesOffer: OfferResolution?
+    /// An in-place refusal stays copy-only in this window, including after the offer bar refreshes.
+    private var copyOnlyOfferURLs: Set<URL> = []
+    /// A separate copy keeps the original offer hidden only while the copy is open.
+    private var sourceOfferCopy: OfferCopy?
 
     var revision: Int { publication?.revision ?? 0 }
     /// The exact model last independently verified on disk. Alignment reconciles verified publications;
@@ -169,6 +171,7 @@ final class ShowDocument: NSDocument {
         switch outcome {
         case let .editable(document, fingerprint):
             restoredOffers.supersede()
+            copyOnlyOfferURLs.removeAll()
             status.setEditCheckpointOffer(nil)
             undoManager?.removeAllActions()
             formatUpdateOriginal = nil
@@ -199,6 +202,7 @@ final class ShowDocument: NSDocument {
             case let .damaged(error, candidates): throw DocumentRecoveryOffer.error(for: error, candidates: candidates)
             }
             restoredOffers.supersede()
+            copyOnlyOfferURLs.removeAll()
             status.setEditCheckpointOffer(nil)
             undoManager?.removeAllActions()
             store.replaceLoadedModel(upgraded.payload)
@@ -707,33 +711,59 @@ final class ShowDocument: NSDocument {
         status.setEditCheckpointOffer(offer.isEmpty ? nil : offer)
     }
 
-    /// "Restore Unsaved Changes": only while the record is based on exactly the publication on disk. Applies the
-    /// whole snapshot as one undoable edit; the document is dirty and is never marked saved by a restore.
+    /// "Restore Unsaved Changes": the record and the file must still have the exact same base. A mismatch
+    /// remains an offer, but only as a separate copy; an accepted restore is the exact decoded payload.
     func restoreOfferedEditCheckpoint() {
         refreshEditCheckpointOffer()
         guard let offer = status.editCheckpointOffer, let candidate = offer.candidate,
+              !copyOnlyOfferURLs.contains(candidate.url),
               offer.candidateMode(restoreInEffect: isEditCheckpointRestoreInEffect) == .restore else { return }
+        guard let url = fileURL, let expectedBase = onDiskBase else {
+            refuseInPlaceRestore(candidate.url, reason: "The saved show's location or base could not be verified.")
+            return
+        }
+        do {
+            let baseMatches = try candidate.record.isBasedOnCurrentFile(
+                at: url, expected: expectedBase, coordination: PresenterFileCoordination(presenter: self)
+            )
+            guard fileURL?.standardizedFileURL == url.standardizedFileURL,
+                  baseMatches else {
+                refuseInPlaceRestore(candidate.url, reason: "The saved show has changed on disk since it was opened.")
+                return
+            }
+        } catch {
+            refuseInPlaceRestore(candidate.url, reason: "The saved show could not be read: \(error.localizedDescription)")
+            return
+        }
         // One undo step: the model change (which marks the document dirty) and the "restored" mark, so Undo of the
         // restore also un-marks the record and offers it again; Redo marks it again.
         let undo = undoManager
         undo?.beginUndoGrouping()
         let restored = store.restoreEditCheckpoint(candidate.payload, basedOn: verifiedModel)
         if restored {
-            markRestored(candidate.url, snapshot: store.model, generation: restoredOffers.currentGeneration)
+            markRestored(candidate.url, snapshot: candidate.payload, generation: restoredOffers.currentGeneration)
             undo?.setActionName("Restore Unsaved Changes")
         }
         undo?.endUndoGrouping()
         if !restored {
-            let error = NSError(
-                domain: NSCocoaErrorDomain, code: NSFileReadCorruptFileError,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "Unsaved changes could not be restored.",
-                    NSLocalizedRecoverySuggestionErrorKey:
-                        "The checkpoint is still available. Open it as a separate copy or review the current show before trying again."
-                ]
-            )
-            _ = presentError(error)
+            refuseInPlaceRestore(candidate.url, reason: "Its selected edit map or canonical inputs differ from the saved show.")
         }
+    }
+
+    func isEditCheckpointCopyOnly(_ url: URL) -> Bool { copyOnlyOfferURLs.contains(url) }
+
+    private func refuseInPlaceRestore(_ url: URL, reason: String) {
+        copyOnlyOfferURLs.insert(url)
+        refreshEditCheckpointOffer()
+        _ = presentError(NSError(
+            domain: NSCocoaErrorDomain, code: NSFileReadCorruptFileError,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Unsaved changes could not be restored in place.",
+                NSLocalizedFailureReasonErrorKey: reason,
+                NSLocalizedRecoverySuggestionErrorKey:
+                    "The original checkpoint is still available. Open it as a separate copy to review it without replacing the saved show."
+            ]
+        ))
     }
 
     private func markRestored(_ url: URL, snapshot: ShowDocumentModel, generation: UInt64) {
@@ -755,13 +785,13 @@ final class ShowDocument: NSDocument {
     }
 
     /// "Open as Separate Copy": a new untitled show (new show ID, so it can't be mistaken for this one), dirty
-    /// and unsaved. Never merged into this show and never published by itself. The records stay until the copy
-    /// is saved; if the copy is closed without saving, the offer returns here.
+    /// and unsaved. Never merged into this show or published by itself. Saving or closing the copy reveals
+    /// the original offer again; a copy with a new show ID cannot resolve the original checkpoint.
     func openOfferedEditCheckpointAsCopy() {
         guard let offer = status.editCheckpointOffer, let candidate = offer.candidate else { return }
         let urls: Set<URL> = [candidate.url]
         let copy = ShowDocument.openUntitledCopy(of: candidate.payload.duplicatedAsNewShow())
-        copy.resolvesOffer = OfferResolution(key: documentKey, urls: Array(urls), source: self)
+        copy.sourceOfferCopy = OfferCopy(urls: Array(urls), source: self)
         setAsideOfferURLs.formUnion(urls)
         refreshEditCheckpointOffer()
     }
@@ -808,10 +838,9 @@ final class ShowDocument: NSDocument {
             // or an old undo callback mistake this former restore for an active one.
             restoredOffers.supersede()
         }
-        if let resolution = resolvesOffer {
-            resolvesOffer = nil
-            try? recovery.discardOfferedEditCheckpoints(resolution.urls, for: resolution.key)
-            resolution.source?.offerCopyWasSaved(Set(resolution.urls))
+        if let copy = sourceOfferCopy {
+            sourceOfferCopy = nil
+            copy.source?.offerCopyWasSaved(Set(copy.urls))
         }
         // A restore offer becomes "based on an older revision" once a newer version is saved.
         refreshEditCheckpointOffer()
@@ -827,8 +856,7 @@ final class ShowDocument: NSDocument {
         refreshEditCheckpointOffer()
     }
 
-    struct OfferResolution {
-        let key: DocumentKey
+    struct OfferCopy {
         let urls: [URL]
         weak var source: ShowDocument?
     }
@@ -837,13 +865,13 @@ final class ShowDocument: NSDocument {
         // Closing while still edited means the user chose Don't Save: drop this document's edit checkpoints.
         if isDocumentEdited {
             try? recovery.discardEditCheckpoints(for: documentKey)
-            // Don't Save after a restore discards the restored changes too (C2b retention (b)).
-            if !restoredOffers.isEmpty { try? recovery.discardOfferedEditCheckpoints(Array(restoredOffers.urls), for: documentKey) }
+            // Don't Save drops the live edit, not the original offered record; only an exact verified save
+            // or the user's explicit Discard may delete it.
         }
-        if let resolution = resolvesOffer {
+        if let copy = sourceOfferCopy {
             // A copy closed without saving: the records stay, and the original show offers them again.
-            resolvesOffer = nil
-            resolution.source?.offerCopyClosedUnsaved(Set(resolution.urls))
+            sourceOfferCopy = nil
+            copy.source?.offerCopyClosedUnsaved(Set(copy.urls))
         }
         scheduler?.cancelPending()
         cancelSaveRetry()

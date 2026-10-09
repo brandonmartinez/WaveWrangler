@@ -259,8 +259,8 @@ public struct RecoveryStore: Sendable {
         }
     }
 
-    /// Deletes the given offered records only (after an explicit, confirmed Discard, a verified publication
-    /// that contains a restored record, or Don't Save after a restore). Never deletes records it wasn't given.
+    /// Deletes the given offered records only (after an explicit, confirmed Discard or a verified publication
+    /// of that exact restored record). Don't Save and a separately saved copy retain the original offer.
     public func discardOfferedEditCheckpoints(_ urls: [URL], for key: DocumentKey) throws {
         let held = folder("edit-checkpoints-offered", key).standardizedFileURL.path
         for url in urls where url.standardizedFileURL.deletingLastPathComponent().path == held && ops.exists(url) {

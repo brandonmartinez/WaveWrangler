@@ -53,6 +53,36 @@ struct EditCheckpointOfferTests {
         #expect(assess(rig, key, model, onDisk: r3.fingerprint).isEmpty)
     }
 
+    @Test func restoreBaseReadsDiskInsteadOfTrustingCachedOpenFingerprint() throws {
+        let rig = Rig()
+        let url = rig.url()
+        let (current, cachedBase) = try rig.seedTwoRevisions(Fixtures.show(seed: 852), at: url)
+        let key = DocumentKey.show(current.show.id)
+        let unsaved = try current.renamingShow(to: "Offered")
+        try rig.recovery.writeEditCheckpoint(
+            snapshot: coder.encode(unsaved, revision: 3), base: cachedBase,
+            schemaVersion: SchemaVersion.show, for: key
+        )
+        try rig.recovery.setAsideEditCheckpoints(for: key)
+        let candidate = try #require(assess(rig, key, current, onDisk: cachedBase).candidate)
+        #expect(try candidate.record.isBasedOnCurrentFile(
+            at: url, expected: cachedBase, coordination: AlreadyCoordinated()
+        ))
+
+        // Identical model but a distinct publication: the cached fingerprint still matches the offer,
+        // whereas the actual bytes on disk no longer do.
+        let newer = try rig.publisher.publish(
+            current, revision: 3, key: key, to: url, target: .inPlace(expectedBase: cachedBase)
+        )
+        #expect(newer.fingerprint != cachedBase)
+        #expect(candidate.record.relation(to: cachedBase) == .basedOnCurrent)
+        #expect(try !candidate.record.isBasedOnCurrentFile(
+            at: url, expected: cachedBase, coordination: AlreadyCoordinated()
+        ))
+        #expect(assess(rig, key, current, onDisk: newer.fingerprint).candidate?.relation == .basedOnOtherRevision)
+        #expect(rig.recovery.offeredEditCheckpoints(for: key).map(\.url) == [candidate.url])
+    }
+
     @Test func damagedWrongDocumentAndNewerRecordsAreReportedKeptAndNeverApplied() throws {
         let rig = Rig()
         let model = Fixtures.show(seed: 841)

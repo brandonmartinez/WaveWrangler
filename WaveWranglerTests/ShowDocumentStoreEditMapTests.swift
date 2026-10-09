@@ -24,6 +24,11 @@ enum Responsiveness {
 @MainActor
 @Suite("Native edit-map store")
 struct ShowDocumentStoreEditMapTests {
+    private enum ChangedSelectedMapInput: CaseIterable {
+        case sourceRecord, placement, speakerAssignment, recorderEpoch
+        case acceptedAlignment, alignmentRevision, sourceDigest, formatVersion, recipe
+    }
+
     private func savedShow() throws -> (model: ShowDocumentModel, mappedID: EpisodeID, otherID: EpisodeID) {
         let source = SourceRecord(displayNameHint: "synthetic")
         let mapped = Episode(
@@ -297,6 +302,131 @@ struct ShowDocumentStoreEditMapTests {
             onDisk: RevisionFingerprint(of: newerBytes), coder: coder,
             belongsToDocument: { $0.show.id == base.show.id }
         ).candidate?.relation == .basedOnOtherRevision)
+    }
+
+    @Test func changedSourceAndAlignmentInputsWithEqualEditMapsRefuseExactCheckpoint() throws {
+        let base = try savedPersistableShow().model
+        let key = DocumentKey.show(base.show.id)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let root = FileManager.default.temporaryDirectory.appending(path: "ww-map-inputs-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recovery = RecoveryStore(root: root)
+        let baseBytes = try coder.encode(base, revision: 2)
+        var changed = base
+        changed.episodes[0].sources[0].role = .backup
+        changed.episodes[0].alignment?.maps[0].inputs.sources[0].contentDigest = "different-input"
+        #expect(changed.editMaps == base.editMaps)
+        #expect(changed.validationIssues().isEmpty)
+        try recovery.writeEditCheckpoint(
+            snapshot: coder.encode(changed, revision: 3), base: RevisionFingerprint(of: baseBytes),
+            schemaVersion: SchemaVersion.show, for: key
+        )
+        try recovery.setAsideEditCheckpoints(for: key)
+        let candidate = try #require(EditCheckpointOffer.assess(
+            recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue,
+            onDisk: RevisionFingerprint(of: baseBytes), coder: coder,
+            belongsToDocument: { $0.show.id == base.show.id }
+        ).candidate)
+        let store = ShowDocumentStore(model: base)
+        store.document = ShowDocument()
+        #expect(!store.restoreEditCheckpoint(candidate.payload, basedOn: base))
+        #expect(store.model == base)
+        #expect(recovery.offeredEditCheckpoints(for: key).map(\.url) == [candidate.url])
+        #expect(try coder.decode(candidate.record.snapshot).payload == changed)
+    }
+
+    @Test(arguments: ChangedSelectedMapInput.allCases)
+    private func retainedSelectedMapRequiresEveryCanonicalInput(_ input: ChangedSelectedMapInput) throws {
+        var base = try savedPersistableShow().model
+        let speaker = Speaker(name: "Synthetic speaker")
+        base.speakers = [speaker]
+        base.episodes[0].speakerAssignments = [
+            SpeakerAssignment(
+                speakerID: speaker.id,
+                primary: ChannelReference(sourceID: base.episodes[0].sources[0].id, statedChannel: 0)
+            )
+        ]
+        #expect(base.validationIssues().isEmpty)
+        var changed = base
+        switch input {
+        case .sourceRecord:
+            changed.episodes[0].sources[0].displayNameHint = "Different recording"
+        case .placement:
+            changed.episodes[0].sources[0].placement.channelLabels.append(ChannelLabel(channel: 0, label: "Mic"))
+        case .speakerAssignment:
+            changed.episodes[0].speakerAssignments[0].primaryConfirmation = .userConfirmed
+        case .recorderEpoch:
+            changed.episodes[0].recorderGroups[0].epochs[0].note = "Different epoch"
+        case .acceptedAlignment:
+            changed.episodes[0].alignment?.acceptedRevision = nil
+        case .alignmentRevision:
+            var next = try #require(changed.episodes[0].alignment?.maps[0])
+            next.revision = 3
+            next.derivedFrom = 2
+            changed.episodes[0].alignment?.maps.append(next)
+        case .sourceDigest:
+            changed.episodes[0].alignment?.maps[0].inputs.sources[0].contentDigest = "new-digest"
+        case .formatVersion:
+            changed.episodes[0].alignment?.maps[0].inputs.sources[0].formatInterpretationVersion = 2
+        case .recipe:
+            changed.episodes[0].alignment?.maps[0].inputs.recipe = RecipeReference(name: "synthetic", revision: 2)
+        }
+        #expect(changed.editMaps == base.editMaps)
+        #expect(changed.validationIssues().isEmpty, "\(input)")
+        let store = ShowDocumentStore(model: base)
+        store.document = ShowDocument()
+        #expect(!store.restoreEditCheckpoint(changed, basedOn: base), "\(input)")
+        #expect(store.lastEditMapError == .unauthorizedMutation, "\(input)")
+        #expect(store.model == base, "\(input)")
+    }
+
+    @Test func saveAfterRefusedInputChangeCannotResolveDifferentPayload() throws {
+        let base = try savedPersistableShow().model
+        let key = DocumentKey.show(base.show.id)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let root = FileManager.default.temporaryDirectory.appending(path: "ww-map-refused-save-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let recovery = RecoveryStore(root: root)
+        let disk = root.appending(path: "show.wwshow")
+        let baseBytes = try coder.encode(base, revision: 2)
+        try baseBytes.write(to: disk)
+        var changed = base
+        changed.episodes[0].alignment?.maps[0].inputs.sources[0].contentDigest = "different-input"
+        #expect(changed.editMaps == base.editMaps)
+        try recovery.writeEditCheckpoint(
+            snapshot: coder.encode(changed, revision: 3), base: RevisionFingerprint(of: baseBytes),
+            schemaVersion: SchemaVersion.show, for: key
+        )
+        try recovery.setAsideEditCheckpoints(for: key)
+        let candidate = try #require(EditCheckpointOffer.assess(
+            recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue,
+            onDisk: RevisionFingerprint(of: baseBytes), coder: coder,
+            belongsToDocument: { $0.show.id == base.show.id }
+        ).candidate)
+        let store = ShowDocumentStore(model: base)
+        store.document = ShowDocument()
+        var restores = RestoredEditCheckpoints.State<ShowDocumentModel>()
+        let restored = store.restoreEditCheckpoint(candidate.payload, basedOn: base)
+        if restored {
+            restores.mark(candidate.url, snapshot: store.model, generation: restores.currentGeneration)
+        }
+        #expect(!restored)
+        #expect(store.model == base)
+
+        let started = restores.startingSave()
+        let published = store.model
+        let publisher = DocumentPublisher(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery)
+        _ = try publisher.publish(
+            published, revision: 3, key: key, to: disk,
+            target: .inPlace(expectedBase: RevisionFingerprint(of: baseBytes))
+        )
+        #expect(try coder.decode(Data(contentsOf: disk)).payload == published)
+        #expect(published != candidate.payload)
+        let resolved = restores.resolved(started: started, published: published, current: store.model)
+        try recovery.discardOfferedEditCheckpoints(Array(resolved), for: key)
+        #expect(resolved.isEmpty)
+        #expect(recovery.offeredEditCheckpoints(for: key).map(\.url) == [candidate.url])
     }
 
     @Test func deletedEpisodeRestoreRevertThenUnrelatedSaveKeepsOffer() throws {
