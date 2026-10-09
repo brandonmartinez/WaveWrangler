@@ -264,15 +264,54 @@ final class AlignmentInspectionUITests: XCTestCase {
         let episodeRows = sidebar.descendants(matching: .any).matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "ww.show.sidebar.episode."
         ))
-        XCTAssertEqual(episodeRows.count, 1, "The synthetic fixture exposes exactly one episode row")
+        let episodeRowCount = episodeRows.count
         let episodeRow = episodeRows.firstMatch
-        XCTAssertTrue(episodeRow.waitForExistence(timeout: 2), "The synthetic episode row must be exposed")
+        let episodeRowExists = episodeRow.waitForExistence(timeout: 2)
+        let episodeRowType = episodeRow.elementType.rawValue
+        let episodeRowIdentifier = episodeRow.identifier
         let episodeRowLabel = episodeRow.label
-        XCTAssertFalse(episodeRowLabel.isEmpty, "The episode row must retain its accessible label")
-        print(
-            "EPISODE ROW AX before audit type=\(episodeRow.elementType.rawValue) " +
-            "id=\(episodeRow.identifier) label=\(episodeRowLabel) " +
-            "value=\(String(describing: episodeRow.value)) frame=\(episodeRow.frame)"
+        let episodeRowValue = String(describing: episodeRow.value)
+        let episodeRowFrame = episodeRow.frame
+        let episodeRowChildren = episodeRowExists
+            ? episodeRow.children(matching: .any).allElementsBoundByIndex : []
+        let episodeRowChildrenDescription = episodeRowChildren.map { child in
+            "type=\(child.elementType.rawValue) id=\(child.identifier) label=\(child.label) " +
+            "value=\(String(describing: child.value)) frame=\(child.frame)\n\(child.debugDescription)"
+        }.joined(separator: "\n---\n")
+        let windowFocusSummary = app.windows.allElementsBoundByIndex.map { candidate in
+            let hasKeyboardFocus = candidate.value(forKey: "hasKeyboardFocus") as? Bool ?? false
+            return "id=\(candidate.identifier) label=\(candidate.label) " +
+                "hasKeyboardFocus=\(hasKeyboardFocus) frame=\(candidate.frame)"
+        }.joined(separator: "\n")
+        let focusedWindowDescriptions = app.windows.allElementsBoundByIndex
+            .filter { $0.value(forKey: "hasKeyboardFocus") as? Bool == true }
+            .map(\.debugDescription)
+            .joined(separator: "\n---\n")
+        let episodeRowDiagnostic = """
+        Episode row AX diagnostic before assertions:
+        matchingIdentifierCount=\(episodeRowCount) exists=\(episodeRowExists)
+        type=\(episodeRowType) id=\(episodeRowIdentifier) label=\(episodeRowLabel)
+        value=\(episodeRowValue) frame=\(episodeRowFrame)
+        matched element:
+        \(episodeRow.debugDescription)
+        children(count=\(episodeRowChildren.count)):
+        \(episodeRowChildrenDescription.isEmpty ? "(none)" : episodeRowChildrenDescription)
+        application windows:
+        \(windowFocusSummary.isEmpty ? "(none)" : windowFocusSummary)
+        focused window AX:
+        \(focusedWindowDescriptions.isEmpty ? "(none reported)" : focusedWindowDescriptions)
+        target show window AX:
+        \(window.debugDescription)
+        """
+        print("WW-EPISODE-ROW-DIAGNOSTIC-BEGIN\n\(episodeRowDiagnostic)\nWW-EPISODE-ROW-DIAGNOSTIC-END")
+        XCTAssertEqual(
+            episodeRowCount, 1,
+            "The synthetic fixture exposes exactly one episode row.\n\(episodeRowDiagnostic)"
+        )
+        XCTAssertTrue(episodeRowExists, "The synthetic episode row must be exposed.\n\(episodeRowDiagnostic)")
+        XCTAssertFalse(
+            episodeRowLabel.isEmpty,
+            "The episode row must retain its accessible label.\n\(episodeRowDiagnostic)"
         )
         let neutralPoint = CGPoint(x: showInfo.frame.midX, y: showInfo.frame.midY)
         XCTAssertTrue(window.frame.contains(neutralPoint), "The neutral pointer target must stay inside the show window")
