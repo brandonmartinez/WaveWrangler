@@ -149,9 +149,10 @@ struct SelectedPrimaryCheckedOpenRedTests {
 
     @Test func unchangedDescriptorIdentityDiagnosticReadsNoContent() throws {
         let directory = try FixtureDirectory("selected-primary-identity-diagnostic")
-        let primary = try directory.write(
-            spec, signal: LandmarkSignal(frames: 40_000, channelCount: 2, seed: 710)
+        let fixture = try directory.write(
+            spec, signal: LandmarkSignal(frames: 40_000, channelCount: 2, seed: 711)
         )
+        let primary = try directory.copy(fixture, as: "primary.wav")
         let expected = try fingerprint(primary)
         let expectedIdentifier = try #require(expected.fileIdentifier.value)
         let expectedSize = try #require(expected.fileSize.value)
