@@ -25,7 +25,7 @@ reset_state() {
   : > "$ROOT/order"
 }
 run_lane() {
-  lane="$1"; class="$2"; seconds="$3"; queue_timeout="${4:-10}"
+  lane="$1"; class="$2"; seconds="$3"; queue_timeout="${4:-120}"
   dir="$ROOT/run-$lane"
   "$SCRIPT" run --lane "$lane" --class "$class" --pr 1 --sha test --dir "$dir" \
     --lease-minutes 1 --queue-timeout "$queue_timeout" --result "$dir/result.xcresult" -- \
@@ -33,7 +33,7 @@ run_lane() {
       "$seconds" "$lane" "$ROOT/order" "$dir/result.xcresult"
 }
 run_lane_in_dir() {
-  lane="$1"; class="$2"; seconds="$3"; dir="$4"; queue_timeout="${5:-10}"
+  lane="$1"; class="$2"; seconds="$3"; dir="$4"; queue_timeout="${5:-120}"
   "$SCRIPT" run --lane "$lane" --class "$class" --pr 1 --sha test --dir "$dir" \
     --lease-minutes 1 --queue-timeout "$queue_timeout" --result "$dir/result-$lane.xcresult" -- \
     bash -c 'sleep "$1"; echo "$2" >> "$3"; mkdir -p "$4"; echo completed' _ \
@@ -304,7 +304,7 @@ reset_state
 ln -s /bin/bash "$ROOT/xcodebuild"
 "$ROOT/xcodebuild" -c 'sleep 7; :' test-without-building &
 active_build_pid=$!
-run_lane host-blocked pr 0 1 > "$ROOT/host-blocked.out" 2>&1 &
+run_lane host-blocked pr 0 15 > "$ROOT/host-blocked.out" 2>&1 &
 host_blocked_pid=$!
 wait_for_ticket host-blocked
 sleep 2
@@ -313,7 +313,6 @@ sleep 2
 assert_contains "$ROOT/host-blocked-status.out" "QUEUE position=1 class=pr lane=host-blocked"
 assert_contains "$ROOT/gui-lock.log" "blocked: active xcodebuild pid $active_build_pid"
 wait "$active_build_pid" "$host_blocked_pid"
-assert_contains "$ROOT/host-blocked.out" "WAIT queue timeout; ticket retained in place"
 assert_contains "$ROOT/host-blocked.out" "RELEASED lane=host-blocked"
 
 echo "test: active host xcodebuild prevents stale reclaim"
@@ -346,7 +345,7 @@ assert_contains "$ROOT/gui-lock.log" "blocked: active xcodebuild pid $active_run
 wait "$active_runner_pid" "$runner_blocked_pid"
 assert_contains "$ROOT/runner-blocked.out" "RELEASED lane=runner-blocked"
 
-echo "test: queue timeout retains position"
+echo "test: hard queue deadline keeps FIFO until timeout then removes ticket"
 reset_state
 run_lane timeout-holder pr 4 > "$ROOT/timeout-holder.out" 2>&1 &
 timeout_holder_pid=$!
@@ -359,9 +358,11 @@ for attempt in $(seq 1 20); do
   sleep 1
 done
 assert_contains "$ROOT/timeout-status.out" "QUEUE position=1 class=pr lane=timeout-waiter"
-wait "$timeout_holder_pid" "$timeout_waiter_pid"
-assert_contains "$ROOT/timeout-waiter.out" "WAIT queue timeout; ticket retained in place"
-assert_contains "$ROOT/gui-lock.log" "requeued in place"
+if wait "$timeout_waiter_pid"; then fail "expired queue unexpectedly entered"; fi
+assert_contains "$ROOT/timeout-waiter.out" "GUI startup/queue deadline exceeded"
+[ -z "$(find "$ROOT/.gui.queue" -name '*-timeout-waiter' -print -quit)" ] ||
+  fail "expired queue ticket remained"
+wait "$timeout_holder_pid"
 
 echo "test: hard lease maximum"
 if "$SCRIPT" run --lane invalid --class pr --sha test --dir "$ROOT/invalid" --lease-minutes 46 -- true > /dev/null 2>&1; then
@@ -671,5 +672,111 @@ if (
 ) > /dev/null 2>&1; then
   fail "direct bash -c wrapper was accepted"
 fi
+
+echo "test: VM fence disallows direct or repeated guest leases"
+reset_state
+export GUI_LOCK_TEST_VM_HOST=1 GUI_LOCK_TEST_VM_CONSOLE_STATE=unlocked GUI_LOCK_TEST_BOOT_ID=boot1
+if run_lane vm-direct pr 0 > "$ROOT/vm-direct.out" 2>&1; then
+  fail "VM command ran without host fence"
+fi
+"$SCRIPT" vm-arm vm-a > "$ROOT/vm-arm.out"
+vm_dir="$ROOT/run-vm"
+"$SCRIPT" run --lane vm-first --class pr --sha test --dir "$vm_dir" \
+  --vm-token vm-a --queue-timeout 10 --result "$vm_dir/result.xcresult" -- \
+  bash -c 'mkdir -p "$1"' _ "$vm_dir/result.xcresult" > "$ROOT/vm-first.out"
+assert_contains "$ROOT/vm-first.out" "VM_FENCED lane=vm-first"
+[ -d "$ROOT/.gui.lock" ] || fail "VM lease released before reboot"
+if "$SCRIPT" run --lane vm-repeat --class pr --sha test --dir "$ROOT/run-vm-repeat" \
+  --vm-token vm-a -- bash -c true > "$ROOT/vm-repeat.out" 2>&1; then
+  fail "VM token admitted another run before reboot"
+fi
+if "$SCRIPT" vm-release vm-a boot1 > "$ROOT/vm-same-boot.out" 2>&1; then
+  fail "VM fence cleared without a different boot"
+fi
+GUI_LOCK_TEST_VM_READY=0 GUI_LOCK_TEST_BOOT_ID=boot2 \
+  "$SCRIPT" vm-release vm-a boot1 > "$ROOT/vm-not-ready.out" 2>&1 &&
+  fail "unready VM cleared fence"
+GUI_LOCK_TEST_BOOT_ID=boot2 "$SCRIPT" vm-release vm-a boot1 > "$ROOT/vm-ready.out"
+assert_contains "$ROOT/vm-ready.out" "VM_READY token=vm-a boot=boot2"
+[ ! -d "$ROOT/.gui.lock" ] || fail "old boot lease remained after proved reboot"
+export GUI_LOCK_TEST_BOOT_ID=boot2
+"$SCRIPT" vm-arm vm-b > "$ROOT/vm-next.out"
+GUI_LOCK_TEST_BOOT_ID=boot3 "$SCRIPT" vm-release vm-b boot2 > "$ROOT/vm-next-ready.out"
+unset GUI_LOCK_TEST_VM_HOST GUI_LOCK_TEST_VM_CONSOLE_STATE GUI_LOCK_TEST_BOOT_ID
+
+echo "test: host helper requires detached acknowledgment and changed guest boot"
+reset_state
+HOST="$(cd "$(dirname "$SCRIPT")" && pwd)/gui-vm-lease"
+export GUI_VM_ROOT="$ROOT/host" GUI_VM_TEST_MODE=1 GUI_VM_TEST_GUEST_SCRIPT="$SCRIPT"
+mkdir -p "$GUI_VM_ROOT"
+printf 'running\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.state"
+printf 'boot1\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.boot"
+"$HOST" run --vm ww-ui-1 --deadline 18 -- run --lane host-first --class pr \
+  --sha test --dir "$ROOT/host-run" --queue-timeout 5 \
+  --result "$ROOT/host-run/result.xcresult" -- \
+  bash -c 'mkdir -p "$1"' _ "$ROOT/host-run/result.xcresult" > "$ROOT/host-first.out" 2>&1 &
+host_pid=$!
+for attempt in $(seq 1 12); do
+  [ "$(sed -n 's/^phase=//p' "$GUI_VM_ROOT/ww-ui-1.state" 2>/dev/null)" = awaiting-detached-restart ] && break
+  sleep 1
+done
+[ "$(cat "$GUI_VM_ROOT/ww-ui-1.synthetic.state")" = stopped ] || fail "host did not stop VM after lease"
+token=$(sed -n 's/^token=//p' "$GUI_VM_ROOT/ww-ui-1.state")
+[ -n "$token" ] || fail "host token not recorded"
+if "$HOST" run --vm ww-ui-1 --deadline 5 -- run --lane early -- \
+  bash -c true > "$ROOT/host-early.out" 2>&1; then
+  fail "new guest ticket entered while VM awaiting restart"
+fi
+printf 'boot2\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.boot"
+printf 'running\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.state"
+"$HOST" acknowledge-detached ww-ui-1 "$token" > "$ROOT/host-ack.out"
+wait "$host_pid" || { cat "$ROOT/host-first.out" >&2; fail "host VM transaction failed"; }
+assert_contains "$ROOT/host-first.out" "VM_READY vm=ww-ui-1 token=$token"
+[ ! -e "$GUI_VM_ROOT/ww-ui-1.state" ] || fail "ready VM retained host fence"
+
+echo "test: host stop failure retains fence and rejects successor"
+printf 'running\n' > "$GUI_VM_ROOT/ww-ui-2.synthetic.state"
+printf 'boot1\n' > "$GUI_VM_ROOT/ww-ui-2.synthetic.boot"
+if GUI_VM_TEST_STOP_FAIL=1 "$HOST" run --vm ww-ui-2 --deadline 5 -- run \
+  --lane failed-stop --class pr --sha test --dir "$ROOT/host-fail" \
+  --result "$ROOT/host-fail/result.xcresult" -- \
+  bash -c 'exit 7' > "$ROOT/host-fail.out" 2>&1; then
+  fail "failed stop reported success"
+fi
+assert_contains "$GUI_VM_ROOT/ww-ui-2.state" "phase=blocked"
+if "$HOST" run --vm ww-ui-2 --deadline 5 -- run --lane denied -- \
+  bash -c true > "$ROOT/host-denied.out" 2>&1; then
+  fail "blocked VM admitted a new host transaction"
+fi
+
+echo "test: stalled guest preflight forces stop and blocks future tickets"
+printf 'running\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.state"
+printf 'boot3\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.boot"
+if GUI_VM_TEST_VM_CONSOLE_STATE=hangs "$HOST" run --vm ww-ui-1 --deadline 6 -- run \
+  --lane stalled-preflight --class pr --sha test --dir "$ROOT/host-stalled" \
+  --result "$ROOT/host-stalled/result.xcresult" -- \
+  bash -c true > "$ROOT/host-stalled.out" 2>&1; then
+  fail "stalled console reported a completed guest run"
+fi
+assert_contains "$GUI_VM_ROOT/ww-ui-1.state" "phase=blocked"
+[ "$(cat "$GUI_VM_ROOT/ww-ui-1.synthetic.state")" = stopped ] ||
+  fail "stalled guest was left running"
+
+echo "test: stopped VM with no detached restart expires closed"
+export GUI_VM_ROOT="$ROOT/host-missing"
+mkdir -p "$GUI_VM_ROOT"
+printf 'running\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.state"
+printf 'boot4\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.boot"
+if "$HOST" run --vm ww-ui-1 --deadline 5 -- run \
+  --lane missing-detached --class pr --sha test --dir "$ROOT/host-missing" \
+  --result "$ROOT/host-missing/result.xcresult" -- \
+  bash -c 'mkdir -p "$1"' _ "$ROOT/host-missing/result.xcresult" \
+  > "$ROOT/host-missing.out" 2>&1; then
+  fail "guest admitted a successor without detached restart"
+fi
+[ "$(cat "$GUI_VM_ROOT/ww-ui-1.synthetic.state")" = stopped ] ||
+  fail "missing detached restart left VM running"
+assert_contains "$GUI_VM_ROOT/ww-ui-1.state" "phase=blocked"
+unset GUI_VM_ROOT GUI_VM_TEST_MODE GUI_VM_TEST_GUEST_SCRIPT
 
 echo "PASS: gui-lock lease tests"

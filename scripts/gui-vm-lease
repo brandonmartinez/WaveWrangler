@@ -1,0 +1,262 @@
+#!/bin/bash
+# Host-side fence for synthetic functional leases on the two existing Tart guests.
+set -u
+
+ROOT="${GUI_VM_ROOT:-$HOME/ww-uitest-runs/vm-fences}"
+mkdir -p "$ROOT"
+monotonic_now() { /usr/bin/perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e 'print int(clock_gettime(CLOCK_MONOTONIC))'; }
+fail() { echo "VM lifecycle blocked: $*" >&2; exit 75; }
+field() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -1; }
+remaining() {
+  local left=$((DEADLINE - $(monotonic_now)))
+  [ "$left" -gt 0 ] || return 1
+  printf '%s\n' "$left"
+}
+bounded() {
+  local limit
+  limit=$(remaining) || return 75
+  if [ -n "${GUI_VM_TEST_REMOTE_BUDGET:-}" ] &&
+    [ "$GUI_VM_TEST_REMOTE_BUDGET" -lt "$limit" ]; then
+    limit="$GUI_VM_TEST_REMOTE_BUDGET"
+  fi
+  /run/current-system/sw/bin/timeout --foreground --kill-after=2 "$limit" "$@" 9>&-
+}
+vm_state() {
+  if [ "${GUI_VM_TEST_MODE:-0}" = 1 ]; then
+    cat "$ROOT/$VM.synthetic.state"
+    return
+  fi
+  bounded tart list --format json | jq -er --arg vm "$VM" \
+    '[.[] | select(.Name == $vm) | .State] | if length == 1 then .[0] else error("VM identity not unique") end'
+}
+remote() {
+  local command="" escaped argument limit
+  if [ "${GUI_VM_TEST_MODE:-0}" = 1 ]; then
+    if [ "$1" = /usr/sbin/sysctl ]; then cat "$ROOT/$VM.synthetic.boot"; return; fi
+    if [ "$1" = '$HOME/ww-uitest-runs/gui-lock' ]; then shift; fi
+    limit=$(remaining) || return 75
+    GUI_LOCK_ROOT="$ROOT/$VM.synthetic.guest" GUI_LOCK_TEST_MODE=1 \
+      GUI_LOCK_TEST_VM_HOST=1 GUI_LOCK_TEST_VM_CONSOLE_STATE="${GUI_VM_TEST_VM_CONSOLE_STATE:-unlocked}" \
+      GUI_LOCK_TEST_BOOT_ID="$(cat "$ROOT/$VM.synthetic.boot")" \
+      /run/current-system/sw/bin/timeout --foreground --kill-after=2 "$limit" \
+      "${GUI_VM_TEST_GUEST_SCRIPT:?}" "$@" 9>&-
+    return
+  fi
+  for argument in "$@"; do
+    if [ "$argument" = '$HOME/ww-uitest-runs/gui-lock' ]; then
+      escaped='$HOME/ww-uitest-runs/gui-lock'
+    else
+      printf -v escaped '%q' "$argument"
+    fi
+    command="$command $escaped"
+  done
+  limit=$(remaining) || return 75
+  /run/current-system/sw/bin/timeout --foreground --kill-after=2 "$limit" \
+    ssh -o BatchMode=yes -o ConnectTimeout=8 "$VM" "$command" 9>&-
+}
+save_state() {
+  printf 'token=%s\nboot=%s\nphase=%s\ndeadline=%s\n' "$TOKEN" "$BOOT" "$1" "$DEADLINE" > "$STATE.tmp.$$" &&
+    mv "$STATE.tmp.$$" "$STATE"
+}
+stop_vm() {
+  local state
+  state=$(vm_state) || return 1
+  if [ "$state" = running ]; then
+    if [ "${GUI_VM_TEST_MODE:-0}" = 1 ]; then
+      [ "${GUI_VM_TEST_STOP_FAIL:-0}" != 1 ] || return 1
+      printf 'stopped\n' > "$ROOT/$VM.synthetic.state"
+    else
+      bounded tart stop "$VM" --timeout 15 || return 1
+    fi
+  elif [ "$state" != stopped ]; then
+    echo "unexpected VM state: $state" >&2
+    return 1
+  fi
+  state=$(vm_state) || return 1
+  [ "$state" = stopped ] || { echo "VM did not stop: $state" >&2; return 1; }
+  rm -f "$ROOT/$VM.ack.$TOKEN"
+  save_state awaiting-detached-restart
+  printf 'STOPPED vm=%s token=%s; launch this same VM with functions.bash mode=async detach=true:\n' "$VM" "$TOKEN"
+  printf '  tart run --no-graphics --no-clipboard --no-audio %s\n' "$VM"
+}
+recover_on_exit() {
+  local rc="$?"
+  trap - EXIT INT TERM
+  if [ "$PHASE" = running ]; then
+    echo "VM lifecycle interrupted (status $rc); stopping $VM" >&2
+    stop_vm || echo "VM stop unproved; manual intervention required" >&2
+  fi
+  [ "$PHASE" = complete ] || save_state blocked
+  exit "$rc"
+}
+
+finish_reboot() {
+  local state new_boot
+  while :; do
+    state=$(vm_state) || return 1
+    if [ "$state" = running ]; then
+      PHASE=running
+      [ -f "$ROOT/$VM.ack.$TOKEN" ] && break
+    fi
+    remaining >/dev/null || return 1
+    sleep 2 9>&-
+  done
+  save_state verifying
+  PHASE=running
+  new_boot=$(remote /usr/sbin/sysctl -n kern.boottime) || return 1
+  [ "$new_boot" != "$BOOT" ] &&
+    [ "$(cat "$ROOT/$VM.ack.$TOKEN")" = "$new_boot" ] || return 1
+  remote '$HOME/ww-uitest-runs/gui-lock' status || return 1
+  remote '$HOME/ww-uitest-runs/gui-lock' vm-release "$TOKEN" "$BOOT" || return 1
+  printf 'VM_READY vm=%s token=%s old_boot=%s new_boot=%s guest_status=%s\n' \
+    "$VM" "$TOKEN" "$BOOT" "$new_boot" "${rc:-interrupted}"
+  rm "$STATE" "$ROOT/$VM.ack.$TOKEN" || return 1
+  PHASE=complete
+}
+
+if [ "${1:-}" = acknowledge-detached ]; then
+  [ $# -eq 3 ] || fail "usage: gui-vm-lease acknowledge-detached ww-ui-1|ww-ui-2 TOKEN"
+  VM="$2"
+  case "$VM" in ww-ui-1|ww-ui-2) ;; *) fail "unknown VM";; esac
+  STATE="$ROOT/$VM.state"
+  [ "$(field "$STATE" token)" = "$3" ] &&
+    [ "$(field "$STATE" phase)" = awaiting-detached-restart ] ||
+    fail "no matching stopped VM awaiting detached launch"
+  DEADLINE=$(field "$STATE" deadline)
+  remaining >/dev/null || fail "detached launch arrived after hard deadline"
+  [ "$(vm_state)" = running ] || fail "guest is not running"
+  new_boot=$(remote /usr/sbin/sysctl -n kern.boottime) || fail "guest boot identity unavailable"
+  [ "$new_boot" != "$(field "$STATE" boot)" ] || fail "guest did not reboot"
+  printf '%s\n' "$new_boot" > "$ROOT/$VM.ack.$3" ||
+    fail "cannot record detached launch acknowledgment"
+  printf 'DETACHED_ACK vm=%s token=%s\n' "$VM" "$3"
+  exit 0
+fi
+
+case "${1:-}" in run|recover) ;; *)
+  fail "usage: gui-vm-lease run|recover --vm ww-ui-1|ww-ui-2 --deadline SECONDS -- gui-lock run ..."
+  ;;
+esac
+ACTION="$1"
+shift
+VM=""; TOTAL_SECONDS=""; PHASE=setup
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --vm) VM="$2"; shift 2;;
+    --deadline) TOTAL_SECONDS="$2"; shift 2;;
+    --) shift; break;;
+    *) fail "unexpected option: $1";;
+  esac
+done
+case "$VM" in ww-ui-1|ww-ui-2) ;; *) fail "only ww-ui-1 and ww-ui-2 are authorized";; esac
+case "$TOTAL_SECONDS" in ""|*[!0-9]*) fail "deadline must be integer seconds";; esac
+if [ "${GUI_VM_TEST_MODE:-0}" != 1 ]; then
+  [ "$TOTAL_SECONDS" -ge 120 ] || fail "deadline must leave at least 120 seconds for stop/restart"
+fi
+if [ "$ACTION" = run ]; then
+  [ "${1:-}" = run ] || fail "expected guest gui-lock run arguments after --"
+  shift
+  RESULT_PATH=""
+  args=("$@")
+  for ((i=0; i<${#args[@]}; i++)); do
+    argument="${args[$i]}"
+    [ "$argument" != --vm-token ] || fail "VM token is assigned by the host helper"
+    [ "$argument" != -- ] || break
+    if [ "$argument" = --result ]; then
+      [ "$((i + 1))" -lt "${#args[@]}" ] || fail "--result needs a path"
+      RESULT_PATH="${args[$((i + 1))]}"
+    fi
+  done
+  [ -n "$RESULT_PATH" ] || fail "an explicit guest --result path is required"
+fi
+if [ "${GUI_VM_TEST_MODE:-0}" != 1 ]; then
+  [ -x /run/current-system/sw/bin/timeout ] && command -v tart >/dev/null &&
+    command -v jq >/dev/null || fail "host requires configured timeout, tart, and jq"
+fi
+
+STATE="$ROOT/$VM.state"
+GUARD="$ROOT/$VM.guard"
+exec 9>"$GUARD" || fail "cannot open persistent host guard"
+/usr/bin/lockf -s -t 1 9 || fail "another lifecycle owns $VM"
+if [ "$ACTION" = recover ]; then
+  [ -f "$STATE" ] && [ "$(field "$STATE" phase)" = blocked ] ||
+    fail "recovery requires a blocked previous lifecycle"
+  TOKEN=$(field "$STATE" token)
+  BOOT=$(field "$STATE" boot)
+  [ -n "$TOKEN" ] && [ -n "$BOOT" ] || fail "prior guest fence/boot unknown; manual recovery required"
+  DEADLINE=$(( $(monotonic_now) + TOTAL_SECONDS ))
+  PHASE=running
+  trap recover_on_exit EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  stop_vm || fail "recovery stop failed"
+  PHASE=stopped
+  finish_reboot || fail "recovery restart/readiness failed"
+  exit 0
+fi
+[ ! -e "$STATE" ] || fail "prior VM lifecycle is unresolved: $STATE"
+DEADLINE=$(( $(monotonic_now) + TOTAL_SECONDS ))
+TOKEN="$(date +%s)-$$-$RANDOM"
+BOOT=""
+save_state starting
+trap recover_on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+PHASE=running
+
+[ "$(vm_state)" = running ] || fail "existing VM is not running"
+BOOT=$(remote /usr/sbin/sysctl -n kern.boottime) || fail "cannot read guest boot identity"
+save_state arming
+remote '$HOME/ww-uitest-runs/gui-lock' vm-arm "$TOKEN" || fail "guest refused fence"
+save_state running
+PHASE=running
+budget=$(remaining) || fail "deadline expired before guest run"
+if [ "${GUI_VM_TEST_MODE:-0}" != 1 ]; then budget=$((budget - 90)); fi
+[ "$budget" -gt 0 ] || fail "insufficient time to stop and restart"
+guest_args=$(printf ' %q' "$@")
+remote_args=$(printf ' %q' "$TOKEN")
+rc=0
+if [ "${GUI_VM_TEST_MODE:-0}" = 1 ]; then
+  GUI_VM_TEST_REMOTE_BUDGET=$((budget - 2)) \
+    remote '$HOME/ww-uitest-runs/gui-lock' run --vm-token "$TOKEN" "$@" || rc=$?
+else
+  /run/current-system/sw/bin/timeout --foreground --kill-after=2 "$budget" \
+    ssh -o BatchMode=yes -o ConnectTimeout=8 "$VM" \
+    "\$HOME/ww-uitest-runs/gui-lock run --vm-token$remote_args$guest_args" 9>&- || rc=$?
+fi
+printf 'GUEST_STATUS vm=%s token=%s exit=%s\n' "$VM" "$TOKEN" "$rc"
+evidence="$ROOT/$VM.evidence.$TOKEN"
+budget=$(remaining) || budget=0
+if [ "${GUI_VM_TEST_MODE:-0}" = 1 ]; then
+  budget=$((budget - 2))
+else
+  budget=$((budget - 70))
+fi
+if [ "$budget" -gt 0 ]; then
+  if [ "${GUI_VM_TEST_MODE:-0}" = 1 ]; then
+    [ -e "$RESULT_PATH" ] && printf 'synthetic xcresult present: %s\n' "$RESULT_PATH" > "$evidence"
+    summary_status=$?
+  else
+    printf -v escaped_result '%q' "$RESULT_PATH"
+    /run/current-system/sw/bin/timeout --foreground --kill-after=2 "$budget" \
+      ssh -o BatchMode=yes -o ConnectTimeout=8 "$VM" \
+      "xcrun xcresulttool get test-results summary --path $escaped_result" \
+      > "$evidence" 2>&1 9>&-
+    summary_status=$?
+  fi
+else
+  printf 'No time reserved to inspect result before VM stop\n' > "$evidence"
+  summary_status=75
+fi
+if [ "$summary_status" -ne 0 ]; then
+  printf 'EVIDENCE_UNAVAILABLE vm=%s token=%s status=%s\n' "$VM" "$TOKEN" "$summary_status"
+  [ "$rc" -ne 0 ] || rc=75
+else
+  printf 'EVIDENCE_CAPTURED vm=%s token=%s file=%s\n' "$VM" "$TOKEN" "$evidence"
+fi
+save_state stopping
+stop_vm || fail "stop failed; VM and fence remain blocked"
+PHASE=stopped
+
+finish_reboot || fail "detached restart/readiness failed; VM remains fenced"
+exit "$rc"

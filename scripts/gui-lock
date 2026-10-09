@@ -15,11 +15,13 @@ ACQUIRING_GRACE_SECONDS=120
 LEGACY_HARD_MAX_SECONDS=2700
 RESTORE_TIMEOUT_SECONDS=30
 CLASSES="required pr full perf"
+VM_FENCE="$ROOT/.gui.vm.fence"
 
 mkdir -p "$ROOT" "$QUEUE"
 for priority in $CLASSES; do mkdir -p "$QUEUE/$priority"; done
 
 now() { date +%s; }
+monotonic_now() { /usr/bin/perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e 'print int(clock_gettime(CLOCK_MONOTONIC))'; }
 timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { printf '%s %s\n' "$(timestamp)" "$*" >> "$LOG"; }
 field() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -1; }
@@ -117,6 +119,12 @@ reclaim_dead_tickets() {
 }
 acquire_guard() {
   local timeout=120
+  if [ -n "${STARTUP_DEADLINE:-}" ] && [ "${ACQUIRED_OWNERSHIP:-0}" != 1 ]; then
+    timeout=$((STARTUP_DEADLINE - $(monotonic_now)))
+    [ "$timeout" -gt 0 ] || { echo "GUI startup deadline exceeded" >&2; return 1; }
+  elif vm_host && [ "${ACQUIRED_OWNERSHIP:-0}" = 1 ]; then
+    timeout=10
+  fi
   if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ -n "${GUI_LOCK_TEST_GUARD_TIMEOUT_SECONDS:-}" ]; then
     case "$GUI_LOCK_TEST_GUARD_TIMEOUT_SECONDS" in
       ""|*[!0-9]*) echo "test guard timeout must be an integer" >&2; return 1;;
@@ -281,6 +289,7 @@ restore_recorded_settings() {
   lane=$(field "$owner" lane)
   if [ ! -x "$script" ]; then
     log "WARN settings restore script is not executable lane=$lane script=$script"
+    vm_host && return 1
     return 0
   fi
   timeout_command=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)
@@ -289,12 +298,14 @@ restore_recorded_settings() {
   fi
   if [ -z "$timeout_command" ]; then
     log "WARN settings restore unavailable without timeout command lane=$lane script=$script"
+    vm_host && return 1
     return 0
   fi
   "$timeout_command" --kill-after=5 "$RESTORE_TIMEOUT_SECONDS" "$script" >> "$output" 2>&1
   rc=$?
   if [ "$rc" -ne 0 ]; then
     log "WARN settings restore failed/killed lane=$lane script=$script status=$rc"
+    vm_host && return 1
   fi
 }
 
@@ -305,6 +316,84 @@ cleanup_reclaimed_lease() {
   kill_recorded_pids "$pids_file"
   restore_recorded_settings "$reclaimed_owner"
   rm -rf "$reclaimed"
+}
+
+vm_boot() {
+  if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ]; then
+    printf '%s\n' "${GUI_LOCK_TEST_BOOT_ID:-synthetic-boot}"
+  else
+    /usr/sbin/sysctl -n kern.boottime
+  fi
+}
+
+vm_host() {
+  local model
+  if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ]; then
+    [ "${GUI_LOCK_TEST_VM_HOST:-0}" = 1 ]
+    return
+  fi
+  model=$(/usr/sbin/sysctl -n hw.model) || return 1
+  case "$model" in VirtualMac*) return 0;; *) return 1;; esac
+}
+
+vm_fence_command() {
+  local action="$1" requested="$2" previous="${3:-}" recorded boot state old_owner ticket
+  vm_host || { echo "VM fence commands require a VirtualMac" >&2; return 1; }
+  case "$requested" in ""|*[!a-zA-Z0-9_-]*) echo "invalid VM fence token" >&2; return 2;; esac
+  acquire_guard
+  boot=$(vm_boot) || { release_guard; return 1; }
+  if [ "$action" = vm-arm ]; then
+    if [ -f "$VM_FENCE" ] || [ -d "$LOCK" ] || [ -n "$(first_ticket)" ] ||
+      block_if_test_active; then
+      echo "VM lease or fence already active" >&2
+      release_guard
+      return 1
+    fi
+    { printf 'token=%s\nboot=%s\nstate=armed\n' "$requested" "$boot"; } | atomic_write "$VM_FENCE"
+    printf 'VM_ARMED token=%s boot=%s\n' "$requested" "$boot"
+  else
+    recorded=$(field "$VM_FENCE" token)
+    state=$(field "$VM_FENCE" state)
+    if [ "$recorded" != "$requested" ] || { [ "$state" != spent ] && [ "$state" != armed ]; } ||
+      [ "$boot" = "$previous" ] || [ "$(field "$VM_FENCE" boot)" != "$previous" ]; then
+      echo "VM reboot/fence proof missing; retaining fence" >&2
+      release_guard
+      return 1
+    fi
+    for ticket in $(tickets_in_order); do
+      if [ "$(field "$ticket/ticket" vm_token)" != "$requested" ] ||
+        [ "$(field "$ticket/ticket" boot)" != "$previous" ]; then
+        echo "foreign/unknown VM ticket remains; retaining fence" >&2
+        release_guard
+        return 1
+      fi
+    done
+    if ! vm_console_preflight ||
+      { [ "${GUI_LOCK_TEST_MODE:-}" != 1 ] && ! xcodebuild -checkFirstLaunchStatus; } ||
+      { [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ "${GUI_LOCK_TEST_VM_READY:-1}" != 1 ]; }; then
+      echo "VM readiness failed; retaining fence" >&2
+      release_guard
+      return 1
+    fi
+    if [ -d "$LOCK" ]; then
+      old_owner=$(owner_file "$LOCK")
+      if [ "$(field "$old_owner" boot)" != "$previous" ] ||
+        [ "$(field "$old_owner" vm_token)" != "$requested" ] ||
+        ! restore_recorded_settings "$old_owner"; then
+        echo "old VM lease does not match reboot proof; retaining fence" >&2
+        release_guard
+        return 1
+      fi
+      mv "$LOCK" "$ROOT/.gui.vm.recovered-$requested" || { release_guard; return 1; }
+    fi
+    for ticket in $(tickets_in_order); do
+      mv "$ticket" "$ROOT/.gui.vm.ticket.recovered-$(basename "$ticket")" ||
+        { release_guard; return 1; }
+    done
+    rm "$VM_FENCE" || { release_guard; return 1; }
+    printf 'VM_READY token=%s boot=%s\n' "$requested" "$boot"
+  fi
+  release_guard
 }
 
 reclaim_if_stale() {
@@ -364,6 +453,9 @@ write_owner_file() {
     printf 'heartbeat=%s\n' "$HEARTBEAT"
     printf 'expires=%s\n' "$EXPIRES"
     printf 'lease_seconds=%s\n' "$LEASE_SECONDS"
+    if vm_host; then
+      printf 'boot=%s\nvm_token=%s\n' "$(vm_boot)" "$VM_TOKEN"
+    fi
   } | atomic_write "$owner"
 }
 
@@ -417,6 +509,12 @@ cleanup_owned_lease() {
     release_guard
     return 0
   fi
+  if vm_host; then
+    log "VM fenced until host reboot lane=$LANE class=$CLASS sha=$SHA"
+    printf 'VM_FENCED lane=%s token=%s; host must stop/restart guest\n' "$LANE" "$VM_TOKEN"
+    release_guard
+    return 0
+  fi
   kill_recorded_pids "$(field "$owner" pids_file)"
   restore_recorded_settings "$owner"
   releasing="$ROOT/.gui.lock.releasing-$TOKEN"
@@ -442,6 +540,10 @@ cleanup_run() {
 status() {
   current=$(now)
   remaining=0
+  if [ -f "$VM_FENCE" ]; then
+    printf 'VM_FENCE state=%s token=%s boot=%s\n' \
+      "$(field "$VM_FENCE" state)" "$(field "$VM_FENCE" token)" "$(field "$VM_FENCE" boot)"
+  fi
   if [ -d "$LOCK" ] && [ -f "$(owner_file "$LOCK")" ]; then
     owner=$(owner_file "$LOCK")
     acquired=$(field "$owner" acquired)
@@ -484,6 +586,10 @@ vm_console_preflight() {
   local model state
   if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ -n "${GUI_LOCK_TEST_VM_CONSOLE_STATE:-}" ]; then
     state="$GUI_LOCK_TEST_VM_CONSOLE_STATE"
+    if [ "$state" = hangs ]; then
+      sleep 20
+      state=unavailable
+    fi
     if [ "$state" = locks-after-preflight ]; then
       VM_CONSOLE_PREFLIGHT_COUNT=$(( ${VM_CONSOLE_PREFLIGHT_COUNT:-0} + 1 ))
       if [ "$VM_CONSOLE_PREFLIGHT_COUNT" -eq 1 ]; then state=unlocked; else state=locked; fi
@@ -538,6 +644,9 @@ acquire_for_run() {
     printf 'owner_pid=%s\n' "$$"
     printf 'created=%s\n' "$(now)"
     printf 'lease_seconds=%s\n' "$LEASE_SECONDS"
+    if vm_host; then
+      printf 'vm_token=%s\nboot=%s\n' "$VM_TOKEN" "$(vm_boot)"
+    fi
   } | atomic_write "$TICKET/ticket"
   log "ticket lane=$LANE class=$CLASS pr=$PR sha=$SHA ticket=$(basename "$TICKET")"
   deadline=$(( $(now) + QUEUE_TIMEOUT ))
@@ -556,6 +665,13 @@ acquire_for_run() {
     fi
     if [ "$first" = "$TICKET" ]; then
       acquire_guard
+      if vm_host && { [ "$(field "$VM_FENCE" token)" != "$VM_TOKEN" ] ||
+        [ "$(field "$VM_FENCE" state)" != armed ] ||
+        [ "$(field "$VM_FENCE" boot)" != "$(vm_boot)" ]; }; then
+        echo "VM fence unavailable or spent; restart required" >&2
+        release_guard
+        return 75
+      fi
       if ! vm_console_preflight; then
         release_guard
         return 1
@@ -569,6 +685,10 @@ acquire_for_run() {
           continue
         fi
         if mkdir "$LOCK" 2>/dev/null; then
+          if vm_host; then
+            { printf 'token=%s\nboot=%s\nstate=spent\n' "$VM_TOKEN" "$(vm_boot)"; } |
+              atomic_write "$VM_FENCE"
+          fi
           TOKEN="$(now)-$$-$sequence"
           mkdir -p "$DIR"
           RECORDED_RESTORE_SCRIPT="$RESTORE_SCRIPT"
@@ -594,10 +714,10 @@ acquire_for_run() {
         release_guard
       fi
     fi
-    if [ "$(now)" -ge "$deadline" ]; then
-      log "WARN queue timeout lane=$LANE class=$CLASS ticket=$(basename "$TICKET") requeued in place"
-      printf 'WAIT queue timeout; ticket retained in place lane=%s class=%s\n' "$LANE" "$CLASS"
-      deadline=$(( $(now) + QUEUE_TIMEOUT ))
+    if [ "$(monotonic_now)" -ge "$STARTUP_DEADLINE" ]; then
+      log "ERROR queue deadline lane=$LANE class=$CLASS ticket=$(basename "$TICKET")"
+      echo "GUI startup/queue deadline exceeded" >&2
+      return 75
     fi
     sleep "$POLL"
   done
@@ -632,9 +752,14 @@ validate_command() {
 }
 
 run_one() {
-  trap cleanup_run EXIT
-  trap 'cleanup_run; exit 130' INT
-  trap 'cleanup_run; exit 143' TERM
+  trap 'rc=$?; cleanup_run || rc=75; exit "$rc"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  if vm_host && { [ "$(field "$VM_FENCE" token)" != "$VM_TOKEN" ] ||
+    [ "$(field "$VM_FENCE" state)" != armed ]; }; then
+    echo "VM fence unavailable or spent; restart required" >&2
+    return 75
+  fi
   if ! vm_console_preflight; then
     return 1
   fi
@@ -651,19 +776,22 @@ run_one() {
   write_owner
   last_mtime=$(stat_mtime "$OUTPUT")
   warned=0
+  run_deadline=$(( $(monotonic_now) + LEASE_SECONDS ))
 
   while kill -0 "$COMMAND_PID" 2>/dev/null; do
     sleep "$POLL"
     if ! still_owner; then
       log "WARN lease lost lane=$LANE pid=$COMMAND_PID"
+      vm_host && return 75
       kill "$COMMAND_PID" 2>/dev/null || true
       wait "$COMMAND_PID" 2>/dev/null || true
       return 75
     fi
     record_run_pids
     current=$(now)
-    if [ "$current" -ge "$EXPIRES" ]; then
+    if [ "$current" -ge "$EXPIRES" ] || [ "$(monotonic_now)" -ge "$run_deadline" ]; then
       log "WARN lease expired while command ran lane=$LANE pid=$COMMAND_PID"
+      vm_host && return 75
       kill_recorded_pids "$PIDS_FILE"
       wait "$COMMAND_PID" 2>/dev/null || true
       return 75
@@ -672,6 +800,7 @@ run_one() {
     if [ "$current_mtime" -gt "$last_mtime" ]; then
       if ! renew_lease_if_owned; then
         log "WARN lease lost while renewing lane=$LANE pid=$COMMAND_PID"
+        vm_host && return 75
         kill_recorded_pids "$PIDS_FILE"
         wait "$COMMAND_PID" 2>/dev/null || true
         return 75
@@ -719,6 +848,12 @@ command="${1:-status}"
 [ $# -gt 0 ] && shift
 case "$command" in
   status) status; exit 0;;
+  vm-arm|vm-release)
+    [ $# -ge 1 ] && [ $# -le 2 ] || exit 2
+    LANE=vm-fence
+    vm_fence_command "$command" "$@"
+    exit $?
+    ;;
   guard-probe)
     [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ $# -eq 2 ] || exit 2
     guard_probe "$1" "$2"
@@ -743,6 +878,7 @@ OUTPUT=""
 RESTORE_SCRIPT=""
 LEASE_MINUTES="$DEFAULT_LEASE_MINUTES"
 QUEUE_TIMEOUT=3600
+VM_TOKEN=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --lane) LANE="$2"; shift 2;;
@@ -755,6 +891,7 @@ while [ $# -gt 0 ]; do
     --restore-script) RESTORE_SCRIPT="$2"; shift 2;;
     --lease-minutes) LEASE_MINUTES="$2"; shift 2;;
     --queue-timeout) QUEUE_TIMEOUT="$2"; shift 2;;
+    --vm-token) VM_TOKEN="$2"; shift 2;;
     --) shift; break;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2;;
   esac
@@ -776,6 +913,13 @@ case "$LEASE_MINUTES" in *[!0-9]*|"") echo "lease minutes must be an integer" >&
 }
 case "$QUEUE_TIMEOUT" in *[!0-9]*|"") echo "queue timeout must be an integer" >&2; exit 2;; esac
 [ "$QUEUE_TIMEOUT" -ge 1 ] || { echo "queue timeout must be positive" >&2; exit 2; }
+if vm_host; then
+  [ -n "$VM_TOKEN" ] && [ "$(field "$VM_FENCE" token)" = "$VM_TOKEN" ] &&
+    [ "$(field "$VM_FENCE" state)" = armed ] || {
+    echo "VirtualMac run requires an armed VM fence; restart required" >&2
+    exit 75
+  }
+fi
 
 LEASE_SECONDS=$((LEASE_MINUTES * 60))
 if [ "${GUI_LOCK_TEST_MODE:-}" = 1 ] && [ -n "${GUI_LOCK_TEST_LEASE_SECONDS:-}" ]; then
@@ -797,5 +941,6 @@ ACQUIRED_OWNERSHIP=0
 GUARD_HELD=0
 RECORDED_RESTORE_SCRIPT=""
 SETTINGS_RESTORE_PENDING=0
+STARTUP_DEADLINE=$(( $(monotonic_now) + QUEUE_TIMEOUT ))
 
 run_one "$@"

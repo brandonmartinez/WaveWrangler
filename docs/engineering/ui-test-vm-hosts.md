@@ -28,6 +28,75 @@ Tart's [personal-workstation license](https://tart.run/licensing/)
 is royalty-free; Apple's [macOS license](https://www.apple.com/legal/sla/docs/macOSGoldenGate.pdf)
 limits this Mac to two additional macOS virtualized instances.
 
+## Proposed per-lease reboot fence (#415; not deployed)
+
+This source change is a **draft**, not permission to run a selector or replace
+the installed helper. Independent source review and a separate coordinator
+host release are required before validating **one existing VM at a time**.
+Do not use this path for the Mac mini, performance runs, real media, or a third
+VM. The existing guest `gui-lock` instructions below describe the currently
+installed helper, not proof that the new host protocol is active.
+
+After review and installation of both scripts, run the host transaction from
+the development Mac with `functions.bash` **`mode: async, detach: true`**.
+It must outlive the initiating session; do not use an attached shell, `&`,
+`nohup`, or `disown`. The host helper holds a persistent per-VM `lockf` guard,
+arms a guest token, and allows one guest `gui-lock run` with an absolute
+monotonic startup/queue deadline. It records the guest status and leaves
+the old guest lease fenced rather than treating a PID snapshot as proof that
+XCTest runners are gone. Choose a total `--deadline` that leaves at least
+90 seconds after the guest run for stopping and restarting. A sample
+invocation (fill in a unique verified run directory, SHA, selector and result):
+
+```sh
+source "$HOME/.shell/exports-core.sh"
+# Submit this whole invocation with functions.bash mode=async detach=true.
+scripts/gui-vm-lease run --vm ww-ui-1 --deadline 3600 -- \
+  run --lane my-lane --class pr --sha "$SHA" --dir "$RUN" \
+  --result "$RUN/result.xcresult" --queue-timeout 900 -- \
+  xcodebuild test-without-building -xctestrun "$RUN/Products/WaveWranglerUITests_....xctestrun" \
+    -destination 'platform=macOS,arch=arm64' -parallel-testing-enabled NO \
+    -only-testing:WaveWranglerUITests/MyClass -resultBundlePath "$RUN/result.xcresult"
+```
+
+The host helper logs the exact guest exit status and captures an available
+`xcresulttool` summary in its per-token host evidence file (or records why
+it was unavailable). It does not delete the guest `.xcresult` or run log.
+Even a failed/TERM'd guest command
+must stop the **same** VM with `tart stop`, then output `STOPPED` with a
+transaction token. Only after this line, submit **a separate**
+`functions.bash` command with `mode: async, detach: true`:
+
+```sh
+source "$HOME/.shell/exports-core.sh"
+tart run --no-graphics --no-clipboard --no-audio ww-ui-1
+```
+
+Verify that the tool accepted **detached** mode (not merely that `tart list`
+reports `running`). Only then signal the waiting host transaction, using the
+exact `STOPPED` token; the helper checks a new guest boot identity before
+accepting the acknowledgment:
+
+```sh
+source "$HOME/.shell/exports-core.sh"
+scripts/gui-vm-lease acknowledge-detached ww-ui-1 "$TOKEN"
+```
+
+The host transaction checks the guest boot identity again, guest status,
+console unlock, Xcode first-launch status, and the old token/boot on the
+persisted guest owner and tickets before removing the fence. `VM_READY` is
+the sole admission signal for the next ticket. If stop, detached launch,
+acknowledgment, readiness, or the end-to-end deadline fails, the state file
+remains blocked; **never remove the fence or guard manually**. A separately
+authorized `gui-vm-lease recover --vm ww-ui-1 --deadline 300 --` stops the
+same guest and repeats the detached-restart handshake under a fresh recovery
+budget; it never converts the failed prior run into a pass. Stop the guest
+before investigating a failed readiness probe; do not presume host `timeout`
+on SSH has terminated guest-side XCTest. Preserve host logs, the guest run
+log and any `.xcresult` for diagnosis before trying another test. A guest
+settings-restore script requires a guest `timeout` implementation; without
+it readiness fails closed after reboot.
+
 After a host reboot, start each guest in its **own** detached,
 session-independent background process. The VM service must not be owned by
 an app/agent session that can be archived later; otherwise archiving that
