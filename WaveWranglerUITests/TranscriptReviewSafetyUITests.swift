@@ -116,7 +116,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         let inspector = app.scrollViews["ww.inspector"]
         let button = app.buttons["ww.review.action.acceptShorten"]
         let reason = app.staticTexts["ww.review.action.acceptShorten.reason"]
-        let expected = "Accept is blocked: no current proposal or transcript timing is connected; the alignment map, all-lane backing, protection coverage, and edit policy are unverified."
+        let expected = "Accept is blocked: this synthetic proposal has no verified source, word timing, current map, protection coverage, or human acceptance intent."
 
         XCTAssertTrue(button.exists)
         XCTAssertFalse(button.isEnabled)
@@ -245,7 +245,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         let blocked = app.descendants(matching: .any)["ww.review.blockedReason"]
         let accept = app.buttons["ww.review.action.acceptShorten"]
         let reason = app.staticTexts["ww.review.action.acceptShorten.reason"]
-        let refusal = "Accept is blocked: no current proposal or transcript timing is connected; the alignment map, all-lane backing, protection coverage, and edit policy are unverified."
+        let refusal = "Accept is blocked: this synthetic proposal has no verified source, word timing, current map, protection coverage, or human acceptance intent."
 
         XCTAssertTrue(inspector.waitForExistence(timeout: 3))
         XCTAssertTrue(window.frame.contains(inspector.frame), "The AX scroll viewport must stay within the show window")

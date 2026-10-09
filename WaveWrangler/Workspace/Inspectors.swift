@@ -9,7 +9,11 @@ struct InspectorContainer: View {
 
     var body: some View {
         if state.sidebarSelection != .showInfo && state.destination == .review {
-            ReviewInspectorViewport(state: state, selectedOccurrence: state.reviewState.selectedOccurrence)
+            ReviewInspectorViewport(
+                state: state,
+                selectedOccurrence: state.reviewState.selectedOccurrence,
+                selectedProposal: state.reviewState.selectedProposal
+            )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
             InspectorScrollContent(state: state)
@@ -47,6 +51,7 @@ private struct InspectorScrollContent: View {
 private struct ReviewInspectorViewport: NSViewRepresentable {
     let state: ShowWindowState
     let selectedOccurrence: TranscriptReviewShellOccurrence?
+    let selectedProposal: TranscriptReviewShellProposal?
     @Environment(\.wwTextSize) private var textSize
 
     func makeNSView(context: Context) -> ReviewInspectorPanel {
@@ -54,7 +59,7 @@ private struct ReviewInspectorViewport: NSViewRepresentable {
     }
 
     func updateNSView(_ view: ReviewInspectorPanel, context: Context) {
-        view.update(selectedOccurrence: selectedOccurrence, textSize: textSize)
+        view.update(selectedOccurrence: selectedOccurrence, selectedProposal: selectedProposal, textSize: textSize)
     }
 }
 
@@ -104,10 +109,14 @@ private final class ReviewInspectorPanel: NSView {
     }
     override var fittingSize: NSSize { .zero }
 
-    func update(selectedOccurrence: TranscriptReviewShellOccurrence?, textSize: TextSize) {
+    func update(
+        selectedOccurrence: TranscriptReviewShellOccurrence?,
+        selectedProposal: TranscriptReviewShellProposal?,
+        textSize: TextSize
+    ) {
         heading.font = .systemFont(ofSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.headline.baseSize)), weight: .semibold)
         setup.font = .systemFont(ofSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize)))
-        document.update(selectedOccurrence: selectedOccurrence, textSize: textSize)
+        document.update(selectedOccurrence: selectedOccurrence, selectedProposal: selectedProposal, textSize: textSize)
         needsLayout = true
     }
 
@@ -134,6 +143,13 @@ private final class ReviewInspectorDocument: NSView {
     private let selected = ReviewInspectorDocument.makeLabel("Selected occurrence: No occurrence selected")
     private let occurrenceID = ReviewInspectorDocument.makeLabel("Occurrence ID: None", identifier: "ww.review.inspector.occurrenceID", label: "Occurrence ID")
     private let tokenID = ReviewInspectorDocument.makeLabel("Token stub ID: None", identifier: "ww.review.inspector.tokenID", label: "Token stub ID")
+    private let proposal = ReviewInspectorDocument.makeLabel("Proposal selection: None", identifier: "ww.review.inspector.proposal", label: "Proposal selection")
+    private let proposalID = ReviewInspectorDocument.makeLabel("Proposal ID: None", identifier: "ww.review.inspector.proposalID", label: "Proposal ID")
+    private let proposalRationale = ReviewInspectorDocument.makeLabel("Proposal rationale: None", identifier: "ww.review.inspector.proposalRationale", label: "Proposal rationale")
+    private let proposalTiming = ReviewInspectorDocument.makeLabel("Proposal timing: None", identifier: "ww.review.inspector.proposalTiming", label: "Proposal timing")
+    private let proposalSource = ReviewInspectorDocument.makeLabel("Proposal source: None", identifier: "ww.review.inspector.proposalSource", label: "Proposal source")
+    private let proposalProtection = ReviewInspectorDocument.makeLabel("Proposal protection: None", identifier: "ww.review.inspector.proposalProtection", label: "Proposal protection")
+    private let proposalStatus = ReviewInspectorDocument.makeLabel("Proposal status: None", identifier: "ww.review.inspector.proposalStatus", label: "Proposal status")
     private let rows: [(NSView, CGFloat)]
 
     init() {
@@ -160,9 +176,13 @@ private final class ReviewInspectorDocument: NSView {
         action("Reject proposal", id: "reject", reason: TranscriptReviewShellPresentation.rejectBlockedReason)
         append(occurrenceID)
         append(tokenID)
-        append(Self.makeLabel("Proposal selection: \(TranscriptReviewShellPresentation.noProposalState)",
-                              identifier: "ww.review.inspector.proposal", label: "Proposal selection",
-                              value: TranscriptReviewShellPresentation.noProposalState))
+        append(proposal)
+        append(proposalID)
+        append(proposalRationale)
+        append(proposalTiming)
+        append(proposalSource)
+        append(proposalProtection)
+        append(proposalStatus)
         append(Self.makeLabel("Primary role: synthetic example, not analyzed", identifier: "ww.review.inspector.primaryState"))
         append(Self.makeLabel("Backup role: synthetic example, not analyzed; no transcript",
                               identifier: "ww.review.inspector.backupState"))
@@ -194,12 +214,31 @@ private final class ReviewInspectorDocument: NSView {
         NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
     }
 
-    func update(selectedOccurrence: TranscriptReviewShellOccurrence?, textSize: TextSize) {
+    func update(
+        selectedOccurrence: TranscriptReviewShellOccurrence?,
+        selectedProposal: TranscriptReviewShellProposal?,
+        textSize: TextSize
+    ) {
         selected.stringValue = "Selected occurrence: \(selectedOccurrence?.title ?? "No occurrence selected")"
         occurrenceID.stringValue = "Occurrence ID: \(selectedOccurrence?.id ?? "None")"
         occurrenceID.accessibilityValueOverride = selectedOccurrence?.id ?? "None"
         tokenID.stringValue = "Token stub ID: \(selectedOccurrence?.tokenStubID ?? "None")"
         tokenID.accessibilityValueOverride = selectedOccurrence?.tokenStubID ?? "None"
+        let proposalValue = selectedProposal?.title ?? TranscriptReviewShellPresentation.noProposalState
+        proposal.stringValue = "Proposal selection: \(proposalValue)"
+        proposal.accessibilityValueOverride = proposalValue
+        proposalID.stringValue = "Proposal ID: \(selectedProposal?.id ?? "None")"
+        proposalID.accessibilityValueOverride = selectedProposal?.id ?? "None"
+        proposalRationale.stringValue = "Proposal rationale: \(selectedProposal?.rationale ?? "None")"
+        proposalRationale.accessibilityValueOverride = selectedProposal?.rationale ?? "None"
+        proposalTiming.stringValue = "Proposal timing: \(selectedProposal?.timingState ?? "None")"
+        proposalTiming.accessibilityValueOverride = selectedProposal?.timingState ?? "None"
+        proposalSource.stringValue = "Proposal source: \(selectedProposal?.sourceState ?? "None")"
+        proposalSource.accessibilityValueOverride = selectedProposal?.sourceState ?? "None"
+        proposalProtection.stringValue = "Proposal protection: \(selectedProposal?.protectionState ?? "None")"
+        proposalProtection.accessibilityValueOverride = selectedProposal?.protectionState ?? "None"
+        proposalStatus.stringValue = "Proposal status: \(selectedProposal?.status ?? "None")"
+        proposalStatus.accessibilityValueOverride = selectedProposal?.status ?? "None"
         let regular = NSFont.systemFont(ofSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize)))
         for (view, _) in rows {
             if let label = view as? NSTextField {

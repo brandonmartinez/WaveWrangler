@@ -57,7 +57,19 @@ final class TranscriptReviewUITests: XCTestCase {
         )
         XCTAssertTrue(
             (app.descendants(matching: .any)["ww.review.inspector.proposal"].value as? String ?? "")
-                .contains("no analysis")
+                .contains("Synthetic contextual filler proposal 1")
+        )
+        XCTAssertEqual(
+            app.descendants(matching: .any)["ww.review.inspector.proposalTiming"].value as? String,
+            "Timing unavailable — no word timing or source-frame interval."
+        )
+        XCTAssertEqual(
+            app.descendants(matching: .any)["ww.review.inspector.proposalSource"].value as? String,
+            "Source unavailable — no selected Primary is connected or authorized."
+        )
+        XCTAssertEqual(
+            app.descendants(matching: .any)["ww.review.inspector.proposalProtection"].value as? String,
+            "Protection unsupported — coverage is not established."
         )
 
         for identifier in [
@@ -128,6 +140,49 @@ final class TranscriptReviewUITests: XCTestCase {
             "token-stub-002"
         )
         XCTAssertFalse(app.buttons["ww.review.action.acceptShorten"].isEnabled)
+    }
+
+    func testKeyboardProposalSelectionUpdatesAccessibleProvisionalDetails() {
+        let firstProposal = app.descendants(matching: .any)["ww.review.proposal.synthetic-proposal-001"]
+        XCTAssertTrue(firstProposal.waitForExistence(timeout: 3))
+        firstProposal.click()
+
+        let proposals = app.descendants(matching: .any)["ww.review.proposals"]
+        XCTAssertTrue(
+            Acceptance.hasKeyboardFocus(proposals)
+                || proposals.descendants(matching: .outline).allElementsBoundByIndex.contains(where: Acceptance.hasKeyboardFocus)
+                || proposals.descendants(matching: .table).allElementsBoundByIndex.contains(where: Acceptance.hasKeyboardFocus),
+            "The native synthetic proposal list or its table owns keyboard focus"
+        )
+        XCTAssertEqual(
+            app.descendants(matching: .any)["ww.review.inspector.proposalID"].value as? String,
+            "synthetic-proposal-001"
+        )
+        XCTAssertEqual(
+            app.descendants(matching: .any)["ww.review.inspector.proposalStatus"].value as? String,
+            "Provisional synthetic proposal — not verified or actionable."
+        )
+
+        app.typeKey(.downArrow, modifierFlags: [])
+        XCTAssertTrue(Acceptance.waitFor(timeout: 3) {
+            app.descendants(matching: .any)["ww.review.inspector.proposalID"].value as? String
+                == "synthetic-proposal-002"
+        })
+        XCTAssertTrue(
+            (app.descendants(matching: .any)["ww.review.inspector.proposalTiming"].value as? String ?? "")
+                .contains("Timing unavailable")
+        )
+        XCTAssertTrue(
+            (app.descendants(matching: .any)["ww.review.inspector.proposalSource"].value as? String ?? "")
+                .contains("no selected Primary")
+        )
+        XCTAssertTrue(
+            (app.descendants(matching: .any)["ww.review.inspector.proposalProtection"].value as? String ?? "")
+                .contains("Protection unsupported")
+        )
+        for identifier in ["acceptShorten", "lift", "reject", "singleLaneAudition", "fullPreview"] {
+            XCTAssertFalse(app.buttons["ww.review.action.\(identifier)"].isEnabled, "\(identifier) remains disabled")
+        }
     }
 
     func testReturnAndEscapeWhileFilteringDoNotAcceptOrAudition() {
