@@ -95,6 +95,17 @@ proof, unsupported boundary, mismatched provenance and uninspectable lanes refus
 transcript or recognition confidence is never protection evidence. Audio analysis consent remains
 limited to the selected authorized Primary, not to Backups or other speakers.
 
+The Mac-owned `EpisodeSourceAccessVerifier` is a separate, read-only precursor: against the live
+verified show publication and active accepted-map **content** key, it enumerates every mapped
+source/occurrence/epoch and its declared channels, and rechecks each device-local bookmark, grant,
+confirmed file identity and metadata revision. A missing grant or incompatible source refuses;
+non-Primary sources are only observed through already granted metadata access, never decoded or
+downloaded. The channel count is still a recorded declaration, **not** a freshly certified physical
+channel survey. Its witness reports protection survey absent and complete-cut preparation refused
+until independent lane protection, final merged fade and atomic map/history/preview publication
+are certified. Reverify after awaits and before any future admission; it does not mint the
+policy's sealed verified types or enable a cut.
+
 `ReviewJournal` records named pending/adjusted/accepted/rejected/restored/abstained/blocked states;
 Restore keeps the accepted cut's evidence and removes activity. Undo Restore and redo Accept require
 fresh identical all-lane proof or leave the inactive state and history untouched. The app must

@@ -310,13 +310,21 @@ actor AlignmentRuntime {
             let record = try? await accessStore.record(for: key)
             let evaluation = evaluator.evaluate(key: key, record: record, setting: .on)
             if let refreshed = evaluation.refreshedRecord { try? await accessStore.save(refreshed) }
-            guard let url = evaluation.resolvedURL else {
+            guard let url = evaluation.resolvedURL,
+                  evaluation.observation.access == .granted,
+                  evaluation.observation.identity == .matchesRecorded,
+                  evaluation.observation.location == .present,
+                  evaluation.observation.residency == .local
+            else {
                 values.append(AlignmentSource(id: source.id, url: URL(fileURLWithPath: "/"), availability: .off))
                 await coordinator.removeSource(source.id)
                 continue
             }
             let revision = access.withScopedAccess(to: url) { scoped -> SourceRevision? in
-                guard case let .success(metadata) = access.io.metadata(at: scoped) else { return nil }
+                guard case let .success(metadata) = access.io.metadata(at: scoped),
+                      metadata.isReadable.value == true,
+                      record?.recordedIdentity?.fingerprint.compare(to: metadata.fingerprint) == .matches
+                else { return nil }
                 return .metadata(source.id, fingerprint: metadata.fingerprint)
             }
             if let revision {
@@ -417,6 +425,27 @@ enum AlignmentRuntimeProvider {
             )
         }
         return runtime
+    }
+
+    /// A read-only metadata witness for a verified, unmodified publication. This does not authorize a cut:
+    /// declared channels are not a fresh content survey and protection/fade/publication proofs are absent.
+    static func verifyEpisodeSourceAccess(
+        for document: ShowDocument, episode episodeID: EpisodeID
+    ) async throws -> EpisodeSourceAccessWitness {
+        let runtime = try await runtime(for: document, episode: episodeID)
+        let verifier = EpisodeSourceAccessVerifier(
+            showID: document.store.model.show.id, coordinator: runtime.coordinator,
+            accessStore: SetupEngineProvider.store, access: SetupEngineProvider.context
+        )
+        return try await verifier.verify(episode: episodeID) {
+            try await MainActor.run {
+                guard let model = document.verifiedModel, let publication = document.publication,
+                      document.store.model == model else {
+                    throw EpisodeSourceAccessRefusal.changedDuringVerification
+                }
+                return EpisodeSourceDocument(model: model, publication: publication)
+            }
+        }
     }
 
     static func reconcileActive(for document: ShowDocument) {
