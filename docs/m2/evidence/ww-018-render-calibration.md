@@ -232,6 +232,8 @@ their 48 seed identities are unique and disjoint from the 16 calibration and 48 
 The retained unedited run log `render-holdout-2-on-6f385b2.log` (SHA-256
 `87a20620f5ebab5821ebb5654d0f3d5cbd1147dad927e9917ba953c5ddfb53bd`) reports
 `holdoutSplitMeetsEveryFrozenGate()` passing in 16.989 s.
+**Rev-2 overall frozen holdout protocol: INCOMPLETE.** Its once-only objective gate results below are valid,
+but the prospective freeze also required a CPU measurement during that run. None was captured.
 
 | Gate | Limit | Rev-2 measured result | Outcome |
 | --- | --- | --- | --- |
@@ -248,7 +250,9 @@ The retained unedited run log `render-holdout-2-on-6f385b2.log` (SHA-256
 
 The family-peak result is the existing `holdout-timing.txt` measurement, not a new revision-2 timing run;
 the pinned renderer source tree is unchanged from that measurement. The retained revision-2 log records the
-test duration but no host identifier or CPU sample, so neither is asserted here. `scripts/test.sh` also runs
+test duration but no host identifier or contemporaneous CPU sample, so neither is asserted here. Focused
+calibration CPU samples and any later full-suite sample cannot repair this holdout's missing CPU measurement;
+rev-2 must not be rerun or counted as a complete frozen-protocol pass. `scripts/test.sh` also runs
 ordinary package tests without top-level case parallelism so short alignment-pipeline tests cannot overlap
 their internal work, caps segment cases at three and decode/time-map calibration cases at two. The 75-minute
 pipeline render remains full length.
