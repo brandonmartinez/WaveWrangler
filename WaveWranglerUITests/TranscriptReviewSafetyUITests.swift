@@ -174,46 +174,6 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         }
     }
 
-    func testDiagnoseParentChildSurfaces() throws {
-        Acceptance.attach(self, png: app.windows["ww.show.window"].screenshot().pngRepresentation, name: "initial-review-window")
-        let showInfo = app.descendants(matching: .any)["ww.show.sidebar.showInfo"]
-        showInfo.click()
-        XCTAssertTrue(app.staticTexts["ww.show.showInfoSummary.title"].waitForExistence(timeout: 3))
-        for name in ["showInfo", "setup", "reviewDetail", "reviewInspector"] {
-            switch name {
-            case "setup":
-                selectFirstEpisode()
-                app.buttons["ww.show.destination.setup"].click()
-            case "reviewDetail":
-                app.buttons["ww.show.destination.review"].click()
-                app.textFields["ww.review.filter"].click()
-                app.buttons["Hide Inspector"].click()
-                XCTAssertFalse(app.scrollViews["ww.inspector"].exists)
-            case "reviewInspector":
-                app.buttons["Show Inspector"].click()
-                XCTAssertTrue(app.scrollViews["ww.inspector"].waitForExistence(timeout: 3))
-            default: break
-            }
-            let findings = try AcceptanceAudit.run(app, surface: name, test: self, types: .parentChild)
-            print("PARENT-CHILD \(name): \(findings)")
-            if name == "reviewDetail" {
-                app.buttons["ww.show.destination.review"].click()
-                let blurredFindings = try AcceptanceAudit.run(app, surface: "reviewDetailBlurred", test: self, types: .parentChild)
-                print("PARENT-CHILD reviewDetailBlurred: \(blurredFindings)")
-                let episode = app.descendants(matching: .any)
-                    .matching(NSPredicate(format: "identifier BEGINSWITH %@", "ww.show.sidebar.episode.")).firstMatch
-                episode.click()
-                print("PARENT-CHILD filter-focused-after-sidebar: \(Acceptance.hasKeyboardFocus(app.textFields["ww.review.filter"]))")
-                let sidebarFindings = try AcceptanceAudit.run(app, surface: "reviewDetailSidebar", test: self, types: .parentChild)
-                print("PARENT-CHILD reviewDetailSidebar: \(sidebarFindings)")
-                app.typeKey(.tab, modifierFlags: [])
-                print("PARENT-CHILD filter-focused-after-tab: \(Acceptance.hasKeyboardFocus(app.textFields["ww.review.filter"]))")
-                let tabFindings = try AcceptanceAudit.run(app, surface: "reviewDetailTab", test: self, types: .parentChild)
-                print("PARENT-CHILD reviewDetailTab: \(tabFindings)")
-            }
-        }
-    }
-
     func testBlockedReviewKeepsVisibleFocusAndKeyboardRecoveryAndPassesAudits() throws {
         let filter = app.textFields["ww.review.filter"]
         XCTAssertTrue(filter.waitForExistence(timeout: 3))
@@ -231,7 +191,8 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         hideInspector.click()
         XCTAssertTrue(app.buttons["Show Inspector"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.scrollViews["ww.inspector"].exists, "The old AX scroll tree is gone before auditing the detail")
-        filter.click()
+        app.typeKey(.tab, modifierFlags: [])
+        XCTAssertFalse(Acceptance.hasKeyboardFocus(filter), "Audit the stable tree after leaving the filter's field editor")
         let detailAudit = try AcceptanceAudit.run(
             app,
             surface: "transcript-review-blocked-detail",
@@ -241,7 +202,6 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertTrue(detailAudit.isEmpty, detailAudit.joined(separator: "\n"))
         app.buttons["Show Inspector"].click()
         XCTAssertTrue(setupRemedy.waitForExistence(timeout: 3))
-        filter.click()
 
         let unwaived = try AcceptanceAudit.run(
             app,
