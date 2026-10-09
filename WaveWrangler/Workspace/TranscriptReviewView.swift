@@ -169,6 +169,7 @@ private struct TranscriptOccurrenceTable: NSViewRepresentable {
         table.delegate = context.coordinator
         table.allowsEmptySelection = true
         table.selectionHighlightStyle = .none
+        table.backgroundColor = .controlBackgroundColor
         table.setAccessibilityIdentifier("ww.review.occurrences")
         table.setAccessibilityLabel("Transcript occurrences")
         context.coordinator.table = table
@@ -177,6 +178,8 @@ private struct TranscriptOccurrenceTable: NSViewRepresentable {
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
+        scroll.drawsBackground = true
+        scroll.backgroundColor = .controlBackgroundColor
         return scroll
     }
 
@@ -266,6 +269,10 @@ private final class OccurrenceCellView: NSTableCellView {
         identifier = NSUserInterfaceItemIdentifier("occurrence")
         title.lineBreakMode = .byTruncatingTail
         note.lineBreakMode = .byTruncatingTail
+        title.backgroundColor = .controlBackgroundColor
+        title.drawsBackground = true
+        note.backgroundColor = .controlBackgroundColor
+        note.drawsBackground = true
         note.setAccessibilityElement(false)
         addSubview(title)
         addSubview(note)
