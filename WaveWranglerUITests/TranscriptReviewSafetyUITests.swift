@@ -109,6 +109,42 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertTrue(window.frame.contains(inspector.frame), "Scrolling cannot expand the AX viewport")
     }
 
+    func testProposalRowsHaveDistinctAccessibleDescriptionsAndRemainFullyVisible() throws {
+        let window = app.windows["ww.show.window"]
+        let content = app.scrollViews["ww.review.contentScroll"]
+        let first = app.descendants(matching: .any)["ww.review.proposal.synthetic-proposal-001"]
+        let second = app.descendants(matching: .any)["ww.review.proposal.synthetic-proposal-002"]
+
+        XCTAssertTrue(content.waitForExistence(timeout: 3))
+        XCTAssertTrue(first.waitForExistence(timeout: 3))
+        XCTAssertTrue(second.waitForExistence(timeout: 3))
+        XCTAssertEqual(first.elementType, .cell, "A proposal is exposed as a table cell, not duplicate static text")
+        XCTAssertEqual(second.elementType, .cell, "A proposal is exposed as a table cell, not duplicate static text")
+        XCTAssertTrue(first.label.contains("synthetic-proposal-001"))
+        XCTAssertTrue(first.label.contains("Synthetic contextual filler proposal 1"))
+        XCTAssertTrue(second.label.contains("synthetic-proposal-002"))
+        XCTAssertTrue(second.label.contains("Synthetic contextual filler proposal 2"))
+        XCTAssertNotEqual(first.label, second.label, "Each proposal has a distinguishable accessible name")
+        XCTAssertTrue(second.label.contains("Provisional"))
+        XCTAssertTrue((second.value as? String ?? "").contains("Timing unavailable"))
+
+        let descriptions = try AcceptanceAudit.run(
+            app,
+            surface: "transcript-review-proposal-rows",
+            test: self,
+            types: .sufficientElementDescription
+        )
+        XCTAssertTrue(descriptions.isEmpty, descriptions.joined(separator: "\n"))
+
+        assertTextSize100()
+        for textSize in [100, 200] {
+            if textSize == 200 { assertTextSize200() }
+            scrollToFullyVisible(second, in: content)
+            XCTAssertTrue(content.frame.contains(second.frame), "\(textSize)% proposal 002 is fully inside its scroll viewport")
+            XCTAssertTrue(window.frame.contains(second.frame), "\(textSize)% proposal 002 is fully inside the minimum window")
+        }
+    }
+
     func testAcceptRefusalIsCompleteAndItsLastLineIsReachableAt200Percent() {
         for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
         assertTextSize200()
@@ -158,7 +194,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             XCTAssertEqual(window.frame.width, 760, accuracy: 2)
             XCTAssertEqual(window.frame.height, 492, accuracy: 2)
 
-            let scroll = app.scrollViews["ww.review.wideContentScroll"]
+            let scroll = app.scrollViews["ww.review.contentScroll"]
             XCTAssertTrue(scroll.waitForExistence(timeout: 3), "\(appearance): wide Review needs a vertical viewport")
             XCTAssertGreaterThanOrEqual(scroll.frame.width, 620, "\(appearance): exercise the wide layout")
             XCTAssertTrue(window.frame.contains(scroll.frame), "\(appearance): the scroll viewport stays inside the window")
@@ -411,10 +447,18 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
     }
 
     private func assertTextSize200() {
+        assertTextSize("200%")
+    }
+
+    private func assertTextSize100() {
+        assertTextSize("100%")
+    }
+
+    private func assertTextSize(_ expectedTextSize: String) {
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows["ww.settings.window"]
         XCTAssertTrue(settings.waitForExistence(timeout: 3), "Verify the real in-app text setting, not a launch override")
-        XCTAssertEqual(app.popUpButtons["ww.settings.textSize"].value as? String, "200%")
+        XCTAssertEqual(app.popUpButtons["ww.settings.textSize"].value as? String, expectedTextSize)
         settings.typeKey("w", modifierFlags: .command)
         XCTAssertFalse(settings.exists)
         app.windows["ww.show.window"].click()

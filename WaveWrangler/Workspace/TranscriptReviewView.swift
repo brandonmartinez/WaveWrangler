@@ -63,6 +63,7 @@ struct TranscriptReviewView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .accessibilityIdentifier("ww.review.contentScroll")
                 } else {
                     ScrollView(.vertical) {
                         HStack(alignment: .top, spacing: 12) {
@@ -73,7 +74,7 @@ struct TranscriptReviewView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
-                    .accessibilityIdentifier("ww.review.wideContentScroll")
+                    .accessibilityIdentifier("ww.review.contentScroll")
                 }
             }
         }
@@ -107,7 +108,9 @@ struct TranscriptReviewView: View {
                     state: state,
                     pointSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize))
                 )
-                .frame(minHeight: 120)
+                .frame(height: ProposalTable.contentHeight(
+                    pointSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize))
+                ))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
@@ -327,6 +330,14 @@ private struct ProposalTable: NSViewRepresentable {
     let state: TranscriptReviewState
     let pointSize: CGFloat
 
+    static func rowHeight(pointSize: CGFloat) -> CGFloat {
+        max(70, (pointSize * 3.5).rounded(.up) + 16)
+    }
+
+    static func contentHeight(pointSize: CGFloat) -> CGFloat {
+        CGFloat(TranscriptReviewShellPresentation.proposals.count) * rowHeight(pointSize: pointSize)
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator(state: state) }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -376,7 +387,7 @@ private struct ProposalTable: NSViewRepresentable {
             syncingSelection = true
             defer { syncingSelection = false }
             if changed {
-                table.rowHeight = max(70, (pointSize * 3.5).rounded(.up) + 16)
+                table.rowHeight = ProposalTable.rowHeight(pointSize: pointSize)
                 table.reloadData()
             }
             let selectedRow = rows.firstIndex { $0.id == selectedID } ?? -1
@@ -423,10 +434,13 @@ private final class ProposalCellView: NSTableCellView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         identifier = NSUserInterfaceItemIdentifier("proposal")
+        setAccessibilityElement(true)
+        setAccessibilityRole(.cell)
         title.lineBreakMode = .byTruncatingTail
         note.lineBreakMode = .byTruncatingTail
         title.backgroundColor = .controlBackgroundColor
         title.drawsBackground = true
+        title.setAccessibilityElement(false)
         note.backgroundColor = .controlBackgroundColor
         note.drawsBackground = true
         note.setAccessibilityElement(false)
@@ -443,9 +457,9 @@ private final class ProposalCellView: NSTableCellView {
         title.stringValue = "\(proposal.title) — Provisional"
         title.font = NSFont.systemFont(ofSize: pointSize)
         title.textColor = .labelColor
-        title.setAccessibilityIdentifier("ww.review.proposal.\(proposal.id)")
-        title.setAccessibilityLabel("Candidate \(proposal.id): \(proposal.title)")
-        title.accessibilityValueOverride = details
+        setAccessibilityIdentifier("ww.review.proposal.\(proposal.id)")
+        setAccessibilityLabel("Candidate \(proposal.id): \(proposal.title) — Provisional")
+        setAccessibilityValue(details)
         note.isHidden = true
         toolTip = details
         needsLayout = true
