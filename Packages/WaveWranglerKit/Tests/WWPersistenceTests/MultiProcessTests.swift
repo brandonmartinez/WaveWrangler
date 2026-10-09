@@ -16,6 +16,40 @@ struct MultiProcessTests {
         let readiness: Pipe
         let release: Pipe
 
+        private func boundedStdoutJSON() -> String {
+            let fd = output.fileHandleForReading.fileDescriptor
+            let flags = Darwin.fcntl(fd, F_GETFL)
+            guard flags >= 0, Darwin.fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0 else { return "unavailable" }
+            var buffer = [UInt8](repeating: 0, count: 1_025)
+            let count = buffer.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+            guard count > 0 else { return count == 0 ? "none" : "unavailable" }
+            guard count < buffer.count else { return "too-large" }
+            guard let object = try? JSONSerialization.jsonObject(with: Data(buffer.prefix(count))) as? [String: Any] else {
+                return "invalid"
+            }
+            var safe: [String: String] = [:]
+            for key in ["result", "outcome", "stage", "kind"] {
+                guard let value = object[key] as? String, value.utf8.count <= 64,
+                      value.utf8.allSatisfy({ byte in
+                          (65...90).contains(byte) || (97...122).contains(byte) ||
+                          (48...57).contains(byte) || byte == 45 || byte == 95
+                      }) else { continue }
+                safe[key] = value
+            }
+            guard let data = try? JSONSerialization.data(withJSONObject: safe, options: [.sortedKeys]) else {
+                return "invalid"
+            }
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        private func gateFailureContext(pollResult: Int32, revents: Int16, marker: Data) -> String {
+            let hex = marker.map { String(format: "%02x", $0) }.joined()
+            let observed = "poll=\(pollResult) revents=\(revents) markerBytes=\(marker.count) markerHex=\(hex.isEmpty ? "none" : hex)"
+            guard !process.isRunning else { return "\(observed) termination=still running" }
+            process.waitUntilExit()
+            return "\(observed) termination=\(process.terminationReason.rawValue)/\(process.terminationStatus) stdoutJSON=\(boundedStdoutJSON())"
+        }
+
         func waitUntilReady(timeoutMilliseconds: Int32 = 30_000) throws {
             var descriptor = pollfd(
                 fd: readiness.fileHandleForReading.fileDescriptor,
@@ -27,21 +61,14 @@ struct MultiProcessTests {
                 result = Darwin.poll(&descriptor, 1, timeoutMilliseconds)
             } while result < 0 && errno == EINTR
             guard result > 0, descriptor.revents & Int16(POLLIN) != 0 else {
-                let termination: String
-                if process.isRunning {
-                    termination = "still running"
-                } else {
-                    process.waitUntilExit()
-                    termination = "\(process.terminationReason.rawValue)/\(process.terminationStatus)"
-                }
                 throw CocoaError(.fileReadUnknown, userInfo: [
-                    NSLocalizedDescriptionKey: "writer \(writer) did not reach the save gate; poll=\(result) events=\(descriptor.revents) termination=\(termination)",
+                    NSLocalizedDescriptionKey: "writer \(writer) did not reach the save gate; \(gateFailureContext(pollResult: result, revents: descriptor.revents, marker: Data()))",
                 ])
             }
             let marker = readiness.fileHandleForReading.readData(ofLength: 1)
             guard marker == Data([0x52]) else {
                 throw CocoaError(.fileReadCorruptFile, userInfo: [
-                    NSLocalizedDescriptionKey: "writer \(writer) emitted an invalid save-gate marker",
+                    NSLocalizedDescriptionKey: "writer \(writer) emitted an invalid save-gate marker; \(gateFailureContext(pollResult: result, revents: descriptor.revents, marker: marker))",
                 ])
             }
         }
@@ -109,6 +136,97 @@ struct MultiProcessTests {
     static func output(_ pipe: Pipe) -> [String: Any] {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    static func launchSyntheticGate(_ script: String) throws -> GatedProbe {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", script]
+        let output = Pipe()
+        let readiness = Pipe()
+        let release = Pipe()
+        process.standardOutput = output
+        process.standardError = readiness
+        process.standardInput = release
+        try process.run()
+        return GatedProbe(writer: "synthetic", process: process, output: output, readiness: readiness, release: release)
+    }
+
+    static func gateFailure(_ probe: GatedProbe) -> String {
+        do {
+            try probe.waitUntilReady(timeoutMilliseconds: 1_000)
+            Issue.record("synthetic gate unexpectedly accepted")
+            return ""
+        } catch {
+            return (error as NSError).userInfo[NSLocalizedDescriptionKey] as? String ?? ""
+        }
+    }
+
+    static func gateRevents(_ failure: String) -> Int16? {
+        failure.split(separator: " ").first { $0.hasPrefix("revents=") }
+            .flatMap { Int16($0.dropFirst("revents=".count)) }
+    }
+
+    @Test func invalidMarkerReportsByteAndExitedChildWithoutPrivateOutput() throws {
+        let probe = try Self.launchSyntheticGate(
+            "printf '\\123' >&2; printf '{\"result\":\"openFailed\",\"detail\":\"/private/synthetic-secret\"}\\n'; exit 7"
+        )
+        defer { probe.cancelIfRunning() }
+        probe.process.waitUntilExit()
+        let failure = Self.gateFailure(probe)
+        #expect(failure.contains("poll=1 revents="))
+        let revents = try #require(Self.gateRevents(failure))
+        #expect(revents & Int16(POLLIN) != 0)
+        #expect(failure.contains("markerBytes=1 markerHex=53"))
+        #expect(failure.contains("termination=\(Process.TerminationReason.exit.rawValue)/7"))
+        #expect(failure.contains("stdoutJSON={\"result\":\"openFailed\"}"))
+        #expect(!failure.contains("synthetic-secret"))
+    }
+
+    @Test func earlyExitWithoutMarkerReportsEOFAndExitedChild() throws {
+        let probe = try Self.launchSyntheticGate("printf '{\"result\":\"gateFailed\"}\\n'; exit 9")
+        defer { probe.cancelIfRunning() }
+        probe.process.waitUntilExit()
+        let failure = Self.gateFailure(probe)
+        #expect(failure.contains("poll=1 revents="))
+        let revents = try #require(Self.gateRevents(failure))
+        #expect(revents & Int16(POLLHUP) != 0)
+        #expect(failure.contains("markerBytes=0 markerHex=none"))
+        #expect(failure.contains("termination=\(Process.TerminationReason.exit.rawValue)/9"))
+        #expect(failure.contains("stdoutJSON={\"result\":\"gateFailed\"}"))
+    }
+
+    @Test func oversizedExitedChildOutputIsNotIncludedInGateFailure() throws {
+        let privateText = String(repeating: "synthetic-secret", count: 100)
+        let probe = try Self.launchSyntheticGate(
+            "printf '\\123' >&2; printf '{\"result\":\"openFailed\",\"detail\":\"\(privateText)\"}\\n'; exit 8"
+        )
+        defer { probe.cancelIfRunning() }
+        probe.process.waitUntilExit()
+        let failure = Self.gateFailure(probe)
+        #expect(failure.contains("markerBytes=1 markerHex=53"))
+        #expect(failure.contains("stdoutJSON=too-large"))
+        #expect(!failure.contains("synthetic-secret"))
+        #expect(failure.utf8.count < 256)
+    }
+
+    @Test func invalidMarkerFromLiveChildDoesNotDrainOutput() throws {
+        let probe = try Self.launchSyntheticGate("printf '\\123' >&2; cat >/dev/null")
+        defer { probe.cancelIfRunning() }
+        let failure = Self.gateFailure(probe)
+        #expect(failure.contains("markerBytes=1 markerHex=53"))
+        #expect(failure.contains("termination=still running"))
+        #expect(!failure.contains("stdoutJSON="))
+    }
+
+    @Test func validMarkerStillReleasesSyntheticChild() throws {
+        let probe = try Self.launchSyntheticGate(
+            "printf '\\122' >&2; cat >/dev/null; printf '{\"result\":\"saved\"}\\n'"
+        )
+        defer { probe.cancelIfRunning() }
+        try probe.waitUntilReady(timeoutMilliseconds: 1_000)
+        try probe.releaseToSave()
+        #expect(probe.finish()["result"] as? String == "saved")
     }
 
     @Test func twoProcessesSavingTheSameFileConflictAndPreserveBoth() throws {
