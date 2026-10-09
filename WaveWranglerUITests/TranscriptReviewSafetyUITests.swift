@@ -137,6 +137,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
     func testVisibleReviewTextHasContrastAt100And200PercentInLightAndDark() {
         continueAfterFailure = true
         let inspector = app.scrollViews["ww.inspector"]
+        Acceptance.attach(self, png: app.windows["ww.show.window"].screenshot().pngRepresentation, name: "initial-review-window")
         let baseArguments = app.launchArguments
         for appearance in ["aqua", "darkAqua"] {
             if app.state != .notRunning { app.terminate() }
@@ -170,6 +171,29 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
                     measureVisibleText(blocked, in: app.windows["ww.show.window"], label: "\(appearance) \(percent)% blocked")
                 }
             }
+        }
+    }
+
+    func testDiagnoseParentChildSurfaces() throws {
+        let showInfo = app.descendants(matching: .any)["ww.show.sidebar.showInfo"]
+        showInfo.click()
+        XCTAssertTrue(app.staticTexts["ww.show.showInfoSummary.title"].waitForExistence(timeout: 3))
+        for name in ["showInfo", "setup", "reviewDetail", "reviewInspector"] {
+            switch name {
+            case "setup":
+                selectFirstEpisode()
+                app.buttons["ww.show.destination.setup"].click()
+            case "reviewDetail":
+                app.buttons["ww.show.destination.review"].click()
+                app.buttons["Hide Inspector"].click()
+                XCTAssertFalse(app.scrollViews["ww.inspector"].exists)
+            case "reviewInspector":
+                app.buttons["Show Inspector"].click()
+                XCTAssertTrue(app.scrollViews["ww.inspector"].waitForExistence(timeout: 3))
+            default: break
+            }
+            let findings = try AcceptanceAudit.run(app, surface: name, test: self, types: .parentChild)
+            print("PARENT-CHILD \(name): \(findings)")
         }
     }
 
