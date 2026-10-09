@@ -4,6 +4,7 @@ import Testing
 import WWAlignPipeline
 import WWCore
 import WWDerived
+import WWEpisodeSetup
 import WWPersistence
 import WWSources
 import WWTimeMap
