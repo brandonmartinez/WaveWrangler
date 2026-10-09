@@ -11,11 +11,11 @@ public enum SpeechRefusal: Error, Sendable, Equatable {
 }
 
 /// Media-free admission boundary. The caller must supply the current canonical show model, not a
-/// cached selection. The linked CPU engine has no model, source reader, or transcript publisher.
+/// cached selection. The isolated PCM adapter does not establish source identity or authorization.
 public struct SpeechInference: Sendable {
     public init() {}
 
-    /// Verifies only that the built-in CPU C ABI responds to generated data; no model is available.
+    /// Verifies only that the built-in CPU C ABI responds to generated data; no production model is supplied.
     public static var nativeCPULinked: Bool {
         let probe = ww_whisper_cpu_probe()
         return probe.linked == 1 && probe.inference_available == 0

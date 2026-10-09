@@ -208,12 +208,16 @@ descriptors whose filesystem is not confirmed locally mounted. Checked, bounded 
 refuses I/O errors and short reads instead of aborting; it reads exactly 77,704,715 bytes,
 checks the descriptor before/after, and hashes the bytes against
 `921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f`
-before loading them from memory into the pinned CPU library. It generates two seconds
+before loading them from memory into the pinned CPU library. The experimental
+`WWSpeech.VerifiedTinyModel` shares this exact verifier with the probe;
+`BoundedPCMInference` can synchronously infer on exactly two seconds of
+caller-supplied, 16 kHz mono in-memory PCM but is **not** a source-authorized
+production entry point. The probe generates two seconds
 of 16 kHz mono PCM with two inference threads and at most 16 decoded tokens. Output is
 aggregate only; segment timing availability is **not** word timing or accuracy.
 Never put model bytes in the repo. `SpeechInference.infer` still refuses even for a
-selected primary; no production source binding, sandbox offline proof or media use is
-established by this command.
+selected primary; no production source binding, exact model-artifact rights,
+signed-app sandbox offline proof or media use is established by this command.
 
 For headless functional XCUITests, build on the development Mac and run the
 signed Products inside the [macOS VM GUI hosts](ui-test-vm-hosts.md) through
