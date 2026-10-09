@@ -56,6 +56,11 @@ public struct DecodedSource<Product: Sendable>: Sendable {
     public let product: Product
 }
 
+enum DecodeOpenIdentity: Sendable {
+    case ordinary
+    case checked(FileSystemFingerprint)
+}
+
 /// Decodes one referenced original into a sink, off the main thread, in fixed-size chunks.
 ///
 /// Order: security scope (WWSources ledger) → metadata preflight (WWSources' metadata gateway: regular
@@ -101,7 +106,7 @@ public struct SourceDecoder: Sendable {
         try Self.checkCancellation()
         do {
             return try await access.withScopedAccess(to: url) { scopedURL in
-                try await run(scopedURL, source: source, makeSink: makeSink)
+                try await run(scopedURL, source: source, identity: .ordinary, makeSink: makeSink)
             }
         } catch let failure as DecodeFailure {
             throw failure
@@ -110,7 +115,7 @@ public struct SourceDecoder: Sendable {
         }
     }
 
-    /// Checked selected-source entry point; no unchecked open is permitted while its FD gate is absent.
+    /// The caller's expected identity is descriptor evidence, not source-selection authority.
     @concurrent
     public func decode<Sink: DecodedAudioSink>(
         _ url: URL,
@@ -118,18 +123,40 @@ public struct SourceDecoder: Sendable {
         expectedIdentity: FileSystemFingerprint,
         makeSink: @escaping @Sendable (FormatInterpretation) throws -> Sink
     ) async throws(DecodeFailure) -> DecodedSource<Sink.Product> {
-        throw .sourceIdentityMismatch
+        try Self.checkCancellation()
+        do {
+            return try await access.withScopedAccess(to: url) { scopedURL in
+                try await run(
+                    scopedURL, source: source, identity: .checked(expectedIdentity),
+                    makeSink: makeSink
+                )
+            }
+        } catch let failure as DecodeFailure {
+            throw failure
+        } catch {
+            throw .sinkFailed("unexpected error: \(error)")
+        }
     }
 
     @concurrent
     private func run<Sink: DecodedAudioSink>(
         _ url: URL,
         source: SourceID,
+        identity: DecodeOpenIdentity,
         makeSink: @Sendable (FormatInterpretation) throws -> Sink
     ) async throws(DecodeFailure) -> DecodedSource<Sink.Product> {
         let before = try preflight(url)
         try Self.checkCancellation()
-        let reader = try content.openForDecoding(url)
+        let reader: any DecodingContentReader
+        switch identity {
+        case .ordinary:
+            reader = try content.openForDecoding(url)
+        case let .checked(expected):
+            guard let checked = content as? any CheckedSourceContentIO else {
+                throw .sourceIdentityMismatch
+            }
+            reader = try checked.openForDecoding(url, expectedIdentity: expected)
+        }
         defer { reader.close() }
         try Self.verifyOpened(reader.facts.openedFile, matches: before)
         let interpretation = try DecodeEnvelope.interpret(reader.facts, url: url, source: source, fingerprint: before.fingerprint)

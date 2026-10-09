@@ -26,7 +26,7 @@ final class CancelProbe: @unchecked Sendable {
 
 /// Produces a synthetic codec stream whose sample at stream frame `s`, channel `c`, is `s + c / 4`, so
 /// every published sample states exactly which stream frame produced it.
-final class ScriptedContentIO: SourceContentIO, @unchecked Sendable {
+final class ScriptedContentIO: CheckedSourceContentIO, @unchecked Sendable {
     struct Script: Sendable {
         var facts: EncodedStreamFacts
         /// Total codec-stream frames the reader produces before end of stream.
@@ -65,6 +65,16 @@ final class ScriptedContentIO: SourceContentIO, @unchecked Sendable {
         }
         if let failure = script.openFailure { throw failure }
         return Reader(owner: self)
+    }
+
+    func openForDecoding(
+        _ url: URL, expectedIdentity: FileSystemFingerprint
+    ) throws(DecodeFailure) -> any DecodingContentReader {
+        guard case let .success(metadata) = SystemSourceIO().metadata(at: url),
+              expectedIdentity.compare(to: metadata.fingerprint).isExactMatch else {
+            throw .sourceIdentityMismatch
+        }
+        return try openForDecoding(url)
     }
 
     fileprivate func update(_ body: (inout Record) -> Void) { lock.withLock { body(&_record) } }

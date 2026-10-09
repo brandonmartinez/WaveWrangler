@@ -125,7 +125,8 @@ fileprivate final class CursorWorker: @unchecked Sendable {
     static func make(
         decoder: SourceDecoder,
         url: URL,
-        source: SourceID
+        source: SourceID,
+        identity: DecodeOpenIdentity
     ) async throws(DecodeFailure) -> CursorWorker {
         let queue = DispatchQueue(label: "com.brandonmartinez.wavewrangler.decode-cursor", qos: .userInitiated)
         let cancellation = CursorCancellation()
@@ -139,7 +140,16 @@ fileprivate final class CursorWorker: @unchecked Sendable {
                     do throws(DecodeFailure) {
                         let before = try decoder.preflight(url)
                         guard !cancellation.isCancelled else { throw .cancelled }
-                        let reader = try decoder.content.openForDecoding(url)
+                        let reader: any DecodingContentReader
+                        switch identity {
+                        case .ordinary:
+                            reader = try decoder.content.openForDecoding(url)
+                        case let .checked(expected):
+                            guard let checked = decoder.content as? any CheckedSourceContentIO else {
+                                throw .sourceIdentityMismatch
+                            }
+                            reader = try checked.openForDecoding(url, expectedIdentity: expected)
+                        }
                         do throws(DecodeFailure) {
                             try SourceDecoder.verifyOpened(reader.facts.openedFile, matches: before)
                             let interpretation = try DecodeEnvelope.interpret(
@@ -337,7 +347,12 @@ extension SourceDecoder {
         expectedIdentity: FileSystemFingerprint,
         _ body: @Sendable (DecodingCursor) async throws -> T
     ) async throws -> T {
-        throw DecodeFailure.sourceIdentityMismatch
+        try SourceDecoder.checkCancellation()
+        return try await access.withScopedAccess(to: url) { scopedURL in
+            try await openCursor(
+                scopedURL, source: source, identity: .checked(expectedIdentity), body
+            )
+        }
     }
 
     /// Opens one source exactly as `decode` does (security scope → metadata preflight → read-only open →
@@ -356,7 +371,7 @@ extension SourceDecoder {
     ) async throws -> T {
         try Self.checkCancellation()
         return try await access.withScopedAccess(to: url) { scopedURL in
-            try await openCursor(scopedURL, source: source, body)
+            try await openCursor(scopedURL, source: source, identity: .ordinary, body)
         }
     }
 
@@ -364,9 +379,10 @@ extension SourceDecoder {
     private func openCursor<T: Sendable>(
         _ url: URL,
         source: SourceID,
+        identity: DecodeOpenIdentity,
         _ body: @Sendable (DecodingCursor) async throws -> T
     ) async throws -> T {
-        let worker = try await CursorWorker.make(decoder: self, url: url, source: source)
+        let worker = try await CursorWorker.make(decoder: self, url: url, source: source, identity: identity)
         do {
             try Self.checkCancellation()
         } catch {

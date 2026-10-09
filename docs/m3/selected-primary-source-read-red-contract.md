@@ -4,15 +4,17 @@ This test-only unit does **not** authorize a source read. The current
 `SelectedPrimarySourceReadIssuer.requireSourceReadAuthority` still throws
 `trustedSourceOpenUnavailable`, `SpeechInference.infer` still refuses, and no
 Backup, cut, speech or actual-episode open follows. The
-`SelectedPrimaryCheckedOpenRedTests` now refer to fail-closed
-`expectedIdentity:` overloads that always throw `sourceIdentityMismatch`;
-they cannot issue a checked descriptor or PCM. At `149654bd` a scoped package
+`SelectedPrimaryCheckedOpenRedTests` exercise explicit `expectedIdentity:`
+overloads, which must check the opened descriptor before any header read.
+They are decoder primitives, not app source grants. At `149654bd` a scoped package
 JIT exited 1 on the then-absent overloads with zero tests run; the unhosted
 `WaveWranglerTests` app-intent selector exited 65 with zero tests because
 `EpisodeSetupModel` is app-only. The app intent coverage moved into the
 hosted target; `b4743237` subsequently compiled and produced a genuine
-15-case behavioral RED on its fail-closed issuer scaffold. The package
-checked-open overloads on this new head have not had native validation;
+15-case behavioral RED on its fail-closed issuer scaffold. At `ad6de643`
+the package suite compiled and failed all eight cases against fail-closed
+overloads without opening any descriptor. The subsequent package checked-open
+implementation on this new head requires independent focused validation;
 static parsing is not a test pass. Keep ordinary unselected alignment decoding available through
 its existing APIs; never treat that path as selected-source authorization.
 
@@ -37,7 +39,9 @@ The synthetic WWDecode RED selectors are:
 | --- | --- |
 | `pathReplacementBeforeParserRefusesWithoutHeaderReads` (different/same size) | Atomic replacement between preflight and open refuses `sourceIdentityMismatch`; the selected-Primary opener runs, **zero** header-read callbacks, Backup untouched. Same-size replacement must still fail on file-object identity. |
 | `missingOrWrongDescriptorVolumeRefusesBeforeParser` (unknown/wrong known volume) | Both must open the selected descriptor and refuse before any header read; never accept missing or mismatched volume evidence. |
+| `subMillisecondTimestampMismatchRefusesBeforeParser` | A sub-millisecond modification-time difference in the expected identity refuses on the opened descriptor without using the metadata comparator's tolerance or reading the header. |
 | `pushAndCursorPathsCannotBypassCheckedOpen` (push/cursor) | Both checked entry points receive the **correct Primary identity**, then replace its path with a different same-size file inside the opener. Both must open the selected path, refuse the wrong descriptor before a sink or header read, and leave Backup untouched. Passing a Backup fingerprint to preflight instead is not this test. |
+| `checkedCallsNeverFallBackToAnUncheckedGateway` | Both checked push and cursor paths refuse if the injected gateway lacks the checked-open contract; its ordinary opener is never called. |
 | `selectedPrimaryChannelUsesOneCheckedDescriptorAndNeverOpensBackup` | Generated 16 kHz two-channel Primary yields exactly **32,000** channel-1 source frames from one checked descriptor; generated Backup is never opened or modified. |
 | `cancellationAtLastWindowReadCannotPublishCheckedPCM` | Generated final-window read cancels the decoder task; checked PCM is never returned and the reader closes. |
 

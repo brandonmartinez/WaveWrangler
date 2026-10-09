@@ -22,7 +22,7 @@ import WWSources
 ///
 /// Package access: apps decode through `SourceDecoder`, which adds the scope, preflight, identity and
 /// staleness checks this gateway relies on.
-package struct SystemSourceContentIO: SourceContentIO {
+package struct SystemSourceContentIO: CheckedSourceContentIO {
     package init() {}
 
     #if DEBUG
@@ -33,14 +33,13 @@ package struct SystemSourceContentIO: SourceContentIO {
     #endif
 
     package func openForDecoding(_ url: URL) throws(DecodeFailure) -> any DecodingContentReader {
-        try SystemDecodingReader.make(url, gateway: self)
+        try SystemDecodingReader.make(url, gateway: self, identity: .ordinary)
     }
 
-    /// Fail closed until the expected identity is verified on the opened descriptor before callbacks.
     package func openForDecoding(
         _ url: URL, expectedIdentity: FileSystemFingerprint
     ) throws(DecodeFailure) -> any DecodingContentReader {
-        throw .sourceIdentityMismatch
+        try SystemDecodingReader.make(url, gateway: self, identity: .checked(expectedIdentity))
     }
 }
 
@@ -151,6 +150,43 @@ private func openedState(_ info: stat) -> OpenedFileState {
     )
 }
 
+private struct DescriptorVolume {
+    var length: UInt32 = 0
+    var identifier: uuid_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+}
+
+private func descriptorVolumeUUID(_ descriptor: Int32) -> UUID? {
+    var attributes = attrlist()
+    attributes.bitmapcount = UInt16(ATTR_BIT_MAP_COUNT)
+    attributes.volattr = UInt32(ATTR_VOL_INFO | ATTR_VOL_UUID)
+    var volume = DescriptorVolume()
+    guard fgetattrlist(descriptor, &attributes, &volume, MemoryLayout<DescriptorVolume>.size, 0) == 0,
+          volume.length >= MemoryLayout<DescriptorVolume>.size else { return nil }
+    return UUID(uuid: volume.identifier)
+}
+
+private func matchesCheckedIdentity(
+    _ expected: FileSystemFingerprint, observed: FileSystemFingerprint?,
+    descriptor: Int32, info: stat
+) -> Bool {
+    guard let observed, expected.compare(to: observed).isExactMatch,
+          let volume = expected.volumeUUID.value.flatMap(UUID.init(uuidString:)),
+          let identifier = expected.fileIdentifier.value,
+          let size = expected.fileSize.value,
+          let modified = expected.contentModificationDate.value,
+          let created = expected.creationDate.value,
+          descriptorVolumeUUID(descriptor) == volume,
+          UInt64(info.st_ino) == identifier,
+          Int64(info.st_size) == size else { return false }
+    let openedModified = Date(
+        timeIntervalSince1970: Double(info.st_mtimespec.tv_sec) + Double(info.st_mtimespec.tv_nsec) / 1e9
+    )
+    let openedCreated = Date(
+        timeIntervalSince1970: Double(info.st_birthtimespec.tv_sec) + Double(info.st_birthtimespec.tv_nsec) / 1e9
+    )
+    return openedModified == modified && openedCreated == created
+}
+
 // MARK: - Reader
 
 private final class SystemDecodingReader: DecodingContentReader {
@@ -180,8 +216,21 @@ private final class SystemDecodingReader: DecodingContentReader {
 
     deinit { close() }
 
-    static func make(_ url: URL, gateway: SystemSourceContentIO) throws(DecodeFailure) -> SystemDecodingReader {
+    static func make(
+        _ url: URL, gateway: SystemSourceContentIO, identity: DecodeOpenIdentity
+    ) throws(DecodeFailure) -> SystemDecodingReader {
         guard url.isFileURL else { throw .notFound }
+        let observed: FileSystemFingerprint?
+        switch identity {
+        case .ordinary:
+            observed = nil
+        case .checked:
+            if case let .success(metadata) = SystemSourceIO().metadata(at: url) {
+                observed = metadata.fingerprint
+            } else {
+                observed = nil
+            }
+        }
         let (descriptor, openErrno): (Int32, Int32) = withoutMaterializingDataless {
             url.withUnsafeFileSystemRepresentation { path -> (Int32, Int32) in
                 guard let path else { return (-1, ENOENT) }
@@ -224,6 +273,11 @@ private final class SystemDecodingReader: DecodingContentReader {
         guard info.st_size > 0 else {
             Darwin.close(descriptor)
             throw .emptyFile
+        }
+        if case let .checked(expected) = identity,
+           !matchesCheckedIdentity(expected, observed: observed, descriptor: descriptor, info: info) {
+            Darwin.close(descriptor)
+            throw .sourceIdentityMismatch
         }
 
         let file = ReadOnlyDescriptor(descriptor: descriptor, sizeBytes: Int64(info.st_size), gateway: gateway)

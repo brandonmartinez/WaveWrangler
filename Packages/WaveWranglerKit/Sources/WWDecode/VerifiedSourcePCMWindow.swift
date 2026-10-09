@@ -28,13 +28,18 @@ package enum VerifiedPCMWindowFailure: Error, Sendable, Equatable {
 }
 
 extension SourceDecoder {
-    /// Checked selected-window entry point remains a refusal until the descriptor gate exists.
+    /// Descriptor-checked primitive; the caller must separately establish app-owned source authority.
     @concurrent
     package func readVerifiedPCMWindow(
         _ url: URL, source: SourceID, channel: Int, startingAt start: Int64,
         expectedIdentity: FileSystemFingerprint
     ) async throws -> VerifiedSourcePCMWindow {
-        throw DecodeFailure.sourceIdentityMismatch
+        let end = try checkedWindowEnd(start: start, channel: channel)
+        return try await withDecodingCursor(
+            url, source: source, expectedIdentity: expectedIdentity
+        ) { cursor in
+            try await collectVerifiedWindow(cursor, channel: channel, start: start, end: end)
+        }
     }
 
     /// Package-internal content primitive, not a speech authorization entry point. It uses the same
@@ -45,55 +50,66 @@ extension SourceDecoder {
     package func readVerifiedPCMWindow(
         _ url: URL, source: SourceID, channel: Int, startingAt start: Int64
     ) async throws -> VerifiedSourcePCMWindow {
-        let (end, overflow) = start.addingReportingOverflow(32_000)
-        guard !overflow, start >= 0, channel >= 0 else {
-            throw VerifiedPCMWindowFailure.invalidRequest
-        }
+        let end = try checkedWindowEnd(start: start, channel: channel)
         return try await withDecodingCursor(url, source: source) { cursor in
-            let interpretation = cursor.interpretation
-            guard interpretation.formatInterpretationVersion == FormatInterpretation.currentVersion,
-                  interpretation.envelopeVersion == DecodeEnvelope.version,
-                  interpretation.sourceSampleRate == 16_000,
-                  interpretation.output.sampleRate == 16_000,
-                  interpretation.output.channelCount == interpretation.channelCount,
-                  interpretation.origin.sourceSampleRate == 16_000,
-                  interpretation.origin.sourceFrameOfFirstDecodedFrame == 0,
-                  interpretation.origin.decodedFrameCount == interpretation.frames.validFrames,
-                  interpretation.frames.validFrames <= 16_000 * 60 * 10,
-                  end <= interpretation.frames.validFrames,
-                  channel < interpretation.channelCount
-            else { throw VerifiedPCMWindowFailure.invalidRequest }
-
-            var samples: [Float] = []
-            samples.reserveCapacity(32_000)
-            var next: Int64 = 0
-            while let chunk = try await cursor.next() {
-                let (chunkEnd, overrun) = next.addingReportingOverflow(Int64(chunk.frameCount))
-                guard !overrun, chunk.frameCount > 0,
-                      chunk.firstSourceFrame == next,
-                      chunk.channelCount == interpretation.channelCount,
-                      chunkEnd <= interpretation.frames.validFrames
-                else { throw VerifiedPCMWindowFailure.invalidPCM }
-                let low = max(next, start)
-                let high = min(chunkEnd, end)
-                if low < high {
-                    let channelSamples = chunk.channel(channel)
-                    let offset = Int(low - next)
-                    let selected = channelSamples.dropFirst(offset).prefix(Int(high - low))
-                    guard selected.allSatisfy({ $0.isFinite && abs($0) <= 1 }) else {
-                        throw VerifiedPCMWindowFailure.invalidPCM
-                    }
-                    samples.append(contentsOf: selected)
-                }
-                next = chunkEnd
-            }
-            guard next == interpretation.frames.validFrames, samples.count == 32_000 else {
-                throw VerifiedPCMWindowFailure.invalidPCM
-            }
-            return VerifiedSourcePCMWindow(
-                interpretation: interpretation, channel: channel,
-                sourceFrames: start..<end, samples: samples
-            )
+            try await collectVerifiedWindow(cursor, channel: channel, start: start, end: end)
         }
     }
+}
+
+private func checkedWindowEnd(start: Int64, channel: Int) throws -> Int64 {
+    let (end, overflow) = start.addingReportingOverflow(32_000)
+    guard !overflow, start >= 0, channel >= 0 else {
+        throw VerifiedPCMWindowFailure.invalidRequest
+    }
+    return end
+}
+
+private func collectVerifiedWindow(
+    _ cursor: DecodingCursor, channel: Int, start: Int64, end: Int64
+) async throws -> VerifiedSourcePCMWindow {
+    let interpretation = cursor.interpretation
+    guard interpretation.formatInterpretationVersion == FormatInterpretation.currentVersion,
+          interpretation.envelopeVersion == DecodeEnvelope.version,
+          interpretation.sourceSampleRate == 16_000,
+          interpretation.output.sampleRate == 16_000,
+          interpretation.output.channelCount == interpretation.channelCount,
+          interpretation.origin.sourceSampleRate == 16_000,
+          interpretation.origin.sourceFrameOfFirstDecodedFrame == 0,
+          interpretation.origin.decodedFrameCount == interpretation.frames.validFrames,
+          interpretation.frames.validFrames <= 16_000 * 60 * 10,
+          end <= interpretation.frames.validFrames,
+          channel < interpretation.channelCount
+    else { throw VerifiedPCMWindowFailure.invalidRequest }
+
+    var samples: [Float] = []
+    samples.reserveCapacity(32_000)
+    var next: Int64 = 0
+    while let chunk = try await cursor.next() {
+        let (chunkEnd, overrun) = next.addingReportingOverflow(Int64(chunk.frameCount))
+        guard !overrun, chunk.frameCount > 0,
+              chunk.firstSourceFrame == next,
+              chunk.channelCount == interpretation.channelCount,
+              chunkEnd <= interpretation.frames.validFrames
+        else { throw VerifiedPCMWindowFailure.invalidPCM }
+        let low = max(next, start)
+        let high = min(chunkEnd, end)
+        if low < high {
+            let channelSamples = chunk.channel(channel)
+            let offset = Int(low - next)
+            let selected = channelSamples.dropFirst(offset).prefix(Int(high - low))
+            guard selected.allSatisfy({ $0.isFinite && abs($0) <= 1 }) else {
+                throw VerifiedPCMWindowFailure.invalidPCM
+            }
+            samples.append(contentsOf: selected)
+        }
+        next = chunkEnd
+    }
+    guard next == interpretation.frames.validFrames, samples.count == 32_000 else {
+        throw VerifiedPCMWindowFailure.invalidPCM
+    }
+    return VerifiedSourcePCMWindow(
+        interpretation: interpretation, channel: channel,
+        sourceFrames: start..<end, samples: samples
+    )
 }

@@ -1,4 +1,5 @@
 import Foundation
+import WWSources
 
 /// The only gateway allowed to open referenced originals for content (decoding).
 ///
@@ -15,6 +16,13 @@ public protocol SourceContentIO: Sendable {
     /// container structure; it decodes nothing until `DecodingContentReader.readRawFrames(into:)` is
     /// called.
     func openForDecoding(_ url: URL) throws(DecodeFailure) -> any DecodingContentReader
+}
+
+/// A separate gateway requirement: selected reads cannot silently use an unchecked content opener.
+package protocol CheckedSourceContentIO: SourceContentIO {
+    func openForDecoding(
+        _ url: URL, expectedIdentity: FileSystemFingerprint
+    ) throws(DecodeFailure) -> any DecodingContentReader
 }
 
 /// One open, read-only decode of one source. A reader belongs to a single task. It is not shared and
