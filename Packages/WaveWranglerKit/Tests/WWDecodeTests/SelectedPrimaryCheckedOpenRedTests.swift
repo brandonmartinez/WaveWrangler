@@ -184,7 +184,9 @@ struct SelectedPrimaryCheckedOpenRedTests {
             failure = error
         }
 
-        #expect(mutation.attempted)
+        #expect(opened.openedPaths == [primary.path])
+        try #require(journal.events.contains("append"), "decode refused before PCM append: \(String(describing: failure))")
+        try #require(mutation.attempted, "birth-time mutation did not run on first PCM append")
         try #require(mutation.error == nil, "fixture birth-time mutation failed: \(mutation.error ?? "")")
         let after = try fingerprint(primary)
         let drift = try #require(after.creationDate.value).timeIntervalSince(created)
@@ -194,9 +196,7 @@ struct SelectedPrimaryCheckedOpenRedTests {
         #expect(after.fileIdentifier == expected.fileIdentifier)
         #expect(after.fileSize == expected.fileSize)
         #expect(after.contentModificationDate == expected.contentModificationDate)
-        #expect(opened.openedPaths == [primary.path])
         #expect(failure == .sourceChangedDuringDecode)
-        #expect(journal.events.contains("append"), "the birth time must change after PCM was read")
         #expect(journal.events.last == "abandon", "no checked PCM may be published")
         #expect(!journal.events.contains("finish"))
         let afterSnapshot = try FileSnapshot(primary)
