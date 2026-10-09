@@ -10,7 +10,7 @@ struct InspectorContainer: View {
     var body: some View {
         if state.sidebarSelection != .showInfo && state.destination == .review {
             ReviewInspectorViewport(state: state)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
             InspectorScrollContent(state: state)
         }
@@ -25,10 +25,6 @@ private struct InspectorScrollContent: View {
             Group {
                 if state.sidebarSelection == .showInfo {
                     ShowInfoInspector(state: state)
-                } else if state.destination == .review {
-                    TranscriptReviewInspector(state: state.reviewState) {
-                        state.showReviewSetup()
-                    }
                 } else if state.destination == .alignment, let model = state.alignmentModel {
                     AlignmentInspectorView(model: model)
                 } else if let episode = state.selectedEpisode {
@@ -51,29 +47,67 @@ private struct InspectorScrollContent: View {
 private struct ReviewInspectorViewport: NSViewRepresentable {
     let state: ShowWindowState
 
-    func makeNSView(context: Context) -> HostedView {
-        HostedView(state: state)
+    func makeNSView(context: Context) -> ReviewInspectorScrollView {
+        ReviewInspectorScrollView(state: state)
     }
 
-    func updateNSView(_ view: HostedView, context: Context) {
-        view.hostingView.rootView = InspectorScrollContent(state: state)
+    func updateNSView(_ view: ReviewInspectorScrollView, context: Context) {
+        view.hostingView.rootView = ReviewInspectorContent(state: state)
+        view.layoutDocument()
     }
 
-    final class HostedView: NSView {
-        let hostingView: NSHostingView<InspectorScrollContent>
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: ReviewInspectorScrollView, context: Context) -> CGSize? {
+        let windowHeight = nsView.window?.contentLayoutRect.height ?? state.window?.contentLayoutRect.height ?? 440
+        return CGSize(width: proposal.width ?? 270, height: min(proposal.height ?? windowHeight, windowHeight))
+    }
+}
 
-        init(state: ShowWindowState) {
-            hostingView = NSHostingView(rootView: InspectorScrollContent(state: state))
-            hostingView.sizingOptions = []
-            super.init(frame: .zero)
-            setAccessibilityElement(false)
-            hostingView.frame = bounds
-            hostingView.autoresizingMask = [.width, .height]
-            addSubview(hostingView)
+private struct ReviewInspectorContent: View {
+    let state: ShowWindowState
+
+    var body: some View {
+        TranscriptReviewInspector(state: state.reviewState) {
+            state.showReviewSetup()
         }
+        .padding(14)
+        .wwFont(.body)
+    }
+}
 
-        @available(*, unavailable)
-        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+private final class ReviewInspectorScrollView: NSScrollView {
+    let hostingView: NSHostingView<ReviewInspectorContent>
+    private var layingOutDocument = false
+
+    init(state: ShowWindowState) {
+        hostingView = NSHostingView(rootView: ReviewInspectorContent(state: state))
+        hostingView.sizingOptions = [.intrinsicContentSize]
+        super.init(frame: .zero)
+        documentView = hostingView
+        hasVerticalScroller = true
+        autohidesScrollers = true
+        drawsBackground = false
+        setAccessibilityLabel("Inspector")
+        setAccessibilityIdentifier("ww.inspector")
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func tile() {
+        super.tile()
+        layoutDocument()
+    }
+
+    func layoutDocument() {
+        guard !layingOutDocument, contentView.bounds.width > 0 else { return }
+        layingOutDocument = true
+        defer { layingOutDocument = false }
+        let width = contentView.bounds.width
+        if hostingView.frame.width != width {
+            hostingView.setFrameSize(NSSize(width: width, height: hostingView.frame.height))
+        }
+        let frame = NSRect(x: 0, y: 0, width: width, height: max(contentView.bounds.height, hostingView.fittingSize.height))
+        if hostingView.frame != frame { hostingView.frame = frame }
     }
 }
 

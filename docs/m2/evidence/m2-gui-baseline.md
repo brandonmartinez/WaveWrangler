@@ -185,6 +185,25 @@ inspector to the window geometry and focuses the List after a row click.
 Neither the AX nor keyboard failure is accepted without a clean GUI pass.
 First-round result bundles: ww-ui-2
 `~/ww-uitest-runs/ww029-pr320-80b7a2282651-20261008T200740/`.
+The final #320 head `e92f5975f7d3` still failed the unwaived Parent/Child
+audit and keyboard focus; its inspector AX origin shifted to y=1340 below the
+572-point window, preventing a remedy hit point. This was a regression, not a
+pass: `~/ww-uitest-runs/ww029-pr320-e92f5975f7d3-20261008T201251/`.
+
+### Native first-responder correction (draft PR #329, 2026-10-08)
+
+On ww-ui-2, clean `607e00d88c2f` passed 5/5 `TranscriptReviewUITests` and
+2/3 `TranscriptReviewSafetyUITests` (0 skips). The AppKit occurrence table
+gained actual keyboard focus, arrow selection and a clickable Setup remedy;
+the only remaining failure was unwaived Parent/Child. The blocked audit's AX
+tree still showed a 2928-point-tall inspector group inside a 572-point window.
+Four exact-ID contrast artefacts passed their live 40-glyph / p75 4.5:1 tests;
+`analysisState` was not waived. Evidence:
+`~/ww-uitest-runs/ww029-native-607e00d88c2f-20261008T203833/`.
+The follow-up revision replaces the inspector's SwiftUI scroll container
+with a native scroll viewport whose proposed height is capped to the owning
+window's content height; the document can scroll independently. Both essential
+classes and a fully in-window AX viewport remain required, with no new waiver.
 
 ### Broad (M5) observations
 
