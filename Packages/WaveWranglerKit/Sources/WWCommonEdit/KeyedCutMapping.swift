@@ -92,6 +92,17 @@ public enum KeyedCutMapping {
         outputRate: NominalRate, fadeOutOutputFrames: Int64, fadeInOutputFrames: Int64,
         proofs: [KeyedLaneFootprintInput]
     ) throws(ProvisionalCutMappingError) -> ProvisionalKeyedCutMapping {
+        guard CommonEditPreflight.withinInspectionBudget(
+            map: base, laneCount: manifest.lanes.count, surveyCount: proofs.count
+        ), laneKeys.count <= CommonEditPreflight.maximumInspectedLanes,
+           (mode == .lift || base.removals.count < CommonEditPreflight.maximumInspectedIntervals),
+           proofs.allSatisfy({
+               CommonEditPreflight.withinIntervalBudget($0.survey) &&
+               $0.sourceCoverage.count <= CommonEditPreflight.maximumInspectedIntervals &&
+               $0.protected.count <= CommonEditPreflight.maximumInspectedIntervals &&
+               $0.finalMergedFades.count <= CommonEditPreflight.maximumInspectedIntervals
+           })
+        else { throw .structuralPreflight(.inspectionLimit) }
         guard !manifestRevision.isEmpty, manifest.revision == manifestRevision,
               !laneKeys.isEmpty, laneKeys.count == manifest.lanes.count,
               proofs.count == laneKeys.count,
@@ -138,6 +149,8 @@ public enum KeyedCutMapping {
         let qStart = try roundedGrid(start, rate: outputRate)
         let qEnd = try roundedGrid(end, rate: outputRate)
         let grid = RemovedFrameSpan(start: qStart, end: qEnd)
+        let gridStart = outputRate.instant(ofFrame: qStart)
+        let gridEnd = outputRate.instant(ofFrame: qEnd)
         guard qStart >= base.alignedFrameOrigin, qEnd > qStart, qEnd <= base.alignedFrameEnd,
               qEnd - qStart <= CommonEditPreflight.maximumInspectedFrames,
               !base.removals.contains(where: { $0.start < qEnd && qStart < $0.end })
@@ -160,6 +173,8 @@ public enum KeyedCutMapping {
         var mapped: [ProvisionalLaneCutMapping] = []
         var gridSurveys: [CommonEditLaneSurvey] = []
         for proof in proofs {
+            guard !proof.survey.protected.contains(where: { $0.start < grid.end && grid.start < $0.end })
+            else { throw .protectedFrame }
             switch proof.identity.lane {
             case .intentionalSilence:
                 guard proof.sourceCoverage.isEmpty, proof.protected.isEmpty,
@@ -179,7 +194,12 @@ public enum KeyedCutMapping {
                 else { throw .incompleteCoverage }
                 let startPosition = try inverse(qStart, key: key, epoch: epoch, base: base)
                 let endPosition = try inverse(qEnd, key: key, epoch: epoch, base: base)
-                let removal = SourceFrameSpan(start: startPosition, end: endPosition)
+                guard let exclusiveEnd = Int64(exactly: endPosition.exactFrame.ceil()) else {
+                    throw .ambiguousInverse
+                }
+                // The rounded inverse at qEnd can be the LAST source frame inside the grid cut.
+                // Include it when the exact inverse has a fractional source-frame position.
+                let removal = SourceFrameSpan(start: startPosition.frame, end: exclusiveEnd)
                 guard removal.start >= 0, removal.start < removal.end,
                       removal.end <= occurrence.frameCount,
                       removal.end - removal.start <= CommonEditPreflight.maximumInspectedFrames,
@@ -187,9 +207,8 @@ public enum KeyedCutMapping {
                       contains(grid, in: proof.survey.coverage),
                       !proof.survey.intentionalSilence.contains(where: { $0.start < qEnd && qStart < $0.end })
                 else { throw .incompleteCoverage }
-                if proof.identity == primary && removal != sourceFrames { throw .invalidGrid }
                 for frame in qStart..<qEnd {
-                    let source = try inverse(frame, key: key, epoch: epoch, base: base)
+                    let source = try inverse(frame, key: key, epoch: epoch, base: base).frame
                     guard source >= removal.start, source < removal.end,
                           contains(SourceFrameSpan(start: source, end: source + 1), in: proof.sourceCoverage)
                     else { throw .incompleteCoverage }
@@ -197,7 +216,23 @@ public enum KeyedCutMapping {
                 for sourceFrame in removal.start..<removal.end {
                     guard let forward = try? base.alignment.alignedTime(
                         ofFrame: sourceFrame, in: key.occurrence
-                    ), case let .aligned(position) = forward, position.epoch == epoch
+                    ), case let .aligned(position) = forward, position.epoch == epoch,
+                          position.instant < gridEnd,
+                          (sourceFrame == removal.start || position.instant >= gridStart)
+                    else { throw .ambiguousInverse }
+                }
+                if removal.start > 0 {
+                    guard let prior = try? base.alignment.alignedTime(
+                        ofFrame: removal.start - 1, in: key.occurrence
+                    ), case let .aligned(position) = prior, position.epoch == epoch,
+                          position.instant < gridStart
+                    else { throw .ambiguousInverse }
+                }
+                if removal.end < occurrence.frameCount {
+                    guard let next = try? base.alignment.alignedTime(
+                        ofFrame: removal.end, in: key.occurrence
+                    ), case let .aligned(position) = next, position.epoch == epoch,
+                          position.instant >= gridEnd
                     else { throw .ambiguousInverse }
                 }
                 guard !proof.protected.contains(where: { intersects($0, removal) }) else {
@@ -206,6 +241,8 @@ public enum KeyedCutMapping {
                 let fades = try validateFades(proof, removal: removal, limit: occurrence.frameCount,
                                               map: map, fadeOutLength: fadeOutOutputFrames,
                                               fadeInLength: fadeInOutputFrames)
+                guard !fades.final.contains(where: { $0.start < grid.end && grid.start < $0.end })
+                else { throw .invalidFade }
                 guard (proof.survey.requestedFades.isEmpty ||
                        proof.survey.requestedFades == fades.requested),
                       (proof.survey.finalMergedFades.isEmpty ||
@@ -251,7 +288,7 @@ public enum KeyedCutMapping {
     private static func inverse(
         _ gridFrame: Int64, key: CommonEditLaneKey, epoch: RecordingEpochID,
         base: CommonEpisodeEditMap
-    ) throws(ProvisionalCutMappingError) -> Int64 {
+    ) throws(ProvisionalCutMappingError) -> SourcePosition {
         guard let mapped = try? base.alignment.sourceFrame(
             at: base.outputRate.instant(ofFrame: gridFrame), in: key.occurrence
         ), case let .source(position) = mapped, position.epoch == epoch,
@@ -262,7 +299,7 @@ public enum KeyedCutMapping {
                   .multiplied(by: ExactRational(base.outputRate.framesPerSecond)),
               error >= ExactRational(-1), error <= ExactRational(1)
         else { throw .ambiguousInverse }
-        return position.frame
+        return position
     }
 
     private static func validateFades(

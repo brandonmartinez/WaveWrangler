@@ -41,6 +41,130 @@ struct KeyedCutMappingTests {
         }
     }
 
+    @Test func roundedEndIncludesEveryAffectedSourceFrameInBothModes() throws {
+        let fx = try Fixture(primaryRate: 44_100)
+        let request = SourceFrameSpan(start: 9, end: 11)
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            let unprotected = try fx.map(mode: mode, proofs: fx.fadeFreeProofs(),
+                                         source: request, fadeOutOutputFrames: 0,
+                                         fadeInOutputFrames: 0)
+            #expect(unprotected.grid == RemovedFrameSpan(start: 10, end: 12))
+            #expect(unprotected.lanes[0].sourceRemoval == SourceFrameSpan(start: 9, end: 12))
+            #expect(unprotected.lanes[1].sourceRemoval == SourceFrameSpan(start: 12, end: 14))
+
+            for lane in [0, 1, 2] {
+                let affected: Int64 = lane == 0 ? 11 : 12
+                #expect(throws: ProvisionalCutMappingError.protectedFrame) {
+                    try fx.map(mode: mode, proofs: fx.fadeFreeProofs(
+                        protected: [lane: SourceFrameSpan(start: affected, end: affected + 1)],
+                        gridProtected: lane == 0 ? RemovedFrameSpan(start: 12, end: 13) : nil
+                    ), source: request, fadeOutOutputFrames: 0, fadeInOutputFrames: 0)
+                }
+            }
+            #expect(throws: ProvisionalCutMappingError.protectedFrame) {
+                try fx.map(mode: mode, proofs: fx.fadeFreeProofs(
+                    gridProtected: RemovedFrameSpan(start: 10, end: 11)
+                ), source: request, fadeOutOutputFrames: 0, fadeInOutputFrames: 0)
+            }
+
+            let adjacent = try fx.map(mode: mode, proofs: fx.fadeFreeProofs(
+                protected: [0: SourceFrameSpan(start: 8, end: 9),
+                            1: SourceFrameSpan(start: 14, end: 15)],
+                gridProtected: RemovedFrameSpan(start: 12, end: 13)
+            ), source: request, fadeOutOutputFrames: 0, fadeInOutputFrames: 0)
+            #expect(adjacent.lanes[0].sourceRemoval == SourceFrameSpan(start: 9, end: 12))
+        }
+    }
+
+    @Test func wholeMapAndAggregateLaneWorkRefuseBeforeProofProcessing() throws {
+        let fx = try Fixture()
+        let long = try CommonEpisodeEditMap(
+            alignment: fx.base.alignment, alignmentRevision: fx.base.alignmentRevision,
+            editRevision: fx.base.editRevision, outputRate: fx.base.outputRate,
+            alignedFrameOrigin: fx.base.alignedFrameOrigin, alignedFrameCount: 8_193, removals: []
+        )
+        #expect(throws: ProvisionalCutMappingError.structuralPreflight(.inspectionLimit)) {
+            try fx.map(proofs: [], base: long)
+        }
+        let full = try CommonEpisodeEditMap(
+            alignment: fx.base.alignment, alignmentRevision: fx.base.alignmentRevision,
+            editRevision: fx.base.editRevision, outputRate: fx.base.outputRate,
+            alignedFrameOrigin: fx.base.alignedFrameOrigin, alignedFrameCount: 8_192, removals: []
+        )
+        let extra = (0..<5).map { index in
+            KeyedEditLane(lane: .intentionalSilence("extra-\(index)"), epoch: nil,
+                          alignmentRevision: fx.base.alignmentRevision, revision: "s-\(index)")
+        }
+        #expect(throws: ProvisionalCutMappingError.structuralPreflight(.inspectionLimit)) {
+            try fx.map(proofs: [], identities: fx.identities + extra, base: full)
+        }
+        let many = (0..<17).map { index in
+            KeyedEditLane(lane: .intentionalSilence("lane-\(index)"), epoch: nil,
+                          alignmentRevision: fx.base.alignmentRevision, revision: "s-\(index)")
+        }
+        #expect(throws: ProvisionalCutMappingError.structuralPreflight(.inspectionLimit)) {
+            try fx.map(proofs: [], identities: fx.identities + many)
+        }
+        var excessSpans = fx.proofs
+        let spans = (0..<33).map { SourceFrameSpan(start: Int64($0), end: Int64($0 + 1)) }
+        excessSpans[1] = fx.proof(1, coverage: spans)
+        #expect(throws: ProvisionalCutMappingError.structuralPreflight(.inspectionLimit)) {
+            try fx.map(proofs: excessSpans)
+        }
+    }
+
+    @Test func sourceFootprintsContainAllForwardFramesInsideSharedGrid() throws {
+        for rate: Int64 in [44_100, 48_000] {
+            let fx = try Fixture(primaryRate: rate)
+            for mode in [ProvisionalCutMode.shorten, .lift] {
+                for first in stride(from: Int64(4), through: 20, by: 2) {
+                    let mapping = try fx.map(
+                        mode: mode, proofs: fx.fadeFreeProofs(),
+                        source: .init(start: first, end: first + 2),
+                        fadeOutOutputFrames: 0, fadeInOutputFrames: 0
+                    )
+                    let lower = fx.base.outputRate.instant(ofFrame: mapping.grid.start)
+                    let upper = fx.base.outputRate.instant(ofFrame: mapping.grid.end)
+                    for lane in mapping.lanes.prefix(3) {
+                        guard case let .audio(key) = lane.identity.lane,
+                              let removal = lane.sourceRemoval else {
+                            Issue.record("Expected an audio-lane source footprint")
+                            continue
+                        }
+                        for frame: Int64 in 0..<32 {
+                            guard case let .aligned(position) = try fx.base.alignment.alignedTime(
+                                ofFrame: frame, in: key.occurrence
+                            ) else {
+                                Issue.record("Expected a mapped source frame")
+                                continue
+                            }
+                            if position.instant >= lower && position.instant < upper {
+                                #expect(frame >= removal.start && frame < removal.end)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test func roundedMergedFadeOverlappingGridRefusesLiftAndShorten() throws {
+        let fx = try Fixture(backupRate: 44_100)
+        var proofs = fx.fadeFreeProofs()
+        let backup = proofs[1]
+        proofs[1] = .init(
+            identity: backup.identity, survey: backup.survey,
+            sourceCoverage: backup.sourceCoverage,
+            finalMergedFades: [SourceFrameSpan(start: 4, end: 6)]
+        )
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            #expect(throws: ProvisionalCutMappingError.invalidFade) {
+                try fx.map(mode: mode, proofs: proofs, source: .init(start: 4, end: 6),
+                           fadeOutOutputFrames: 0, fadeInOutputFrames: 0)
+            }
+        }
+    }
+
     @Test func staleMissingDuplicateReorderedAndCrossRevisionProofsRefuse() throws {
         let fx = try Fixture()
         for proof in [
@@ -252,7 +376,7 @@ private struct Fixture {
     let identities: [KeyedEditLane]
     let proofs: [KeyedLaneFootprintInput]
 
-    init(primaryRate: Int64 = 48_000) throws {
+    init(primaryRate: Int64 = 48_000, backupRate: Int64 = 48_000) throws {
         let source = SourceID(), rate = try NominalRate(48_000)
         let group = RecorderGroupID(), epoch = RecordingEpochID(), occurrence = SourceOccurrenceID()
         let reference = TimelineReference(group: group, epoch: epoch, occurrence: occurrence)
@@ -263,9 +387,11 @@ private struct Fixture {
         let backupID = SourceOccurrenceID(), otherID = SourceOccurrenceID()
         let backupEpoch = RecordingEpochID(), otherEpoch = RecordingEpochID()
         let backup = try Self.group(reference: reference, group: RecorderGroupID(),
-                                    epoch: backupEpoch, source: otherSource, occurrence: backupID, offset: -2)
+                                    epoch: backupEpoch, source: otherSource, occurrence: backupID,
+                                    offset: -2, nominalRate: backupRate)
         let other = try Self.group(reference: reference, group: RecorderGroupID(),
-                                   epoch: otherEpoch, source: otherSource, occurrence: otherID, offset: -2)
+                                   epoch: otherEpoch, source: otherSource, occurrence: otherID,
+                                   offset: -2, nominalRate: backupRate)
         base = try CommonEpisodeEditMap(
             alignment: AlignedTimelineMap(reference: reference, groups: [primary, backup, other]),
             alignmentRevision: 7, editRevision: 8, outputRate: rate,
@@ -284,7 +410,8 @@ private struct Fixture {
         proofs = (0..<4).map { index in
             let lane = identities[index]
             let start: Int64 = index == 0 ? 0 : -2
-            let end: Int64 = index == 0 ? (primaryRate == 48_000 ? 32 : 34) : 30
+            let end: Int64 = index == 0 ? (primaryRate == 48_000 ? 32 : 34) :
+                (backupRate == 48_000 ? 30 : 32)
             return KeyedLaneFootprintInput(
                 identity: lane,
                 survey: .init(lane: lane.lane, coverage: index == 3 ? [] :
@@ -295,7 +422,7 @@ private struct Fixture {
                      (primaryRate == 48_000 ?
                       [RemovedFrameSpan(start: -2, end: 0), RemovedFrameSpan(start: 32, end: 34)] :
                       [RemovedFrameSpan(start: -2, end: 0)]) :
-                     [RemovedFrameSpan(start: 30, end: 34)])),
+                     [RemovedFrameSpan(start: end, end: 34)])),
                 sourceCoverage: index == 3 ? [] : [SourceFrameSpan(start: 0, end: 32)],
                 requestedFadeOut: index == 3 ? nil :
                     SourceFrameSpan(start: index == 0 ? 8 : (primaryRate == 48_000 ? 10 : 11),
@@ -327,11 +454,27 @@ private struct Fixture {
                      finalMergedFades: finalFades ?? old.finalMergedFades)
     }
 
+    func fadeFreeProofs(protected: [Int: SourceFrameSpan] = [:],
+                        gridProtected: RemovedFrameSpan? = nil) -> [KeyedLaneFootprintInput] {
+        proofs.enumerated().map { index, original in
+            let survey = original.survey
+            return .init(
+                identity: original.identity,
+                survey: .init(lane: survey.lane, coverage: survey.coverage,
+                              intentionalSilence: survey.intentionalSilence,
+                              protected: index == 0 ? gridProtected.map { [$0] } ?? [] : []),
+                sourceCoverage: original.sourceCoverage,
+                protected: protected[index].map { [$0] } ?? []
+            )
+        }
+    }
+
     func map(mode: ProvisionalCutMode = .shorten, proofs: [KeyedLaneFootprintInput]? = nil,
              identities: [KeyedEditLane]? = nil, primary: KeyedEditLane? = nil,
              source: SourceFrameSpan = .init(start: 10, end: 12),
              outputRate: NominalRate? = nil,
              fadeOutOutputFrames: Int64 = 2,
+             fadeInOutputFrames: Int64 = 2,
              base: CommonEpisodeEditMap? = nil) throws -> ProvisionalKeyedCutMapping {
         try KeyedCutMapping.map(
             base: base ?? self.base,
@@ -340,7 +483,7 @@ private struct Fixture {
             selectedPrimary: self.identities[0], primary: primary ?? self.identities[0],
             sourceFrames: source, mode: mode,
             outputRate: outputRate ?? self.base.outputRate, fadeOutOutputFrames: fadeOutOutputFrames,
-            fadeInOutputFrames: 2, proofs: proofs ?? self.proofs
+            fadeInOutputFrames: fadeInOutputFrames, proofs: proofs ?? self.proofs
         )
     }
 

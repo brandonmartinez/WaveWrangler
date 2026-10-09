@@ -214,6 +214,42 @@ struct CommonEditPreflightTests {
         )
         #expect(throws: CommonEditAttestationRefusal.inspectionLimit) { try fx.check() }
     }
+
+    @Test func fullMapWorkAndLaneCountAreBoundedBeforeSurveyInspection() throws {
+        let fx = try Fixture()
+        let full = try CommonEpisodeEditMap(
+            alignment: fx.map.alignment, alignmentRevision: fx.map.alignmentRevision,
+            editRevision: fx.map.editRevision, outputRate: fx.map.outputRate,
+            alignedFrameOrigin: fx.map.alignedFrameOrigin, alignedFrameCount: 8_192, removals: []
+        )
+        let more = (0..<7).map { CommonEditManifestLane.intentionalSilence("extra-\($0)") }
+        #expect(throws: CommonEditAttestationRefusal.inspectionLimit) {
+            try CommonEditPreflight.check(
+                map: full, manifest: .init(revision: "supplied", lanes: fx.manifest.lanes + more),
+                surveys: []
+            )
+        }
+        #expect(throws: CommonEditAttestationRefusal.missingSurvey) {
+            try CommonEditPreflight.check(
+                map: full, manifest: .init(revision: "supplied", lanes: fx.manifest.lanes + more.dropLast()),
+                surveys: []
+            )
+        }
+        let many = (0..<17).map { CommonEditManifestLane.intentionalSilence("lane-\($0)") }
+        #expect(throws: CommonEditAttestationRefusal.inspectionLimit) {
+            try CommonEditPreflight.check(map: fx.map,
+                                          manifest: .init(revision: "supplied", lanes: many),
+                                          surveys: [])
+        }
+        let tooManySpans = (0..<33).map {
+            RemovedFrameSpan(start: Int64($0 - 2), end: Int64($0 - 1))
+        }
+        var surveys = fx.surveys
+        surveys[0] = .init(lane: fx.manifest.lanes[0], coverage: tooManySpans)
+        #expect(throws: CommonEditAttestationRefusal.inspectionLimit) {
+            try CommonEditPreflight.check(map: fx.map, manifest: fx.manifest, surveys: surveys)
+        }
+    }
 }
 
 private struct Fixture {

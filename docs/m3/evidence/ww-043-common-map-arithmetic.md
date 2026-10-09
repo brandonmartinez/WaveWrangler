@@ -107,16 +107,32 @@ Primary boundaries forward exactly and HALF-UP rounds them once at the base map'
 same `[qStart,qEnd)` is used for Shorten removal or Lift reservation. It refuses pre-existing removal
 overlap, domain/rate/revision mismatch and every missing/duplicate/reordered/cross-keyed lane.
 For each audio lane it inverts both shared endpoints, checks source coverage as an adjacent-only
-union, inspects every output-grid and removed source frame for one epoch and a supported inverse,
-and checks protected source frames plus requested and **final merged** source-frame fades on the
-source grid. It derives corresponding grid fade spans, refuses fades crossing previous/common
-removals or contradicting supplied grid spans, and checks their union via `CommonEditPreflight`.
+union, and inspects every output-grid and conservatively affected source frame for one epoch and
+a supported inverse. The source footprint starts at the rounded inverse of `qStart` (which can
+contribute at the first grid sample), but ends at the **ceiling of the exact inverse** of `qEnd`,
+not its rounded nearest frame: source frames whose forward instant falls strictly inside the
+half-open grid cut are included even when the nearest end inverse would omit them. Its outside
+neighbors must forward-map outside the cut in the same epoch. The footprint may extend beyond
+the requested Primary source interval due to output-grid rounding; that extension must pass
+source coverage, protected-frame and final merged fade checks in **both** Shorten and Lift.
+The adapter checks protected source frames plus requested and **final merged** source-frame fades
+on the source grid. It derives corresponding grid fade spans, refuses fades crossing
+previous/common removals or contradicting supplied grid spans, and checks their union via
+`CommonEditPreflight`. Both modes independently reject grid-protected cut frames and
+final merged grid fades overlapping the newly reserved cut, including when Lift has
+no grid removal in its resulting map.
 The requested fade lengths must agree with rounded output-frame lengths. Intentional
 silence needs an explicit complete grid interval, not a fabricated inverse. The existing finite
-`CommonEditPreflight` also checks the complete common map; the source removal/merged fade and
-whole-grid inspection are bounded to 8,192 frames and longer cases refuse until a stronger proof
-exists. End boundaries without a supported source inverse (including a source's exclusive last
-frame) refuse rather than extrapolate.
+`CommonEditPreflight` also checks the complete common map. Entry checks refuse before
+derived arrays or per-lane scans when the full map exceeds 8,192 frames, there are more than
+16 lanes or 65,536 checked full-map frame/lane combinations, or there are more than 32
+intervals in any map, survey or source-proof collection. Alignment groups, occurrences,
+epochs and segments are bounded at entry too. This is a finite synthetic path, not a
+real-episode-size guarantee. End boundaries without a supported source inverse (including a
+source's exclusive last frame) refuse rather than extrapolate. On the adversarial 44.1/48 kHz
+request `[9,11)`, grid `[10,12)` includes source frame 11 even though its rounded end inverse
+is 11; the corrected source footprint `[9,12)` catches protection at frame 11 for both modes.
+The immediately adjacent retained source/grid frames remain outside this removal.
 
 All keys, backing, protection and final fade observations are **caller-supplied**. The result is a
 `ProvisionalKeyedCutMapping`, not a `WWCutPolicy.CutFootprint`, `ApprovedCut`, source witness or render

@@ -9,7 +9,16 @@ frame endpoints (`qStart`, `qEnd`) at output rate `R` in a **synthetic, provisio
 path. It requires ordered unique lane/revision/epoch keys, source and grid coverage,
 and final merged source-frame fades for every declared lane; both Shorten and Lift
 refuse gaps, stale or cross-revision keys, partial coverage and protected removals
-or fades. Its caller-supplied manifest and protection remain untrusted, and it
+or fades. Each conservative source footprint includes the rounded start inverse
+and every forward-mapped source frame inside the grid interval, through the exact
+exclusive-end inverse rounded **up**; adjacent source frames are checked on both
+sides. A frame beyond the requested source end can therefore be in the rounded
+grid cut and is checked for protection in either mode. Grid protection and final
+rounded-grid fade overlap with the reserved cut also refuse Shorten and Lift alike.
+Full-map inspection is limited to 8,192 grid frames, 16 lanes, 65,536 frame/lane
+pairs and 32 intervals per map/survey/source-proof collection; excess refuses
+before per-lane inspection.
+Its caller-supplied manifest and protection remain untrusted, and it
 does not implement `CutFootprintMapping` or mint `ProtectionProof`.
 Do not use native source duration as the common ripple. No trusted organizer lane-manifest adapter
 or native person-action adapter exists yet. Their snapshot and review-action constructors are
