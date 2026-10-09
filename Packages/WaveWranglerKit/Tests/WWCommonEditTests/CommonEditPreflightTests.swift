@@ -73,6 +73,71 @@ struct CommonEditPreflightTests {
         #expect(throws: CommonEditAttestationRefusal.uncoveredFrame) { try fx.check() }
     }
 
+    @Test func mixedRateExactSourceInverseUsesSourceFrameRounding() throws {
+        let fx = try LowRateFixture()
+        let inverse = try fx.map.alignment.sourceFrame(
+            at: fx.map.outputRate.instant(ofFrame: 2), in: fx.lane.occurrence
+        )
+        guard case let .source(position) = inverse else {
+            Issue.record("Expected a mapped fractional source position")
+            return
+        }
+        #expect(position.exactFrame == q(1, 3))
+        #expect(position.frame == 0)
+        #expect(position.epoch == fx.epoch)
+        #expect(try fx.check().inspectedFrames == 6)
+        #expect(throws: CommonEditAttestationRefusal.trustedAuthorityUnavailable) {
+            try CommonEditAttestation.prepare(map: fx.map, manifest: fx.manifest, surveys: fx.surveys)
+        }
+    }
+
+    @Test func mixedRateCannotClaimUnavailableSourceFrame() throws {
+        var fx = try LowRateFixture()
+        fx.map = try CommonEpisodeEditMap(
+            alignment: fx.map.alignment, alignmentRevision: 2, editRevision: 3,
+            outputRate: NominalRate(48_000), alignedFrameOrigin: 0, alignedFrameCount: 10, removals: []
+        )
+        fx.surveys = [.init(lane: .audio(fx.lane), coverage: [RemovedFrameSpan(start: 0, end: 10)])]
+        #expect(throws: CommonEditAttestationRefusal.uncoveredFrame) { try fx.check() }
+    }
+
+    @Test func adjacentIntervalsHaveIdenticalProtectionAndFadeContainment() throws {
+        var fx = try Fixture()
+        fx.surveys[0] = fx.survey(fx.primary, coverage: [
+            RemovedFrameSpan(start: 0, end: 16), RemovedFrameSpan(start: 16, end: 32),
+        ], protected: [RemovedFrameSpan(start: 15, end: 17)],
+            requestedFades: [RemovedFrameSpan(start: 18, end: 20)],
+            finalFades: [RemovedFrameSpan(start: 17, end: 19), RemovedFrameSpan(start: 19, end: 21)])
+        #expect(try fx.check().audioLanes == 2)
+
+        fx.surveys[0] = fx.survey(fx.primary, protected: [RemovedFrameSpan(start: 15, end: 17)],
+                                  requestedFades: [RemovedFrameSpan(start: 18, end: 20)],
+                                  finalFades: [RemovedFrameSpan(start: 17, end: 19),
+                                               RemovedFrameSpan(start: 19, end: 21)])
+        #expect(try fx.check().audioLanes == 2)
+
+        fx.surveys[0] = fx.survey(fx.primary, coverage: [
+            RemovedFrameSpan(start: 0, end: 16), RemovedFrameSpan(start: 16, end: 32),
+        ], requestedFades: [RemovedFrameSpan(start: 16, end: 18)],
+            finalFades: [RemovedFrameSpan(start: 15, end: 17), RemovedFrameSpan(start: 17, end: 19)])
+        #expect(try fx.check().audioLanes == 2)
+
+        fx.surveys[0] = fx.survey(fx.primary, coverage: [
+            RemovedFrameSpan(start: 0, end: 16), RemovedFrameSpan(start: 17, end: 32),
+        ], protected: [RemovedFrameSpan(start: 15, end: 18)])
+        #expect(throws: CommonEditAttestationRefusal.invalidSurvey) { try fx.check() }
+
+        fx.surveys[0] = fx.survey(fx.primary, coverage: [
+            RemovedFrameSpan(start: 0, end: 16), RemovedFrameSpan(start: 17, end: 32),
+        ], finalFades: [RemovedFrameSpan(start: 15, end: 18)])
+        #expect(throws: CommonEditAttestationRefusal.unsafeFade) { try fx.check() }
+
+        fx.surveys[0] = fx.survey(fx.primary, requestedFades: [RemovedFrameSpan(start: 18, end: 20)],
+                                  finalFades: [RemovedFrameSpan(start: 17, end: 19),
+                                               RemovedFrameSpan(start: 20, end: 21)])
+        #expect(throws: CommonEditAttestationRefusal.invalidSurvey) { try fx.check() }
+    }
+
     @Test func unsupportedInverseIsNotSilence() throws {
         var fx = try Fixture()
         let original = fx.map.alignment.groups[1]
@@ -84,6 +149,42 @@ struct CommonEditPreflightTests {
         fx.map = try Fixture.editMap(AlignedTimelineMap(
             reference: fx.map.alignment.reference, groups: [fx.map.alignment.groups[0], unsupported]
         ))
+        #expect(throws: CommonEditAttestationRefusal.ambiguousInverse) { try fx.check() }
+    }
+
+    @Test func knownGapInverseRefusesDespiteClaimedCoverage() throws {
+        var fx = try Fixture()
+        let original = fx.map.alignment.groups[1]
+        let firstEpoch = original.epochs[0].epoch
+        let nextEpoch = RecordingEpochID()
+        let offset = q(-2, 48_000)
+        let first = try AffineClockSegment(groupClockStart: .zero, groupClockEnd: q(10, 48_000),
+                                           rateRatio: .one, alignedOffset: offset)
+        let second = try AffineClockSegment(groupClockStart: q(12, 48_000),
+                                            groupClockEnd: q(32, 48_000),
+                                            rateRatio: .one, alignedOffset: offset)
+        let provenance = MapProvenance.manual(ManualCorrection(basis: .numericEntry))
+        let split = try GroupTimeMap(
+            group: original.group, reference: original.reference,
+            epochs: [
+                EpochClockMap(epoch: firstEpoch, mapping: .mapped(segments: [first], provenance: provenance)),
+                EpochClockMap(epoch: nextEpoch, mapping: .mapped(segments: [second], provenance: provenance)),
+            ],
+            placements: [OccurrencePlacement(
+                occurrence: original.placements[0].occurrence,
+                spans: [EpochSpan(startFrame: 0, endFrame: 10, epoch: firstEpoch, groupClockOffset: .zero),
+                        EpochSpan(startFrame: 12, endFrame: 32, epoch: nextEpoch, groupClockOffset: .zero)]
+            )]
+        )
+        fx.map = try Fixture.editMap(AlignedTimelineMap(
+            reference: fx.map.alignment.reference, groups: [fx.map.alignment.groups[0], split]
+        ))
+        let inverse = try fx.map.alignment.sourceFrame(at: fx.map.outputRate.instant(ofFrame: 8),
+                                                       in: fx.secondary.occurrence)
+        guard case .gap = inverse else {
+            Issue.record("Expected a known source gap at the aligned grid frame")
+            return
+        }
         #expect(throws: CommonEditAttestationRefusal.ambiguousInverse) { try fx.check() }
     }
 
@@ -187,6 +288,46 @@ private struct Fixture {
             epochs: [EpochClockMap(epoch: epoch, mapping: .mapped(segments: [segment], provenance: provenance))],
             placements: [placement]
         )
+    }
+}
+
+private struct LowRateFixture {
+    let lane: CommonEditLaneKey
+    let epoch: RecordingEpochID
+    var map: CommonEpisodeEditMap
+    let manifest: CommonEditLaneManifest
+    var surveys: [CommonEditLaneSurvey]
+
+    init() throws {
+        let group = RecorderGroupID()
+        epoch = RecordingEpochID()
+        lane = .init(source: SourceID(), occurrence: SourceOccurrenceID(), channel: 0)
+        let reference = TimelineReference(group: group, epoch: epoch, occurrence: lane.occurrence)
+        let segment = try AffineClockSegment(groupClockStart: .zero, groupClockEnd: q(2, 8_000),
+                                             rateRatio: .one, alignedOffset: .zero)
+        let placement = OccurrencePlacement(
+            occurrence: try SourceOccurrence(id: lane.occurrence, source: lane.source,
+                                             nominalRate: NominalRate(8_000), frameCount: 2),
+            spans: [EpochSpan(startFrame: 0, endFrame: 2, epoch: epoch, groupClockOffset: .zero)]
+        )
+        let groupMap = try GroupTimeMap(
+            group: group, reference: reference,
+            epochs: [EpochClockMap(epoch: epoch, mapping: .mapped(
+                segments: [segment], provenance: .timelineReference
+            ))],
+            placements: [placement]
+        )
+        map = try CommonEpisodeEditMap(
+            alignment: AlignedTimelineMap(reference: reference, groups: [groupMap]),
+            alignmentRevision: 2, editRevision: 3, outputRate: NominalRate(48_000),
+            alignedFrameOrigin: 0, alignedFrameCount: 6, removals: []
+        )
+        manifest = .init(revision: "supplied-not-trusted", lanes: [.audio(lane)])
+        surveys = [.init(lane: .audio(lane), coverage: [RemovedFrameSpan(start: 0, end: 6)])]
+    }
+
+    func check() throws -> ProvisionalCommonEditCheck {
+        try CommonEditPreflight.check(map: map, manifest: manifest, surveys: surveys)
     }
 }
 

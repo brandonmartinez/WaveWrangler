@@ -163,10 +163,16 @@ public enum CommonEditPreflight {
                         guard case let .aligned(forward) = mapped, forward.epoch == position.epoch else {
                             throw CommonEditAttestationRefusal.ambiguousInverse
                         }
-                        let error: ExactRational
-                        do { error = try forward.instant.subtracting(instant) }
+                        let sourceFrameError: ExactRational
+                        let halfSourceFrame: ExactRational
+                        do {
+                            // The exact inverse is quantized on the source grid, not the output grid.
+                            sourceFrameError = try position.exactFrame.subtracting(ExactRational(position.frame))
+                            halfSourceFrame = try ExactRational(1, 2)
+                        }
                         catch { throw .ambiguousInverse }
-                        guard error.magnitude <= map.outputRate.instant(ofFrame: 1) else {
+                        guard position.exactFrame.roundedHalfUp() == Int128(position.frame),
+                              sourceFrameError.magnitude <= halfSourceFrame else {
                             throw CommonEditAttestationRefusal.ambiguousInverse
                         }
                     case .outsideCoverage:
@@ -185,7 +191,13 @@ public enum CommonEditPreflight {
     }
 
     private static func contained(_ span: RemovedFrameSpan, in spans: [RemovedFrameSpan]) -> Bool {
-        spans.contains { $0.start <= span.start && span.end <= $0.end }
+        var cursor = span.start
+        for covered in spans where covered.end > cursor {
+            guard covered.start <= cursor else { return false }
+            cursor = covered.end
+            if cursor >= span.end { return true }
+        }
+        return false
     }
 
     private static func valid(_ spans: [RemovedFrameSpan], in map: CommonEpisodeEditMap) -> Bool {
