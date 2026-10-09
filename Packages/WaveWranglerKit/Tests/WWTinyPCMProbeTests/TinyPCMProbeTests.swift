@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import WWTinyPCMProbe
@@ -38,6 +39,60 @@ struct TinyPCMProbeTests {
         #expect(throws: ProbeError.invalidInput) { try TinyModelProbe.run(path: link.path) }
         #expect(throws: ProbeError.invalidInput) {
             try TinyModelProbe.run(path: FileManager.default.temporaryDirectory.path)
+        }
+    }
+
+    @Test func descriptorReadFailureRefusesWithoutHashingOrInference() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data().write(to: file)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.truncate(atOffset: 77_704_715)
+        try handle.close()
+
+        var attempts = 0
+        #expect(throws: ProbeError.readFailed) {
+            try TinyModelProbe.readModel(path: file.path, descriptorRead: { _, _, _, _ in
+                attempts += 1
+                errno = attempts == 1 ? EINTR : EIO
+                return -1
+            })
+        }
+        #expect(attempts == 2)
+        attempts = 0
+        #expect(throws: ProbeError.readFailed) {
+            try TinyModelProbe.readModel(path: file.path, descriptorRead: { _, _, _, _ in
+                attempts += 1
+                errno = EINTR
+                return -1
+            })
+        }
+        #expect(attempts == 9)
+        #expect(throws: ProbeError.invalidSize) {
+            try TinyModelProbe.readModel(path: file.path, descriptorRead: { _, _, _, _ in 0 })
+        }
+    }
+
+    @Test func nonlocalOrUnknownFilesystemRefusesBeforeContentRead() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data([0]).write(to: file)
+
+        #expect(throws: ProbeError.nonLocalFilesystem) {
+            try TinyModelProbe.readModel(path: file.path, fileSystemStatus: { _, status in
+                status.pointee.f_flags = 0
+                return 0
+            }, descriptorRead: { _, _, _, _ in
+                Issue.record("Nonlocal descriptor was read")
+                return -1
+            })
+        }
+        #expect(throws: ProbeError.filesystemStatusUnavailable) {
+            try TinyModelProbe.readModel(path: file.path, fileSystemStatus: { _, _ in -1 },
+                                         descriptorRead: { _, _, _, _ in
+                Issue.record("Descriptor was read without filesystem provenance")
+                return -1
+            })
         }
     }
 

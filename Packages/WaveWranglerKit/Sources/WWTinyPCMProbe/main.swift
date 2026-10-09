@@ -9,6 +9,9 @@ enum ProbeError: Error, Equatable {
     case invalidSize
     case notMaterialized
     case readPolicyUnavailable
+    case filesystemStatusUnavailable
+    case nonLocalFilesystem
+    case readFailed
     case changedDuringRead
     case hashMismatch
     case loadFailed
@@ -57,7 +60,11 @@ enum TinyModelProbe {
         )
     }
 
-    private static func readModel(path: String) throws -> Data {
+    static func readModel(
+        path: String,
+        fileSystemStatus: (Int32, UnsafeMutablePointer<statfs>) -> Int32 = Darwin.fstatfs,
+        descriptorRead: (Int32, UnsafeMutableRawPointer, Int, off_t) -> ssize_t = Darwin.pread
+    ) throws -> Data {
         let fd = Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
         guard fd >= 0 else { throw errno == ENOENT ? ProbeError.missingModel : .invalidInput }
         defer { Darwin.close(fd) }
@@ -68,12 +75,34 @@ enum TinyModelProbe {
             throw ProbeError.invalidInput
         }
         guard before.st_flags & UInt32(SF_DATALESS) == 0 else { throw ProbeError.notMaterialized }
+        var filesystem = statfs()
+        guard fileSystemStatus(fd, &filesystem) == 0 else { throw ProbeError.filesystemStatusUnavailable }
+        guard filesystem.f_flags & UInt32(MNT_LOCAL) != 0 else { throw ProbeError.nonLocalFilesystem }
         guard before.st_size == modelSize else { throw ProbeError.invalidSize }
 
-        // Bound the read to the verified descriptor, not a second open by path.
-        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
-        let bytes = handle.readData(ofLength: modelSize + 1)
-        guard bytes.count == modelSize else { throw ProbeError.invalidSize }
+        var bytes = Data(count: modelSize)
+        try bytes.withUnsafeMutableBytes { (buffer: UnsafeMutableRawBufferPointer) in
+            guard let base = buffer.baseAddress else { throw ProbeError.readFailed }
+            var offset = 0
+            var interruptedReads = 0
+            while offset < modelSize {
+                let count = min(64 * 1024, modelSize - offset)
+                let received = descriptorRead(fd, base + offset, count, off_t(offset))
+                if received > 0 {
+                    guard received <= count else { throw ProbeError.readFailed }
+                    offset += received
+                    interruptedReads = 0
+                } else if received == 0 {
+                    throw ProbeError.invalidSize
+                } else if errno == EINTR {
+                    // A permanently interrupted descriptor must not spin forever.
+                    interruptedReads += 1
+                    guard interruptedReads <= 8 else { throw ProbeError.readFailed }
+                } else {
+                    throw ProbeError.readFailed
+                }
+            }
+        }
         var after = stat()
         guard fstat(fd, &after) == 0,
               before.st_dev == after.st_dev, before.st_ino == after.st_ino,
