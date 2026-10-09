@@ -119,6 +119,8 @@ public actor DerivedJobCoordinator {
     private let continuation: AsyncStream<DerivedSlotChange>.Continuation
 
     public private(set) var inputs: DerivedInputs
+    /// Invalidates observations even when a public submit republishes different bytes at the same key.
+    package private(set) var mutationGeneration: UInt64 = 0
     private var slots: [DerivedSlot: SlotRecord] = [:]
     private var cachedCandidates: [DerivedSlot: [DerivedAssetKey]] = [:]
     private var explicitlyInvalidated: [DerivedSlot: Set<DerivedAssetKey>] = [:]
@@ -166,6 +168,7 @@ public actor DerivedJobCoordinator {
     /// work should observe cancellation promptly (work that ignores it delays the return). Idempotent. Call it
     /// before releasing source access — see the type's lifetime note.
     public func shutdown() async {
+        mutationGeneration += 1
         hasShutDown = true
         let jobs = inFlight.values
         for task in jobs { task.cancel() }
@@ -188,16 +191,19 @@ public actor DerivedJobCoordinator {
     // MARK: - Inputs
 
     public func updateSource(_ revision: SourceRevision) {
+        mutationGeneration += 1
         inputs.sources[revision.source] = revision.token
         refresh()
     }
 
     public func removeSource(_ source: SourceID) {
+        mutationGeneration += 1
         inputs.sources[source] = nil
         refresh()
     }
 
     public func setFormat(_ format: FormatRevision) {
+        mutationGeneration += 1
         inputs.format = format
         refresh()
     }
@@ -205,27 +211,32 @@ public actor DerivedJobCoordinator {
     /// The accepted map changed (REF-019): everything derived from any other revision of this episode's map
     /// becomes stale and its in-flight jobs are cancelled.
     public func acceptMap(_ map: MapRevisionReference) {
+        mutationGeneration += 1
         inputs.acceptedMaps[map.episode] = map.revision
         refresh()
     }
 
     public func clearAcceptedMap(episode: EpisodeID) {
+        mutationGeneration += 1
         inputs.acceptedMaps[episode] = nil
         refresh()
     }
 
     public func setRecipe(_ recipe: RecipeReference) {
+        mutationGeneration += 1
         inputs.recipes[recipe.name] = recipe.revision
         refresh()
     }
 
     public func setAssetRevision(_ asset: AssetSpec) {
+        mutationGeneration += 1
         inputs.assets[asset.kind] = asset.revision
         refresh()
     }
 
     /// Marks one slot stale (e.g. its definition changed) and cancels its job.
     public func invalidate(_ slot: DerivedSlot) {
+        mutationGeneration += 1
         guard var record = slots[slot], let key = record.state.key else { return }
         explicitlyInvalidated[slot, default: []].insert(key)
         cachedCandidates[slot] = nil
@@ -283,6 +294,7 @@ public actor DerivedJobCoordinator {
         key: DerivedAssetKey,
         work: @escaping @Sendable () async throws -> Data
     ) -> DerivedJob {
+        mutationGeneration += 1
         guard !hasShutDown else { return DerivedJob(slot: slot, key: key, task: Task { .cancelled }) }
         var record = slots[slot] ?? SlotRecord()
         record.task?.cancel()
@@ -343,6 +355,7 @@ public actor DerivedJobCoordinator {
     }
 
     public func cancel(_ slot: DerivedSlot) {
+        mutationGeneration += 1
         guard var record = slots[slot], case let .running(key) = record.state else { return }
         record.task?.cancel()
         record.task = nil
@@ -357,6 +370,7 @@ public actor DerivedJobCoordinator {
     /// accepted-map identity has published, so upstream-dependent assets can become current again without
     /// rerunning work. Explicitly invalidated slots are never revived.
     public func restoreCachedCurrentSlots() {
+        mutationGeneration += 1
         var changed = true
         while changed {
             changed = false

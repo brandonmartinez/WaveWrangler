@@ -26,6 +26,8 @@ public struct EpisodeSourceLane: Sendable, Equatable, Hashable {
     public let occurrence: SourceOccurrenceID
     public let epoch: RecordingEpochID
     public let group: RecorderGroupID
+    /// The accepted map's declared length, not physical length until independently probed.
+    public let frameCount: Int64
     public let fileRevision: SourceRevision
 }
 
@@ -84,6 +86,9 @@ public enum EpisodeSourceAccessRefusal: Error, Sendable, Equatable {
     case accessUnverified(SourceID)
     case sourceChanged(SourceID)
     case changedDuringVerification
+    case inspectionLimit
+    case contentNotAuthorized(SourceID)
+    case decoderMismatch(SourceID)
 }
 
 /// An UNTRUSTED read-only lane survey. Its callback is caller-controlled and cannot attest the open
@@ -138,6 +143,80 @@ public struct EpisodeSourceInventorySurveyor: Sendable {
         guard fresh == witness else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
     }
 
+    /// Internal, synthetic-testable producer seam only. The callback still cannot bind an actual open
+    /// ShowDocument, and these per-source receipts are neither an all-lane protection survey nor cut proof.
+    /// The app must supply its private open-show binding and independent per-source grants before use.
+    func probeSources(
+        episode episodeID: EpisodeID,
+        decoder: SourceDecoder,
+        authorizations: [ContentWorkAuthorization],
+        currentDocument: @Sendable () async throws -> EpisodeSourceSurveyInput
+    ) async throws -> [SourceID: DecoderHeaderReceipt] {
+        guard authorizations.count <= 64 else { throw EpisodeSourceAccessRefusal.inspectionLimit }
+        let generation = await coordinator.mutationGeneration
+        let inventory = try await survey(episode: episodeID, currentDocument: currentDocument)
+        guard await coordinator.mutationGeneration == generation else {
+            throw EpisodeSourceAccessRefusal.changedDuringVerification
+        }
+        let sources = Array(Set(inventory.lanes.map(\.source))).sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
+        guard !sources.isEmpty else { throw EpisodeSourceAccessRefusal.incompleteOccurrences }
+        let authorized = Set(authorizations.map(\.source))
+        for source in sources where !authorized.contains(source) {
+            throw EpisodeSourceAccessRefusal.contentNotAuthorized(source)
+        }
+
+        let records = try await accessStore.records(in: showID)
+        guard records.count <= 256 else { throw EpisodeSourceAccessRefusal.inspectionLimit }
+        guard await coordinator.mutationGeneration == generation else {
+            throw EpisodeSourceAccessRefusal.changedDuringVerification
+        }
+        let evaluator = SourceAvailabilityEvaluator(context: access)
+        var locations: [SourceID: URL] = [:]
+        for source in sources {
+            let key = DeviceAccessKey(showID: showID, sourceID: source)
+            guard let record = records.first(where: { $0.key == key }) else {
+                throw EpisodeSourceAccessRefusal.accessMissing(source)
+            }
+            let observed = try observe(source, record: record, evaluator: evaluator)
+            guard inventory.lanes.filter({ $0.source == source }).allSatisfy({ $0.fileRevision == observed.revision }) else {
+                throw EpisodeSourceAccessRefusal.changedDuringVerification
+            }
+            locations[source] = observed.url
+        }
+
+        var receipts: [SourceID: DecoderHeaderReceipt] = [:]
+        for source in sources {
+            try Task.checkCancellation()
+            guard let url = locations[source] else { throw EpisodeSourceAccessRefusal.accessMissing(source) }
+            let receipt = try await decoder.probeHeader(
+                url, source: source, grant: DecoderHeaderGrant(explicitUserRequestFor: source)
+            )
+            guard await coordinator.mutationGeneration == generation else {
+                throw EpisodeSourceAccessRefusal.changedDuringVerification
+            }
+            let interpretation = receipt.interpretation
+            let registered = await coordinator.inputs.sources[source]
+            guard let registered,
+                  SourceRevision.metadata(source, fingerprint: interpretation.sourceFingerprint).token == registered,
+                  interpretation.formatInterpretationVersion == FormatRevision.current.interpretationVersion,
+                  interpretation.envelopeVersion == FormatRevision.current.envelopeVersion
+            else { throw EpisodeSourceAccessRefusal.sourceChanged(source) }
+            let lanes = inventory.lanes.filter { $0.source == source }
+            guard Set(lanes.map(\.channel)) == Set(0..<interpretation.channelCount),
+                  lanes.allSatisfy({ $0.frameCount == interpretation.frames.validFrames })
+            else {
+                throw EpisodeSourceAccessRefusal.decoderMismatch(source)
+            }
+            receipts[source] = receipt
+        }
+        try await resurvey(inventory, currentDocument: currentDocument)
+        guard await coordinator.mutationGeneration == generation else {
+            throw EpisodeSourceAccessRefusal.changedDuringVerification
+        }
+        try Task.checkCancellation()
+        return receipts
+    }
+
     private struct Sample: Equatable {
         let document: EpisodeSourceSurveyInput
         let accessRecords: [DeviceAccessRecord]
@@ -156,9 +235,86 @@ public struct EpisodeSourceInventorySurveyor: Sendable {
         let identifier: UInt64
     }
 
+    /// Reject caller-provided show shape before walking unrelated episodes or decoding embedded maps.
+    /// This is an inspection budget, not an on-disk document-size guarantee.
+    private func requireBounded(_ model: ShowDocumentModel) throws {
+        guard model.episodes.count <= 64, model.speakers.count <= 256,
+              model.history.entries.count <= 4096 else { throw EpisodeSourceAccessRefusal.inspectionLimit }
+        var nodes = 0
+        var bytes = 0
+        func charge(_ count: Int) throws {
+            guard count <= (1 << 20) - bytes else { throw EpisodeSourceAccessRefusal.inspectionLimit }
+            bytes += count
+        }
+        for episode in model.episodes {
+            guard episode.sources.count <= 64, episode.recorderGroups.count <= 32,
+                  episode.speakerAssignments.count <= 256,
+                  (episode.alignment?.maps.count ?? 0) <= 16
+            else { throw EpisodeSourceAccessRefusal.inspectionLimit }
+            try charge(episode.title.utf8.count)
+            try charge(episode.notes.utf8.count)
+            for source in episode.sources {
+                guard source.placement.channelLabels.count <= 8 else {
+                    throw EpisodeSourceAccessRefusal.inspectionLimit
+                }
+                try charge(source.displayNameHint.utf8.count)
+                for label in source.placement.channelLabels { try charge(label.label.utf8.count) }
+            }
+            for group in episode.recorderGroups {
+                guard group.epochs.count <= 32 else { throw EpisodeSourceAccessRefusal.inspectionLimit }
+                try charge(group.name.utf8.count)
+                try charge(group.deviceName.utf8.count)
+                try charge(group.clockNote.utf8.count)
+                for epoch in group.epochs {
+                    try charge(epoch.label.utf8.count)
+                    try charge(epoch.note.utf8.count)
+                }
+            }
+            for assignment in episode.speakerAssignments where assignment.backups.count > 64 {
+                throw EpisodeSourceAccessRefusal.inspectionLimit
+            }
+            for version in episode.alignment?.maps ?? [] {
+                guard version.inputs.sources.count <= 64 else { throw EpisodeSourceAccessRefusal.inspectionLimit }
+                if let recipe = version.inputs.recipe { try charge(recipe.name.utf8.count) }
+                for input in version.inputs.sources {
+                    if let digest = input.contentDigest { try charge(digest.utf8.count) }
+                }
+                var pending: [(EmbeddedJSON, Int)] = [(version.map, 0)]
+                while let (value, depth) = pending.popLast() {
+                    nodes += 1
+                    guard nodes <= 65_536, depth <= 32 else { throw EpisodeSourceAccessRefusal.inspectionLimit }
+                    switch value {
+                    case .null, .bool, .integer, .number: break
+                    case .string(let text): try charge(text.utf8.count)
+                    case .array(let values):
+                        guard values.count <= 65_536 - nodes - pending.count else {
+                            throw EpisodeSourceAccessRefusal.inspectionLimit
+                        }
+                        for child in values { pending.append((child, depth + 1)) }
+                    case .object(let values):
+                        guard values.count <= 65_536 - nodes - pending.count else {
+                            throw EpisodeSourceAccessRefusal.inspectionLimit
+                        }
+                        for (key, child) in values {
+                            try charge(key.utf8.count)
+                            pending.append((child, depth + 1))
+                        }
+                    }
+                }
+            }
+        }
+        try charge(model.show.title.utf8.count)
+        try charge(model.show.notes.utf8.count)
+        for speaker in model.speakers {
+            try charge(speaker.name.utf8.count)
+            try charge(speaker.notes.utf8.count)
+        }
+        for entry in model.history.entries { try charge(entry.actionName.utf8.count) }
+    }
+
     private func observe(
         _ source: SourceID, record: DeviceAccessRecord, evaluator: SourceAvailabilityEvaluator
-    ) throws -> (revision: SourceRevision, physical: PhysicalFile) {
+    ) throws -> (revision: SourceRevision, physical: PhysicalFile, url: URL) {
         let key = DeviceAccessKey(showID: showID, sourceID: source)
         let evaluation = evaluator.evaluate(key: key, record: record, setting: .off)
         guard evaluation.observation.access == .granted,
@@ -178,7 +334,7 @@ public struct EpisodeSourceInventorySurveyor: Sendable {
         else { throw EpisodeSourceAccessRefusal.physicalIdentityUnknown(source) }
         return (
             SourceRevision.metadata(source, fingerprint: metadata.fingerprint),
-            PhysicalFile(volume: volume, identifier: identifier)
+            PhysicalFile(volume: volume, identifier: identifier), url
         )
     }
 
@@ -190,6 +346,7 @@ public struct EpisodeSourceInventorySurveyor: Sendable {
         let document = try await currentDocument()
         try Task.checkCancellation()
         let model = document.model
+        try requireBounded(model)
         guard model.show.id == showID else { throw EpisodeSourceAccessRefusal.wrongShow }
         guard let episode = model.episode(episodeID) else { throw EpisodeSourceAccessRefusal.episodeMissing }
         guard let revision = episode.alignment?.acceptedRevision,
@@ -219,6 +376,7 @@ public struct EpisodeSourceInventorySurveyor: Sendable {
         }
 
         let records = try await accessStore.records(in: showID)
+        guard records.count <= 256 else { throw EpisodeSourceAccessRefusal.inspectionLimit }
         let latest = try await currentDocument()
         try Task.checkCancellation()
         guard latest.model == model, latest.publication == document.publication else {
@@ -273,7 +431,7 @@ public struct EpisodeSourceInventorySurveyor: Sendable {
             guard let record = records.first(where: { $0.key == key }) else {
                 throw EpisodeSourceAccessRefusal.accessMissing(source.id)
             }
-            let (fileRevision, physical) = try observe(source.id, record: record, evaluator: evaluator)
+            let (fileRevision, physical, _) = try observe(source.id, record: record, evaluator: evaluator)
             if let other = physicalOwners.updateValue(source.id, forKey: physical) {
                 throw EpisodeSourceAccessRefusal.physicalAlias(other, source.id)
             }
@@ -283,7 +441,8 @@ public struct EpisodeSourceInventorySurveyor: Sendable {
                 for channel in 0..<count {
                     lanes.append(EpisodeSourceLane(
                         source: source.id, channel: channel, occurrence: placement.occurrence.id,
-                        epoch: span.epoch, group: group.group, fileRevision: fileRevision
+                        epoch: span.epoch, group: group.group,
+                        frameCount: placement.occurrence.frameCount, fileRevision: fileRevision
                     ))
                 }
             }
@@ -311,6 +470,7 @@ public struct EpisodeSourceInventorySurveyor: Sendable {
         else { throw EpisodeSourceAccessRefusal.acceptedMapNotActive }
         let finalRecords = try await accessStore.records(in: showID)
         try Task.checkCancellation()
+        guard finalRecords.count <= 256 else { throw EpisodeSourceAccessRefusal.inspectionLimit }
         guard finalRecords.count == Set(finalRecords.map(\.key)).count else {
             throw EpisodeSourceAccessRefusal.duplicateOccurrence
         }
@@ -319,7 +479,7 @@ public struct EpisodeSourceInventorySurveyor: Sendable {
                 throw EpisodeSourceAccessRefusal.accessMissing(source.id)
             }
             guard record == original else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
-            let (revision, physical) = try observe(source.id, record: record, evaluator: evaluator)
+            let (revision, physical, _) = try observe(source.id, record: record, evaluator: evaluator)
             guard revision.token == observedRevisions[source.id],
                   physicalOwners[physical] == source.id
             else { throw EpisodeSourceAccessRefusal.changedDuringVerification }

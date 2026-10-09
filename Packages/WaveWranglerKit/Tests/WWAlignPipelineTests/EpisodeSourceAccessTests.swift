@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import WWCore
+import WWDecode
 import WWDerived
 import WWPersistence
 import WWSources
@@ -395,6 +396,192 @@ struct EpisodeSourceAccessTests {
             try await original.2.verify(episode: original.0.episodeID) { Self.document(original.0.model) }
         }
         #expect(original.0.content.total.opens == opens)
+    }
+
+    @Test func coherentForgedReadyFactsCannotMintDecoderReceipt() async throws {
+        let (fixture, _, verifier) = try await fixture()
+        let source = fixture.id("primary")
+        let slot = PipelineSlots.sourceFacts(source)
+        guard case let .ready(key) = await fixture.coordinator.state(of: slot) else {
+            Issue.record("source facts were not ready")
+            return
+        }
+        var forged = try SourceFacts.decode(try #require(await fixture.coordinator.readyPayload(for: slot)))
+        forged.interpretation.channelCount = 1
+        forged.interpretation.output.channelCount = 1
+        forged.interpretation.frames.primingFrames = -1
+        forged.interpretation.origin.discardedLeadingStreamFrames = -1
+        let bytes = try SourceFacts.encode(forged)
+        await fixture.coordinator.invalidate(slot)
+        let job = await fixture.coordinator.submit(slot, key: key) { bytes }
+        #expect(await job.outcome == .published(key))
+        let opened = fixture.content.record(fixture.url("primary")).opens
+        let receipts = try await verifier.probeSources(
+            episode: fixture.episodeID, decoder: fixture.decoder,
+            authorizations: fixture.authorizations
+        ) { Self.document(fixture.model) }
+        #expect(receipts[source]?.interpretation.channelCount == 2)
+        #expect(receipts[source]?.interpretation.frames.primingFrames == 0)
+        #expect(fixture.content.record(fixture.url("primary")).opens > opened)
+        fixture.model.episodes[0].sources[0].observations.channelCount = .known(1)
+        await #expect(throws: EpisodeSourceAccessRefusal.decoderMismatch(source)) {
+            try await verifier.probeSources(
+                episode: fixture.episodeID, decoder: fixture.decoder,
+                authorizations: fixture.authorizations
+            ) { Self.document(fixture.model) }
+        }
+    }
+
+    @Test func sameKeyRepublishDuringHeaderProbeRefuses() async throws {
+        let (fixture, _, verifier) = try await fixture()
+        let source = fixture.id("primary")
+        let slot = PipelineSlots.sourceFacts(source)
+        guard case let .ready(key) = await fixture.coordinator.state(of: slot) else {
+            Issue.record("source facts were not ready")
+            return
+        }
+        let calls = Box(0)
+        let baseline = fixture.content.total.opens
+        await #expect(throws: EpisodeSourceAccessRefusal.changedDuringVerification) {
+            try await verifier.probeSources(
+                episode: fixture.episodeID, decoder: fixture.decoder,
+                authorizations: fixture.authorizations
+            ) {
+                if calls.update({ $0 += 1; return $0 }) == 5 {
+                    await fixture.coordinator.invalidate(slot)
+                    let job = await fixture.coordinator.submit(slot, key: key) {
+                        Data("different-payload-at-same-key".utf8)
+                    }
+                    #expect(await job.outcome == .published(key))
+                }
+                return Self.document(fixture.model)
+            }
+        }
+        #expect(calls.value >= 5)
+        #expect(fixture.content.total.opens > baseline, "the replacement lands after both header opens")
+    }
+
+    @Test func oversizedSurveyInputsRefuseBeforeDecodeOrWholeShowTraversal() async throws {
+        let (fixture, _, verifier) = try await fixture()
+        let baseline = fixture.content.total.opens
+        let original = fixture.model
+        fixture.model.episodes += Array(repeating: Episode(title: "unrelated"), count: 65)
+        await #expect(throws: EpisodeSourceAccessRefusal.inspectionLimit) {
+            try await verifier.survey(episode: fixture.episodeID) { Self.document(fixture.model) }
+        }
+        fixture.model = original
+        fixture.model.episodes[0].alignment?.maps += Array(
+            repeating: try #require(original.episodes[0].alignment?.maps[0]), count: 65
+        )
+        await #expect(throws: EpisodeSourceAccessRefusal.inspectionLimit) {
+            try await verifier.survey(episode: fixture.episodeID) { Self.document(fixture.model) }
+        }
+        fixture.model = original
+        fixture.model.episodes[0].alignment?.maps[0].inputs.sources = Array(
+            repeating: try #require(original.episodes[0].alignment?.maps[0].inputs.sources[0]), count: 257
+        )
+        await #expect(throws: EpisodeSourceAccessRefusal.inspectionLimit) {
+            try await verifier.survey(episode: fixture.episodeID) { Self.document(fixture.model) }
+        }
+        fixture.model = original
+        fixture.model.episodes[0].alignment?.maps[0].map = .string(String(repeating: "x", count: 1_048_577))
+        await #expect(throws: EpisodeSourceAccessRefusal.inspectionLimit) {
+            try await verifier.survey(episode: fixture.episodeID) { Self.document(fixture.model) }
+        }
+        fixture.model = original
+        fixture.model.episodes[0].alignment?.maps[0].inputs.sources[0].contentDigest = String(
+            repeating: "x", count: 1_048_577
+        )
+        await #expect(throws: EpisodeSourceAccessRefusal.inspectionLimit) {
+            try await verifier.survey(episode: fixture.episodeID) { Self.document(fixture.model) }
+        }
+        #expect(fixture.content.total.opens == baseline)
+    }
+
+    @Test func noBackupAuthorizationOrGrantNeverOpensBackup() async throws {
+        let (fixture, store, verifier) = try await fixture()
+        let backup = fixture.id("backup")
+        let before = fixture.content.record(fixture.url("backup")).opens
+        await #expect(throws: EpisodeSourceAccessRefusal.contentNotAuthorized(backup)) {
+            try await verifier.probeSources(
+                episode: fixture.episodeID, decoder: fixture.decoder,
+                authorizations: [.explicitUserRequest(for: fixture.id("primary"))]
+            ) { Self.document(fixture.model) }
+        }
+        #expect(fixture.content.record(fixture.url("backup")).opens == before)
+        try await store.removeRecord(for: DeviceAccessKey(showID: fixture.model.show.id, sourceID: backup))
+        await #expect(throws: EpisodeSourceAccessRefusal.accessMissing(backup)) {
+            try await verifier.probeSources(
+                episode: fixture.episodeID, decoder: fixture.decoder,
+                authorizations: fixture.authorizations
+            ) { Self.document(fixture.model) }
+        }
+        #expect(fixture.content.record(fixture.url("backup")).opens == before)
+        await #expect(throws: EpisodeSourceAccessRefusal.inspectionLimit) {
+            try await verifier.probeSources(
+                episode: fixture.episodeID, decoder: fixture.decoder,
+                authorizations: Array(repeating: .explicitUserRequest(for: backup), count: 257)
+            ) { Self.document(fixture.model) }
+        }
+        #expect(fixture.content.record(fixture.url("backup")).opens == before)
+    }
+
+    @Test func decodedHeaderLengthMustMatchAcceptedMapOccurrence() async throws {
+        let (fixture, _, verifier) = try await fixture()
+        let source = fixture.id("primary")
+        fixture.content.register(fixture.url("primary"), .init(
+            channels: 2, frames: 48_000, signal: .scene(seed: 81)
+        ))
+        await #expect(throws: EpisodeSourceAccessRefusal.decoderMismatch(source)) {
+            try await verifier.probeSources(
+                episode: fixture.episodeID, decoder: fixture.decoder,
+                authorizations: fixture.authorizations
+            ) { Self.document(fixture.model) }
+        }
+    }
+
+    @Test func headerOnlyOpenRejectsSourceReplacedInsideCursorBody() async throws {
+        let (fixture, _, _) = try await fixture()
+        let source = fixture.id("primary")
+        let url = fixture.url("primary")
+        let before = fixture.content.record(url).opens
+        await #expect(throws: DecodeFailure.sourceChangedDuringDecode) {
+            try await fixture.decoder.withDecodingCursor(url, source: source) { cursor in
+                try fixture.rewrite("primary")
+                return cursor.interpretation
+            }
+        }
+        #expect(fixture.content.record(url).opens == before + 1)
+        #expect(fixture.content.openReaders == 0)
+    }
+
+    @Test(arguments: ["revoke", "replace"])
+    func postHeaderGrantOrSourceChangeRefuses(_ action: String) async throws {
+        let (fixture, store, verifier) = try await fixture()
+        let backup = fixture.id("backup")
+        let calls = Box(0)
+        let opened = fixture.content.total.opens
+        let expected: EpisodeSourceAccessRefusal = action == "revoke"
+            ? .accessMissing(backup) : .accessUnverified(backup)
+        await #expect(throws: expected) {
+            try await verifier.probeSources(
+                episode: fixture.episodeID, decoder: fixture.decoder,
+                authorizations: fixture.authorizations
+            ) {
+                if calls.update({ $0 += 1; return $0 }) == 5 {
+                    if action == "revoke" {
+                        await store.removeRecord(for: DeviceAccessKey(
+                            showID: fixture.model.show.id, sourceID: backup
+                        ))
+                    } else {
+                        try fixture.rewrite("backup")
+                    }
+                }
+                return Self.document(fixture.model)
+            }
+        }
+        #expect(calls.value >= 5)
+        #expect(fixture.content.total.opens > opened)
     }
 }
 

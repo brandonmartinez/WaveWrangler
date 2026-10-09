@@ -104,8 +104,38 @@ struct DecodingCursorTests {
         #expect(interpretation.frames.validFrames == ScriptedSource.aacValid)
         #expect(content.record.reads == 0)
         #expect(content.record.opens == 1 && content.record.closes == 1)
-        #expect(io.metadataCalls == 1, "no reads, so no closing staleness check is needed")
+        #expect(io.metadataCalls == 2, "a header-only receipt also requires a closing identity check")
         #expect(ledger.snapshot.openScopes == 0)
+    }
+
+    @Test("A header receipt with a grant for another source refuses before content open")
+    func wrongSourceHeaderGrant() async throws {
+        let source = try ScriptedSource()
+        let content = ScriptedContentIO(source.script())
+        let decoder = makeDecoder(io: AdjustableIO(), content: content)
+        await #expect(throws: DecodeFailure.permissionDenied) {
+            try await decoder.probeHeader(
+                source.url, source: SourceID(), grant: DecoderHeaderGrant(explicitUserRequestFor: SourceID())
+            )
+        }
+        #expect(content.record.opens == 0)
+    }
+
+    @Test("A decoder header receipt uses the real read-only gateway on a generated stereo WAVE")
+    func systemHeaderReceipt() async throws {
+        let directory = try FixtureDirectory("header-receipt")
+        let url = try directory.write(
+            FixtureSpec(container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
+                        sampleRate: 48_000, channelCount: 2),
+            signal: LandmarkSignal(channelCount: 2, seed: 81)
+        )
+        let source = SourceID()
+        let receipt = try await SourceDecoder(access: SourceAccessContext(io: SystemSourceIO()))
+            .probeHeader(url, source: source, grant: DecoderHeaderGrant(explicitUserRequestFor: source))
+        #expect(receipt.interpretation.source == source)
+        #expect(receipt.interpretation.channelCount == 2)
+        #expect(receipt.interpretation.frames.validFrames == 23_456)
+        #expect(receipt.interpretation.frames.primingFrames == 0)
     }
 
     @Test("A cursor that escapes its call is closed")

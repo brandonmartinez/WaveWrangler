@@ -115,6 +115,18 @@ until independent lane protection, final merged fade and atomic map/history/prev
 are certified. Reverify after awaits and before any future admission; it does not mint the
 policy's sealed verified types or enable a cut.
 
+The package-internal `probeSources` seam is a synthetic-only step toward physical source
+verification, not an app-issued all-lane witness. It requires an independent content authorization
+and current access record for **every** placed source before opening any of them, then uses the
+WWDecode read-only gateway to obtain non-serializable header receipts. It compares physical channels
+and frames with the accepted map, never decodes samples or trusts the publicly writable cached
+`SourceFacts` payload, and refuses coordinator mutations (including same-key republish) across
+awaits. The survey budgets raw model arrays, map trees and text before interpreting embedded maps.
+This budget applies *after* a caller has constructed a model; a bounded canonical on-disk read and
+an app-owned grant/clean-document binding are still required before a production consumer can use
+these receipts. The current selected-Primary transcription grant is **not** Backup authorization.
+No complete protection inventory, common edit, preview or render follows from this seam.
+
 `ReviewJournal` records named pending/adjusted/accepted/rejected/restored/abstained/blocked states;
 Restore keeps the accepted cut's evidence and removes activity. Undo Restore and redo Accept require
 fresh identical all-lane proof or leave the inactive state and history untouched. The app must

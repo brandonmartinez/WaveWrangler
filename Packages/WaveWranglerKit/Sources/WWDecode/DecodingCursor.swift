@@ -312,8 +312,7 @@ public actor DecodingCursor {
     }
 
     func verifyForReturn() async throws(DecodeFailure) {
-        try checkUsable()
-        if currentReadCalls > 0 { try await verifyUnchanged() }
+        try await verifyUnchanged()
     }
 
     func close() async {
@@ -332,7 +331,8 @@ extension SourceDecoder {
     /// Opens one source exactly as `decode` does (security scope → metadata preflight → read-only open →
     /// opened-file identity → envelope interpretation) and lends a `DecodingCursor` to `body`. After
     /// `body` returns, any terminal cursor failure is rethrown and every result derived from reads receives
-    /// a final staleness check, even if the body explicitly checked earlier. Cancellation is also checked,
+    /// a final staleness check (including header-only opens), even if the body explicitly checked earlier.
+    /// Cancellation is also checked,
     /// so a result built from the cursor is returned only if the source was unchanged. The reader is
     /// closed and the scope released on every path.
     ///
@@ -374,5 +374,36 @@ extension SourceDecoder {
         }
         await cursor.close()
         return result
+    }
+}
+
+/// Ephemeral evidence of a fresh header interpretation through the decoder gateway. Cache payloads,
+/// caller-supplied interpretations and serialized data cannot construct this value.
+package final class DecoderHeaderReceipt: Sendable {
+    package let interpretation: FormatInterpretation
+
+    fileprivate init(interpretation: FormatInterpretation) {
+        self.interpretation = interpretation
+    }
+}
+
+/// A per-source request marker. Only the app's permission flow can establish that the request
+/// reflects user consent; the package producer additionally checks it before any source open.
+package struct DecoderHeaderGrant: Sendable {
+    package let source: SourceID
+
+    package init(explicitUserRequestFor source: SourceID) {
+        self.source = source
+    }
+}
+
+extension SourceDecoder {
+    /// Package-only producer; callers must separately establish the request's user provenance and
+    /// document/map currency. No samples are read and the open source is checked again before return.
+    package func probeHeader(_ url: URL, source: SourceID, grant: DecoderHeaderGrant) async throws -> DecoderHeaderReceipt {
+        guard grant.source == source else { throw DecodeFailure.permissionDenied }
+        return try await withDecodingCursor(url, source: source) { cursor in
+            DecoderHeaderReceipt(interpretation: cursor.interpretation)
+        }
     }
 }
