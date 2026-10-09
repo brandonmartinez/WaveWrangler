@@ -25,6 +25,37 @@ struct CheckpointRetirementNativeTests {
         #expect(toolbar.contains("Storage use can grow without a limit until you discard them individually."))
     }
 
+    @Test func everyRetainedSessionHasNondestructiveSelectionAndBoundActions() throws {
+        let document = try String(contentsOf: Self.documentSource, encoding: .utf8)
+        let bridge = try String(contentsOf: Self.documentSource.deletingLastPathComponent()
+            .deletingLastPathComponent().appending(path: "Workspace/EditCheckpointOfferBridge.swift"), encoding: .utf8)
+        let presentation = try String(contentsOf: Self.documentSource.deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Packages/WaveWranglerKit/Sources/WWOrganizer/EditCheckpointOffer.swift"), encoding: .utf8)
+        #expect(presentation.contains("case next = \"Next Recovery Copy\""))
+        #expect(document.contains("selectedOfferURL"))
+        #expect(document.contains("selectedOfferRecord"))
+        #expect(bridge.contains("case .next:"))
+    }
+
+    @Test func damagedCanonicalFileReportsRetainedC2bAndOffersRawReveal() throws {
+        let document = try String(contentsOf: Self.documentSource, encoding: .utf8)
+        #expect(document.contains("checkedOfferedEditCheckpoints(for: key)"))
+        #expect(document.contains("The recovery copy is damaged and cannot be restored"))
+        #expect(document.contains("Show in Finder"))
+        #expect(document.contains("NSWorkspace.shared.activateFileViewerSelecting"))
+    }
+
+    @Test func priorCopyDecodesOlderSchemasOrOffersRawRevealWithoutDeletion() throws {
+        let document = try String(contentsOf: Self.documentSource, encoding: .utf8)
+        let prior = try #require(document.range(of: "func openPriorAsCopy("))
+        let discard = try #require(document.range(of: "func selectedPriorForDiscard(", range: prior.upperBound..<document.endIndex))
+        let implementation = document[prior.lowerBound..<discard.lowerBound]
+        #expect(implementation.contains("ShowSchemaMigration.decodeUpgradingOlder(bytes)"))
+        #expect(implementation.contains("Show in Finder"))
+        #expect(implementation.contains("NSRecoveryAttempterErrorKey"))
+    }
+
     @Test(arguments: [true, false])
     func nativeSafeWriteVerificationErrorDoesNotClearDirtyState(initiallyDirty: Bool) async throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "WWNativeRecovery-\(UUID().uuidString)", directoryHint: .isDirectory)

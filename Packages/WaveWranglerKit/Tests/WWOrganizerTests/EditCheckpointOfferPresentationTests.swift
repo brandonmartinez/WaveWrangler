@@ -13,7 +13,7 @@ struct EditCheckpointOfferPresentationTests {
         #expect(p.heading == "Restore unsaved changes from 10:42 PM?")
         #expect(p.body.contains("“The Daily Wrangle”") && p.body.contains("recovery copy") && p.body.contains("unsaved changes"))
         #expect(!p.body.localizedCaseInsensitiveContains("never saved"))
-        #expect(p.actions == [.restore, .discard])
+        #expect(p.actions == [.restore, .openAsCopy, .discard])
         #expect(p.announcement == p.heading)
         #expect(EditCheckpointAction.restore.rawValue == "Restore Unsaved Changes")
     }
@@ -73,5 +73,20 @@ struct EditCheckpointOfferPresentationTests {
             #expect(SymbolCatalog.all.contains(presentation.symbolName))
             #expect(presentation.body.contains("local storage without a limit until you discard"))
         }
+    }
+
+    @Test func allSessionsCanBeVisitedWithoutDiscardAndAChangedSelectionCannotRestore() {
+        let newest = EditCheckpointOfferPresentation(.restore(createdAt: date), showName: "Show",
+                                                      position: (index: 1, total: 3), formatTime: time)
+        #expect(newest.actions == [.restore, .openAsCopy, .discard, .next])
+        #expect(newest.body.contains("Recovery copy 1 of 3, newest first"))
+        let middle = EditCheckpointOfferPresentation(.olderRevision(createdAt: date), showName: "Show",
+                                                      position: (index: 2, total: 3), formatTime: time)
+        #expect(middle.actions == [.openAsCopy, .discard, .previous, .next])
+        let oldest = EditCheckpointOfferPresentation(.olderRevision(createdAt: date), showName: "Show",
+                                                      position: (index: 3, total: 3), formatTime: time)
+        #expect(oldest.actions == [.openAsCopy, .discard, .previous])
+        let changed = EditCheckpointOfferPresentation(.selectionChanged, showName: "Show")
+        #expect(changed.actions == [.checkAgain] && !changed.actions.contains(.restore))
     }
 }

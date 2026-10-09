@@ -6,15 +6,19 @@ import WWPersistence
 @MainActor
 protocol EditCheckpointOfferProviding: AnyObject {
     var editCheckpointOfferState: EditCheckpointOfferState? { get }
+    var editCheckpointOfferPosition: (index: Int, total: Int)? { get }
     func selectedEditCheckpointForDiscard() throws -> SelectedRecoveryRecord
     /// Performs an already-confirmed action (Discard and Dismiss are confirmed by the window first).
     func performConfirmedEditCheckpointAction(_ action: EditCheckpointAction, selected: SelectedRecoveryRecord?) throws
 }
 
 extension ShowDocument: EditCheckpointOfferProviding {
+    var editCheckpointOfferPosition: (index: Int, total: Int)? { selectedEditCheckpointPosition }
+
     var editCheckpointOfferState: EditCheckpointOfferState? {
         guard let offer = status.editCheckpointOffer else { return nil }
-        if let candidate = offer.candidate, let mode = offer.candidateMode(restoreInEffect: isEditCheckpointRestoreInEffect) {
+        if let candidate = selectedEditCheckpointCandidate {
+            let mode = offer.mode(for: candidate, restoreInEffect: isEditCheckpointRestoreInEffect)
             let createdAt = candidate.record.createdAt
             if restoredOfferURLs.contains(candidate.url) { return .restored(createdAt: createdAt) }
             if !recoveryBaseVerified { return .unverified(createdAt: createdAt) }
@@ -24,18 +28,26 @@ extension ShowDocument: EditCheckpointOfferProviding {
             case .copyOnlyOlderRevision: .olderRevision(createdAt: createdAt)
             }
         }
-        guard !offer.problems.isEmpty else { return nil }
-        let newer = offer.problems.filter { if case .newerFormat = $0 { true } else { false } }.count
-        return .unusable(damaged: offer.problems.count - newer, newerFormat: newer)
+        if let selectedOfferURL, let problem = offer.problems.first(where: { $0.url == selectedOfferURL }) {
+            let newer: Int = if case .newerFormat = problem { 1 } else { 0 }
+            return .unusable(damaged: 1 - newer, newerFormat: newer)
+        }
+        return offer.isEmpty ? nil : .selectionChanged
     }
 
     func selectedEditCheckpointForDiscard() throws -> SelectedRecoveryRecord {
         guard let offer = status.editCheckpointOffer else { throw CocoaError(.fileReadNoSuchFile) }
-        if let candidate = offer.candidate {
-            return try recovery.selectRecord(.offeredEditCheckpoint, at: candidate.url, for: documentKey)
+        if selectedEditCheckpointCandidate != nil {
+            _ = try checkSelectedEditCheckpoint()
+            guard let selectedOfferRecord else { throw CocoaError(.fileReadUnknown) }
+            return selectedOfferRecord
         }
-        guard let problem = offer.problems.first else { throw CocoaError(.fileReadNoSuchFile) }
-        return try recovery.selectRecord(.offeredEditCheckpoint, at: problem.url, for: documentKey, allowingDamagedRecord: true)
+        guard let selectedOfferURL, offer.problems.contains(where: { $0.url == selectedOfferURL }),
+              let selectedOfferRecord, selectedOfferRecord.url == selectedOfferURL,
+              selectedOfferRecord.key == documentKey, selectedOfferRecord.kind == .offeredEditCheckpoint
+        else { throw CocoaError(.fileReadNoSuchFile) }
+        _ = try recovery.readSelectedRecord(selectedOfferRecord)
+        return selectedOfferRecord
     }
 
     func performConfirmedEditCheckpointAction(_ action: EditCheckpointAction, selected: SelectedRecoveryRecord?) throws {
@@ -46,8 +58,10 @@ extension ShowDocument: EditCheckpointOfferProviding {
             guard let selected else { throw CocoaError(.fileReadNoSuchFile) }
             try discardOfferedEditCheckpoint(selected)
         case .showInFinder: NSWorkspace.shared.activateFileViewerSelecting(editCheckpointProblemURLs)
-        case .checkAgain: refreshEditCheckpointOffer()
+        case .checkAgain: reselectEditCheckpointAfterChange()
         case .dismiss: hideEditCheckpointProblems()
+        case .previous: try advanceEditCheckpointOffer(by: -1)
+        case .next: try advanceEditCheckpointOffer(by: 1)
         }
     }
 }

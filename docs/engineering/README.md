@@ -168,11 +168,20 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
   validated priors and C2b unpublished edit checkpoints, conflict candidates, migration backups.
   Neither Save/Save As/Copy, autosave, Revert, Don't Save nor close removes them. Only a separately
   confirmed, identity-bound Discard removes one selected record; local storage can grow without bound.
-  The save-status popover reports retained priors and exposes individual review/Discard. This is not
-  cross-device recovery; the pending-library-edits journal has its own verified-replay clearing rule.
-- **Open:** unknown-newer refuses (never written); damaged files offer a whole validated checkpoint as
-  a new untitled copy; migrations preserve the original plus a non-overwriting backup and publish only
-  after independent expectations pass.
+  The message bar offers each C2b session newest first, with Previous/Next, independent Restore/Open
+  Copy/Discard actions and a recheck of the selected record's physical identity and full bytes. The
+  save-status popover reports retained C3 priors and exposes individual review/Discard. Save As adds
+  a location hint without replacing the original hint, so either path can locate retained copies if
+  damaged. This is not cross-device recovery; the pending-library-edits journal has its own
+  verified-replay clearing rule.
+- **Open:** unknown-newer refuses (never written); a damaged canonical show offers individually
+  validated C3 and C2b records only as separate copies. A damaged C2b payload is never "restored":
+  the refusal reports it as unusable and can reveal its retained raw file in Finder. Older-schema C3
+  priors open as upgraded unsaved copies where safe; otherwise they remain intact with an actionable
+  raw-file reveal. Format Update checks the originating file's observed item identity before the
+  migration write as well as the expected bytes; an identical replacement at that path is refused.
+  Migrations keep the original and a non-overwriting backup and adopt only a verified receipt and
+  matching independent read-back.
 - **Autosave** (`WWAutosaveEnabled`, `WWAutosaveDelaySeconds` ∈ {1, 2, 5, 10, 30}): the gate is checked
   at `autosavesInPlace`, `scheduleAutosaving()` and every `autosave(withImplicitCancellability:)`.
   OFF schedules nothing, cancels queued automatic work (never a success-shaped `nil`), stays dirty and

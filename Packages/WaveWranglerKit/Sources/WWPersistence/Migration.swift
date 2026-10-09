@@ -47,7 +47,10 @@ public struct DocumentMigrator<Coder: CanonicalDocumentCoding>: Sendable {
 
     public var migratableSchemas: Set<Int> { Set(steps.keys) }
 
-    public func migrate(_ url: URL, key: DocumentKey, isCancelled: () -> Bool = { false }) throws -> MigrationReceipt {
+    public func migrate(
+        _ url: URL, key: DocumentKey, originatingItem: FileItemIdentity? = nil,
+        isCancelled: () -> Bool = { false }
+    ) throws -> MigrationReceipt {
         guard let recovery = publisher.recovery else {
             throw PublicationError.failed(stage: .migrationOriginalRead, kind: .other, detail: "migration requires a recovery store")
         }
@@ -59,6 +62,9 @@ public struct DocumentMigrator<Coder: CanonicalDocumentCoding>: Sendable {
             throw PublicationError.failed(stage: .migrationOriginalRead, kind: WriteFailureKind(classifying: error), detail: "\(error)")
         }
         let originalFingerprint = RevisionFingerprint(of: original)
+        if let originatingItem, FileItemIdentity.observe(at: url) != originatingItem {
+            throw PublicationError.originConflict("The originating file's identity changed before format update.")
+        }
         guard let schema = originalFingerprint.schemaVersion, let step = steps[schema] else {
             throw PublicationError.failed(stage: .migrationOriginalRead, kind: .other, detail: "no migration from schema \(originalFingerprint.schemaVersion.map(String.init) ?? "?")")
         }
@@ -105,6 +111,7 @@ public struct DocumentMigrator<Coder: CanonicalDocumentCoding>: Sendable {
                 revision: nil, schemaVersion: schema, checksum: nil, byteDigest: originalFingerprint.byteDigest
             )),
             retainPrior: false,
+            expectedOriginItem: originatingItem,
             isCancelled: isCancelled
         )
         return MigrationReceipt(backup: backup, originalFingerprint: originalFingerprint, publication: receipt)

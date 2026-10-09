@@ -41,6 +41,9 @@ final class ShowDocument: NSDocument {
     /// Offered C2b records whose Restore is currently in effect (Undo of the Restore removes the record again).
     /// They stay on disk after Restore, Save and Don't Save; only a separately confirmed Discard removes one.
     var restoredOfferURLs: Set<URL> = []
+    /// The one displayed C2b choice, bound to its physical file until the user explicitly selects another.
+    private(set) var selectedOfferURL: URL?
+    private(set) var selectedOfferRecord: SelectedRecoveryRecord?
     var recoveryBaseVerified = false
     /// Explicitly dismissed unusable-record reports; the underlying records remain on disk.
     private var dismissedProblemURLs: Set<URL> = []
@@ -170,6 +173,8 @@ final class ShowDocument: NSDocument {
 
     private func load(_ data: Data, url: URL?) throws {
         restoredOfferURLs.removeAll()
+        selectedOfferURL = nil
+        selectedOfferRecord = nil
         dismissedProblemURLs.removeAll()
         originatingItem = url.flatMap(FileItemIdentity.observe(at:))
         // A schema 1 show reports `.needsMigration`: it opens upgraded in memory, read-only, and nothing is written
@@ -188,6 +193,7 @@ final class ShowDocument: NSDocument {
             publication = document.publication
             onDiskBase = fingerprint
             status.set(.clean(revision: document.revision))
+            if let url { try recovery.recordLocation(url, for: documentKey) }
             // Move active records to the offered directory on open; neither location is retired by a save.
             try recovery.setAsideEditCheckpoints(for: .show(document.payload.show.id))
             // Evidence-only and presentation work runs after the window's first frame (SCALE-001 cold open):
@@ -204,7 +210,8 @@ final class ShowDocument: NSDocument {
             let upgraded: DecodedDocument<ShowDocumentModel>
             switch opener.olderShowForViewing(data, url: url) {
             case let .viewable(document): upgraded = document
-            case let .damaged(error, candidates): throw DocumentRecoveryOffer.error(for: error, candidates: candidates, recovery: recovery)
+            case let .damaged(error, candidates):
+                throw DocumentRecoveryOffer.error(for: error, candidates: candidates, recovery: recovery, url: url)
             }
             store.replaceLoadedModel(upgraded.payload)
             verifiedModel = upgraded.payload
@@ -214,10 +221,11 @@ final class ShowDocument: NSDocument {
             formatUpdatePromptPending = true
             status.setFormatUpdate(.needed)
             status.set(.clean(revision: upgraded.revision))
+            if let url { try recovery.recordLocation(url, for: documentKey) }
             // Edit checkpoints are set aside and offered only once the update has published (restoring is an edit).
             scheduleAfterFirstFrame()
         case let .damaged(error, candidates):
-            throw DocumentRecoveryOffer.error(for: error, candidates: candidates, recovery: recovery)
+            throw DocumentRecoveryOffer.error(for: error, candidates: candidates, recovery: recovery, url: url)
         case let .unreadable(kind, detail, _):
             throw CocoaError(kind == .permissionDenied ? .fileReadNoPermission : .fileReadUnknown,
                              userInfo: [NSLocalizedFailureReasonErrorKey: detail])
@@ -325,7 +333,9 @@ final class ShowDocument: NSDocument {
         pendingSave = nil
         let result: Error? = error ?? (receipt == nil
             ? PublicationError.acknowledgementUncertain("No independently verified publication receipt was returned.")
-            : nil)
+            : adopts && (receipt?.itemIdentity == nil || receipt?.itemIdentity != FileItemIdentity.observe(at: url))
+                ? PublicationError.acknowledgementUncertain("The verified file's identity changed before adoption.")
+                : nil)
         if result == nil, adopts, let receipt {
             cancelSaveRetry()
             uncertainCandidate = nil
@@ -480,6 +490,8 @@ final class ShowDocument: NSDocument {
                 self.store.replaceLoadedModel(copy)
                 self.undoManager?.removeAllActions()
                 self.restoredOfferURLs.removeAll()
+                self.selectedOfferURL = nil
+                self.selectedOfferRecord = nil
                 self.status.setCopyNotice(Self.copyMessage(copyName: name, folder: url.deletingLastPathComponent().lastPathComponent,
                                                            originalFolder: request.originalFolder))
             }
@@ -619,6 +631,7 @@ final class ShowDocument: NSDocument {
             do {
                 lastReceipt = try publisher.publish(
                     encoded: candidate, key: pendingSave.key, to: url, target: target, retainPrior: inPlace,
+                    expectedOriginItem: inPlace ? originatingItem : nil,
                     isCancelled: { false },
                     step: .external { _, _ in
                         try super.writeSafely(to: url, ofType: typeName, for: saveOperation)
@@ -749,7 +762,73 @@ final class ShowDocument: NSDocument {
             decodeOlder: ShowSchemaMigration.decodeUpgradingOlder,
             belongsToDocument: { $0.show.id == showID }
         ).excluding(dismissedProblemURLs)
+        var selectionError: Error?
+        if selectedOfferURL == nil, let firstURL = offer.orderedURLs.first {
+            do {
+                selectedOfferRecord = try recovery.selectRecord(
+                    .offeredEditCheckpoint, at: firstURL, for: documentKey,
+                    allowingDamagedRecord: offer.problems.contains { $0.url == firstURL }
+                )
+                selectedOfferURL = firstURL
+            } catch {
+                if offer.problems.contains(where: { $0.url == firstURL }) { selectedOfferURL = firstURL }
+                selectionError = error
+            }
+        }
         status.setEditCheckpointOffer(offer.isEmpty ? nil : offer)
+        if let selectionError {
+            status.setEditCheckpointWarning("The selected recovery copy could not be checked: \(selectionError.localizedDescription)")
+        }
+    }
+
+    var selectedEditCheckpointCandidate: EditCheckpointOffer<ShowDocumentModel>.Candidate? {
+        guard let selectedOfferURL else { return nil }
+        return status.editCheckpointOffer?.usable.first { $0.url == selectedOfferURL }
+    }
+
+    var selectedEditCheckpointPosition: (index: Int, total: Int)? {
+        guard let offer = status.editCheckpointOffer, let selectedOfferURL,
+              let index = offer.orderedURLs.firstIndex(of: selectedOfferURL) else { return nil }
+        return (index + 1, offer.orderedURLs.count)
+    }
+
+    func advanceEditCheckpointOffer(by offset: Int) throws {
+        guard let offer = status.editCheckpointOffer, let selectedOfferURL else { throw CocoaError(.fileReadNoSuchFile) }
+        let urls = offer.orderedURLs
+        guard let index = urls.firstIndex(of: selectedOfferURL),
+              urls.indices.contains(index + offset) else { throw CocoaError(.fileReadNoSuchFile) }
+        let nextURL = urls[index + offset]
+        let isProblem = offer.problems.contains { $0.url == nextURL }
+        do {
+            selectedOfferRecord = try recovery.selectRecord(
+                .offeredEditCheckpoint, at: nextURL, for: documentKey, allowingDamagedRecord: isProblem
+            )
+        } catch {
+            guard isProblem else { throw error }
+            selectedOfferRecord = nil
+            self.selectedOfferURL = nextURL
+            status.setEditCheckpointOffer(offer)
+            status.setEditCheckpointWarning("The raw recovery copy could not be checked: \(error.localizedDescription)")
+            return
+        }
+        self.selectedOfferURL = nextURL
+        status.setEditCheckpointOffer(offer)
+    }
+
+    func checkSelectedEditCheckpoint() throws -> EditCheckpointOffer<ShowDocumentModel>.Candidate {
+        guard let selection = selectedOfferRecord, selection.key == documentKey,
+              selection.kind == .offeredEditCheckpoint, selection.url == selectedOfferURL,
+              let candidate = selectedEditCheckpointCandidate else { throw CocoaError(.fileReadUnknown) }
+        let bytes = try recovery.readSelectedRecord(selection)
+        let record = try EditCheckpointRecord.decode(bytes)
+        guard record == candidate.record else { throw CocoaError(.fileReadUnknown) }
+        return candidate
+    }
+
+    func reselectEditCheckpointAfterChange() {
+        selectedOfferURL = nil
+        selectedOfferRecord = nil
+        refreshEditCheckpointOffer()
     }
 
     func refreshPriorCheckpoints() {
@@ -759,13 +838,37 @@ final class ShowDocument: NSDocument {
 
     func openPriorAsCopy(_ prior: RecoveryCheckpoint) throws {
         guard prior.key == documentKey else { throw CocoaError(.fileReadCorruptFile) }
-        let selected = try recovery.selectRecord(.priorCheckpoint, at: prior.url, for: documentKey)
-        let bytes = try recovery.bytes(of: prior)
-        guard FileItemIdentity.observe(at: prior.url) == selected.itemIdentity,
-              RevisionFingerprint.digest(bytes) == selected.byteDigest,
-              selected.byteDigest == prior.fingerprint.byteDigest else { throw CocoaError(.fileReadUnknown) }
-        let model = try coder.decode(bytes).payload
+        let selected: SelectedRecoveryRecord
+        do {
+            selected = try recovery.selectRecord(.priorCheckpoint, at: prior.url, for: documentKey,
+                                                 allowingDamagedRecord: true)
+        } catch {
+            throw Self.unusablePriorError(at: prior.url, reason: error)
+        }
+        let bytes: Data
+        do {
+            bytes = try recovery.readSelectedRecord(selected)
+            guard selected.byteDigest == prior.fingerprint.byteDigest else { throw CocoaError(.fileReadUnknown) }
+        } catch {
+            throw Self.unusablePriorError(at: prior.url, reason: error)
+        }
+        let model: ShowDocumentModel
+        do {
+            model = try ShowSchemaMigration.decodeUpgradingOlder(bytes).payload
+            guard DocumentKey.show(model.show.id) == documentKey else { throw CocoaError(.fileReadCorruptFile) }
+        } catch {
+            throw Self.unusablePriorError(at: prior.url, reason: error)
+        }
         _ = Self.openUntitledCopy(of: model.duplicatedAsNewShow())
+    }
+
+    private static func unusablePriorError(at url: URL, reason: Error) -> NSError {
+        NSError(domain: "com.brandonmartinez.wavewrangler.recovery", code: 2, userInfo: [
+            NSLocalizedDescriptionKey: "This older recovery copy cannot be opened.",
+            NSLocalizedRecoverySuggestionErrorKey: "It has been kept unchanged on this Mac. Show it in Finder to export the raw file. \(reason.localizedDescription)",
+            NSLocalizedRecoveryOptionsErrorKey: ["Show in Finder", "Cancel"],
+            NSRecoveryAttempterErrorKey: RawRecoveryRevealer(url: url),
+        ])
     }
 
     func selectedPriorForDiscard(_ prior: RecoveryCheckpoint) throws -> SelectedRecoveryRecord {
@@ -789,10 +892,12 @@ final class ShowDocument: NSDocument {
     /// "Restore Unsaved Changes": only while the record is based on exactly the publication on disk. Applies the
     /// whole snapshot as one undoable edit; the document is dirty and is never marked saved by a restore.
     func restoreOfferedEditCheckpoint() throws {
+        let selected = try checkSelectedEditCheckpoint()
         refreshEditCheckpointOffer()
-        guard let offer = status.editCheckpointOffer, let candidate = offer.candidate,
+        guard let offer = status.editCheckpointOffer, let candidate = selectedEditCheckpointCandidate,
+              candidate.url == selected.url, candidate.record == selected.record,
               recoveryBaseVerified,
-              offer.candidateMode(restoreInEffect: isEditCheckpointRestoreInEffect) == .restore else {
+              offer.mode(for: candidate, restoreInEffect: isEditCheckpointRestoreInEffect) == .restore else {
             throw PublicationError.originConflict("The recovery copy's base could not be verified for an in-place restore. Check Again or open it as a separate copy.")
         }
         // One undo step: the model change (which marks the document dirty) and the "restored" mark, so Undo of the
@@ -831,7 +936,7 @@ final class ShowDocument: NSDocument {
     /// "Open as Separate Copy": a new untitled show (new show ID, so it can't be mistaken for this one), dirty
     /// and unsaved. Never merged into this show and never published by itself. The original record is kept.
     func openOfferedEditCheckpointAsCopy() throws {
-        guard let offer = status.editCheckpointOffer, let candidate = offer.candidate else { throw CocoaError(.fileReadNoSuchFile) }
+        let candidate = try checkSelectedEditCheckpoint()
         ShowDocument.openUntitledCopy(of: candidate.payload.duplicatedAsNewShow())
     }
 
@@ -840,20 +945,29 @@ final class ShowDocument: NSDocument {
         try recovery.discardSelectedRecord(selected)
         restoredOfferURLs.remove(selected.url)
         dismissedProblemURLs.remove(selected.url)
+        if selectedOfferURL == selected.url {
+            selectedOfferURL = nil
+            selectedOfferRecord = nil
+        }
         refreshEditCheckpointOffer()
     }
 
     /// Hides the "couldn't be restored" report in this window (after confirmation). Nothing is deleted.
     func hideEditCheckpointProblems() {
-        guard let offer = status.editCheckpointOffer else { return }
-        dismissedProblemURLs.formUnion(offer.problems.map(\.url))
+        guard let selectedOfferURL, status.editCheckpointOffer?.problems.contains(where: { $0.url == selectedOfferURL }) == true else { return }
+        dismissedProblemURLs.insert(selectedOfferURL)
+        self.selectedOfferURL = nil
+        selectedOfferRecord = nil
         refreshEditCheckpointOffer()
     }
 
     /// A restored record stays marked until Undo, Revert or explicit Discard.
     var isEditCheckpointRestoreInEffect: Bool { !restoredOfferURLs.isEmpty }
 
-    var editCheckpointProblemURLs: [URL] { status.editCheckpointOffer?.problems.map(\.url) ?? [] }
+    var editCheckpointProblemURLs: [URL] {
+        guard let selectedOfferURL, status.editCheckpointOffer?.problems.contains(where: { $0.url == selectedOfferURL }) == true else { return [] }
+        return [selectedOfferURL]
+    }
 
     override func close() {
         scheduler?.cancelPending()
@@ -934,6 +1048,10 @@ final class ShowDocument: NSDocument {
     /// reported without claiming the original is unchanged.
     func updateFormat() {
         guard FormatUpdatePolicy.allowsUpdateAttempt(status.formatUpdate), let url = fileURL, let original = formatUpdateOriginal else { return }
+        guard let openedItem = originatingItem, FileItemIdentity.observe(at: url) == openedItem else {
+            status.setFormatUpdate(.failed(detail: "The originating file's identity is missing or has changed. Reopen the show before updating it."))
+            return
+        }
         status.setFormatUpdate(.updating)
         let key = documentKey
         var hooks: any PublicationHooks = NoPublicationHooks()
@@ -949,16 +1067,19 @@ final class ShowDocument: NSDocument {
             Task { @MainActor in
                 let attempt = await Task.detached(priority: .userInitiated) {
                     let errorDetail: String?
+                    let receipt: MigrationReceipt?
                     do {
-                        _ = try migrator.migrate(url, key: key)
+                        receipt = try migrator.migrate(url, key: key, originatingItem: openedItem)
                         errorDetail = nil
                     } catch {
+                        receipt = nil
                         errorDetail = Self.formatUpdateDetail(error)
                     }
                     let onDisk = try? coordination.coordinateReading(at: url) { try Data(contentsOf: $0) }
-                    return (errorDetail: errorDetail, onDisk: onDisk)
+                    return (errorDetail: errorDetail, onDisk: onDisk, receipt: receipt)
                 }.value
-                self?.finishFormatUpdate(errorDetail: attempt.errorDetail, original: original, onDisk: attempt.onDisk, url: url)
+                self?.finishFormatUpdate(errorDetail: attempt.errorDetail, original: original, onDisk: attempt.onDisk,
+                                         receipt: attempt.receipt, url: url)
                 finish.run()
             }
         }
@@ -978,7 +1099,7 @@ final class ShowDocument: NSDocument {
         return (error as NSError).localizedFailureReason ?? error.localizedDescription
     }
 
-    private func finishFormatUpdate(errorDetail: String?, original: Data, onDisk: Data?, url: URL) {
+    private func finishFormatUpdate(errorDetail: String?, original: Data, onDisk: Data?, receipt: MigrationReceipt?, url: URL) {
         guard status.formatUpdate == .updating else { return }
         guard fileURL?.standardizedFileURL == url.standardizedFileURL else {
             // The show was moved or renamed during the update: what's at its new location wasn't checked here.
@@ -988,7 +1109,11 @@ final class ShowDocument: NSDocument {
         }
         let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery, identityOf: { .show($0.show.id) })
         var adopted: (document: DecodedDocument<ShowDocumentModel>, fingerprint: RevisionFingerprint)?
-        if let onDisk, case let .editable(document, fingerprint) = opener.outcome(for: onDisk, url: url, key: documentKey) {
+        if let onDisk, let receipt, errorDetail == nil,
+           let verifiedItem = receipt.publication.itemIdentity, FileItemIdentity.observe(at: url) == verifiedItem,
+           RevisionFingerprint.digest(onDisk) == receipt.publication.fingerprint.byteDigest,
+           case let .editable(document, fingerprint) = opener.outcome(for: onDisk, url: url, key: documentKey),
+           document.publication == receipt.publication.publication {
             adopted = (document, fingerprint)
         }
         switch FormatUpdateOutcome.classify(errorDetail: errorDetail, original: original, onDiskNow: onDisk,
@@ -1061,67 +1186,157 @@ final class ShowDocument: NSDocument {
 /// Error for a damaged show file that offers whole validated checkpoints from this Mac as a new copy.
 /// The damaged file is never modified.
 enum DocumentRecoveryOffer {
-    static func error(for error: PersistenceError, candidates: [RecoveryCandidate<ShowDocumentModel>], recovery: RecoveryStore) -> NSError {
+    static func error(
+        for error: PersistenceError, candidates: [RecoveryCandidate<ShowDocumentModel>],
+        recovery: RecoveryStore, url: URL?
+    ) -> NSError {
         var userInfo: [String: Any] = [
             NSLocalizedDescriptionKey: error.errorDescription ?? "The document is damaged.",
             NSLocalizedFailureReasonErrorKey: error.failureReason ?? "",
         ]
-        if let newest = candidates.first {
-            let selectable = candidates.first { $0.checkpoint.url.path.contains("/checkpoints/") }
-            let selected: SelectedRecoveryRecord?
-            if let selectable {
-                selected = try? recovery.selectRecord(.priorCheckpoint, at: selectable.checkpoint.url, for: selectable.checkpoint.key)
-            } else { selected = nil }
-            let priorDetail = selected.map {
-                " The separately discardable prior copy is “\($0.url.lastPathComponent)”; other copies remain."
-            } ?? ""
-            userInfo[NSLocalizedRecoverySuggestionErrorKey] =
-                "A complete earlier revision (\(newest.document.revision)) is kept on this Mac. You can open it as a new, unsaved copy. The damaged file is left unchanged.\(priorDetail)"
-            userInfo[NSLocalizedRecoveryOptionsErrorKey] = selected == nil
-                ? ["Open Recovered Copy", "Cancel"]
-                : ["Open Recovered Copy", "Discard One Prior Copy…", "Cancel"]
-            userInfo[NSRecoveryAttempterErrorKey] = RecoveryAttempter(model: newest.document.payload, recovery: recovery, selected: selected)
-        } else {
-            userInfo[NSLocalizedRecoverySuggestionErrorKey] = error.recoverySuggestion ?? ""
+        var actions: [RecoveryAttempter.Action] = []
+        for candidate in candidates {
+            let kind: RecoveryRecordKind = candidate.checkpoint.url.lastPathComponent == "current.wwcheckpoint"
+                ? .verifiedCurrent : .priorCheckpoint
+            if let selected = try? recovery.selectRecord(kind, at: candidate.checkpoint.url,
+                                                         for: candidate.checkpoint.key, allowingDamagedRecord: true) {
+                actions.append(.copy(selected, unpublished: false))
+            } else {
+                actions.append(.reveal(candidate.checkpoint.url))
+            }
         }
+        var damagedURLs: [URL] = []
+        var scanFailures: [String] = []
+        if let url {
+            let keys: [DocumentKey]
+            do {
+                keys = try recovery.checkedKeys(forLocation: url)
+            } catch {
+                keys = []
+                scanFailures.append("location hints: \(error.localizedDescription)")
+                damagedURLs.append(recovery.root)
+            }
+            for key in keys {
+                do {
+                    let validPriorURLs = Set(candidates.map(\.checkpoint.url))
+                    for prior in try recovery.checkedCheckpoints(for: key) where !validPriorURLs.contains(prior.url) {
+                        damagedURLs.append(prior.url)
+                    }
+                } catch {
+                    scanFailures.append("prior copies for \(key.rawValue): \(error.localizedDescription)")
+                    damagedURLs.append(recovery.root)
+                }
+                do {
+                    try recovery.setAsideEditCheckpoints(for: key)
+                    let stored = try recovery.checkedOfferedEditCheckpoints(for: key)
+                    let offer = EditCheckpointOffer.assess(
+                        stored, documentID: key.rawValue, onDisk: nil,
+                        coder: JSONEnvelopeCoder<ShowDocumentModel>.show,
+                        decodeOlder: ShowSchemaMigration.decodeUpgradingOlder,
+                        belongsToDocument: { DocumentKey.show($0.show.id) == key }
+                    )
+                    for candidate in offer.usable {
+                        if let selected = try? recovery.selectRecord(.offeredEditCheckpoint, at: candidate.url, for: key) {
+                            actions.append(.copy(selected, unpublished: true))
+                        } else {
+                            damagedURLs.append(candidate.url)
+                        }
+                    }
+                    damagedURLs += offer.problems.map(\.url)
+                } catch {
+                    scanFailures.append("unsaved copies for \(key.rawValue): \(error.localizedDescription)")
+                    damagedURLs.append(recovery.root)
+                }
+            }
+        }
+        actions += damagedURLs.map(RecoveryAttempter.Action.reveal)
+        if !actions.isEmpty {
+            let priorCount = actions.filter { if case .copy(_, false) = $0 { return true }; return false }.count
+            let copyCount = actions.filter { if case .copy(_, true) = $0 { return true }; return false }.count
+            let names = actions.enumerated().map { index, action in
+                switch action {
+                case .copy(_, false): priorCount == 1 ? "Open Recovered Copy" : "Open Prior Copy \(index + 1)"
+                case .copy(_, true): copyCount == 1 ? "Open Unsaved Copy" : "Open Unsaved Copy \(index + 1)"
+                case .reveal: "Show in Finder \(index + 1)"
+                case .cancel: "Cancel"
+                }
+            }
+            userInfo[NSLocalizedRecoveryOptionsErrorKey] = names + ["Cancel"]
+            userInfo[NSRecoveryAttempterErrorKey] = RecoveryAttempter(recovery: recovery, actions: actions + [.cancel])
+        }
+        let damaged = damagedURLs.isEmpty ? "" :
+            " The recovery copy is damaged and cannot be restored. Its raw bytes are kept; use Show in Finder to export them."
+        let available = actions.contains { if case .copy = $0 { return true }; return false }
+            ? " Complete recovery copies can be opened as separate unsaved shows. The damaged file is not changed."
+            : ""
+        let scan = scanFailures.isEmpty ? "" :
+            " Some recovery records could not be listed: \(scanFailures.joined(separator: "; ")). They remain on this Mac."
+        userInfo[NSLocalizedRecoverySuggestionErrorKey] = (error.recoverySuggestion ?? "") + available + damaged + scan
         return NSError(domain: "com.brandonmartinez.wavewrangler.persistence", code: 1, userInfo: userInfo)
     }
 
     /// NSErrorRecoveryAttempting: AppKit calls this on the main thread from error presentation.
     final class RecoveryAttempter: NSObject {
-        let model: ShowDocumentModel
+        enum Action {
+            case copy(SelectedRecoveryRecord, unpublished: Bool)
+            case reveal(URL)
+            case cancel
+        }
         let recovery: RecoveryStore
-        let selected: SelectedRecoveryRecord?
+        let actions: [Action]
 
-        init(model: ShowDocumentModel, recovery: RecoveryStore, selected: SelectedRecoveryRecord?) {
-            self.model = model
+        init(recovery: RecoveryStore, actions: [Action]) {
             self.recovery = recovery
-            self.selected = selected
+            self.actions = actions
         }
 
         override func attemptRecovery(fromError error: Error, optionIndex recoveryOptionIndex: Int) -> Bool {
-            if recoveryOptionIndex == 0 {
-                let model = model
-                MainActor.assumeIsolated { _ = ShowDocument.openUntitledCopy(of: model) }
-                return true
-            }
-            guard recoveryOptionIndex == 1, let selected else { return false }
+            guard actions.indices.contains(recoveryOptionIndex) else { return false }
+            let action = actions[recoveryOptionIndex]
             let recovery = recovery
             return MainActor.assumeIsolated {
-                let alert = NSAlert()
-                alert.messageText = "Discard this prior recovery copy?"
-                alert.informativeText = "Only \(selected.url.lastPathComponent) will be removed from this Mac. Other recovery copies remain."
-                alert.addButton(withTitle: "Cancel")
-                alert.addButton(withTitle: "Discard")
-                guard alert.runModal() == .alertSecondButtonReturn else { return false }
-                do {
-                    try recovery.discardSelectedRecord(selected)
-                    return false // The damaged document is still damaged; deletion does not recover it.
-                } catch {
-                    _ = NSApp.presentError(error)
+                switch action {
+                case let .copy(selected, unpublished):
+                    do {
+                        let bytes = try recovery.readSelectedRecord(selected)
+                        let snapshot: Data
+                        if unpublished {
+                            let record = try EditCheckpointRecord.decode(bytes)
+                            guard record.documentID == selected.key.rawValue,
+                                  EnvelopeHeaderInfo.peek(record.snapshot)?.checksum == record.payloadChecksum
+                            else { throw CocoaError(.fileReadCorruptFile) }
+                            snapshot = record.snapshot
+                        } else {
+                            snapshot = bytes
+                        }
+                        let model = try ShowSchemaMigration.decodeUpgradingOlder(snapshot).payload
+                        guard DocumentKey.show(model.show.id) == selected.key else { throw CocoaError(.fileReadCorruptFile) }
+                        _ = ShowDocument.openUntitledCopy(of: model.duplicatedAsNewShow())
+                        return true
+                    } catch {
+                        _ = NSApp.presentError(error)
+                        return false
+                    }
+                case let .reveal(url):
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                    return false // Revealing raw bytes never claims the damaged show was restored.
+                case .cancel:
                     return false
                 }
             }
         }
+    }
+}
+
+final class RawRecoveryRevealer: NSObject {
+    let url: URL
+
+    init(url: URL) { self.url = url }
+
+    override func attemptRecovery(fromError error: Error, optionIndex recoveryOptionIndex: Int) -> Bool {
+        guard recoveryOptionIndex == 0 else { return false }
+        let url = url
+        MainActor.assumeIsolated { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        return false
     }
 }

@@ -215,7 +215,8 @@ final class ShowWindowState {
 
     var editCheckpointOffer: (state: EditCheckpointOfferState, presentation: EditCheckpointOfferPresentation)? {
         guard let provider: EditCheckpointOfferProviding = store.document, let state = provider.editCheckpointOfferState else { return nil }
-        return (state, EditCheckpointOfferPresentation(state, showName: store.model.show.title))
+        return (state, EditCheckpointOfferPresentation(state, showName: store.model.show.title,
+                                                       position: provider.editCheckpointOfferPosition))
     }
 
     /// Discard and Dismiss ask first (Cancel on Esc, no destructive default); the others act directly.

@@ -55,6 +55,45 @@ struct ShowSchemaMigrationTests {
         rig.dir.sub("Recovery").appending(path: "migration-backups/\(golden.key.rawValue)/schema1-\(RevisionFingerprint(of: golden.bytes).shortDigest).wwbackup")
     }
 
+    @Test func formatUpdateRefusesByteIdenticalReplacementOfTheOpenedItem() throws {
+        let golden = Self.goldens[0]
+        let rig = Rig()
+        let url = rig.url()
+        let moved = rig.url("Moved-original.wwshow")
+        try golden.bytes.write(to: url)
+        let openedItem = try #require(FileItemIdentity.observe(at: url))
+        let migrator = DocumentMigrator.show(publisher: rig.publisher)
+        try FileManager.default.moveItem(at: url, to: moved)
+        try golden.bytes.write(to: url)
+        let replacement = try Data(contentsOf: url)
+        #expect(FileItemIdentity.observe(at: url) != openedItem)
+        #expect(throws: PublicationError.self) {
+            _ = try migrator.migrate(url, key: golden.key, originatingItem: openedItem)
+        }
+        #expect(try Data(contentsOf: moved) == golden.bytes)
+        #expect(try Data(contentsOf: url) == replacement)
+    }
+
+    @Test func migrationReceiptRejectsByteIdenticalReplacementBeforeAdoption() throws {
+        let golden = Self.goldens[0]
+        let rig = Rig()
+        let url = rig.url()
+        let moved = rig.url("Migrated-original.wwshow")
+        try golden.bytes.write(to: url)
+        let openedItem = try #require(FileItemIdentity.observe(at: url))
+        let receipt = try DocumentMigrator.show(publisher: rig.publisher)
+            .migrate(url, key: golden.key, originatingItem: openedItem)
+        let published = try Data(contentsOf: url)
+        let verifiedItem = try #require(receipt.publication.itemIdentity)
+        #expect(FileItemIdentity.observe(at: url) == verifiedItem)
+        try FileManager.default.moveItem(at: url, to: moved)
+        try published.write(to: url)
+        #expect(try Data(contentsOf: url) == published)
+        #expect(FileItemIdentity.observe(at: url) != verifiedItem,
+                "matching publication bytes alone cannot authorize adoption of a new physical item")
+        #expect(try Data(contentsOf: moved) == published)
+    }
+
     // MARK: - Golden schema 1 files and the upgrade rule
 
     @Test(arguments: goldens)

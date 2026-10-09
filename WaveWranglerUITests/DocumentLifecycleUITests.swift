@@ -33,7 +33,7 @@ final class DocumentLifecycleUITests: XCTestCase {
 
     /// C2b recovery presentation (#84; M1-DUR-026 relaunch route): after a crash with unpublished edits, reopening
     /// the show offers "Restore unsaved changes from <time>". Discard asks first (Esc cancels). Restore puts the
-    /// changes back as unsaved (dirty, disk unchanged); ⌘S publishes them, and the offer is resolved.
+    /// changes back as unsaved (dirty, disk unchanged); ⌘S publishes them without deleting the offer.
     func testRelaunchWithEditCheckpointOffersRestore() throws {
         let document = try makeDocument("Relaunch Restore")
         try crashWithUnpublishedEdit(document, title: "Unsaved before the crash")
@@ -44,7 +44,7 @@ final class DocumentLifecycleUITests: XCTestCase {
         record("offer: \(bar.label) | \(bar.value as? String ?? "")")
         XCTAssertTrue(bar.label.hasPrefix("Restore unsaved changes from "), bar.label)
         // VoiceOver: a group labelled by its heading; the heading (header trait) and body are its children.
-        let body = bar.staticTexts.matching(NSPredicate(format: "value CONTAINS 'never saved' OR label CONTAINS 'never saved'")).firstMatch
+        let body = bar.staticTexts.matching(NSPredicate(format: "value CONTAINS 'recovery copy' OR label CONTAINS 'recovery copy'")).firstMatch
         XCTAssertTrue(body.exists, "the body text is exposed to VoiceOver")
         XCTAssertTrue(bar.buttons["Restore Unsaved Changes"].exists && bar.buttons["Discard…"].exists)
         XCTAssertEqual(diskTitle(document), "Synthetic Trial Show 1", "opening never applies or publishes the checkpoint")
@@ -58,7 +58,8 @@ final class DocumentLifecycleUITests: XCTestCase {
         XCTAssertTrue(bar.exists, "Cancel keeps the offer")
 
         bar.buttons["Restore Unsaved Changes"].click()
-        XCTAssertTrue(waitFor(timeout: 5) { !bar.exists }, "the offer is resolved by Restore")
+        XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).label.hasPrefix("Recovery copy kept from ") },
+                      "Restore keeps its independently discardable recovery copy")
         let field = showTitleField(window)
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         XCTAssertEqual(field.value as? String, "Unsaved before the crash")
@@ -71,7 +72,7 @@ final class DocumentLifecycleUITests: XCTestCase {
         XCTAssertTrue(messageBar(window).waitForExistence(timeout: 5), "Undo of Restore offers the unsaved changes again")
         XCTAssertTrue(messageBar(window).label.hasPrefix("Restore unsaved changes from "))
         app.typeKey("z", modifierFlags: [.command, .shift])
-        XCTAssertTrue(waitFor(timeout: 5) { !self.messageBar(window).exists }, "Redo restores again")
+        XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).label.hasPrefix("Recovery copy kept from ") }, "Redo restores again")
         XCTAssertEqual(showTitleField(window).value as? String, "Unsaved before the crash")
 
         app.typeKey("s", modifierFlags: .command)
@@ -79,7 +80,8 @@ final class DocumentLifecycleUITests: XCTestCase {
         forceQuit()
         window = try launchAndOpen(document, autosave: true, extraArguments: Self.slowAutosave)
         Thread.sleep(forTimeInterval: 1.5)
-        XCTAssertFalse(messageBar(window).exists, "a verified save resolved the offer")
+        XCTAssertTrue(messageBar(window).waitForExistence(timeout: 5), "a verified save keeps the offered record")
+        XCTAssertEqual(messageBar(window).label, "Unsaved changes based on an older revision")
     }
 
     /// C2b on the **restoration display path** (#107 review). State restoration reads the document, makes its window
@@ -110,6 +112,53 @@ final class DocumentLifecycleUITests: XCTestCase {
         XCTAssertTrue(bar.label.hasPrefix("Restore unsaved changes from "), bar.label)
     }
 
+    /// The original path is indexed when a valid show is first opened, not only after a later save.
+    /// If that canonical file is then damaged, its retained C2b copy is reachable but never restored in place.
+    func testDamagedCanonicalShowOffersRetainedUnsavedCopyWithoutOverwriting() throws {
+        let document = try makeDocument("Damaged Canonical")
+        try crashWithUnpublishedEdit(document, title: "Retained unsaved edit")
+        var damaged = try Data(contentsOf: document)
+        let index = try XCTUnwrap(damaged.firstIndex(of: UInt8(ascii: "S")))
+        damaged[index] = UInt8(ascii: "T")
+        try damaged.write(to: document)
+
+        app = XCUIApplication()
+        app.launchArguments = ["-WWUITestHooks", "YES", "-WWUITestAutosave", "ON",
+                               "-ApplePersistenceIgnoreState", "YES"] + Self.slowAutosave
+        app.launchOnce(opening: document)
+        let refusal = app.dialogs.firstMatch.exists ? app.dialogs.firstMatch : app.sheets.firstMatch
+        XCTAssertTrue(refusal.waitForExistence(timeout: 10), "damaged canonical show refuses open")
+        XCTAssertFalse(refusal.buttons["Restore Unsaved Changes"].exists, "no in-place restore over damage")
+        let copy = refusal.buttons["Open Unsaved Copy"]
+        XCTAssertTrue(copy.exists, "the retained C2b session is reachable by its original-location hint")
+        if copy.exists { copy.click() }
+        let opened = app.windows.matching(identifier: "ww.show.window").firstMatch
+        XCTAssertTrue(opened.waitForExistence(timeout: 10), "the C2b edit opens only as a separate show")
+        XCTAssertEqual(showTitleField(opened).value as? String, "Retained unsaved edit")
+        XCTAssertEqual(try Data(contentsOf: document), damaged, "the damaged canonical bytes remain untouched")
+    }
+
+    func testDamagedRecordIsReachableWithoutDiscardingAUsableSession() throws {
+        let document = try makeDocument("Usable and Damaged")
+        try crashWithUnpublishedEdit(document, title: "Usable unsaved edit")
+        let canonical = try Data(contentsOf: document)
+        let window = try launchAndOpen(document, autosave: true,
+                                      extraArguments: Self.slowAutosave +
+                                          ["-WWUITestRetainDamagedEditCheckpoint", canonical.base64EncodedString()])
+        let bar = messageBar(window)
+        XCTAssertTrue(bar.waitForExistence(timeout: 10))
+        XCTAssertTrue(bar.buttons["Show in Finder"].exists, "the damaged newest record is offered with raw reveal")
+        XCTAssertFalse(bar.buttons["Restore Unsaved Changes"].exists, "damaged data is never restored")
+        XCTAssertTrue(bar.buttons["Next Recovery Copy"].exists, "the older usable session is reachable without Discard")
+        bar.buttons["Next Recovery Copy"].click()
+        XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).label.contains("2 of 2") })
+        XCTAssertTrue(messageBar(window).buttons["Open as Separate Copy"].exists, "the usable older session can be opened")
+        messageBar(window).buttons["Previous Recovery Copy"].click()
+        XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).label.contains("1 of 2") },
+                      "the damaged session remains accessible after reviewing the usable one")
+        XCTAssertEqual(try Data(contentsOf: document), canonical)
+    }
+
     /// Two crashed sessions leave two records with different edits: each is offered on its own, newest first, and
     /// acting on one never removes the other.
     func testTwoCrashedSessionsAreOfferedOneAfterAnother() throws {
@@ -126,11 +175,20 @@ final class DocumentLifecycleUITests: XCTestCase {
         let bar = messageBar(window)
         XCTAssertTrue(bar.waitForExistence(timeout: 10))
         let first = bar.label
+        XCTAssertTrue(bar.buttons["Next Recovery Copy"].exists, "older sessions are reachable without Discard")
+        bar.buttons["Next Recovery Copy"].click()
+        XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).label.contains("2 of 2") },
+                      "the older session is selected independently")
+        XCTAssertTrue(messageBar(window).buttons["Open as Separate Copy"].exists, "every session offers Open Copy")
+        messageBar(window).buttons["Previous Recovery Copy"].click()
+        XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).label == first },
+                      "the newest session is reselected without deleting the older one")
         bar.buttons["Restore Unsaved Changes"].click()
         XCTAssertEqual(showTitleField(window).value as? String, "Session B edits", "the newest record is offered first")
-        // The other session's record is still offered (never deleted with B), but only as a separate copy while
-        // B's restore is in effect, so a second restore can never replace the first.
-        XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).exists && self.messageBar(window).label.hasPrefix("More unsaved changes from ") })
+        XCTAssertTrue(messageBar(window).buttons["Next Recovery Copy"].exists)
+        messageBar(window).buttons["Next Recovery Copy"].click()
+        // The other session's record is copy-only while B's restore is in effect.
+        XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).label.hasPrefix("More unsaved changes from ") })
         record("two sessions: first \(first) | then \(messageBar(window).label)")
         XCTAssertFalse(messageBar(window).buttons["Restore Unsaved Changes"].exists)
         messageBar(window).buttons["Open as Separate Copy"].click()

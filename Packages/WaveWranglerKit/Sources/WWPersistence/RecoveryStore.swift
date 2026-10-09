@@ -27,6 +27,7 @@ public struct RecoveryCheckpoint: Sendable, Equatable {
 public enum RecoveryRecordKind: Sendable, Equatable {
     case offeredEditCheckpoint
     case priorCheckpoint
+    case verifiedCurrent
 }
 
 /// The one immutable physical record selected while an offer is displayed, before confirmation.
@@ -45,7 +46,8 @@ public struct SelectedRecoveryRecord: Sendable {
 /// - `edit-checkpoints/<key>/` and `edit-checkpoints-offered/<key>/` — every quiescent unpublished draft.
 /// - `conflicts/<key>/` — competing candidates preserved when a save detected another revision on disk.
 /// - `migration-backups/<key>/` — non-overwriting copies of pre-migration originals.
-/// - `locations/<key>.json` — last known location hint, used only to find checkpoints for a damaged file.
+/// - `locations/<key>/<path-digest>.json` — historical location hints, used only to find
+///   checkpoints for a damaged file. Legacy `locations/<key>.json` hints remain readable.
 ///
 /// Every record is written to `.staging/` and moved into place with an exclusive rename, so a record is
 /// either whole or absent. Nothing here is portable across devices (recorded limitation).
@@ -151,7 +153,7 @@ public struct RecoveryStore: Sendable {
                 } else {
                     _ = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(previous)
                 }
-                try retainCheckpointUnlocked(previous, for: key)
+                _ = try retainCheckpointUnlocked(previous, for: key)
             }
             try replaceRecord(bytes, at: url)
         }
@@ -171,20 +173,44 @@ public struct RecoveryStore: Sendable {
 
     public func recordLocation(_ url: URL, for key: DocumentKey) throws {
         let data = try JSONEncoder().encode(LocationHint(path: url.standardizedFileURL.path))
-        let destination = root.appending(path: "locations/\(key.rawValue).json")
-        try replaceRecord(data, at: destination)
+        let digest = RevisionFingerprint.digest(Data(url.standardizedFileURL.path.utf8))
+        let destination = folder("locations", key).appending(path: "\(digest).json")
+        try withMutationLock {
+            if ops.exists(destination) {
+                guard try ops.read(destination) == data else { throw CocoaError(.fileWriteUnknown) }
+                return
+            }
+            let staged = try stage(data)
+            try ops.createDirectory(destination.deletingLastPathComponent())
+            try ops.moveNew(staged, to: destination)
+            guard try ops.read(destination) == data else { throw CocoaError(.fileWriteUnknown) }
+        }
     }
 
     public func keys(forLocation url: URL) -> [DocumentKey] {
+        (try? checkedKeys(forLocation: url)) ?? []
+    }
+
+    /// Unlike the legacy convenience lookup, this surfaces an unreadable or malformed hint so the
+    /// damaged-file recovery UI cannot report "no copies" when it failed to inspect the index.
+    public func checkedKeys(forLocation url: URL) throws -> [DocumentKey] {
         let directory = root.appending(path: "locations", directoryHint: .isDirectory)
         let path = url.standardizedFileURL.path
-        guard let entries = try? ops.contentsOfDirectory(directory) else { return [] }
-        return entries.compactMap { entry in
-            guard entry.pathExtension == "json", let data = try? ops.read(entry),
-                  let hint = try? JSONDecoder().decode(LocationHint.self, from: data), hint.path == path
-            else { return nil }
-            return DocumentKey(rawValue: entry.deletingPathExtension().lastPathComponent)
+        guard ops.exists(directory) else { return [] }
+        let entries = try ops.contentsOfDirectory(directory)
+        var found: [DocumentKey] = []
+        for entry in entries {
+            let key = DocumentKey(rawValue: entry.deletingPathExtension().lastPathComponent)
+            let hints = entry.pathExtension == "json" ? [entry] : try ops.contentsOfDirectory(entry)
+            for hintURL in hints where hintURL.pathExtension == "json" {
+                let hint = try JSONDecoder().decode(LocationHint.self, from: ops.read(hintURL))
+                if hint.path == path {
+                    found.append(key)
+                    break
+                }
+            }
         }
+        return Array(Set(found)).sorted { $0.rawValue < $1.rawValue }
     }
 
     // MARK: - Conflict candidates, migration backups, drafts
@@ -327,23 +353,41 @@ public struct RecoveryStore: Sendable {
     /// Recheck exactly the selected record under the same cross-process mutation lock as every store writer.
     /// A stale, replaced, unreadable, or unowned record is an error, never a successful no-op.
     public func discardSelectedRecord(_ selection: SelectedRecoveryRecord) throws {
+        guard selection.kind != .verifiedCurrent else { throw CocoaError(.fileWriteNoPermission) }
         try withMutationLock {
-            let bytes = try validatedSelectionBytes(selection.kind, at: selection.url, for: selection.key,
-                                                    allowingDamagedRecord: selection.allowsDamagedRecord)
-            guard FileItemIdentity.observe(at: selection.url) == selection.itemIdentity,
-                  RevisionFingerprint.digest(bytes) == selection.byteDigest else { throw CocoaError(.fileReadUnknown) }
+            _ = try readSelectedRecordUnlocked(selection)
             try ops.remove(selection.url)
             guard !ops.exists(selection.url) else { throw CocoaError(.fileWriteUnknown) }
         }
     }
 
+    /// Re-read one selected record without permitting a newer record at the same path to substitute its bytes.
+    public func readSelectedRecord(_ selection: SelectedRecoveryRecord) throws -> Data {
+        try withMutationLock { try readSelectedRecordUnlocked(selection) }
+    }
+
+    private func readSelectedRecordUnlocked(_ selection: SelectedRecoveryRecord) throws -> Data {
+        let bytes = try validatedSelectionBytes(selection.kind, at: selection.url, for: selection.key,
+                                                allowingDamagedRecord: selection.allowsDamagedRecord)
+        guard FileItemIdentity.observe(at: selection.url) == selection.itemIdentity,
+              RevisionFingerprint.digest(bytes) == selection.byteDigest else { throw CocoaError(.fileReadUnknown) }
+        return bytes
+    }
+
     private func validatedSelectionBytes(
         _ kind: RecoveryRecordKind, at url: URL, for key: DocumentKey, allowingDamagedRecord: Bool
     ) throws -> Data {
-        let directory = folder(kind == .offeredEditCheckpoint ? "edit-checkpoints-offered" : "checkpoints", key).standardizedFileURL
+        let kindFolder: String = switch kind {
+            case .offeredEditCheckpoint: "edit-checkpoints-offered"
+            case .priorCheckpoint: "checkpoints"
+            case .verifiedCurrent: "verified-current"
+        }
+        let directory = folder(kindFolder, key).standardizedFileURL
         let expectedExtension = kind == .offeredEditCheckpoint ? "wwedit" : "wwcheckpoint"
         guard url.standardizedFileURL.deletingLastPathComponent() == directory,
-              url.pathExtension == expectedExtension else { throw CocoaError(.fileReadNoPermission) }
+              url.pathExtension == expectedExtension,
+              kind != .verifiedCurrent || url.lastPathComponent == "current.wwcheckpoint"
+        else { throw CocoaError(.fileReadNoPermission) }
         let bytes = try ops.read(url)
         if kind == .offeredEditCheckpoint {
             let record = try? EditCheckpointRecord.decode(bytes)
@@ -364,7 +408,7 @@ public struct RecoveryStore: Sendable {
         return bytes
     }
 
-    private static func sequence(of url: URL) -> Int? {
+    static func sequence(of url: URL) -> Int? {
         let components = url.deletingPathExtension().lastPathComponent.split(separator: "-")
         return components.first(where: { $0.count == 10 }).flatMap { Int($0) }
     }
@@ -501,7 +545,7 @@ public struct EditCheckpointRecord: Sendable, Equatable, Codable {
         return try encoder.encode(self)
     }
 
-    static func decode(_ data: Data) throws -> EditCheckpointRecord {
+    public static func decode(_ data: Data) throws -> EditCheckpointRecord {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()

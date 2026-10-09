@@ -14,6 +14,8 @@ public enum EditCheckpointOfferState: Sendable, Equatable {
     /// Another session's unsaved changes, while a restore is already in effect in this window: open only as a
     /// separate untitled copy, so a second restore never replaces the first.
     case anotherSession(createdAt: Date)
+    /// The exact selected record was replaced or disappeared; never switch to another record implicitly.
+    case selectionChanged
     /// Records that can't be used (damaged/unreadable, or written by a newer WaveWrangler). Reported, kept,
     /// never applied.
     case unusable(damaged: Int, newerFormat: Int)
@@ -26,6 +28,8 @@ public enum EditCheckpointAction: String, Sendable, Equatable, CaseIterable {
     case showInFinder = "Show in Finder"
     case checkAgain = "Check Again"
     case dismiss = "Dismiss…"
+    case previous = "Previous Recovery Copy"
+    case next = "Next Recovery Copy"
 }
 
 public struct EditCheckpointOfferPresentation: Sendable, Equatable {
@@ -37,7 +41,10 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
     /// Announced once when the bar first appears (states §7, "Recovered … on open"); never moves focus.
     public var announcement: String { heading }
 
-    public init(_ state: EditCheckpointOfferState, showName: String, formatTime: (Date) -> String = SaveStatusPresentation.defaultTime) {
+    public init(
+        _ state: EditCheckpointOfferState, showName: String, position: (index: Int, total: Int)? = nil,
+        formatTime: (Date) -> String = SaveStatusPresentation.defaultTime
+    ) {
         switch state {
         case let .restore(createdAt):
             heading = "Restore unsaved changes from \(formatTime(createdAt))?"
@@ -45,7 +52,7 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
                 + "If you restore them, they appear in this window as unsaved changes that you can save or undo. "
                 + "Restoring does not remove this recovery copy."
             symbolName = "clock.arrow.circlepath"
-            actions = [.restore, .discard]
+            actions = [.restore, .openAsCopy, .discard]
         case let .restored(createdAt):
             heading = "Recovery copy kept from \(formatTime(createdAt))"
             body = "WaveWrangler kept this recovery copy of “\(showName)” on this Mac, even after restoring or saving. "
@@ -72,6 +79,11 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
                 + "It has been kept on this Mac. Check Again or open it as a separate untitled copy; in-place restore is unavailable."
             symbolName = "exclamationmark.triangle"
             actions = [.checkAgain, .openAsCopy, .discard]
+        case .selectionChanged:
+            heading = "Selected recovery copy changed"
+            body = "The selected record could not be checked. No other recovery copy was selected or applied. Check Again to review the retained records."
+            symbolName = "exclamationmark.triangle"
+            actions = [.checkAgain]
         case let .unusable(damaged, newerFormat):
             heading = "Unsaved changes couldn't be restored"
             let reason = switch (damaged > 0, newerFormat > 0) {
@@ -83,6 +95,12 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
                 + "They weren't applied, and they've been kept on this Mac."
             symbolName = "exclamationmark.triangle"
             actions = [.showInFinder, .discard, .dismiss]
+        }
+        if let position, position.total > 1 {
+            heading += " (\(position.index) of \(position.total))"
+            body += " Recovery copy \(position.index) of \(position.total), newest first."
+            if position.index > 1 { actions.append(.previous) }
+            if position.index < position.total { actions.append(.next) }
         }
         body += " Recovery copies use local storage without a limit until you discard them individually."
     }

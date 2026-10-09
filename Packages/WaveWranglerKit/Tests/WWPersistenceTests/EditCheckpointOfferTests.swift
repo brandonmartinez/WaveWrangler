@@ -92,6 +92,11 @@ struct EditCheckpointOfferTests {
         #expect(newer.count == 2)
         #expect(offer.problems.contains { if case .newerFormat(_, 42, _) = $0 { true } else { false } })
         #expect(offer.problems.contains { if case .newerFormat(_, 99, _) = $0 { true } else { false } })
+        #expect(offer.orderedURLs.count == 6)
+        #expect(offer.orderedURLs.firstIndex(of: try #require(offer.candidate).url).map { $0 > 0 } == true,
+                "older usable sessions remain reachable behind newer damaged records")
+        #expect(offer.orderedURLs.first == offer.problems.first?.url,
+                "a damaged latest checkpoint is shown before older usable sessions")
 
         // Discarding the offer removes the valid record only; every problem record is kept.
         let selected = try rig.recovery.selectRecord(.offeredEditCheckpoint, at: try #require(offer.candidate).url, for: key)

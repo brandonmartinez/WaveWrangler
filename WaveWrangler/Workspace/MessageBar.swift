@@ -26,9 +26,11 @@ struct MessageBar: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !actions.isEmpty {
-                    HStack {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 128, maximum: 220), alignment: .leading)],
+                              alignment: .leading, spacing: 4) {
                         ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
                             Button(action.0, action: action.1)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     .padding(.top, 2)
@@ -50,4 +52,3 @@ struct MessageBar: View {
         .accessibilityIdentifier(identifier)
     }
 }
-

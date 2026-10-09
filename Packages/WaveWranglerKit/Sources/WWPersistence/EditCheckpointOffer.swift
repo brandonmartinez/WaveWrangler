@@ -43,6 +43,8 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
     /// Every usable record, newest first.
     public let usable: [Candidate]
     public let problems: [Problem]
+    /// All records in store sequence order, including those whose contents cannot be decoded.
+    public let orderedURLs: [URL]
 
     /// The newest usable record: what the message bar offers. Every action applies to this record only; other
     /// records (each from a different session, with different edits) are offered one after another.
@@ -62,6 +64,10 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
     /// At most one restore is in effect per document; every other record is copy-only.
     public func candidateMode(restoreInEffect: Bool) -> CandidateMode? {
         guard let candidate else { return nil }
+        return mode(for: candidate, restoreInEffect: restoreInEffect)
+    }
+
+    public func mode(for candidate: Candidate, restoreInEffect: Bool) -> CandidateMode {
         guard candidate.relation == .basedOnCurrent else { return .copyOnlyOlderRevision }
         return restoreInEffect ? .copyOnlyWhileAnotherRestoreIsInEffect : .restore
     }
@@ -115,7 +121,12 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
             usable.append(Candidate(url: entry.url, record: record, relation: record.relation(to: onDisk), payload: decoded.payload))
         }
         usable.sort { ($0.record.createdAt, $0.record.checkpointSequence) > ($1.record.createdAt, $1.record.checkpointSequence) }
-        return EditCheckpointOffer(usable: usable, problems: problems)
+        let orderedURLs = stored.enumerated().sorted { left, right in
+            if let a = RecoveryStore.sequence(of: left.element.url),
+               let b = RecoveryStore.sequence(of: right.element.url), a != b { return a > b }
+            return left.offset < right.offset
+        }.map(\.element.url)
+        return EditCheckpointOffer(usable: usable, problems: problems, orderedURLs: orderedURLs)
     }
 
     /// The same offer with its relation re-checked against what is on disk now (for example after a save
@@ -123,12 +134,13 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
     public func reassessed(against onDisk: RevisionFingerprint?) -> EditCheckpointOffer {
         EditCheckpointOffer(
             usable: usable.map { Candidate(url: $0.url, record: $0.record, relation: $0.record.relation(to: onDisk), payload: $0.payload) },
-            problems: problems
+            problems: problems, orderedURLs: orderedURLs
         )
     }
 
     /// The offer without problem reports explicitly dismissed in this window; no record is removed.
     public func excluding(_ urls: Set<URL>) -> EditCheckpointOffer {
-        EditCheckpointOffer(usable: usable.filter { !urls.contains($0.url) }, problems: problems.filter { !urls.contains($0.url) })
+        EditCheckpointOffer(usable: usable.filter { !urls.contains($0.url) }, problems: problems.filter { !urls.contains($0.url) },
+                            orderedURLs: orderedURLs.filter { !urls.contains($0) })
     }
 }

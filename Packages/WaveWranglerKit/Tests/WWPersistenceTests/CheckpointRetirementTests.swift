@@ -7,6 +7,99 @@ import WWCore
 struct CheckpointRetirementTests {
     let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
 
+    @Test func saveAsRetainsBothOriginAndDestinationRecoveryLookups() throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 2711)
+        let key = DocumentKey.show(model.show.id)
+        let origin = rig.url("Origin.wwshow")
+        let destination = rig.url("Destination.wwshow")
+        let original = try coder.encode(model, revision: 1)
+        let prior = try rig.recovery.retainCheckpoint(original, for: key)
+        try rig.recovery.recordLocation(origin, for: key)
+        try rig.recovery.recordLocation(destination, for: key)
+        #expect(rig.recovery.keys(forLocation: origin).contains(key))
+        #expect(rig.recovery.keys(forLocation: destination).contains(key))
+        #expect(try rig.recovery.bytes(of: prior) == original)
+        let reopened = RecoveryStore(root: rig.recovery.root)
+        #expect(reopened.keys(forLocation: origin).contains(key))
+        #expect(reopened.keys(forLocation: destination).contains(key))
+    }
+
+    @Test func legacyOriginHintSurvivesANewDestinationHint() throws {
+        let rig = Rig()
+        let key = DocumentKey.show(Fixtures.show(seed: 2712).show.id)
+        let origin = rig.url("Legacy.wwshow")
+        let destination = rig.url("New.wwshow")
+        let legacy = rig.recovery.root.appending(path: "locations/\(key.rawValue).json")
+        try FileManager.default.createDirectory(at: legacy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["path": origin.standardizedFileURL.path]).write(to: legacy)
+        let bytes = try Data(contentsOf: legacy)
+        try rig.recovery.recordLocation(destination, for: key)
+        #expect(try Data(contentsOf: legacy) == bytes)
+        #expect(rig.recovery.keys(forLocation: origin) == [key])
+        #expect(rig.recovery.keys(forLocation: destination) == [key])
+    }
+
+    @Test func failedLocationHintAfterPublicationReportsUncertaintyNotSuccess() throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 2714)
+        let destination = rig.url("Hint Failure.wwshow")
+        let recovery = RecoveryStore(root: rig.recovery.root, ops: FaultingFileOperations(writeNewFails: true))
+        let publisher = DocumentPublisher(coder: coder, recovery: recovery)
+        var uncertain = false
+        do {
+            _ = try publisher.publish(model, revision: 1, key: .show(model.show.id),
+                                      to: destination, target: .newLocation, retainPrior: false)
+            Issue.record("a missing recovery-location hint was reported as a verified save")
+        } catch {
+            if case .acknowledgementUncertain = error as? PublicationError { uncertain = true }
+            else { Issue.record("expected uncertainty, got \(error)") }
+        }
+        #expect(uncertain)
+        #expect(try coder.decode(Data(contentsOf: destination)).payload == model)
+    }
+
+    @Test func damagedC2bSnapshotCannotBeDecodedAndItsSelectedRawBytesRemain() throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 2713)
+        let key = DocumentKey.show(model.show.id)
+        var snapshot = try coder.encode(model, revision: 2)
+        let index = try #require(snapshot.firstIndex(of: UInt8(ascii: "S")))
+        snapshot[index] = UInt8(ascii: "T")
+        try rig.recovery.writeEditCheckpoint(snapshot: snapshot, base: nil,
+                                             schemaVersion: coder.format.currentSchemaVersion, for: key)
+        try rig.recovery.setAsideEditCheckpoints(for: key)
+        let stored = try #require(try rig.recovery.checkedOfferedEditCheckpoints(for: key).first)
+        let offer = EditCheckpointOffer.assess([stored], documentID: key.rawValue, onDisk: nil,
+                                                coder: coder, belongsToDocument: { $0.show.id == model.show.id })
+        #expect(offer.usable.isEmpty && offer.problems == [.damaged(stored.url)])
+        let selected = try rig.recovery.selectRecord(.offeredEditCheckpoint, at: stored.url, for: key)
+        let raw = try rig.recovery.readSelectedRecord(selected)
+        #expect(try EditCheckpointRecord.decode(raw).snapshot == snapshot)
+        #expect(throws: PersistenceError.self) { try coder.decode(snapshot) }
+        #expect(try rig.recovery.readSelectedRecord(selected) == raw)
+    }
+
+    @Test func olderPriorAndDamagedPriorRemainDistinctUnderSelection() throws {
+        let rig = Rig()
+        let golden = ShowSchema1Fixtures.placeholderOnly
+        let model = try ShowSchemaMigration.decodeUpgradingOlder(golden).payload
+        let key = DocumentKey.show(model.show.id)
+        let prior = try rig.recovery.retainCheckpoint(golden, for: key)
+        let older = try rig.recovery.selectRecord(.priorCheckpoint, at: prior.url, for: key,
+                                                  allowingDamagedRecord: true)
+        #expect(try ShowSchemaMigration.decodeUpgradingOlder(rig.recovery.readSelectedRecord(older)).payload == model)
+        let broken = prior.url.deletingLastPathComponent().appending(path: "broken.wwcheckpoint")
+        try Data("damaged".utf8).write(to: broken)
+        let brokenSelection = try rig.recovery.selectRecord(.priorCheckpoint, at: broken, for: key,
+                                                           allowingDamagedRecord: true)
+        #expect(throws: PersistenceError.self) {
+            try ShowSchemaMigration.decodeUpgradingOlder(rig.recovery.readSelectedRecord(brokenSelection))
+        }
+        #expect(try rig.recovery.readSelectedRecord(older) == golden)
+        #expect(try rig.recovery.readSelectedRecord(brokenSelection) == Data("damaged".utf8))
+    }
+
     @Test func saveAsAndDontSaveLeaveOriginCheckpointAndBytes() async throws {
         let rig = Rig()
         let initial = Fixtures.show(seed: 2701)
@@ -25,6 +118,8 @@ struct CheckpointRetirementTests {
         guard case .success = await session.saveAs(destination) else { Issue.record("Save As failed"); return }
         #expect(try Data(contentsOf: origin) == originBytes)
         #expect(try coder.decode(Data(contentsOf: destination)).payload == restored)
+        #expect(rig.recovery.keys(forLocation: origin).contains(key))
+        #expect(rig.recovery.keys(forLocation: destination).contains(key))
         await session.discardUnsavedChanges()
         #expect(rig.recovery.latestEditCheckpoint(for: key) == snapshot)
     }
@@ -135,6 +230,7 @@ struct CheckpointRetirementTests {
         let selection = try rig.recovery.selectRecord(.offeredEditCheckpoint, at: url, for: key)
         let original = try Data(contentsOf: url)
         try original.write(to: url, options: .atomic)
+        #expect(throws: CocoaError.self) { _ = try rig.recovery.readSelectedRecord(selection) }
         #expect(throws: CocoaError.self) { try rig.recovery.discardSelectedRecord(selection) }
         #expect(try Data(contentsOf: url) == original)
         let failedStore = RecoveryStore(root: rig.recovery.root, ops: FaultingFileOperations(removeFails: true))
@@ -232,13 +328,17 @@ private struct FaultingFileOperations: FileOperations {
     private let base = LocalFileOperations()
     var readFailureURL: URL?
     var removeFails = false
+    var writeNewFails = false
     func read(_ url: URL) throws -> Data {
         if url.standardizedFileURL == readFailureURL?.standardizedFileURL { throw POSIXError(.EIO) }
         return try base.read(url)
     }
     func exists(_ url: URL) -> Bool { base.exists(url) }
     func createDirectory(_ url: URL) throws { try base.createDirectory(url) }
-    func writeNew(_ data: Data, to url: URL) throws { try base.writeNew(data, to: url) }
+    func writeNew(_ data: Data, to url: URL) throws {
+        if writeNewFails { throw POSIXError(.ENOSPC) }
+        try base.writeNew(data, to: url)
+    }
     func replace(_ destination: URL, withStaged staged: URL) throws { try base.replace(destination, withStaged: staged) }
     func moveNew(_ source: URL, to destination: URL) throws { try base.moveNew(source, to: destination) }
     func remove(_ url: URL) throws {

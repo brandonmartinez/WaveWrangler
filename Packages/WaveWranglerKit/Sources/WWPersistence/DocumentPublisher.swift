@@ -177,6 +177,8 @@ public struct PublicationReceipt: Sendable, Equatable {
     /// The coherent prior revision retained before publication, if there was one.
     public let priorCheckpoint: RecoveryCheckpoint?
     public let verifiedAt: Date
+    /// Physical identity of the item independently read back after publication.
+    public let itemIdentity: FileItemIdentity?
     /// Publication was verified, but cancellation or a dependant (library/index) acknowledgement did not
     /// complete. The document itself is coherent at `revision`.
     public let followUpIncomplete: Bool
@@ -186,7 +188,7 @@ public struct PublicationReceipt: Sendable, Equatable {
 
     func markingFollowUpIncomplete() -> PublicationReceipt {
         PublicationReceipt(url: url, fingerprint: fingerprint, publication: publication, priorCheckpoint: priorCheckpoint,
-                           verifiedAt: verifiedAt, followUpIncomplete: true)
+                           verifiedAt: verifiedAt, itemIdentity: itemIdentity, followUpIncomplete: true)
     }
 }
 
@@ -257,6 +259,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
         to url: URL,
         target: PublicationTarget,
         retainPrior: Bool = true,
+        expectedOriginItem: FileItemIdentity? = nil,
         isCancelled: () -> Bool = { false },
         step: PublishStep = .stagedReplace,
         followUp: PublicationFollowUp = .none
@@ -271,6 +274,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
             throw PublicationError.invalidCandidate(.invalidRevision(revision))
         }
         return try publish(encoded: encoded, key: key, to: url, target: target, retainPrior: retainPrior,
+                           expectedOriginItem: expectedOriginItem,
                            isCancelled: isCancelled, step: step, followUp: followUp)
     }
 
@@ -282,6 +286,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
         to url: URL,
         target: PublicationTarget,
         retainPrior: Bool,
+        expectedOriginItem: FileItemIdentity? = nil,
         isCancelled: () -> Bool,
         step: PublishStep,
         followUp: PublicationFollowUp
@@ -293,7 +298,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
             if let stagingDirectory { try? ops.remove(stagingDirectory) }
         }
 
-        let (prior, verifiedAt): (RecoveryCheckpoint?, Date) = try coordination.coordinateWriting(at: url) { url in
+        let (prior, verifiedAt, verifiedItem): (RecoveryCheckpoint?, Date, FileItemIdentity?) = try coordination.coordinateWriting(at: url) { url in
             try hooks.reached(.candidateValidated)
 
             // Step 4: retain the prior only when its SHA-256 matches the expected base.
@@ -331,6 +336,9 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
             case .saveAs(replacingExisting: true):
                 break
             }
+            if let expectedOriginItem, FileItemIdentity.observe(at: url) != expectedOriginItem {
+                throw PublicationError.originConflict("The originating file's identity changed before publication.")
+            }
             try hooks.reached(.baseChecked)
 
             // Step 6: stage + flush + verify, then replace (or the external safe-save).
@@ -354,6 +362,9 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
                 try hooks.reached(.stagedFlushed)
             }
             if !isCancelled() {
+                if let expectedOriginItem, FileItemIdentity.observe(at: url) != expectedOriginItem {
+                    throw PublicationError.originConflict("The originating file's identity changed before the write.")
+                }
                 do {
                     switch step {
                     case .stagedReplace: try ops.replace(url, withStaged: staged!)
@@ -383,24 +394,33 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
 
             // Step 7: independent read-back of coherent disk truth.
             let readBack: Data
+            let itemBeforeRead = FileItemIdentity.observe(at: url)
             do {
                 readBack = try ops.read(url)
             } catch where !(error is any InjectedInterruption) {
                 throw PublicationError.acknowledgementUncertain("read-back failed: \(error)")
             }
-            guard readBack == candidate,
+            let itemAfterRead = FileItemIdentity.observe(at: url)
+            guard itemBeforeRead == itemAfterRead,
+                  readBack == candidate,
                   let decoded = try? coder.decode(readBack), decoded.publication == encoded.publication
             else {
                 throw PublicationError.acknowledgementUncertain("read-back did not match publication \(encoded.publication.publicationID)")
             }
-            return (prior, Date())
+            return (prior, Date(), itemAfterRead)
         }
         try hooks.reached(.readBackVerified)
 
-        try? recovery?.recordLocation(url, for: key)
+        do {
+            try recovery?.recordLocation(url, for: key)
+        } catch {
+            throw PublicationError.acknowledgementUncertain(
+                "The file was written, but its recovery-location hint could not be retained: \(error)"
+            )
+        }
         var receipt = PublicationReceipt(
             url: url, fingerprint: candidateFingerprint, publication: encoded.publication,
-            priorCheckpoint: prior, verifiedAt: verifiedAt, followUpIncomplete: isCancelled()
+            priorCheckpoint: prior, verifiedAt: verifiedAt, itemIdentity: verifiedItem, followUpIncomplete: isCancelled()
         )
         guard !receipt.followUpIncomplete else { return receipt }
         // Step 8: acknowledge, then the derived index.

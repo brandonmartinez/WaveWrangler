@@ -26,11 +26,14 @@ import Foundation
 /// - `-WWUITestRetainOlderCheckpoint <base64 schema 1 show>` (#159 F-OLDER-BAD): before the first show file is read,
 ///   keeps those bytes as a retained recovery checkpoint of their show, located at that file, as an M1 save would
 ///   have left them, so a damaged older file can offer its recovered copy.
+/// - `-WWUITestRetainDamagedEditCheckpoint <base64 valid show>`: before opening a damaged canonical file,
+///   stores a C2b record with a damaged payload for that show. The raw record must remain revealable.
 ///
 /// Debug builds only: in Release the whole type is compiled out, so `-WWUITestHooks YES` and the
 /// distributed notifications have no effect (`PersistenceEnvironment.isUITestRun` is always `false`).
 #if DEBUG
 import AppKit
+import WWCore
 import WWPersistence
 
 @MainActor
@@ -60,15 +63,29 @@ enum UITestHooks {
     /// `-WWUITestRetainOlderCheckpoint`: see the type's documentation. Runs before launch, after any storage reset.
     static func seedOlderCheckpointIfRequested() {
         guard PersistenceEnvironment.isUITestRun,
-              let encoded = UserDefaults.standard.string(forKey: "WWUITestRetainOlderCheckpoint"),
+              let encoded = UserDefaults.standard.string(forKey: "WWUITestRetainOlderCheckpoint")
+                  ?? UserDefaults.standard.string(forKey: "WWUITestRetainDamagedEditCheckpoint"),
               let bytes = Data(base64Encoded: encoded),
               let older = try? ShowSchemaMigration.decodeUpgradingOlder(bytes) else { return }
         let key = DocumentKey.show(older.payload.show.id)
+        let damagedEdit = UserDefaults.standard.string(forKey: "WWUITestRetainDamagedEditCheckpoint") != nil
         ShowDocument.debugBeforeRead = { url in
             ShowDocument.debugBeforeRead = nil
             let recovery = PersistenceEnvironment.recovery
-            _ = try? recovery.retainCheckpoint(bytes, for: key)
-            try? recovery.recordLocation(url, for: key)
+            do {
+                if damagedEdit {
+                    var snapshot = bytes
+                    guard let index = snapshot.firstIndex(of: UInt8(ascii: "S")) else { return }
+                    snapshot[index] = UInt8(ascii: "T")
+                    try recovery.writeEditCheckpoint(snapshot: snapshot, base: nil,
+                                                     schemaVersion: SchemaVersion.show, for: key)
+                } else {
+                    _ = try recovery.retainCheckpoint(bytes, for: key)
+                }
+                try recovery.recordLocation(url, for: key)
+            } catch {
+                NSApp.presentError(error)
+            }
         }
     }
 
