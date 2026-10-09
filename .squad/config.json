@@ -1,4 +1,11 @@
 {
   "version": 1,
-  "stateBackend": "local"
+  "stateBackend": "local",
+  "hostComputeBudgetPolicy": {
+    "schedulingOnly": true,
+    "workingMacCourtesyCores": 4,
+    "workingMacCourtesyLoadApprox": 24,
+    "miniNoPerProcessCpuMergeGate": true,
+    "exactHeadFunctionalFullSuiteRequired": true
+  }
 }
