@@ -133,6 +133,13 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
   anything but an exact match), `SourceTransferController` (download/progress/cancel/retry/offline) and
   the `@MainActor @Observable` `SourceAvailabilityMonitor` for the Sources UI. The availability setting
   is injected as `SourceAvailabilitySetting(downloadSourcesAutomatically:)` from the app preference.
+- **M3 Primary-open preparation:** `WWEpisodeSetup.PrimaryOpenRequestGate` checks a selected, explicitly
+  confirmed Primary source/channel and speaker against show/episode, document/selection/relink generations,
+  accepted alignment and a versioned device record; cancellation and stale requests refuse. Even a
+  synthetically confirmed request refuses until guarded decoder capture is available. The
+  current device record has no durable access generation, so `EpisodeSetupModel.beginPrimaryContentOpen`
+  supplies none and always refuses. Selecting Primary, relinking or a metadata bookmark never grants
+  audio access; no production content-open or positive speech issuer is wired through this preparatory seam.
 - **Derived index/cache:** `LibraryIndex` in Caches, rebuilt whenever missing/stale/damaged; never authoritative.
 - **Envelope** (`WWPersistence.JSONEnvelopeCoder`, behind `CanonicalDocumentCoding`):
   `{checksum, format, payload, publicationID, revision, schemaVersion}` with sorted keys. Only

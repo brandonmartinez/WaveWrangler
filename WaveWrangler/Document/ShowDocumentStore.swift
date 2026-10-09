@@ -8,6 +8,8 @@ import WWCore
 @Observable
 final class ShowDocumentStore {
     private(set) var model: ShowDocumentModel
+    /// Changes even when undo or a reload restores byte-for-byte equal model values.
+    private(set) var modelGeneration = UUID()
     /// The most recent refused operation, shown to the user until the next successful change.
     private(set) var lastError: DomainError?
 
@@ -22,6 +24,7 @@ final class ShowDocumentStore {
     /// Replaces the value after reading from disk; not an undoable edit.
     func replaceLoadedModel(_ model: ShowDocumentModel) {
         self.model = model
+        modelGeneration = UUID()
         lastError = nil
         coalescingKey = nil
     }
@@ -47,6 +50,7 @@ final class ShowDocumentStore {
             guard updated != model else { return true }
             if let key, key == coalescingKey {
                 model = updated
+                modelGeneration = UUID()
                 // No new undo step, so AppKit won't reschedule autosaving: the quiescence timer must still move
                 // to this edit, or a checkpoint/autosave taken mid-burst would miss the rest of it.
                 document?.coalescedEditDidChangeModel()
@@ -107,6 +111,7 @@ final class ShowDocumentStore {
     ) {
         let previous = model
         model = newModel
+        modelGeneration = UUID()
         coalescingKey = nil
         if let undoManager = document?.undoManager {
             AppUndoRegistration.register(

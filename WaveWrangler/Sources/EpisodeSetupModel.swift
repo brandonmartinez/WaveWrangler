@@ -74,11 +74,27 @@ final class EpisodeSetupModel {
 
     var statuses: [SourceID: SourceStatusSnapshot] = [:]
     var selection: Set<SetupRowID> = [] {
-        didSet { if selection != oldValue { pendingInspectorFocus = false } }
+        didSet {
+            if selection != oldValue {
+                pendingInspectorFocus = false
+                selectionGeneration = UUID()
+                primaryOpenRequests.cancelAll()
+            }
+        }
     }
     var speakerSelection: Set<SpeakerID> = [] {
-        didSet { if speakerSelection != oldValue { pendingInspectorFocus = false } }
+        didSet {
+            if speakerSelection != oldValue {
+                pendingInspectorFocus = false
+                selectionGeneration = UUID()
+                primaryOpenRequests.cancelAll()
+            }
+        }
     }
+    @ObservationIgnored private var selectionGeneration = UUID()
+    @ObservationIgnored private var relinkGeneration = UUID()
+    @ObservationIgnored private var relinkPending = false
+    @ObservationIgnored private let primaryOpenRequests = PrimaryOpenRequestGate()
     var onlyNeedingAttention = false
     enum FocusedTable: Hashable { case sources, speakers }
     /// Which Setup table has keyboard focus (nil = neither).
@@ -226,6 +242,25 @@ final class EpisodeSetupModel {
         observation?.cancel()
         observation = nil
         observedIDs = []
+        primaryOpenRequests.cancelAll()
+    }
+
+    /// The real device store cannot yet supply a durable record generation, so this refuses rather than
+    /// converting selected-primary metadata or an in-app confirmation into permission to read audio.
+    func beginPrimaryContentOpen(speakerID: SpeakerID, channel: ChannelReference) throws -> PrimaryOpenRequestID {
+        try primaryOpenRequests.begin(speakerID: speakerID, channel: channel, state: primaryOpenState())
+    }
+
+    func primaryOpenState() -> PrimaryOpenState {
+        let selectedSpeaker = speakerSelection.count == 1 ? speakerSelection.first : nil
+        return PrimaryOpenState(model: store.model, episodeID: episodeID,
+                                documentGeneration: store.modelGeneration,
+                                selectionGeneration: selectionGeneration,
+                                relinkGeneration: relinkGeneration,
+                                accessRecordGeneration: nil,
+                                outstandingRelink: relinkPending || sheet != nil,
+                                selectedSpeakerID: selectedSpeaker,
+                                selectedChannel: selectedReference?.channel)
     }
 
     private func receive(_ update: [SourceID: SourceStatusSnapshot], for ids: Set<SourceID>) {
@@ -457,10 +492,18 @@ final class EpisodeSetupModel {
 
     func beginRelink(_ sourceID: SourceID, mode: RelinkContext.Mode = .relink) {
         guard let window = window(), let source = episode?.source(sourceID) else { return }
+        relinkGeneration = UUID()
+        let generation = relinkGeneration
+        let documentGeneration = store.modelGeneration
+        relinkPending = true
+        sheet = nil
+        primaryOpenRequests.cancelAll()
         let name = source.displayNameHint
         Task { [engine] in
             let recorded = await engine.recordedDetails(for: sourceID)
+            guard self.relinkGeneration == generation else { return }
             let folder = await engine.lastKnownFolder(for: sourceID)
+            guard self.relinkGeneration == generation else { return }
             let url: URL?
             if let override = SetupFixtures.relinkCandidateOverride {
                 url = override
@@ -475,20 +518,52 @@ final class EpisodeSetupModel {
                 let response = await panel.beginSheetModal(for: window)
                 url = response == .OK ? panel.url : nil
             }
-            guard let url else { return }
+            guard let url else {
+                self.relinkPending = false
+                return
+            }
             let comparison = await engine.compare(candidate: url, for: sourceID)
-            self.sheet = .relink(RelinkContext(sourceID: sourceID, displayName: name, candidate: url, comparison: comparison, mode: mode))
+            guard self.relinkGeneration == generation else { return }
+            guard self.store.modelGeneration == documentGeneration,
+                  self.episode?.source(sourceID) != nil else {
+                self.relinkPending = false
+                self.message = "The source or show changed while checking the file. Choose it again; nothing was changed."
+                return
+            }
+            self.relinkPending = false
+            self.sheet = .relink(RelinkContext(sourceID: sourceID, displayName: name, candidate: url, comparison: comparison,
+                                               mode: mode, generation: generation, documentGeneration: documentGeneration))
         }
     }
 
     /// One undoable "Relink “file”" action. The device-local record changes; no file is touched.
     func confirmRelink(_ context: RelinkContext) {
+        guard case let .relink(current) = sheet,
+              current.generation == context.generation,
+              current.sourceID == context.sourceID, current.candidate == context.candidate,
+              current.comparison == context.comparison, current.mode == context.mode,
+              relinkGeneration == context.generation,
+              store.modelGeneration == context.documentGeneration,
+              episode?.source(context.sourceID) != nil else {
+            message = "The source or show changed while relinking. Choose the file again; nothing was changed."
+            return
+        }
         sheet = nil
+        relinkGeneration = UUID()
+        let generation = relinkGeneration
+        primaryOpenRequests.cancelAll()
         guard let registrar = relinkRegistrar else {
             message = "Couldn't relink “\(context.displayName)”: this window has no undo history. Nothing was changed."
             return
         }
+        relinkPending = true
         registrar.relink(context.sourceID, to: context.candidate, identity: context.comparison.acceptedIdentity, actionName: SetupUndoName.relink(context.displayName))
+        Task {
+            await registrar.settle()
+            guard relinkGeneration == generation else { return }
+            relinkPending = false
+            relinkGeneration = UUID()
+        }
         selection = [.source(context.sourceID)]
     }
 
@@ -567,6 +642,8 @@ struct RelinkContext {
     var candidate: URL
     var comparison: RelinkComparison
     var mode: Mode
+    var generation: UUID
+    var documentGeneration: UUID
 }
 
 struct NumberSheetContext {
