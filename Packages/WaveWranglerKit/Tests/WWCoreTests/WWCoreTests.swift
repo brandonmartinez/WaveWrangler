@@ -290,4 +290,13 @@ struct ValueTypeTests {
         #expect(next.undoActionName == "C")
         #expect(!next.canRedo)
     }
+
+    @Test func legacyNamedHistoryStillDecodesWithoutCutLedgerFields() throws {
+        let legacy = Data(#"{"entries":[{"id":"00000000-0000-0000-0000-000000000001","actionName":"Legacy edit","timestamp":0}],"cursor":1}"#.utf8)
+        let history = try JSONDecoder().decode(EditHistory.self, from: legacy)
+        #expect(history.entries.map(\.actionName) == ["Legacy edit"])
+        #expect(history.undoActionName == "Legacy edit")
+        #expect(history.cursor == 1)
+        #expect(try JSONDecoder().decode(EditHistory.self, from: JSONEncoder().encode(history)) == history)
+    }
 }

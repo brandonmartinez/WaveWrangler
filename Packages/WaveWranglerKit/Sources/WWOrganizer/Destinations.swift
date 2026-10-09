@@ -29,19 +29,20 @@ public enum ShowDestination: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
-    public var isAvailableInThisVersion: Bool { self == .setup || self == .alignment }
+    public var isAvailableInThisVersion: Bool { self == .setup || self == .alignment || self == .review }
 
     /// VoiceOver value for the segment when not selected; `nil` when nothing extra is said.
     public var unavailableValue: String? {
         isAvailableInThisVersion ? nil : "Not available in this version"
     }
 
-    /// Help tag for blocked segments ("Later").
+    /// Help text for each destination segment.
     public var helpText: String {
         switch self {
         case .setup: "Set up sources and speakers for this episode"
         case .alignment: "Inspect and correct recorder alignment"
-        case .review, .export: "Later: not available in this version"
+        case .review: "Inspect the provisional transcript and timeline review shell"
+        case .export: "Later: not available in this version"
         }
     }
 
@@ -52,10 +53,7 @@ public enum ShowDestination: String, CaseIterable, Sendable, Identifiable {
         case .alignment:
             nil
         case .review:
-            BlockedPanel(
-                heading: "Review isn't available yet",
-                body: "Reviewing speech edits comes in a later version of WaveWrangler. Your episode setup will carry forward."
-            )
+            nil
         case .export:
             BlockedPanel(
                 heading: "Export isn't available yet",
