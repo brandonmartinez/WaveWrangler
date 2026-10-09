@@ -522,6 +522,13 @@
 - [#378](https://github.com/brandonmartinez/WaveWrangler/pull/378) organizer inventory is rejected because mutable channel-count underreports the unassigned lane; [#380](https://github.com/brandonmartinez/WaveWrangler/pull/380) is independently rejected as an always-throw / unreachable returned inventory and remains unmerged.
 - Refuse any purported all-lane manifest unless channel counts are independently source-verified and Backup protection/backing is proven; do not infer proof from primary speech.
 - [#369](https://github.com/brandonmartinez/WaveWrangler/pull/369) the exact `32fb...` independent review is REJECTED for optimized-away signing asserts, unchecked nonblocking `fcntl`, and peer cleanup; a different author is correcting it. Retain the kernel-log aggregate evidence, and keep the offline gate STOP.
+
+### 2026-10-09T06:39:53-04:00: Reject unbounded diagnostic harness on #401/#386
+
+**By:** Lead, recorded by Scribe.
+- Lead formally rejected PR [#401](https://github.com/brandonmartinez/WaveWrangler/pull/401) at exact commit `996c78b297bac9c94725d862189fb7a01c93a4fd` as an unbounded diagnostic harness, not the product.
+- The first valid `b1fedb` synthetic VM1 round was `0 pass / 2 fail / 0 skip` at the pre-menu `selected=false` row; the later `996c` owner-stopped run was incomplete after ~19m39s with wrapper exit 141, SSH exit 255, unreadable partial xcresult, and unknown counts.
+- The original author is locked out from revising, advising, or coauthoring this artifact; a different Mac author will prepare a fresh-main test-only replacement with exact synthetic-row firstMatch and bounded named focus probes while #386 stays open and the #401 draft stays frozen.
 - The one-time authorized maintainer `ggml-tiny.en` official asset measured 77,704,715 bytes with hash `921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f` and stays private outside Git; no inferred converter bitwise or redistribution proof, and no production engine.
 - [#220](https://github.com/brandonmartinez/WaveWrangler/issues/220) remains blocked: the strict physical-Mini episode-switch target is p95 < 100 ms over 100 samples and is not superseded by M2's accepted <= 122.5 ms baseline.
 - Author-only reports do not count as passing evidence; keep the record aggregate-only and avoid private model/media paths, transcripts, IP, sample names, PID, `xcresult`, or machine paths.
