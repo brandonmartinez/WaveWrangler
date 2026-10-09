@@ -126,12 +126,16 @@ record. It has no file URL. Release builds expose no worker handoff. The same FD
 callback; the retained private writer overwrites and truncates bytes on normal return,
 worker refusal and cancellation, and both descriptors are closed. A synthetic worker
 file is pinned/verified before decode, before callback and after callback; mismatches
-refuse without publishing a result. After the callback, the full organizer snapshot
+refuse without publishing a result. After the last pre-worker awaited organizer read,
+the selected source's bookmark is resolved afresh from that snapshot and its confirmed
+record, path, fingerprint and file state are checked against the decoded input
+**before the worker receives PCM**. After the callback, the full organizer snapshot
 is read once more; only **after that awaited read** are the selected source's current
-bookmark, pathname, fingerprint and file state checked against the decoded input.
-Synthetic tests suspend this final read and replace the source, rewrite its bytes,
-or retarget its bookmark with an unchanged organizer snapshot; every stale result
-refuses. Other tests cover selected-channel content,
+bookmark, pathname, fingerprint and file state checked again before result publication.
+Synthetic tests suspend both reads and replace the source, rewrite its bytes,
+or retarget its bookmark with an unchanged organizer snapshot: pre-worker changes
+refuse without invoking the callback, and post-worker changes refuse the result.
+Other tests cover selected-channel content,
 modified bytes, source/path/revision races, wrong episode, mapped occurrences, worker
 identity changes, cancellation and scrubbed anonymous bytes. This input is **raw f32le**,
 not a runnable Whisper WAV or a grant of actual inference. Real model/native rights,

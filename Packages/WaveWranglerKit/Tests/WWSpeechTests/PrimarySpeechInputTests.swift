@@ -129,17 +129,21 @@ private actor SpeechAfterWorkerSnapshot {
     }
 }
 
-private actor SpeechSuspendedAfterWorkerSnapshot {
+private actor SpeechSuspendedSnapshot {
     let value: PrimarySpeechInputState
+    let suspendedRead: Int
     private(set) var calls = 0
     private var entered: CheckedContinuation<Void, Never>?
     private var resumeRead: CheckedContinuation<Void, Never>?
 
-    init(_ value: PrimarySpeechInputState) { self.value = value }
+    init(_ value: PrimarySpeechInputState, suspendedRead: Int) {
+        self.value = value
+        self.suspendedRead = suspendedRead
+    }
 
     func read() async -> PrimarySpeechInputState {
         calls += 1
-        if calls == 4 {
+        if calls == suspendedRead {
             await withCheckedContinuation { continuation in
                 resumeRead = continuation
                 entered?.resume()
@@ -149,7 +153,7 @@ private actor SpeechSuspendedAfterWorkerSnapshot {
         return value
     }
 
-    func waitUntilFourthRead() async {
+    func waitUntilSuspendedRead() async {
         if resumeRead != nil { return }
         await withCheckedContinuation { entered = $0 }
     }
@@ -162,6 +166,7 @@ private actor SpeechSuspendedAfterWorkerSnapshot {
 
 private final class CapturedSpeechFD: @unchecked Sendable {
     var descriptor: Int32 = -1
+    var invocations = 0
 }
 
 private struct SpeechMidReadContentIO: SourceContentIO {
@@ -591,7 +596,7 @@ struct PrimarySpeechInputTests {
             name: "synthetic-stub", version: "1", sizeBytes: 3,
             sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
             license: "synthetic", source: "fixture")
-        let state = SpeechSuspendedAfterWorkerSnapshot(snapshot)
+        let state = SpeechSuspendedSnapshot(snapshot, suspendedRead: 4)
         let task = Task {
             try await PrimarySpeechInputAdapter(access: access).withSealedSyntheticWorkerInput(
                 episodeID: episode, speakerID: speaker,
@@ -599,7 +604,7 @@ struct PrimarySpeechInputTests {
                 availability: .on, current: { await state.read() }, workerURL: stub, workerPin: pin
             ) { _ in 1 }
         }
-        await state.waitUntilFourthRead()
+        await state.waitUntilSuspendedRead()
         #expect(await state.calls == 4)
         do {
             if change == "source-replaced" {
@@ -627,6 +632,64 @@ struct PrimarySpeechInputTests {
             _ = try await task.value
             Issue.record("source changed during final organizer read was accepted")
         } catch { #expect(error as? SpeechAdmissionRefusal == .sourceAliasOrChanged) }
+    }
+
+    @Test(arguments: ["source-replaced", "content-rewritten", "bookmark-retargeted"])
+    func workerNeverReceivesSourceChangedDuringPreWorkerStateRead(_ change: String) async throws {
+        let (directory, url, _, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let bookmarkTarget = SpeechBookmarkTarget(url)
+        let access = SourceAccessContext(io: SpeechFixtureIO(url: url, bookmarkTarget: bookmarkTarget))
+        let stub = directory.appendingPathComponent("stub")
+        try Data("abc".utf8).write(to: stub)
+        let pin = LocalSpeechAssetPin(
+            name: "synthetic-stub", version: "1", sizeBytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            license: "synthetic", source: "fixture")
+        let state = SpeechSuspendedSnapshot(snapshot, suspendedRead: 3)
+        let captured = CapturedSpeechFD()
+        let task = Task {
+            try await PrimarySpeechInputAdapter(access: access).withSealedSyntheticWorkerInput(
+                episodeID: episode, speakerID: speaker,
+                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                availability: .on, current: { await state.read() }, workerURL: stub, workerPin: pin
+            ) { input in
+                captured.invocations += 1
+                captured.descriptor = dup(input.descriptor)
+                return 1
+            }
+        }
+        await state.waitUntilSuspendedRead()
+        #expect(await state.calls == 3)
+        do {
+            if change == "source-replaced" {
+                try FileManager.default.moveItem(
+                    at: url, to: directory.appendingPathComponent("original.wav"))
+                try wav(channel1: -400).write(to: url)
+            } else if change == "content-rewritten" {
+                let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+                let modified = try #require(attributes[.modificationDate] as? Date)
+                let handle = try FileHandle(forWritingTo: url)
+                try handle.write(contentsOf: wav(channel1: -400))
+                try handle.close()
+                try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+            } else {
+                let relinked = directory.appendingPathComponent("relinked.wav")
+                try wav().write(to: relinked)
+                bookmarkTarget.set(relinked)
+            }
+        } catch {
+            await state.resume()
+            throw error
+        }
+        await state.resume()
+        do {
+            _ = try await task.value
+            Issue.record("stale pre-worker source was published")
+        } catch { #expect(error as? SpeechAdmissionRefusal == .sourceAliasOrChanged) }
+        defer { if captured.descriptor >= 0 { _ = close(captured.descriptor) } }
+        #expect(captured.invocations == 0)
+        #expect(captured.descriptor == -1)
     }
 
         @Test func proxyFilterPreservesSpeechBandAndSuppressesOutOfBandTone() async throws {

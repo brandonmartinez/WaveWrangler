@@ -326,7 +326,26 @@ public struct PrimarySpeechInputAdapter: Sendable {
               final.accessRecords == latest.accessRecords, final.sourceRevision == revision,
               final.inputAssetRevision == Self.inputAssetRevision
         else { throw .sourceRevisionChanged }
-        guard Self.sameFile(before, try Self.inspect(url)) else { throw .sourceAliasOrChanged }
+        let finalRecords = final.accessRecords.filter {
+            $0.showID == final.show.show.id && $0.sourceID == selection.sourceID
+        }
+        guard finalRecords.count == 1, let finalRecord = finalRecords.first,
+              finalRecord == record,
+              finalRecord.recordedIdentity?.confirmation == .userConfirmed,
+              finalRecord.lastKnownPath == url.path,
+              let bookmark = finalRecord.bookmark,
+              case let .resolved(finalURL, isStale) = decoder.access.io.resolveBookmark(bookmark),
+              !isStale, finalURL.isFileURL, finalURL == url,
+              case let .success(finalMetadata) = decoder.access.io.metadata(at: url),
+              finalMetadata.volumeIsLocal.value == true,
+              finalMetadata.isDataless.value == false,
+              finalMetadata.isRegularFile.value == true,
+              finalMetadata.isSymbolicLink.value == false,
+              metadata.fingerprint.compare(to: finalMetadata.fingerprint) == .matches,
+              finalRecord.recordedIdentity?.fingerprint.compare(to: finalMetadata.fingerprint) == .matches,
+              Self.sameFile(before, try Self.inspect(url)),
+              finalMetadata.fingerprint.fileIdentifier.value == UInt64(before.st_ino)
+        else { throw .sourceAliasOrChanged }
         guard !Task.isCancelled else { throw .decode(.cancelled) }
         let result = try consume(product)
         if postConsumeCheck {
