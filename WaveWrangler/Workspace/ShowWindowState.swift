@@ -155,6 +155,9 @@ final class ShowWindowState {
     func showEpisodeInfo() {
         if selectedEpisodeID == nil, let first = store.model.episodes.first { sidebarSelection = .episode(first.id) }
         guard selectedEpisodeID != nil else { return }
+        if destination == .review || destination == .alignment {
+            select(.setup)
+        }
         inspectorPresented = true
         titleFocusRequest += 1
     }
