@@ -1,5 +1,6 @@
 import AppKit
 import WWOrganizer
+import WWSpeech
 
 #if DEBUG
 import Darwin
@@ -17,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             exit(SpeechProbe.run())
         }
         #endif
+        if !SpeechInference.nativeCPULinked {
+            NSLog("Built-in CPU speech bridge link check failed; inference remains unavailable.")
+        }
         // The first `shared` access creates NSApp, so this makes it a WaveWranglerApplication (#126).
         let app = WaveWranglerApplication.shared
         let delegate = AppDelegate()
