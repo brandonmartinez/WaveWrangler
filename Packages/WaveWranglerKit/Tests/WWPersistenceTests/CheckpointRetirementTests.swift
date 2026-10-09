@@ -254,6 +254,10 @@ struct CheckpointRetirementTests {
             return
         }
         #expect(await session.isDirty)
+        guard case .saveFailed(_, .diskFull, _) = await session.status.state else {
+            Issue.record("A failed Save As must show its write failure rather than the old clean status")
+            return
+        }
         #expect(await session.url == origin)
         #expect(try Data(contentsOf: origin) == originalBytes)
         #expect(!FileManager.default.fileExists(atPath: destination.path))

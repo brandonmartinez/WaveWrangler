@@ -172,7 +172,8 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
             return .failure(error)
         }
         let result = duplicate(to: destination, replacingExisting: replacingExisting, isCancelled: isCancelled)
-        if case let .success(receipt) = result {
+        switch result {
+        case let .success(receipt):
             url = destination
             base = receipt.fingerprint
             originatingItem = FileItemIdentity.observe(at: destination)
@@ -180,6 +181,13 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
             isDirty = false
             readOnlyReason = nil
             status.state = .saved(revision: receipt.revision, at: receipt.verifiedAt)
+        case let .failure(error):
+            switch error {
+            case .cancelled, .readOnly: break
+            default:
+                isDirty = true
+                status.state = DocumentSaveState.from(error, retainedRevision: base?.revision)
+            }
         }
         return result
     }
