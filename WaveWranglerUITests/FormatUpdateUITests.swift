@@ -68,71 +68,71 @@ final class FormatUpdateUITests: XCTestCase {
             check(Acceptance.waitFor(timeout: 10) { self.diskSchemaVersion(document) == Self.currentShowSchema }, "updated to the current schema")
             check(diskPrimaryChannels(document) == ["unknown"], "the index-0 placeholder became Unknown: \(diskPrimaryChannels(document))")
         }
+    }
 
-        /// The opened file's inode, not merely its bytes and path, must authorize Update.
-        func testT21UpdateRefusesByteIdenticalReplacementOfOrigin() throws {
-            let document = try writeOlder("Replaced Origin", ShowSchema1Fixtures.placeholderOnly)
-            let original = try Data(contentsOf: document)
-            let moved = workDirectory.appending(path: "Actual Original.wwshow")
-            try task("T21-origin-identity") {
-                let window = try openAndExpectPrompt(document, name: "Replaced Origin", original: original)
-                try FileManager.default.moveItem(at: document, to: moved)
-                try original.write(to: document)
-                app.typeKey(.return, modifierFlags: [])
-                let bar = window.descendants(matching: .any).matching(identifier: "ww.show.messageBar").firstMatch
-                check(bar.waitForExistence(timeout: 10), "identity refusal is shown in the read-only window")
-                check(texts(in: bar).contains { $0.contains("Couldn't update") || $0.contains("originating file") },
-                      "the update does not claim success")
-                check(diskSchemaVersion(document) == 1 && diskSchemaVersion(moved) == 1, "neither original nor replacement was overwritten")
-                check((try? Data(contentsOf: document)) == original && (try? Data(contentsOf: moved)) == original,
-                      "both exact schema 1 files remain unchanged")
-                try audit("T21 replaced-origin refusal")
-            }
+    /// The opened file's inode, not merely its bytes and path, must authorize Update.
+    func testT21UpdateRefusesByteIdenticalReplacementOfOrigin() throws {
+        let document = try writeOlder("Replaced Origin", ShowSchema1Fixtures.placeholderOnly)
+        let original = try Data(contentsOf: document)
+        let moved = workDirectory.appending(path: "Actual Original.wwshow")
+        try task("T21-origin-identity") {
+            let window = try openAndExpectPrompt(document, name: "Replaced Origin", original: original)
+            try FileManager.default.moveItem(at: document, to: moved)
+            try original.write(to: document)
+            app.typeKey(.return, modifierFlags: [])
+            let bar = window.descendants(matching: .any).matching(identifier: "ww.show.messageBar").firstMatch
+            check(bar.waitForExistence(timeout: 10), "identity refusal is shown in the read-only window")
+            check(texts(in: bar).contains { $0.contains("Couldn't update") || $0.contains("originating file") },
+                  "the update does not claim success")
+            check(diskSchemaVersion(document) == 1 && diskSchemaVersion(moved) == 1, "neither original nor replacement was overwritten")
+            check((try? Data(contentsOf: document)) == original && (try? Data(contentsOf: moved)) == original,
+                  "both exact schema 1 files remain unchanged")
+            try audit("T21 replaced-origin refusal")
         }
+    }
 
-        func testT21OlderPriorOpensAsUpgradedSeparateCopyAfterUpdate() throws {
-            let document = try writeOlder("Prior Schema One", ShowSchema1Fixtures.placeholderOnly)
-            try task("T21-older-prior") {
-                launch(["-WWUITestAutosave", "ON", "-WWUITestResetStorage", "YES",
-                        "-WWUITestRetainOlderCheckpoint", ShowSchema1Fixtures.placeholderOnly.base64EncodedString()], opening: document)
-                let window = app.windows.matching(identifier: "ww.show.window").firstMatch
-                check(window.waitForExistence(timeout: 10) && app.sheets.firstMatch.waitForExistence(timeout: 5), "older show opens with update sheet")
-                app.typeKey(.return, modifierFlags: [])
-                check(Acceptance.waitFor(timeout: 10) { self.diskSchemaVersion(document) == Self.currentShowSchema }, "format update succeeded")
-                app.menuBars.menuBarItems["View"].click()
-                app.menuBars.menuItems["Show Save Status"].click()
-                let popover = app.popovers.firstMatch
-                check(popover.waitForExistence(timeout: 5), "prior copies are in the save-status popover")
-                let prior = popover.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.show.recovery.openPrior.'")).firstMatch
-                check(prior.waitForExistence(timeout: 5), "the schema 1 checkpoint is individually offerable")
-                if prior.exists { prior.click() }
-                let copy = app.windows.matching(identifier: "ww.show.window").matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
-                check(copy.waitForExistence(timeout: 10), "the older prior opens as a new current-schema copy")
-                check(diskSchemaVersion(document) == Self.currentShowSchema,
-                      "opening the prior never overwrites the updated canonical file")
-            }
+    func testT21OlderPriorOpensAsUpgradedSeparateCopyAfterUpdate() throws {
+        let document = try writeOlder("Prior Schema One", ShowSchema1Fixtures.placeholderOnly)
+        try task("T21-older-prior") {
+            launch(["-WWUITestAutosave", "ON", "-WWUITestResetStorage", "YES",
+                    "-WWUITestRetainOlderCheckpoint", ShowSchema1Fixtures.placeholderOnly.base64EncodedString()], opening: document)
+            let window = app.windows.matching(identifier: "ww.show.window").firstMatch
+            check(window.waitForExistence(timeout: 10) && app.sheets.firstMatch.waitForExistence(timeout: 5), "older show opens with update sheet")
+            app.typeKey(.return, modifierFlags: [])
+            check(Acceptance.waitFor(timeout: 10) { self.diskSchemaVersion(document) == Self.currentShowSchema }, "format update succeeded")
+            app.menuBars.menuBarItems["View"].click()
+            app.menuBars.menuItems["Show Save Status"].click()
+            let popover = app.popovers.firstMatch
+            check(popover.waitForExistence(timeout: 5), "prior copies are in the save-status popover")
+            let prior = popover.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.show.recovery.openPrior.'")).firstMatch
+            check(prior.waitForExistence(timeout: 5), "the schema 1 checkpoint is individually offerable")
+            if prior.exists { prior.click() }
+            let copy = app.windows.matching(identifier: "ww.show.window").matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
+            check(copy.waitForExistence(timeout: 10), "the older prior opens as a new current-schema copy")
+            check(diskSchemaVersion(document) == Self.currentShowSchema,
+                  "opening the prior never overwrites the updated canonical file")
         }
+    }
 
-        func testDamagedC2bSnapshotOffersRawRevealNotRestore() throws {
-            var damaged = ShowSchema1Fixtures.placeholderOnly
-            let range = try XCTUnwrap(damaged.range(of: Data("Placeholder Show".utf8)))
-            damaged.replaceSubrange(range, with: Data("Placeholder Shoe".utf8))
-            let document = try writeOlder("Damaged Edit", damaged)
-            try task("F-DAMAGED-C2B") {
-                launch(["-WWUITestAutosave", "ON", "-WWUITestResetStorage", "YES",
-                        "-WWUITestRetainDamagedEditCheckpoint", ShowSchema1Fixtures.placeholderOnly.base64EncodedString()], opening: document)
-                let refusal = app.dialogs.firstMatch.exists ? app.dialogs.firstMatch : app.sheets.firstMatch
-                check(refusal.waitForExistence(timeout: 10), "damaged canonical file shows a refusal")
-                check(texts(in: refusal).contains { $0.contains("recovery copy is damaged and cannot be restored") },
-                      "the damaged C2b payload is described honestly")
-                check(refusal.buttons.matching(NSPredicate(format: "title BEGINSWITH 'Show in Finder'")).firstMatch.exists,
-                      "the exact retained raw record can be revealed non-destructively")
-                check(!refusal.buttons["Open Unsaved Copy"].exists && !refusal.buttons["Restore Unsaved Changes"].exists,
-                      "damaged bytes are never offered as a successful restore")
-                check((try? Data(contentsOf: document)) == damaged, "canonical bytes remain unchanged")
-                try audit("F-DAMAGED-C2B refusal")
-                app.typeKey(.escape, modifierFlags: [])
-            }
+    func testDamagedC2bSnapshotOffersRawRevealNotRestore() throws {
+        var damaged = ShowSchema1Fixtures.placeholderOnly
+        let range = try XCTUnwrap(damaged.range(of: Data("Placeholder Show".utf8)))
+        damaged.replaceSubrange(range, with: Data("Placeholder Shoe".utf8))
+        let document = try writeOlder("Damaged Edit", damaged)
+        try task("F-DAMAGED-C2B") {
+            launch(["-WWUITestAutosave", "ON", "-WWUITestResetStorage", "YES",
+                    "-WWUITestRetainDamagedEditCheckpoint", ShowSchema1Fixtures.placeholderOnly.base64EncodedString()], opening: document)
+            let refusal = app.dialogs.firstMatch.exists ? app.dialogs.firstMatch : app.sheets.firstMatch
+            check(refusal.waitForExistence(timeout: 10), "damaged canonical file shows a refusal")
+            check(texts(in: refusal).contains { $0.contains("recovery copy is damaged and cannot be restored") },
+                  "the damaged C2b payload is described honestly")
+            check(refusal.buttons.matching(NSPredicate(format: "title BEGINSWITH 'Show in Finder'")).firstMatch.exists,
+                  "the exact retained raw record can be revealed non-destructively")
+            check(!refusal.buttons["Open Unsaved Copy"].exists && !refusal.buttons["Restore Unsaved Changes"].exists,
+                  "damaged bytes are never offered as a successful restore")
+            check((try? Data(contentsOf: document)) == damaged, "canonical bytes remain unchanged")
+            try audit("F-DAMAGED-C2B refusal")
+            app.typeKey(.escape, modifierFlags: [])
         }
     }
 
