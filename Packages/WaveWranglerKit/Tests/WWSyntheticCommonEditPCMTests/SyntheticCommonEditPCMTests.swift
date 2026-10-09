@@ -22,6 +22,9 @@ struct SyntheticCommonEditPCMTests {
                 (108...121).map(Float.init))
         #expect(output[2] == [Float](repeating: 0, count: 20))
         #expect(plan.mapping.map.keptSpans.map(\.outputStart) == [0, 6])
+        #expect(plan.mapping.excludedBackups.map(\.key) == [fixture.excludedBackup])
+        #expect(plan.mapping.excludedBackups.map(\.status) ==
+                ["backup not verified; excluded from cut proof"])
     }
 
     @Test func liftKeepsDurationAndMutesOnlyReservedGrid() throws {
@@ -288,6 +291,28 @@ struct SyntheticCommonEditPCMTests {
             try fixture.mapping(.shorten, surveys: protected)
         }
         let mapping = try fixture.mapping(.shorten)
+        #expect(throws: SyntheticCommonEditPCMError.invalidPlan) {
+            try SyntheticCommonEditPCMPlan(
+                base: fixture.base, mapping: mapping, mode: .shorten,
+                manifest: .init(revision: fixture.manifest.revision,
+                                lanes: fixture.identities.map(\.lane),
+                                roleClaims: fixture.manifest.roleClaims),
+                surveys: mapping.lanes.map(\.survey), fades: []
+            )
+        }
+        #expect(throws: ProvisionalCutMappingError.invalidLanes) {
+            try KeyedCutMapping.map(
+                base: fixture.base,
+                manifest: .init(revision: fixture.manifest.revision,
+                                lanes: fixture.identities.map(\.lane),
+                                excludedBackups: [fixture.excludedBackup]),
+                manifestRevision: fixture.manifest.revision,
+                laneKeys: fixture.identities, selectedPrimary: fixture.identities[0],
+                primary: fixture.identities[0], sourceFrames: .init(start: 4, end: 6),
+                mode: .lift, outputRate: fixture.base.outputRate,
+                fadeOutOutputFrames: 0, fadeInOutputFrames: 0, proofs: []
+            )
+        }
         for mode in [ProvisionalCutMode.shorten, .lift] {
             let original = try fixture.mapping(mode)
             let (_, input) = try fixture.prepare(mode)
@@ -339,14 +364,18 @@ struct SyntheticCommonEditPCMTests {
 private struct PCMFixture {
     let base: CommonEpisodeEditMap
     let identities: [KeyedEditLane]
+    let excludedBackup: CommonEditLaneKey
     let manifest: CommonEditLaneManifest
     let surveys: [CommonEditLaneSurvey]
 
     init() throws {
         let rate = try NominalRate(48_000)
-        let primaryEpoch = RecordingEpochID(), backupEpoch = RecordingEpochID()
-        let primaryID = SourceOccurrenceID(), backupID = SourceOccurrenceID()
-        let primarySource = SourceID(), backupSource = SourceID()
+        let primaryEpoch = RecordingEpochID(), otherEpoch = RecordingEpochID()
+        let backupEpoch = RecordingEpochID()
+        let primaryID = SourceOccurrenceID(), otherID = SourceOccurrenceID()
+        let backupID = SourceOccurrenceID()
+        let primarySource = SourceID(), otherSource = SourceID()
+        let backupSource = SourceID()
         let primaryGroup = RecorderGroupID()
         let reference = TimelineReference(group: primaryGroup, epoch: primaryEpoch,
                                           occurrence: primaryID)
@@ -377,22 +406,35 @@ private struct PCMFixture {
         }
         let primary = try group(id: primaryGroup, epoch: primaryEpoch, source: primarySource,
                                 occurrence: primaryID, count: 20, offset: 0)
+        let other = try group(id: RecorderGroupID(), epoch: otherEpoch, source: otherSource,
+                              occurrence: otherID, count: 22, offset: -2)
         let backup = try group(id: RecorderGroupID(), epoch: backupEpoch, source: backupSource,
                                occurrence: backupID, count: 22, offset: -2)
         base = try CommonEpisodeEditMap(
-            alignment: AlignedTimelineMap(reference: reference, groups: [primary, backup]),
+            alignment: AlignedTimelineMap(reference: reference, groups: [primary, other, backup]),
             alignmentRevision: 7, editRevision: 8, outputRate: rate,
             alignedFrameOrigin: -2, alignedFrameCount: 22, removals: []
         )
         identities = [
             .init(lane: .audio(.init(source: primarySource, occurrence: primaryID, channel: 0)),
                   epoch: primaryEpoch, alignmentRevision: 7, revision: "primary"),
-            .init(lane: .audio(.init(source: backupSource, occurrence: backupID, channel: 1)),
-                  epoch: backupEpoch, alignmentRevision: 7, revision: "backup"),
+            .init(lane: .audio(.init(source: otherSource, occurrence: otherID, channel: 1)),
+                  epoch: otherEpoch, alignmentRevision: 7, revision: "other-primary"),
             .init(lane: .intentionalSilence("bed"), epoch: nil,
                   alignmentRevision: 7, revision: "silence"),
         ]
-        manifest = .init(revision: "episode", lanes: identities.map(\.lane))
+        excludedBackup = .init(source: backupSource, occurrence: backupID, channel: 0)
+        manifest = .init(
+            revision: "episode", lanes: identities.map(\.lane),
+            excludedBackups: [excludedBackup],
+            roleClaims: [
+                .init(key: .init(source: primarySource, occurrence: primaryID, channel: 0),
+                      role: .selectedPrimary),
+                .init(key: .init(source: otherSource, occurrence: otherID, channel: 1),
+                      role: .selectedPrimary),
+                .init(key: excludedBackup, role: .backup),
+            ]
+        )
         surveys = [
             .init(lane: identities[0].lane, coverage: [.init(start: 0, end: 20)],
                   intentionalSilence: [.init(start: -2, end: 0)]),

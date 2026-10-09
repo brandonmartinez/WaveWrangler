@@ -73,6 +73,7 @@ struct SyntheticCommonEditPCMPlan: Sendable {
               }),
               !manifest.revision.isEmpty,
               manifest.revision == mapping.manifestRevision,
+              mapping.excludedBackups.map(\.key) == manifest.excludedBackups,
               surveys.map(\.lane) == manifest.lanes,
               zip(mapping.lanes, surveys).allSatisfy({
                   $0.survey == $1 && $0.finalMergedGridFades == $1.finalMergedFades

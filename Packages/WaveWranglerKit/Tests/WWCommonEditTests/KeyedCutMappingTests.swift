@@ -5,6 +5,20 @@ import WWTimeMap
 
 @Suite("Keyed all-lane cut mapping (synthetic, provisional)")
 struct KeyedCutMappingTests {
+    @Test func knownBackupCannotEnterDefaultEmptyExclusionCutProof() throws {
+        let fx = try Fixture(knownBackup: true)
+        guard case let .audio(knownBackup) = fx.identities[1].lane,
+              knownBackup.occurrence == fx.base.alignment.groups[1].placements[0].occurrence.id else {
+            Issue.record("Expected the known Backup occurrence in the fixture")
+            return
+        }
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            #expect(throws: ProvisionalCutMappingError.invalidLanes) {
+                try fx.map(mode: mode, excludedBackups: [])
+            }
+        }
+    }
+
     @Test func bothModesUseOneRoundedGridAndEveryLane() throws {
         let fx = try Fixture()
         for mode in [ProvisionalCutMode.shorten, .lift] {
@@ -40,9 +54,203 @@ struct KeyedCutMappingTests {
             #expect(throws: CommonEditAttestationRefusal.trustedAuthorityUnavailable) {
                 try CommonEditAttestation.prepare(
                     map: result.map,
-                    manifest: .init(revision: "episode", lanes: fx.identities.map(\.lane)),
+                    manifest: .init(revision: "episode", lanes: fx.identities.map(\.lane),
+                                    roleClaims: fx.roleClaims),
                     surveys: proofs.map(\.survey)
                 )
+            }
+        }
+    }
+
+    @Test func selectedPrimariesMapWhileEveryBackupIsExplicitlyExcluded() throws {
+        let fx = try Fixture(knownBackup: true)
+        let selected = [fx.identities[0], fx.identities[2], fx.identities[3]]
+        let proofs = [fx.proofs[0], fx.proofs[2], fx.proofs[3]]
+        guard case let .audio(backup) = fx.identities[1].lane else {
+            Issue.record("Expected the excluded Backup occurrence")
+            return
+        }
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            let result = try fx.map(mode: mode, proofs: proofs, identities: selected,
+                                    excludedBackups: [backup])
+            #expect(result.lanes.map(\.identity) == selected)
+            #expect(result.lanes[0].sourceRemoval == SourceFrameSpan(start: 10, end: 12))
+            #expect(result.lanes[1].sourceRemoval == SourceFrameSpan(start: 12, end: 14))
+            #expect(result.excludedBackups.map(\.key) == [backup])
+            #expect(result.excludedBackups[0].status == "backup not verified; excluded from cut proof")
+            #expect(throws: CommonEditAttestationRefusal.trustedAuthorityUnavailable) {
+                try CommonEditAttestation.prepare(
+                    map: result.map,
+                    manifest: .init(revision: "episode", lanes: selected.map(\.lane),
+                                    excludedBackups: [backup], roleClaims: fx.roleClaims),
+                    surveys: proofs.map(\.survey)
+                )
+            }
+        }
+    }
+
+    @Test func missingOrMisclassifiedPrimaryAndBackupProofsRefuse() throws {
+        let fx = try Fixture(knownBackup: true)
+        let selected = [fx.identities[0], fx.identities[2], fx.identities[3]]
+        let proofs = [fx.proofs[0], fx.proofs[2], fx.proofs[3]]
+        guard case let .audio(backup) = fx.identities[1].lane,
+              case let .audio(otherPrimary) = fx.identities[2].lane else {
+            Issue.record("Expected audio occurrences")
+            return
+        }
+        #expect(throws: ProvisionalCutMappingError.invalidLanes) {
+            try fx.map(proofs: proofs, identities: selected)
+        }
+        #expect(throws: ProvisionalCutMappingError.invalidLanes) {
+            try fx.map(proofs: [proofs[0], proofs[2]], identities: selected,
+                       excludedBackups: [backup])
+        }
+        #expect(throws: ProvisionalCutMappingError.invalidLanes) {
+            try fx.map(proofs: proofs, identities: selected, excludedBackups: [backup, backup])
+        }
+        #expect(throws: ProvisionalCutMappingError.invalidLanes) {
+            try fx.map(proofs: proofs, identities: selected,
+                       excludedBackups: [backup, otherPrimary])
+        }
+        let missingCoverage = proofs[1]
+        #expect(throws: ProvisionalCutMappingError.incompleteCoverage) {
+            try fx.map(proofs: [
+                proofs[0],
+                .init(identity: missingCoverage.identity, survey: missingCoverage.survey),
+                proofs[2],
+            ], identities: selected, excludedBackups: [backup])
+        }
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            let protected = fx.proofs[2]
+            let checked = KeyedLaneFootprintInput(
+                identity: protected.identity, survey: protected.survey,
+                sourceCoverage: protected.sourceCoverage,
+                protected: [SourceFrameSpan(start: 13, end: 14)],
+                requestedFadeOut: protected.requestedFadeOut,
+                requestedFadeIn: protected.requestedFadeIn,
+                finalMergedFades: protected.finalMergedFades
+            )
+            #expect(throws: ProvisionalCutMappingError.protectedFrame) {
+                try fx.map(mode: mode, proofs: [proofs[0], checked, proofs[2]],
+                           identities: selected, excludedBackups: [backup])
+            }
+        }
+    }
+
+    @Test func excludedBackupNeedsNoInverseButSelectedPrimaryStillDoes() throws {
+        let fx = try Fixture(knownBackup: true)
+        let backup = fx.base.alignment.groups[1]
+        let unsupported = try GroupTimeMap(
+            group: backup.group, reference: backup.reference,
+            epochs: [.init(epoch: fx.identities[1].epoch!,
+                           mapping: .unsupported(.estimatorAbstained))],
+            placements: backup.placements
+        )
+        let alignment = try AlignedTimelineMap(
+            reference: fx.base.alignment.reference,
+            groups: [fx.base.alignment.groups[0], unsupported, fx.base.alignment.groups[2]]
+        )
+        let base = try CommonEpisodeEditMap(
+            alignment: alignment, alignmentRevision: fx.base.alignmentRevision,
+            editRevision: fx.base.editRevision, outputRate: fx.base.outputRate,
+            alignedFrameOrigin: fx.base.alignedFrameOrigin,
+            alignedFrameCount: fx.base.alignedFrameCount, removals: []
+        )
+        let selected = [fx.identities[0], fx.identities[2], fx.identities[3]]
+        let proofs = [fx.proofs[0], fx.proofs[2], fx.proofs[3]]
+        guard case let .audio(backupKey) = fx.identities[1].lane,
+              case let .audio(otherKey) = fx.identities[2].lane else {
+            Issue.record("Expected distinct audio occurrences")
+            return
+        }
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            let result = try fx.map(mode: mode, proofs: proofs, identities: selected,
+                                    excludedBackups: [backupKey], base: base)
+            #expect(result.excludedBackups.map(\.key) == [backupKey])
+            #expect(result.lanes.count == 3)
+        }
+        let onlyPrimary = [fx.identities[0], fx.identities[3]]
+        let onlyProofs = [fx.proofs[0], fx.proofs[3]]
+        let excluded = [backupKey, otherKey]
+        #expect(throws: ProvisionalCutMappingError.invalidLanes) {
+            try fx.map(proofs: onlyProofs, identities: onlyPrimary,
+                       excludedBackups: excluded, fadeOutOutputFrames: 2,
+                       fadeInOutputFrames: 2, base: base)
+        }
+        #expect(throws: ProvisionalCutMappingError.invalidLanes) {
+            try fx.map(base: base)
+        }
+        let other = fx.base.alignment.groups[2]
+        let unsupportedPrimary = try GroupTimeMap(
+            group: other.group, reference: other.reference,
+            epochs: [.init(epoch: fx.identities[2].epoch!,
+                           mapping: .unsupported(.estimatorAbstained))],
+            placements: other.placements
+        )
+        let primaryAlignment = try AlignedTimelineMap(
+            reference: fx.base.alignment.reference,
+            groups: [fx.base.alignment.groups[0], unsupported, unsupportedPrimary]
+        )
+        let primaryBase = try CommonEpisodeEditMap(
+            alignment: primaryAlignment, alignmentRevision: fx.base.alignmentRevision,
+            editRevision: fx.base.editRevision, outputRate: fx.base.outputRate,
+            alignedFrameOrigin: fx.base.alignedFrameOrigin,
+            alignedFrameCount: fx.base.alignedFrameCount, removals: []
+        )
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            #expect(throws: ProvisionalCutMappingError.ambiguousInverse) {
+                try fx.map(mode: mode, proofs: proofs, identities: selected,
+                           excludedBackups: [backupKey], base: primaryBase)
+            }
+        }
+    }
+
+    @Test func sharedBackupSourceCannotBeAdmittedThroughAnotherOccurrence() throws {
+        let fx = try Fixture(sharedBackupSource: true, knownBackup: true)
+        guard case let .audio(backup) = fx.identities[1].lane else {
+            Issue.record("Expected a Backup occurrence")
+            return
+        }
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            #expect(throws: ProvisionalCutMappingError.invalidLanes) {
+                try fx.map(mode: mode, proofs: [fx.proofs[0], fx.proofs[2], fx.proofs[3]],
+                           identities: [fx.identities[0], fx.identities[2], fx.identities[3]],
+                           excludedBackups: [backup])
+            }
+        }
+    }
+
+    @Test func absentDuplicateOrContradictoryRoleClaimsRefuseBeforeMapping() throws {
+        let fx = try Fixture(knownBackup: true)
+        let selected = [fx.identities[0], fx.identities[2], fx.identities[3]]
+        let proofs = [fx.proofs[0], fx.proofs[2], fx.proofs[3]]
+        guard case let .audio(backup) = fx.identities[1].lane,
+              case let .audio(primary) = fx.identities[0].lane else {
+            Issue.record("Expected selected Primary and Backup keys")
+            return
+        }
+        let wrong = CommonEditAudioRoleClaim(key: backup, role: .selectedPrimary)
+        let wrongChannel = CommonEditAudioRoleClaim(
+            key: .init(source: primary.source, occurrence: primary.occurrence, channel: 1),
+            role: .selectedPrimary
+        )
+        for claims in [
+            [],
+            Array(fx.roleClaims.dropLast()),
+            fx.roleClaims + [fx.roleClaims[1]],
+            [fx.roleClaims[0], wrong, fx.roleClaims[2]],
+            [wrongChannel, fx.roleClaims[1], fx.roleClaims[2]],
+        ] {
+            for mode in [ProvisionalCutMode.shorten, .lift] {
+                #expect(throws: ProvisionalCutMappingError.invalidLanes) {
+                    try fx.map(mode: mode, proofs: proofs, identities: selected,
+                               excludedBackups: [backup], roleClaims: claims)
+                }
+            }
+        }
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            #expect(throws: ProvisionalCutMappingError.invalidLanes) {
+                try fx.map(mode: mode, roleClaims: fx.roleClaims)
             }
         }
     }
@@ -228,12 +436,12 @@ struct KeyedCutMappingTests {
     }
 
     @Test func roundedMergedFadeOverlappingGridRefusesLiftAndShorten() throws {
-        let fx = try Fixture(backupRate: 44_100)
+        let fx = try Fixture(secondaryRate: 44_100)
         var proofs = fx.fadeFreeProofs()
-        let backup = proofs[1]
+        let secondary = proofs[1]
         proofs[1] = .init(
-            identity: backup.identity, survey: backup.survey,
-            sourceCoverage: backup.sourceCoverage,
+            identity: secondary.identity, survey: secondary.survey,
+            sourceCoverage: secondary.sourceCoverage,
             finalMergedFades: [SourceFrameSpan(start: 4, end: 6)]
         )
         for mode in [ProvisionalCutMode.shorten, .lift] {
@@ -291,7 +499,7 @@ struct KeyedCutMappingTests {
 
     @Test func inverseGapAndUnsupportedEpochNeverBecomeSilence() throws {
         let fx = try Fixture()
-        let backup = fx.base.alignment.groups[1]
+        let secondary = fx.base.alignment.groups[1]
         let epoch = fx.identities[1].epoch!
         let next = RecordingEpochID()
         let offset = try ExactRational(-2, 48_000)
@@ -306,19 +514,19 @@ struct KeyedCutMappingTests {
         )
         let provenance = MapProvenance.manual(ManualCorrection(basis: .numericEntry))
         let gap = try GroupTimeMap(
-            group: backup.group, reference: backup.reference,
+            group: secondary.group, reference: secondary.reference,
             epochs: [.init(epoch: epoch, mapping: .mapped(segments: [first], provenance: provenance)),
                      .init(epoch: next, mapping: .mapped(segments: [second], provenance: provenance))],
             placements: [.init(
-                occurrence: backup.placements[0].occurrence,
+                occurrence: secondary.placements[0].occurrence,
                 spans: [.init(startFrame: 0, endFrame: 11, epoch: epoch, groupClockOffset: .zero),
                         .init(startFrame: 13, endFrame: 32, epoch: next, groupClockOffset: .zero)]
             )]
         )
         let unsupported = try GroupTimeMap(
-            group: backup.group, reference: backup.reference,
+            group: secondary.group, reference: secondary.reference,
             epochs: [.init(epoch: epoch, mapping: .unsupported(.estimatorAbstained))],
-            placements: backup.placements
+            placements: secondary.placements
         )
         for group in [gap, unsupported] {
             let alignment = try AlignedTimelineMap(
@@ -341,7 +549,7 @@ struct KeyedCutMappingTests {
 
     @Test func sourceGapBetweenOutputSamplesRefuses() throws {
         let fx = try Fixture()
-        let backup = fx.base.alignment.groups[1]
+        let secondary = fx.base.alignment.groups[1]
         let epoch = fx.identities[1].epoch!
         let next = RecordingEpochID()
         let offset = try ExactRational(-2, 48_000)
@@ -357,11 +565,11 @@ struct KeyedCutMappingTests {
         )
         let provenance = MapProvenance.manual(ManualCorrection(basis: .numericEntry))
         let skipped = try GroupTimeMap(
-            group: backup.group, reference: backup.reference,
+            group: secondary.group, reference: secondary.reference,
             epochs: [.init(epoch: epoch, mapping: .mapped(segments: [first], provenance: provenance)),
                      .init(epoch: next, mapping: .mapped(segments: [second], provenance: provenance))],
             placements: [.init(
-                occurrence: backup.placements[0].occurrence,
+                occurrence: secondary.placements[0].occurrence,
                 spans: [.init(startFrame: 0, endFrame: 25, epoch: epoch, groupClockOffset: .zero),
                         .init(startFrame: 26, endFrame: 32, epoch: next, groupClockOffset: .zero)]
             )]
@@ -454,8 +662,10 @@ private struct Fixture {
     let base: CommonEpisodeEditMap
     let identities: [KeyedEditLane]
     let proofs: [KeyedLaneFootprintInput]
+    let roleClaims: [CommonEditAudioRoleClaim]
 
-    init(primaryRate: Int64 = 48_000, backupRate: Int64 = 48_000) throws {
+    init(primaryRate: Int64 = 48_000, secondaryRate: Int64 = 48_000,
+         sharedBackupSource: Bool = false, knownBackup: Bool = false) throws {
         let source = SourceID(), rate = try NominalRate(48_000)
         let group = RecorderGroupID(), epoch = RecordingEpochID(), occurrence = SourceOccurrenceID()
         let reference = TimelineReference(group: group, epoch: epoch, occurrence: occurrence)
@@ -463,34 +673,42 @@ private struct Fixture {
                                      source: source, occurrence: occurrence, offset: 0,
                                      nominalRate: primaryRate)
         let otherSource = SourceID()
-        let backupID = SourceOccurrenceID(), otherID = SourceOccurrenceID()
-        let backupEpoch = RecordingEpochID(), otherEpoch = RecordingEpochID()
-        let backup = try Self.group(reference: reference, group: RecorderGroupID(),
-                                    epoch: backupEpoch, source: otherSource, occurrence: backupID,
-                                    offset: -2, nominalRate: backupRate)
+        let otherPrimarySource = sharedBackupSource ? otherSource : SourceID()
+        let secondaryID = SourceOccurrenceID(), otherID = SourceOccurrenceID()
+        let secondaryEpoch = RecordingEpochID(), otherEpoch = RecordingEpochID()
+        let secondary = try Self.group(reference: reference, group: RecorderGroupID(),
+                                       epoch: secondaryEpoch, source: otherSource,
+                                       occurrence: secondaryID, offset: -2,
+                                       nominalRate: secondaryRate)
         let other = try Self.group(reference: reference, group: RecorderGroupID(),
-                                   epoch: otherEpoch, source: otherSource, occurrence: otherID,
-                                   offset: -2, nominalRate: backupRate)
+                                   epoch: otherEpoch, source: otherPrimarySource, occurrence: otherID,
+                                   offset: -2, nominalRate: secondaryRate)
         base = try CommonEpisodeEditMap(
-            alignment: AlignedTimelineMap(reference: reference, groups: [primary, backup, other]),
+            alignment: AlignedTimelineMap(reference: reference, groups: [primary, secondary, other]),
             alignmentRevision: 7, editRevision: 8, outputRate: rate,
             alignedFrameOrigin: -2, alignedFrameCount: 36, removals: []
         )
         let identities: [KeyedEditLane] = [
             .init(lane: .audio(.init(source: source, occurrence: occurrence, channel: 0)),
                   epoch: epoch, alignmentRevision: 7, revision: "p"),
-            .init(lane: .audio(.init(source: otherSource, occurrence: backupID, channel: 0)),
-                  epoch: backupEpoch, alignmentRevision: 7, revision: "b"),
-            .init(lane: .audio(.init(source: otherSource, occurrence: otherID, channel: 1)),
+            .init(lane: .audio(.init(source: otherSource, occurrence: secondaryID, channel: 0)),
+                  epoch: secondaryEpoch, alignmentRevision: 7, revision: "s"),
+            .init(lane: .audio(.init(source: otherPrimarySource, occurrence: otherID, channel: 1)),
                   epoch: otherEpoch, alignmentRevision: 7, revision: "o"),
             .init(lane: .intentionalSilence("bed"), epoch: nil, alignmentRevision: 7, revision: "s"),
         ]
         self.identities = identities
+        roleClaims = identities.prefix(3).enumerated().compactMap { index, identity in
+            guard case let .audio(key) = identity.lane else { return nil }
+            return CommonEditAudioRoleClaim(
+                key: key, role: knownBackup && index == 1 ? .backup : .selectedPrimary
+            )
+        }
         proofs = (0..<4).map { index in
             let lane = identities[index]
             let start: Int64 = index == 0 ? 0 : -2
             let end: Int64 = index == 0 ? (primaryRate == 48_000 ? 32 : 34) :
-                (backupRate == 48_000 ? 30 : 32)
+                (secondaryRate == 48_000 ? 30 : 32)
             return KeyedLaneFootprintInput(
                 identity: lane,
                 survey: .init(lane: lane.lane, coverage: index == 3 ? [] :
@@ -550,6 +768,8 @@ private struct Fixture {
 
     func map(mode: ProvisionalCutMode = .shorten, proofs: [KeyedLaneFootprintInput]? = nil,
              identities: [KeyedEditLane]? = nil, primary: KeyedEditLane? = nil,
+             excludedBackups: [CommonEditLaneKey] = [],
+             roleClaims: [CommonEditAudioRoleClaim]? = nil,
              source: SourceFrameSpan = .init(start: 10, end: 12),
              outputRate: NominalRate? = nil,
              fadeOutOutputFrames: Int64 = 2,
@@ -557,7 +777,9 @@ private struct Fixture {
              base: CommonEpisodeEditMap? = nil) throws -> ProvisionalKeyedCutMapping {
         try KeyedCutMapping.map(
             base: base ?? self.base,
-            manifest: .init(revision: "episode", lanes: (identities ?? self.identities).map(\.lane)),
+            manifest: .init(revision: "episode", lanes: (identities ?? self.identities).map(\.lane),
+                            excludedBackups: excludedBackups,
+                            roleClaims: roleClaims ?? self.roleClaims),
             manifestRevision: "episode", laneKeys: identities ?? self.identities,
             selectedPrimary: self.identities[0], primary: primary ?? self.identities[0],
             sourceFrames: source, mode: mode,

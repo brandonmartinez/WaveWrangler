@@ -72,6 +72,7 @@ public struct ProvisionalKeyedCutMapping: Sendable {
     public let map: CommonEpisodeEditMap
     public let manifestRevision: String
     public let lanes: [ProvisionalLaneCutMapping]
+    public let excludedBackups: [ExcludedBackupLane]
 }
 
 public enum ProvisionalCutMappingError: Error, Equatable, Sendable {
@@ -86,8 +87,9 @@ public enum ProvisionalCutMappingError: Error, Equatable, Sendable {
 
 public enum KeyedCutMapping {
     /// Rounds the selected Primary's two exact source boundaries once on the common output grid.
-    /// Every audio lane must invert the resulting complete interval in its own occurrence and epoch.
-    /// The manifest, surveys, revisions, protection and fade observations remain untrusted.
+    /// Every admitted selected Primary must invert the interval in its own occurrence and epoch.
+    /// Excluded Backups are metadata-only and have no source or grid survey.
+    /// Explicit role claims, surveys, revisions, protection and fades remain untrusted.
     public static func map(
         base: CommonEpisodeEditMap, manifest: CommonEditLaneManifest,
         manifestRevision: String, laneKeys: [KeyedEditLane],
@@ -96,9 +98,14 @@ public enum KeyedCutMapping {
         outputRate: NominalRate, fadeOutOutputFrames: Int64, fadeInOutputFrames: Int64,
         proofs: [KeyedLaneFootprintInput]
     ) throws(ProvisionalCutMappingError) -> ProvisionalKeyedCutMapping {
-        guard CommonEditPreflight.withinInspectionBudget(
-            map: base, laneCount: manifest.lanes.count, surveyCount: proofs.count
-        ), laneKeys.count <= CommonEditPreflight.maximumInspectedLanes,
+        guard manifest.excludedBackups.count <= CommonEditPreflight.maximumInspectedLanes,
+              manifest.lanes.count <=
+                  CommonEditPreflight.maximumInspectedLanes - manifest.excludedBackups.count,
+              manifest.roleClaims.count <= CommonEditPreflight.maximumInspectedLanes,
+              CommonEditPreflight.withinInspectionBudget(
+                  map: base, laneCount: manifest.lanes.count + manifest.excludedBackups.count,
+                  surveyCount: proofs.count
+              ), laneKeys.count <= CommonEditPreflight.maximumInspectedLanes,
            (mode == .lift || base.removals.count < CommonEditPreflight.maximumInspectedIntervals),
            proofs.allSatisfy({
                CommonEditPreflight.withinIntervalBudget($0.survey) &&
@@ -107,6 +114,7 @@ public enum KeyedCutMapping {
                $0.finalMergedFades.count <= CommonEditPreflight.maximumInspectedIntervals
            })
         else { throw .structuralPreflight(.inspectionLimit) }
+        guard manifest.hasCompleteSelectedPrimaryClassification() else { throw .invalidLanes }
         var remainingSourceFrames = try sourceScanAllowance(proofs)
         guard !manifestRevision.isEmpty, manifest.revision == manifestRevision,
               !laneKeys.isEmpty, laneKeys.count == manifest.lanes.count,
@@ -133,7 +141,15 @@ public enum KeyedCutMapping {
             if case let .audio(key) = identity.lane { return key }
             return nil
         }
-        guard Set(audioKeys.map(\.occurrence)) == Set(occurrences.keys),
+        let audioOccurrences = Set(audioKeys.map(\.occurrence))
+        let excludedOccurrences = manifest.excludedBackups.map(\.occurrence)
+        guard audioOccurrences.union(excludedOccurrences) == Set(occurrences.keys),
+              Set(excludedOccurrences).count == excludedOccurrences.count,
+              audioOccurrences.isDisjoint(with: excludedOccurrences),
+              Set(audioKeys.map(\.source)).isDisjoint(with: manifest.excludedBackups.map(\.source)),
+              manifest.excludedBackups.allSatisfy({ key in
+                  key.channel >= 0 && occurrences[key.occurrence]?.source == key.source
+              }),
               laneKeys.allSatisfy({ identity in
                   switch identity.lane {
                   case let .audio(key):
@@ -276,9 +292,11 @@ public enum KeyedCutMapping {
                                     requestedFadeInGrid: fades.inside))
             }
         }
-        do { _ = try CommonEditPreflight.check(map: map, manifest: manifest, surveys: gridSurveys) }
+        let checked: ProvisionalCommonEditCheck
+        do { checked = try CommonEditPreflight.check(map: map, manifest: manifest, surveys: gridSurveys) }
         catch { throw .structuralPreflight(error) }
-        return .init(grid: grid, map: map, manifestRevision: manifestRevision, lanes: mapped)
+        return .init(grid: grid, map: map, manifestRevision: manifestRevision,
+                     lanes: mapped, excludedBackups: checked.excludedBackups)
     }
 
     private static func alignedBoundary(

@@ -19,14 +19,59 @@ public enum CommonEditManifestLane: Sendable, Hashable {
     case intentionalSilence(String)
 }
 
+public enum CommonEditAudioRole: Sendable, Hashable {
+    case selectedPrimary
+    case backup
+}
+
+/// A caller's role assertion, not an organizer-issued selection or access witness.
+public struct CommonEditAudioRoleClaim: Sendable, Hashable {
+    public let key: CommonEditLaneKey
+    public let role: CommonEditAudioRole
+
+    public init(key: CommonEditLaneKey, role: CommonEditAudioRole) {
+        self.key = key
+        self.role = role
+    }
+}
+
+public struct ExcludedBackupLane: Sendable {
+    public let key: CommonEditLaneKey
+    public var status: String { "backup not verified; excluded from cut proof" }
+
+    fileprivate init(key: CommonEditLaneKey) {
+        self.key = key
+    }
+}
+
 /// Untrusted input: the caller must not infer episode completeness from this value or its revision.
 public struct CommonEditLaneManifest: Sendable {
     public let revision: String
+    /// Audio lanes must have explicit selected-Primary role claims; silence is separately supported.
     public let lanes: [CommonEditManifestLane]
+    /// Metadata only: these occurrences have no survey, source proof or render participation.
+    public let excludedBackups: [CommonEditLaneKey]
+    /// An absent or contradictory claim refuses; these caller assertions do not prove actual roles.
+    public let roleClaims: [CommonEditAudioRoleClaim]
 
-    public init(revision: String, lanes: [CommonEditManifestLane]) {
+    public init(revision: String, lanes: [CommonEditManifestLane],
+                excludedBackups: [CommonEditLaneKey] = [],
+                roleClaims: [CommonEditAudioRoleClaim] = []) {
         self.revision = revision
         self.lanes = lanes
+        self.excludedBackups = excludedBackups
+        self.roleClaims = roleClaims
+    }
+
+    func hasCompleteSelectedPrimaryClassification() -> Bool {
+        let admitted = lanes.compactMap { lane -> CommonEditLaneKey? in
+            if case let .audio(key) = lane { return key }
+            return nil
+        }
+        return roleClaims.count == admitted.count + excludedBackups.count &&
+            Set(roleClaims.map(\.key)).count == roleClaims.count &&
+            Set(roleClaims.filter { $0.role == .selectedPrimary }.map(\.key)) == Set(admitted) &&
+            Set(roleClaims.filter { $0.role == .backup }.map(\.key)) == Set(excludedBackups)
     }
 }
 
@@ -72,10 +117,13 @@ public enum CommonEditAttestationRefusal: Error, Equatable, Sendable {
 public struct ProvisionalCommonEditCheck: Sendable {
     public let inspectedFrames: Int64
     public let audioLanes: Int
+    public let excludedBackups: [ExcludedBackupLane]
 
-    fileprivate init(inspectedFrames: Int64, audioLanes: Int) {
+    fileprivate init(inspectedFrames: Int64, audioLanes: Int,
+                     excludedBackups: [CommonEditLaneKey]) {
         self.inspectedFrames = inspectedFrames
         self.audioLanes = audioLanes
+        self.excludedBackups = excludedBackups.map(ExcludedBackupLane.init(key:))
     }
 }
 
@@ -90,18 +138,34 @@ public enum CommonEditPreflight {
         map: CommonEpisodeEditMap, manifest: CommonEditLaneManifest,
         surveys: [CommonEditLaneSurvey]
     ) throws(CommonEditAttestationRefusal) -> ProvisionalCommonEditCheck {
-        guard withinInspectionBudget(map: map, laneCount: manifest.lanes.count, surveyCount: surveys.count),
+        guard manifest.excludedBackups.count <= maximumInspectedLanes,
+              manifest.lanes.count <= maximumInspectedLanes - manifest.excludedBackups.count,
+              manifest.roleClaims.count <= maximumInspectedLanes,
+              withinInspectionBudget(map: map,
+                                     laneCount: manifest.lanes.count + manifest.excludedBackups.count,
+                                     surveyCount: surveys.count),
               surveys.allSatisfy({ withinIntervalBudget($0) })
         else { throw CommonEditAttestationRefusal.inspectionLimit }
+        guard manifest.hasCompleteSelectedPrimaryClassification() else {
+            throw CommonEditAttestationRefusal.invalidManifest
+        }
         let placements = map.alignment.groups.flatMap(\.placements)
         let occurrences = Dictionary(uniqueKeysWithValues: placements.map { ($0.occurrence.id, $0.occurrence) })
         let audio = manifest.lanes.compactMap { lane -> CommonEditLaneKey? in
             if case let .audio(key) = lane { return key }
             return nil
         }
+        let audioOccurrences = Set(audio.map(\.occurrence))
+        let excludedOccurrences = manifest.excludedBackups.map(\.occurrence)
         guard !manifest.revision.isEmpty, !placements.isEmpty, !manifest.lanes.isEmpty,
-              Set(audio.map(\.occurrence)) == Set(occurrences.keys),
+              audioOccurrences.union(excludedOccurrences) == Set(occurrences.keys),
+              Set(excludedOccurrences).count == excludedOccurrences.count,
+              audioOccurrences.isDisjoint(with: excludedOccurrences),
+              Set(audio.map(\.source)).isDisjoint(with: manifest.excludedBackups.map(\.source)),
               audio.allSatisfy({ key in
+                  key.channel >= 0 && occurrences[key.occurrence]?.source == key.source
+              }),
+              manifest.excludedBackups.allSatisfy({ key in
                   key.channel >= 0 && occurrences[key.occurrence]?.source == key.source
               }),
               manifest.lanes.allSatisfy({ lane in
@@ -188,7 +252,9 @@ public enum CommonEditPreflight {
                 }
             }
         }
-        return ProvisionalCommonEditCheck(inspectedFrames: map.alignedFrameCount, audioLanes: audio.count)
+        return ProvisionalCommonEditCheck(inspectedFrames: map.alignedFrameCount,
+                                          audioLanes: audio.count,
+                                          excludedBackups: manifest.excludedBackups)
     }
 
     static func withinInspectionBudget(

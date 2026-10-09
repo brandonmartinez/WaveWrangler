@@ -36,13 +36,15 @@ reusable by synthetic preview/export comparisons without two independently selec
 maps. Work refuses above the existing 8,192-frame / 16-lane / 65,536-frame-lane
 preflight budget; chunk size must be 1–8,192. Cancellation before work, between chunks
 and before returning refuses without a result. Tests use only generated asymmetric
-audio and explicit silence: negative origin, prior/adjacent and overlapping cuts,
+selected-Primary audio, an excluded Backup role with no PCM input, and explicit
+silence: negative origin, prior/adjacent and overlapping cuts,
 multi-chunk equivalence, Lift padding, exact fades and neighbouring frames, stale
 revisions, changed protection after mapping, missing/changed lane content, reversed,
 split, altered and adjacent merged fades, protected intervals and mandatory authority
-refusal. Synthetic Backup-lane adversarial cases exercise structural safety only:
-they neither verify Backup files nor authorize their inclusion in M3 cut proof,
-preview, or render. They do not establish speech preservation, real-media acceptance,
+refusal. The excluded Backup has no survey, keyed footprint, or PCM channel;
+tests refuse missing role claims or a changed exclusion. No Backup file is
+verified or authorized for M3 cut proof, preview, or render. These tests do not
+establish speech preservation, real-media acceptance,
 a null preview/export comparison or full-episode size support.
 
 **Open dependency:** M3 #41/#43 are rescoped to admitted selected-Primary tracks.
