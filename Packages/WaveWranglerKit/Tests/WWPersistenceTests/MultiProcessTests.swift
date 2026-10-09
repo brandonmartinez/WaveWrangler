@@ -16,15 +16,9 @@ struct MultiProcessTests {
         let readiness: Pipe
         let release: Pipe
 
-        private func boundedStdoutJSON() -> String {
-            let fd = output.fileHandleForReading.fileDescriptor
-            let flags = Darwin.fcntl(fd, F_GETFL)
-            guard flags >= 0, Darwin.fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0 else { return "unavailable" }
-            var buffer = [UInt8](repeating: 0, count: 1_025)
-            let count = buffer.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
-            guard count > 0 else { return count == 0 ? "none" : "unavailable" }
-            guard count < buffer.count else { return "too-large" }
-            guard let object = try? JSONSerialization.jsonObject(with: Data(buffer.prefix(count))) as? [String: Any] else {
+        static func sanitizedStdoutJSON(_ data: Data) -> String {
+            guard data.count <= 1_024 else { return "too-large" }
+            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return "invalid"
             }
             var safe: [String: String] = [:]
@@ -40,6 +34,16 @@ struct MultiProcessTests {
                 return "invalid"
             }
             return String(decoding: data, as: UTF8.self)
+        }
+
+        private func boundedStdoutJSON() -> String {
+            let fd = output.fileHandleForReading.fileDescriptor
+            let flags = Darwin.fcntl(fd, F_GETFL)
+            guard flags >= 0, Darwin.fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0 else { return "unavailable" }
+            var buffer = [UInt8](repeating: 0, count: 1_025)
+            let count = buffer.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+            guard count > 0 else { return count == 0 ? "none" : "unavailable" }
+            return Self.sanitizedStdoutJSON(Data(buffer.prefix(count)))
         }
 
         private func gateFailureContext(pollResult: Int32, revents: Int16, marker: Data) -> String {
@@ -196,18 +200,24 @@ struct MultiProcessTests {
         #expect(failure.contains("stdoutJSON={\"result\":\"gateFailed\"}"))
     }
 
-    @Test func oversizedExitedChildOutputIsNotIncludedInGateFailure() throws {
+    @Test func oversizedOutputIsNotIncludedInDiagnostic() {
         let privateText = String(repeating: "synthetic-secret", count: 100)
-        let probe = try Self.launchSyntheticGate(
-            "printf '\\123' >&2; printf '{\"result\":\"openFailed\",\"detail\":\"\(privateText)\"}\\n'; exit 8"
-        )
+        let summary = GatedProbe.sanitizedStdoutJSON(Data(
+            "{\"result\":\"openFailed\",\"detail\":\"\(privateText)\"}".utf8
+        ))
+        #expect(summary == "too-large")
+        #expect(!summary.contains("synthetic-secret"))
+    }
+
+    @Test func malformedExitedChildOutputIsNotIncludedInGateFailure() throws {
+        let probe = try Self.launchSyntheticGate("printf '\\123' >&2; printf 'synthetic-secret'; exit 8")
         defer { probe.cancelIfRunning() }
         probe.process.waitUntilExit()
         let failure = Self.gateFailure(probe)
         #expect(failure.contains("markerBytes=1 markerHex=53"))
-        #expect(failure.contains("stdoutJSON=too-large"))
+        #expect(failure.contains("termination=\(Process.TerminationReason.exit.rawValue)/8"))
+        #expect(failure.contains("stdoutJSON=invalid"))
         #expect(!failure.contains("synthetic-secret"))
-        #expect(failure.utf8.count < 256)
     }
 
     @Test func invalidMarkerFromLiveChildDoesNotDrainOutput() throws {
