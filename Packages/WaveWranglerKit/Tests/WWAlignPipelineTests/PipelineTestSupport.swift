@@ -98,6 +98,7 @@ final class ProceduralContentIO: SourceContentIO, @unchecked Sendable {
     private var openNow = 0
     private var _peakOpen = 0
     private var _onRead: (@Sendable (String, Int) -> Void)?
+    private var _onOpen: (@Sendable (String) -> Void)?
 
     static func path(_ url: URL) -> String { url.standardizedFileURL.path }
 
@@ -105,6 +106,7 @@ final class ProceduralContentIO: SourceContentIO, @unchecked Sendable {
 
     /// Called (outside the lock) on every read with the file's path and the reader's read index.
     func setOnRead(_ action: (@Sendable (String, Int) -> Void)?) { lock.withLock { _onRead = action } }
+    func setOnOpen(_ action: (@Sendable (String) -> Void)?) { lock.withLock { _onOpen = action } }
 
     func record(_ url: URL) -> Record { lock.withLock { records[Self.path(url)] ?? Record() } }
     var total: Record {
@@ -123,10 +125,11 @@ final class ProceduralContentIO: SourceContentIO, @unchecked Sendable {
 
     func openForDecoding(_ url: URL) throws(DecodeFailure) -> any DecodingContentReader {
         let path = Self.path(url)
-        let stream: Stream? = lock.withLock {
+        let (stream, onOpen): (Stream?, (@Sendable (String) -> Void)?) = lock.withLock {
             records[path, default: Record()].opens += 1
-            return streams[path]
+            return (streams[path], _onOpen)
         }
+        onOpen?(path)
         guard let stream else { throw .notFound }
         var info = stat()
         guard stat(path, &info) == 0 else { throw .notFound }
@@ -324,6 +327,7 @@ func cancelSlotDuringRead(_ coordinator: DerivedJobCoordinator, _ slot: DerivedS
 
 struct SourceSpec: Sendable {
     var name: String
+    var id: SourceID? = nil
     var channels = 2
     var seconds: Double
     var signal: Signal
@@ -410,7 +414,7 @@ final class PipelineFixture: @unchecked Sendable {
             epochs.append(epoch)
             recorderGroups.append(RecorderGroup(id: group, name: groupSpec.name, epochs: [RecordingEpoch(id: epoch, label: "Take 1")]))
             for spec in groupSpec.sources {
-                let id = SourceID()
+                let id = spec.id ?? SourceID()
                 let url = media.appendingPathComponent("\(spec.name).wav", isDirectory: false)
                 try Data(repeating: 0x5A, count: 4096).write(to: url)
                 content.register(url, .init(channels: spec.channels, frames: spec.frames, signal: spec.signal, sampleRate: spec.sampleRate))

@@ -108,6 +108,36 @@ struct DecodingCursorTests {
         #expect(ledger.snapshot.openScopes == 0)
     }
 
+    @Test("Overflowing declared codec frame ranges refuse a header and a decode without reading")
+    func headerDeclaredFrameOverflow() async throws {
+        let source = try ScriptedSource()
+        let cases: [(Int64, Int64, Int64)] = [
+            (.max, 1, 0),
+            (.max - 1, 0, 2),
+            (.max - 1023, 0, 0)
+        ]
+        for (valid, priming, remainder) in cases {
+            var facts = source.aacFacts()
+            facts.readerLengthFrames = valid
+            facts.packetTable = PacketTableFacts(validFrames: valid, primingFrames: priming, remainderFrames: remainder)
+            let content = ScriptedContentIO(source.script(facts))
+            let decoder = makeDecoder(io: AdjustableIO(), content: content)
+            let id = SourceID()
+            let interpretation = try DecodeEnvelope.interpret(
+                facts, url: source.url, source: id,
+                fingerprint: FormatInterpretationTests.fingerprint
+            )
+            #expect(interpretation.frames.validFrames == valid)
+            await #expect(throws: DecodeFailure.inconsistentStream(.invalidDeclaredCount("codec stream frame range overflows Int64"))) {
+                try await decoder.probeHeader(source.url, source: id, grant: DecoderHeaderGrant(explicitUserRequestFor: id))
+            }
+            #expect(content.record.opens == 1 && content.record.closes == 1)
+            #expect(content.record.reads == 0)
+            let result = await runAttempt(source.url, content: ScriptedContentIO(source.script(facts)))
+            #expect(result.failure == .inconsistentStream(.invalidDeclaredCount("codec stream frame range overflows Int64")))
+        }
+    }
+
     @Test("A header receipt with a grant for another source refuses before content open")
     func wrongSourceHeaderGrant() async throws {
         let source = try ScriptedSource()

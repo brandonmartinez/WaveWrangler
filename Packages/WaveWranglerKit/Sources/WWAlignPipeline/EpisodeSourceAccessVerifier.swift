@@ -171,7 +171,7 @@ public struct EpisodeSourceInventorySurveyor: Sendable {
             throw EpisodeSourceAccessRefusal.changedDuringVerification
         }
         let evaluator = SourceAvailabilityEvaluator(context: access)
-        var locations: [SourceID: URL] = [:]
+        var originalRecords: [SourceID: DeviceAccessRecord] = [:]
         for source in sources {
             let key = DeviceAccessKey(showID: showID, sourceID: source)
             guard let record = records.first(where: { $0.key == key }) else {
@@ -181,16 +181,32 @@ public struct EpisodeSourceInventorySurveyor: Sendable {
             guard inventory.lanes.filter({ $0.source == source }).allSatisfy({ $0.fileRevision == observed.revision }) else {
                 throw EpisodeSourceAccessRefusal.changedDuringVerification
             }
-            locations[source] = observed.url
+            originalRecords[source] = record
         }
 
         var receipts: [SourceID: DecoderHeaderReceipt] = [:]
         for source in sources {
             try Task.checkCancellation()
-            guard let url = locations[source] else { throw EpisodeSourceAccessRefusal.accessMissing(source) }
+            guard authorized.contains(source) else { throw EpisodeSourceAccessRefusal.contentNotAuthorized(source) }
+            let key = DeviceAccessKey(showID: showID, sourceID: source)
+            guard let record = try await accessStore.record(for: key) else {
+                throw EpisodeSourceAccessRefusal.accessMissing(source)
+            }
+            guard record == originalRecords[source],
+                  await coordinator.mutationGeneration == generation
+            else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
+            let observed = try observe(source, record: record, evaluator: evaluator)
+            guard inventory.lanes.filter({ $0.source == source }).allSatisfy({ $0.fileRevision == observed.revision }),
+                  await coordinator.inputs.sources[source] == observed.revision.token,
+                  await coordinator.mutationGeneration == generation
+            else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
             let receipt = try await decoder.probeHeader(
-                url, source: source, grant: DecoderHeaderGrant(explicitUserRequestFor: source)
+                observed.url, source: source, grant: DecoderHeaderGrant(explicitUserRequestFor: source)
             )
+            guard await coordinator.mutationGeneration == generation else {
+                throw EpisodeSourceAccessRefusal.changedDuringVerification
+            }
+            try await resurvey(inventory, currentDocument: currentDocument)
             guard await coordinator.mutationGeneration == generation else {
                 throw EpisodeSourceAccessRefusal.changedDuringVerification
             }

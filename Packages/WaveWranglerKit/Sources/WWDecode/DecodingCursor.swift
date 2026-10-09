@@ -26,17 +26,25 @@ struct ChunkPump {
     private(set) var published: Int64 = 0
     private(set) var reads = 0
 
-    init(reader: any DecodingContentReader, interpretation: FormatInterpretation, chunkFrames: Int) {
+    init(reader: any DecodingContentReader, interpretation: FormatInterpretation, chunkFrames: Int) throws(DecodeFailure) {
+        let priming = interpretation.frames.primingFrames
+        let valid = interpretation.frames.validFrames
+        let (validEnd, validOverflow) = priming.addingReportingOverflow(valid)
+        let (declaredEnd, declaredOverflow) = validEnd.addingReportingOverflow(interpretation.frames.remainderFrames)
+        let (limit, limitOverflow) = declaredEnd.addingReportingOverflow(Int64(interpretation.packets.framesPerPacket))
+        guard !validOverflow, !declaredOverflow, !limitOverflow else {
+            throw .inconsistentStream(.invalidDeclaredCount("codec stream frame range overflows Int64"))
+        }
         self.reader = reader
         channels = interpretation.channelCount
         capacity = chunkFrames
         buffer = RawDecodeBuffer(channelCount: channels, capacityFrames: capacity)
-        priming = interpretation.frames.primingFrames
-        valid = interpretation.frames.validFrames
-        validEnd = priming + valid
-        declaredStreamEnd = validEnd + interpretation.frames.remainderFrames
+        self.priming = priming
+        self.valid = valid
+        self.validEnd = validEnd
+        declaredStreamEnd = declaredEnd
         // One packet of slack: codecs may emit up to a packet beyond the declared remainder.
-        streamLimit = declaredStreamEnd + Int64(interpretation.packets.framesPerPacket)
+        streamLimit = limit
     }
 
     /// Exactly one reader call.
@@ -46,7 +54,11 @@ struct ChunkPump {
         guard got >= 0, got <= capacity else { throw .inconsistentStream(.readerOverran(requested: capacity, returned: got)) }
         if got == 0 { return .end }
         let start = streamPosition
-        streamPosition += Int64(got)
+        let (position, overflow) = streamPosition.addingReportingOverflow(Int64(got))
+        guard !overflow else {
+            throw .inconsistentStream(.invalidDeclaredCount("codec stream position overflows Int64"))
+        }
+        streamPosition = position
         guard streamPosition <= streamLimit else {
             throw .inconsistentStream(.streamExceedsDeclaredLength(declaredStreamFrames: declaredStreamEnd, observedAtLeast: streamPosition))
         }
@@ -149,7 +161,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
                                 fingerprint: before.fingerprint
                             )
                             guard !cancellation.isCancelled else { throw .cancelled }
-                            let pump = ChunkPump(
+                            let pump = try ChunkPump(
                                 reader: reader,
                                 interpretation: interpretation,
                                 chunkFrames: decoder.configuration.chunkFrames

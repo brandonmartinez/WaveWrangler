@@ -121,7 +121,12 @@ and current access record for **every** placed source before opening any of them
 WWDecode read-only gateway to obtain non-serializable header receipts. It compares physical channels
 and frames with the accepted map, never decodes samples or trusts the publicly writable cached
 `SourceFacts` payload, and refuses coordinator mutations (including same-key republish) across
-awaits. The survey budgets raw model arrays, map trees and text before interpreting embedded maps.
+awaits. It rechecks each source's live access record, confirmed identity and registered revision
+immediately before that source's header open, then resurveys after each awaited probe so revocation
+or relinking during a preceding source's probe cannot open a later source from a retained URL.
+The decoder refuses declared codec-frame arithmetic overflow before allocating a chunk pump,
+including header-only probes. The survey budgets raw model arrays, map trees and text before
+interpreting embedded maps.
 This budget applies *after* a caller has constructed a model; a bounded canonical on-disk read and
 an app-owned grant/clean-document binding are still required before a production consumer can use
 these receipts. The current selected-Primary transcription grant is **not** Backup authorization.

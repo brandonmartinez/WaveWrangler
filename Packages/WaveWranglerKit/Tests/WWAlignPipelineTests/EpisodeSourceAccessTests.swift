@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 import Testing
 import WWCore
 import WWDecode
@@ -21,8 +22,14 @@ struct EpisodeSourceAccessTests {
 
     private func fixture() async throws -> (PipelineFixture, InMemoryDeviceAccessStore, EpisodeSourceAccessVerifier) {
         let fixture = try await PipelineFixture([
-            .init(name: "Primary", sources: [.init(name: "primary", seconds: 4, signal: .scene(seed: 81))]),
-            .init(name: "Backup", sources: [.init(name: "backup", seconds: 4, signal: .scene(seed: 81))]),
+            .init(name: "Primary", sources: [.init(
+                name: "primary", id: SourceID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!),
+                seconds: 4, signal: .scene(seed: 81)
+            )]),
+            .init(name: "Backup", sources: [.init(
+                name: "backup", id: SourceID(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!),
+                seconds: 4, signal: .scene(seed: 81)
+            )]),
         ], label: "source-access")
         let report = try await fixture.analyse(preferredReference: "primary")
         _ = try await fixture.acceptAndActivate(report, [fixture.epochs[1]: .numeric(ppm: 0, offsetMilliseconds: 0)])
@@ -458,7 +465,7 @@ struct EpisodeSourceAccessTests {
             }
         }
         #expect(calls.value >= 5)
-        #expect(fixture.content.total.opens > baseline, "the replacement lands after both header opens")
+        #expect(fixture.content.total.opens > baseline, "the replacement lands after the first header open")
     }
 
     @Test func oversizedSurveyInputsRefuseBeforeDecodeOrWholeShowTraversal() async throws {
@@ -582,6 +589,55 @@ struct EpisodeSourceAccessTests {
         }
         #expect(calls.value >= 5)
         #expect(fixture.content.total.opens > opened)
+    }
+
+    @Test(arguments: ["revoke", "relink"])
+    func backupChangedWhileFirstHeaderProbeSuspendsNeverOpensBackup(_ action: String) async throws {
+        let (fixture, store, verifier) = try await fixture()
+        let firstURL = fixture.url("primary")
+        let laterURL = fixture.url("backup")
+        let later = fixture.id("backup")
+        let key = DeviceAccessKey(showID: fixture.model.show.id, sourceID: later)
+        var updated = try #require(await store.record(for: key))
+        updated.bookmark = try SystemSourceIO().makeReadOnlyBookmark(for: firstURL)
+        updated.lastKnownPath = firstURL.path
+        let relinked = updated
+        let completed = Box(false)
+        let mutationError = Box<String?>(nil)
+        let openedBefore = fixture.content.record(laterURL).opens
+        fixture.content.setOnOpen { path in
+            guard path == ProceduralContentIO.path(firstURL) else { return }
+            // Only the decoder's private Dispatch worker waits; no cooperative-pool thread is blocked.
+            let mutation = DispatchSemaphore(value: 0)
+            Task.detached {
+                if action == "revoke" {
+                    await store.removeRecord(for: key)
+                } else {
+                    do {
+                        try await store.save(relinked)
+                    } catch {
+                        mutationError.value = String(describing: error)
+                    }
+                }
+                completed.value = true
+                mutation.signal()
+            }
+            if mutation.wait(timeout: .now() + 10) == .timedOut {
+                mutationError.value = "source mutation timed out"
+            }
+        }
+        defer { fixture.content.setOnOpen(nil) }
+        await #expect(throws: EpisodeSourceAccessRefusal.self) {
+            try await verifier.probeSources(
+                episode: fixture.episodeID, decoder: fixture.decoder,
+                authorizations: fixture.authorizations
+            ) { Self.document(fixture.model) }
+        }
+        #expect(completed.value)
+        #expect(mutationError.value == nil)
+        #expect(fixture.content.record(firstURL).opens > 0)
+        #expect(fixture.content.record(laterURL).opens == openedBefore,
+                "the stale Backup grant must be caught before any second source content open")
     }
 }
 

@@ -144,7 +144,7 @@ public struct SourceDecoder: Sendable {
         _ interpretation: FormatInterpretation,
         into sink: inout Sink
     ) async throws(DecodeFailure) -> DecodeReport {
-        var pump = ChunkPump(reader: reader, interpretation: interpretation, chunkFrames: configuration.chunkFrames)
+        var pump = try ChunkPump(reader: reader, interpretation: interpretation, chunkFrames: configuration.chunkFrames)
         while true {
             try Self.checkCancellation()
             guard case let .frames(chunk) = try pump.step() else { break }
