@@ -37,6 +37,9 @@ public struct RecoveryStore: Sendable {
     public let root: URL
     public let retainCount: Int
     private let ops: any FileOperations
+    #if DEBUG
+    var timingObserver: (@Sendable (String) -> Void)?
+    #endif
 
     public init(root: URL, retainCount: Int = 3, ops: any FileOperations = LocalFileOperations()) {
         precondition(retainCount >= 2, "Keep at least the last two validated revisions.")
@@ -58,6 +61,9 @@ public struct RecoveryStore: Sendable {
     @discardableResult
     public func retainCheckpoint(_ bytes: Data, for key: DocumentKey) throws -> RecoveryCheckpoint {
         let fingerprint = RevisionFingerprint(of: bytes)
+        #if DEBUG
+        timingObserver?("retain-fingerprint")
+        #endif
         let directory = folder("checkpoints", key)
         let name = String(format: "%010d", fingerprint.revision ?? 0) + "-\(fingerprint.shortDigest).wwcheckpoint"
         let url = directory.appending(path: name)
@@ -66,17 +72,28 @@ public struct RecoveryStore: Sendable {
         for stale in all.dropFirst(retainCount) where stale.url.lastPathComponent != url.lastPathComponent {
             try ops.remove(stale.url)
         }
+        #if DEBUG
+        timingObserver?("retain-prune")
+        #endif
         return RecoveryCheckpoint(key: key, url: url, fingerprint: fingerprint)
     }
 
     /// Retained checkpoints, newest revision first. Bytes are fingerprinted but not decoded here.
     public func checkpoints(for key: DocumentKey) throws -> [RecoveryCheckpoint] {
-        try records(in: folder("checkpoints", key), extension: "wwcheckpoint")
+        let urls = try records(in: folder("checkpoints", key), extension: "wwcheckpoint")
+        #if DEBUG
+        timingObserver?("retain-enumerate")
+        #endif
+        let checkpoints = urls
             .compactMap { url in
                 guard let data = try? ops.read(url) else { return nil }
                 return RecoveryCheckpoint(key: key, url: url, fingerprint: RevisionFingerprint(of: data))
             }
             .sorted { ($0.fingerprint.revision ?? 0, $0.url.lastPathComponent) > ($1.fingerprint.revision ?? 0, $1.url.lastPathComponent) }
+        #if DEBUG
+        timingObserver?("retain-read-sort")
+        #endif
+        return checkpoints
     }
 
     /// Whole validated revisions that can be recovered, newest first: the verified-current record (if any)
@@ -185,6 +202,9 @@ public struct RecoveryStore: Sendable {
         at date: Date = Date()
     ) throws -> EditCheckpointRecord {
         let existing = editCheckpointFiles(for: key)
+        #if DEBUG
+        timingObserver?("draft-enumerate")
+        #endif
         let sequence = (existing.compactMap { Self.sequence(of: $0) }.max() ?? 0) + 1
         // Whole milliseconds, so the record round-trips exactly through its canonical timestamp.
         let date = Date(timeIntervalSince1970: TimeInterval(Int64((date.timeIntervalSince1970 * 1000).rounded())) / 1000)
@@ -195,17 +215,35 @@ public struct RecoveryStore: Sendable {
             payloadChecksum: EnvelopeHeaderInfo.peek(snapshot)?.checksum ?? "", snapshot: snapshot
         )
         let bytes = try record.encoded()
+        #if DEBUG
+        timingObserver?("draft-record-encode")
+        #endif
         let url = folder("edit-checkpoints", key).appending(path: String(format: "%010d", sequence) + ".wwedit")
         let staged = try stage(bytes)
+        #if DEBUG
+        timingObserver?("draft-stage-fsync")
+        #endif
         guard try ops.read(staged) == bytes, (try? EditCheckpointRecord.decode(bytes)) == record else {
             throw CocoaError(.fileWriteUnknown)
         }
+        #if DEBUG
+        timingObserver?("draft-stage-verify")
+        #endif
         try ops.createDirectory(url.deletingLastPathComponent())
         try ops.moveNew(staged, to: url)
+        #if DEBUG
+        timingObserver?("draft-move")
+        #endif
         guard (try? EditCheckpointRecord.decode(ops.read(url))) == record else { throw CocoaError(.fileWriteUnknown) }
+        #if DEBUG
+        timingObserver?("draft-read-verify")
+        #endif
         for older in existing where older.lastPathComponent != url.lastPathComponent {
             try ops.remove(older)
         }
+        #if DEBUG
+        timingObserver?("draft-prune")
+        #endif
         return record
     }
 
@@ -323,13 +361,27 @@ public struct RecoveryStore: Sendable {
     /// Whole-or-absent write of a content-addressed record; an existing identical record is accepted.
     private func writeRecord(_ bytes: Data, to url: URL) throws {
         if ops.exists(url) {
-            if (try? ops.read(url)) == bytes { return }
+            let existing = try? ops.read(url)
+            #if DEBUG
+            timingObserver?("retain-record-compare")
+            #endif
+            if existing == bytes { return }
             // A damaged leftover with the same name: keep it aside rather than overwrite silently.
             try ops.moveNew(url, to: url.appendingPathExtension("damaged-\(UUID().uuidString)"))
+        } else {
+            #if DEBUG
+            timingObserver?("retain-record-compare")
+            #endif
         }
         let staged = try stage(bytes)
+        #if DEBUG
+        timingObserver?("retain-stage-fsync")
+        #endif
         try ops.createDirectory(url.deletingLastPathComponent())
         try ops.moveNew(staged, to: url)
+        #if DEBUG
+        timingObserver?("retain-move")
+        #endif
     }
 
     /// Whole replacement of a small mutable record (location hints).

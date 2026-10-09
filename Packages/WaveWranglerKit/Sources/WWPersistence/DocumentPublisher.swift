@@ -293,12 +293,23 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
 
             // Step 4: retain the validated prior — only bytes that are exactly the expected base.
             var prior: RecoveryCheckpoint?
-            if retainPrior, case let .inPlace(expected) = target, let recovery,
-               let onDisk = try? ops.read(url), RevisionFingerprint.digest(onDisk) == expected.byteDigest {
-                do {
-                    prior = try recovery.retainCheckpoint(onDisk, for: key)
-                } catch where !(error is any InjectedInterruption) {
-                    throw PublicationError.failed(stage: .candidateValidated, kind: WriteFailureKind(classifying: error), detail: "\(error)")
+            if retainPrior, case let .inPlace(expected) = target, let recovery {
+                #if DEBUG
+                recovery.timingObserver?("prior-read-start")
+                #endif
+                let onDisk = try? ops.read(url)
+                #if DEBUG
+                recovery.timingObserver?("prior-read-end")
+                #endif
+                if let onDisk, RevisionFingerprint.digest(onDisk) == expected.byteDigest {
+                    #if DEBUG
+                    recovery.timingObserver?("prior-digest-match")
+                    #endif
+                    do {
+                        prior = try recovery.retainCheckpoint(onDisk, for: key)
+                    } catch where !(error is any InjectedInterruption) {
+                        throw PublicationError.failed(stage: .candidateValidated, kind: WriteFailureKind(classifying: error), detail: "\(error)")
+                    }
                 }
             }
             try hooks.reached(.priorRetained)

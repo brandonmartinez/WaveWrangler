@@ -153,9 +153,16 @@ struct AutosavePolicyTests {
     func editToQuiescentCheckpointLatency() async throws {
         let timeline = CheckpointTimeline()
         let rig = Rig(hooks: timeline)
+        var recovery = rig.recovery
+        recovery.timingObserver = { timeline.mark($0) }
+        let publisher = DocumentPublisher(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: recovery, hooks: timeline)
         // Default policy: publication after 1 s quiescence.
         let gate = AutosaveGate(AutosavePreference(enabled: true, delaySeconds: 1))
-        let (session, url) = try makeSession(rig, seed: 43, gate: gate)
+        let model = Fixtures.show(seed: 43)
+        let url = rig.url("Session-43.wwshow")
+        let receipt = try publisher.publish(model, revision: 1, key: .show(model.show.id), to: url, target: .newLocation)
+        let session = CanonicalDocumentSession(key: .show(model.show.id), url: url, payload: model, base: receipt.fingerprint,
+                                               revision: 1, publisher: publisher, gate: gate)
         await session.observeSaveTiming { entered in timeline.mark(entered ? "session-entry" : "session-return") }
         struct PublicationCompletion: Sendable {
             let result: Result<PublicationReceipt, PublicationError>
@@ -237,7 +244,7 @@ struct AutosavePolicyTests {
                 Issue.record("edit checkpoint sample \(sample) failed: \(CheckpointTimeline.description(completion.events, from: lastEdit))")
                 return
             }
-            let record = try #require(rig.recovery.latestEditCheckpoint(for: session.key))
+            let record = try #require(recovery.latestEditCheckpoint(for: session.key))
             #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(record.snapshot).payload.show.title == "Draft sample \(sample)")
             let independentRead = ContinuousClock.now
             draftLatencies.append(Stats.seconds(completion.written - lastEdit))

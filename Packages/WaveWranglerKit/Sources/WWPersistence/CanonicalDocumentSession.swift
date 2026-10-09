@@ -208,9 +208,12 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
     /// Records a C2b unpublished edit checkpoint (not a save). ON only; OFF creates none.
     @discardableResult
     public func writeEditCheckpoint(keepingStatus: Bool = false) -> Bool {
-        guard isDirty, readOnlyReason == nil, gate?.isEnabled ?? true, let recovery = publisher.recovery,
-              let snapshot = try? publisher.coder.encode(payload, revision: max(revision, base?.revision ?? 0) + 1)
-        else { return false }
+        guard isDirty, readOnlyReason == nil, gate?.isEnabled ?? true, let recovery = publisher.recovery else { return false }
+        let snapshot = try? publisher.coder.encode(payload, revision: max(revision, base?.revision ?? 0) + 1)
+        #if DEBUG
+        recovery.timingObserver?("draft-snapshot-encode")
+        #endif
+        guard let snapshot else { return false }
         do {
             let record = try recovery.writeEditCheckpoint(
                 snapshot: snapshot, base: base, schemaVersion: publisher.coder.format.currentSchemaVersion, for: key
