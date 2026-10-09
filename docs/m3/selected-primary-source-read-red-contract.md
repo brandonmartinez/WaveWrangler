@@ -99,6 +99,16 @@ equal-looking remove/restore must refuse even if the cached record matches.
 Neither that witness nor these tests prove freshness against other store
 instances/processes or external OS scope revocation (#430).
 
+The hosted RED matrix injects selection row **and** speaker away/back,
+access-record remove/restore, and accepted-map **and** document mutation/undo
+at both `beforeDescriptorOpen` and `beforePublication`. Each case must reach
+its selected phase and refuse despite restored values: before-open cases
+observe zero descriptor opens; before-publication cases observe exactly one
+Primary open and zero Backup opens. Cancellation has the same paired
+before-open/before-publication count and must throw `CancellationError`.
+These phase/count assertions prohibit an earlier generic refusal from
+masquerading as a passed stale-authority recheck.
+
 This hosted RED suite has **not** had native compilation or GUI execution:
 that requires a separately authorized JIT/GUI lease. Its intended compile
 failure on missing app-private symbols is not a test pass and does not change

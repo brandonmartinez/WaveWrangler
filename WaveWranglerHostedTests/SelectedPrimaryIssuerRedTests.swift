@@ -38,7 +38,7 @@ struct SelectedPrimaryIssuerRedTests {
             var opened: [SourceID] = []
             SelectedPrimarySourceReadIssuer.debugSourceOpenObserver = { opened.append($0) }
             SelectedPrimarySourceReadIssuer.debugPhaseObserver = { phase in
-                guard phase == (beforePublication ? .beforePublication : .afterAuthorityCapture) else { return }
+                guard phase == (beforePublication ? .beforePublication : .beforeDescriptorOpen) else { return }
                 reached = true
                 let store = SetupEngineProvider.store
                 let record = try #require(await store.record(for: fixture.primaryKey))
@@ -59,16 +59,25 @@ struct SelectedPrimaryIssuerRedTests {
         }
     }
 
-    @Test func selectionAwayAndBackAfterCaptureRefusesBeforeOpen() async throws {
+    @Test(arguments: [false, true], [false, true])
+    func selectionAwayAndBackCannotRegainAuthority(
+        beforePublication: Bool, speaker: Bool
+    ) async throws {
         try await withFixture { fixture in
             var reached = false
             var opened: [SourceID] = []
             SelectedPrimarySourceReadIssuer.debugSourceOpenObserver = { opened.append($0) }
             SelectedPrimarySourceReadIssuer.debugPhaseObserver = { phase in
-                guard phase == .afterAuthorityCapture else { return }
+                guard phase == (beforePublication ? .beforePublication : .beforeDescriptorOpen) else { return }
                 reached = true
-                fixture.setup.selection = [.source(fixture.backupID)]
-                fixture.setup.selection = [.source(fixture.primaryID)]
+                if speaker {
+                    let original = fixture.setup.speakerSelection
+                    fixture.setup.speakerSelection = [SpeakerID()]
+                    fixture.setup.speakerSelection = original
+                } else {
+                    fixture.setup.selection = [.source(fixture.backupID)]
+                    fixture.setup.selection = [.source(fixture.primaryID)]
+                }
             }
             defer {
                 SelectedPrimarySourceReadIssuer.debugPhaseObserver = nil
@@ -78,20 +87,22 @@ struct SelectedPrimaryIssuerRedTests {
             await #expect(throws: SelectedPrimarySourceReadRefusal.selectionUnavailable) {
                 try await fixture.read(startingAt: 0)
             }
-            #expect(reached)
-            #expect(opened.isEmpty)
+            #expect(reached, "a refusal before the selected phase does not prove ABA revalidation")
+            #expect(opened == (beforePublication ? [fixture.primaryID] : []))
             try fixture.assertMediaUnchanged()
         }
     }
 
-    @Test(arguments: [false, true])
-    func acceptedMapAndDocumentABACannotPublish(oldMap: Bool) async throws {
+    @Test(arguments: [false, true], [false, true])
+    func acceptedMapAndDocumentABACannotRegainAuthority(
+        beforePublication: Bool, oldMap: Bool
+    ) async throws {
         try await withFixture { fixture in
             var reached = false
             var opened: [SourceID] = []
             SelectedPrimarySourceReadIssuer.debugSourceOpenObserver = { opened.append($0) }
             SelectedPrimarySourceReadIssuer.debugPhaseObserver = { phase in
-                guard phase == .beforePublication else { return }
+                guard phase == (beforePublication ? .beforePublication : .beforeDescriptorOpen) else { return }
                 reached = true
                 let original = fixture.document.store.model
                 var changed = original
@@ -111,8 +122,8 @@ struct SelectedPrimaryIssuerRedTests {
             await #expect(throws: SelectedPrimarySourceReadRefusal.changedDuringVerification) {
                 try await fixture.read(startingAt: 0)
             }
-            #expect(reached, "the issuer must reach its last publication check")
-            #expect(opened == [fixture.primaryID])
+            #expect(reached, "a refusal before the selected phase does not prove ABA revalidation")
+            #expect(opened == (beforePublication ? [fixture.primaryID] : []))
             try fixture.assertMediaUnchanged()
         }
     }
