@@ -383,7 +383,7 @@ public enum CutPolicy {
                       lane.mapRevision == key.alignmentRevision else {
                     throw CutRefusal.incompleteLanes
                 }
-                guard case let .audio(_, actual, coverage, removal, _, protection,
+                guard case let .audio(_, actual, coverage, removal, fades, protection,
                                       backed, boundary, _, _, endpointError)? = supplied[lane.id],
                       actual == origin, backed, boundary == .supported,
                       coverage.contains(removal), endpointError >= 0, endpointError <= 1,
@@ -392,7 +392,14 @@ public enum CutPolicy {
                       protection.protected.allSatisfy({ coverage.contains($0) }) else {
                     throw CutRefusal.uninspectableLane(lane.id)
                 }
-                guard !protection.protected.contains(where: { $0.intersects(removal) }) else {
+                let affected = [removal] + [fades.fadeOut, fades.fadeIn].compactMap { $0 } +
+                    fades.mergedFinal
+                guard affected.allSatisfy({ coverage.contains($0) }) else {
+                    throw CutRefusal.uninspectableLane(lane.id)
+                }
+                guard !protection.protected.contains(where: { protected in
+                    affected.contains(where: { protected.intersects($0) })
+                }) else {
                     throw CutRefusal.protectedFrame(lane.id)
                 }
                 if origin == key.primary {

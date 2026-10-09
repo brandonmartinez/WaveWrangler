@@ -120,12 +120,13 @@ struct CutPolicyTests {
         secondOrigin: SourceOccurrence = other, secondProtection: ProtectionProof? = nil,
         secondBacked: Bool = true, secondBoundary: BoundarySupport = .supported,
         secondEndpointError: Int64 = 0, secondRemoval: FrameSpan = span(140, 150),
+        secondCoverage: FrameSpan = span(1, 6_000), secondFades: FadeFootprint = FadeFootprint(),
         mode: CutMode = .shorten, includeBackup: Bool = false
     ) -> CutFootprint {
         let original = proof(mode: mode)
         let second = LaneFootprint.audio(
-            id: "second-primary", origin: secondOrigin, coverage: span(1, 6_000),
-            removal: secondRemoval, fades: FadeFootprint(),
+            id: "second-primary", origin: secondOrigin, coverage: secondCoverage,
+            removal: secondRemoval, fades: secondFades,
             protection: secondProtection ?? .verifiedPrimary(other, revision: "p3", protected: []),
             backed: secondBacked, boundary: secondBoundary, fadeOutOutputFrames: 0,
             fadeInOutputFrames: 0, endpointErrorOutputFrames: secondEndpointError)
@@ -249,6 +250,65 @@ struct CutPolicyTests {
         #expect(throws: CutRefusal.staleEvidence) {
             try CutPolicy.primaryParticipation(key: Self.key(manifest: "changed"),
                 manifest: manifest, footprint: Self.primaryParticipationProof())
+        }
+    }
+
+    @Test("Selected Primary fade footprints cannot touch protected speech in either mode")
+    func primaryParticipationProtectedFades() throws {
+        let second = LaneRevision(id: "second-primary", kind: .selectedPrimary, origin: Self.other,
+                                  backingRevision: "a3", mapRevision: "m1", protectionRevision: "p3")
+        let manifest = EpisodeLaneManifest(revision: "episode-lanes-1",
+                                           lanes: [Self.lanes[0], second, Self.lanes[1]])
+        let protected = Self.span(138, 140)
+        let protection = ProtectionProof.verifiedPrimary(Self.other, revision: "p3",
+                                                          protected: [protected])
+        for mode in [CutMode.shorten, .lift] {
+            let safe = Self.primaryParticipationProof(
+                secondProtection: protection, secondFades: FadeFootprint(
+                    fadeOut: Self.span(136, 138), fadeIn: Self.span(150, 152),
+                    mergedFinal: [Self.span(136, 138), Self.span(150, 152)]), mode: mode)
+            _ = try CutPolicy.primaryParticipation(key: Self.key(), manifest: manifest,
+                                                    footprint: safe)
+            for fades in [
+                FadeFootprint(fadeOut: protected, mergedFinal: [protected]),
+                FadeFootprint(fadeIn: protected, mergedFinal: [protected]),
+                FadeFootprint(mergedFinal: [protected]),
+            ] {
+                #expect(throws: CutRefusal.protectedFrame("second-primary")) {
+                    try CutPolicy.primaryParticipation(key: Self.key(), manifest: manifest,
+                        footprint: Self.primaryParticipationProof(
+                            secondProtection: protection, secondFades: fades, mode: mode))
+                }
+            }
+        }
+    }
+
+    @Test("Selected Primary requested and merged fades must stay inside verified coverage")
+    func primaryParticipationUncoveredFades() throws {
+        let second = LaneRevision(id: "second-primary", kind: .selectedPrimary, origin: Self.other,
+                                  backingRevision: "a3", mapRevision: "m1", protectionRevision: "p3")
+        let manifest = EpisodeLaneManifest(revision: "episode-lanes-1",
+                                           lanes: [Self.lanes[0], second, Self.lanes[1]])
+        let coverage = Self.span(137, 160)
+        let protection = ProtectionProof.verifiedPrimary(Self.other, revision: "p3",
+                                                          protected: [Self.span(138, 140)])
+        for mode in [CutMode.shorten, .lift] {
+            for fades in [
+                FadeFootprint(fadeOut: Self.span(136, 138),
+                              mergedFinal: [Self.span(137, 138)]),
+                FadeFootprint(fadeIn: Self.span(159, 161),
+                              mergedFinal: [Self.span(158, 159)]),
+                FadeFootprint(mergedFinal: [Self.span(136, 138)]),
+                FadeFootprint(fadeOut: Self.span(136, 138),
+                              mergedFinal: [Self.span(136, 138)]),
+            ] {
+                #expect(throws: CutRefusal.uninspectableLane("second-primary")) {
+                    try CutPolicy.primaryParticipation(key: Self.key(), manifest: manifest,
+                        footprint: Self.primaryParticipationProof(
+                            secondProtection: protection, secondCoverage: coverage,
+                            secondFades: fades, mode: mode))
+                }
+            }
         }
     }
 
