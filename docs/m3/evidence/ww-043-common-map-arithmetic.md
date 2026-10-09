@@ -127,7 +127,14 @@ silence needs an explicit complete grid interval, not a fabricated inverse. The 
 derived arrays or per-lane scans when the full map exceeds 8,192 frames, there are more than
 16 lanes or 65,536 checked full-map frame/lane combinations, or there are more than 32
 intervals in any map, survey or source-proof collection. Alignment groups, occurrences,
-epochs and segments are bounded at entry too. This is a finite synthetic path, not a
+epochs and segments are bounded at entry too. A separate checked aggregate
+65,536-source-frame budget charges the source cut in every audio lane, both requested
+fade conversions and all final merged fade conversions (including repeated requested
+spans). Oversized fades refuse before allocating a derived cut map; after rounding
+the grid, all cut-source lengths are inverted and charged before derived map/lane
+allocation or any source-frame walk. Each frame's alignment lookup traverses only
+the bounded occurrence/epoch/segment metadata, and fade conversion's output-map
+lookup traverses at most the bounded removal intervals. This is a finite synthetic path, not a
 real-episode-size guarantee. End boundaries without a supported source inverse (including a
 source's exclusive last frame) refuse rather than extrapolate. On the adversarial 44.1/48 kHz
 request `[9,11)`, grid `[10,12)` includes source frame 11 even though its rounded end inverse

@@ -113,6 +113,65 @@ struct KeyedCutMappingTests {
         }
     }
 
+    @Test func aggregateMergedFadeSourceWorkRefusesBeforeMapping() throws {
+        let fx = try Fixture()
+        let fades = (0..<32).map { index in
+            SourceFrameSpan(start: Int64(index) * 8_193, end: Int64(index) * 8_193 + 8_192)
+        }
+        let proofs = fx.proofs.map { original in
+            KeyedLaneFootprintInput(
+                identity: original.identity, survey: original.survey,
+                sourceCoverage: original.sourceCoverage,
+                finalMergedFades: original.identity.epoch == nil ? [] : fades
+            )
+        }
+        // Three audio lanes would walk 786,432 source frames; an invalid cut makes
+        // the old path return invalidGrid without running any of those scans.
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            #expect(throws: ProvisionalCutMappingError.structuralPreflight(.inspectionLimit)) {
+                try fx.map(mode: mode, proofs: proofs, source: .init(start: 32, end: 32),
+                           fadeOutOutputFrames: 0, fadeInOutputFrames: 0)
+            }
+        }
+    }
+
+    @Test func requestedAndFinalFadeScansShareTheSourceBudget() throws {
+        let fx = try Fixture()
+        let fades = (0..<8).map { index in
+            SourceFrameSpan(start: Int64(index) * 8_193, end: Int64(index) * 8_193 + 8_192)
+        }
+        var proofs = fx.proofs
+        let old = proofs[1]
+        proofs[1] = .init(
+            identity: old.identity, survey: old.survey,
+            sourceCoverage: old.sourceCoverage,
+            requestedFadeOut: fades[0], finalMergedFades: fades
+        )
+        #expect(throws: ProvisionalCutMappingError.structuralPreflight(.inspectionLimit)) {
+            try fx.map(proofs: proofs, source: .init(start: 32, end: 32))
+        }
+    }
+
+    @Test func cutAndMergedFadeSourceScansShareTheAggregateLimit() throws {
+        let fx = try Fixture()
+        let fades = (0..<8).map { index in
+            let start = Int64(index) * 8_193
+            return SourceFrameSpan(start: start, end: start + (index == 7 ? 8_190 : 8_192))
+        }
+        var proofs = fx.fadeFreeProofs()
+        let old = proofs[0]
+        proofs[0] = .init(identity: old.identity, survey: old.survey,
+                          sourceCoverage: old.sourceCoverage, finalMergedFades: fades)
+        // The fades cost 65,534 frames, then three affected source cuts add six.
+        // The deliberately uncovered fades must never reach per-lane inspection.
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            #expect(throws: ProvisionalCutMappingError.structuralPreflight(.inspectionLimit)) {
+                try fx.map(mode: mode, proofs: proofs, fadeOutOutputFrames: 0,
+                           fadeInOutputFrames: 0)
+            }
+        }
+    }
+
     @Test func sourceFootprintsContainAllForwardFramesInsideSharedGrid() throws {
         for rate: Int64 in [44_100, 48_000] {
             let fx = try Fixture(primaryRate: rate)

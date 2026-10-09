@@ -103,6 +103,7 @@ public enum KeyedCutMapping {
                $0.finalMergedFades.count <= CommonEditPreflight.maximumInspectedIntervals
            })
         else { throw .structuralPreflight(.inspectionLimit) }
+        var remainingSourceFrames = try sourceScanAllowance(proofs)
         guard !manifestRevision.isEmpty, manifest.revision == manifestRevision,
               !laneKeys.isEmpty, laneKeys.count == manifest.lanes.count,
               proofs.count == laneKeys.count,
@@ -155,6 +156,20 @@ public enum KeyedCutMapping {
               qEnd - qStart <= CommonEditPreflight.maximumInspectedFrames,
               !base.removals.contains(where: { $0.start < qEnd && qStart < $0.end })
         else { throw .invalidGrid }
+        for proof in proofs {
+            guard case let .audio(key) = proof.identity.lane, let epoch = proof.identity.epoch else {
+                continue
+            }
+            let removal = try sourceRemoval(qStart: qStart, qEnd: qEnd, key: key,
+                                            epoch: epoch, base: base)
+            guard let count = sourceLength(removal),
+                  count <= CommonEditPreflight.maximumInspectedFrames
+            else { throw .incompleteCoverage }
+            guard count <= remainingSourceFrames else {
+                throw .structuralPreflight(.inspectionLimit)
+            }
+            remainingSourceFrames -= count
+        }
         let removals: [RemovedFrameSpan]
         if mode == .shorten {
             removals = (base.removals + [grid]).sorted { $0.start < $1.start }
@@ -192,14 +207,8 @@ public enum KeyedCutMapping {
                       valid(proof.finalMergedFades, limit: occurrence.frameCount),
                       proof.protected.allSatisfy({ contains($0, in: proof.sourceCoverage) })
                 else { throw .incompleteCoverage }
-                let startPosition = try inverse(qStart, key: key, epoch: epoch, base: base)
-                let endPosition = try inverse(qEnd, key: key, epoch: epoch, base: base)
-                guard let exclusiveEnd = Int64(exactly: endPosition.exactFrame.ceil()) else {
-                    throw .ambiguousInverse
-                }
-                // The rounded inverse at qEnd can be the LAST source frame inside the grid cut.
-                // Include it when the exact inverse has a fractional source-frame position.
-                let removal = SourceFrameSpan(start: startPosition.frame, end: exclusiveEnd)
+                let removal = try sourceRemoval(qStart: qStart, qEnd: qEnd, key: key,
+                                                epoch: epoch, base: base)
                 guard removal.start >= 0, removal.start < removal.end,
                       removal.end <= occurrence.frameCount,
                       removal.end - removal.start <= CommonEditPreflight.maximumInspectedFrames,
@@ -335,6 +344,46 @@ public enum KeyedCutMapping {
             finalGrid.append(try gridFade(fade, key: key, epoch: epoch, map: map, limit: limit))
         }
         return (requestedGrid, finalGrid)
+    }
+
+    private static func sourceScanAllowance(
+        _ proofs: [KeyedLaneFootprintInput]
+    ) throws(ProvisionalCutMappingError) -> Int64 {
+        var remaining = CommonEditPreflight.maximumInspectedWork
+        for proof in proofs {
+            for span in [proof.requestedFadeOut, proof.requestedFadeIn] {
+                if let span {
+                    guard let count = sourceLength(span) else { throw .invalidFade }
+                    guard count <= remaining else { throw .structuralPreflight(.inspectionLimit) }
+                    remaining -= count
+                }
+            }
+            for span in proof.finalMergedFades {
+                guard let count = sourceLength(span) else { throw .invalidFade }
+                guard count <= remaining else { throw .structuralPreflight(.inspectionLimit) }
+                remaining -= count
+            }
+        }
+        return remaining
+    }
+
+    private static func sourceLength(_ span: SourceFrameSpan) -> Int64? {
+        guard span.start >= 0, span.end > span.start else { return nil }
+        let (length, overflow) = span.end.subtractingReportingOverflow(span.start)
+        return overflow ? nil : length
+    }
+
+    private static func sourceRemoval(
+        qStart: Int64, qEnd: Int64, key: CommonEditLaneKey, epoch: RecordingEpochID,
+        base: CommonEpisodeEditMap
+    ) throws(ProvisionalCutMappingError) -> SourceFrameSpan {
+        let start = try inverse(qStart, key: key, epoch: epoch, base: base)
+        let end = try inverse(qEnd, key: key, epoch: epoch, base: base)
+        // The rounded inverse at qEnd can omit a source frame inside the half-open grid cut.
+        guard let exclusiveEnd = Int64(exactly: end.exactFrame.ceil()) else {
+            throw .ambiguousInverse
+        }
+        return SourceFrameSpan(start: start.frame, end: exclusiveEnd)
     }
 
     private static func gridFade(

@@ -17,7 +17,14 @@ grid cut and is checked for protection in either mode. Grid protection and final
 rounded-grid fade overlap with the reserved cut also refuse Shorten and Lift alike.
 Full-map inspection is limited to 8,192 grid frames, 16 lanes, 65,536 frame/lane
 pairs and 32 intervals per map/survey/source-proof collection; excess refuses
-before per-lane inspection.
+before per-lane inspection. A separate aggregate 65,536-source-frame scan budget
+charges every affected cut footprint and each requested and final merged fade
+conversion, including repeated scans of a requested fade in the final set.
+Lengths and sums use checked arithmetic. Excess final fades refuse before
+derived cut-map allocation; exact per-lane cut lengths are charged from their
+inverse endpoints before any source-frame scan or derived map construction.
+Each conversion's alignment and map lookups are additionally bounded by the
+same entry limits on occurrences, epochs, segments and removal intervals.
 Its caller-supplied manifest and protection remain untrusted, and it
 does not implement `CutFootprintMapping` or mint `ProtectionProof`.
 Do not use native source duration as the common ripple. No trusted organizer lane-manifest adapter
