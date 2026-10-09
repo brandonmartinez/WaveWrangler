@@ -63,12 +63,17 @@ struct MessageBar: View {
         .accessibilityIdentifier("\(identifier).actions")
     }
 
+    @ViewBuilder
     private func actionButton(index: Int, action: (String, () -> Void)) -> some View {
         let hotkey = shortcut(for: index, choice: recoveryChoice)
         let title = hotkey.map { "\($0.label) \(action.0)" } ?? action.0
-        return Button(title, action: action.1)
+        let button = Button(title, action: action.1)
             .fixedSize(horizontal: false, vertical: true)
-            .keyboardShortcut(hotkey?.key, modifiers: hotkey?.modifiers ?? .command)
+        if let hotkey {
+            button.keyboardShortcut(hotkey.key, modifiers: hotkey.modifiers)
+        } else {
+            button
+        }
     }
 
     private func shortcut(
