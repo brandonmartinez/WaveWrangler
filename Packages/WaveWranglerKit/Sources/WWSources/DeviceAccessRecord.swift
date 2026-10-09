@@ -90,6 +90,45 @@ public protocol DeviceAccessStore: Sendable {
     func removeRecords(in showID: ShowID) async throws
 }
 
+/// A comparison point for mutations made through the same store actor instance.
+/// The record is a location hint, not source identity or permission to open content.
+public struct DeviceAccessSnapshot: Sendable {
+    public let key: DeviceAccessKey
+    public let record: DeviceAccessRecord?
+    fileprivate let storeID: UUID
+    fileprivate let revision: UInt64
+}
+
+/// Opt-in instance-local mutation detection. Neither a file-store cache nor this revision observes
+/// another store instance/process, external file edits, OS scope revocation, or show/role selection.
+/// Callers needing source-read authorization must independently establish those boundaries.
+public protocol DeviceAccessRevisionStore: DeviceAccessStore {
+    func snapshot(for key: DeviceAccessKey) async throws -> DeviceAccessSnapshot
+    func isCurrent(_ snapshot: DeviceAccessSnapshot) async throws -> Bool
+}
+
+private struct MutationRevision {
+    let storeID = UUID()
+    private(set) var value: UInt64?
+
+    init(_ value: UInt64 = 0) { self.value = value }
+
+    mutating func advance() {
+        guard let value else { return }
+        self.value = value == .max ? nil : value + 1
+    }
+
+    func snapshot(for key: DeviceAccessKey, record: DeviceAccessRecord?) throws -> DeviceAccessSnapshot {
+        guard let value else { throw DeviceAccessStoreError.revisionUnavailable }
+        return DeviceAccessSnapshot(key: key, record: record, storeID: storeID, revision: value)
+    }
+
+    func isCurrent(_ snapshot: DeviceAccessSnapshot) throws -> Bool {
+        guard let value else { throw DeviceAccessStoreError.revisionUnavailable }
+        return snapshot.storeID == storeID && snapshot.revision == value
+    }
+}
+
 extension Array where Element == DeviceAccessRecord {
     func sortedByKey() -> [DeviceAccessRecord] {
         sorted { $0.key.description < $1.key.description }
@@ -100,27 +139,56 @@ public enum DeviceAccessStoreError: Error, Equatable, Sendable {
     /// The store was written by a newer app version; it is left untouched and not overwritten.
     case unsupportedNewerSchema(Int)
     case unreadable(SourceErrorDescriptor)
+    /// Mutation count was exhausted; checks never treat an unavailable revision as current.
+    case revisionUnavailable
 }
 
-public actor InMemoryDeviceAccessStore: DeviceAccessStore {
+public actor InMemoryDeviceAccessStore: DeviceAccessRevisionStore {
     private var records: [DeviceAccessKey: DeviceAccessRecord] = [:]
+    private var revision: MutationRevision
 
     public init(_ records: [DeviceAccessRecord] = []) {
+        revision = MutationRevision()
         for record in records { self.records[record.key] = record }
+    }
+
+    internal init(_ records: [DeviceAccessRecord] = [], initialRevision: UInt64) {
+        revision = MutationRevision(initialRevision)
+        for record in records { self.records[record.key] = record }
+    }
+
+    public func snapshot(for key: DeviceAccessKey) throws -> DeviceAccessSnapshot {
+        try revision.snapshot(for: key, record: records[key])
+    }
+
+    public func isCurrent(_ snapshot: DeviceAccessSnapshot) throws -> Bool {
+        try revision.isCurrent(snapshot)
     }
 
     public func record(for key: DeviceAccessKey) -> DeviceAccessRecord? { records[key] }
     public func records(in showID: ShowID) -> [DeviceAccessRecord] { records.values.filter { $0.showID == showID }.sortedByKey() }
     public func allRecords() -> [DeviceAccessRecord] { Array(records.values).sortedByKey() }
-    public func save(_ record: DeviceAccessRecord) { records[record.key] = record }
-    public func save(_ records: [DeviceAccessRecord]) { for record in records { self.records[record.key] = record } }
-    public func removeRecord(for key: DeviceAccessKey) { records[key] = nil }
-    public func removeRecords(in showID: ShowID) { records = records.filter { $0.key.showID != showID } }
+    public func save(_ record: DeviceAccessRecord) {
+        records[record.key] = record
+        revision.advance()
+    }
+    public func save(_ records: [DeviceAccessRecord]) {
+        for record in records { self.records[record.key] = record }
+        revision.advance()
+    }
+    public func removeRecord(for key: DeviceAccessKey) {
+        records[key] = nil
+        revision.advance()
+    }
+    public func removeRecords(in showID: ShowID) {
+        records = records.filter { $0.key.showID != showID }
+        revision.advance()
+    }
 }
 
 /// JSON-file store in the app container (Application Support). The store file is the only thing it
 /// ever writes; it never touches sources.
-public actor FileDeviceAccessStore: DeviceAccessStore {
+public actor FileDeviceAccessStore: DeviceAccessRevisionStore {
     private struct Envelope: Codable {
         var schemaVersion: Int
         var records: [DeviceAccessRecord]
@@ -132,9 +200,16 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
 
     public let fileURL: URL
     private var cache: [DeviceAccessKey: DeviceAccessRecord]?
+    private var revision: MutationRevision
 
     public init(fileURL: URL) {
         self.fileURL = fileURL
+        revision = MutationRevision()
+    }
+
+    internal init(fileURL: URL, initialRevision: UInt64) {
+        self.fileURL = fileURL
+        revision = MutationRevision(initialRevision)
     }
 
     /// `~/Library/Application Support/WaveWrangler/DeviceAccess/source-access-records.json` (inside the
@@ -146,6 +221,15 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
 
     public func record(for key: DeviceAccessKey) throws -> DeviceAccessRecord? {
         try load()[key]
+    }
+
+    public func snapshot(for key: DeviceAccessKey) throws -> DeviceAccessSnapshot {
+        try revision.snapshot(for: key, record: load()[key])
+    }
+
+    public func isCurrent(_ snapshot: DeviceAccessSnapshot) throws -> Bool {
+        _ = try load()
+        return try revision.isCurrent(snapshot)
     }
 
     public func records(in showID: ShowID) throws -> [DeviceAccessRecord] {
@@ -164,19 +248,20 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
         var all = try load()
         for record in records { all[record.key] = record }
         try persist(all)
+        revision.advance()
     }
 
     public func removeRecord(for key: DeviceAccessKey) throws {
         var all = try load()
-        guard all.removeValue(forKey: key) != nil else { return }
-        try persist(all)
+        if all.removeValue(forKey: key) != nil { try persist(all) }
+        revision.advance()
     }
 
     public func removeRecords(in showID: ShowID) throws {
         let all = try load()
         let kept = all.filter { $0.key.showID != showID }
-        guard kept.count != all.count else { return }
-        try persist(kept)
+        if kept.count != all.count { try persist(kept) }
+        revision.advance()
     }
 
     private func load() throws -> [DeviceAccessKey: DeviceAccessRecord] {

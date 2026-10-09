@@ -105,7 +105,117 @@ extension TransferState {
         if case .offlineOrUnknown = self { return true }
         return false
     }
+}
 
+@Suite("Instance-scoped device access revisions")
+struct DeviceAccessRevisionTests {
+    private func record() -> DeviceAccessRecord {
+        DeviceAccessRecord(showID: testShow, sourceID: SourceID(), createdAt: Date(timeIntervalSince1970: 0))
+    }
+
+    private func stores(in tree: SyntheticTree) -> [any DeviceAccessRevisionStore] {
+        [
+            InMemoryDeviceAccessStore(),
+            FileDeviceAccessStore(fileURL: tree.root.appendingPathComponent("store.json")),
+        ]
+    }
+
+    @Test func relinkAndRemoveReaddNeverRestoreAnOldSnapshot() async throws {
+        let tree = try SyntheticTree(label: "access-revisions-aba")
+        defer { withExtendedLifetime(tree) {} }
+        for store in stores(in: tree) {
+            let original = record()
+            try await store.save(original)
+            let beforeRelink = try await store.snapshot(for: original.key)
+            #expect(beforeRelink.record == original)
+            try await store.save(original)
+            #expect(try await store.isCurrent(beforeRelink) == false)
+
+            let beforeRemoval = try await store.snapshot(for: original.key)
+            try await store.removeRecord(for: original.key)
+            try await store.save(original)
+            #expect(try await store.isCurrent(beforeRemoval) == false)
+            #expect(try await store.record(for: original.key) == original)
+
+            let absent = try await store.snapshot(for: DeviceAccessKey(showID: testShow, sourceID: SourceID()))
+            #expect(absent.record == nil)
+            try await store.removeRecord(for: absent.key)
+            #expect(try await store.isCurrent(absent) == false)
+        }
+    }
+
+    @Test func unrelatedAndBatchMutationsInvalidateSnapshot() async throws {
+        let tree = try SyntheticTree(label: "access-revisions-batch")
+        defer { withExtendedLifetime(tree) {} }
+        for store in stores(in: tree) {
+            let primary = record()
+            let other = record()
+            try await store.save(primary)
+            let snapshot = try await store.snapshot(for: primary.key)
+            #expect(try await store.isCurrent(snapshot))
+            try await store.save([other, record()])
+            #expect(try await store.isCurrent(snapshot) == false)
+            let afterBatch = try await store.snapshot(for: primary.key)
+            try await store.removeRecords(in: testShow)
+            #expect(try await store.isCurrent(afterBatch) == false)
+        }
+    }
+
+    @Test func snapshotsCannotCrossInstancesEvenWithEqualContents() async throws {
+        let original = record()
+        let memoryA = InMemoryDeviceAccessStore([original])
+        let memoryB = InMemoryDeviceAccessStore([original])
+        let snapshot = try await memoryA.snapshot(for: original.key)
+        #expect(try await memoryB.isCurrent(snapshot) == false)
+
+        let tree = try SyntheticTree(label: "access-instance")
+        let url = tree.root.appendingPathComponent("store.json")
+        let fileA = FileDeviceAccessStore(fileURL: url)
+        try await fileA.save(original)
+        let fileSnapshot = try await fileA.snapshot(for: original.key)
+        let envelope = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        #expect(Set(envelope.keys) == ["schemaVersion", "records"])
+        let fileB = FileDeviceAccessStore(fileURL: url)
+        #expect(try await fileB.record(for: original.key) == original)
+        #expect(try await fileB.isCurrent(fileSnapshot) == false)
+        #expect(try await fileA.isCurrent(fileSnapshot))
+    }
+
+    @Test func exhaustedRevisionNeverWrapsOrAcceptsStaleSnapshots() async throws {
+        let original = record()
+        let memory = InMemoryDeviceAccessStore([original], initialRevision: UInt64.max)
+        let memorySnapshot = try await memory.snapshot(for: original.key)
+        try await memory.save(original)
+        await #expect(throws: DeviceAccessStoreError.revisionUnavailable) { try await memory.isCurrent(memorySnapshot) }
+        await #expect(throws: DeviceAccessStoreError.revisionUnavailable) { try await memory.snapshot(for: original.key) }
+
+        let tree = try SyntheticTree(label: "access-overflow")
+        let file = FileDeviceAccessStore(fileURL: tree.root.appendingPathComponent("store.json"), initialRevision: UInt64.max)
+        let fileSnapshot = try await file.snapshot(for: original.key)
+        try await file.save(original)
+        await #expect(throws: DeviceAccessStoreError.revisionUnavailable) { try await file.isCurrent(fileSnapshot) }
+        await #expect(throws: DeviceAccessStoreError.revisionUnavailable) { try await file.snapshot(for: original.key) }
+        #expect(try await file.record(for: original.key) == original)
+    }
+
+    @Test func malformedOrNewerFileCannotIssueOrVerifySnapshot() async throws {
+        let tree = try SyntheticTree(label: "access-corrupt")
+        let url = tree.root.appendingPathComponent("store.json")
+        let store = FileDeviceAccessStore(fileURL: url)
+        let key = record().key
+        try Data(#"{"schemaVersion":99,"records":[]}"#.utf8).write(to: url)
+        await #expect(throws: DeviceAccessStoreError.unsupportedNewerSchema(99)) { try await store.snapshot(for: key) }
+        try Data(#"{"schemaVersion":1,"records":"bad"}"#.utf8).write(to: url)
+        do {
+            _ = try await store.snapshot(for: key)
+            Issue.record("Corrupt store issued a snapshot")
+        } catch let error as DeviceAccessStoreError {
+            guard case .unreadable = error else { Issue.record("Unexpected error: \(error)"); return }
+        }
+    }
+}
+
+extension TransferState {
     var isFailed: Bool {
         if case .failed = self { return true }
         return false
