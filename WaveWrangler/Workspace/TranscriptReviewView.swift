@@ -164,6 +164,7 @@ private struct TranscriptOccurrenceTable: NSViewRepresentable {
         table.dataSource = context.coordinator
         table.delegate = context.coordinator
         table.allowsEmptySelection = true
+        table.selectionHighlightStyle = .none
         table.setAccessibilityIdentifier("ww.review.occurrences")
         table.setAccessibilityLabel("Transcript occurrences")
         context.coordinator.table = table
@@ -210,6 +211,10 @@ private struct TranscriptOccurrenceTable: NSViewRepresentable {
 
         func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
+        func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+            OccurrenceRowView()
+        }
+
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
             let identifier = NSUserInterfaceItemIdentifier("occurrence")
             let cell = tableView.makeView(withIdentifier: identifier, owner: nil) as? OccurrenceCellView
@@ -230,6 +235,19 @@ private final class OccurrenceTableView: NSTableView {
     override func mouseDown(with event: NSEvent) {
         _ = window?.makeFirstResponder(self)
         super.mouseDown(with: event)
+    }
+}
+
+private final class OccurrenceRowView: NSTableRowView {
+    override func drawBackground(in dirtyRect: NSRect) {
+        super.drawBackground(in: dirtyRect)
+        guard isSelected else { return }
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4)
+        NSColor.controlBackgroundColor.setFill()
+        path.fill()
+        NSColor.controlAccentColor.setStroke()
+        path.lineWidth = 2
+        path.stroke()
     }
 }
 
@@ -256,6 +274,7 @@ private final class OccurrenceCellView: NSTableCellView {
     func configure(_ occurrence: TranscriptReviewShellOccurrence, pointSize: CGFloat) {
         title.stringValue = occurrence.title
         title.font = NSFont.systemFont(ofSize: pointSize)
+        title.textColor = .labelColor
         title.setAccessibilityIdentifier("ww.review.occurrence.\(occurrence.id)")
         title.setAccessibilityLabel(occurrence.title)
         title.accessibilityValueOverride = occurrence.note
