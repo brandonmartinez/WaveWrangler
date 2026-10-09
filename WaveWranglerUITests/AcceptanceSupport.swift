@@ -350,6 +350,14 @@ enum AcceptanceAudit {
         if ["ww.library.sidebar.recent", "ww.library.sidebar.unavailable"].contains(id) {
             return "Library sidebar unselected row (#59: 18.1:1 light / 15.7:1 dark)"
         }
+        if [
+            "ww.review.lane.speaker-b-primary",
+            "ww.review.timeline.domain.source",
+            "ww.review.inspector.primaryState",
+            "ww.review.inspector.backupState",
+        ].contains(id) {
+            return "blocked review text, measured per run; require at least 40 glyph pixels and p75 contrast of 4.5:1"
+        }
         if id == "ww.show.sidebar.showInfo" || id.hasPrefix("ww.show.sidebar.episode.") {
             return "show sidebar row (mini 479eb9e: unselected 15.7–15.9:1)"
         }
