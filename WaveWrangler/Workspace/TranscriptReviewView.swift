@@ -444,7 +444,7 @@ private final class ProposalCellView: NSTableCellView {
         title.font = NSFont.systemFont(ofSize: pointSize)
         title.textColor = .labelColor
         title.setAccessibilityIdentifier("ww.review.proposal.\(proposal.id)")
-        title.setAccessibilityLabel("Provisional review candidate \(proposal.id)")
+        title.setAccessibilityLabel("Candidate \(proposal.id): \(proposal.title)")
         title.accessibilityValueOverride = details
         note.isHidden = true
         toolTip = details

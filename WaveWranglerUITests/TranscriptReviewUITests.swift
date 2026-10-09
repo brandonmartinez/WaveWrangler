@@ -145,6 +145,8 @@ final class TranscriptReviewUITests: XCTestCase {
     func testKeyboardProposalSelectionUpdatesAccessibleProvisionalDetails() {
         let firstProposal = app.descendants(matching: .any)["ww.review.proposal.synthetic-proposal-001"]
         XCTAssertTrue(firstProposal.waitForExistence(timeout: 3))
+        XCTAssertTrue(firstProposal.label.contains("Synthetic contextual filler proposal 1"))
+        XCTAssertTrue(firstProposal.label.contains("synthetic-proposal-001"))
         firstProposal.click()
 
         let proposals = app.descendants(matching: .any)["ww.review.proposals"]
@@ -168,6 +170,9 @@ final class TranscriptReviewUITests: XCTestCase {
             app.descendants(matching: .any)["ww.review.inspector.proposalID"].value as? String
                 == "synthetic-proposal-002"
         })
+        let secondProposal = app.descendants(matching: .any)["ww.review.proposal.synthetic-proposal-002"]
+        XCTAssertTrue(secondProposal.label.contains("Synthetic contextual filler proposal 2"))
+        XCTAssertTrue(secondProposal.label.contains("synthetic-proposal-002"))
         XCTAssertTrue(
             (app.descendants(matching: .any)["ww.review.inspector.proposalTiming"].value as? String ?? "")
                 .contains("Timing unavailable")
