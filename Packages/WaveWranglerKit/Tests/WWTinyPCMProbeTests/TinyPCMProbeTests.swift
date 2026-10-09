@@ -26,6 +26,21 @@ struct TinyPCMProbeTests {
         }
     }
 
+    @Test func symlinkAndDirectoryRefuseBeforeRead() throws {
+        let target = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let link = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            try? FileManager.default.removeItem(at: link)
+            try? FileManager.default.removeItem(at: target)
+        }
+        try Data([0]).write(to: target)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        #expect(throws: ProbeError.invalidInput) { try TinyModelProbe.run(path: link.path) }
+        #expect(throws: ProbeError.invalidInput) {
+            try TinyModelProbe.run(path: FileManager.default.temporaryDirectory.path)
+        }
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_TINY_MODEL_PATH"] != nil))
     func modelBackedSyntheticInferenceWhenExplicitlyOptedIn() throws {
         let path = try #require(ProcessInfo.processInfo.environment["WW_TINY_MODEL_PATH"])

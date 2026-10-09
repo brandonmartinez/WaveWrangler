@@ -7,6 +7,8 @@ enum ProbeError: Error, Equatable {
     case missingModel
     case invalidInput
     case invalidSize
+    case notMaterialized
+    case readPolicyUnavailable
     case changedDuringRead
     case hashMismatch
     case loadFailed
@@ -30,29 +32,15 @@ enum TinyModelProbe {
     private static let modelSHA256 = "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f"
 
     static func run(path: String) throws -> TinyProbeResult {
-        let fd = Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
-        guard fd >= 0 else { throw errno == ENOENT ? ProbeError.missingModel : .invalidInput }
-        defer { Darwin.close(fd) }
-        var before = stat()
-        guard fstat(fd, &before) == 0, (before.st_mode & S_IFMT) == S_IFREG else {
-            throw ProbeError.invalidInput
-        }
-        guard before.st_size == modelSize else { throw ProbeError.invalidSize }
-
-        // Bound the read to the verified descriptor, not a second open by path.
-        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
-        var bytes = handle.readData(ofLength: modelSize + 1)
-        guard bytes.count == modelSize else { throw ProbeError.invalidSize }
-        var after = stat()
-        guard fstat(fd, &after) == 0,
-              before.st_dev == after.st_dev, before.st_ino == after.st_ino,
-              before.st_size == after.st_size,
-              before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
-              before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
-              before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
-              before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec
-        else { throw ProbeError.changedDuringRead }
-
+        let policy = IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES
+        let previous = getiopolicy_np(policy, IOPOL_SCOPE_THREAD)
+        guard previous >= 0,
+              setiopolicy_np(policy, IOPOL_SCOPE_THREAD, IOPOL_MATERIALIZE_DATALESS_FILES_OFF) == 0
+        else { throw ProbeError.readPolicyUnavailable }
+        let readResult = Result { try readModel(path: path) }
+        guard setiopolicy_np(policy, IOPOL_SCOPE_THREAD, previous) == 0
+        else { throw ProbeError.readPolicyUnavailable }
+        var bytes = try readResult.get()
         let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
         guard digest == modelSHA256 else { throw ProbeError.hashMismatch }
         let native = bytes.withUnsafeMutableBytes { (buffer: UnsafeMutableRawBufferPointer) in
@@ -67,6 +55,35 @@ enum TinyModelProbe {
             segmentTimingAvailable: native.segment_timing_available == 1,
             loadSeconds: native.load_seconds, inferenceSeconds: native.inference_seconds
         )
+    }
+
+    private static func readModel(path: String) throws -> Data {
+        let fd = Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw errno == ENOENT ? ProbeError.missingModel : .invalidInput }
+        defer { Darwin.close(fd) }
+        let flags = fcntl(fd, F_GETFL)
+        guard flags >= 0, flags & O_ACCMODE == O_RDONLY else { throw ProbeError.invalidInput }
+        var before = stat()
+        guard fstat(fd, &before) == 0, (before.st_mode & S_IFMT) == S_IFREG else {
+            throw ProbeError.invalidInput
+        }
+        guard before.st_flags & UInt32(SF_DATALESS) == 0 else { throw ProbeError.notMaterialized }
+        guard before.st_size == modelSize else { throw ProbeError.invalidSize }
+
+        // Bound the read to the verified descriptor, not a second open by path.
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
+        let bytes = handle.readData(ofLength: modelSize + 1)
+        guard bytes.count == modelSize else { throw ProbeError.invalidSize }
+        var after = stat()
+        guard fstat(fd, &after) == 0,
+              before.st_dev == after.st_dev, before.st_ino == after.st_ino,
+              before.st_size == after.st_size, after.st_flags & UInt32(SF_DATALESS) == 0,
+              before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
+              before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+              before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
+              before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec
+        else { throw ProbeError.changedDuringRead }
+        return bytes
     }
 }
 

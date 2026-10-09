@@ -201,8 +201,9 @@ the executable against a separately approved, locally supplied `ggml-tiny.en.bin
 swift run --package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm --jobs 4 ww-tiny-pcm-probe --model "$LOCAL_TINY_MODEL_PATH"
 ```
 
-It opens only that path read-only without following the final symlink, bounds the read to
-77,704,715 bytes, checks the descriptor before/after, and hashes the bytes against
+It opens only that path read-only without following the final symlink, disables dataless
+provider materialization for the open/read thread, refuses dataless descriptors, bounds
+the read to 77,704,715 bytes, checks the descriptor before/after, and hashes the bytes against
 `921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f`
 before loading them from memory into the pinned CPU library. It generates two seconds
 of 16 kHz mono PCM with two inference threads and at most 16 decoded tokens. Output is
