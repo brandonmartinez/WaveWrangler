@@ -145,11 +145,13 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
                 : .saved(revision: receipt.revision, at: receipt.verifiedAt)
             return .success(receipt)
         } catch let error as PublicationError {
+            if error != .cancelled { isDirty = true }
             status.state = DocumentSaveState.from(error, retainedRevision: base?.revision)
             // C2b: an automatic publication that failed or is uncertain still gets an edit checkpoint.
             if automatic, error != .cancelled { writeEditCheckpoint(keepingStatus: true) }
             return .failure(error)
         } catch {
+            isDirty = true
             status.state = .acknowledgementUncertain(message: "\(error)")
             return .failure(.acknowledgementUncertain("\(error)"))
         }
