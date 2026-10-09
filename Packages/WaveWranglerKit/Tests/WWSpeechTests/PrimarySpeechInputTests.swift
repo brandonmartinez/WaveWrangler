@@ -264,6 +264,15 @@ struct PrimarySpeechInputTests {
         return (directory, url, SourceAccessContext(io: io), snapshot, episode.id, speaker)
     }
 
+    private func syntheticWorker(in directory: URL) throws -> (URL, LocalSpeechAssetPin) {
+        let url = directory.appendingPathComponent("stub")
+        try Data("abc".utf8).write(to: url)
+        return (url, LocalSpeechAssetPin(
+            name: "synthetic-stub", version: "1", sizeBytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            license: "synthetic", source: "fixture"))
+    }
+
     @Test func onlySelectedChannelDecodesAndCannotLaunchCallerWAV() async throws {
         let (directory, _, access, snapshot, episode, speaker) = try fixture()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1147,6 +1156,221 @@ struct PrimarySpeechInputTests {
             ) { _ in Issue.record("mapped occurrence reached worker"); return 0 }
             Issue.record("mapped occurrence was admitted")
         } catch { #expect(error == .occurrenceNotContinuous) }
+    }
+
+    @Test func syntheticWordsBindSelectedPCMWithoutInventingTimingOrConfidence() async throws {
+        let (directory, _, access, state, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (url, pin) = try syntheticWorker(in: directory)
+        let evidence = try await PrimarySpeechInputAdapter(access: access).withSyntheticWordEvidence(
+            episodeID: episode, speakerID: speaker,
+            authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+            availability: .on, current: { state }, workerURL: url, workerPin: pin
+        ) { input in
+            #expect(input.selection.channel == 1)
+            var bytes = [UInt8](repeating: 0, count: input.frameCount * 4)
+            #expect(bytes.withUnsafeMutableBytes {
+                pread(input.descriptor, $0.baseAddress, $0.count, 0)
+            } == bytes.count)
+            #expect(Float(bitPattern: UInt32(bytes[0]) | UInt32(bytes[1]) << 8
+                | UInt32(bytes[2]) << 16 | UInt32(bytes[3]) << 24) == Float(-200) / 32768)
+            return [
+                SyntheticWordObservation(text: "hello", startSeconds: 0, endSeconds: 0.001,
+                                         recognitionConfidence: nil),
+                SyntheticWordObservation(text: "uncertain", startSeconds: nil, endSeconds: nil,
+                                         recognitionConfidence: nil),
+                SyntheticWordObservation(text: "world", startSeconds: 0.002, endSeconds: 0.004,
+                                         recognitionConfidence: 0.75)
+            ]
+        }
+        #expect(evidence.selection.episodeID == episode)
+        #expect(evidence.selection.speakerID == speaker)
+        #expect(evidence.selection.channel == 1)
+        #expect(evidence.sourceRevision == state.sourceRevision)
+        #expect(evidence.showRevision == state.showRevision)
+        #expect(evidence.selectedSourcePCMHash.hasPrefix("selected-pcm-sha256:"))
+        #expect(evidence.inputSHA256.count == 64)
+        #expect(evidence.interpretation.channelCount == 2)
+        #expect(evidence.inputAssetRevision == PrimarySpeechInputAdapter.inputAssetRevision)
+        #expect(evidence.proxyAssetRevision == SelectedPrimaryPCMProxy.proxyAsset.revision)
+        #expect(evidence.chunks.map(\.outputFrames) == [0..<64])
+        #expect(evidence.alignment == .unmapped)
+        #expect(evidence.words.count == 3)
+        #expect(evidence.words[0].speakerID == speaker)
+        #expect(evidence.words[0].channel == 1)
+        #expect(evidence.words[0].startSeconds == 0)
+        #expect(evidence.words[1].startSeconds == nil)
+        #expect(evidence.words[1].endSeconds == nil)
+        #expect(evidence.words[1].recognitionConfidence == nil)
+        #expect(evidence.words[2].recognitionConfidence == 0.75)
+    }
+
+    @Test(arguments: ["partial", "nan", "infinite", "negative", "reversed", "zero",
+                      "overrun", "overlap", "confidence", "nan-confidence", "empty", "missing"])
+    func syntheticWordsRefuseInvalidOrUnsupportedEvidence(_ scenario: String) async throws {
+        let (directory, _, access, state, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (url, pin) = try syntheticWorker(in: directory)
+        let second: SyntheticWordObservation
+        switch scenario {
+        case "partial": second = .init(text: "word", startSeconds: 0.002, endSeconds: nil)
+        case "nan": second = .init(text: "word", startSeconds: .nan, endSeconds: 0.003)
+        case "infinite": second = .init(text: "word", startSeconds: 0.002, endSeconds: .infinity)
+        case "negative": second = .init(text: "word", startSeconds: -0.1, endSeconds: 0.003)
+        case "reversed": second = .init(text: "word", startSeconds: 0.003, endSeconds: 0.002)
+        case "zero": second = .init(text: "word", startSeconds: 0.002, endSeconds: 0.002)
+        case "overrun": second = .init(text: "word", startSeconds: 0.002, endSeconds: 0.005)
+        case "overlap": second = .init(text: "word", startSeconds: 0.0005, endSeconds: 0.002)
+        case "confidence": second = .init(text: "word", startSeconds: 0.002, endSeconds: 0.003,
+                                          recognitionConfidence: 1.1)
+        case "nan-confidence": second = .init(text: "word", startSeconds: 0.002,
+                                              endSeconds: 0.003, recognitionConfidence: .nan)
+        case "empty": second = .init(text: " ", startSeconds: 0.002, endSeconds: 0.003)
+        default: second = .init(text: "word", startSeconds: 0.002, endSeconds: 0.003)
+        }
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: access).withSyntheticWordEvidence(
+                episodeID: episode, speakerID: speaker,
+                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                availability: .on, current: { state }, workerURL: url, workerPin: pin
+            ) { _ in scenario == "missing" ? [] : [
+                .init(text: "first", startSeconds: 0, endSeconds: 0.001), second
+            ] }
+            Issue.record("invalid worker evidence was published")
+        } catch { #expect(error == .invalidWordEvidence) }
+    }
+
+    @Test(arguments: ["backup", "continuous", "gap", "duplicate", "stale-placement"])
+    func syntheticWordsRefuseBackupAndEveryMappedPlacement(_ scenario: String) async throws {
+        let adapter: PrimarySpeechInputAdapter
+        let state: PrimarySpeechInputState
+        let directory: URL
+        let episode: EpisodeID
+        let speaker: SpeakerID
+        if scenario == "backup" {
+            let (folder, _, access, original, episodeID, speakerID) = try fixture()
+            directory = folder; episode = episodeID; speaker = speakerID
+            var show = original.show
+            show.episodes[0].sources[0].role = .backup
+            state = .init(show: show, showRevision: 2, accessRecords: original.accessRecords,
+                          sourceRevision: original.sourceRevision,
+                          inputAssetRevision: original.inputAssetRevision)
+            adapter = PrimarySpeechInputAdapter(access: access)
+        } else {
+            let item = try mappedFixture(scenario == "stale-placement" ? "continuous" : scenario)
+            directory = item.directory; episode = item.episode; speaker = item.speaker
+            var show = item.state.show
+            if scenario == "stale-placement" {
+                show.episodes[0].sources[0].placement.epochID = RecordingEpochID()
+            }
+            state = .init(show: show, showRevision: scenario == "stale-placement" ? 2 : 1,
+                          accessRecords: item.state.accessRecords,
+                          sourceRevision: item.state.sourceRevision,
+                          inputAssetRevision: item.state.inputAssetRevision)
+            adapter = PrimarySpeechInputAdapter(access: item.access)
+        }
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (url, pin) = try syntheticWorker(in: directory)
+        do {
+            _ = try await adapter.withSyntheticWordEvidence(
+                episodeID: episode, speakerID: speaker,
+                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                availability: .on, current: { state }, workerURL: url, workerPin: pin
+            ) { _ in Issue.record("backup or mapped source reached worker"); return [
+                .init(text: "wrong", startSeconds: 0, endSeconds: 0.001)
+            ] }
+            Issue.record("backup or mapped evidence was published")
+        } catch {
+            #expect(error == (scenario == "backup" ? .primaryNotConfirmed : .occurrenceNotContinuous))
+        }
+    }
+
+    @Test(arguments: ["source-replaced", "content-rewritten", "bookmark-retargeted"])
+    func syntheticWordsRefuseSourceMutationDuringFinalAwait(_ scenario: String) async throws {
+        let (directory, url, _, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let bookmarkTarget = SpeechBookmarkTarget(url)
+        let access = SourceAccessContext(io: SpeechFixtureIO(url: url, bookmarkTarget: bookmarkTarget))
+        let (stub, pin) = try syntheticWorker(in: directory)
+        let gate = SpeechSuspendedAfterWorkerSnapshot(snapshot)
+        let task = Task {
+            try await PrimarySpeechInputAdapter(access: access).withSyntheticWordEvidence(
+                episodeID: episode, speakerID: speaker,
+                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                availability: .on, current: { await gate.read() }, workerURL: stub, workerPin: pin
+            ) { _ in [.init(text: "word", startSeconds: 0, endSeconds: 0.001)] }
+        }
+        await gate.waitUntilFourthRead()
+        do {
+            if scenario == "source-replaced" {
+                try FileManager.default.moveItem(at: url, to: directory.appendingPathComponent("original.wav"))
+                try wav(channel1: -400).write(to: url)
+            } else if scenario == "content-rewritten" {
+                let date = try #require(FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)
+                let handle = try FileHandle(forWritingTo: url)
+                try handle.write(contentsOf: wav(channel1: -400))
+                try handle.close()
+                try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+            } else {
+                let other = directory.appendingPathComponent("other.wav")
+                try wav(channel1: -400).write(to: other)
+                bookmarkTarget.set(other)
+            }
+        } catch {
+            await gate.resume()
+            throw error
+        }
+        await gate.resume()
+        do {
+            _ = try await task.value
+            Issue.record("stale word result was published")
+        } catch { #expect(error as? SpeechAdmissionRefusal == .sourceAliasOrChanged) }
+    }
+
+    @Test func syntheticWordsRefuseLateOrganizerAndAccessChange() async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (url, pin) = try syntheticWorker(in: directory)
+        let grant = PrimarySpeechAuthorization.explicitUserRequest(
+            episodeID: episode, speakerID: speaker)
+        for change in ["revision", "access"] {
+            var records = snapshot.accessRecords
+            if change == "access" { records.removeAll() }
+            let changed = PrimarySpeechInputState(
+                show: snapshot.show, showRevision: change == "revision" ? 2 : 1,
+                accessRecords: records, sourceRevision: snapshot.sourceRevision,
+                inputAssetRevision: snapshot.inputAssetRevision)
+            let state = SpeechAfterWorkerSnapshot(initial: snapshot, changed: changed)
+            do {
+                _ = try await PrimarySpeechInputAdapter(access: access).withSyntheticWordEvidence(
+                    episodeID: episode, speakerID: speaker, authorization: grant,
+                    availability: .on, current: { await state.read() },
+                    workerURL: url, workerPin: pin
+                ) { _ in [.init(text: "word", startSeconds: 0, endSeconds: 0.001)] }
+                Issue.record("post-worker organizer change yielded words")
+            } catch { #expect(error == .sourceRevisionChanged) }
+            #expect(await state.calls == 4)
+        }
+    }
+
+    @Test func syntheticWordsRefuseCancellationAfterCallback() async throws {
+        let (directory, _, access, state, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (url, pin) = try syntheticWorker(in: directory)
+        let task = Task {
+            try await PrimarySpeechInputAdapter(access: access).withSyntheticWordEvidence(
+                episodeID: episode, speakerID: speaker,
+                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                availability: .on, current: { state }, workerURL: url, workerPin: pin
+            ) { _ in
+                withUnsafeCurrentTask { $0?.cancel() }
+                return [.init(text: "word", startSeconds: 0, endSeconds: 0.001)]
+            }
+        }
+        do {
+            _ = try await task.value
+            Issue.record("cancelled word result was published")
+        } catch { #expect(error as? SpeechAdmissionRefusal == .decode(.cancelled)) }
     }
 
     @Test func backupAndOfflineSourcesCannotProducePCMProxy() async throws {
