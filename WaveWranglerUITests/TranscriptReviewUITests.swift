@@ -106,6 +106,15 @@ final class TranscriptReviewUITests: XCTestCase {
         let tokenID = app.descendants(matching: .any)["ww.review.inspector.tokenID"]
         XCTAssertEqual(tokenID.value as? String, "token-stub-001")
 
+        let inspector = app.scrollViews["ww.inspector"]
+        XCTAssertTrue(inspector.waitForExistence(timeout: 3))
+        for _ in 0..<4 { inspector.swipeUp() }
+        XCTAssertTrue(
+            Acceptance.hasKeyboardFocus(occurrences)
+                || occurrences.descendants(matching: .outline).allElementsBoundByIndex.contains(where: Acceptance.hasKeyboardFocus)
+                || occurrences.descendants(matching: .table).allElementsBoundByIndex.contains(where: Acceptance.hasKeyboardFocus),
+            "Scrolling the inspector must not steal the native occurrence table's first responder"
+        )
         app.typeKey(.downArrow, modifierFlags: [])
         XCTAssertTrue(Acceptance.waitFor(timeout: 3) {
             tokenID.value as? String == "token-stub-002"
