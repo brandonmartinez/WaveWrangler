@@ -1,9 +1,23 @@
+import AppKit
 import SwiftUI
 import WWCore
 import WWOrganizer
 
 /// Trailing inspector (IA §4.4): selection-driven; heading names the kind.
 struct InspectorContainer: View {
+    @Bindable var state: ShowWindowState
+
+    var body: some View {
+        if state.sidebarSelection != .showInfo && state.destination == .review {
+            ReviewInspectorViewport(state: state, selectedOccurrence: state.reviewState.selectedOccurrence)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            InspectorScrollContent(state: state)
+        }
+    }
+}
+
+private struct InspectorScrollContent: View {
     @Bindable var state: ShowWindowState
 
     var body: some View {
@@ -27,6 +41,224 @@ struct InspectorContainer: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Inspector")
         .accessibilityIdentifier("ww.inspector")
+    }
+}
+
+private struct ReviewInspectorViewport: NSViewRepresentable {
+    let state: ShowWindowState
+    let selectedOccurrence: TranscriptReviewShellOccurrence?
+    @Environment(\.wwTextSize) private var textSize
+
+    func makeNSView(context: Context) -> ReviewInspectorPanel {
+        ReviewInspectorPanel(state: state)
+    }
+
+    func updateNSView(_ view: ReviewInspectorPanel, context: Context) {
+        view.update(selectedOccurrence: selectedOccurrence, textSize: textSize)
+    }
+}
+
+private final class ReviewInspectorPanel: NSView {
+    private weak var state: ShowWindowState?
+    private let heading = EntryLabel(wrappingLabelWithString: "Review Inspector")
+    private let setup = NSButton(title: "Go to Setup (⌘1)", target: nil, action: nil)
+    private let scroll = NSScrollView()
+    private let document = ReviewInspectorDocument()
+
+    init(state: ShowWindowState) {
+        self.state = state
+        super.init(frame: .zero)
+        setAccessibilityElement(false)
+        heading.setAccessibilityIdentifier("ww.review.inspector.heading")
+        heading.textColor = .labelColor
+        heading.backgroundColor = .windowBackgroundColor
+        heading.drawsBackground = true
+        addSubview(heading)
+
+        setup.target = self
+        setup.action = #selector(showSetup(_:))
+        setup.bezelStyle = .rounded
+        setup.cell?.wraps = true
+        setup.cell?.lineBreakMode = .byWordWrapping
+        setup.setAccessibilityLabel("Go to Setup (⌘1)")
+        setup.setAccessibilityHelp("Choose or confirm a Primary source in Setup. Keyboard alternative: View, Setup, Command-1.")
+        setup.setAccessibilityIdentifier("ww.review.remedy.setup")
+        addSubview(setup)
+
+        scroll.documentView = document
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = true
+        scroll.backgroundColor = .windowBackgroundColor
+        scroll.setAccessibilityLabel("Inspector")
+        scroll.setAccessibilityIdentifier("ww.inspector")
+        addSubview(scroll)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var isFlipped: Bool { true }
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+    override var fittingSize: NSSize { .zero }
+
+    func update(selectedOccurrence: TranscriptReviewShellOccurrence?, textSize: TextSize) {
+        heading.font = .systemFont(ofSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.headline.baseSize)), weight: .semibold)
+        setup.font = .systemFont(ofSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize)))
+        document.update(selectedOccurrence: selectedOccurrence, textSize: textSize)
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let width = max(1, bounds.width - 28)
+        let headingHeight = ReviewInspectorDocument.textHeight(heading.stringValue, font: heading.font!, width: width)
+        heading.frame = NSRect(x: 14, y: 14, width: width, height: headingHeight)
+        let buttonHeight = max(30, ReviewInspectorDocument.textHeight(setup.title, font: setup.font!, width: width - 16) + 14)
+        setup.frame = NSRect(x: 14, y: heading.frame.maxY + 8, width: width, height: buttonHeight)
+        let top = setup.frame.maxY + 10
+        scroll.frame = NSRect(x: 0, y: top, width: bounds.width, height: max(0, bounds.height - top))
+        scroll.tile()
+        document.layoutRows(width: scroll.contentView.bounds.width, minimumHeight: scroll.contentView.bounds.height)
+    }
+
+    @objc private func showSetup(_ sender: Any?) {
+        state?.showReviewSetup()
+    }
+}
+
+private final class ReviewInspectorDocument: NSView {
+    private let selected = ReviewInspectorDocument.makeLabel("Selected occurrence: No occurrence selected")
+    private let occurrenceID = ReviewInspectorDocument.makeLabel("Occurrence ID: None", identifier: "ww.review.inspector.occurrenceID", label: "Occurrence ID")
+    private let tokenID = ReviewInspectorDocument.makeLabel("Token stub ID: None", identifier: "ww.review.inspector.tokenID", label: "Token stub ID")
+    private let rows: [(NSView, CGFloat)]
+
+    init() {
+        var content: [(NSView, CGFloat)] = []
+        func append(_ view: NSView, spacing: CGFloat = 10) { content.append((view, spacing)) }
+        append(selected)
+        append(Self.makeLabel("Analysis state: None", identifier: "ww.review.inspector.analysisState",
+                              label: "Analysis state", value: "None — this shell contains no analysis"), spacing: 12)
+        func action(_ title: String, id: String, reason: String) {
+            let button = NSButton(title: title, target: nil, action: nil)
+            button.isEnabled = false
+            button.cell?.wraps = true
+            button.cell?.lineBreakMode = .byWordWrapping
+            button.setAccessibilityLabel(title)
+            button.setAccessibilityValue(reason)
+            button.setAccessibilityHelp(reason)
+            button.setAccessibilityIdentifier("ww.review.action.\(id)")
+            append(button, spacing: 4)
+            append(Self.makeLabel(reason, identifier: "ww.review.action.\(id).reason",
+                                  label: "\(title) blocked", value: reason), spacing: 10)
+        }
+        action("Accept Shorten when safe", id: "acceptShorten", reason: TranscriptReviewShellPresentation.acceptBlockedReason)
+        action("Lift — preserve timing", id: "lift", reason: TranscriptReviewShellPresentation.liftBlockedReason)
+        action("Reject proposal", id: "reject", reason: TranscriptReviewShellPresentation.rejectBlockedReason)
+        append(occurrenceID)
+        append(tokenID)
+        append(Self.makeLabel("Proposal selection: \(TranscriptReviewShellPresentation.noProposalState)",
+                              identifier: "ww.review.inspector.proposal", label: "Proposal selection",
+                              value: TranscriptReviewShellPresentation.noProposalState))
+        append(Self.makeLabel("Primary role: synthetic example, not analyzed", identifier: "ww.review.inspector.primaryState"))
+        append(Self.makeLabel("Backup role: synthetic example, not analyzed; no transcript",
+                              identifier: "ww.review.inspector.backupState"))
+        for domain in TranscriptReviewShellPresentation.timeDomains {
+            append(Self.makeLabel("\(domain.1): \(TranscriptReviewShellPresentation.timeNotEstablished)",
+                                  identifier: "ww.review.inspector.domain.\(domain.0)", label: domain.1,
+                                  value: TranscriptReviewShellPresentation.timeNotEstablished))
+        }
+        append(Self.makeLabel("Default proposal mode: Shorten when safe. No proposal is active.",
+                              identifier: "ww.review.inspector.defaultMode"))
+        action("Single-lane audition — not a full preview", id: "singleLaneAudition",
+               reason: TranscriptReviewShellPresentation.singleLaneAuditionBlockedReason)
+        action("Preview complete episode", id: "fullPreview",
+               reason: TranscriptReviewShellPresentation.fullPreviewBlockedReason)
+        append(Self.makeLabel(TranscriptReviewShellPresentation.fullPreviewBlockedReason,
+                              identifier: "ww.review.inspector.previewBlockedReason", label: "Complete preview blocked",
+                              value: TranscriptReviewShellPresentation.fullPreviewBlockedReason))
+        rows = content
+        super.init(frame: .zero)
+        setAccessibilityElement(false)
+        for (view, _) in rows { addSubview(view) }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var isFlipped: Bool { true }
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+
+    func update(selectedOccurrence: TranscriptReviewShellOccurrence?, textSize: TextSize) {
+        selected.stringValue = "Selected occurrence: \(selectedOccurrence?.title ?? "No occurrence selected")"
+        occurrenceID.stringValue = "Occurrence ID: \(selectedOccurrence?.id ?? "None")"
+        occurrenceID.accessibilityValueOverride = selectedOccurrence?.id ?? "None"
+        tokenID.stringValue = "Token stub ID: \(selectedOccurrence?.tokenStubID ?? "None")"
+        tokenID.accessibilityValueOverride = selectedOccurrence?.tokenStubID ?? "None"
+        let regular = NSFont.systemFont(ofSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize)))
+        for (view, _) in rows {
+            if let label = view as? NSTextField {
+                label.font = label.accessibilityIdentifier() == "ww.review.inspector.analysisState"
+                    ? .systemFont(ofSize: regular.pointSize, weight: .semibold) : regular
+            } else if let button = view as? NSButton {
+                button.font = regular
+            }
+        }
+    }
+
+    func layoutRows(width: CGFloat, minimumHeight: CGFloat) {
+        guard width > 0 else { return }
+        let contentWidth = max(1, width - 28)
+        var y: CGFloat = 14
+        for (view, spacing) in rows {
+            let text: String
+            let font: NSFont
+            if let label = view as? NSTextField {
+                text = label.stringValue
+                font = label.font!
+                label.preferredMaxLayoutWidth = contentWidth
+            } else if let button = view as? NSButton {
+                text = button.title
+                font = button.font!
+            } else { continue }
+            let isButton = view is NSButton
+            let height = Self.textHeight(text, font: font, width: contentWidth - (isButton ? 16 : 0))
+                + (isButton ? 14 : 0)
+            view.frame = NSRect(x: 14, y: y, width: contentWidth, height: max(isButton ? 30 : 18, height))
+            y = view.frame.maxY + spacing
+        }
+        let frame = NSRect(x: 0, y: 0, width: width, height: max(minimumHeight, y + 14))
+        if self.frame != frame { self.frame = frame }
+    }
+
+    static func textHeight(_ text: String, font: NSFont, width: CGFloat) -> CGFloat {
+        let bounds = (text as NSString).boundingRect(
+            with: NSSize(width: max(1, width), height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font]
+        )
+        return ceil(bounds.height) + 4
+    }
+
+    private static func makeLabel(_ text: String, identifier: String? = nil,
+                                  label: String? = nil, value: String? = nil) -> EntryLabel {
+        let field = EntryLabel(wrappingLabelWithString: text)
+        field.isEnabled = true
+        field.isEditable = false
+        field.isSelectable = false
+        field.textColor = .labelColor
+        field.backgroundColor = .windowBackgroundColor
+        field.drawsBackground = true
+        field.lineBreakMode = .byWordWrapping
+        if let identifier { field.setAccessibilityIdentifier(identifier) }
+        if let label { field.setAccessibilityLabel(label) }
+        field.accessibilityValueOverride = value
+        return field
     }
 }
 
@@ -284,6 +516,7 @@ struct ShowInfoInspector: View {
             }
         }
         .disabled(!state.canEdit)
+        .accessibilityIdentifier("ww.inspector.showInfo")
         .onAppear {
             titleDraft = store.model.show.title
             notesDraft = store.model.show.notes
