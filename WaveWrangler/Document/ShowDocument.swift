@@ -940,7 +940,7 @@ final class ShowDocument: NSDocument {
         ])
         return NSError(domain: "com.brandonmartinez.wavewrangler.recovery", code: 2, userInfo: [
             NSLocalizedDescriptionKey: "This older recovery copy cannot be opened.",
-            NSLocalizedRecoverySuggestionErrorKey: "It has been kept unchanged on this Mac. Show it in Finder to export the raw file. \(reason.localizedDescription)",
+            NSLocalizedRecoverySuggestionErrorKey: "It has been kept unchanged on this Mac. Use Show in Finder to export the raw file. \(reason.localizedDescription)",
             NSLocalizedRecoveryOptionsErrorKey: plan.choices.map(\.label) + ["Cancel"],
             OpaqueErrorContent.recoveryPlanKey: plan,
             OpaqueErrorContent.requiresExplicitSelectionKey: true,

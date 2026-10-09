@@ -197,7 +197,7 @@ final class OpaqueErrorPanel: NSPanel {
             : optionButtons + [previousPageButton, nextPageButton].compactMap { $0 }
         let buttonRow = NSStackView(views: buttons)
         buttonRow.orientation = choicePlan == nil ? .horizontal : .vertical
-        buttonRow.alignment = .trailing
+        buttonRow.alignment = choicePlan == nil ? .centerY : .trailing
         buttonRow.spacing = 12
 
         let column = NSStackView(views: [texts, buttonRow])
