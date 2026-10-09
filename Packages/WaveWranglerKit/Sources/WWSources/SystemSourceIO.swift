@@ -67,24 +67,20 @@ public struct SystemSourceIO: SourceIO {
         ))
     }
 
-    /// Metadata-only, no-follow observation. Bracket URL volume evidence with kernel observations
-    /// so a path replacement while collecting metadata cannot yield a usable witness.
+    /// WWSources cannot open the source: O_EVTONLY was proven content-readable on macOS.
+    /// Until a content-gateway confirmation seam exists, no URL-only observation mints a witness.
     package func rawIdentity(at url: URL) -> RawSourceIdentity? {
-        var first = stat()
-        guard lstat(url.path, &first) == 0 else { return nil }
-        guard case let .success(metadata) = self.metadata(at: url),
-              let volume = metadata.fingerprint.volumeUUID.value,
-              metadata.fingerprint.fileIdentifier.value == UInt64(first.st_ino),
-              metadata.fingerprint.fileSize.value == Int64(first.st_size),
-              metadata.isRegularFile.value == true,
-              metadata.isSymbolicLink.value == false,
-              metadata.isDataless.value == false
-        else { return nil }
-        var second = stat()
-        guard lstat(url.path, &second) == 0 else { return nil }
-        let before = RawSourceIdentity(first, volumeUUID: volume)
-        let after = RawSourceIdentity(second, volumeUUID: volume)
-        return before == after && before.isUsable ? before : nil
+        nil
+    }
+
+    /// Called only with a source descriptor already held open by the content gateway.
+    /// Opens metadata for its mount, not source bytes.
+    package static func rawIdentity(onDescriptor fd: Int32) -> RawSourceIdentity? {
+        guard let mountPoint = RawSourceIdentity.mountPoint(onDescriptor: fd) else { return nil }
+        let rootFD = Darwin.open(mountPoint, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_DIRECTORY)
+        guard rootFD >= 0 else { return nil }
+        defer { _ = Darwin.close(rootFD) }
+        return RawSourceIdentity.onDescriptor(fd, volumeRootDescriptor: rootFD)
     }
 
     public func listItems(under directory: URL) -> DirectoryListing {

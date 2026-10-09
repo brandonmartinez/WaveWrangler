@@ -221,7 +221,7 @@ struct RelinkTests {
         let relink = RelinkEvaluator(context: SourceAccessContext(io: io))
         let proposal = relink.evaluate(candidate: file, for: record.key, record: record)
         #expect(proposal.comparison == .matches)
-        #expect(proposal.candidateRaw != nil)
+        #expect(proposal.candidateRaw == nil)
         let unconfirmed = try relink.apply(proposal, to: record, userConfirmed: false)
         #expect(unconfirmed.recordedIdentity == recorded)
         #expect(unconfirmed.recordedIdentity?.rawWitness == nil)
@@ -235,9 +235,9 @@ struct RelinkTests {
         #expect(legacyRelinked.recordedIdentity == legacy.recordedIdentity)
         #expect(legacyRelinked.recordedIdentity?.rawWitness == nil)
 
-        let confirmed = try relink.apply(proposal, to: record, userConfirmed: true)
-        #expect(confirmed.recordedIdentity?.confirmation == .userConfirmed)
-        #expect(confirmed.recordedIdentity?.rawWitness == proposal.candidateRaw)
+        #expect(throws: RelinkError.sourceMismatch) {
+            _ = try relink.apply(proposal, to: record, userConfirmed: true)
+        }
 
         var wrongVolume = proposal
         var fingerprint = try #require(wrongVolume.candidateFingerprint)
@@ -368,17 +368,27 @@ struct ForbiddenAPITests {
     ]
 
     static let exceptions: [String: Set<String>] = [
-        "SystemSourceIO.swift": ["startDownloadingUbiquitousItem", "bookmarkData(", "startAccessingSecurityScopedResource", "FileManager", ".resourceValues("],
+        "SystemSourceIO.swift": ["open(", "startDownloadingUbiquitousItem", "bookmarkData(", "startAccessingSecurityScopedResource", "FileManager", ".resourceValues("],
         "DeviceAccessRecord.swift": ["Data(contentsOf", "contentsOf", ".write(to", "write(", "createDirectory", "FileManager"],
+    ]
+
+    static let metadataDescriptorOpens = [
+        "let rootFD = Darwin.open(mountPoint, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_DIRECTORY)",
     ]
 
     static func violations(in source: String, fileName: String, forbiddenTokens: [String] = forbidden) -> [String] {
         let allowed = exceptions[fileName] ?? []
-        let code = source
+        let lines = source
             .split(separator: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
-            .joined(separator: "\n")
-        return forbiddenTokens.filter { !allowed.contains($0) && code.contains($0) }.map { "\(fileName): \($0)" }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        let code = lines.joined(separator: "\n")
+        var violations = forbiddenTokens.filter { !allowed.contains($0) && code.contains($0) }.map { "\(fileName): \($0)" }
+        if fileName == "SystemSourceIO.swift", forbiddenTokens.contains("open("),
+           lines.contains(where: { $0.contains("open(") && !metadataDescriptorOpens.contains($0) }) {
+            violations.append("\(fileName): open(")
+        }
+        return violations
     }
 
     @Test func scannerDetectsForbiddenCalls() {
@@ -388,6 +398,8 @@ struct ForbiddenAPITests {
         #expect(Self.violations(in: "try FileManager.default.moveItem(at: a, to: b)", fileName: "RelinkEvaluator.swift").contains("RelinkEvaluator.swift: moveItem"))
         #expect(Self.violations(in: "// FileHandle in a comment", fileName: "X.swift").isEmpty)
         #expect(Self.violations(in: "try FileManager.default.evictUbiquitousItem(at: u)", fileName: "SystemSourceIO.swift") == ["SystemSourceIO.swift: evictUbiquitousItem"])
+        #expect(Self.violations(in: "let fd = Darwin.open(url.path, O_RDONLY)", fileName: "SystemSourceIO.swift") == ["SystemSourceIO.swift: open("])
+        #expect(Self.violations(in: "let fd = Darwin.open(url.path, O_EVTONLY | O_RDWR)", fileName: "SystemSourceIO.swift") == ["SystemSourceIO.swift: open("])
 
         let requestedCases = [
             ("contentsOf", "let text = try String(contentsOf: url)"),
@@ -414,7 +426,14 @@ struct ForbiddenAPITests {
         #expect(files.count >= 10)
         var violations: [String] = []
         for file in files {
-            violations += Self.violations(in: try String(contentsOf: file, encoding: .utf8), fileName: file.lastPathComponent)
+            let source = try String(contentsOf: file, encoding: .utf8)
+            violations += Self.violations(in: source, fileName: file.lastPathComponent)
+            if file.lastPathComponent == "SystemSourceIO.swift" {
+                let opens = source.split(separator: "\n")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { $0.contains("open(") && !$0.hasPrefix("//") }
+                #expect(opens == Self.metadataDescriptorOpens)
+            }
         }
         #expect(violations.isEmpty, "\(violations)")
     }

@@ -14,7 +14,7 @@ public struct RelinkProposal: Sendable, Equatable {
 
     public var key: DeviceAccessKey
     public var candidateFingerprint: FileSystemFingerprint?
-    /// Metadata-only raw observation at evaluation, not authority to read content.
+    /// No raw witness is captured during evaluation; only explicit confirmation may mint one.
     public var candidateRaw: RawSourceIdentity?
     /// `.unknown` (all fields) when this device has no recorded evidence, e.g. a cross-machine open.
     public var comparison: IdentityComparison
@@ -93,7 +93,7 @@ public struct RelinkEvaluator: Sendable {
             return RelinkProposal(
                 key: key,
                 candidateFingerprint: metadata.fingerprint,
-                candidateRaw: (context.io as? SystemSourceIO)?.rawIdentity(at: url),
+                candidateRaw: nil,
                 comparison: comparison,
                 availability: availability,
                 alreadyLinkedTo: linkedElsewhere,
@@ -127,7 +127,6 @@ public struct RelinkEvaluator: Sendable {
             guard let fingerprint = proposal.candidateFingerprint,
                   case let .resolved(scoped, isStale) = context.io.resolveBookmark(bookmark), !isStale,
                   let raw = context.withScopedAccess(to: scoped, { system.rawIdentity(at: $0) }),
-                  raw == proposal.candidateRaw,
                   fingerprint.fileIdentifier.value == raw.inode,
                   fingerprint.fileSize.value == raw.sizeBytes,
                   fingerprint.volumeUUID.value?.lowercased() == raw.volumeUUID

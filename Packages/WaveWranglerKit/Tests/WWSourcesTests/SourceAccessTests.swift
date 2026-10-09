@@ -177,6 +177,44 @@ struct IdentityEvidenceTests {
         #expect(observed.inode == metadata.fingerprint.fileIdentifier.value)
         #expect(observed.sizeBytes == metadata.fingerprint.fileSize.value)
     }
+
+    @Test func volumeRootDescriptorMustMatchTheSourceFileSystem() throws {
+        let tree = try SyntheticTree(label: "raw-fd-root")
+        var rng = SplitMix64(seed: 414)
+        let file = try tree.file("take.wav", bytes: 128, rng: &rng)
+        let io = SystemSourceIO()
+        guard case let .success(metadata) = io.metadata(at: file) else {
+            Issue.record("synthetic file metadata unavailable")
+            return
+        }
+        let expectedVolume = try #require(metadata.fingerprint.volumeUUID.value)
+        let fd = Darwin.open(file.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        defer { _ = Darwin.close(fd) }
+        var sourceMount = statfs()
+        guard fstatfs(fd, &sourceMount) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        let mountPoint = try #require(withUnsafeBytes(of: sourceMount.f_mntonname) { bytes -> String? in
+            guard let end = bytes.firstIndex(of: 0) else { return nil }
+            return String(bytes: bytes[..<end], encoding: .utf8)
+        })
+        let rootFD = Darwin.open(mountPoint, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_DIRECTORY)
+        guard rootFD >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        defer { _ = Darwin.close(rootFD) }
+        let observed = try #require(RawSourceIdentity.onDescriptor(fd, volumeRootDescriptor: rootFD))
+        #expect(observed.volumeUUID == expectedVolume.lowercased())
+
+        let wrongRootFD = Darwin.open("/dev", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_DIRECTORY)
+        guard wrongRootFD >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        defer { _ = Darwin.close(wrongRootFD) }
+        var wrongMount = statfs()
+        guard fstatfs(wrongRootFD, &wrongMount) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        #expect(withUnsafeBytes(of: sourceMount.f_fsid) { source in
+            withUnsafeBytes(of: wrongMount.f_fsid) { wrong in !source.elementsEqual(wrong) }
+        })
+        #expect(RawSourceIdentity.onDescriptor(fd, volumeRootDescriptor: wrongRootFD) == nil)
+        #expect(RawSourceIdentity.onDescriptor(fd, volumeRootDescriptor: fd) == nil)
+    }
+
 }
 
 @Suite("Identity timestamp tolerance (#78)")

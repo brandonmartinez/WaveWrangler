@@ -21,7 +21,7 @@ private struct ExpectedRawIdentity: Decodable, Equatable {
     var modificationNanoseconds: Int64
 
     init(_ info: stat, volumeUUID: String) {
-        version = 1
+        version = 2
         self.volumeUUID = volumeUUID.lowercased()
         device = Int64(info.st_dev)
         inode = UInt64(info.st_ino)
@@ -56,9 +56,53 @@ private func rawIdentity(at url: URL, volumeUUID: String) throws -> ExpectedRawI
     return ExpectedRawIdentity(info, volumeUUID: volumeUUID)
 }
 
+private func capturedWitness(at url: URL) async throws -> RawSourceIdentity {
+    let io = SystemSourceIO()
+    guard case let .success(metadata) = io.metadata(at: url) else { throw POSIXError(.EIO) }
+    return try await SourceDecoder(access: SourceAccessContext(io: io))
+        .captureRawIdentity(url, matching: metadata.fingerprint)
+}
+
 @Suite("Selected Primary raw source identity (mechanical checks, not issuance)")
 struct RawSelectedPrimaryWitnessTests {
-    @Test("Unchanged copied Primary decodes exactly 32000 frames; Backup stays unopened; confirmation persists raw identity")
+    @Test("Explicit capture observes an exact synthetic source without parsing or reading it")
+    func captureExactRawWitnessBeforeAnyContentRead() async throws {
+        let directory = try FixtureDirectory("raw-capture")
+        let spec = FixtureSpec(
+            container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
+            sampleRate: 48_000, channelCount: 1
+        )
+        let primary = try directory.write(spec, signal: LandmarkSignal(frames: 32_000, channelCount: 1, seed: 417))
+        let io = SystemSourceIO()
+        guard case let .success(metadata) = io.metadata(at: primary) else { throw POSIXError(.EIO) }
+        let fingerprint = metadata.fingerprint
+        let witness = try await SourceDecoder(access: SourceAccessContext(io: io))
+            .captureRawIdentity(primary, matching: fingerprint)
+        #expect(witness.isUsable)
+        #expect(witness.inode == fingerprint.fileIdentifier.value)
+        #expect(witness.volumeUUID == fingerprint.volumeUUID.value?.lowercased())
+        let reads = Counter()
+        var gateway = SystemSourceContentIO()
+        gateway.readPolicyObserver = { _ in reads.increment() }
+        #expect(try gateway.captureRawIdentity(primary, matching: metadata, io: io) == witness)
+        #expect(reads.count == 0)
+
+        var wrong = fingerprint
+        wrong.fileIdentifier = .unknown
+        await #expect(throws: DecodeFailure.sourceIdentityMismatch) {
+            _ = try await SourceDecoder(access: SourceAccessContext(io: io)).captureRawIdentity(primary, matching: wrong)
+        }
+        let wrongRoot = Darwin.open("/dev", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_DIRECTORY)
+        guard wrongRoot >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        defer { _ = Darwin.close(wrongRoot) }
+        gateway.volumeRootDescriptor = wrongRoot
+        #expect(throws: DecodeFailure.sourceIdentityMismatch) {
+            _ = try gateway.captureRawIdentity(primary, matching: metadata, io: io)
+        }
+        #expect(reads.count == 0)
+    }
+
+    @Test("Unchanged copied Primary decodes exactly 32000 frames; Backup stays unopened; synthetic witness round-trips")
     func copiedPrimaryNeedsRawConfirmation() async throws {
         let directory = try FixtureDirectory("raw-primary")
         let signal = LandmarkSignal(frames: 32_000, channelCount: 1, seed: 413)
@@ -81,7 +125,13 @@ struct RawSelectedPrimaryWitnessTests {
         )
         let relink = RelinkEvaluator(context: SourceAccessContext(io: io))
         let proposal = relink.evaluate(candidate: primary, for: provisional.key, record: provisional)
-        let confirmed = try relink.apply(proposal, to: provisional, userConfirmed: true)
+        #expect(throws: RelinkError.sourceMismatch) {
+            _ = try relink.apply(proposal, to: provisional, userConfirmed: true)
+        }
+        let captured = try await capturedWitness(at: primary)
+        var confirmed = provisional
+        confirmed.recordedIdentity?.confirmation = .userConfirmed
+        confirmed.recordedIdentity?.rawWitness = captured
         let expected = try rawIdentity(at: primary, volumeUUID: volume)
         let backupOpens = Counter()
         var gateway = SystemSourceContentIO()
@@ -95,15 +145,17 @@ struct RawSelectedPrimaryWitnessTests {
         #expect(backupOpens.count == 0)
         #expect(expected.mode & UInt16(S_IFMT) == UInt16(S_IFREG) && !expected.dataless)
 
-        // Decoding through the ordinary gateway above is not selected-Primary authorization.
+        // This test-only constructed record and the ordinary decode above issue no read authority.
         let persisted = try JSONEncoder().encode(confirmed)
         let recovered = try JSONDecoder().decode(ExpectedConfirmedRecord.self, from: persisted)
         #expect(recovered.recordedIdentity.rawWitness == expected)
+        #expect(confirmed.recordedIdentity?.rawWitness?.fileSystemID0 != nil)
+        #expect(confirmed.recordedIdentity?.rawWitness?.fileSystemID1 != nil)
         #expect(DeviceAccessRecord.schemaVersion > 1)
     }
 
     @Test("A real descriptor refuses a 211ns challenged mtime before any header byte")
-    func sub500NanosecondPreOpenDrift() throws {
+    func sub500NanosecondPreOpenDrift() async throws {
         let directory = try FixtureDirectory("raw-pre-header")
         let spec = FixtureSpec(
             container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
@@ -114,7 +166,7 @@ struct RawSelectedPrimaryWitnessTests {
         guard case let .success(metadata) = io.metadata(at: primary),
               let volume = metadata.fingerprint.volumeUUID.value
         else { throw POSIXError(.EIO) }
-        let confirmedRaw = try #require(io.rawIdentity(at: primary))
+        let confirmedRaw = try await capturedWitness(at: primary)
         var info = stat()
         guard lstat(primary.path, &info) == 0 else { throw POSIXError(.EIO) }
         let delta = info.st_mtimespec.tv_nsec < 1_000_000_000 - 211 ? 211 : -211
@@ -133,8 +185,35 @@ struct RawSelectedPrimaryWitnessTests {
         #expect(reads.count == 0)
     }
 
+    @Test("A mismatched or invalid mount-root descriptor refuses before any header byte")
+    func unusableVolumeRootRefusesBeforeHeader() async throws {
+        let directory = try FixtureDirectory("raw-root-refusal")
+        let spec = FixtureSpec(
+            container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
+            sampleRate: 48_000, channelCount: 1
+        )
+        let primary = try directory.write(spec, signal: LandmarkSignal(frames: 32_000, channelCount: 1, seed: 415))
+        let witness = try await capturedWitness(at: primary)
+        let wrongRoot = Darwin.open("/dev", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_DIRECTORY)
+        guard wrongRoot >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        defer { _ = Darwin.close(wrongRoot) }
+        let notARoot = Darwin.open(primary.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        guard notARoot >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        defer { _ = Darwin.close(notARoot) }
+        for rootDescriptor in [wrongRoot, notARoot] {
+            let reads = Counter()
+            var gateway = SystemSourceContentIO()
+            gateway.volumeRootDescriptor = rootDescriptor
+            gateway.readPolicyObserver = { _ in reads.increment() }
+            #expect(throws: DecodeFailure.sourceIdentityMismatch) {
+                _ = try gateway.openForDecoding(primary, matching: witness)
+            }
+            #expect(reads.count == 0)
+        }
+    }
+
     @Test("A post-open birth-only challenge on the same descriptor refuses publication")
-    func birthOnlyPostOpenDrift() throws {
+    func birthOnlyPostOpenDrift() async throws {
         let directory = try FixtureDirectory("raw-birth-after-open")
         let spec = FixtureSpec(
             container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
@@ -145,7 +224,7 @@ struct RawSelectedPrimaryWitnessTests {
         guard case let .success(metadata) = io.metadata(at: primary),
               let volume = metadata.fingerprint.volumeUUID.value
         else { throw POSIXError(.EIO) }
-        let confirmedRaw = try #require(io.rawIdentity(at: primary))
+        let confirmedRaw = try await capturedWitness(at: primary)
         var info = stat()
         guard lstat(primary.path, &info) == 0 else { throw POSIXError(.EIO) }
         info.st_birthtimespec.tv_nsec += info.st_birthtimespec.tv_nsec < 1_000_000_000 - 1 ? 1 : -1
@@ -182,6 +261,30 @@ struct RawSelectedPrimaryWitnessTests {
         json["recordedIdentity"] = identity
         let legacy = try JSONDecoder().decode(DeviceAccessRecord.self, from: JSONSerialization.data(withJSONObject: json))
         #expect(legacy.recordedIdentity?.rawWitness == nil)
+    }
+
+    @Test("A version-one raw witness cannot open a selected Primary")
+    func versionOneWitnessRefusedBeforeHeader() throws {
+        let directory = try FixtureDirectory("raw-v1-refusal")
+        let spec = FixtureSpec(
+            container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
+            sampleRate: 48_000, channelCount: 1
+        )
+        let primary = try directory.write(spec, signal: LandmarkSignal(frames: 32_000, channelCount: 1, seed: 416))
+        guard case let .success(metadata) = SystemSourceIO().metadata(at: primary) else { throw POSIXError(.EIO) }
+        let volume = try #require(metadata.fingerprint.volumeUUID.value)
+        var info = stat()
+        guard lstat(primary.path, &info) == 0 else { throw POSIXError(.EIO) }
+        let old = RawSourceIdentity(info, volumeUUID: volume)
+        let legacy = try JSONDecoder().decode(RawSourceIdentity.self, from: JSONEncoder().encode(old))
+        #expect(legacy.version == 1 && !legacy.isUsable)
+        let reads = Counter()
+        var gateway = SystemSourceContentIO()
+        gateway.readPolicyObserver = { _ in reads.increment() }
+        #expect(throws: DecodeFailure.sourceIdentityMismatch) {
+            _ = try gateway.openForDecoding(primary, matching: legacy)
+        }
+        #expect(reads.count == 0)
     }
 
     @Test("Appending to an open synthetic Primary changes raw same-file state and cannot finish")

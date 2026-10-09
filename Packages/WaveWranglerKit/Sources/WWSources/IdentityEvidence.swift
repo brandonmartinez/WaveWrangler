@@ -123,9 +123,13 @@ public struct RawSourceIdentity: Sendable, Codable, Equatable {
     public let birthNanoseconds: Int64
     public let modificationSeconds: Int64
     public let modificationNanoseconds: Int64
+    /// Mount-local identifier bound to the volume UUID through two live descriptors.
+    /// Optional so older stored witnesses decode but never pass `isUsable`.
+    public let fileSystemID0: Int32?
+    public let fileSystemID1: Int32?
 
-    package init(_ info: stat, volumeUUID: String) {
-        version = 1
+    package init(_ info: stat, volumeUUID: String, fileSystemID: (Int32, Int32)? = nil) {
+        version = fileSystemID == nil ? 1 : 2
         self.volumeUUID = volumeUUID.lowercased()
         device = Int64(info.st_dev)
         inode = UInt64(info.st_ino)
@@ -136,25 +140,53 @@ public struct RawSourceIdentity: Sendable, Codable, Equatable {
         birthNanoseconds = Int64(info.st_birthtimespec.tv_nsec)
         modificationSeconds = Int64(info.st_mtimespec.tv_sec)
         modificationNanoseconds = Int64(info.st_mtimespec.tv_nsec)
+        fileSystemID0 = fileSystemID?.0
+        fileSystemID1 = fileSystemID?.1
     }
 
     package var isUsable: Bool {
-        version == 1 && mode & UInt16(S_IFMT) == UInt16(S_IFREG) && !dataless && sizeBytes > 0
+        version == 2 && fileSystemID0 != nil && fileSystemID1 != nil
+            && mode & UInt16(S_IFMT) == UInt16(S_IFREG) && !dataless && sizeBytes > 0
             && (0..<1_000_000_000).contains(birthNanoseconds)
             && (0..<1_000_000_000).contains(modificationNanoseconds)
             && !volumeUUID.isEmpty
     }
 
+    package func matches(_ info: stat) -> Bool {
+        guard let fileSystemID0, let fileSystemID1, isUsable else { return false }
+        return self == RawSourceIdentity(
+            info, volumeUUID: volumeUUID, fileSystemID: (fileSystemID0, fileSystemID1)
+        )
+    }
+
     /// Mechanical descriptor evidence only. This does not authorize a decode.
     package static func onDescriptor(_ fd: Int32) -> RawSourceIdentity? {
+        SystemSourceIO.rawIdentity(onDescriptor: fd)
+    }
+
+    /// The caller holds both descriptors; a root on another mount, or one that cannot report its
+    /// UUID, can never corroborate the source descriptor.
+    package static func onDescriptor(_ fd: Int32, volumeRootDescriptor rootFD: Int32) -> RawSourceIdentity? {
         var first = stat()
-        guard fstat(fd, &first) == 0 else { return nil }
+        var rootInfo = stat()
+        var sourceMount = statfs()
+        var rootMount = statfs()
+        guard fstat(fd, &first) == 0,
+              fstat(rootFD, &rootInfo) == 0,
+              rootInfo.st_mode & S_IFMT == S_IFDIR,
+              fstatfs(fd, &sourceMount) == 0,
+              fstatfs(rootFD, &rootMount) == 0,
+              fileSystemID(sourceMount) == fileSystemID(rootMount),
+              let sourceMountPoint = mountPoint(sourceMount),
+              mountPoint(rootMount) == sourceMountPoint
+        else { return nil }
+        let fsid = fileSystemID(sourceMount)
         var attributes = attrlist()
         attributes.bitmapcount = UInt16(ATTR_BIT_MAP_COUNT)
-        attributes.volattr = attrgroup_t(ATTR_VOL_UUID)
+        attributes.volattr = attrgroup_t(ATTR_VOL_INFO | UInt32(ATTR_VOL_UUID))
         var bytes = [UInt8](repeating: 0, count: 20)
         let status = bytes.withUnsafeMutableBytes {
-            fgetattrlist(fd, &attributes, $0.baseAddress, $0.count, 0)
+            fgetattrlist(rootFD, &attributes, $0.baseAddress, $0.count, 0)
         }
         guard status == 0, bytes[0] == 20, bytes[1] == 0, bytes[2] == 0, bytes[3] == 0 else { return nil }
         let volume = UUID(uuid: (
@@ -162,10 +194,38 @@ public struct RawSourceIdentity: Sendable, Codable, Equatable {
             bytes[12], bytes[13], bytes[14], bytes[15], bytes[16], bytes[17], bytes[18], bytes[19]
         )).uuidString
         var second = stat()
-        guard fstat(fd, &second) == 0 else { return nil }
-        let before = RawSourceIdentity(first, volumeUUID: volume)
-        let after = RawSourceIdentity(second, volumeUUID: volume)
+        var sourceMountAfter = statfs()
+        var rootMountAfter = statfs()
+        guard fstat(fd, &second) == 0,
+              fstatfs(fd, &sourceMountAfter) == 0,
+              fstatfs(rootFD, &rootMountAfter) == 0,
+              fileSystemID(sourceMountAfter) == fsid,
+              fileSystemID(rootMountAfter) == fsid,
+              mountPoint(sourceMountAfter) == sourceMountPoint,
+              mountPoint(rootMountAfter) == sourceMountPoint
+        else { return nil }
+        let before = RawSourceIdentity(first, volumeUUID: volume, fileSystemID: fsid)
+        let after = RawSourceIdentity(second, volumeUUID: volume, fileSystemID: fsid)
         return before == after && before.isUsable ? before : nil
+    }
+
+    package static func mountPoint(onDescriptor fd: Int32) -> String? {
+        var mount = statfs()
+        guard fstatfs(fd, &mount) == 0 else { return nil }
+        return mountPoint(mount)
+    }
+
+    private static func fileSystemID(_ mount: statfs) -> (Int32, Int32) {
+        (mount.f_fsid.val.0, mount.f_fsid.val.1)
+    }
+
+    private static func mountPoint(_ mount: statfs) -> String? {
+        withUnsafeBytes(of: mount.f_mntonname) { bytes in
+            guard let end = bytes.firstIndex(of: 0), end > 0,
+                  let path = String(bytes: bytes[..<end], encoding: .utf8), path.hasPrefix("/")
+            else { return nil }
+            return path
+        }
     }
 }
 

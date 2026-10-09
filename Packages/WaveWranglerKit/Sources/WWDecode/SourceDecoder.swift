@@ -92,6 +92,29 @@ public struct SourceDecoder: Sendable {
         self.configuration = configuration
     }
 
+    /// Captures non-authorizing kernel evidence at an explicit confirmation boundary. This never
+    /// opens an audio parser or reads source bytes; the caller must separately record consent.
+    @concurrent
+    public func captureRawIdentity(
+        _ url: URL,
+        matching fingerprint: FileSystemFingerprint
+    ) async throws(DecodeFailure) -> RawSourceIdentity {
+        try Self.checkCancellation()
+        do {
+            return try await access.withScopedAccess(to: url) { scoped in
+                let before = try preflight(scoped)
+                guard before.fingerprint == fingerprint else { throw DecodeFailure.sourceIdentityMismatch }
+                let raw = try SystemSourceContentIO().captureRawIdentity(scoped, matching: before, io: access.io)
+                try Self.checkCancellation()
+                return raw
+            }
+        } catch let failure as DecodeFailure {
+            throw failure
+        } catch {
+            throw .sinkFailed("unexpected identity capture error: \(error)")
+        }
+    }
+
     @concurrent
     public func decode<Sink: DecodedAudioSink>(
         _ url: URL,
