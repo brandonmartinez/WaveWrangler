@@ -113,7 +113,7 @@ struct SelectedPrimaryPCMWindow: Sendable {
 enum SelectedPrimarySourceReadIssuer {
     #if DEBUG
     enum Phase: Equatable {
-        case afterAuthorityCapture
+        case afterIntentCapture
         case beforeDescriptorOpen
         case beforePublication
     }
@@ -125,8 +125,7 @@ enum SelectedPrimarySourceReadIssuer {
     static func readCheckedPrimaryWindow(
         for document: ShowDocument, in window: NSWindow, startingAt start: Int64
     ) async throws -> SelectedPrimaryPCMWindow {
-        try Task.checkCancellation()
-        throw SelectedPrimarySourceReadRefusal.trustedSourceOpenUnavailable
+        return try await requireSourceReadAuthority(for: document, in: window, startingAt: start)
     }
 
     static func requireSourceReadAuthority(
@@ -153,6 +152,9 @@ enum SelectedPrimarySourceReadIssuer {
         try validatePortableMapWindow(
             model: current.model, selection: selection, startingAt: start
         )
+        #if DEBUG
+        try await debugPhaseObserver?(.afterIntentCapture)
+        #endif
         _ = try await binding.current()
         try Task.checkCancellation()
         guard window.isKeyWindow, state.destination == .setup,

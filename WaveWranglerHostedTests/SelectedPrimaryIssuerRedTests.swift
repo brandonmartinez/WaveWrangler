@@ -33,6 +33,46 @@ struct SelectedPrimaryIssuerRedTests {
     }
 
     @Test(arguments: [false, true])
+    func failClosedIntentCaptureRechecksSelectionOrDocumentABA(documentMutation: Bool) async throws {
+        try await withFixture { fixture in
+            var reached = false
+            var opened: [SourceID] = []
+            SelectedPrimarySourceReadIssuer.debugSourceOpenObserver = { opened.append($0) }
+            SelectedPrimarySourceReadIssuer.debugPhaseObserver = { phase in
+                guard phase == .afterIntentCapture else { return }
+                reached = true
+                if documentMutation {
+                    let original = fixture.document.store.model
+                    var changed = original
+                    changed.show.title = "Transient synthetic title"
+                    fixture.document.store.replaceLoadedModel(changed)
+                    fixture.document.store.replaceLoadedModel(original)
+                } else {
+                    fixture.setup.selection = [.source(fixture.backupID)]
+                    fixture.setup.selection = [.source(fixture.primaryID)]
+                }
+            }
+            defer {
+                SelectedPrimarySourceReadIssuer.debugPhaseObserver = nil
+                SelectedPrimarySourceReadIssuer.debugSourceOpenObserver = nil
+            }
+
+            if documentMutation {
+                await #expect(throws: EpisodeSourceAccessRefusal.changedDuringVerification) {
+                    try await fixture.read(startingAt: 0)
+                }
+            } else {
+                await #expect(throws: SelectedPrimarySourceReadRefusal.selectionUnavailable) {
+                    try await fixture.read(startingAt: 0)
+                }
+            }
+            #expect(reached)
+            #expect(opened.isEmpty)
+            try fixture.assertMediaUnchanged()
+        }
+    }
+
+    @Test(arguments: [false, true])
     func accessRemoveRestoreABACannotRegainAuthority(beforePublication: Bool) async throws {
         try await withFixture { fixture in
             var reached = false

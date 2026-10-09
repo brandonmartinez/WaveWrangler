@@ -79,9 +79,13 @@ positive issuance. `WaveWranglerHostedTests/SelectedPrimaryIssuerRedTests.swift`
 specifies the internal app-owned `readCheckedPrimaryWindow` entry point and its
 `SelectedPrimaryPCMWindow` result. The app now has only a fail-closed compiling
 scaffold: the result cannot be constructed outside its private initializer,
-the bridge checks cancellation and otherwise always throws
-`trustedSourceOpenUnavailable`, and DEBUG observer slots are never invoked.
-`requireSourceReadAuthority` still returns `Never`. The hosted fixture refuses
+the bridge delegates to the real registered-window, selected-intent, and portable-map
+preflight; a valid intent still always throws `trustedSourceOpenUnavailable`.
+`requireSourceReadAuthority` still returns `Never`. Its passive DEBUG
+`afterIntentCapture` observer can suspend before the final document/window/selection
+recheck, but does not supply access evidence or open a descriptor. The later
+`beforeDescriptorOpen`/`beforePublication` and source-open observers are not invoked.
+The hosted fixture refuses
 to touch `SetupEngineProvider.store` or create bookmarks unless
 `PersistenceEnvironment.isUITestRun` was set at app launch. It registers an
 actual `ShowDocument`, runs `makeWindowControllers`/`showWindows`, waits for the
@@ -96,14 +100,14 @@ identity itself. The future internal result exposes a checked channel, source
 frame range and 32,000 samples only after the descriptor-gateway check and
 last publication revalidation. `VerifiedSourcePCMWindow` is package-scoped:
 an app client cannot call or return that type directly, and cannot manufacture
-an unverified result. DEBUG-only `debugPhaseObserver` (after authority capture,
+an unverified result. DEBUG-only `debugPhaseObserver` (after intent capture,
 before descriptor open, before publication) and `debugSourceOpenObserver`
 observe phase/source ID without supplying a URL, identity, receipt, PCM or
 alternative read path. The source-open observation must be emitted from the
 single content gateway for **every** opened source, not from an intent-only
 preflight. Phase observers may suspend, mutate app state/access records or
 cancel the current task to assert refusals at those boundaries.
-The RED issuer owns a monotonic actor-instance access-revision witness; an
+The future issuer needs a monotonic actor-instance access-revision witness; an
 equal-looking remove/restore must refuse even if the cached record matches.
 Neither that witness nor these tests prove freshness against other store
 instances/processes or external OS scope revocation (#430).
@@ -119,11 +123,13 @@ These phase/count assertions prohibit an earlier generic refusal from
 masquerading as a passed stale-authority recheck.
 
 At `6144838b` the hosted build exited 65 with zero tests on the missing result
-type; that compiler sentinel predates this scaffold. This new head has **not**
-had native compilation or GUI execution: a separate JIT/GUI lease is required.
-Once it compiles, the hosted suite must fail behaviorally because the issuer
-does not invoke observers or return PCM; compilation alone cannot establish
-that outcome, and later test/fixture diagnostics may still surface. Neither
+type; that compiler sentinel predates this scaffold. At `b4743237` the
+fail-closed hosted suite selected 15 cases and failed all 15 without a source
+open. The subsequent app-only intent preflight and its two ABA cases on this
+head have **not** had native compilation or GUI execution: a separate
+JIT/GUI lease is required. Early intent refusal can succeed, but the later
+phase/count and positive-window cases remain behavioral RED until an
+independently reviewed issuer exists. Neither
 the scaffold nor the package checked-open compile RED authorizes Backup,
 inference, edits, or a positive source read.
 

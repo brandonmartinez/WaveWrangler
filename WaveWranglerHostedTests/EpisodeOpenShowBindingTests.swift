@@ -254,6 +254,11 @@ struct EpisodeOpenShowBindingTests {
                 for: opened.document, in: unrelatedWindow, startingAt: 0
             )
         }
+        await #expect(throws: SelectedPrimarySourceReadRefusal.selectionUnavailable) {
+            try await SelectedPrimarySourceReadIssuer.readCheckedPrimaryWindow(
+                for: opened.document, in: unrelatedWindow, startingAt: 0
+            )
+        }
         let cancelled = Task { @MainActor in
             withUnsafeCurrentTask { $0?.cancel() }
             try await SelectedPrimarySourceReadIssuer.requireSourceReadAuthority(
