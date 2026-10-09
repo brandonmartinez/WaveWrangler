@@ -158,12 +158,13 @@ final class ShowDocument: NSDocument {
     override func read(from url: URL, ofType typeName: String) throws {
         let interval = OpenSignposts.begin("document.read")
         defer { OpenSignposts.end(interval) }
-        let data = try Data(contentsOf: url)
-        try MainActor.assumeIsolated {
+        let opened = try ShowDocumentOriginGuard.readPinned(at: url) {
             #if DEBUG
-            Self.debugBeforeRead?(url)
+            MainActor.assumeIsolated { Self.debugBeforeRead?(url) }
             #endif
-            try load(data, url: url)
+        }
+        try MainActor.assumeIsolated {
+            try load(opened.data, url: url, openedItem: opened.item)
         }
     }
 
@@ -171,12 +172,12 @@ final class ShowDocument: NSDocument {
         try MainActor.assumeIsolated { try load(data, url: nil) }
     }
 
-    private func load(_ data: Data, url: URL?) throws {
+    private func load(_ data: Data, url: URL?, openedItem: FileItemIdentity? = nil) throws {
         restoredOfferURLs.removeAll()
         selectedOfferURL = nil
         selectedOfferRecord = nil
         dismissedProblemURLs.removeAll()
-        originatingItem = url.flatMap(FileItemIdentity.observe(at:))
+        originatingItem = openedItem
         // A schema 1 show reports `.needsMigration`: it opens upgraded in memory, read-only, and nothing is written
         // until the user chooses Update (#159). Schema 1 recovery checkpoints stay offerable, upgraded in memory.
         let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery,
@@ -429,6 +430,8 @@ final class ShowDocument: NSDocument {
         let completion: ((Bool) -> Void)?
     }
 
+    private static let copyOriginRefusal = "Save a Copy Elsewhere needs a different file. WaveWrangler did not overwrite the original show or discard recovery copies."
+
     /// Opens the native save panel named "<Show> copy" and saves the show there as a new, separate show (new show
     /// ID, titled after the chosen name), like Save As: the window then edits the copy. The original file and its
     /// last saved version are untouched. `completion` gets whether the copy was saved.
@@ -488,6 +491,13 @@ final class ShowDocument: NSDocument {
     var showFileName: String { fileURL?.deletingPathExtension().lastPathComponent ?? displayName }
 
     private func saveCopy(_ request: CopyElsewhereRequest, to url: URL, ofType typeName: String, completionHandler: @escaping (Error?) -> Void) {
+        guard !ShowDocumentOriginGuard.isOriginatingDestination(url, originURL: fileURL, originatingItem: originatingItem) else {
+            let error = PublicationError.originConflict(Self.copyOriginRefusal)
+            if !isDocumentEdited { updateChangeCount(.changeDone) }
+            status.set(.originConflict(message: Self.copyOriginRefusal))
+            completionHandler(error)
+            return
+        }
         let copy: ShowDocumentModel
         do {
             copy = try store.model.duplicatedAsNewShow().renamingShow(to: url.deletingPathExtension().lastPathComponent)
@@ -617,6 +627,10 @@ final class ShowDocument: NSDocument {
             guard FormatUpdatePolicy.allowsSave(status.formatUpdate, adoptsPublication: Self.adoptsPublication(saveOperation),
                                                 toOwnFile: url.standardizedFileURL == fileURL?.standardizedFileURL) else {
                 throw formatUpdateSaveRefusal()
+            }
+            if pendingCandidateKey != nil,
+               ShowDocumentOriginGuard.isOriginatingDestination(url, originURL: pendingSave.originURL, originatingItem: originatingItem) {
+                throw PublicationError.originConflict(Self.copyOriginRefusal)
             }
             let inPlace = pendingSave.originURL == url.standardizedFileURL
             let target: PublicationTarget

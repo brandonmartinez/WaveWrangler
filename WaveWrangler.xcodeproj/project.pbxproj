@@ -59,6 +59,7 @@
 				Alignment/AnchorTimeEditing.swift,
 				Document/CopyElsewhereRetryGate.swift,
 				Document/FormatUpdate.swift,
+				Document/ShowDocumentOriginGuard.swift,
 				Document/SharedModelPublication.swift,
 				Library/CanonicalLibraryAdoption.swift,
 				Library/LibraryFailureMessage.swift,
