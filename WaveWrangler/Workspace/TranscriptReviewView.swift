@@ -35,14 +35,12 @@ struct TranscriptReviewView: View {
                 Text("Provisional UI shell · synthetic fixture only · no media read or speech analysis.")
                     .wwFont(.body)
                     .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("ww.review.provisionalNotice")
             }
             .accessibilityElement(children: .contain)
 
             Text(TranscriptReviewShellPresentation.noLiveSourceReason)
                 .wwFont(.body)
-                .fixedSize(horizontal: false, vertical: true)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(nsColor: .controlBackgroundColor))
