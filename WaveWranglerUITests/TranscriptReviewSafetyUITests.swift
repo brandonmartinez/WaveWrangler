@@ -88,6 +88,10 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertTrue(inspector.waitForExistence(timeout: 3))
         let content = app.descendants(matching: .any)["ww.show.contentInspector"]
         XCTAssertTrue(
+            window.frame.contains(content.frame),
+            "The split AX group must fit the window rather than its document: content \(content.frame), window \(window.frame)"
+        )
+        XCTAssertTrue(
             window.frame.contains(inspector.frame),
             "The AX scroll viewport must be bounded by the window: scroll \(inspector.frame), content \(content.frame), window \(window.frame)"
         )
