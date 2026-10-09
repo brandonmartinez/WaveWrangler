@@ -1,5 +1,17 @@
 import Foundation
 import WWCore
+#if DEBUG
+import Darwin
+
+struct CheckpointPhaseMeasurement: Sendable {
+    let phase: String
+    let endedAt: ContinuousClock.Instant
+    let wallSeconds: Double
+    let threadCPUSeconds: Double?
+    let bytes: Int
+    let count: Int
+}
+#endif
 
 /// Stable key for a document's device-local recovery records. Derived from logical identity, never from a
 /// path, so checkpoints survive moving or renaming the document on this Mac.
@@ -37,6 +49,9 @@ public struct RecoveryStore: Sendable {
     public let root: URL
     public let retainCount: Int
     private let ops: any FileOperations
+    #if DEBUG
+    var timingObserver: (@Sendable (CheckpointPhaseMeasurement) -> Void)?
+    #endif
 
     public init(root: URL, retainCount: Int = 3, ops: any FileOperations = LocalFileOperations()) {
         precondition(retainCount >= 2, "Keep at least the last two validated revisions.")
@@ -57,26 +72,36 @@ public struct RecoveryStore: Sendable {
     /// Idempotent for identical bytes. Pruning only happens after the new checkpoint is in place.
     @discardableResult
     public func retainCheckpoint(_ bytes: Data, for key: DocumentKey) throws -> RecoveryCheckpoint {
-        let fingerprint = RevisionFingerprint(of: bytes)
+        let fingerprint = measured("retain-fingerprint", bytes: bytes.count) { RevisionFingerprint(of: bytes) }
         let directory = folder("checkpoints", key)
         let name = String(format: "%010d", fingerprint.revision ?? 0) + "-\(fingerprint.shortDigest).wwcheckpoint"
         let url = directory.appending(path: name)
-        try writeRecord(bytes, to: url)
+        try measured("retain-record", bytes: bytes.count) { try writeRecord(bytes, to: url) }
         let all = try checkpoints(for: key)
-        for stale in all.dropFirst(retainCount) where stale.url.lastPathComponent != url.lastPathComponent {
-            try ops.remove(stale.url)
+        try measured("retain-prune", count: all.count) {
+            for stale in all.dropFirst(retainCount) where stale.url.lastPathComponent != url.lastPathComponent {
+                try ops.remove(stale.url)
+            }
         }
         return RecoveryCheckpoint(key: key, url: url, fingerprint: fingerprint)
     }
 
     /// Retained checkpoints, newest revision first. Bytes are fingerprinted but not decoded here.
     public func checkpoints(for key: DocumentKey) throws -> [RecoveryCheckpoint] {
-        try records(in: folder("checkpoints", key), extension: "wwcheckpoint")
+        let urls = try measured("retained-enumerate", count: 1) {
+            try records(in: folder("checkpoints", key), extension: "wwcheckpoint")
+        }
+        let checkpoints: [RecoveryCheckpoint] = urls
             .compactMap { url in
-                guard let data = try? ops.read(url) else { return nil }
-                return RecoveryCheckpoint(key: key, url: url, fingerprint: RevisionFingerprint(of: data))
+                guard let data = measured("retained-read", bytesOf: { $0?.count ?? 0 }, { try? ops.read(url) })
+                else { return nil }
+                let fingerprint = measured("retained-fingerprint", bytes: data.count) { RevisionFingerprint(of: data) }
+                return RecoveryCheckpoint(key: key, url: url, fingerprint: fingerprint)
             }
+        return measured("retained-sort", count: urls.count) {
+            checkpoints
             .sorted { ($0.fingerprint.revision ?? 0, $0.url.lastPathComponent) > ($1.fingerprint.revision ?? 0, $1.url.lastPathComponent) }
+        }
     }
 
     /// Whole validated revisions that can be recovered, newest first: the verified-current record (if any)
@@ -196,8 +221,11 @@ public struct RecoveryStore: Sendable {
         )
         let bytes = try record.encoded()
         let url = folder("edit-checkpoints", key).appending(path: String(format: "%010d", sequence) + ".wwedit")
-        let staged = try stage(bytes)
-        guard try ops.read(staged) == bytes, (try? EditCheckpointRecord.decode(bytes)) == record else {
+        let staged = try measured("draft-stage-fsync", bytes: bytes.count) { try stage(bytes) }
+        let stagedBytes = try measured("staged-read", bytesOf: { $0.count }) { try ops.read(staged) }
+        guard measured("staged-equality", bytes: bytes.count, { stagedBytes == bytes }),
+              measured("staged-decode", bytes: bytes.count, { (try? EditCheckpointRecord.decode(bytes)) == record })
+        else {
             throw CocoaError(.fileWriteUnknown)
         }
         try ops.createDirectory(url.deletingLastPathComponent())
@@ -323,11 +351,11 @@ public struct RecoveryStore: Sendable {
     /// Whole-or-absent write of a content-addressed record; an existing identical record is accepted.
     private func writeRecord(_ bytes: Data, to url: URL) throws {
         if ops.exists(url) {
-            if (try? ops.read(url)) == bytes { return }
+            if measured("retain-existing-compare", bytes: bytes.count, { (try? ops.read(url)) == bytes }) { return }
             // A damaged leftover with the same name: keep it aside rather than overwrite silently.
             try ops.moveNew(url, to: url.appendingPathExtension("damaged-\(UUID().uuidString)"))
         }
-        let staged = try stage(bytes)
+        let staged = try measured("retain-stage-fsync", bytes: bytes.count) { try stage(bytes) }
         try ops.createDirectory(url.deletingLastPathComponent())
         try ops.moveNew(staged, to: url)
     }
@@ -346,6 +374,45 @@ public struct RecoveryStore: Sendable {
         try ops.writeNew(bytes, to: staged)
         return staged
     }
+
+    func measured<T>(
+        _ phase: String, bytes: Int = 0, count: Int = 1,
+        bytesOf: (T) -> Int = { _ in 0 }, _ operation: () throws -> T
+    ) rethrows -> T {
+        #if DEBUG
+        guard let timingObserver else { return try operation() }
+        let started = ContinuousClock.now
+        let cpuStarted = Self.threadCPUSeconds()
+        let value = try operation()
+        let ended = ContinuousClock.now
+        let cpuEnded = Self.threadCPUSeconds()
+        let duration = ended - started
+        timingObserver(CheckpointPhaseMeasurement(
+            phase: phase, endedAt: ended,
+            wallSeconds: Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18,
+            threadCPUSeconds: cpuStarted.flatMap { start in cpuEnded.map { max(0, $0 - start) } },
+            bytes: bytes == 0 ? bytesOf(value) : bytes, count: count
+        ))
+        return value
+        #else
+        return try operation()
+        #endif
+    }
+
+    #if DEBUG
+    private static func threadCPUSeconds() -> Double? {
+        var info = thread_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<thread_basic_info>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                thread_info(pthread_mach_thread_np(pthread_self()), thread_flavor_t(THREAD_BASIC_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        return Double(info.user_time.seconds + info.system_time.seconds)
+            + Double(info.user_time.microseconds + info.system_time.microseconds) / 1_000_000
+    }
+    #endif
 }
 
 /// C2b unpublished edit-checkpoint record: a whole-model snapshot of not-yet-published edits. Explicitly

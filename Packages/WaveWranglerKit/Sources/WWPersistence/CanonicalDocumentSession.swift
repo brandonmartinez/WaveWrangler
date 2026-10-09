@@ -20,6 +20,13 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
 
     private let publisher: DocumentPublisher<Coder>
     private let gate: AutosaveGate?
+    #if DEBUG
+    private var saveTimingHook: (@Sendable (Bool) -> Void)?
+
+    func observeSaveTiming(_ hook: @escaping @Sendable (Bool) -> Void) {
+        saveTimingHook = hook
+    }
+    #endif
 
     public init(
         key: DocumentKey,
@@ -118,6 +125,10 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
         isCancelled: () -> Bool = { false },
         followUp: PublicationFollowUp = .none
     ) -> Result<PublicationReceipt, PublicationError> {
+        #if DEBUG
+        saveTimingHook?(true)
+        defer { saveTimingHook?(false) }
+        #endif
         if let readOnlyReason { return .failure(.readOnly(readOnlyReason)) }
         if automatic, let gate, !gate.isEnabled {
             status.state = .autosaveSkipped
@@ -198,7 +209,9 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
     @discardableResult
     public func writeEditCheckpoint(keepingStatus: Bool = false) -> Bool {
         guard isDirty, readOnlyReason == nil, gate?.isEnabled ?? true, let recovery = publisher.recovery,
-              let snapshot = try? publisher.coder.encode(payload, revision: max(revision, base?.revision ?? 0) + 1)
+              let snapshot = recovery.measured("draft-snapshot-encode", bytesOf: { $0?.count ?? 0 }, {
+                  try? publisher.coder.encode(payload, revision: max(revision, base?.revision ?? 0) + 1)
+              })
         else { return false }
         do {
             let record = try recovery.writeEditCheckpoint(
