@@ -33,6 +33,8 @@ let package = Package(
         .library(name: "WWAlignSegment", targets: ["WWAlignSegment"]),
         // WW-021/WW-023 integration: headless analysis -> proposal -> accepted map -> aligned derived assets.
         .library(name: "WWAlignPipeline", targets: ["WWAlignPipeline"]),
+        // Pure WW-027 word/proposal evaluation; no recognizer, media access, or cut authorization.
+        .library(name: "WWWordEvaluation", targets: ["WWWordEvaluation"]),
         // Pure M3 proposal and protected-cut admission policy; mapping is supplied by an Alignment adapter.
         .library(name: "WWCutPolicy", targets: ["WWCutPolicy"]),
         // Headless persistence probe for multi-process and observed-provider trials (synthetic documents only).
@@ -52,6 +54,7 @@ let package = Package(
         .target(name: "WWRender", dependencies: ["WWCore", "WWTimeMap"]),
         .target(name: "WWAlignSegment", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
         .target(name: "WWAlignPipeline", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWDerived", "WWPersistence", "WWAlignEstimate", "WWRender"]),
+        .target(name: "WWWordEvaluation"),
         .target(name: "WWCutPolicy"),
         .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
@@ -67,6 +70,7 @@ let package = Package(
         .testTarget(name: "WWRenderTests", dependencies: ["WWRender", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWAlignSegmentTests", dependencies: ["WWAlignSegment", "WWAlignEstimate", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWAlignPipelineTests", dependencies: ["WWAlignPipeline", "WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWAlignEstimate", "WWRender", "WWCore"]),
+        .testTarget(name: "WWWordEvaluationTests", dependencies: ["WWWordEvaluation"]),
         .testTarget(name: "WWCutPolicyTests", dependencies: ["WWCutPolicy"]),
         // Headless validation on a user-approved local episode copy. Skipped unless WW_LOCAL_EPISODE_DIR is
         // set at run time (never on CI); see docs/m2/evidence/m2-local-episode-validation.md.
