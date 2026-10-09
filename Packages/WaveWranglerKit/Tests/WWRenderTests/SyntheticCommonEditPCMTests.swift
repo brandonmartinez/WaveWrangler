@@ -270,8 +270,10 @@ struct SyntheticCommonEditPCMTests {
             do {
                 _ = try SyntheticCommonEditPCMRenderer.render(plan, input: input, chunkFrames: 3)
                 return false
-            } catch {
+            } catch let error as SyntheticCommonEditPCMError {
                 return error == .cancelled
+            } catch {
+                return false
             }
         }
         #expect(await cancelled.value)
