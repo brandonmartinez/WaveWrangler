@@ -42,6 +42,8 @@ let package = Package(
         .library(name: "WWCutPolicy", targets: ["WWCutPolicy"]),
         // Headless persistence probe for multi-process and observed-provider trials (synthetic documents only).
         .executable(name: "wwpersist-probe", targets: ["WWPersistenceProbe"]),
+        // Explicitly opted-in, generated-PCM-only model experiment; not linked by the app.
+        .executable(name: "ww-tiny-pcm-probe", targets: ["WWTinyPCMProbe"]),
     ],
     targets: [
         .target(name: "WWCore"),
@@ -73,6 +75,7 @@ let package = Package(
         ),
         .target(name: "WWCutPolicy", dependencies: ["WWCore"]),
         .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),
+        .executableTarget(name: "WWTinyPCMProbe", dependencies: ["WWWhisperNative"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
         .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore", "WWPersistenceProbe", "WWOrganizer", "WWTimeMap"]),
         .testTarget(name: "WWSourcesTests", dependencies: ["WWSources", "WWCore"]),
@@ -88,6 +91,7 @@ let package = Package(
         .testTarget(name: "WWAlignPipelineTests", dependencies: ["WWAlignPipeline", "WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWAlignEstimate", "WWRender", "WWCore"]),
         .testTarget(name: "WWWordEvaluationTests", dependencies: ["WWWordEvaluation"]),
         .testTarget(name: "WWSpeechTests", dependencies: ["WWSpeech", "WWCore"]),
+        .testTarget(name: "WWTinyPCMProbeTests", dependencies: ["WWTinyPCMProbe"]),
         .testTarget(name: "WWCutPolicyTests", dependencies: ["WWCutPolicy", "WWCore"]),
         // Headless validation on a user-approved local episode copy. Skipped unless WW_LOCAL_EPISODE_DIR is
         // set at run time (never on CI); see docs/m2/evidence/m2-local-episode-validation.md.
