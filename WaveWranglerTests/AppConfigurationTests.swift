@@ -54,6 +54,27 @@ struct AppConfigurationTests {
         #expect(entry.contains("OfflineSocketProbe.runIfRequested()"))
     }
 
+    @Test func uiDiagnosticRunnerCanHostLocalPeersWithoutGrantingTheAppNetworking() throws {
+        let appEntitlements = try Self.plist("WaveWrangler.entitlements")
+        #expect(appEntitlements["com.apple.security.network.client"] == nil)
+        #expect(appEntitlements["com.apple.security.network.server"] == nil)
+        let runnerURL = Self.appFolder.deletingLastPathComponent()
+            .appending(path: "WaveWranglerUITests/OfflineDiagnosticUITests.entitlements")
+        let runnerData = try Data(contentsOf: runnerURL)
+        let runner = try #require(try PropertyListSerialization.propertyList(from: runnerData, format: nil) as? [String: Any])
+        #expect(runner as NSDictionary == [
+            "com.apple.security.app-sandbox": true,
+            "com.apple.security.network.client": true,
+            "com.apple.security.network.server": true,
+        ] as NSDictionary)
+        let project = try String(contentsOf: Self.appFolder.deletingLastPathComponent()
+            .appending(path: "WaveWrangler.xcodeproj/project.pbxproj"), encoding: .utf8)
+        #expect(project.components(separatedBy: "CODE_SIGN_ENTITLEMENTS = WaveWranglerUITests/OfflineDiagnosticUITests.entitlements;").count - 1 == 2,
+                "Debug and Release UI test configurations must sign the runner with local-peer privileges")
+        #expect(project.components(separatedBy: "CODE_SIGN_ENTITLEMENTS = WaveWrangler/WaveWrangler.entitlements;").count - 1 == 2,
+                "Only the app configurations may use its unchanged no-network entitlement file")
+    }
+
     @Test func speechSourceScanHasNoLaunchOrDescriptorRelayPath() throws {
         let root = Self.appFolder.deletingLastPathComponent()
         let sources = ["WaveWrangler", "Packages/WaveWranglerKit/Sources"].map { root.appending(path: $0) }

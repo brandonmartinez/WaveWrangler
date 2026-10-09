@@ -484,6 +484,7 @@
 		677E75DBA68CFE4DDF54A969 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = WaveWranglerUITests/OfflineDiagnosticUITests.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSPrincipalClass = WWUITestIsolation;
@@ -498,6 +499,7 @@
 		6762AC438239D46DF6FF58F8 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = WaveWranglerUITests/OfflineDiagnosticUITests.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSPrincipalClass = WWUITestIsolation;
