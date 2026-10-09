@@ -59,12 +59,16 @@ struct TranscriptReviewView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 } else {
-                    HStack(alignment: .top, spacing: 12) {
-                        transcriptPane
-                            .frame(minWidth: 230, maxWidth: .infinity)
-                        timelinePane
-                            .frame(minWidth: 250, maxWidth: .infinity)
+                    ScrollView(.vertical) {
+                        HStack(alignment: .top, spacing: 12) {
+                            transcriptPane
+                                .frame(minWidth: 230, maxWidth: .infinity)
+                            timelinePane
+                                .frame(minWidth: 250, maxWidth: .infinity)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
+                    .accessibilityIdentifier("ww.review.wideContentScroll")
                 }
             }
         }
