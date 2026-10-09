@@ -1,12 +1,22 @@
 import AppKit
 import WWOrganizer
 
+#if DEBUG
+import Darwin
+#endif
+
 /// Process entry point. The app is AppKit-hosted (NSApplication + NSDocumentController) with SwiftUI views
 /// inside document windows; there is no storyboard and no SwiftUI `App`/`DocumentGroup` scene.
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static func main() {
+        #if DEBUG
+        // Run the bounded synthetic diagnostic before AppKit initializes; it creates no window.
+        if CommandLine.arguments.count == 2, CommandLine.arguments[1] == "--ww-speech-synthetic-probe" {
+            exit(SpeechProbe.run())
+        }
+        #endif
         // The first `shared` access creates NSApp, so this makes it a WaveWranglerApplication (#126).
         let app = WaveWranglerApplication.shared
         let delegate = AppDelegate()
