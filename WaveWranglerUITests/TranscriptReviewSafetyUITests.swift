@@ -172,10 +172,15 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             for identifier in ["ww.review.lane.speaker-b-primary", "ww.review.timeline.domain.output"] {
                 let field = app.descendants(matching: .any)[identifier]
                 XCTAssertTrue(field.exists, "\(appearance): \(identifier) is present in AX")
-                for _ in 0..<18 where field.exists && !scroll.frame.contains(field.frame) {
+                Acceptance.record(self, "\(appearance) \(identifier): initial \(field.frame), viewport \(scroll.frame)")
+                for attempt in 0..<18 where field.exists && !scroll.frame.contains(field.frame) {
                     scroll.scroll(byDeltaX: 0, deltaY: -180)
+                    if attempt == 0 {
+                        Acceptance.record(self, "\(appearance) \(identifier): after first scroll \(field.frame)")
+                    }
                 }
-                XCTAssertTrue(scroll.frame.contains(field.frame), "\(appearance): \(identifier) scrolls fully into the viewport")
+                XCTAssertTrue(scroll.frame.contains(field.frame),
+                              "\(appearance): \(identifier) \(field.frame) scrolls fully into \(scroll.frame)")
                 XCTAssertTrue(window.frame.contains(field.frame), "\(appearance): \(identifier) fits inside the window")
                 XCTAssertTrue(field.isHittable, "\(appearance): \(identifier) has an in-window hit point")
                 XCTAssertFalse((field.value as? String ?? "").isEmpty, "\(appearance): \(identifier) has an AX value")
