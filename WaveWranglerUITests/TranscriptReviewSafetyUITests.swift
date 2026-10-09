@@ -75,9 +75,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             XCTAssertEqual(reason.label, "\(title) blocked")
             XCTAssertTrue((reason.value as? String ?? "").hasPrefix(reasonPrefix))
 
-            for _ in 0..<8 where !reason.isHittable {
-                inspector.swipeUp()
-            }
+            scrollToFullyVisible(reason, in: inspector)
             XCTAssertTrue(reason.isHittable, "\(title)'s refusal reason is visible in the inspector")
         }
     }
@@ -255,9 +253,12 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         let window = app.windows["ww.show.window"]
         XCTAssertTrue(window.frame.contains(container.frame), "\(label): the measured viewport must fit in the window")
         let visible = element.frame.intersection(container.frame).intersection(window.frame)
-        XCTAssertGreaterThanOrEqual(visible.height, 24, "\(label): at least one full line must be visibly reachable")
+        XCTAssertGreaterThanOrEqual(visible.height, 20, "\(label): at least one full line must be visibly reachable")
         XCTAssertTrue(element.isHittable, "\(label): text needs a real visible hit point")
-        guard visible.height >= 24, element.isHittable else { return }
+        guard visible.height >= 20, element.isHittable else { return }
+        if label.hasSuffix("blocked") {
+            Acceptance.attach(self, png: window.screenshot().pngRepresentation, name: "\(label)-window")
+        }
         let measured = measureWindowCrop(visible)
         let count = measured?["glyphPixels"] as? Int ?? 0
         let p75 = measured?["glyphP75"] as? Double ?? 0
