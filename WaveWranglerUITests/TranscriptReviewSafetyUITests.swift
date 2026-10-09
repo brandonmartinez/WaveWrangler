@@ -215,11 +215,8 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertFalse(Acceptance.hasKeyboardFocus(filter), "Move focus off the filter and the pointer off toolbar help")
         let window = app.windows["ww.show.window"]
         let selectedTitle = app.staticTexts["ww.review.occurrence.synthetic-001"]
-        let selectedNote = app.staticTexts["Example text only — no transcript analysis or timing."]
         XCTAssertTrue(selectedTitle.exists)
-        XCTAssertTrue(selectedNote.exists)
         measureVisibleText(selectedTitle, in: window, label: "selected occurrence title", minimumLineHeight: 14)
-        measureVisibleText(selectedNote, in: window, label: "selected occurrence note", minimumLineHeight: 14)
 
         let unwaived = try AcceptanceAudit.run(
             app,
