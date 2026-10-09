@@ -310,13 +310,21 @@ actor AlignmentRuntime {
             let record = try? await accessStore.record(for: key)
             let evaluation = evaluator.evaluate(key: key, record: record, setting: .on)
             if let refreshed = evaluation.refreshedRecord { try? await accessStore.save(refreshed) }
-            guard let url = evaluation.resolvedURL else {
+            guard let url = evaluation.resolvedURL,
+                  evaluation.observation.access == .granted,
+                  evaluation.observation.identity == .matchesRecorded,
+                  evaluation.observation.location == .present,
+                  evaluation.observation.residency == .local
+            else {
                 values.append(AlignmentSource(id: source.id, url: URL(fileURLWithPath: "/"), availability: .off))
                 await coordinator.removeSource(source.id)
                 continue
             }
             let revision = access.withScopedAccess(to: url) { scoped -> SourceRevision? in
-                guard case let .success(metadata) = access.io.metadata(at: scoped) else { return nil }
+                guard case let .success(metadata) = access.io.metadata(at: scoped),
+                      metadata.isReadable.value == true,
+                      record?.recordedIdentity?.fingerprint.compare(to: metadata.fingerprint) == .matches
+                else { return nil }
                 return .metadata(source.id, fingerprint: metadata.fingerprint)
             }
             if let revision {
@@ -417,6 +425,14 @@ enum AlignmentRuntimeProvider {
             )
         }
         return runtime
+    }
+
+    /// Only the app may bind an untrusted package inventory to its actual open ShowDocument. This
+    /// private snapshot is not an edit authorization or a protection/fade/publication proof.
+    static func sourceInventorySnapshot(
+        for document: ShowDocument, episode episodeID: EpisodeID
+    ) async throws -> OpenEpisodeSourceSnapshot {
+        try await OpenEpisodeSourceSnapshot.issue(for: document, episode: episodeID)
     }
 
     static func reconcileActive(for document: ShowDocument) {
