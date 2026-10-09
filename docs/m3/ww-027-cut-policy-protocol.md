@@ -106,3 +106,42 @@ placements (Primary, Backup, other-speaker and omitted-lane cases) under both mo
 absent/hallucinated timing, ambiguous inverse, uncovered lane, last-frame merged fade, stale keys,
 explicit human-action refusal and append-only Undo/Redo/branch history.
 They are a **bounded precursor**, not the frozen precision or real-material gates.
+
+## Bounded per-cut decision audit (WW-032 preparatory unit)
+
+`CutDecisionHistory` is a separate, versioned Codable value for **one** proposal. It records named
+Adjust, Accept, Reject, Restore and Abstain decisions with stable `EditID`s and an undo/redo cursor;
+recording after Undo discards the redo tail. It retains the selected Primary's exact source/channel/
+occurrence/epoch, the proposal's word timing and correction/dependency revisions, source-frame
+boundaries, Shorten/Lift mode and requested output-frame fade lengths. An admitted Accept also records
+the pre-edit common aligned-output grid `[qStart, qEnd)`, output sample rate and historical person-action
+ID. These are **not** post-edit Output positions. Output gain and playback-rate changes are not
+supported by `CutRequest`/`CutPolicy` and are not represented or authorized by this audit.
+
+Decoding checks the version, cursor, unique candidate-token/edit/person-action IDs, valid ranges
+and chained transitions; it cannot authenticate a saved claim of acceptance. `auditState` (including `.accepted`)
+and `auditFreshness(.matchesRecordedKey)` are **historical facts only**, even if the bytes were forged
+or a key happens to match. No Codable type here is a trusted `ApprovedCut`, `VerifiedEpisodeState` or
+`HumanReviewAction`. Undo/Redo move the audit cursor only. A real reactivation requires a *new*
+`CutPolicy.admit` with current trusted episode state, a fresh privately minted person action, and a
+current complete all-lane footprint including final merged fades. Key changes (including Primary/
+Backup activation, correction, source/model/asset/format, map and other-cut revisions) keep the
+history readable but mark it stale; neither a stale nor a matching audit may be exported by itself.
+
+This standalone value round-trips independently; it is **not** embedded in `ShowDocumentModel.history`,
+does not bump the canonical show schema, and is not wired to native save/reopen, app preview, common-map
+publication or rendering. The M1 `WWCore.EditHistory` persisted shape remains unchanged. A future
+integration must define canonical schema migration, atomic map/history publication, independent
+verified re-admission on reopen/undo, and post-edit Output-coordinate derivation before #27/#41
+acceptance. Synthetic tests do not establish real-media, native UI/GUI or full-suite qualification.
+
+**Synthetic RED -> GREEN, 2026-10-09, working Mac:** With two SwiftPM build jobs and tests serialized,
+the new ledger suite first ran 7 tests: 6 passed, and the duplicate-token identity test failed as
+expected; the separate legacy `WWCore.EditHistory` decoding test passed (1/1). After refusing duplicate
+token IDs at ledger creation/decode, a filtered rerun passed **19/19 WWCutPolicy tests** (7 history,
+12 existing policy, including 120 adversarial placements under both modes) and **1/1 WWCore legacy
+decode test**. Command: `SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=2 swift test
+--package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm --jobs 2 --no-parallel
+--filter 'WWCutPolicyTests|legacyNamedHistoryStillDecodes'`. The recorded working-tree checks are
+scoped synthetic unit evidence, **not** a clean exact-head `scripts/test.sh`, renderer/common-map,
+native save/reopen, GUI, real-media or independent cumulative-review gate.
