@@ -1,5 +1,12 @@
 import WWCommonEdit
 
+struct SyntheticPCMChunk: Sendable {
+    let firstOutputFrame: Int64
+    let frameCount: Int
+    let channelCount: Int
+    let samples: [Float]
+}
+
 /// Test-only, already-aligned PCM. This internal boundary has no source provider or production issuer.
 struct SyntheticAlignedPCM: Sendable {
     let lanes: [(identity: KeyedEditLane, samples: [Float])]
@@ -157,7 +164,7 @@ struct SyntheticCommonEditPCMPlan: Sendable {
 
 struct SyntheticCommonEditPCMResult: Sendable {
     let plan: SyntheticCommonEditPCMPlan
-    let chunks: [RenderedChunk]
+    let chunks: [SyntheticPCMChunk]
 }
 
 enum SyntheticCommonEditPCMRenderer {
@@ -190,7 +197,7 @@ enum SyntheticCommonEditPCMRenderer {
         }
 
         let map = plan.mapping.map
-        var chunks: [RenderedChunk] = []
+        var chunks: [SyntheticPCMChunk] = []
         var outputFrame: Int64 = 0
         while outputFrame < map.outputFrameCount {
             guard !Task.isCancelled else { throw .cancelled }
@@ -231,7 +238,7 @@ enum SyntheticCommonEditPCMRenderer {
                     }
                 }
             }
-            chunks.append(RenderedChunk(
+            chunks.append(SyntheticPCMChunk(
                 firstOutputFrame: outputFrame, frameCount: frames,
                 channelCount: laneCount, samples: output
             ))

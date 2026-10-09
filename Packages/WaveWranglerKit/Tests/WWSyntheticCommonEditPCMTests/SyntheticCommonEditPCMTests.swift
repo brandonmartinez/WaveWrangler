@@ -2,7 +2,7 @@ import Testing
 import WWCommonEdit
 import WWCore
 import WWTimeMap
-@testable import WWRender
+@testable import WWSyntheticCommonEditPCM
 
 @Suite("Synthetic common edit PCM bridge (not production admission)")
 struct SyntheticCommonEditPCMTests {
@@ -365,7 +365,8 @@ private struct PCMFixture {
                 group: id, reference: reference,
                 epochs: [.init(epoch: epoch, mapping: .mapped(
                     segments: [segment],
-                    provenance: .manual(.init(basis: .numericEntry))
+                    provenance: id == primaryGroup ? .timelineReference :
+                        .manual(.init(basis: .numericEntry))
                 ))],
                 placements: [.init(
                     occurrence: recording,

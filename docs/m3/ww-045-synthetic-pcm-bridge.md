@@ -1,7 +1,9 @@
 # WW-045: provisional common-edit PCM bridge
 
-`WWRender` has an internal, source-free `SyntheticCommonEditPCMPlan` and
-`SyntheticCommonEditPCMRenderer`. The plan takes the exact **base** `CommonEpisodeEditMap`,
+The separate, unexported `WWSyntheticCommonEditPCM` package target has an internal,
+source-free `SyntheticCommonEditPCMPlan` and `SyntheticCommonEditPCMRenderer`.
+Neither the frozen M2 `WWRender` source nor its test tree is changed. The plan takes
+the exact **base** `CommonEpisodeEditMap`,
 the `ProvisionalKeyedCutMapping` returned by `KeyedCutMapping.map`, its Shorten/Lift mode,
 the ordered lane manifest and structural surveys. It rebuilds and compares the complete
 resulting map, including revisions, alignment, origin, rate and removals, then runs
@@ -10,7 +12,7 @@ survey field against the keyed mapper's retained, validated survey, and refuses 
 protected interval intersecting the pending grid in **both** Shorten and Lift.
 Neither caller-supplied keys nor this finite structural check
 constitute trusted source, protection or human-acceptance evidence. The bridge is
-internal to `WWRender` and is **not** wired into app preview, export, source providers
+internal to its package target and is **not** wired into app preview, export, source providers
 or publication; `CommonEditAttestation.prepare` still refuses.
 
 The already-aligned planar input has one full original-grid buffer per declared audio
@@ -29,7 +31,7 @@ cuts and removed spans and pass preflight's coverage and protection checks. The 
 linear fade-out uses `(length - position - 1) / length`, and fade-in uses
 `(position + 1) / length`; all frames outside envelopes are bitwise copies.
 
-The returned immutable result holds **one** plan and ordered `RenderedChunk` values,
+The returned immutable result holds **one** plan and ordered `SyntheticPCMChunk` values,
 reusable by synthetic preview/export comparisons without two independently selected
 maps. Work refuses above the existing 8,192-frame / 16-lane / 65,536-frame-lane
 preflight budget; chunk size must be 1–8,192. Cancellation before work, between chunks
@@ -46,4 +48,5 @@ protection proof, a current trusted organizer/access witness, accepted cut and r
 action, final fade authorization, atomic map/history publication and invalidation, and
 an independently reviewed production renderer/provider integration. This preparatory
 bridge does not supply any of those gates or change the existing `GroupRenderer` input
-and channel-integrity contract.
+and channel-integrity contract. Its `SyntheticPCMChunk` is not a production
+`WWRender.RenderedChunk` or a render/export admission.
