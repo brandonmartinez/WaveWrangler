@@ -244,6 +244,76 @@ final class CoreTasksKeyboardUITests: XCTestCase {
         }
     }
 
+    /// An AX and keyboard walk of the retained-prior offer; spoken VoiceOver captions require VoiceOver to run.
+    func testT17RecoveryActionAXKeyboardWalk() throws {
+        let document = try makeDocument("Recovery AX")
+        try task("T17 AX keyboard walk") {
+            let window = try launchAndOpen(document, autosave: false)
+            for title in ["Complete Version", "Newest Version"] {
+                try editShowTitle(window, title)
+                app.typeKey("s", modifierFlags: .command)
+                check(Acceptance.waitFor(timeout: 10) { self.diskTitle(document) == title },
+                      "\(title) saved")
+            }
+            app.terminate()
+            let bytes = try Data(contentsOf: document)
+            let damaged = Data(bytes.prefix(bytes.count / 2))
+            try damaged.write(to: document)
+            _ = try openOptionally(document, autosave: false)
+
+            let offer = app.dialogs.firstMatch.exists ? app.dialogs.firstMatch : app.sheets.firstMatch
+            guard offer.waitForExistence(timeout: 10) else {
+                check(false, "the retained-prior recovery offer appears")
+                return
+            }
+            let buttons = offer.buttons.allElementsBoundByIndex
+            let newest = offer.buttons["Open Newest Prior Copy (revision 2)"]
+            let older = offer.buttons["Open Prior Copy 2 (revision 1)"]
+            let expected = Set(["Cancel", "Open Newest Prior Copy (revision 2)", "Open Prior Copy 2 (revision 1)"])
+            check(Set(buttons.map(\.label)) == expected && buttons.allSatisfy {
+                $0.elementType == .button && $0.isEnabled
+            }, "three distinct, enabled AX buttons with their own roles: \(buttons.map(\.label))")
+            try audit("T17 recovery action AX walk")
+
+            let keyboardNavigation = UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0
+            var focusOrder: [String] = []
+            if keyboardNavigation {
+                for _ in 0..<(buttons.count * 3) {
+                    if let focused = buttons.first(where: Acceptance.hasKeyboardFocus) {
+                        focusOrder.append(focused.label)
+                    }
+                    app.typeKey("\t", modifierFlags: [])
+                }
+                check(Set(focusOrder) == expected, "Tab reaches each named recovery action: \(focusOrder)")
+                for _ in 0..<(buttons.count + 1) where !Acceptance.hasKeyboardFocus(newest) {
+                    app.typeKey("\t", modifierFlags: [])
+                }
+                check(Acceptance.hasKeyboardFocus(newest), "Tab can return focus to the newest prior")
+            }
+            Acceptance.writeEvidence("t17-recovery-action-ax-keyboard", [
+                "buttonLabels": buttons.map(\.label), "focusOrder": focusOrder,
+                "keyboardNavigation": keyboardNavigation, "spokenVoiceOverCaptured": false,
+            ], test: self)
+            if keyboardNavigation {
+                if Acceptance.hasKeyboardFocus(newest) { app.typeKey(" ", modifierFlags: []) }
+            } else {
+                app.typeKey(.return, modifierFlags: [])
+            }
+
+            let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
+            check(copy.waitForExistence(timeout: 10), "keyboard activation opens the newest prior")
+            if copy.exists {
+                let info = copy.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
+                check(info.waitForExistence(timeout: 5), "recovered copy has Show Info")
+                if info.exists { info.click() }
+                let title = copy.textFields["Show title"]
+                check(title.waitForExistence(timeout: 5) && title.value as? String == "Complete Version",
+                      "the named newest prior, not the older copy, opened: \(title.value ?? "nil")")
+            }
+            check((try? Data(contentsOf: document)) == damaged, "the damaged file remains unchanged")
+        }
+    }
+
     /// T20 (K19): a show written by a newer WaveWrangler is refused for editing and saving with a reason.
     func testT20UnknownNewerRefusal() throws {
         let document = try makeDocument("Newer")
