@@ -89,13 +89,46 @@ enum SelectedPrimarySourceReadRefusal: Error, Equatable, Sendable {
     case selectionUnavailable
     case acceptedMapUnavailable
     case windowOutsideMappedEpoch
+    case accessChanged
+    case changedDuringVerification
     case trustedSourceOpenUnavailable
+}
+
+/// A future checked result; only the issuer may ever construct one.
+struct SelectedPrimaryPCMWindow: Sendable {
+    let channel: Int
+    let sourceFrames: Range<Int64>
+    let samples: [Float]
+
+    private init(channel: Int, sourceFrames: Range<Int64>, samples: [Float]) {
+        self.channel = channel
+        self.sourceFrames = sourceFrames
+        self.samples = samples
+    }
 }
 
 /// App-only preparation; it cannot issue PCM. Neither the metadata inventory nor a cached access
 /// record can authorize the decoder's open descriptor, so the last step remains an explicit refusal.
 @MainActor
 enum SelectedPrimarySourceReadIssuer {
+    #if DEBUG
+    enum Phase: Equatable {
+        case afterAuthorityCapture
+        case beforeDescriptorOpen
+        case beforePublication
+    }
+
+    static var debugPhaseObserver: (@MainActor (Phase) async throws -> Void)?
+    static var debugSourceOpenObserver: (@MainActor (SourceID) -> Void)?
+    #endif
+
+    static func readCheckedPrimaryWindow(
+        for document: ShowDocument, in window: NSWindow, startingAt start: Int64
+    ) async throws -> SelectedPrimaryPCMWindow {
+        try Task.checkCancellation()
+        throw SelectedPrimarySourceReadRefusal.trustedSourceOpenUnavailable
+    }
+
     static func requireSourceReadAuthority(
         for document: ShowDocument, in window: NSWindow, startingAt start: Int64
     ) async throws -> Never {

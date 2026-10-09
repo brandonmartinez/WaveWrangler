@@ -70,8 +70,11 @@ success-shaped fake issuance here would bypass the very boundary under test.
 
 An independent Fact Checker approved **tests-only RED preparation**, not
 positive issuance. `WaveWranglerHostedTests/SelectedPrimaryIssuerRedTests.swift`
-now specifies the missing internal app-owned `readCheckedPrimaryWindow` bridge
-and its `SelectedPrimaryPCMWindow` result. This is intentionally a compile RED:
+specifies the internal app-owned `readCheckedPrimaryWindow` entry point and its
+`SelectedPrimaryPCMWindow` result. The app now has only a fail-closed compiling
+scaffold: the result cannot be constructed outside its private initializer,
+the bridge checks cancellation and otherwise always throws
+`trustedSourceOpenUnavailable`, and DEBUG observer slots are never invoked.
 `requireSourceReadAuthority` still returns `Never`. The hosted fixture refuses
 to touch `SetupEngineProvider.store` or create bookmarks unless
 `PersistenceEnvironment.isUITestRun` was set at app launch. It registers an
@@ -109,10 +112,14 @@ before-open/before-publication count and must throw `CancellationError`.
 These phase/count assertions prohibit an earlier generic refusal from
 masquerading as a passed stale-authority recheck.
 
-This hosted RED suite has **not** had native compilation or GUI execution:
-that requires a separately authorized JIT/GUI lease. Its intended compile
-failure on missing app-private symbols is not a test pass and does not change
-the refusal-only production issuer or authorize Backup, inference, or edits.
+At `6144838b` the hosted build exited 65 with zero tests on the missing result
+type; that compiler sentinel predates this scaffold. This new head has **not**
+had native compilation or GUI execution: a separate JIT/GUI lease is required.
+Once it compiles, the hosted suite must fail behaviorally because the issuer
+does not invoke observers or return PCM; compilation alone cannot establish
+that outcome, and later test/fixture diagnostics may still surface. Neither
+the scaffold nor the package checked-open compile RED authorizes Backup,
+inference, edits, or a positive source read.
 
 Before a positive release, add these **behavioral** RED cases against the
 reviewed private seam (not just source-text assertions):

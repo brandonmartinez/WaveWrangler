@@ -9,7 +9,7 @@ import WWSources
 import WWTimeMap
 @testable import WaveWrangler
 
-/// RED: these app-private checked-read and DEBUG observation entry points do not exist yet.
+/// RED: the app-private entry point is fail-closed and its DEBUG observers never fire.
 /// Run only with the hosted test scheme's isolated UI-test storage and a GUI-host lease.
 @MainActor
 @Suite("RED app-owned selected Primary issuer", .serialized)
