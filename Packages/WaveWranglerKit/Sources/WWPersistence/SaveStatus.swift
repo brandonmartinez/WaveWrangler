@@ -20,6 +20,8 @@ public enum DocumentSaveState: Sendable, Equatable {
     case saveFailed(retainedRevision: Int?, kind: WriteFailureKind, message: String)
     /// Another revision is on disk; nothing was overwritten and this candidate is preserved on this Mac.
     case conflict(onDiskRevision: Int?, missing: Bool)
+    /// The originating item cannot be confirmed even if path and bytes match; no overwrite was attempted.
+    case originConflict(message: String)
     /// Publication may have happened but was not verified. Reopen to verify.
     case acknowledgementUncertain(message: String)
     /// A C2b unpublished edit checkpoint (not a save) protects the unsaved edits on this Mac.
@@ -43,6 +45,7 @@ public enum DocumentSaveState: Sendable, Equatable {
         case let .savedFollowUpIncomplete(revision, _): "Saved on this Mac — revision \(revision); library not yet updated"
         case let .saveFailed(retained, _, _): "Save failed — revision \(retained.map(String.init) ?? "on disk") retained"
         case let .conflict(_, missing): missing ? "Conflict — the document was moved or deleted" : "Conflict — another revision is on disk"
+        case .originConflict: "Save refused — original file identity could not be verified"
         case .acknowledgementUncertain: "Save may have completed — reopen to verify"
         case let .recoveryCheckpoint(at): "Unsaved changes protected on this Mac (checkpoint \(at.formatted(date: .omitted, time: .standard))) — not saved"
         case .autosaveSkipped: "Not saved — autosave is off"
@@ -73,7 +76,7 @@ public enum DocumentSaveState: Sendable, Equatable {
     /// Whether unsaved work may exist (drives "unsaved" indicators; never cleared by skipped/failed saves).
     public var hasUnsavedWork: Bool {
         switch self {
-        case .edited, .saveFailed, .conflict, .acknowledgementUncertain, .recoveryCheckpoint, .autosaveSkipped, .cancelled, .saving: true
+        case .edited, .saveFailed, .conflict, .originConflict, .acknowledgementUncertain, .recoveryCheckpoint, .autosaveSkipped, .cancelled, .saving: true
         case .clean, .saved, .savedFollowUpIncomplete, .readOnlyNewerFormat, .recoveredReadOnly: false
         }
     }
@@ -86,6 +89,7 @@ public enum DocumentSaveState: Sendable, Equatable {
         case let .failed(_, kind, _): .saveFailed(retainedRevision: retainedRevision, kind: kind, message: error.errorDescription ?? "")
         case .cancelled: .cancelled
         case let .acknowledgementUncertain(message): .acknowledgementUncertain(message: message)
+        case let .originConflict(reason): .originConflict(message: reason)
         }
     }
 }

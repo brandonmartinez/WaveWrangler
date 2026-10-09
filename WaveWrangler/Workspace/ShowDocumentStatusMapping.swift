@@ -35,6 +35,8 @@ enum ShowDocumentStatusMapping {
             }
         case .conflict:
             .conflict(changedAt: nil)
+        case let .originConflict(reason):
+            .failed(reason: reason)
         case .acknowledgementUncertain:
             .notConfirmed
         case .readOnlyNewerFormat:

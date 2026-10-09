@@ -101,6 +101,7 @@ private struct SaveStatusPopover: View {
     let state: ShowWindowState
     let presentation: SaveStatusPresentation
     @FocusState private var focusedAction: Int?
+    @FocusState private var focusedRecoveryURL: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -111,6 +112,30 @@ private struct SaveStatusPopover: View {
                 .wwFont(.body)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 360, alignment: .leading)
+            if let warning = state.store.document?.status.recoveryWarning {
+                Text(warning).wwFont(.body)
+            }
+            if let document = state.store.document, !document.status.priorCheckpoints.isEmpty {
+                Text("\(document.status.priorCheckpoints.count) prior recovery copies are kept on this Mac. Storage use can grow without a limit until you discard them individually.")
+                    .wwFont(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(document.status.priorCheckpoints, id: \.url) { prior in
+                            HStack {
+                                Text("Revision \(prior.fingerprint.revision.map(String.init) ?? "unknown") — \(prior.url.lastPathComponent)")
+                                    .lineLimit(1)
+                                Button("Open Copy") { state.openPriorAsCopy(prior) }
+                                    .focused($focusedRecoveryURL, equals: prior.url)
+                                    .accessibilityIdentifier("ww.show.recovery.openPrior.\(prior.url.lastPathComponent)")
+                                Button("Discard…") { state.discardPrior(prior) }
+                                    .accessibilityIdentifier("ww.show.recovery.discardPrior.\(prior.url.lastPathComponent)")
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 260)
+            }
             if !presentation.actions.isEmpty {
                 HStack {
                     ForEach(Array(presentation.actions.enumerated()), id: \.element) { index, action in
@@ -128,7 +153,10 @@ private struct SaveStatusPopover: View {
         .accessibilityIdentifier("ww.show.saveStatus.popover")
         // The popover itself (AppKit's frame around this content) needs a description too (A11Y audit, #157).
         .background(PopoverAccessibilityLabel(label: "Save status details"))
-        .onAppear { focusedAction = presentation.actions.isEmpty ? nil : 0 }
+        .onAppear {
+            focusedAction = presentation.actions.isEmpty ? nil : 0
+            focusedRecoveryURL = presentation.actions.isEmpty ? state.store.document?.status.priorCheckpoints.first?.url : nil
+        }
     }
 }
 

@@ -13,8 +13,9 @@ public struct StoredEditCheckpoint: Sendable, Equatable {
 
 /// C2b recovery presentation, decided on open/relaunch (contracts C2b, #84). Pure: no I/O.
 ///
-/// - If a usable record is based on exactly the on-disk publication (same bytes, so the same revision and
-///   publication), offer **"Restore unsaved changes from <time>"**. A restored document is dirty, not saved.
+/// - If a usable record's base SHA-256 matches the observed on-disk publication, offer
+///   **"Restore unsaved changes from <time>"**. A digest match is not a byte-for-byte proof;
+///   a restored document is dirty, not saved.
 /// - If it is based on any other publication, offer **"Unsaved changes based on an older revision"**, opened
 ///   only as a separate untitled copy. Never auto-merged, never auto-published.
 /// - Unreadable, damaged, wrong-document and unknown-newer records are reported as problems and retained;
@@ -51,9 +52,8 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
     public enum CandidateMode: Sendable, Equatable {
         /// Based on exactly the publication on disk and no other restore in effect: "Restore unsaved changes".
         case restore
-        /// Based on the publication on disk, but another record's restore is in effect in this window. A second
-        /// restore would replace the first (and its record could then be resolved by a save that doesn't hold
-        /// it), so this record opens only as a separate copy.
+        /// Based on the publication on disk, but another record's restore is in effect in this window.
+        /// A second restore would replace the first, so this record opens only as a separate copy.
         case copyOnlyWhileAnotherRestoreIsInEffect
         /// Based on another (older) publication: opens only as a separate copy; never restored over newer work.
         case copyOnlyOlderRevision
@@ -127,21 +127,8 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
         )
     }
 
-    /// The offer without the given records (restored, discarded, copied or hidden); everything else remains.
+    /// The offer without problem reports explicitly dismissed in this window; no record is removed.
     public func excluding(_ urls: Set<URL>) -> EditCheckpointOffer {
         EditCheckpointOffer(usable: usable.filter { !urls.contains($0.url) }, problems: problems.filter { !urls.contains($0.url) })
-    }
-}
-
-/// Which restored offer records a verified publication resolves (#84 review). A record is deleted only when the
-/// publication contains its restore: the restore was in effect when the save started **and** still is (an Undo
-/// of the restore removes it from `restoredNow`), and the published candidate equals the current model (no
-/// undo or edits during the save). Anything else stays for a later save, or for the next launch.
-public enum RestoredEditCheckpoints {
-    public static func resolved(byPublicationStartedWith atStart: Set<URL>, restoredNow: Set<URL>, publishedEqualsCurrent: Bool) -> Set<URL> {
-        // Only one restore can be in effect (`EditCheckpointOffer.candidateMode`), so the published model is that
-        // record's snapshot plus later edits. If more than one is ever marked, it's ambiguous: delete none.
-        guard publishedEqualsCurrent, atStart.count <= 1, restoredNow.count <= 1 else { return [] }
-        return atStart.intersection(restoredNow)
     }
 }

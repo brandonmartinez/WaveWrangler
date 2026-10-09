@@ -5,6 +5,10 @@ import Foundation
 public enum EditCheckpointOfferState: Sendable, Equatable {
     /// Based on exactly the version on disk: offer to restore as unsaved changes (dirty, never "Saved").
     case restore(createdAt: Date)
+    /// Restored in memory; its device-local recovery copy remains offerable after any save.
+    case restored(createdAt: Date)
+    /// The file's current base cannot be verified, so in-place restore is refused.
+    case unverified(createdAt: Date)
     /// Based on another (older) version: open only as a separate untitled copy; never merged or published.
     case olderRevision(createdAt: Date)
     /// Another session's unsaved changes, while a restore is already in effect in this window: open only as a
@@ -20,6 +24,7 @@ public enum EditCheckpointAction: String, Sendable, Equatable, CaseIterable {
     case openAsCopy = "Open as Separate Copy"
     case discard = "Discard…"
     case showInFinder = "Show in Finder"
+    case checkAgain = "Check Again"
     case dismiss = "Dismiss…"
 }
 
@@ -36,25 +41,37 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
         switch state {
         case let .restore(createdAt):
             heading = "Restore unsaved changes from \(formatTime(createdAt))?"
-            body = "WaveWrangler kept changes to “\(showName)” on this Mac that were never saved. "
+            body = "WaveWrangler kept a recovery copy of changes to “\(showName)” on this Mac. "
                 + "If you restore them, they appear in this window as unsaved changes that you can save or undo. "
-                + "The saved show hasn't been changed."
+                + "Restoring does not remove this recovery copy."
             symbolName = "clock.arrow.circlepath"
             actions = [.restore, .discard]
+        case let .restored(createdAt):
+            heading = "Recovery copy kept from \(formatTime(createdAt))"
+            body = "WaveWrangler kept this recovery copy of “\(showName)” on this Mac, even after restoring or saving. "
+                + "Review it as a separate copy or choose Discard to remove only this record."
+            symbolName = "clock.arrow.circlepath"
+            actions = [.openAsCopy, .discard]
         case let .olderRevision(createdAt):
             heading = "Unsaved changes based on an older revision"
-            body = "WaveWrangler kept changes to “\(showName)” from \(formatTime(createdAt)) on this Mac that were never saved, "
-                + "but the show has been saved since then. So that neither version is overwritten, they can only be opened "
+            body = "WaveWrangler kept a recovery copy of changes to “\(showName)” from \(formatTime(createdAt)) on this Mac, "
+                + "but the show's on-disk revision differs from its base. So neither version is overwritten, it can only be opened "
                 + "as a separate untitled copy, which you can compare with this show."
             symbolName = "exclamationmark.triangle"
             actions = [.openAsCopy, .discard]
         case let .anotherSession(createdAt):
             heading = "More unsaved changes from \(formatTime(createdAt))"
-            body = "WaveWrangler kept another set of changes to “\(showName)” from \(formatTime(createdAt)) on this Mac that were never saved. "
+            body = "WaveWrangler kept another recovery copy of changes to “\(showName)” from \(formatTime(createdAt)) on this Mac. "
                 + "You've already restored unsaved changes in this window, so these can only be opened as a separate untitled copy. "
                 + "That way neither set is lost."
             symbolName = "exclamationmark.triangle"
             actions = [.openAsCopy, .discard]
+        case let .unverified(createdAt):
+            heading = "Recovery copy kept — file could not be checked"
+            body = "WaveWrangler couldn't check whether the recovery copy from \(formatTime(createdAt)) matches “\(showName)” on disk. "
+                + "It has been kept on this Mac. Check Again or open it as a separate untitled copy; in-place restore is unavailable."
+            symbolName = "exclamationmark.triangle"
+            actions = [.checkAgain, .openAsCopy, .discard]
         case let .unusable(damaged, newerFormat):
             heading = "Unsaved changes couldn't be restored"
             let reason = switch (damaged > 0, newerFormat > 0) {
@@ -65,8 +82,9 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
             body = "WaveWrangler found unsaved changes to “\(showName)” on this Mac that it can't use. \(reason) "
                 + "They weren't applied, and they've been kept on this Mac."
             symbolName = "exclamationmark.triangle"
-            actions = [.showInFinder, .dismiss]
+            actions = [.showInFinder, .discard, .dismiss]
         }
+        body += " Recovery copies use local storage without a limit until you discard them individually."
     }
 
     /// Confirmation for the bar's destructive or dismissing actions (Dismiss/Discard need an explicit
@@ -77,9 +95,15 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
         formatTime: (Date) -> String = SaveStatusPresentation.defaultTime
     ) -> (message: String, informative: String, button: String)? {
         switch (action, state) {
-        case let (.discard, .restore(createdAt)), let (.discard, .olderRevision(createdAt)), let (.discard, .anotherSession(createdAt)):
+        case let (.discard, .restore(createdAt)), let (.discard, .restored(createdAt)),
+             let (.discard, .olderRevision(createdAt)), let (.discard, .anotherSession(createdAt)),
+             let (.discard, .unverified(createdAt)):
             ("Discard unsaved changes from \(formatTime(createdAt))?",
-             "These changes were never saved. If you discard them, they can't be restored.",
+             "This recovery copy stays on this Mac until you discard it. If you discard it, it can't be restored.",
+             "Discard")
+        case (.discard, .unusable):
+            ("Discard this unusable recovery record?",
+             "Only the selected record will be removed. It can't be restored afterward; other recovery records stay on this Mac.",
              "Discard")
         case (.dismiss, .unusable):
             ("Hide this message?",

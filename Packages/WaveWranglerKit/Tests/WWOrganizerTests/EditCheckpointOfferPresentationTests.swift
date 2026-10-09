@@ -11,8 +11,8 @@ struct EditCheckpointOfferPresentationTests {
     @Test func restoreBasedOnCurrent() {
         let p = EditCheckpointOfferPresentation(.restore(createdAt: date), showName: "The Daily Wrangle", formatTime: time)
         #expect(p.heading == "Restore unsaved changes from 10:42 PM?")
-        #expect(p.body.contains("“The Daily Wrangle”") && p.body.contains("never saved") && p.body.contains("unsaved changes"))
-        #expect(!p.body.localizedCaseInsensitiveContains("saved to"))
+        #expect(p.body.contains("“The Daily Wrangle”") && p.body.contains("recovery copy") && p.body.contains("unsaved changes"))
+        #expect(!p.body.localizedCaseInsensitiveContains("never saved"))
         #expect(p.actions == [.restore, .discard])
         #expect(p.announcement == p.heading)
         #expect(EditCheckpointAction.restore.rawValue == "Restore Unsaved Changes")
@@ -43,8 +43,8 @@ struct EditCheckpointOfferPresentationTests {
         #expect(newer.body.contains("newer version of WaveWrangler"))
         #expect(both.body.contains("couldn't be read") && both.body.contains("newer version"))
         for p in [damaged, newer, both] {
-            #expect(p.actions == [.showInFinder, .dismiss])
-            #expect(!p.actions.contains(.restore) && !p.actions.contains(.openAsCopy) && !p.actions.contains(.discard))
+            #expect(p.actions == [.showInFinder, .discard, .dismiss])
+            #expect(!p.actions.contains(.restore) && !p.actions.contains(.openAsCopy))
         }
     }
 
@@ -53,6 +53,13 @@ struct EditCheckpointOfferPresentationTests {
         #expect(discard?.message == "Discard unsaved changes from 10:42 PM?")
         #expect(discard?.button == "Discard" && discard?.informative.contains("can't be restored") == true)
         #expect(EditCheckpointOfferPresentation.confirmation(for: .discard, state: .olderRevision(createdAt: date), formatTime: time) != nil)
+        let restored = EditCheckpointOfferPresentation(.restored(createdAt: date), showName: "Show", formatTime: time)
+        #expect(restored.actions == [.openAsCopy, .discard])
+        #expect(restored.body.contains("local storage") && restored.body.contains("even after restoring or saving"))
+        let unverified = EditCheckpointOfferPresentation(.unverified(createdAt: date), showName: "Show", formatTime: time)
+        #expect(unverified.body.contains("couldn't check") && unverified.body.contains("kept"))
+        #expect(unverified.actions == [.checkAgain, .openAsCopy, .discard])
+        #expect(EditCheckpointOfferPresentation.confirmation(for: .discard, state: .unusable(damaged: 1, newerFormat: 0))?.button == "Discard")
         let dismiss = EditCheckpointOfferPresentation.confirmation(for: .dismiss, state: .unusable(damaged: 1, newerFormat: 0))
         #expect(dismiss?.button == "Hide" && dismiss?.informative.contains("stay on this Mac") == true)
         for action in [EditCheckpointAction.restore, .openAsCopy, .showInFinder] {
@@ -62,7 +69,9 @@ struct EditCheckpointOfferPresentationTests {
 
     @Test func symbolsAreCatalogued() {
         for state in [EditCheckpointOfferState.restore(createdAt: date), .olderRevision(createdAt: date), .unusable(damaged: 1, newerFormat: 0)] {
-            #expect(SymbolCatalog.all.contains(EditCheckpointOfferPresentation(state, showName: "x").symbolName))
+            let presentation = EditCheckpointOfferPresentation(state, showName: "x")
+            #expect(SymbolCatalog.all.contains(presentation.symbolName))
+            #expect(presentation.body.contains("local storage without a limit until you discard"))
         }
     }
 }

@@ -50,7 +50,7 @@ struct PublicationTests {
         #expect(checkpoints.map(\.document.payload) == [model])
     }
 
-    @Test func retainsAtMostConfiguredCheckpointsNewestFirst() throws {
+    @Test func retainsEveryCoherentPriorWithoutSaveDrivenPruning() throws {
         let rig = Rig()
         var model = Fixtures.show(seed: 2)
         let url = rig.url()
@@ -60,7 +60,7 @@ struct PublicationTests {
             base = try rig.publisher.publish(model, revision: revision, key: .show(model.show.id), to: url, target: .inPlace(expectedBase: base)).fingerprint
         }
         let revisions = try rig.recovery.checkpoints(for: .show(model.show.id)).map(\.fingerprint.revision)
-        #expect(revisions == [6, 5, 4])
+        #expect(revisions == [6, 5, 4, 3, 2, 1])
     }
 
     @Test func detectsExternalChangeAsConflictAndPreservesBoth() throws {
@@ -329,7 +329,7 @@ struct EditCheckpointTests {
             #expect(record.checkpointSequence == index)
         }
         let records = rig.recovery.editCheckpoints(for: key)
-        #expect(records.count == 1, "older records are pruned once the newer one is verified")
+        #expect(records.count == 3, "every complete edit checkpoint remains until individually discarded")
         let latest = try #require(rig.recovery.latestEditCheckpoint(for: key))
         #expect(latest.unpublished && latest.recordKind == "edit-checkpoint" && latest.baseRevision == 2)
         #expect(latest.basePublicationID == base.publicationID && latest.baseChecksum == base.checksum)
@@ -348,7 +348,11 @@ struct EditCheckpointTests {
         #expect(rig.recovery.latestEditCheckpoint(for: key)?.checkpointSequence == 3)
         #expect(FileManager.default.fileExists(atPath: damaged.path))
 
-        try rig.recovery.discardEditCheckpoints(for: key)
-        #expect(rig.recovery.editCheckpoints(for: key).isEmpty)
+        try rig.recovery.setAsideEditCheckpoints(for: key)
+        let offered = rig.recovery.offeredEditCheckpoints(for: key)
+        #expect(offered.count == 4, "damaged and earlier records remain offerable")
+        let selected = try rig.recovery.selectRecord(.offeredEditCheckpoint, at: offered[0].url, for: key, allowingDamagedRecord: true)
+        try rig.recovery.discardSelectedRecord(selected)
+        #expect(rig.recovery.offeredEditCheckpoints(for: key).count == 3)
     }
 }

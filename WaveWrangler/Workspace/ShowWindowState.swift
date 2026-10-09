@@ -3,6 +3,7 @@ import Observation
 import SwiftUI
 import WWCore
 import WWOrganizer
+import WWPersistence
 
 /// Per-window state of a show window (IA-02: each window keeps its own selection, destination, sidebar
 /// and inspector visibility; the document, undo history and save state are shared). Menu commands route
@@ -59,7 +60,7 @@ final class ShowWindowState {
         return observer
     }
 
-    var saveStatus: DocumentSaveStatus { statusProvider.saveStatus }
+    var saveStatus: WWOrganizer.DocumentSaveStatus { statusProvider.saveStatus }
 
     var presentation: SaveStatusPresentation {
         SaveStatusPresentation(saveStatus, showName: store.model.show.title)
@@ -221,14 +222,25 @@ final class ShowWindowState {
     func performEditCheckpointAction(_ action: EditCheckpointAction) {
         guard let provider: EditCheckpointOfferProviding = store.document, let state = provider.editCheckpointOfferState else { return }
         guard let wording = EditCheckpointOfferPresentation.confirmation(for: action, state: state) else {
-            provider.performConfirmedEditCheckpointAction(action)
-            if action == .restore { announce("Restored unsaved changes") }
+            do {
+                try provider.performConfirmedEditCheckpointAction(action, selected: nil)
+                if action == .restore { announce("Restored unsaved changes") }
+            }
+            catch { _ = store.document?.presentError(error) }
             return
         }
+        let selected: SelectedRecoveryRecord?
+        do { selected = action == .discard ? try provider.selectedEditCheckpointForDiscard() : nil }
+        catch { _ = store.document?.presentError(error); return }
         Task {
-            guard await Dialogs.confirm(in: window, message: wording.message, informative: wording.informative, confirmTitle: wording.button,
+            let detail = selected.map { " Selected recovery record: \($0.url.lastPathComponent). No other copy is removed." } ?? ""
+            guard await Dialogs.confirm(in: window, message: wording.message, informative: wording.informative + detail, confirmTitle: wording.button,
                                         destructive: action == .discard, destructiveIsDefault: false) else { return }
-            provider.performConfirmedEditCheckpointAction(action)
+            do { try provider.performConfirmedEditCheckpointAction(action, selected: selected) }
+            catch {
+                _ = store.document?.presentError(error)
+                store.document?.refreshEditCheckpointOffer()
+            }
         }
     }
 
@@ -238,8 +250,27 @@ final class ShowWindowState {
         announce(presentation.announcement)
     }
 
+    func openPriorAsCopy(_ prior: RecoveryCheckpoint) {
+        do { try store.document?.openPriorAsCopy(prior) }
+        catch { _ = store.document?.presentError(error) }
+    }
+
+    func discardPrior(_ prior: RecoveryCheckpoint) {
+        guard let document = store.document else { return }
+        let selected: SelectedRecoveryRecord
+        do { selected = try document.selectedPriorForDiscard(prior) }
+        catch { _ = document.presentError(error); document.refreshPriorCheckpoints(); return }
+        Task {
+            guard await Dialogs.confirm(in: window, message: "Discard recovery copy?",
+                                        informative: "Remove only \(selected.url.lastPathComponent) from this Mac. This prior revision can't be restored after Discard; other copies stay.",
+                                        confirmTitle: "Discard", destructive: true, destructiveIsDefault: false) else { return }
+            do { try document.discardPrior(selected) }
+            catch { _ = document.presentError(error); document.refreshPriorCheckpoints() }
+        }
+    }
+
     /// Announces save-state changes per states §7 (first failure once, explicit/after-retry "Saved").
-    func saveStateDidChange(from old: DocumentSaveState, to new: DocumentSaveState) {
+    func saveStateDidChange(from old: WWOrganizer.DocumentSaveState, to new: WWOrganizer.DocumentSaveState) {
         if let text = SaveStatusPresentation.announcement(from: old, to: new, showName: store.model.show.title, explicitSave: explicitSavePending) {
             announce(text)
         }
@@ -345,7 +376,7 @@ final class ShowWindowState {
     }
 }
 
-extension DocumentSaveState {
+extension WWOrganizer.DocumentSaveState {
     fileprivate var announcementIsTerminalFailure: Bool {
         switch self {
         case .notConfirmed, .locationUnavailable, .diskFull, .failed, .cancelled, .conflict: true

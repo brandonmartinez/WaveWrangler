@@ -121,6 +121,8 @@ public enum PublicationError: Error, Sendable, Equatable {
     /// Publication may have happened but could not be verified. The user must reopen/reconcile before
     /// anything treats it as saved.
     case acknowledgementUncertain(String)
+    /// The originating item cannot be proved to be the one opened; no canonical write was attempted.
+    case originConflict(String)
 }
 
 extension PublicationError: LocalizedError {
@@ -139,6 +141,7 @@ extension PublicationError: LocalizedError {
             }
         case .cancelled: "Saving was cancelled."
         case .acknowledgementUncertain: "The save may have completed, but it could not be verified."
+        case .originConflict: "The original file could not be safely overwritten."
         }
     }
 
@@ -147,7 +150,8 @@ extension PublicationError: LocalizedError {
         case .readOnly: "Open it with the version of WaveWrangler that created it."
         case .invalidCandidate, .failed, .cancelled: "The previously saved revision is unchanged. Your changes are still open; try saving again."
         case .conflict: "Your changes are still open and a copy is kept on this Mac. Save them as a new document, or open the other version."
-        case .acknowledgementUncertain: "Your changes are still open. Reopen the document to check what was saved."
+        case .acknowledgementUncertain: "The save may have written the file, but WaveWrangler could not verify it. Your recovery copies are still on this Mac. Reopen or compare before trying again."
+        case .originConflict: "The original has not been overwritten. Reopen it or save your changes as a separate copy."
         }
     }
 
@@ -159,6 +163,7 @@ extension PublicationError: LocalizedError {
         case let .failed(stage, _, detail): "\(stage.rawValue): \(detail)"
         case .cancelled: nil
         case let .acknowledgementUncertain(detail): detail
+        case let .originConflict(detail): detail
         }
     }
 }
@@ -213,7 +218,7 @@ public struct PublicationFollowUp {
 /// Executes the ordered C3 publication protocol for one candidate revision:
 ///
 /// 3. encode and validate the complete candidate with a fresh publication ID — **P1**;
-/// 4. retain the validated prior (the on-disk bytes, only if they are exactly the expected base) — **P2**;
+/// 4. retain the validated prior (the on-disk bytes, only if their SHA-256 matches the expected base) — **P2**;
 /// 5. coordinated base check: any difference from the expected base is a conflict; the candidate is
 ///    preserved device-locally and nothing is overwritten — **P3**;
 /// 6. stage privately + flush + verify — **P4** — then replace (or the external safe-save) — **P5**;
@@ -291,12 +296,15 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
         let (prior, verifiedAt): (RecoveryCheckpoint?, Date) = try coordination.coordinateWriting(at: url) { url in
             try hooks.reached(.candidateValidated)
 
-            // Step 4: retain the validated prior — only bytes that are exactly the expected base.
+            // Step 4: retain the prior only when its SHA-256 matches the expected base.
             var prior: RecoveryCheckpoint?
-            if retainPrior, case let .inPlace(expected) = target, let recovery,
-               let onDisk = try? ops.read(url), RevisionFingerprint.digest(onDisk) == expected.byteDigest {
+            if retainPrior, case let .inPlace(expected) = target, let recovery {
+                let onDisk: Data
                 do {
-                    prior = try recovery.retainCheckpoint(onDisk, for: key)
+                    onDisk = try ops.read(url)
+                    if RevisionFingerprint.digest(onDisk) == expected.byteDigest {
+                        prior = try recovery.retainCheckpoint(onDisk, for: key)
+                    }
                 } catch where !(error is any InjectedInterruption) {
                     throw PublicationError.failed(stage: .candidateValidated, kind: WriteFailureKind(classifying: error), detail: "\(error)")
                 }
@@ -354,9 +362,15 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
                 } catch where !(error is any InjectedInterruption) {
                     // Determine what is actually on disk rather than guessing.
                     let now = try? ops.read(url)
-                    if let now, RevisionFingerprint.digest(now) == candidateFingerprint.byteDigest {
-                        // Published despite the reported error; continue to verification.
-                    } else if now.map(RevisionFingerprint.digest) == onDiskFingerprint?.byteDigest {
+                    if let now, now == candidate {
+                        if case .external = step {
+                            // NSDocument must receive the safe-write error before it clears its edited token.
+                            throw PublicationError.acknowledgementUncertain(
+                                "safe write reported \(error), although the candidate appears on disk"
+                            )
+                        }
+                        // A staged replacement can still be verified after a reported write error.
+                    } else if let now, let onDisk, now == onDisk {
                         throw PublicationError.failed(stage: .stagedFlushed, kind: WriteFailureKind(classifying: error), detail: "\(error)")
                     } else {
                         throw PublicationError.acknowledgementUncertain("publication reported \(error) and the on-disk state is unknown")
@@ -374,7 +388,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
             } catch where !(error is any InjectedInterruption) {
                 throw PublicationError.acknowledgementUncertain("read-back failed: \(error)")
             }
-            guard RevisionFingerprint.digest(readBack) == candidateFingerprint.byteDigest,
+            guard readBack == candidate,
                   let decoded = try? coder.decode(readBack), decoded.publication == encoded.publication
             else {
                 throw PublicationError.acknowledgementUncertain("read-back did not match publication \(encoded.publication.publicationID)")

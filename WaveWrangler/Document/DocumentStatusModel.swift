@@ -14,6 +14,14 @@ final class DocumentStatusModel {
     /// C2b edit checkpoints offered since this show was opened ("Restore unsaved changes", "based on an older
     /// revision", or records that can't be used). `nil` when there is nothing to offer or report.
     private(set) var editCheckpointOffer: EditCheckpointOffer<ShowDocumentModel>?
+    /// Retained C3 priors are device-local, unbounded, and can only be removed one at a time.
+    private(set) var priorCheckpoints: [RecoveryCheckpoint] = []
+    private var editCheckpointWarning: String?
+    private var priorCheckpointWarning: String?
+    var recoveryWarning: String? {
+        let messages = [editCheckpointWarning, priorCheckpointWarning].compactMap { $0 }
+        return messages.isEmpty ? nil : messages.joined(separator: " ")
+    }
     /// Non-nil when the document is read-only (e.g. recovered copy); edits and saves are refused.
     private(set) var readOnlyReason: String?
     /// ST-11: an automatic retry of a failed save is pending (the popover then says it will try again).
@@ -36,6 +44,20 @@ final class DocumentStatusModel {
 
     func setEditCheckpointOffer(_ value: EditCheckpointOffer<ShowDocumentModel>?) {
         editCheckpointOffer = value
+        editCheckpointWarning = nil
+    }
+
+    func setPriorCheckpoints(_ value: [RecoveryCheckpoint]) {
+        priorCheckpoints = value
+        priorCheckpointWarning = nil
+    }
+
+    func setEditCheckpointWarning(_ warning: String) {
+        editCheckpointWarning = warning
+    }
+
+    func setPriorCheckpointWarning(_ warning: String) {
+        priorCheckpointWarning = warning
     }
 
     func setRetryingAutomatically(_ value: Bool) {

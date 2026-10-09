@@ -9,8 +9,8 @@ import WWPersistence
 /// Persistence contract (WW-009 C3–C6):
 /// - **Publication** runs through `DocumentPublisher` inside our `writeSafely` override with
 ///   `AlreadyCoordinated` (NSDocument's save is already a coordinated write): P1 candidate validated → P2
-///   validated prior retained in the device-local recovery store → P3 base check against the exact bytes
-///   this document read/published (another writer ⇒ conflict, nothing overwritten, candidate preserved) →
+///   validated prior retained in the device-local recovery store → P3 base SHA-256 and originating-item
+///   checks (an observed conflict leaves the candidate preserved and the original untouched) →
 ///   stock `super.writeSafely` safe-save (P4 is inside AppKit and not separately interruptible) → P5/P6
 ///   independent read-back of the published bytes. Only then is the save adopted and acknowledged to the
 ///   library (P7).
@@ -31,18 +31,19 @@ final class ShowDocument: NSDocument {
     private(set) var publication: PublicationStamp?
     /// Exact identity of the bytes this document last read or verified: the expected base for in-place saves.
     private var onDiskBase: RevisionFingerprint?
+    /// The opened item (not merely its path/bytes); refreshed after each verified atomic safe-save.
+    private var originatingItem: FileItemIdentity?
     /// The encoded candidate for the save in progress; `data(ofType:)` returns exactly these bytes.
     private var pendingCandidate: EncodedDocument?
+    private var pendingSave: (url: URL, originURL: URL?, operation: NSDocument.SaveOperationType, key: DocumentKey)?
     private var lastReceipt: PublicationReceipt?
     private var scheduler: QuiescenceScheduler?
     /// Offered C2b records whose Restore is currently in effect (Undo of the Restore removes the record again).
-    /// They stay on disk until a verified publication that contains the restore, or an explicit Don't Save,
-    /// resolves them, so a crash right after Restore loses nothing.
-    private var restoredOfferURLs: Set<URL> = []
-    /// Offered records opened as a separate copy (kept until that copy is saved) or hidden by the user.
-    private var setAsideOfferURLs: Set<URL> = []
-    /// Set on a separate copy opened from another show's offer: its first verified save resolves those records.
-    private var resolvesOffer: OfferResolution?
+    /// They stay on disk after Restore, Save and Don't Save; only a separately confirmed Discard removes one.
+    var restoredOfferURLs: Set<URL> = []
+    var recoveryBaseVerified = false
+    /// Explicitly dismissed unusable-record reports; the underlying records remain on disk.
+    private var dismissedProblemURLs: Set<URL> = []
 
     var revision: Int { publication?.revision ?? 0 }
     /// The exact model last independently verified on disk. Alignment reconciles verified publications;
@@ -58,6 +59,8 @@ final class ShowDocument: NSDocument {
     static var debugFormatUpdateHooks: (any PublicationHooks)?
     /// Debug-only: runs before a show file is decoded (F-OLDER-BAD seeds an M1-era recovery checkpoint for it).
     static var debugBeforeRead: (@MainActor (URL) -> Void)?
+    /// Native tests can isolate recovery records from the user's application support directory.
+    static var debugRecoveryStore: RecoveryStore?
     #endif
     /// ST-11: after a failed save with autosave ON, WaveWrangler retries automatically at most this often.
     static var saveRetryInterval: TimeInterval = 30
@@ -81,7 +84,12 @@ final class ShowDocument: NSDocument {
     /// #159: an older-format show is open read-only until its update has published (D14/D15).
     var isAwaitingFormatUpdate: Bool { status.formatUpdate != nil }
     private var gate: AutosaveGate { PersistenceEnvironment.autosaveGate }
-    private var recovery: RecoveryStore { PersistenceEnvironment.recovery }
+    var recovery: RecoveryStore {
+        #if DEBUG
+        if let debugRecoveryStore = Self.debugRecoveryStore { return debugRecoveryStore }
+        #endif
+        return PersistenceEnvironment.recovery
+    }
 
     override init() {
         let interval = OpenSignposts.begin("document.init")
@@ -161,6 +169,9 @@ final class ShowDocument: NSDocument {
     }
 
     private func load(_ data: Data, url: URL?) throws {
+        restoredOfferURLs.removeAll()
+        dismissedProblemURLs.removeAll()
+        originatingItem = url.flatMap(FileItemIdentity.observe(at:))
         // A schema 1 show reports `.needsMigration`: it opens upgraded in memory, read-only, and nothing is written
         // until the user chooses Update (#159). Schema 1 recovery checkpoints stay offerable, upgraded in memory.
         let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery,
@@ -177,9 +188,8 @@ final class ShowDocument: NSDocument {
             publication = document.publication
             onDiskBase = fingerprint
             status.set(.clean(revision: document.revision))
-            // C2b: set this show's edit checkpoints aside as an offer now (synchronously, before any save or new
-            // checkpoint could remove them) so nothing can be lost before the user decides.
-            try? recovery.setAsideEditCheckpoints(for: .show(document.payload.show.id))
+            // Move active records to the offered directory on open; neither location is retired by a save.
+            try recovery.setAsideEditCheckpoints(for: .show(document.payload.show.id))
             // Evidence-only and presentation work runs after the window's first frame (SCALE-001 cold open):
             // the provider-version inspection and the C2b offer scan. Nothing is decided from them before that:
             // the offer's actions re-check against disk, and a save never depends on either.
@@ -194,7 +204,7 @@ final class ShowDocument: NSDocument {
             let upgraded: DecodedDocument<ShowDocumentModel>
             switch opener.olderShowForViewing(data, url: url) {
             case let .viewable(document): upgraded = document
-            case let .damaged(error, candidates): throw DocumentRecoveryOffer.error(for: error, candidates: candidates)
+            case let .damaged(error, candidates): throw DocumentRecoveryOffer.error(for: error, candidates: candidates, recovery: recovery)
             }
             store.replaceLoadedModel(upgraded.payload)
             verifiedModel = upgraded.payload
@@ -207,7 +217,7 @@ final class ShowDocument: NSDocument {
             // Edit checkpoints are set aside and offered only once the update has published (restoring is an edit).
             scheduleAfterFirstFrame()
         case let .damaged(error, candidates):
-            throw DocumentRecoveryOffer.error(for: error, candidates: candidates)
+            throw DocumentRecoveryOffer.error(for: error, candidates: candidates, recovery: recovery)
         case let .unreadable(kind, detail, _):
             throw CocoaError(kind == .permissionDenied ? .fileReadNoPermission : .fileReadUnknown,
                              userInfo: [NSLocalizedFailureReasonErrorKey: detail])
@@ -232,6 +242,10 @@ final class ShowDocument: NSDocument {
         // The model is already current (edits apply live); end any coalesced burst so that an edit made
         // after this save registers new undo and marks the document dirty again.
         store.endCoalescing()
+        guard pendingSave == nil else {
+            completionHandler(PublicationError.originConflict("Another save of this document is still in progress."))
+            return
+        }
         // #159: nothing writes the older show's file, or adopts another one, before its update has published.
         guard FormatUpdatePolicy.allowsSave(status.formatUpdate, adoptsPublication: Self.adoptsPublication(saveOperation),
                                             toOwnFile: url.standardizedFileURL == fileURL?.standardizedFileURL) else {
@@ -252,15 +266,15 @@ final class ShowDocument: NSDocument {
         }
         lastReceipt = nil
         let adopts = Self.adoptsPublication(saveOperation)
+        pendingSave = (url.standardizedFileURL, fileURL?.standardizedFileURL, saveOperation, documentKey)
         if adopts { status.set(.saving) }
         let candidateBytes = pendingCandidate?.data
         let candidateModel = store.model
-        let restoredAtSaveStart = restoredOfferURLs
         super.save(to: url, ofType: typeName, for: saveOperation) { [weak self] error in
             guard let self else { return completionHandler(error) }
-            self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error, url: url, candidateBytes: candidateBytes,
-                            candidateModel: candidateModel, restoredAtSaveStart: restoredAtSaveStart)
-            completionHandler(error)
+            let result = self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error, url: url, candidateBytes: candidateBytes,
+                                         candidateModel: candidateModel)
+            completionHandler(result)
         }
     }
 
@@ -304,16 +318,20 @@ final class ShowDocument: NSDocument {
 
     private func finishSave(
         saveOperation: NSDocument.SaveOperationType, adopts: Bool, error: Error?, url: URL, candidateBytes: Data?, candidateModel: ShowDocumentModel,
-        restoredAtSaveStart: Set<URL>
-    ) {
+    ) -> Error? {
         let receipt = lastReceipt
         lastReceipt = nil
         pendingCandidate = nil
-        if error == nil, adopts, let receipt {
+        pendingSave = nil
+        let result: Error? = error ?? (receipt == nil
+            ? PublicationError.acknowledgementUncertain("No independently verified publication receipt was returned.")
+            : nil)
+        if result == nil, adopts, let receipt {
             cancelSaveRetry()
             uncertainCandidate = nil
             publication = receipt.publication
             onDiskBase = receipt.fingerprint
+            originatingItem = FileItemIdentity.observe(at: url)
             verifiedModel = candidateModel
             // #87: AppKit only marks an autosave in place as "autosaved"; clear "— Edited" exactly when the verified
             // publication holds the current model. Edits made during the save keep the document (and status) edited.
@@ -329,20 +347,20 @@ final class ShowDocument: NSDocument {
             #if DEBUG
             if isAutosaveInPlace { traceEditedState("finishSave autosaveInPlace") }
             #endif
-            if !isDocumentEdited {
-                scheduler?.cancelPending()
-                try? recovery.discardEditCheckpoints(for: documentKey)
-            }
-            resolveOfferRecordsAfterVerifiedSave(
-                restoredAtSaveStart: restoredAtSaveStart, publishedEqualsCurrent: store.model == candidateModel
-            )
+            if !isDocumentEdited { scheduler?.cancelPending() }
+            refreshEditCheckpointOffer()
+            refreshPriorCheckpoints()
             if isAutosaveInPlace, isDocumentEdited {
                 status.set(.edited(autosaveEnabled: gate.isEnabled))
             } else {
                 status.set(.saved(revision: receipt.revision, at: receipt.verifiedAt))
             }
             acknowledgeToLibrary(receipt.publication)
-        } else if let error {
+        } else if let error = result {
+            let cocoaError = error as NSError
+            if !isDocumentEdited, !(cocoaError.domain == NSCocoaErrorDomain && cocoaError.code == NSUserCancelledError) {
+                updateChangeCount(.changeDone)
+            }
             if let publicationError = error as? PublicationError {
                 status.set(DocumentSaveState.from(publicationError, retainedRevision: publication?.revision))
             } else if (error as NSError).domain == NSCocoaErrorDomain, (error as NSError).code == NSUserCancelledError {
@@ -359,6 +377,7 @@ final class ShowDocument: NSDocument {
             // ST-11: with autosave ON, a failed save is retried automatically (at most every `saveRetryInterval`).
             if gate.isEnabled, isDocumentEdited, status.saveStatus.state.isAutomaticallyRetryable { scheduleSaveRetry() }
         }
+        return result
     }
 
     /// P7: the library learns of a verified publication (only after coherent disk truth).
@@ -441,7 +460,6 @@ final class ShowDocument: NSDocument {
     private func saveCopy(_ request: CopyElsewhereRequest, to url: URL, ofType typeName: String, completionHandler: @escaping (Error?) -> Void) {
         let name = url.deletingPathExtension().lastPathComponent
         let copy = (try? store.model.duplicatedAsNewShow().renamingShow(to: name)) ?? store.model.duplicatedAsNewShow()
-        let originalKey = documentKey
         do {
             pendingCandidate = try coder.encodeDocument(copy, revision: 1, publicationID: UUID())
         } catch {
@@ -450,6 +468,7 @@ final class ShowDocument: NSDocument {
             return
         }
         pendingCandidateKey = .show(copy.show.id)
+        pendingSave = (url.standardizedFileURL, fileURL?.standardizedFileURL, .saveAsOperation, .show(copy.show.id))
         lastReceipt = nil
         status.set(.saving)
         let candidateBytes = pendingCandidate?.data
@@ -457,17 +476,16 @@ final class ShowDocument: NSDocument {
             guard let self else { return completionHandler(error) }
             self.pendingCandidateKey = nil
             if error == nil, self.lastReceipt != nil {
-                // The window now edits the copy: a new show, so the original's undo history and edit checkpoints
-                // (whose changes the copy now holds) don't carry over.
+                // The window now edits the copy; the original's recovery records remain under its own key.
                 self.store.replaceLoadedModel(copy)
                 self.undoManager?.removeAllActions()
-                try? self.recovery.discardEditCheckpoints(for: originalKey)
+                self.restoredOfferURLs.removeAll()
                 self.status.setCopyNotice(Self.copyMessage(copyName: name, folder: url.deletingLastPathComponent().lastPathComponent,
                                                            originalFolder: request.originalFolder))
             }
-            self.finishSave(saveOperation: .saveAsOperation, adopts: true, error: error, url: url, candidateBytes: candidateBytes,
-                            candidateModel: copy, restoredAtSaveStart: [])
-            completionHandler(error)
+            let result = self.finishSave(saveOperation: .saveAsOperation, adopts: true, error: error, url: url,
+                                         candidateBytes: candidateBytes, candidateModel: copy)
+            completionHandler(result)
         }
     }
 
@@ -550,13 +568,13 @@ final class ShowDocument: NSDocument {
         uncertainCandidate = nil
         publication = document.publication
         onDiskBase = fingerprint
+        originatingItem = FileItemIdentity.observe(at: url)
         verifiedModel = document.payload
         AlignmentRuntimeProvider.reconcileActive(for: self)
         fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
         if store.model == document.payload {
             updateChangeCount(.changeCleared)
             scheduler?.cancelPending()
-            try? recovery.discardEditCheckpoints(for: documentKey)
             status.set(.saved(revision: document.revision, at: Date()))
         } else {
             // Edits made since that save are still unsaved: publish them normally against the adopted base.
@@ -569,19 +587,28 @@ final class ShowDocument: NSDocument {
 
     override func writeSafely(to url: URL, ofType typeName: String, for saveOperation: NSDocument.SaveOperationType) throws {
         try MainActor.assumeIsolated {
+            guard let pendingSave, pendingSave.url == url.standardizedFileURL,
+                  pendingSave.operation == saveOperation, pendingSave.key == (pendingCandidateKey ?? documentKey),
+                  let candidate = pendingCandidate else {
+                throw PublicationError.originConflict("The save candidate changed before the safe-write boundary.")
+            }
             guard FormatUpdatePolicy.allowsSave(status.formatUpdate, adoptsPublication: Self.adoptsPublication(saveOperation),
                                                 toOwnFile: url.standardizedFileURL == fileURL?.standardizedFileURL) else {
                 throw formatUpdateSaveRefusal()
             }
-            let candidate = try pendingCandidate ?? coder.encodeDocument(store.model, revision: revision + 1, publicationID: UUID())
-            pendingCandidate = candidate
-            let inPlace = (saveOperation == .saveOperation || saveOperation == .autosaveInPlaceOperation)
-                && url.standardizedFileURL == fileURL?.standardizedFileURL
-            let target: PublicationTarget = if inPlace {
-                onDiskBase.map { .inPlace(expectedBase: $0) } ?? .newLocation
+            let inPlace = pendingSave.originURL == url.standardizedFileURL
+            let target: PublicationTarget
+            if inPlace {
+                guard let expectedBase = onDiskBase else {
+                    throw PublicationError.originConflict("The originating file's saved base is unknown. Reopen it or save a separate copy.")
+                }
+                guard let originatingItem, FileItemIdentity.observe(at: url) == originatingItem else {
+                    throw PublicationError.originConflict("The originating file's identity is missing or has changed. Reopen it or save a separate copy.")
+                }
+                target = .inPlace(expectedBase: expectedBase)
             } else {
                 // User-confirmed Save As / Save To destination, or AppKit's own autosave-elsewhere location.
-                .saveAs(replacingExisting: true)
+                target = .saveAs(replacingExisting: true)
             }
             var hooks: any PublicationHooks = NoPublicationHooks()
             #if DEBUG
@@ -589,15 +616,19 @@ final class ShowDocument: NSDocument {
             (Self.debugPublicationHooks as? UITestOfflineHooks)?.target = url
             #endif
             let publisher = DocumentPublisher(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery, hooks: hooks)
-            lastReceipt = try publisher.publish(
-                encoded: candidate, key: pendingCandidateKey ?? documentKey, to: url, target: target, retainPrior: inPlace,
-                isCancelled: { false },
-                step: .external { _, _ in
-                    // Stock safe-save; it calls `data(ofType:)`, which returns exactly the candidate bytes.
-                    try super.writeSafely(to: url, ofType: typeName, for: saveOperation)
-                },
-                followUp: .none
-            )
+            do {
+                lastReceipt = try publisher.publish(
+                    encoded: candidate, key: pendingSave.key, to: url, target: target, retainPrior: inPlace,
+                    isCancelled: { false },
+                    step: .external { _, _ in
+                        try super.writeSafely(to: url, ofType: typeName, for: saveOperation)
+                    },
+                    followUp: .none
+                )
+            } catch {
+                if !isDocumentEdited { updateChangeCount(.changeDone) }
+                throw error
+            }
         }
     }
 
@@ -678,15 +709,17 @@ final class ShowDocument: NSDocument {
     // MARK: - C2b edit checkpoints
 
     private func writeEditCheckpoint() {
-        guard gate.isEnabled, isDocumentEdited,
-              let snapshot = try? coder.encode(store.model, revision: revision + 1),
-              let record = try? recovery.writeEditCheckpoint(
-                  snapshot: snapshot, base: onDiskBase, schemaVersion: coder.format.currentSchemaVersion, for: documentKey
-              )
-        else { return }
-        // ST-11: a visible save failure isn't replaced by the checkpoint state (which reads as "Edited").
-        guard !status.saveStatus.state.isAutomaticallyRetryable else { return }
-        status.set(.recoveryCheckpoint(at: record.createdAt))
+        guard gate.isEnabled, isDocumentEdited else { return }
+        do {
+            let snapshot = try coder.encode(store.model, revision: revision + 1)
+            let record = try recovery.writeEditCheckpoint(
+                snapshot: snapshot, base: onDiskBase, schemaVersion: coder.format.currentSchemaVersion, for: documentKey
+            )
+            if !status.saveStatus.state.isAutomaticallyRetryable { status.set(.recoveryCheckpoint(at: record.createdAt)) }
+        } catch {
+            status.set(.saveFailed(retainedRevision: publication?.revision, kind: WriteFailureKind(classifying: error),
+                                   message: "Recovery checkpoint could not be written: \(error.localizedDescription)"))
+        }
     }
 
     // MARK: - C2b recovery offer (#84)
@@ -694,32 +727,92 @@ final class ShowDocument: NSDocument {
     /// Re-reads the offered records and re-checks each against the publication on disk now.
     func refreshEditCheckpointOffer() {
         let showID = store.model.show.id
+        let stored: [StoredEditCheckpoint]
+        do { stored = try recovery.checkedOfferedEditCheckpoints(for: documentKey) }
+        catch {
+            recoveryBaseVerified = false
+            status.setEditCheckpointWarning("Could not list unsaved recovery copies: \(error.localizedDescription)")
+            return
+        }
+        let verifiedBase: RevisionFingerprint? = if let url = fileURL,
+            let originatingItem, FileItemIdentity.observe(at: url) == originatingItem,
+            let data = try? Data(contentsOf: url),
+            let onDiskBase, RevisionFingerprint.digest(data) == onDiskBase.byteDigest {
+            onDiskBase
+        } else {
+            nil
+        }
+        recoveryBaseVerified = verifiedBase != nil
         let offer = EditCheckpointOffer.assess(
-            recovery.offeredEditCheckpoints(for: documentKey),
-            documentID: documentKey.rawValue, onDisk: onDiskBase, coder: coder,
+            stored,
+            documentID: documentKey.rawValue, onDisk: verifiedBase, coder: coder,
             decodeOlder: ShowSchemaMigration.decodeUpgradingOlder,
             belongsToDocument: { $0.show.id == showID }
-        ).excluding(restoredOfferURLs.union(setAsideOfferURLs))
+        ).excluding(dismissedProblemURLs)
         status.setEditCheckpointOffer(offer.isEmpty ? nil : offer)
+    }
+
+    func refreshPriorCheckpoints() {
+        do { status.setPriorCheckpoints(try recovery.checkedCheckpoints(for: documentKey)) }
+        catch { status.setPriorCheckpointWarning("Could not list recovery copies: \(error.localizedDescription)") }
+    }
+
+    func openPriorAsCopy(_ prior: RecoveryCheckpoint) throws {
+        guard prior.key == documentKey else { throw CocoaError(.fileReadCorruptFile) }
+        let selected = try recovery.selectRecord(.priorCheckpoint, at: prior.url, for: documentKey)
+        let bytes = try recovery.bytes(of: prior)
+        guard FileItemIdentity.observe(at: prior.url) == selected.itemIdentity,
+              RevisionFingerprint.digest(bytes) == selected.byteDigest,
+              selected.byteDigest == prior.fingerprint.byteDigest else { throw CocoaError(.fileReadUnknown) }
+        let model = try coder.decode(bytes).payload
+        _ = Self.openUntitledCopy(of: model.duplicatedAsNewShow())
+    }
+
+    func selectedPriorForDiscard(_ prior: RecoveryCheckpoint) throws -> SelectedRecoveryRecord {
+        guard prior.key == documentKey else { throw CocoaError(.fileReadCorruptFile) }
+        let selected: SelectedRecoveryRecord
+        do { selected = try recovery.selectRecord(.priorCheckpoint, at: prior.url, for: documentKey) }
+        catch is PersistenceError {
+            // Damaged prior: still require the same explicit confirmation, physical identity and full bytes.
+            selected = try recovery.selectRecord(.priorCheckpoint, at: prior.url, for: documentKey, allowingDamagedRecord: true)
+        }
+        guard selected.byteDigest == prior.fingerprint.byteDigest else { throw CocoaError(.fileReadUnknown) }
+        return selected
+    }
+
+    func discardPrior(_ selected: SelectedRecoveryRecord) throws {
+        guard selected.key == documentKey, selected.kind == .priorCheckpoint else { throw CocoaError(.fileReadNoPermission) }
+        try recovery.discardSelectedRecord(selected)
+        refreshPriorCheckpoints()
     }
 
     /// "Restore Unsaved Changes": only while the record is based on exactly the publication on disk. Applies the
     /// whole snapshot as one undoable edit; the document is dirty and is never marked saved by a restore.
-    func restoreOfferedEditCheckpoint() {
+    func restoreOfferedEditCheckpoint() throws {
         refreshEditCheckpointOffer()
         guard let offer = status.editCheckpointOffer, let candidate = offer.candidate,
-              offer.candidateMode(restoreInEffect: isEditCheckpointRestoreInEffect) == .restore else { return }
+              recoveryBaseVerified,
+              offer.candidateMode(restoreInEffect: isEditCheckpointRestoreInEffect) == .restore else {
+            throw PublicationError.originConflict("The recovery copy's base could not be verified for an in-place restore. Check Again or open it as a separate copy.")
+        }
         // One undo step: the model change (which marks the document dirty) and the "restored" mark, so Undo of the
         // restore also un-marks the record and offers it again; Redo marks it again.
         let undo = undoManager
         undo?.beginUndoGrouping()
-        store.apply("Restore Unsaved Changes") { _ in candidate.payload }
+        guard store.apply("Restore Unsaved Changes", { _ in candidate.payload }) else {
+            undo?.endUndoGrouping()
+            throw CocoaError(.fileReadUnknown, userInfo: [
+                NSLocalizedDescriptionKey: "The recovery copy could not be restored into this window."
+            ])
+        }
         markRestored(candidate.url)
+        if !isDocumentEdited { updateChangeCount(.changeDone) }
         undo?.setActionName("Restore Unsaved Changes")
         undo?.endUndoGrouping()
     }
 
     private func markRestored(_ url: URL) {
+        guard recovery.offeredEditCheckpoints(for: documentKey).contains(where: { $0.url == url }) else { return }
         restoredOfferURLs.insert(url)
         undoManager?.registerUndo(withTarget: self) { document in
             MainActor.assumeIsolated { document.unmarkRestored(url) }
@@ -736,84 +829,33 @@ final class ShowDocument: NSDocument {
     }
 
     /// "Open as Separate Copy": a new untitled show (new show ID, so it can't be mistaken for this one), dirty
-    /// and unsaved. Never merged into this show and never published by itself. The records stay until the copy
-    /// is saved; if the copy is closed without saving, the offer returns here.
-    func openOfferedEditCheckpointAsCopy() {
-        guard let offer = status.editCheckpointOffer, let candidate = offer.candidate else { return }
-        let urls: Set<URL> = [candidate.url]
-        let copy = ShowDocument.openUntitledCopy(of: candidate.payload.duplicatedAsNewShow())
-        copy.resolvesOffer = OfferResolution(key: documentKey, urls: Array(urls), source: self)
-        setAsideOfferURLs.formUnion(urls)
-        refreshEditCheckpointOffer()
+    /// and unsaved. Never merged into this show and never published by itself. The original record is kept.
+    func openOfferedEditCheckpointAsCopy() throws {
+        guard let offer = status.editCheckpointOffer, let candidate = offer.candidate else { throw CocoaError(.fileReadNoSuchFile) }
+        ShowDocument.openUntitledCopy(of: candidate.payload.duplicatedAsNewShow())
     }
 
-    /// Discard (after the user confirmed): deletes exactly the record shown. Other records (for example from
-    /// another crashed session) and problem reports stay and are offered next.
-    func discardOfferedEditCheckpoint() {
-        guard let candidate = status.editCheckpointOffer?.candidate else { return }
-        try? recovery.discardOfferedEditCheckpoints([candidate.url], for: documentKey)
+    func discardOfferedEditCheckpoint(_ selected: SelectedRecoveryRecord) throws {
+        guard selected.key == documentKey, selected.kind == .offeredEditCheckpoint else { throw CocoaError(.fileReadNoPermission) }
+        try recovery.discardSelectedRecord(selected)
+        restoredOfferURLs.remove(selected.url)
+        dismissedProblemURLs.remove(selected.url)
         refreshEditCheckpointOffer()
     }
 
     /// Hides the "couldn't be restored" report in this window (after confirmation). Nothing is deleted.
     func hideEditCheckpointProblems() {
         guard let offer = status.editCheckpointOffer else { return }
-        setAsideOfferURLs.formUnion(offer.problems.map(\.url))
+        dismissedProblemURLs.formUnion(offer.problems.map(\.url))
         refreshEditCheckpointOffer()
     }
 
-    /// A restored record is in effect (until it's saved, undone or discarded with Don't Save).
+    /// A restored record stays marked until Undo, Revert or explicit Discard.
     var isEditCheckpointRestoreInEffect: Bool { !restoredOfferURLs.isEmpty }
 
     var editCheckpointProblemURLs: [URL] { status.editCheckpointOffer?.problems.map(\.url) ?? [] }
 
-    /// After a verified publication of this document. A restored record is deleted only when the publication
-    /// contains its restore: the restore was in effect when the save started and still is, and the published
-    /// candidate equals the current model (no undo or edits in between). Otherwise it stays for a later save.
-    private func resolveOfferRecordsAfterVerifiedSave(restoredAtSaveStart: Set<URL>, publishedEqualsCurrent: Bool) {
-        let contained = RestoredEditCheckpoints.resolved(byPublicationStartedWith: restoredAtSaveStart, restoredNow: restoredOfferURLs,
-                                                         publishedEqualsCurrent: publishedEqualsCurrent)
-        if !contained.isEmpty {
-            try? recovery.discardOfferedEditCheckpoints(Array(contained), for: documentKey)
-            restoredOfferURLs.subtract(contained)
-        }
-        if let resolution = resolvesOffer {
-            resolvesOffer = nil
-            try? recovery.discardOfferedEditCheckpoints(resolution.urls, for: resolution.key)
-            resolution.source?.offerCopyWasSaved(Set(resolution.urls))
-        }
-        // A restore offer becomes "based on an older revision" once a newer version is saved.
-        refreshEditCheckpointOffer()
-    }
-
-    fileprivate func offerCopyWasSaved(_ urls: Set<URL>) {
-        setAsideOfferURLs.subtract(urls)
-        refreshEditCheckpointOffer()
-    }
-
-    fileprivate func offerCopyClosedUnsaved(_ urls: Set<URL>) {
-        setAsideOfferURLs.subtract(urls)
-        refreshEditCheckpointOffer()
-    }
-
-    struct OfferResolution {
-        let key: DocumentKey
-        let urls: [URL]
-        weak var source: ShowDocument?
-    }
-
     override func close() {
-        // Closing while still edited means the user chose Don't Save: drop this document's edit checkpoints.
-        if isDocumentEdited {
-            try? recovery.discardEditCheckpoints(for: documentKey)
-            // Don't Save after a restore discards the restored changes too (C2b retention (b)).
-            if !restoredOfferURLs.isEmpty { try? recovery.discardOfferedEditCheckpoints(Array(restoredOfferURLs), for: documentKey) }
-        }
-        if let resolution = resolvesOffer {
-            // A copy closed without saving: the records stay, and the original show offers them again.
-            resolvesOffer = nil
-            resolution.source?.offerCopyClosedUnsaved(Set(resolution.urls))
-        }
         scheduler?.cancelPending()
         cancelSaveRetry()
         super.close()
@@ -872,6 +914,7 @@ final class ShowDocument: NSDocument {
         OpenSignposts.measure("document.deferred") {
             if let url = fileURL { status.setProviderConflicts(ProviderConflictReport.inspect(url)) }
             if !isAwaitingFormatUpdate { refreshEditCheckpointOffer() }
+            refreshPriorCheckpoints()
         }
         presentFormatUpdatePromptIfNeeded()
     }
@@ -956,12 +999,17 @@ final class ShowDocument: NSDocument {
             verifiedModel = adopted.document.payload
             publication = adopted.document.publication
             onDiskBase = adopted.fingerprint
+            originatingItem = FileItemIdentity.observe(at: url)
             fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             formatUpdateOriginal = nil
             status.setFormatUpdate(nil)
             status.set(.saved(revision: adopted.document.revision, at: Date()))
-            try? recovery.setAsideEditCheckpoints(for: documentKey)
+            do { try recovery.setAsideEditCheckpoints(for: documentKey) } catch {
+                status.set(.saveFailed(retainedRevision: publication?.revision, kind: WriteFailureKind(classifying: error),
+                                       message: "Recovery records could not be offered: \(error.localizedDescription)"))
+            }
             refreshEditCheckpointOffer()
+            refreshPriorCheckpoints()
             acknowledgeToLibrary(adopted.document.publication)
         case let .unchanged(detail):
             status.setFormatUpdate(.failed(detail: detail))
@@ -1013,16 +1061,26 @@ final class ShowDocument: NSDocument {
 /// Error for a damaged show file that offers whole validated checkpoints from this Mac as a new copy.
 /// The damaged file is never modified.
 enum DocumentRecoveryOffer {
-    static func error(for error: PersistenceError, candidates: [RecoveryCandidate<ShowDocumentModel>]) -> NSError {
+    static func error(for error: PersistenceError, candidates: [RecoveryCandidate<ShowDocumentModel>], recovery: RecoveryStore) -> NSError {
         var userInfo: [String: Any] = [
             NSLocalizedDescriptionKey: error.errorDescription ?? "The document is damaged.",
             NSLocalizedFailureReasonErrorKey: error.failureReason ?? "",
         ]
         if let newest = candidates.first {
+            let selectable = candidates.first { $0.checkpoint.url.path.contains("/checkpoints/") }
+            let selected: SelectedRecoveryRecord?
+            if let selectable {
+                selected = try? recovery.selectRecord(.priorCheckpoint, at: selectable.checkpoint.url, for: selectable.checkpoint.key)
+            } else { selected = nil }
+            let priorDetail = selected.map {
+                " The separately discardable prior copy is “\($0.url.lastPathComponent)”; other copies remain."
+            } ?? ""
             userInfo[NSLocalizedRecoverySuggestionErrorKey] =
-                "A complete earlier revision (\(newest.document.revision)) is kept on this Mac. You can open it as a new, unsaved copy. The damaged file is left unchanged."
-            userInfo[NSLocalizedRecoveryOptionsErrorKey] = ["Open Recovered Copy", "Cancel"]
-            userInfo[NSRecoveryAttempterErrorKey] = RecoveryAttempter(model: newest.document.payload)
+                "A complete earlier revision (\(newest.document.revision)) is kept on this Mac. You can open it as a new, unsaved copy. The damaged file is left unchanged.\(priorDetail)"
+            userInfo[NSLocalizedRecoveryOptionsErrorKey] = selected == nil
+                ? ["Open Recovered Copy", "Cancel"]
+                : ["Open Recovered Copy", "Discard One Prior Copy…", "Cancel"]
+            userInfo[NSRecoveryAttempterErrorKey] = RecoveryAttempter(model: newest.document.payload, recovery: recovery, selected: selected)
         } else {
             userInfo[NSLocalizedRecoverySuggestionErrorKey] = error.recoverySuggestion ?? ""
         }
@@ -1032,16 +1090,38 @@ enum DocumentRecoveryOffer {
     /// NSErrorRecoveryAttempting: AppKit calls this on the main thread from error presentation.
     final class RecoveryAttempter: NSObject {
         let model: ShowDocumentModel
+        let recovery: RecoveryStore
+        let selected: SelectedRecoveryRecord?
 
-        init(model: ShowDocumentModel) {
+        init(model: ShowDocumentModel, recovery: RecoveryStore, selected: SelectedRecoveryRecord?) {
             self.model = model
+            self.recovery = recovery
+            self.selected = selected
         }
 
         override func attemptRecovery(fromError error: Error, optionIndex recoveryOptionIndex: Int) -> Bool {
-            guard recoveryOptionIndex == 0 else { return false }
-            let model = model
-            MainActor.assumeIsolated { _ = ShowDocument.openUntitledCopy(of: model) }
-            return true
+            if recoveryOptionIndex == 0 {
+                let model = model
+                MainActor.assumeIsolated { _ = ShowDocument.openUntitledCopy(of: model) }
+                return true
+            }
+            guard recoveryOptionIndex == 1, let selected else { return false }
+            let recovery = recovery
+            return MainActor.assumeIsolated {
+                let alert = NSAlert()
+                alert.messageText = "Discard this prior recovery copy?"
+                alert.informativeText = "Only \(selected.url.lastPathComponent) will be removed from this Mac. Other recovery copies remain."
+                alert.addButton(withTitle: "Cancel")
+                alert.addButton(withTitle: "Discard")
+                guard alert.runModal() == .alertSecondButtonReturn else { return false }
+                do {
+                    try recovery.discardSelectedRecord(selected)
+                    return false // The damaged document is still damaged; deletion does not recover it.
+                } catch {
+                    _ = NSApp.presentError(error)
+                    return false
+                }
+            }
         }
     }
 }

@@ -39,6 +39,7 @@ struct ShowDocumentStatusMappingTests {
         let unretried: [WWPersistence.DocumentSaveState] = [
             .saveFailed(retainedRevision: 2, kind: .cancelled, message: "cancelled"),   // D10
             .conflict(onDiskRevision: 3, missing: false),                               // D6
+            .originConflict(message: "Original item changed"),
             .edited(autosaveEnabled: true),
             .cancelled,
         ]

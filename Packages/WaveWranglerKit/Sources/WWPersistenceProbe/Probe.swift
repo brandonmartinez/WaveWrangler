@@ -55,6 +55,7 @@ func describe(_ error: PublicationError) -> [String: Any] {
     case let .failed(stage, kind, detail): return ["result": "failed", "stage": stage.rawValue, "kind": kind.rawValue, "detail": detail]
     case .cancelled: return ["result": "cancelled"]
     case let .acknowledgementUncertain(detail): return ["result": "acknowledgementUncertain", "detail": detail]
+    case let .originConflict(detail): return ["result": "originConflict", "detail": detail]
     case let .readOnly(reason): return ["result": "readOnly", "detail": reason]
     case let .invalidCandidate(error): return ["result": "invalidCandidate", "detail": "\(error)"]
     }

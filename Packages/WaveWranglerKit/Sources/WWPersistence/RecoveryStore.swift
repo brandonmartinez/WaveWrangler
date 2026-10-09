@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import WWCore
 
@@ -23,10 +24,25 @@ public struct RecoveryCheckpoint: Sendable, Equatable {
     public let fingerprint: RevisionFingerprint
 }
 
+public enum RecoveryRecordKind: Sendable, Equatable {
+    case offeredEditCheckpoint
+    case priorCheckpoint
+}
+
+/// The one immutable physical record selected while an offer is displayed, before confirmation.
+public struct SelectedRecoveryRecord: Sendable {
+    public let kind: RecoveryRecordKind
+    public let key: DocumentKey
+    public let url: URL
+    public let byteDigest: String
+    public let itemIdentity: FileItemIdentity
+    public let allowsDamagedRecord: Bool
+}
+
 /// Device-local recovery records inside the app container (C2 placement decision):
 ///
-/// - `checkpoints/<key>/` — the last `retainCount` validated coherent prior revisions, exact envelope bytes.
-/// - `drafts/<key>/` — at most one quiescent recovery draft of unsaved edits (not a save).
+/// - `checkpoints/<key>/` — all validated coherent prior revisions, exact envelope bytes.
+/// - `edit-checkpoints/<key>/` and `edit-checkpoints-offered/<key>/` — every quiescent unpublished draft.
 /// - `conflicts/<key>/` — competing candidates preserved when a save detected another revision on disk.
 /// - `migration-backups/<key>/` — non-overwriting copies of pre-migration originals.
 /// - `locations/<key>.json` — last known location hint, used only to find checkpoints for a damaged file.
@@ -35,11 +51,12 @@ public struct RecoveryCheckpoint: Sendable, Equatable {
 /// either whole or absent. Nothing here is portable across devices (recorded limitation).
 public struct RecoveryStore: Sendable {
     public let root: URL
+    /// Legacy minimum-retention setting; retained for callers, never an upper bound or pruning rule.
     public let retainCount: Int
     private let ops: any FileOperations
 
     public init(root: URL, retainCount: Int = 3, ops: any FileOperations = LocalFileOperations()) {
-        precondition(retainCount >= 2, "Keep at least the last two validated revisions.")
+        precondition(retainCount >= 2, "The minimum retained-prior setting must be at least two.")
         self.root = root
         self.retainCount = retainCount
         self.ops = ops
@@ -53,19 +70,27 @@ public struct RecoveryStore: Sendable {
 
     // MARK: - Prior checkpoints
 
-    /// Retains `bytes` (a revision the caller has already validated) as a checkpoint, then prunes older ones.
-    /// Idempotent for identical bytes. Pruning only happens after the new checkpoint is in place.
+    /// Retains a validated prior without removing any other record. Names are never reused after Discard.
     @discardableResult
     public func retainCheckpoint(_ bytes: Data, for key: DocumentKey) throws -> RecoveryCheckpoint {
+        try withMutationLock { try retainCheckpointUnlocked(bytes, for: key) }
+    }
+
+    private func retainCheckpointUnlocked(_ bytes: Data, for key: DocumentKey) throws -> RecoveryCheckpoint {
         let fingerprint = RevisionFingerprint(of: bytes)
-        let directory = folder("checkpoints", key)
-        let name = String(format: "%010d", fingerprint.revision ?? 0) + "-\(fingerprint.shortDigest).wwcheckpoint"
-        let url = directory.appending(path: name)
-        try writeRecord(bytes, to: url)
-        let all = try checkpoints(for: key)
-        for stale in all.dropFirst(retainCount) where stale.url.lastPathComponent != url.lastPathComponent {
-            try ops.remove(stale.url)
+        for existing in try checkpoints(for: key) where existing.fingerprint.byteDigest == fingerprint.byteDigest {
+            if try ops.read(existing.url) == bytes { return existing }
         }
+        let directory = folder("checkpoints", key)
+        var url: URL
+        repeat {
+            url = directory.appending(path: String(format: "%010d", fingerprint.revision ?? 0)
+                + "-\(fingerprint.shortDigest)-\(UUID().uuidString).wwcheckpoint")
+        } while ops.exists(url)
+        let staged = try stage(bytes)
+        try ops.createDirectory(directory)
+        try ops.moveNew(staged, to: url)
+        guard try ops.read(url) == bytes else { throw CocoaError(.fileWriteUnknown) }
         return RecoveryCheckpoint(key: key, url: url, fingerprint: fingerprint)
     }
 
@@ -79,8 +104,15 @@ public struct RecoveryStore: Sendable {
             .sorted { ($0.fingerprint.revision ?? 0, $0.url.lastPathComponent) > ($1.fingerprint.revision ?? 0, $1.url.lastPathComponent) }
     }
 
+    /// UI listing: a directory/read failure is reported instead of concealing a retained prior.
+    public func checkedCheckpoints(for key: DocumentKey) throws -> [RecoveryCheckpoint] {
+        try records(in: folder("checkpoints", key), extension: "wwcheckpoint")
+            .map { url in RecoveryCheckpoint(key: key, url: url, fingerprint: RevisionFingerprint(of: try ops.read(url))) }
+            .sorted { ($0.fingerprint.revision ?? 0, $0.url.lastPathComponent) > ($1.fingerprint.revision ?? 0, $1.url.lastPathComponent) }
+    }
+
     /// Whole validated revisions that can be recovered, newest first: the verified-current record (if any)
-    /// plus retained priors, de-duplicated by bytes. Never a mixture: each value comes from one whole file.
+    /// plus retained priors, de-duplicated by SHA-256 digest. Each value comes from one whole file.
     public func validatedCheckpoints<Coder: CanonicalDocumentCoding>(
         for key: DocumentKey,
         coder: Coder
@@ -109,9 +141,20 @@ public struct RecoveryStore: Sendable {
     /// Records the latest read-back-verified revision (used by the library so an unreachable location can
     /// show the newest verified value). Kept apart from prior checkpoints so prior retention is unchanged.
     public func recordVerifiedCurrent(_ bytes: Data, for key: DocumentKey) throws {
-        let url = folder("verified-current", key).appending(path: "current.wwcheckpoint")
-        if (try? ops.read(url)) == bytes { return }
-        try replaceRecord(bytes, at: url)
+        try withMutationLock {
+            let url = folder("verified-current", key).appending(path: "current.wwcheckpoint")
+            if ops.exists(url) {
+                let previous = try ops.read(url)
+                if previous == bytes { return }
+                if key == .library {
+                    _ = try LibraryCoder.library.decode(previous)
+                } else {
+                    _ = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(previous)
+                }
+                try retainCheckpointUnlocked(previous, for: key)
+            }
+            try replaceRecord(bytes, at: url)
+        }
     }
 
     public func verifiedCurrent(for key: DocumentKey) -> RecoveryCheckpoint? {
@@ -174,8 +217,7 @@ public struct RecoveryStore: Sendable {
 
     // MARK: - Unpublished edit checkpoints (C2b)
 
-    /// Atomically writes an unpublished edit-checkpoint record (stage → verify → exclusive move), then prunes
-    /// older records only after the new one is read back. Never touches the canonical location.
+    /// Atomically writes one new unpublished record. Neither active nor offered records are pruned.
     @discardableResult
     public func writeEditCheckpoint(
         snapshot: Data,
@@ -184,29 +226,39 @@ public struct RecoveryStore: Sendable {
         for key: DocumentKey,
         at date: Date = Date()
     ) throws -> EditCheckpointRecord {
-        let existing = editCheckpointFiles(for: key)
-        let sequence = (existing.compactMap { Self.sequence(of: $0) }.max() ?? 0) + 1
-        // Whole milliseconds, so the record round-trips exactly through its canonical timestamp.
-        let date = Date(timeIntervalSince1970: TimeInterval(Int64((date.timeIntervalSince1970 * 1000).rounded())) / 1000)
-        let record = EditCheckpointRecord(
-            documentID: key.rawValue, baseRevision: base?.revision, baseChecksum: base?.checksum,
-            basePublicationID: base?.publicationID, baseByteDigest: base?.byteDigest,
-            checkpointSequence: sequence, createdAt: date, schemaVersion: schemaVersion,
-            payloadChecksum: EnvelopeHeaderInfo.peek(snapshot)?.checksum ?? "", snapshot: snapshot
-        )
-        let bytes = try record.encoded()
-        let url = folder("edit-checkpoints", key).appending(path: String(format: "%010d", sequence) + ".wwedit")
-        let staged = try stage(bytes)
-        guard try ops.read(staged) == bytes, (try? EditCheckpointRecord.decode(bytes)) == record else {
-            throw CocoaError(.fileWriteUnknown)
+        try withMutationLock {
+            let existing = try records(in: folder("edit-checkpoints", key), extension: "wwedit")
+                + records(in: folder("edit-checkpoints-offered", key), extension: "wwedit")
+            let sequenceURL = root.appending(path: "edit-sequences/\(key.rawValue).txt")
+            let last: Int
+            if ops.exists(sequenceURL) {
+                guard let stored = Int(String(decoding: try ops.read(sequenceURL), as: UTF8.self)) else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                last = stored
+            } else { last = 0 }
+            let prior = max(existing.compactMap { Self.sequence(of: $0) }.max() ?? 0, last)
+            guard prior < Int.max else { throw CocoaError(.fileWriteOutOfSpace) }
+            let sequence = prior + 1
+            let date = Date(timeIntervalSince1970: TimeInterval(Int64((date.timeIntervalSince1970 * 1000).rounded())) / 1000)
+            let record = EditCheckpointRecord(
+                documentID: key.rawValue, baseRevision: base?.revision, baseChecksum: base?.checksum,
+                basePublicationID: base?.publicationID, baseByteDigest: base?.byteDigest,
+                checkpointSequence: sequence, createdAt: date, schemaVersion: schemaVersion,
+                payloadChecksum: EnvelopeHeaderInfo.peek(snapshot)?.checksum ?? "", snapshot: snapshot
+            )
+            let bytes = try record.encoded()
+            let url = folder("edit-checkpoints", key).appending(path: String(format: "%010d", sequence) + "-\(UUID().uuidString).wwedit")
+            let staged = try stage(bytes)
+            guard try ops.read(staged) == bytes, (try? EditCheckpointRecord.decode(bytes)) == record else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            try ops.createDirectory(url.deletingLastPathComponent())
+            try ops.moveNew(staged, to: url)
+            guard (try? EditCheckpointRecord.decode(ops.read(url))) == record else { throw CocoaError(.fileWriteUnknown) }
+            try replaceRecord(Data(String(sequence).utf8), at: sequenceURL)
+            return record
         }
-        try ops.createDirectory(url.deletingLastPathComponent())
-        try ops.moveNew(staged, to: url)
-        guard (try? EditCheckpointRecord.decode(ops.read(url))) == record else { throw CocoaError(.fileWriteUnknown) }
-        for older in existing where older.lastPathComponent != url.lastPathComponent {
-            try ops.remove(older)
-        }
-        return record
     }
 
     /// Edit-checkpoint records for `key`, newest first. Unreadable records are reported, not deleted.
@@ -222,12 +274,6 @@ public struct RecoveryStore: Sendable {
         return nil
     }
 
-    /// Deletes edit checkpoints once a verified publication contains all their edits, or after an explicit
-    /// Don't Save/Discard.
-    public func discardEditCheckpoints(for key: DocumentKey) throws {
-        for url in editCheckpointFiles(for: key) { try ops.remove(url) }
-    }
-
     private func editCheckpointFiles(for key: DocumentKey) -> [URL] {
         ((try? records(in: folder("edit-checkpoints", key), extension: "wwedit")) ?? [])
     }
@@ -238,20 +284,27 @@ public struct RecoveryStore: Sendable {
     /// an unresolved "Restore unsaved changes" offer survives later saves, new checkpoints and Don't Save.
     /// Each move is a same-volume rename; an existing name is never overwritten.
     public func setAsideEditCheckpoints(for key: DocumentKey) throws {
-        let files = editCheckpointFiles(for: key)
-        guard !files.isEmpty else { return }
-        let held = folder("edit-checkpoints-offered", key)
-        try ops.createDirectory(held)
-        for url in files {
-            let name = "\(Int64((Date().timeIntervalSince1970 * 1000).rounded()))-\(url.deletingPathExtension().lastPathComponent)-\(UUID().uuidString.prefix(8)).wwedit"
-            try ops.moveNew(url, to: held.appending(path: name))
+        try withMutationLock {
+            let files = try records(in: folder("edit-checkpoints", key), extension: "wwedit")
+            guard !files.isEmpty else { return }
+            let held = folder("edit-checkpoints-offered", key)
+            try ops.createDirectory(held)
+            for url in files {
+                let name = "\(Int64((Date().timeIntervalSince1970 * 1000).rounded()))-\(url.deletingPathExtension().lastPathComponent)-\(UUID().uuidString.prefix(8)).wwedit"
+                try ops.moveNew(url, to: held.appending(path: name))
+            }
         }
     }
 
     /// Records set aside by `setAsideEditCheckpoints(for:)`, each with its location. Unreadable or damaged
     /// records are reported, never deleted here.
     public func offeredEditCheckpoints(for key: DocumentKey) -> [StoredEditCheckpoint] {
-        ((try? records(in: folder("edit-checkpoints-offered", key), extension: "wwedit")) ?? []).map { url in
+        (try? checkedOfferedEditCheckpoints(for: key)) ?? []
+    }
+
+    /// UI listing: individual unreadable records remain visible as problems; directory errors are thrown.
+    public func checkedOfferedEditCheckpoints(for key: DocumentKey) throws -> [StoredEditCheckpoint] {
+        try records(in: folder("edit-checkpoints-offered", key), extension: "wwedit").map { url in
             guard let data = try? ops.read(url) else { return StoredEditCheckpoint(url: url, record: .failure(.unreadable(url))) }
             do { return StoredEditCheckpoint(url: url, record: .success(try EditCheckpointRecord.decode(data))) } catch {
                 return StoredEditCheckpoint(url: url, record: .failure(.damaged(url)))
@@ -259,17 +312,72 @@ public struct RecoveryStore: Sendable {
         }
     }
 
-    /// Deletes the given offered records only (after an explicit, confirmed Discard, a verified publication
-    /// that contains a restored record, or Don't Save after a restore). Never deletes records it wasn't given.
-    public func discardOfferedEditCheckpoints(_ urls: [URL], for key: DocumentKey) throws {
-        let held = folder("edit-checkpoints-offered", key).standardizedFileURL.path
-        for url in urls where url.standardizedFileURL.deletingLastPathComponent().path == held && ops.exists(url) {
-            try ops.remove(url)
+    /// Capture one record and its full-record digest before an asynchronous native confirmation.
+    public func selectRecord(
+        _ kind: RecoveryRecordKind, at url: URL, for key: DocumentKey, allowingDamagedRecord: Bool = false
+    ) throws -> SelectedRecoveryRecord {
+        try withMutationLock {
+            let bytes = try validatedSelectionBytes(kind, at: url, for: key, allowingDamagedRecord: allowingDamagedRecord)
+            guard let identity = FileItemIdentity.observe(at: url) else { throw CocoaError(.fileReadUnknown) }
+            return SelectedRecoveryRecord(kind: kind, key: key, url: url, byteDigest: RevisionFingerprint.digest(bytes),
+                                          itemIdentity: identity, allowsDamagedRecord: allowingDamagedRecord)
         }
     }
 
+    /// Recheck exactly the selected record under the same cross-process mutation lock as every store writer.
+    /// A stale, replaced, unreadable, or unowned record is an error, never a successful no-op.
+    public func discardSelectedRecord(_ selection: SelectedRecoveryRecord) throws {
+        try withMutationLock {
+            let bytes = try validatedSelectionBytes(selection.kind, at: selection.url, for: selection.key,
+                                                    allowingDamagedRecord: selection.allowsDamagedRecord)
+            guard FileItemIdentity.observe(at: selection.url) == selection.itemIdentity,
+                  RevisionFingerprint.digest(bytes) == selection.byteDigest else { throw CocoaError(.fileReadUnknown) }
+            try ops.remove(selection.url)
+            guard !ops.exists(selection.url) else { throw CocoaError(.fileWriteUnknown) }
+        }
+    }
+
+    private func validatedSelectionBytes(
+        _ kind: RecoveryRecordKind, at url: URL, for key: DocumentKey, allowingDamagedRecord: Bool
+    ) throws -> Data {
+        let directory = folder(kind == .offeredEditCheckpoint ? "edit-checkpoints-offered" : "checkpoints", key).standardizedFileURL
+        let expectedExtension = kind == .offeredEditCheckpoint ? "wwedit" : "wwcheckpoint"
+        guard url.standardizedFileURL.deletingLastPathComponent() == directory,
+              url.pathExtension == expectedExtension else { throw CocoaError(.fileReadNoPermission) }
+        let bytes = try ops.read(url)
+        if kind == .offeredEditCheckpoint {
+            let record = try? EditCheckpointRecord.decode(bytes)
+            guard record != nil || allowingDamagedRecord else { throw CocoaError(.fileReadCorruptFile) }
+            if let record, record.documentID != key.rawValue { throw CocoaError(.fileReadCorruptFile) }
+        } else {
+            if key == .library {
+                if !allowingDamagedRecord { _ = try LibraryCoder.library.decode(bytes) }
+            } else {
+                let decoded = try? JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes)
+                if let decoded {
+                    guard DocumentKey.show(decoded.payload.show.id) == key else { throw CocoaError(.fileReadCorruptFile) }
+                } else if !allowingDamagedRecord {
+                    _ = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes)
+                }
+            }
+        }
+        return bytes
+    }
+
     private static func sequence(of url: URL) -> Int? {
-        Int(url.deletingPathExtension().lastPathComponent)
+        let components = url.deletingPathExtension().lastPathComponent.split(separator: "-")
+        return components.first(where: { $0.count == 10 }).flatMap { Int($0) }
+    }
+
+    private func withMutationLock<T>(_ operation: () throws -> T) throws -> T {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let lockURL = root.appending(path: ".recovery.lock")
+        let fd = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { throw POSIXError.current() }
+        defer { close(fd) }
+        guard flock(fd, LOCK_EX) == 0 else { throw POSIXError.current() }
+        defer { flock(fd, LOCK_UN) }
+        return try operation()
     }
 
     // MARK: - Pending library edits journal (Design L2/L3)

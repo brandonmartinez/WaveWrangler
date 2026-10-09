@@ -157,15 +157,19 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
 ### Persistence (WW-009 C2–C6)
 
 - **Publication** (`DocumentPublisher`): P1 candidate validated → P2 validated prior retained in the
-  device-local `RecoveryStore` → P3 coordinated base check (exact bytes; mismatch = conflict, nothing
-  overwritten, candidate preserved) → stage + flush + verify → P4 replace → P5/P6 independent read-back →
+  device-local `RecoveryStore` → P3 coordinated base check (SHA-256 match, not an external CAS;
+  mismatch = conflict, nothing overwritten, candidate preserved) → stage + flush + verify →
+  P4 replace → P5/P6 independent exact-byte read-back →
   P7 library acknowledgement → derived index. Failures keep the prior revision and dirty state; a
   post-publication doubt is `acknowledgementUncertain`, never "saved". `ShowDocument` runs the same order
   inside its `writeSafely` override around stock `super.writeSafely` (`AlreadyCoordinated`; P4 is inside
   AppKit). Only Save, Save As and autosave-in-place adopt the new publication.
-- **Recovery store** (Application Support, device-local, keyed by logical ID so it survives moves): last
-  three validated priors, C2b unpublished edit checkpoints, conflict candidates, migration backups.
-  It gives no cross-device recovery.
+- **Recovery store** (Application Support, device-local, keyed by logical ID so it survives moves): all
+  validated priors and C2b unpublished edit checkpoints, conflict candidates, migration backups.
+  Neither Save/Save As/Copy, autosave, Revert, Don't Save nor close removes them. Only a separately
+  confirmed, identity-bound Discard removes one selected record; local storage can grow without bound.
+  The save-status popover reports retained priors and exposes individual review/Discard. This is not
+  cross-device recovery; the pending-library-edits journal has its own verified-replay clearing rule.
 - **Open:** unknown-newer refuses (never written); damaged files offer a whole validated checkpoint as
   a new untitled copy; migrations preserve the original plus a non-overwriting backup and publish only
   after independent expectations pass.

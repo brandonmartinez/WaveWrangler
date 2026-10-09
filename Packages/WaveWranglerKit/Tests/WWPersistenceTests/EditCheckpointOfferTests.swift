@@ -4,7 +4,7 @@ import WWCore
 @testable import WWPersistence
 
 /// C2b recovery presentation (#84): records are set aside as an offer on open, assessed against the publication
-/// on disk, and only removed by an explicit resolution. Damaged and unknown-newer records are reported and kept.
+/// on disk, and only removed by identity-bound Discard. Damaged and unknown-newer records are reported and kept.
 @Suite("C2b edit-checkpoint offer")
 struct EditCheckpointOfferTests {
     let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
@@ -36,10 +36,10 @@ struct EditCheckpointOfferTests {
         guard case let .editable(onDisk, _) = rig.opener.open(url) else { Issue.record("not editable"); return }
         #expect(onDisk.payload == current)
 
-        // The new session's own checkpoints, their pruning and "discard after a verified save" leave the offer alone.
+        // A second session's active checkpoints and later saves leave the earlier offer alone.
         try rig.recovery.writeEditCheckpoint(snapshot: coder.encode(current.renamingShow(to: "New session"), revision: 3), base: base, schemaVersion: 1, for: key)
         try rig.recovery.writeEditCheckpoint(snapshot: coder.encode(current.renamingShow(to: "New session 2"), revision: 3), base: base, schemaVersion: 1, for: key)
-        try rig.recovery.discardEditCheckpoints(for: key)
+        #expect(rig.recovery.editCheckpoints(for: key).count == 2)
         #expect(rig.recovery.offeredEditCheckpoints(for: key).count == 1)
 
         // After another version is published, the same record is "based on an older revision" (never restored over it).
@@ -48,7 +48,8 @@ struct EditCheckpointOfferTests {
         #expect(assess(rig, key, model, onDisk: r3.fingerprint).candidate?.relation == .basedOnOtherRevision)
 
         // Explicit resolution removes exactly the offered record.
-        try rig.recovery.discardOfferedEditCheckpoints([candidate.url], for: key)
+        let selected = try rig.recovery.selectRecord(.offeredEditCheckpoint, at: candidate.url, for: key)
+        try rig.recovery.discardSelectedRecord(selected)
         #expect(rig.recovery.offeredEditCheckpoints(for: key).isEmpty)
         #expect(assess(rig, key, model, onDisk: r3.fingerprint).isEmpty)
     }
@@ -93,7 +94,8 @@ struct EditCheckpointOfferTests {
         #expect(offer.problems.contains { if case .newerFormat(_, 99, _) = $0 { true } else { false } })
 
         // Discarding the offer removes the valid record only; every problem record is kept.
-        try rig.recovery.discardOfferedEditCheckpoints([try #require(offer.candidate).url], for: key)
+        let selected = try rig.recovery.selectRecord(.offeredEditCheckpoint, at: try #require(offer.candidate).url, for: key)
+        try rig.recovery.discardSelectedRecord(selected)
         let after = assess(rig, key, model, onDisk: base)
         #expect(after.candidate == nil && after.problems.count == 5)
         for problem in after.problems { #expect(FileManager.default.fileExists(atPath: problem.url.path)) }
@@ -147,7 +149,8 @@ struct EditCheckpointOfferTests {
         // Restore (or Open as Separate Copy) of B: A is still offered.
         #expect(offer.excluding([shown.url]).candidate?.payload == sessionA)
         // Discard of B deletes B only.
-        try rig.recovery.discardOfferedEditCheckpoints([shown.url], for: key)
+        let selected = try rig.recovery.selectRecord(.offeredEditCheckpoint, at: shown.url, for: key)
+        try rig.recovery.discardSelectedRecord(selected)
         let after = assess(rig, key, model, onDisk: base)
         #expect(after.usable.map(\.payload) == [sessionA])
     }
@@ -173,29 +176,9 @@ struct EditCheckpointOfferTests {
         let a = try #require(afterB.candidate)
         #expect(a.payload.show.title == "A" && a.relation == .basedOnCurrent)
         #expect(afterB.candidateMode(restoreInEffect: true) == .copyOnlyWhileAnotherRestoreIsInEffect)
-        // Saving resolves B only; A stays on disk and is offered again (restorable once B's restore is saved).
-        let resolved = RestoredEditCheckpoints.resolved(byPublicationStartedWith: [b.url], restoredNow: [b.url], publishedEqualsCurrent: true)
-        #expect(resolved == [b.url])
-        // Even if two were ever marked restored, a save would delete neither.
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a.url, b.url], restoredNow: [a.url, b.url], publishedEqualsCurrent: true).isEmpty)
-        try rig.recovery.discardOfferedEditCheckpoints(Array(resolved), for: key)
-        #expect(assess(rig, key, model, onDisk: base).usable.map(\.payload.show.title) == ["A"])
-    }
-
-    /// A verified save resolves a restored record only if it contains the restore (#84 review).
-    @Test func restoredRecordsResolveOnlyWhenThePublicationContainsTheRestore() {
-        let a = URL(fileURLWithPath: "/offered/a.wwedit"), b = URL(fileURLWithPath: "/offered/b.wwedit")
-        // Restored before the save started, still restored, nothing changed during the save: resolved.
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a], restoredNow: [a], publishedEqualsCurrent: true) == [a])
-        // The restore was undone during or before completion: kept.
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a], restoredNow: [], publishedEqualsCurrent: true).isEmpty)
-        // The publication was captured before the restore and finished after it: kept.
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [], restoredNow: [a], publishedEqualsCurrent: true).isEmpty)
-        // Edits (or an undo) happened during the save, so the published candidate isn't the current model: kept.
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a], restoredNow: [a], publishedEqualsCurrent: false).isEmpty)
-        // Only the record restored at both ends (at most one restore is ever in effect).
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [b], restoredNow: [b], publishedEqualsCurrent: true) == [b])
-        #expect(RestoredEditCheckpoints.resolved(byPublicationStartedWith: [a], restoredNow: [b], publishedEqualsCurrent: true).isEmpty)
+        // Saving B's restored model keeps both independent records, even when the models happen to match.
+        let saved = try rig.publisher.publish(b.payload, revision: 3, key: key, to: rig.url(), target: .inPlace(expectedBase: base))
+        #expect(assess(rig, key, model, onDisk: saved.fingerprint).usable.map(\.payload.show.title) == ["B", "A"])
     }
 
     @Test func discardNeverDeletesOutsideTheOfferedRecords() throws {
@@ -207,7 +190,12 @@ struct EditCheckpointOfferTests {
         try rig.recovery.writeEditCheckpoint(snapshot: coder.encode(current, revision: 3), base: base, schemaVersion: 1, for: key)
         let live = rig.recovery.root.appending(path: "edit-checkpoints/\(key.rawValue)")
         let liveFile = try #require(try FileManager.default.contentsOfDirectory(at: live, includingPropertiesForKeys: nil).first)
-        try rig.recovery.discardOfferedEditCheckpoints([url, liveFile], for: key)
+        #expect(throws: CocoaError.self) {
+            try rig.recovery.selectRecord(.offeredEditCheckpoint, at: liveFile, for: key)
+        }
+        #expect(throws: CocoaError.self) {
+            try rig.recovery.selectRecord(.offeredEditCheckpoint, at: url, for: key)
+        }
         #expect(FileManager.default.fileExists(atPath: url.path))
         #expect(FileManager.default.fileExists(atPath: liveFile.path))
         // Nothing to set aside is a no-op; setting aside twice never overwrites.

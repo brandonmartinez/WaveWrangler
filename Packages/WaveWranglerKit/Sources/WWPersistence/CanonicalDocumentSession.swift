@@ -20,6 +20,7 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
 
     private let publisher: DocumentPublisher<Coder>
     private let gate: AutosaveGate?
+    private var originatingItem: FileItemIdentity?
 
     public init(
         key: DocumentKey,
@@ -36,6 +37,7 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
         self.url = url
         self.payload = payload
         self.base = base
+        self.originatingItem = base == nil ? nil : FileItemIdentity.observe(at: url)
         self.revision = revision
         self.isDirty = false
         self.publisher = publisher
@@ -125,6 +127,14 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
         }
         // Nothing pending for automatic work. An explicit Save still republishes and verifies disk truth.
         if automatic, !isDirty, base != nil { return .failure(.cancelled) }
+        if base != nil {
+            guard let originatingItem, FileItemIdentity.observe(at: url) == originatingItem else {
+                isDirty = true
+                let error = PublicationError.originConflict("The originating file's identity is missing or has changed. Reopen it or save a separate copy.")
+                status.state = DocumentSaveState.from(error, retainedRevision: base?.revision)
+                return .failure(error)
+            }
+        }
         status.state = .saving
         let target: PublicationTarget = base.map { .inPlace(expectedBase: $0) } ?? .newLocation
         let next = max(revision, base?.revision ?? 0) + 1
@@ -133,10 +143,9 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
                 payload, revision: next, key: key, to: url, target: target, isCancelled: isCancelled, followUp: followUp
             )
             base = receipt.fingerprint
+            originatingItem = FileItemIdentity.observe(at: url)
             revision = receipt.revision
             isDirty = false
-            // The verified publication contains every edit: unpublished edit checkpoints are no longer needed.
-            try? publisher.recovery?.discardEditCheckpoints(for: key)
             status.state = receipt.followUpIncomplete
                 ? .savedFollowUpIncomplete(revision: receipt.revision, at: receipt.verifiedAt)
                 : .saved(revision: receipt.revision, at: receipt.verifiedAt)
@@ -160,10 +169,17 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
         replacingExisting: Bool = false,
         isCancelled: () -> Bool = { false }
     ) -> Result<PublicationReceipt, PublicationError> {
+        if destination.standardizedFileURL == url.standardizedFileURL {
+            let error = PublicationError.originConflict("Save As cannot bypass the originating file's in-place save checks.")
+            isDirty = true
+            status.state = DocumentSaveState.from(error, retainedRevision: base?.revision)
+            return .failure(error)
+        }
         let result = duplicate(to: destination, replacingExisting: replacingExisting, isCancelled: isCancelled)
         if case let .success(receipt) = result {
             url = destination
             base = receipt.fingerprint
+            originatingItem = FileItemIdentity.observe(at: destination)
             revision = receipt.revision
             isDirty = false
             readOnlyReason = nil
@@ -181,6 +197,9 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
         isCancelled: () -> Bool = { false }
     ) -> Result<PublicationReceipt, PublicationError> {
         guard allowsCopies else { return .failure(.readOnly(readOnlyReason ?? "This document can't be copied.")) }
+        guard destination.standardizedFileURL != url.standardizedFileURL else {
+            return .failure(.originConflict("A copy cannot bypass the originating file's in-place save checks."))
+        }
         do {
             let receipt = try publisher.publish(
                 payload, revision: max(revision, 1), key: key, to: destination,
@@ -197,23 +216,26 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
     /// Records a C2b unpublished edit checkpoint (not a save). ON only; OFF creates none.
     @discardableResult
     public func writeEditCheckpoint(keepingStatus: Bool = false) -> Bool {
-        guard isDirty, readOnlyReason == nil, gate?.isEnabled ?? true, let recovery = publisher.recovery,
-              let snapshot = try? publisher.coder.encode(payload, revision: max(revision, base?.revision ?? 0) + 1)
-        else { return false }
+        guard isDirty, readOnlyReason == nil, gate?.isEnabled ?? true else { return false }
         do {
+            guard let recovery = publisher.recovery else {
+                throw CocoaError(.fileWriteNoPermission)
+            }
+            let snapshot = try publisher.coder.encode(payload, revision: max(revision, base?.revision ?? 0) + 1)
             let record = try recovery.writeEditCheckpoint(
                 snapshot: snapshot, base: base, schemaVersion: publisher.coder.format.currentSchemaVersion, for: key
             )
             if !keepingStatus { status.state = .recoveryCheckpoint(at: record.createdAt) }
             return true
         } catch {
+            status.state = .saveFailed(retainedRevision: base?.revision, kind: WriteFailureKind(classifying: error),
+                                       message: "Recovery checkpoint could not be written: \(error.localizedDescription)")
             return false
         }
     }
 
-    /// Explicit Don't Save/Discard: the user chose to drop unsaved edits, so their checkpoints go too.
+    /// Don't Save closes the session without retiring any recovery records.
     public func discardUnsavedChanges() {
-        try? publisher.recovery?.discardEditCheckpoints(for: key)
     }
 
     public func refreshProviderConflicts() {

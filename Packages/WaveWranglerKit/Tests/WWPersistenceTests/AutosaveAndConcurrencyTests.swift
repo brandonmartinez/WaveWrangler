@@ -112,9 +112,9 @@ struct AutosavePolicyTests {
         #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(record.snapshot).payload.show.title == "Drafted")
         #expect(await session.isDirty)
         #expect(await !session.status.state.isVerifiedOnDisk)
-        // A verified publication containing the edits prunes the record.
+        // A verified publication does not authorize removal of a recovery copy.
         guard case .success = await session.save() else { Issue.record("save failed"); return }
-        #expect(rig.recovery.latestEditCheckpoint(for: session.key) == nil)
+        #expect(rig.recovery.latestEditCheckpoint(for: session.key) == record)
     }
 
     /// WW-005 provisional gate: ≤2 s from the last edit to a coherent, independently read-back checkpoint.
