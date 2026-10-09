@@ -115,7 +115,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         )
         XCTAssertTrue(unwaived.isEmpty, unwaived.joined(separator: "\n"))
         XCTAssertLessThanOrEqual(
-            inspector.frame.height,
+            app.scrollViews["ww.inspector"].frame.height,
             app.windows["ww.show.window"].frame.height,
             "The inspector AX parent must fit the show window, not report its unscrolled content height"
         )
