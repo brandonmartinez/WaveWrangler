@@ -3,8 +3,14 @@
 **Status:** prospective protocol and synthetic policy precursor only. No recognition, media,
 calibration, disjoint holdout, human listening, or precision result has been run or claimed here.
 Refs #21 #25 #27 #41. The pure `WWCutPolicy` target is not connected to the app, renderer, or
-`WWCommonEdit`; it cannot activate or render a cut. The latter's exact rounded pre-edit aligned-output
-frame endpoints (`qStart`, `qEnd`) must be supplied by an Alignment-owned adapter at output rate `R`.
+`WWCommonEdit`; it cannot activate or render a cut. The Alignment-owned
+`WWCommonEdit.KeyedCutMapping` now computes exact rounded pre-edit aligned-output
+frame endpoints (`qStart`, `qEnd`) at output rate `R` in a **synthetic, provisional**
+path. It requires ordered unique lane/revision/epoch keys, source and grid coverage,
+and final merged source-frame fades for every declared lane; both Shorten and Lift
+refuse gaps, stale or cross-revision keys, partial coverage and protected removals
+or fades. Its caller-supplied manifest and protection remain untrusted, and it
+does not implement `CutFootprintMapping` or mint `ProtectionProof`.
 Do not use native source duration as the common ripple. No trusted organizer lane-manifest adapter
 or native person-action adapter exists yet. Their snapshot and review-action constructors are
 non-public; **external callers cannot approve a cut**. Missing authority or review action explicitly

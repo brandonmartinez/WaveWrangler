@@ -99,3 +99,27 @@ final merged fade proof and a person-initiated review action remain hard prerequ
 `WWCutPolicy` manifest/review-action constructors are internal to that module; this preflight
 neither bypasses them nor grants new access to unselected audio. No #40/#41 acceptance claim follows
 from the provisional result.
+
+**Keyed all-lane adapter (provisional):** `KeyedCutMapping.map` consumes the existing common map,
+an ordered episode manifest and exact lane/epoch/alignment-revision keys, the explicitly selected
+Primary and source-frame request, and one keyed source/grid survey per lane. It maps both supported
+Primary boundaries forward exactly and HALF-UP rounds them once at the base map's output rate; the
+same `[qStart,qEnd)` is used for Shorten removal or Lift reservation. It refuses pre-existing removal
+overlap, domain/rate/revision mismatch and every missing/duplicate/reordered/cross-keyed lane.
+For each audio lane it inverts both shared endpoints, checks source coverage as an adjacent-only
+union, inspects every output-grid and removed source frame for one epoch and a supported inverse,
+and checks protected source frames plus requested and **final merged** source-frame fades on the
+source grid. It derives corresponding grid fade spans, refuses fades crossing previous/common
+removals or contradicting supplied grid spans, and checks their union via `CommonEditPreflight`.
+The requested fade lengths must agree with rounded output-frame lengths. Intentional
+silence needs an explicit complete grid interval, not a fabricated inverse. The existing finite
+`CommonEditPreflight` also checks the complete common map; the source removal/merged fade and
+whole-grid inspection are bounded to 8,192 frames and longer cases refuse until a stronger proof
+exists. End boundaries without a supported source inverse (including a source's exclusive last
+frame) refuse rather than extrapolate.
+
+All keys, backing, protection and final fade observations are **caller-supplied**. The result is a
+`ProvisionalKeyedCutMapping`, not a `WWCutPolicy.CutFootprint`, `ApprovedCut`, source witness or render
+permit. No trusted organizer or independent protection constructor, human review action, atomic
+map/history publication, or preview/render invalidation is introduced. The finite synthetic tests
+are not a qualified real-episode or protected-speech acceptance gate; #41 remains pending.
