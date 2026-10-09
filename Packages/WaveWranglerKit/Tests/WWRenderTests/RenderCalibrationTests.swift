@@ -14,7 +14,7 @@ import WWTimeMap
 // Truth is the WWTimeMap itself (`sourceFrame` / `alignedTime`), never the render plan.
 //
 // Gates are `RenderGates` (frozen as m2-freeze-render). The original holdout passed once; the
-// revision-3 holdout uses fresh disjoint seeds and runs only with WW_M2_RENDER_3_HOLDOUT=1.
+// revision-4 holdout uses fresh disjoint seeds and runs only with WW_M2_RENDER_4_HOLDOUT=1.
 // Listening evaluation is still BLOCKED (no consented listeners).
 
 /// The objective render gates. Frozen at m2-freeze-render (docs/m2/fixtures/m2-freeze-render.json;
@@ -44,8 +44,8 @@ enum RenderFixture {
     static let fixtureID = "M2-RENDER-001"
     static let calibrationCases = 16
     static let holdoutCases = 48
-    static let holdoutEnabled = ProcessInfo.processInfo.environment["WW_M2_RENDER_3_HOLDOUT"] == "1"
-    static let holdoutSplit = "holdout-3"
+    static let holdoutEnabled = ProcessInfo.processInfo.environment["WW_M2_RENDER_4_HOLDOUT"] == "1"
+    static let holdoutSplit = "holdout-4"
     /// The calibration split is CPU-bound for tens of seconds, so it runs in its own serialized pass
     /// (scripts/test.sh) instead of starving the time-limited suites of the parallel package run.
     static let calibrationEnabled = ProcessInfo.processInfo.environment["WW_RENDER_CALIBRATION"] == "1"
@@ -503,7 +503,7 @@ struct RenderCalibrationTests {
         }
     }
 
-    /// Revision-3 holdout: disjoint seeds, run once on a clean revision-3 freeze commit.
+    /// Revision-4 holdout: disjoint seeds, run once on a clean revision-4 freeze commit.
     @Test(.enabled(if: RenderFixture.holdoutEnabled))
     func holdoutSplitMeetsEveryFrozenGate() async throws {
         let records = try await runSplit(RenderFixture.holdoutSplit, cases: RenderFixture.holdoutCases)

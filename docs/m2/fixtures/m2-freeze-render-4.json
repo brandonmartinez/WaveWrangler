@@ -1,0 +1,120 @@
+{
+  "freezeID": "m2-freeze-render-4",
+  "date": "2026-10-08",
+  "recordedBy": "Pipeline (fresh WW-018/#310 sampler and holdout author)",
+  "fixtureID": "M2-RENDER-001",
+  "supersedesForExecution": "m2-freeze-render-3",
+  "status": "Prospective revision-4 freeze; holdout-4 NOT RUN until this complete record, runner, registry and pinned trees are committed. Revision-2 and revision-3 once-only runs retain valid objective rows but remain permanently INCOMPLETE as whole protocols. Listening BLOCKED.",
+  "reason": "Independent review rejected rev3 CPU coverage because five sampling gaps exceeded one second. Two repeatable calibration runs proved the pinned low-overhead, descendant-aware Mach-CPU sampler before this freeze was authored. Revision 4 changes only the synthetic holdout split, frozen test tree and CPU sampling protocol; source, two-case scheduler, generator, truth, recipe, gates and counts are unchanged. The whole-process-tree CPU limit is strictly less than 400%, not less-than-or-equal.",
+  "originalFreezeRecord": "docs/m2/fixtures/m2-freeze-render.json",
+  "revisionTwoFreezeRecord": "docs/m2/fixtures/m2-freeze-render-2.json",
+  "revisionThreeFreezeRecord": "docs/m2/fixtures/m2-freeze-render-3.json",
+  "pinnedTrees": {
+    "Sources/WWRender": "94604633d6464391ade116b363f8874675381bf5",
+    "Tests/WWRenderTests": "e6a93761701c87407b14b3597b27872e9df72d63"
+  },
+  "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit; RenderFreezeTests checks working-tree Git IDs against these pins. Renderer source is identical to revisions 1, 2 and 3. Earlier freeze records, pins and once-only results are immutable. A later test/source tree change requires a new prospective user-approved freeze, not a rerun.",
+  "maximumConcurrentCases": 2,
+  "scheduler": "Unchanged revision-2 test-only task group: at most two synthetic cases in flight, admitting one after each completion. One Swift Testing test at a time and --jobs 4 for compilation. Full 16/48 seeded cases plus the one shared fixed multi-span regression case per split; canonical record order retained.",
+  "seedDerivation": "First 8 bytes, big-endian, of SHA-256(\"ww-m2-fixture|v1|M2-RENDER-001|<split>|<index>\"). Calibration uses \"calibration\", original holdout \"holdout\", revisions 2 and 3 use \"holdout-2\" and \"holdout-3\"; revision 4 exclusively uses \"holdout-4\" for indices 0..47. All 208 seeded identities are unique and pairwise disjoint, checked by RenderFreezeTests. The one fixed multi-span regression case is shared and not held out.",
+  "holdoutSplit": "holdout-4",
+  "generator": {
+    "case": "One group, one 6-channel occurrence on one affine epoch; stratum = index mod 8.",
+    "strata": [
+      "48k->48k",
+      "44.1k->48k",
+      "16k->48k",
+      "48k->16k",
+      "96k->48k",
+      "12k->48k",
+      "48k->44.1k a~1.02",
+      "44.1k->48k a~0.98"
+    ],
+    "clock": "a = (1e6 + basePPM + U{-1000..1000}) / 1e6 (basePPM 0, +20000 or -20000); b = U{0..20000}/999983 s; e = (U{0..10000} - 5000)/1000003 s",
+    "frames": "max(Fin/4, 3000) source frames",
+    "outputFrames": "[ceil(t(0)*Fout) - 64, floor(t(N-1)*Fout) + 65)",
+    "tones": "Channel c: amplitude 0.5 at fraction r_c * (1 - 0.02 u) of lower Nyquist; r=[0.02,0.15,0.3,0.5,0.7,0.8], seeded phase.",
+    "stopband": "When 0.98 * (Fin/(a Fout)) > 1.01, six tones between output Nyquist and 0.98 input Nyquist (normalised).",
+    "landmarks": "0.9-amplitude seeded-sign impulse at N/8 on every channel, and at N/4 + c*N/12 on channel c only.",
+    "inactive": "Channel index mod 6 carries -1 dBFS seeded uniform noise; all other channels exact zero.",
+    "multiSpan": "One unchanged fixed MixedGroup case per split (kink, gap, unsupported epoch, 44.1/48 kHz occurrences), with 12 landmarks and two skew pairs. The same multi-span case appears in all splits as disclosed regression coverage; it is not held out."
+  },
+  "truth": "The generator's WWTimeMap forward (alignedTime) and inverse (sourceFrame), not the render plan. Tone truth uses the exact inverse at hull ends and linear interpolation within an affine segment.",
+  "measurement": "Unchanged from m2-freeze-render: steady frames with every tap in span; least-squares gain/phase/residual vs exact tone, parabolic landmark peak within four frames of truth with sign, common-impulse and phase-derived skew, inactive peak in dBFS. NaN or missing evidence fails. Canonical records sort by (caseIndex, kind, channel, encoded JSON).",
+  "splits": {
+    "calibration": {
+      "cases": 16,
+      "plusMultiSpan": 1,
+      "run": true,
+      "seedSplit": "calibration",
+      "enable": "WW_RENDER_CALIBRATION=1 swift test --filter calibrationSplitMeetsEveryObjectiveGate"
+    },
+    "holdout": {
+      "cases": 48,
+      "plusMultiSpan": 1,
+      "run": false,
+      "seedSplit": "holdout-4",
+      "enable": "Only via python3 -B scripts/render-cpu-sampler.py holdout <new outside-repo evidence directory> on a clean freeze-containing commit; WW_M2_RENDER_4_HOLDOUT=1 swift test --jobs 4 --no-parallel --filter holdoutSplitMeetsEveryFrozenGate"
+    }
+  },
+  "renderer": {
+    "module": "WWRender",
+    "RenderVersions.renderer": 1,
+    "RenderVersions.outputAssetFormat": 1,
+    "RenderRecipe.currentVersion": 1,
+    "recipe": "m2Candidate: Kaiser-windowed sinc, halfWidth 32 taps per side, passband edge 0.8, stopband edge 1.0, beta 9.6, 2048 table phases, chunk 4096 output frames, maximum decimation 64",
+    "status": "CANDIDATE, not qualified",
+    "recipeEncoding": {
+      "kernel": {
+        "halfWidth": 32,
+        "kaiserBeta": 9.6,
+        "passbandEdge": 0.8,
+        "stopbandEdge": 1,
+        "tablePhasesPerSample": 2048
+      },
+      "maximumDecimation": 64,
+      "outputChunkFrames": 4096,
+      "padding": "explicit-zero/no-cross-span-taps",
+      "rounding": "exact-position/shared-binary64-phase/binary32-output",
+      "version": 1
+    }
+  },
+  "gateValues": {
+    "landmarkFrames": 1.0,
+    "passbandDB": 0.1,
+    "passbandFraction": 0.8,
+    "aliasDBc": -80.0,
+    "skewFrames": 1.0,
+    "inactiveDBFS": -80.0,
+    "phaseToleranceDegrees": 0.001,
+    "familyPeakBytes": 1073741824,
+    "maximumInversionsSwaps": 0
+  },
+  "cpuTelemetry": {
+    "runner": "scripts/render-cpu-sampler.py",
+    "runnerSHA256": "72f01e42430479ccb618fcc4b64106853d2a500b52a143a9c1a9eb2b71c62b85",
+    "sampleIntervalSeconds": 0.1,
+    "maximumSampleGapSeconds": 1.0,
+    "wholeTreeCPUPercentLimitExclusive": 400.0,
+    "maximumOneMinuteLoad": 24.0,
+    "swiftJobs": 4,
+    "maximumConcurrentCases": 2,
+    "maximumOtherNativeBuilds": 2,
+    "maximumOtherTestHelpers": 0,
+    "calibrationProof": "docs/m2/evidence/ww-018/calibration-rev4-{12,13}-*.{tsv,json,log,txt}; both runs used exactly this runner SHA, each passed 466 records with complete <=1-second coverage and <400% whole-tree CPU before the revision-4 freeze was committed.",
+    "sampler": "macOS libproc proc_listchildpids follows the swift-test PID and observed descendants by PPID ancestry across process groups. Every 0.1 seconds, proc_pidinfo returns a process-identity start time and cumulative task user+system CPU Mach ticks for each PID; mach_timebase_info converts to nanoseconds. Per-PID window CPU is the tick delta divided by the monotonic-nanosecond window; sum across all live descendants for the whole-tree peak. Include an initially seen PID's entire CPU lifetime; retain process identities across reparenting. Record each snapshot's monotonic beginning and end and fail closed if next end minus previous beginning exceeds one second, launch/exit coverage exceeds one second, any process query fails, a PID returns after an unobserved interval, or no SwiftPM helper is observed. Strictly <400% whole tree is PASS; exactly 400% or higher is FAIL. Missing coverage is INCOMPLETE. No rerun.",
+    "recordFiles": [
+      "preflight.json",
+      "timing.json",
+      "cpu.tsv",
+      "samples.tsv",
+      "cpu-summary.json",
+      "run.log",
+      "ww-018-holdout-4.jsonl",
+      "verdict.txt",
+      "command.txt"
+    ]
+  },
+  "familyPeakEvidence": "Reuse 38.5 MiB ru_maxrss and 198632-byte renderer working set from docs/m2/evidence/ww-018/holdout-timing.txt (original frozen source tree 94604633d6464391ade116b363f8874675381bf5); do not describe it as a new revision-4 measurement.",
+  "holdoutProtocol": "On a CLEAN commit containing this prospective freeze, registry, exact pinned source/test trees and runner, with working-Mac one-minute load <=24, at most two other native builds and zero other test helpers, run each new holdout-4 case exactly once through the pinned CPU sampler. Preserve all 1,370 48-case-plus-fixed-regression records, seed disjointness, seven original objective gates with nearest-rank p95/max/counts, host/start load, runtime/exit, complete per-PID CPU samples, conservative gap and strict whole-tree <400% peak. A missing/over-one-second sample is INCOMPLETE, objective/gate or CPU >=400% is FAIL; do not rerun or automatically freeze revision 5. Earlier revision-2/-3 protocols stay INCOMPLETE; listening stays BLOCKED. Fresh final-head full scripts/test.sh and independent review belong to M3 coordination, not this single holdout."
+}

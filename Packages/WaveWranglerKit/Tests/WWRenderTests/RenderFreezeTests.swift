@@ -3,17 +3,18 @@ import Foundation
 import Testing
 @testable import WWRender
 
-/// m2-freeze-render-3 consistency (docs/m2/fixtures/m2-freeze-render-3.json). These checks render nothing and
+/// m2-freeze-render-4 consistency (docs/m2/fixtures/m2-freeze-render-4.json). These checks render nothing and
 /// always run: they fail if the gates, recipe, versions, split counts or pinned trees drift from the committed
 /// freeze. A deliberate change is a new dated freeze revision, never a silent edit.
-@Suite("Render freeze (m2-freeze-render-3)")
+@Suite("Render freeze (m2-freeze-render-4)")
 struct RenderFreezeTests {
     static let repository = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
     static let freezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-render.json")
     static let revisionTwoFreezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-render-2.json")
-    static let activeFreezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-render-3.json")
+    static let revisionThreeFreezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-render-3.json")
+    static let activeFreezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-render-4.json")
 
     static func freeze() throws -> [String: Any] {
         try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: freezeURL)) as? [String: Any])
@@ -21,6 +22,10 @@ struct RenderFreezeTests {
 
     static func revisionTwoFreeze() throws -> [String: Any] {
         try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: revisionTwoFreezeURL)) as? [String: Any])
+    }
+
+    static func revisionThreeFreeze() throws -> [String: Any] {
+        try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: revisionThreeFreezeURL)) as? [String: Any])
     }
 
     static func activeFreeze() throws -> [String: Any] {
@@ -88,7 +93,7 @@ struct RenderFreezeTests {
 
     @Test func revisionThreePreservesTheRecipeAndPinsTheCPUProtocol() throws {
         let previous = try Self.revisionTwoFreeze()
-        let active = try Self.activeFreeze()
+        let active = try Self.revisionThreeFreeze()
         #expect(active["freezeID"] as? String == "m2-freeze-render-3")
         #expect(active["supersedesForExecution"] as? String == "m2-freeze-render-2")
         #expect(active["fixtureID"] as? String == RenderFixture.fixtureID)
@@ -100,7 +105,6 @@ struct RenderFreezeTests {
         }
         #expect(active["maximumConcurrentCases"] as? Int == RenderFixture.maximumConcurrentCases)
         #expect(active["holdoutSplit"] as? String == "holdout-3")
-        #expect(RenderFixture.holdoutSplit == "holdout-3")
         let previousSplits = try #require(previous["splits"] as? [String: [String: Any]])
         let splits = try #require(active["splits"] as? [String: [String: Any]])
         for split in ["calibration", "holdout"] {
@@ -108,7 +112,7 @@ struct RenderFreezeTests {
             #expect(splits[split]?["plusMultiSpan"] as? Int == previousSplits[split]?["plusMultiSpan"] as? Int)
         }
         #expect(splits["holdout"]?["run"] as? Bool == false)
-        #expect(splits["holdout"]?["seedSplit"] as? String == RenderFixture.holdoutSplit)
+        #expect(splits["holdout"]?["seedSplit"] as? String == "holdout-3")
 
         let telemetry = try #require(active["cpuTelemetry"] as? [String: Any])
         #expect(telemetry["runner"] as? String == "scripts/render-holdout-3.sh")
@@ -124,6 +128,55 @@ struct RenderFreezeTests {
 
         let splitsToCheck = ["calibration": RenderFixture.calibrationCases, "holdout": RenderFixture.holdoutCases,
                              "holdout-2": RenderFixture.holdoutCases, "holdout-3": RenderFixture.holdoutCases]
+        var allSeeds: Set<UInt64> = []
+        for (split, count) in splitsToCheck {
+            let identities = Set((0..<count).map { RenderFixture.seed(split: split, index: $0) })
+            #expect(identities.count == count)
+            #expect(identities.isDisjoint(with: allSeeds))
+            allSeeds.formUnion(identities)
+        }
+    }
+
+    @Test func revisionFourPreservesTheGatesAndPinsStrictWholeTreeCPU() throws {
+        let previous = try Self.revisionThreeFreeze()
+        let active = try Self.activeFreeze()
+        #expect(active["freezeID"] as? String == "m2-freeze-render-4")
+        #expect(active["supersedesForExecution"] as? String == "m2-freeze-render-3")
+        #expect(active["fixtureID"] as? String == RenderFixture.fixtureID)
+        for key in ["generator", "renderer", "gateValues"] {
+            #expect(active[key] as? NSDictionary == previous[key] as? NSDictionary)
+        }
+        for key in ["truth", "measurement"] {
+            #expect(active[key] as? String == previous[key] as? String)
+        }
+        #expect(active["maximumConcurrentCases"] as? Int == RenderFixture.maximumConcurrentCases)
+        #expect(active["holdoutSplit"] as? String == "holdout-4")
+        #expect(RenderFixture.holdoutSplit == "holdout-4")
+        let previousSplits = try #require(previous["splits"] as? [String: [String: Any]])
+        let splits = try #require(active["splits"] as? [String: [String: Any]])
+        for split in ["calibration", "holdout"] {
+            #expect(splits[split]?["cases"] as? Int == previousSplits[split]?["cases"] as? Int)
+            #expect(splits[split]?["plusMultiSpan"] as? Int == previousSplits[split]?["plusMultiSpan"] as? Int)
+        }
+        #expect(splits["holdout"]?["run"] as? Bool == false)
+        #expect(splits["holdout"]?["seedSplit"] as? String == RenderFixture.holdoutSplit)
+
+        let telemetry = try #require(active["cpuTelemetry"] as? [String: Any])
+        #expect(telemetry["runner"] as? String == "scripts/render-cpu-sampler.py")
+        #expect(telemetry["sampleIntervalSeconds"] as? Double == 0.1)
+        #expect(telemetry["maximumSampleGapSeconds"] as? Double == 1)
+        #expect(telemetry["wholeTreeCPUPercentLimitExclusive"] as? Double == 400)
+        #expect(telemetry["maximumOneMinuteLoad"] as? Double == 24)
+        #expect(telemetry["swiftJobs"] as? Int == 4)
+        #expect(telemetry["maximumConcurrentCases"] as? Int == RenderFixture.maximumConcurrentCases)
+        #expect(telemetry["maximumOtherTestHelpers"] as? Int == 0)
+        let script = try Data(contentsOf: Self.repository.appendingPathComponent("scripts/render-cpu-sampler.py"))
+        let digest = SHA256.hash(data: script).map { String(format: "%02x", $0) }.joined()
+        #expect(telemetry["runnerSHA256"] as? String == digest)
+
+        let splitsToCheck = ["calibration": RenderFixture.calibrationCases, "holdout": RenderFixture.holdoutCases,
+                             "holdout-2": RenderFixture.holdoutCases, "holdout-3": RenderFixture.holdoutCases,
+                             "holdout-4": RenderFixture.holdoutCases]
         var allSeeds: Set<UInt64> = []
         for (split, count) in splitsToCheck {
             let identities = Set((0..<count).map { RenderFixture.seed(split: split, index: $0) })
@@ -152,7 +205,7 @@ struct RenderFreezeTests {
         return Insecure.SHA1.hash(data: tree).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Prior freeze pins remain historical; only revision 3 pins the current working test tree.
+    /// Prior freeze pins remain historical; only revision 4 pins the current working test tree.
     @Test func rendererAndHarnessTreesMatchTheFreezeRecord() throws {
         let original = try #require(try Self.freeze()["pinnedTrees"] as? [String: String])
         let revisionTwo = try #require(try Self.revisionTwoFreeze()["pinnedTrees"] as? [String: String])
@@ -161,11 +214,14 @@ struct RenderFreezeTests {
         #expect(trees["Sources/WWRender"] == original["Sources/WWRender"])
         #expect(revisionTwo["Sources/WWRender"] == original["Sources/WWRender"])
         #expect(revisionTwo["Tests/WWRenderTests"] == "073754414e1ee52c638d48e64a2e4a262c2ba30e")
+        let revisionThree = try #require(try Self.revisionThreeFreeze()["pinnedTrees"] as? [String: String])
+        #expect(revisionThree["Tests/WWRenderTests"] == "125b552184db93f506e193dd08fd9610d5c7fabe")
         #expect(trees["Tests/WWRenderTests"] != revisionTwo["Tests/WWRenderTests"])
+        #expect(trees["Tests/WWRenderTests"] != revisionThree["Tests/WWRenderTests"])
         let package = Self.repository.appendingPathComponent("Packages/WaveWranglerKit")
         for (path, frozen) in trees {
             let actual = try Self.gitTreeID(package.appendingPathComponent(path))
-            #expect(actual == frozen, "\(path) is \(actual) but m2-freeze-render-3 pins \(frozen): a frozen tree changed; record a new freeze revision before any holdout")
+            #expect(actual == frozen, "\(path) is \(actual) but m2-freeze-render-4 pins \(frozen): a frozen tree changed; record a new freeze revision before any holdout")
         }
     }
 
@@ -196,5 +252,10 @@ struct RenderFreezeTests {
         #expect(current["record"] as? String == "docs/m2/fixtures/m2-freeze-render-3.json")
         #expect(current["fixtures"] as? [String] == [RenderFixture.fixtureID])
         #expect(current["counts"] as? [String: Int] == counts)
+
+        let revisionFour = try #require(freezes.first { $0["freezeID"] as? String == "m2-freeze-render-4" })
+        #expect(revisionFour["record"] as? String == "docs/m2/fixtures/m2-freeze-render-4.json")
+        #expect(revisionFour["fixtures"] as? [String] == [RenderFixture.fixtureID])
+        #expect(revisionFour["counts"] as? [String: Int] == counts)
     }
 }

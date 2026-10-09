@@ -1,7 +1,7 @@
 {
- "registryVersion": "m2-fixtures-v6-decode-and-discontinuity-revision-2",
+ "registryVersion": "m2-fixtures-v7-render-revision-4",
  "date": "2026-10-08",
- "owner": "Alignment (WW-016/WW-021, WW-018/WW-023, WW-017), Mac (WW-050, m2-freeze-decode, m2-freeze-decode-2 and m2-freeze-timemap for WW-015), Lead (independent WW-018/#310 render holdout protocol correction); protocol pattern from docs/m1/ww-003-fixture-protocol.md",
+ "owner": "Alignment (WW-016/WW-021, WW-018/WW-023, WW-017), Mac (WW-050, m2-freeze-decode, m2-freeze-decode-2 and m2-freeze-timemap for WW-015), Lead (independent WW-018/#310 render holdout protocol correction), Pipeline (fresh revision-4 calibration sampler and conditional holdout); protocol pattern from docs/m1/ww-003-fixture-protocol.md",
  "issues": [
   "https://github.com/brandonmartinez/WaveWrangler/issues/15",
   "https://github.com/brandonmartinez/WaveWrangler/issues/24",
@@ -14,7 +14,7 @@
   "https://github.com/brandonmartinez/WaveWrangler/issues/310"
  ],
  "protocol": "docs/m2/ww-019-m2-contracts.md §4 (freeze plan) and §5 (gates)",
- "status": "Records are dated individually; read each entry for its effective freeze and holdout status. The original render holdout passed, but revisions 2 and 3 have valid objective rows and INCOMPLETE frozen CPU protocols (no full holdout CPU pass). m2-freeze-decode holdout passed once in PR #202 and is retained unchanged as historical evidence; it is superseded for the pull-cursor trees by m2-freeze-decode-2, whose calibration passed and whose holdout has NOT RUN. m2-freeze-timemap holdout passed once in PR #202. Discontinuity revision status and evidence remain recorded on their entries and evidence note.",
+ "status": "Records are dated individually; read each entry for its effective freeze and holdout status. The original render holdout passed, revisions 2 and 3 have valid objective rows but permanently INCOMPLETE frozen CPU protocols, and the conditional revision-4 holdout has NOT RUN. m2-freeze-decode holdout passed once in PR #202 and is retained unchanged as historical evidence; it is superseded for the pull-cursor trees by m2-freeze-decode-2, whose calibration passed and whose holdout has NOT RUN. m2-freeze-timemap holdout passed once in PR #202. Discontinuity revision status and evidence remain recorded on their entries and evidence note.",
  "freezeRule": "Each family is frozen (recipe, truth, split and counts, gate, generator tree IDs) in a dated freeze record under docs/m2/fixtures/ before its first holdout case runs. Counts may increase before a freeze and never decrease after one without an explicit, dated user decision.",
  "freezes": [
   {
@@ -164,6 +164,47 @@
       "multiSpanCasePerSplit": 1
      },
      "evidenceStatus": "once-only holdout-3 on clean pre-run freeze 25c54151a089635a0738dbafdffd2a6dc23ff749: objective gates passed, 1370 records SHA-256 a85be57ed284db16ef5fdf6c654b5f6be230867683a7a1ef7398234db7c1b965; sampled helper peak 199.1% but five >1 s gaps (max 2.010 s) leave CPU coverage and overall frozen protocol INCOMPLETE, no rerun; raw records/CPU/run log in ww-018/; listening BLOCKED"
+    }
+   ]
+  },
+  {
+   "freezeID": "m2-freeze-render-4",
+   "record": "docs/m2/fixtures/m2-freeze-render-4.json",
+   "fixtures": [
+    "M2-RENDER-001"
+   ],
+   "status": "prospective freeze; pre-freeze CPU sampler calibrated twice with complete <=1 s coverage and strict whole-tree <400%; disjoint holdout-4 NOT RUN; revisions 2 and 3 remain INCOMPLETE; listening BLOCKED",
+   "supersedesForExecution": "m2-freeze-render-3",
+   "counts": {
+    "fixtures": 1,
+    "calibrationCases": 16,
+    "calibrationMultiSpanCases": 1,
+    "holdoutCases": 48,
+    "holdoutMultiSpanCases": 1
+   },
+   "fixtureEntries": [
+    {
+     "id": "M2-RENDER-001",
+     "family": "render",
+     "role": "objective-gates",
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-render-4.seedDerivation (holdout-4 disjoint from calibration and holdout-1/-2/-3)",
+      "recipe": "m2-freeze-render-4.generator (unchanged eight strata and shared fixed multi-span regression case)"
+     },
+     "expectedTruth": "Unchanged WWTimeMap forward/inverse and all seven original objective gates; contemporaneous <=1 s per-PID coverage and strict whole-process-tree CPU <400% (exactly 400% fails).",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by WWRenderTests; no recordings, user files, network or models."
+     },
+     "split": {
+      "calibration": 16,
+      "holdout": 48,
+      "unit": "cases",
+      "multiSpanCasePerSplit": 1
+     },
+     "evidenceStatus": "prospective freeze; sampler calibrated twice (raw calibration-rev4-12 and -13 traces in ww-018); holdout-4 NOT RUN until clean freeze commit; revisions 2 and 3 remain INCOMPLETE; listening BLOCKED"
     }
    ]
   },
