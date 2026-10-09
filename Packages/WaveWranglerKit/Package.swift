@@ -53,7 +53,7 @@ let package = Package(
         .target(name: "WWAlignEstimate", dependencies: ["WWCore", "WWTimeMap"]),
         .target(name: "WWRender", dependencies: ["WWCore", "WWTimeMap"]),
         .target(name: "WWAlignSegment", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
-        .target(name: "WWAlignPipeline", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWDerived", "WWPersistence", "WWAlignEstimate", "WWRender"]),
+        .target(name: "WWAlignPipeline", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWDerived", "WWPersistence", "WWAlignEstimate", "WWRender", "WWCommonEdit"]),
         .target(name: "WWWordEvaluation"),
         .target(name: "WWCutPolicy"),
         .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),
