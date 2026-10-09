@@ -147,6 +147,67 @@ struct SelectedPrimaryCheckedOpenRedTests {
         #expect(reads.policies.isEmpty)
     }
 
+    @Test func birthTimeDriftOnOpenedDescriptorCannotPublishCheckedPCM() async throws {
+        let directory = try FixtureDirectory("selected-primary-birth-drift")
+        let fixture = try directory.write(
+            spec, signal: LandmarkSignal(frames: 40_000, channelCount: 2, seed: 711)
+        )
+        let primary = try directory.copy(fixture, as: "primary.wav")
+        let backup = try directory.write(
+            spec, signal: LandmarkSignal(frames: 40_000, channelCount: 2, seed: 712),
+            name: "backup.wav"
+        )
+        let expected = try fingerprint(primary)
+        let created = try #require(expected.creationDate.value)
+        let before = try FileSnapshot(primary)
+        let backupBefore = try FileSnapshot(backup)
+        let mutation = BirthDateMutation(url: primary, date: created.addingTimeInterval(0.0005))
+        let opened = CheckedOpenProbe()
+        var gateway = SystemSourceContentIO()
+        gateway.descriptorOpener = { path in
+            opened.recordOpen(String(cString: path))
+            return Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        }
+        let journal = SinkJournal()
+        var failure: DecodeFailure?
+        do {
+            _ = try await makeDecoder(content: gateway).decode(
+                primary, source: SourceID(), expectedIdentity: expected
+            ) { interpretation in
+                JournalingSink(
+                    inner: CollectingSink(channelCount: interpretation.channelCount),
+                    journal: journal,
+                    onAppend: { index in if index == 0 { mutation.apply() } }
+                )
+            }
+        } catch {
+            failure = error
+        }
+
+        #expect(mutation.attempted)
+        try #require(mutation.error == nil, "fixture birth-time mutation failed: \(mutation.error ?? "")")
+        let after = try fingerprint(primary)
+        let drift = try #require(after.creationDate.value).timeIntervalSince(created)
+        try #require(abs(drift - 0.0005) < 0.00001, "fixture birth-time drift was \(drift)")
+        #expect(expected.compare(to: after).isExactMatch, "the path's 1ms tolerance must not bless the descriptor")
+        #expect(after.volumeUUID == expected.volumeUUID)
+        #expect(after.fileIdentifier == expected.fileIdentifier)
+        #expect(after.fileSize == expected.fileSize)
+        #expect(after.contentModificationDate == expected.contentModificationDate)
+        #expect(opened.openedPaths == [primary.path])
+        #expect(failure == .sourceChangedDuringDecode)
+        #expect(journal.events.contains("append"), "the birth time must change after PCM was read")
+        #expect(journal.events.last == "abandon", "no checked PCM may be published")
+        #expect(!journal.events.contains("finish"))
+        let afterSnapshot = try FileSnapshot(primary)
+        #expect(afterSnapshot.sha256 == before.sha256)
+        #expect(afterSnapshot.size == before.size)
+        #expect(afterSnapshot.inode == before.inode)
+        #expect(afterSnapshot.modificationSeconds == before.modificationSeconds)
+        #expect(afterSnapshot.modificationNanoseconds == before.modificationNanoseconds)
+        #expect(try FileSnapshot(backup) == backupBefore)
+    }
+
     @Test func cancellationAtLastWindowReadCannotPublishCheckedPCM() async throws {
         let source = try ScriptedSource()
         let expected = try fingerprint(source.url)
@@ -268,4 +329,30 @@ private final class CheckedOpenProbe: @unchecked Sendable {
     var openedPaths: [String] { lock.withLock { paths } }
     func recordReplacement(_ result: Bool) { lock.withLock { replaced = result } }
     func recordOpen(_ path: String) { lock.withLock { paths.append(path) } }
+}
+
+private final class BirthDateMutation: @unchecked Sendable {
+    private let lock = NSLock()
+    private let url: URL
+    private let date: Date
+    private var state: (attempted: Bool, error: String?) = (false, nil)
+
+    init(url: URL, date: Date) {
+        self.url = url
+        self.date = date
+    }
+
+    var attempted: Bool { lock.withLock { state.attempted } }
+    var error: String? { lock.withLock { state.error } }
+
+    func apply() {
+        lock.withLock {
+            state.attempted = true
+            do {
+                try FileManager.default.setAttributes([.creationDate: date], ofItemAtPath: url.path)
+            } catch {
+                state.error = String(describing: error)
+            }
+        }
+    }
 }
