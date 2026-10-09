@@ -138,6 +138,58 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertTrue(app.buttons["ww.review.remedy.setup"].isHittable, "Setup remains fixed after scrolling to the refusal")
     }
 
+    func testWideMinimumWindowReachesLastLaneAndTimeDomainAt200PercentInLightAndDark() {
+        let baseArguments = app.launchArguments
+        for appearance in ["aqua", "darkAqua"] {
+            app.terminate()
+            app.launchArguments = baseArguments + ["-WWUITestAppearance", appearance]
+            app.launch()
+            app.activate()
+            XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 5))
+            selectFirstEpisode()
+            app.buttons["ww.show.destination.review"].click()
+            for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
+            assertTextSize200()
+
+            let window = app.windows["ww.show.window"]
+            XCTAssertEqual(window.frame.width, 760, accuracy: 2)
+            XCTAssertEqual(window.frame.height, 492, accuracy: 2)
+            app.buttons["Hide Inspector"].click()
+            XCTAssertFalse(app.scrollViews["ww.inspector"].exists)
+            XCTAssertTrue(app.chooseMenu(["View", "Hide Sidebar"]))
+
+            let scroll = app.scrollViews["ww.review.wideContentScroll"]
+            XCTAssertTrue(scroll.waitForExistence(timeout: 3), "\(appearance): wide Review needs a vertical viewport")
+            XCTAssertGreaterThanOrEqual(scroll.frame.width, 620, "\(appearance): exercise the wide layout")
+            XCTAssertTrue(window.frame.contains(scroll.frame), "\(appearance): the scroll viewport stays inside the window")
+
+            let first = app.descendants(matching: .any)["ww.review.occurrence.synthetic-001"]
+            XCTAssertTrue(first.isHittable)
+            first.click()
+            let occurrences = app.descendants(matching: .any)["ww.review.occurrences"]
+            XCTAssertTrue(Acceptance.hasKeyboardFocus(occurrences), "The native table owns keyboard focus")
+
+            for identifier in ["ww.review.lane.speaker-b-primary", "ww.review.timeline.domain.output"] {
+                let field = app.descendants(matching: .any)[identifier]
+                XCTAssertTrue(field.exists, "\(appearance): \(identifier) is present in AX")
+                for _ in 0..<18 where field.exists && !scroll.frame.contains(field.frame) {
+                    scroll.scroll(byDeltaX: 0, deltaY: -180)
+                }
+                XCTAssertTrue(scroll.frame.contains(field.frame), "\(appearance): \(identifier) scrolls fully into the viewport")
+                XCTAssertTrue(window.frame.contains(field.frame), "\(appearance): \(identifier) fits inside the window")
+                XCTAssertTrue(field.isHittable, "\(appearance): \(identifier) has an in-window hit point")
+                XCTAssertFalse((field.value as? String ?? "").isEmpty, "\(appearance): \(identifier) has an AX value")
+            }
+
+            XCTAssertTrue(Acceptance.hasKeyboardFocus(occurrences), "Scrolling must not steal the table's first responder")
+            app.typeKey(.downArrow, modifierFlags: [])
+            XCTAssertTrue(Acceptance.waitFor(timeout: 3) {
+                app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String
+                    == "Synthetic example occurrence 2"
+            }, "\(appearance): keyboard selection updates the timeline after scrolling")
+        }
+    }
+
     func testVisibleReviewTextHasContrastAt100And200PercentInLightAndDark() {
         continueAfterFailure = true
         let inspector = app.scrollViews["ww.inspector"]

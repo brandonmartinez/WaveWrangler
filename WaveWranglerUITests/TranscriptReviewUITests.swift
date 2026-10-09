@@ -154,10 +154,12 @@ final class TranscriptReviewUITests: XCTestCase {
     }
 
     func testEpisodeInfoFromReviewShowsEditableTitleAndKeepsReviewSelection() {
-        let occurrence = app.descendants(matching: .any)["ww.review.occurrence.synthetic-001"]
+        let occurrence = app.descendants(matching: .any)["ww.review.occurrence.synthetic-002"]
         XCTAssertTrue(occurrence.waitForExistence(timeout: 3))
         occurrence.click()
-        XCTAssertEqual(app.descendants(matching: .any)["ww.review.inspector.tokenID"].value as? String, "token-stub-001")
+        XCTAssertEqual(app.descendants(matching: .any)["ww.review.inspector.tokenID"].value as? String, "token-stub-002")
+        let timelineSelection = app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"]
+        XCTAssertEqual(timelineSelection.value as? String, "Synthetic example occurrence 2")
 
         app.menuBars.menuBarItems["Episode"].click()
         let episodeInfo = app.menuItems["Episode Info"]
@@ -174,7 +176,14 @@ final class TranscriptReviewUITests: XCTestCase {
 
         app.typeKey("3", modifierFlags: .command)
         XCTAssertTrue(app.staticTexts["ww.review.inspector.heading"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.descendants(matching: .any)["ww.review.inspector.tokenID"].value as? String, "token-stub-001")
+        XCTAssertEqual(app.descendants(matching: .any)["ww.review.inspector.tokenID"].value as? String, "token-stub-002")
+        XCTAssertEqual(timelineSelection.value as? String, "Synthetic example occurrence 2")
+        app.typeKey("1", modifierFlags: .command)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.setup.sources"].waitForExistence(timeout: 5))
+        app.typeKey("3", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["ww.review.inspector.heading"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.descendants(matching: .any)["ww.review.inspector.tokenID"].value as? String, "token-stub-002")
+        XCTAssertEqual(timelineSelection.value as? String, "Synthetic example occurrence 2")
         app.typeKey("i", modifierFlags: .command)
         XCTAssertTrue(title.waitForExistence(timeout: 5), "The keyboard shortcut reopens Episode Info from Review")
         XCTAssertTrue(Acceptance.hasKeyboardFocus(title))
