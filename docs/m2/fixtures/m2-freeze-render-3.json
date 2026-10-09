@@ -1,0 +1,116 @@
+{
+  "freezeID": "m2-freeze-render-3",
+  "date": "2026-10-08",
+  "recordedBy": "Lead (independent correction of WW-018/#310 holdout protocol)",
+  "fixtureID": "M2-RENDER-001",
+  "supersedesForExecution": "m2-freeze-render-2",
+  "status": "Prospective revision-3 freeze; holdout-3 NOT RUN until this entire record, runner and pinned trees are committed. Revision-2 objective rows are valid but its frozen protocol remains INCOMPLETE (missing contemporaneous CPU). Original holdout remains historical evidence. Listening BLOCKED.",
+  "reason": "The revision-2 once-only run did not capture its required CPU measurement. The test tree now selects a fresh disjoint holdout-3 split, and this revision prospectively pins a 0.25-second per-PID CPU telemetry protocol. Renderer source, two-case scheduler, generator, truth, objective gates, recipe and all case counts are unchanged.",
+  "originalFreezeRecord": "docs/m2/fixtures/m2-freeze-render.json",
+  "revisionTwoFreezeRecord": "docs/m2/fixtures/m2-freeze-render-2.json",
+  "pinnedTrees": {
+    "Sources/WWRender": "94604633d6464391ade116b363f8874675381bf5",
+    "Tests/WWRenderTests": "125b552184db93f506e193dd08fd9610d5c7fabe"
+  },
+  "pinnedTreesRule": "Paths are relative to Packages/WaveWranglerKit; RenderFreezeTests checks working-tree Git IDs against these pins. The renderer source is identical to revisions 1 and 2. Revision-1 and revision-2 records/pins are historical and are not changed. Any subsequent tree change requires a new dated freeze and new disjoint holdout.",
+  "maximumConcurrentCases": 2,
+  "scheduler": "Unchanged revision-2 test-only task group: at most two synthetic cases in flight, with one new case admitted for each completion. One Swift Testing test at a time; --jobs 4 limits compilation. Full 16/48 seeded cases plus one fixed multi-span regression case per split; canonical record order retained.",
+  "seedDerivation": "First 8 bytes, big-endian, of SHA-256(\"ww-m2-fixture|v1|M2-RENDER-001|<split>|<index>\"). Original calibration uses \"calibration\", original holdout \"holdout\", revision 2 \"holdout-2\", revision 3 exclusively \"holdout-3\" for indices 0..47. All 160 seeded identities are unique and pairwise disjoint, checked by RenderFreezeTests. The fixed multi-span regression case is shared across splits and is not held out.",
+  "holdoutSplit": "holdout-3",
+  "generator": {
+    "case": "One group, one 6-channel occurrence on one affine epoch; stratum = index mod 8.",
+    "strata": [
+      "48k->48k",
+      "44.1k->48k",
+      "16k->48k",
+      "48k->16k",
+      "96k->48k",
+      "12k->48k",
+      "48k->44.1k a~1.02",
+      "44.1k->48k a~0.98"
+    ],
+    "clock": "a = (1e6 + basePPM + U{-1000..1000}) / 1e6 (basePPM 0, +20000 or -20000); b = U{0..20000}/999983 s; e = (U{0..10000} - 5000)/1000003 s",
+    "frames": "max(Fin/4, 3000) source frames",
+    "outputFrames": "[ceil(t(0)*Fout) - 64, floor(t(N-1)*Fout) + 65)",
+    "tones": "Channel c: amplitude 0.5 at fraction r_c * (1 - 0.02 u) of lower Nyquist; r=[0.02,0.15,0.3,0.5,0.7,0.8], seeded phase.",
+    "stopband": "When 0.98 * (Fin/(a Fout)) > 1.01, six tones between output Nyquist and 0.98 input Nyquist (normalised).",
+    "landmarks": "0.9-amplitude seeded-sign impulse at N/8 on every channel, and at N/4 + c*N/12 on channel c only.",
+    "inactive": "Channel index mod 6 carries -1 dBFS seeded uniform noise; all other channels exact zero.",
+    "multiSpan": "One unchanged fixed MixedGroup case per split (kink, gap, unsupported epoch, 44.1/48 kHz occurrences), with 12 landmarks and two skew pairs. The same multi-span case appears in all splits as disclosed regression coverage; it is not held out."
+  },
+  "truth": "The generator's WWTimeMap forward (alignedTime) and inverse (sourceFrame), not the render plan. Tone truth uses the exact inverse at hull ends and linear interpolation within an affine segment.",
+  "measurement": "Unchanged from m2-freeze-render: steady frames with every tap in span; least-squares gain/phase/residual vs exact tone, parabolic landmark peak within four frames of truth with sign, common-impulse and phase-derived skew, inactive peak in dBFS. NaN or missing evidence fails. Canonical records sort by (caseIndex, kind, channel, encoded JSON).",
+  "splits": {
+    "calibration": {
+      "cases": 16,
+      "plusMultiSpan": 1,
+      "run": true,
+      "seedSplit": "calibration",
+      "enable": "WW_RENDER_CALIBRATION=1 swift test --filter calibrationSplitMeetsEveryObjectiveGate"
+    },
+    "holdout": {
+      "cases": 48,
+      "plusMultiSpan": 1,
+      "run": false,
+      "seedSplit": "holdout-3",
+      "enable": "Only via bash scripts/render-holdout-3.sh <new outside-repo evidence directory> on a clean freeze-containing commit; WW_M2_RENDER_3_HOLDOUT=1 swift test --jobs 4 --no-parallel --filter holdoutSplitMeetsEveryFrozenGate"
+    }
+  },
+  "renderer": {
+    "module": "WWRender",
+    "RenderVersions.renderer": 1,
+    "RenderVersions.outputAssetFormat": 1,
+    "RenderRecipe.currentVersion": 1,
+    "recipe": "m2Candidate: Kaiser-windowed sinc, halfWidth 32 taps per side, passband edge 0.8, stopband edge 1.0, beta 9.6, 2048 table phases, chunk 4096 output frames, maximum decimation 64",
+    "status": "CANDIDATE, not qualified",
+    "recipeEncoding": {
+      "kernel": {
+        "halfWidth": 32,
+        "kaiserBeta": 9.6,
+        "passbandEdge": 0.8,
+        "stopbandEdge": 1,
+        "tablePhasesPerSample": 2048
+      },
+      "maximumDecimation": 64,
+      "outputChunkFrames": 4096,
+      "padding": "explicit-zero/no-cross-span-taps",
+      "rounding": "exact-position/shared-binary64-phase/binary32-output",
+      "version": 1
+    }
+  },
+  "gateValues": {
+    "landmarkFrames": 1.0,
+    "passbandDB": 0.1,
+    "passbandFraction": 0.8,
+    "aliasDBc": -80.0,
+    "skewFrames": 1.0,
+    "inactiveDBFS": -80.0,
+    "phaseToleranceDegrees": 0.001,
+    "familyPeakBytes": 1073741824,
+    "maximumInversionsSwaps": 0
+  },
+  "cpuTelemetry": {
+    "runner": "scripts/render-holdout-3.sh",
+    "runnerSHA256": "26273bca1e3621f36d8b218dd0fc0b33d83eed15bcd9ae8085060fe6810ead58",
+    "sampleIntervalSeconds": 0.25,
+    "maximumSampleGapSeconds": 1.0,
+    "perPIDCPUPercentLimit": 400.0,
+    "maximumOneMinuteLoad": 24.0,
+    "swiftJobs": 4,
+    "maximumConcurrentCases": 2,
+    "maximumOtherNativeBuilds": 2,
+    "maximumOtherTestHelpers": 0,
+    "sampler": "macOS ps -A -o pid=,ppid=,pgid=,%cpu=,comm= at 0.25-second intervals; record epoch timestamp, PID, PPID, process-group ID, %CPU and command for every descendant by PPID ancestry of the isolated swift-test PID, from launch through process exit. SwiftPM testing helpers start their own process groups, so PGID-only filtering is invalid. Require at least one SwiftPM testing-helper observation, first/last samples within 1 second of start/end, no >1-second gaps, no failed ps calls, and every observed PID at <=400%. Missing telemetry is INCOMPLETE; test/gate or CPU failure is FAIL, never rerun.",
+    "recordFiles": [
+      "preflight.txt",
+      "timing.txt",
+      "cpu.tsv",
+      "cpu-summary.txt",
+      "run.log",
+      "ww-018-holdout-3.jsonl",
+      "verdict.txt"
+    ]
+  },
+  "familyPeakEvidence": "Reuse 38.5 MiB ru_maxrss and 198632-byte renderer working set from docs/m2/evidence/ww-018/holdout-timing.txt (original frozen source tree 94604633d6464391ade116b363f8874675381bf5); do not present as a new revision-3 timing measurement.",
+  "holdoutProtocol": "On a clean commit containing this complete prospective freeze, pinned test and source trees and runner, with one-minute load <=24 and no concurrent heavy holdout, run each fresh holdout-3 case exactly once through the pinned CPU-telemetry runner. Publish the raw 48-case-plus-fixed-regression records, per-gate counts/maxima and nearest-rank p95, host/start load, exit/runtime, complete per-PID CPU samples and peak against <=400%; retain any failure or incomplete telemetry without rerun. Revision-1 and revision-2 pins and original records stay untouched. Listening remains BLOCKED; the full final-head script gate belongs to M3 coordination."
+}

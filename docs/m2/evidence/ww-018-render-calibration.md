@@ -265,3 +265,22 @@ two-case decode calibration peaked at **193.6%** and two-case time-map calibrati
 with SHA-256 `f8a1ee31900ba9526879242f5e0d218e7aaf16e1155890ad17ba351092d27889`,
 byte-identical to the original committed calibration. These focused checks are **not** a full-suite or
 75-minute render CPU qualification; the final clean-head process-specific full gate remains outstanding.
+
+## M3 prospective revision-3 render holdout (#310)
+
+The [dated revision-3 freeze](../fixtures/m2-freeze-render-3.json) keeps the same renderer recipe,
+independent WWTimeMap truth, seven objective gate values, family-peak limit, 16/48 case counts and
+two-case scheduler. Only the test-tree selector changes to `holdout-3`: 48 new SHA-256-derived
+64-bit seeds are disjoint from calibration, original holdout and holdout-2 (all 160 seeded identities
+unique). The fixed multi-span regression case is disclosed and shared, not held out. Earlier
+freeze pins, raw records and revision-2's **INCOMPLETE** protocol verdict remain unchanged.
+
+**Prospective status at freeze commit: NOT RUN.** The pinned `scripts/render-holdout-3.sh` requires
+a clean freeze-containing commit, working-Mac one-minute load ≤24, at most two other native builds
+and no other test helpers. It runs at most two cases in flight with `--jobs 4 --no-parallel` and
+samples the test PID and every live descendant by PPID ancestry every 0.25 s from launch through
+exit (SwiftPM helpers use their own process groups). Missing
+helper samples, gaps >1 s or missing start/end coverage make the run **INCOMPLETE**; an objective
+gate or sampled per-PID CPU >400% is **FAIL**, never rerun. The unaltered renderer's prior family-peak
+measurement is reused and identified as such, not passed off as new timing evidence. Listening
+remains BLOCKED; the full final-head suite is separate, coordinator-owned evidence.

@@ -126,6 +126,47 @@
    ]
   },
   {
+   "freezeID": "m2-freeze-render-3",
+   "record": "docs/m2/fixtures/m2-freeze-render-3.json",
+   "fixtures": [
+    "M2-RENDER-001"
+   ],
+   "status": "prospective test-tree and CPU-telemetry freeze; fresh disjoint holdout-3 NOT RUN until clean freeze commit; revision-2 protocol INCOMPLETE; listening BLOCKED",
+   "supersedesForExecution": "m2-freeze-render-2",
+   "counts": {
+    "fixtures": 1,
+    "calibrationCases": 16,
+    "calibrationMultiSpanCases": 1,
+    "holdoutCases": 48,
+    "holdoutMultiSpanCases": 1
+   },
+   "fixtureEntries": [
+    {
+     "id": "M2-RENDER-001",
+     "family": "render",
+     "role": "objective-gates",
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m2-freeze-render-3.seedDerivation (holdout-3, disjoint from calibration, holdout and holdout-2)",
+      "recipe": "m2-freeze-render-3.generator (unchanged eight strata and disclosed fixed multi-span regression case)"
+     },
+     "expectedTruth": "Unchanged WWTimeMap forward/inverse and all objective gates from m2-freeze-render-3.gateValues; contemporaneous per-PID CPU <=400% with complete 0.25-second telemetry.",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated in memory by WWRenderTests; no recordings, user files, network or models."
+     },
+     "split": {
+      "calibration": 16,
+      "holdout": 48,
+      "unit": "cases",
+      "multiSpanCasePerSplit": 1
+     },
+     "evidenceStatus": "prospectively frozen; holdout-3 NOT RUN, no objective or CPU pass asserted; original and revision-2 results retained unchanged"
+    }
+   ]
+  },
+  {
    "freezeID": "m2-freeze-decode",
    "record": "docs/m2/fixtures/m2-freeze-decode.json",
    "fixtures": [
