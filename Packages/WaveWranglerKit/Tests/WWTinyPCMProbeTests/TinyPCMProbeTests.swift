@@ -128,10 +128,12 @@ struct TinyPCMProbeTests {
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let json = try String(decoding: encoder.encode(result), as: UTF8.self)
+        let actual = try #require(JSONSerialization.jsonObject(with: encoder.encode(result)) as? NSDictionary)
         let expectedDisabled = #"{"absentTextTokenCount":3,"experimentalTextTokenCount":0,"internalWhitespaceTokenCount":0,"leadingWhitespaceTokenCount":1,"mode":"disabled","provenance":"experimental/unsupported","textTokenCount":3,"tokenCount":4,"unseparatedAdjacentTokenCount":1}"#
         let expectedEnabled = #"{"absentTextTokenCount":2,"experimentalTextTokenCount":1,"internalWhitespaceTokenCount":0,"leadingWhitespaceTokenCount":1,"mode":"experimental-enabled","provenance":"experimental/unsupported","textTokenCount":3,"tokenCount":4,"unseparatedAdjacentTokenCount":1}"#
-        #expect(json == #"{"enabledInferenceSeconds":0.75,"inferenceSeconds":0.5,"inferred":true,"loadSeconds":0.25,"loaded":true,"sampleCount":32000,"segmentCount":1,"segmentTimingAvailable":true,"supportedWordBoundaryCount":0,"threads":2,"tokenTimingDisabled":\#(expectedDisabled),"tokenTimingEnabled":\#(expectedEnabled),"whitespaceWordCount":2,"wordTimingAvailable":false,"wordTimingProvenance":"experimental/unsupported"}"#)
+        let expectedJSON = #"{"enabledInferenceSeconds":0.75,"inferenceSeconds":0.5,"inferred":true,"loadSeconds":0.25,"loaded":true,"sampleCount":32000,"segmentCount":1,"segmentTimingAvailable":true,"supportedWordBoundaryCount":0,"threads":2,"tokenTimingDisabled":\#(expectedDisabled),"tokenTimingEnabled":\#(expectedEnabled),"whitespaceWordCount":2,"wordTimingAvailable":false,"wordTimingProvenance":"experimental/unsupported"}"#
+        let expected = try #require(JSONSerialization.jsonObject(with: Data(expectedJSON.utf8)) as? NSDictionary)
+        #expect(actual.isEqual(expected))
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_TINY_MODEL_PATH"] != nil))
