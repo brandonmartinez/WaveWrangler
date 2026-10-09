@@ -31,3 +31,24 @@ enum SharedModelPublication {
         "This show changed in another window while the correction was being prepared, so nothing was "
         + "applied and that change is intact. Choose the correction again."
 }
+
+/// Process-local model mutation witness. Exhaustion is terminal: no later capture can validate.
+struct DocumentMutationGeneration {
+    private(set) var current: UInt64?
+
+    init(initial: UInt64 = 0) {
+        current = initial
+    }
+
+    func matches(_ captured: UInt64) -> Bool {
+        current == captured
+    }
+
+    mutating func advance() {
+        guard let current, current < UInt64.max else {
+            self.current = nil
+            return
+        }
+        self.current = current + 1
+    }
+}

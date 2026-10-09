@@ -8,6 +8,8 @@ import WWCore
 @Observable
 final class ShowDocumentStore {
     private(set) var model: ShowDocumentModel
+    /// Process-local revision of the live model, including undo/redo and reloads.
+    @ObservationIgnored private var mutationGeneration = DocumentMutationGeneration()
     /// The most recent refused operation, shown to the user until the next successful change.
     private(set) var lastError: DomainError?
 
@@ -19,9 +21,25 @@ final class ShowDocumentStore {
         self.model = model
     }
 
+    /// Nil means generation-based work must be refused; the counter cannot be reset or wrapped.
+    func captureMutationGeneration() -> UInt64? {
+        mutationGeneration.current
+    }
+
+    /// A captured generation remains valid only if no replacement has occurred since it was captured.
+    /// Once the counter is exhausted, all comparisons refuse permanently rather than wrapping.
+    func isCurrentMutationGeneration(_ expected: UInt64) -> Bool {
+        mutationGeneration.matches(expected)
+    }
+
+    private func advanceMutationGeneration() {
+        mutationGeneration.advance()
+    }
+
     /// Replaces the value after reading from disk; not an undoable edit.
     func replaceLoadedModel(_ model: ShowDocumentModel) {
         self.model = model
+        advanceMutationGeneration()
         lastError = nil
         coalescingKey = nil
     }
@@ -47,6 +65,7 @@ final class ShowDocumentStore {
             guard updated != model else { return true }
             if let key, key == coalescingKey {
                 model = updated
+                advanceMutationGeneration()
                 // No new undo step, so AppKit won't reschedule autosaving: the quiescence timer must still move
                 // to this edit, or a checkpoint/autosave taken mid-burst would miss the rest of it.
                 document?.coalescedEditDidChangeModel()
@@ -84,7 +103,8 @@ final class ShowDocumentStore {
     }
 
     /// Applies a replacement that was computed from `expected`, but only while the live model is still
-    /// exactly that snapshot.
+    /// exactly that snapshot. This equality guard alone does not reject a switch-away-and-back;
+    /// authority issued across awaits must also validate a captured mutation generation.
     ///
     /// Windows share one store, so a replacement prepared across awaits can arrive after another window has
     /// edited the show; publishing it then would discard that edit. Returns false without touching the model
@@ -107,6 +127,7 @@ final class ShowDocumentStore {
     ) {
         let previous = model
         model = newModel
+        advanceMutationGeneration()
         coalescingKey = nil
         if let undoManager = document?.undoManager {
             AppUndoRegistration.register(
