@@ -203,6 +203,51 @@ struct OrganizationSuggesterTests {
 
 @Suite("Relink")
 struct RelinkTests {
+    @Test func systemExactRelinkDoesNotMintWitnessWithoutConfirmation() throws {
+        let tree = try SyntheticTree(label: "relink-raw-consent")
+        var rng = SplitMix64(seed: 413)
+        let file = try tree.file("take.wav", bytes: 128, rng: &rng)
+        let io = SystemSourceIO()
+        guard case let .success(metadata) = io.metadata(at: file) else {
+            Issue.record("synthetic file metadata unavailable")
+            return
+        }
+        let recorded = RecordedIdentity(
+            fingerprint: metadata.fingerprint, confirmation: .provisional, recordedAt: Date(timeIntervalSince1970: 1)
+        )
+        let record = DeviceAccessRecord(
+            showID: testShow, sourceID: SourceID(), recordedIdentity: recorded, createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let relink = RelinkEvaluator(context: SourceAccessContext(io: io))
+        let proposal = relink.evaluate(candidate: file, for: record.key, record: record)
+        #expect(proposal.comparison == .matches)
+        #expect(proposal.candidateRaw != nil)
+        let unconfirmed = try relink.apply(proposal, to: record, userConfirmed: false)
+        #expect(unconfirmed.recordedIdentity == recorded)
+        #expect(unconfirmed.recordedIdentity?.rawWitness == nil)
+        #expect(unconfirmed.relinkHistory.last?.userConfirmed == false)
+
+        var legacy = record
+        legacy.recordedIdentity?.confirmation = .userConfirmed
+        let legacyProposal = relink.evaluate(candidate: file, for: legacy.key, record: legacy)
+        #expect(legacyProposal.comparison == .matches)
+        let legacyRelinked = try relink.apply(legacyProposal, to: legacy, userConfirmed: false)
+        #expect(legacyRelinked.recordedIdentity == legacy.recordedIdentity)
+        #expect(legacyRelinked.recordedIdentity?.rawWitness == nil)
+
+        let confirmed = try relink.apply(proposal, to: record, userConfirmed: true)
+        #expect(confirmed.recordedIdentity?.confirmation == .userConfirmed)
+        #expect(confirmed.recordedIdentity?.rawWitness == proposal.candidateRaw)
+
+        var wrongVolume = proposal
+        var fingerprint = try #require(wrongVolume.candidateFingerprint)
+        fingerprint.volumeUUID = .known("00000000-0000-0000-0000-000000000000")
+        wrongVolume.candidateFingerprint = fingerprint
+        #expect(throws: RelinkError.sourceMismatch) {
+            try relink.apply(wrongVolume, to: record, userConfirmed: true)
+        }
+    }
+
     @Test func onlyExactMatchesApplyWithoutConfirmation() async throws {
         let tree = try SyntheticTree(label: "relink")
         var rng = SplitMix64(seed: 7)

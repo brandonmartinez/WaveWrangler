@@ -123,7 +123,7 @@ public struct RelinkEvaluator: Sendable {
         updated.lastKnownPath = resolvedPath
         updated.lastKnownVolumeUUID = proposal.candidateFingerprint?.volumeUUID.value
         updated.lastBookmarkRefreshAt = now
-        if let system = context.io as? SystemSourceIO {
+        if userConfirmed, let system = context.io as? SystemSourceIO {
             guard let fingerprint = proposal.candidateFingerprint,
                   case let .resolved(scoped, isStale) = context.io.resolveBookmark(bookmark), !isStale,
                   let raw = context.withScopedAccess(to: scoped, { system.rawIdentity(at: $0) }),

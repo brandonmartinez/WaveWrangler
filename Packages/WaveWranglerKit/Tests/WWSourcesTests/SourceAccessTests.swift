@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 import WWCore
@@ -156,6 +157,25 @@ struct IdentityEvidenceTests {
         #expect(ContentEvidenceField.allCases.count == 3)
         // There is no FileSystemFingerprint field for content: identity is metadata-only in M1.
         #expect(FingerprintField.allCases.count == 6)
+    }
+
+    @Test func regularFileDescriptorReportsTheURLVolumeUUID() throws {
+        let tree = try SyntheticTree(label: "raw-fd-volume")
+        var rng = SplitMix64(seed: 413)
+        let file = try tree.file("take.wav", bytes: 128, rng: &rng)
+        let io = SystemSourceIO()
+        guard case let .success(metadata) = io.metadata(at: file) else {
+            Issue.record("synthetic file metadata unavailable")
+            return
+        }
+        let expectedVolume = try #require(metadata.fingerprint.volumeUUID.value)
+        let fd = Darwin.open(file.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        defer { _ = Darwin.close(fd) }
+        let observed = try #require(RawSourceIdentity.onDescriptor(fd))
+        #expect(observed.volumeUUID == expectedVolume.lowercased())
+        #expect(observed.inode == metadata.fingerprint.fileIdentifier.value)
+        #expect(observed.sizeBytes == metadata.fingerprint.fileSize.value)
     }
 }
 
