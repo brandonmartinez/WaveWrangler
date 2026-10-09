@@ -235,6 +235,30 @@ struct CheckpointRetirementTests {
         #expect(await session.isDirty)
     }
 
+    @Test func failedSaveAsOfCleanSessionKeepsOriginalAndBecomesDirty() async throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 2720)
+        let key = DocumentKey.show(model.show.id)
+        let origin = rig.url()
+        let first = try rig.publisher.publish(model, revision: 1, key: key, to: origin, target: .newLocation)
+        let originalBytes = try Data(contentsOf: origin)
+        let publisher = DocumentPublisher(coder: coder, ops: FaultingFileOperations(writeNewFails: true),
+                                          recovery: rig.recovery)
+        let session = CanonicalDocumentSession(key: key, url: origin, payload: model,
+                                               base: first.fingerprint, revision: 1, publisher: publisher)
+        let destination = rig.url("Failed copy.wwshow")
+        #expect(await !session.isDirty)
+
+        guard case .failure(.failed) = await session.saveAs(destination) else {
+            Issue.record("A failed Save As must report the write failure")
+            return
+        }
+        #expect(await session.isDirty)
+        #expect(await session.url == origin)
+        #expect(try Data(contentsOf: origin) == originalBytes)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+    }
+
     @Test func failedConflictPreservationIsReportedAsFailureNotAPreservedConflict() throws {
         let rig = Rig()
         let model = Fixtures.show(seed: 2717)
