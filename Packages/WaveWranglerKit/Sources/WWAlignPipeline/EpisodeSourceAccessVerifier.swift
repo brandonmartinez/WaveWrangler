@@ -2,19 +2,55 @@ import Foundation
 import WWCore
 import WWDecode
 import WWDerived
+import WWPersistence
 import WWSources
 import WWTimeMap
 
-/// A caller's freshly observed, independently verified document publication. Never a raw unsaved
-/// ShowDocumentModel: the app must refuse when its live model differs from its verified publication.
+/// A publication read back from the current canonical show file against the document's verified base.
+/// A caller cannot manufacture one from an in-memory model and a claimed publication stamp.
 public struct EpisodeSourceDocument: Sendable {
     public let model: ShowDocumentModel
     public let publication: PublicationStamp
+    private let url: URL?
+    private let base: RevisionFingerprint?
 
-    public init(model: ShowDocumentModel, publication: PublicationStamp) {
+    private init(model: ShowDocumentModel, publication: PublicationStamp, url: URL?, base: RevisionFingerprint?) {
         self.model = model
         self.publication = publication
+        self.url = url
+        self.base = base
     }
+
+    /// The expected base must be the one the open document independently verified on read/save. This
+    /// coordinated read verifies the complete on-disk envelope, not just the stamp or cached model.
+    public static func current(
+        at url: URL, expectedModel: ShowDocumentModel, expectedBase: RevisionFingerprint
+    ) throws -> EpisodeSourceDocument {
+        let opener = DocumentOpener(
+            coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: nil,
+            identityOf: { .show($0.show.id) }
+        )
+        guard case let .editable(decoded, fingerprint) = opener.open(
+            url, key: .show(expectedModel.show.id)
+        ), fingerprint == expectedBase, decoded.publication == expectedBase.publication,
+           decoded.payload == expectedModel
+        else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
+        return EpisodeSourceDocument(
+            model: decoded.payload, publication: decoded.publication, url: url.standardizedFileURL, base: fingerprint
+        )
+    }
+
+    func requireCurrent() throws {
+        guard let url, let base else { return }
+        _ = try Self.current(at: url, expectedModel: model, expectedBase: base)
+    }
+
+    #if DEBUG
+    // Test-only construction for in-memory invalid-map and grant fixtures; never exposed to app clients.
+    init(model: ShowDocumentModel, publication: PublicationStamp) {
+        self.init(model: model, publication: publication, url: nil, base: nil)
+    }
+    #endif
 }
 
 /// A metadata-only inventory of *declared* channels on every accepted-map occurrence. Not a content,
@@ -75,15 +111,18 @@ public enum EpisodeSourceAccessRefusal: Error, Sendable, Equatable {
     case duplicateOccurrence
     case unsupportedEpoch(RecordingEpochID)
     case undeclaredChannels(SourceID)
+    case physicalIdentityUnknown(SourceID)
+    case physicalAlias(SourceID, SourceID)
     case accessMissing(SourceID)
     case accessUnverified(SourceID)
     case sourceChanged(SourceID)
     case changedDuringVerification
 }
 
-/// The caller supplies the live document each time, not a cached manifest. Every call also re-reads the
-/// device-local grants and the coordinator's accepted-map content identity. A future cut admission must
-/// recheck after its own awaits and separately certify protection, fades, and atomic publication.
+/// The document callback supplies the open document's verified base; file-backed values are independently
+/// read back even if the callback returns a cached value. Device-local grants and the accepted-map content
+/// identity are rechecked. Future cut admission must repeat the checks after its own awaits and separately
+/// certify protection, fades and atomic publication.
 public struct EpisodeSourceAccessVerifier: Sendable {
     public let showID: ShowID
     public let coordinator: DerivedJobCoordinator
@@ -129,11 +168,43 @@ public struct EpisodeSourceAccessVerifier: Sendable {
         let epoch: RecordingEpochID
     }
 
+    private struct PhysicalFile: Hashable {
+        let volume: String
+        let identifier: UInt64
+    }
+
+    private func observe(
+        _ source: SourceID, record: DeviceAccessRecord, evaluator: SourceAvailabilityEvaluator
+    ) throws -> (revision: SourceRevision, physical: PhysicalFile) {
+        let key = DeviceAccessKey(showID: showID, sourceID: source)
+        let evaluation = evaluator.evaluate(key: key, record: record, setting: .off)
+        guard evaluation.observation.access == .granted,
+              evaluation.refreshedRecord == nil,
+              evaluation.observation.identity == .matchesRecorded,
+              evaluation.observation.location == .present,
+              evaluation.observation.residency == .local,
+              let url = evaluation.resolvedURL
+        else { throw EpisodeSourceAccessRefusal.accessUnverified(source) }
+        let current = access.withScopedAccess(to: url) { access.io.metadata(at: $0) }
+        guard case let .success(metadata) = current,
+              record.recordedIdentity?.fingerprint.compare(to: metadata.fingerprint) == .matches,
+              metadata.isReadable.value == true
+        else { throw EpisodeSourceAccessRefusal.sourceChanged(source) }
+        guard let volume = metadata.fingerprint.volumeUUID.value,
+              let identifier = metadata.fingerprint.fileIdentifier.value
+        else { throw EpisodeSourceAccessRefusal.physicalIdentityUnknown(source) }
+        return (
+            SourceRevision.metadata(source, fingerprint: metadata.fingerprint),
+            PhysicalFile(volume: volume, identifier: identifier)
+        )
+    }
+
     private func sample(
         episode episodeID: EpisodeID,
         currentDocument: @Sendable () async throws -> EpisodeSourceDocument
     ) async throws -> Sample {
         let document = try await currentDocument()
+        try document.requireCurrent()
         let model = document.model
         guard model.show.id == showID else { throw EpisodeSourceAccessRefusal.wrongShow }
         guard let episode = model.episode(episodeID) else { throw EpisodeSourceAccessRefusal.episodeMissing }
@@ -165,6 +236,7 @@ public struct EpisodeSourceAccessVerifier: Sendable {
 
         let records = try await accessStore.records(in: showID)
         let latest = try await currentDocument()
+        try latest.requireCurrent()
         guard latest.model == model, latest.publication == document.publication else {
             throw EpisodeSourceAccessRefusal.changedDuringVerification
         }
@@ -181,15 +253,27 @@ public struct EpisodeSourceAccessVerifier: Sendable {
         guard Set(placements.map(\.1.occurrence.id)).count == placements.count,
               Set(placements.map(\.1.occurrence.source)).count == placements.count
         else { throw EpisodeSourceAccessRefusal.duplicateOccurrence }
+        guard Set(map.groups.map(\.group)) == Set(episode.recorderGroups.map(\.id)),
+              map.groups.allSatisfy({ group in
+                  guard let current = episode.recorderGroups.first(where: { $0.id == group.group }) else { return false }
+                  let placedEpochs = Set(group.placements.flatMap { $0.spans.map(\.epoch) })
+                  return placedEpochs == Set(group.epochs.map(\.epoch))
+                      && placedEpochs == Set(current.epochs.map(\.id))
+              })
+        else { throw EpisodeSourceAccessRefusal.incompleteOccurrences }
         let evaluator = SourceAvailabilityEvaluator(context: access)
         var lanes: [EpisodeSourceLane] = []
         var usedRecords: [DeviceAccessRecord] = []
+        var observedRevisions: [SourceID: String] = [:]
+        var physicalOwners: [PhysicalFile: SourceID] = [:]
         for source in sources {
             guard let (group, placement) = placements.first(where: { $0.1.occurrence.source == source.id }),
                   source.placement.recorderGroupID == group.group,
                   let epoch = source.placement.epochID,
                   placement.spans.first?.epoch == epoch,
-                  !placement.spans.isEmpty
+                  let first = placement.spans.first, first.startFrame == 0,
+                  placement.spans.last?.endFrame == placement.occurrence.frameCount,
+                  zip(placement.spans, placement.spans.dropFirst()).allSatisfy({ $0.endFrame == $1.startFrame })
             else { throw EpisodeSourceAccessRefusal.incompleteOccurrences }
             let epochs = Dictionary(uniqueKeysWithValues: group.epochs.map { ($0.epoch, $0.mapping) })
             for span in placement.spans {
@@ -205,20 +289,11 @@ public struct EpisodeSourceAccessVerifier: Sendable {
             guard let record = records.first(where: { $0.key == key }) else {
                 throw EpisodeSourceAccessRefusal.accessMissing(source.id)
             }
-            let evaluation = evaluator.evaluate(key: key, record: record, setting: .off)
-            guard evaluation.observation.access == .granted,
-                  evaluation.refreshedRecord == nil,
-                  evaluation.observation.identity == .matchesRecorded,
-                  evaluation.observation.location == .present,
-                  evaluation.observation.residency == .local,
-                  let url = evaluation.resolvedURL
-            else { throw EpisodeSourceAccessRefusal.accessUnverified(source.id) }
-            let current = access.withScopedAccess(to: url) { access.io.metadata(at: $0) }
-            guard case let .success(metadata) = current,
-                  record.recordedIdentity?.fingerprint.compare(to: metadata.fingerprint) == .matches,
-                  metadata.isReadable.value == true
-            else { throw EpisodeSourceAccessRefusal.sourceChanged(source.id) }
-            let fileRevision = SourceRevision.metadata(source.id, fingerprint: metadata.fingerprint)
+            let (fileRevision, physical) = try observe(source.id, record: record, evaluator: evaluator)
+            if let other = physicalOwners.updateValue(source.id, forKey: physical) {
+                throw EpisodeSourceAccessRefusal.physicalAlias(other, source.id)
+            }
+            observedRevisions[source.id] = fileRevision.token
             usedRecords.append(record)
             for span in placement.spans {
                 for channel in 0..<count {
@@ -233,6 +308,37 @@ public struct EpisodeSourceAccessVerifier: Sendable {
             LaneAddress(source: $0.source, channel: $0.channel, occurrence: $0.occurrence, epoch: $0.epoch)
         }).count == lanes.count
         else { throw EpisodeSourceAccessRefusal.duplicateOccurrence }
+        guard sources.allSatisfy({ observedRevisions[$0.id] == inputs.sources[$0.id] }),
+              MapDependencies.verify(
+                  version: version, map: map, episode: episode,
+                  registered: observedRevisions, format: inputs.format
+              ).isEmpty
+        else { throw EpisodeSourceAccessRefusal.acceptedMapStale }
+
+        // The last document callback is an await: a grant can be revoked or relinked there even
+        // after the earlier records fetch. Recheck the exact ready key, then read the store again
+        // and validate every observed identity against that final record before returning.
+        let finalInputs = await coordinator.inputs
+        guard finalInputs.acceptedMaps[episodeID] == revision,
+              finalInputs.sources == inputs.sources,
+              finalInputs.format == inputs.format,
+              await coordinator.state(of: identity.slot) == .ready(identity.key)
+        else { throw EpisodeSourceAccessRefusal.acceptedMapNotActive }
+        let finalRecords = try await accessStore.records(in: showID)
+        guard finalRecords.count == Set(finalRecords.map(\.key)).count else {
+            throw EpisodeSourceAccessRefusal.duplicateOccurrence
+        }
+        for (source, original) in zip(sources, usedRecords) {
+            guard let record = finalRecords.first(where: { $0.key == original.key }) else {
+                throw EpisodeSourceAccessRefusal.accessMissing(source.id)
+            }
+            guard record == original else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
+            let (revision, physical) = try observe(source.id, record: record, evaluator: evaluator)
+            guard revision.token == observedRevisions[source.id],
+                  physicalOwners[physical] == source.id
+            else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
+        }
+        try latest.requireCurrent()
         return Sample(document: document, accessRecords: usedRecords, witness: EpisodeSourceAccessWitness(
             show: showID, episode: episodeID, publication: document.publication, acceptedMapKey: identity.key, lanes: lanes
         ))

@@ -95,10 +95,15 @@ proof, unsupported boundary, mismatched provenance and uninspectable lanes refus
 transcript or recognition confidence is never protection evidence. Audio analysis consent remains
 limited to the selected authorized Primary, not to Backups or other speakers.
 
-The Mac-owned `EpisodeSourceAccessVerifier` is a separate, read-only precursor: against the live
-verified show publication and active accepted-map **content** key, it enumerates every mapped
-source/occurrence/epoch and its declared channels, and rechecks each device-local bookmark, grant,
-confirmed file identity and metadata revision. A missing grant or incompatible source refuses;
+The Mac-owned `EpisodeSourceAccessVerifier` is a separate, read-only precursor: against an
+independently coordinated read-back of the open show's exact verified on-disk publication base and
+active accepted-map **content** key, it enumerates complete mapped source/occurrence/epoch
+coverage and its declared channels. Partial or unused epochs and physical aliases refuse. It
+rechecks each device-local bookmark, grant, confirmed file identity and fresh metadata revision
+against both the registered token and the map dependencies, including non-Primary sources;
+it checks records and the ready key again after the last awaited document callback. A missing
+grant, changed publication or incompatible source refuses; a returned witness is a snapshot, not
+a lock on a future provider update or an authorization for work after another await.
 non-Primary sources are only observed through already granted metadata access, never decoded or
 downloaded. The channel count is still a recorded declaration, **not** a freshly certified physical
 channel survey. Its witness reports protection survey absent and complete-cut preparation refused

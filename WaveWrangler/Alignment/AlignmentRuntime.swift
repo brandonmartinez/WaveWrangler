@@ -438,13 +438,25 @@ enum AlignmentRuntimeProvider {
             accessStore: SetupEngineProvider.store, access: SetupEngineProvider.context
         )
         return try await verifier.verify(episode: episodeID) {
-            try await MainActor.run {
-                guard let model = document.verifiedModel, let publication = document.publication,
-                      document.store.model == model else {
+            let snapshot = try await MainActor.run {
+                guard let snapshot = document.currentSourcePublication else {
                     throw EpisodeSourceAccessRefusal.changedDuringVerification
                 }
-                return EpisodeSourceDocument(model: model, publication: publication)
+                return snapshot
             }
+            let url = snapshot.url
+            let model = snapshot.model
+            let base = snapshot.base
+            let current = try await Task.detached(priority: .userInitiated) {
+                try EpisodeSourceDocument.current(at: url, expectedModel: model, expectedBase: base)
+            }.value
+            try await MainActor.run {
+                guard let latest = document.currentSourcePublication,
+                      latest.url == url, latest.model == model, latest.base == base else {
+                    throw EpisodeSourceAccessRefusal.changedDuringVerification
+                }
+            }
+            return current
         }
     }
 
