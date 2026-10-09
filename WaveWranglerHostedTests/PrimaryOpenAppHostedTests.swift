@@ -74,4 +74,27 @@ struct PrimaryOpenAppHostedTests {
         }
         #expect(engine.calls.isEmpty)
     }
+
+    @Test func staleOrForgedRelinkContextNeverReachesDeviceEngine() {
+        let (store, setup, engine, _, source, _) = fixture()
+        let comparison = RelinkComparison(rows: [], outcome: .match)
+        let context = RelinkContext(sourceID: source.id, displayName: "synthetic",
+                                    candidate: URL(fileURLWithPath: "/synthetic/never-opened"),
+                                    comparison: comparison, mode: .relink,
+                                    generation: setup.primaryOpenState().relinkGeneration,
+                                    documentGeneration: store.modelGeneration)
+        setup.confirmRelink(context)
+        #expect(engine.calls.isEmpty)
+        #expect(setup.message != nil)
+
+        setup.sheet = .relink(context)
+        var forged = context
+        forged.comparison = RelinkComparison(rows: [], outcome: .unknown(reason: "synthetic"))
+        setup.confirmRelink(forged)
+        #expect(engine.calls.isEmpty)
+        store.replaceLoadedModel(store.model)
+        setup.confirmRelink(context)
+        #expect(engine.calls.isEmpty)
+        #expect(setup.message != nil)
+    }
 }
