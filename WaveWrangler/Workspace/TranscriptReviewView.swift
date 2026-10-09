@@ -94,6 +94,7 @@ struct TranscriptReviewView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .tag(occurrence.id)
+                        .simultaneousGesture(TapGesture().onEnded { occurrencesFocused = true })
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel(occurrence.title)
                         .accessibilityValue(occurrence.note)

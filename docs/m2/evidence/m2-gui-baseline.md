@@ -171,6 +171,21 @@ The separate `ww.review.inspector.analysisState` finding measured 853 glyph
 pixels at p75 2.66:1 and is **not waived**; the UI uses the system label color
 for that text. The AX parent/child mismatch is also not waived.
 
+### Independent WW-029 correction (draft PR #320, 2026-10-08)
+
+On ww-ui-2, the first clean candidate `80b7a2282651` passed 2/3
+`TranscriptReviewSafetyUITests` and 4/5 `TranscriptReviewUITests` (0 skips).
+Moving the analysis state to the visible inspector summary removed its contrast
+finding; no waiver was added. The unwaived Parent/Child audit still failed,
+and native keyboard focus was not obtained on occurrence click. Its AX dump
+showed an inspector ScrollView frame of 270 x 2928 inside a 1024 x 572 show
+window. The prior analysis-state crop sampled background beyond the actual
+inspector viewport, not legible text. The next candidate bounds the native
+inspector to the window geometry and focuses the List after a row click.
+Neither the AX nor keyboard failure is accepted without a clean GUI pass.
+First-round result bundles: ww-ui-2
+`~/ww-uitest-runs/ww029-pr320-80b7a2282651-20261008T200740/`.
+
 ### Broad (M5) observations
 
 ### Baseline revision 2026-10-08: Format-update fixture and inactive inspector text (#242, #245, #246)

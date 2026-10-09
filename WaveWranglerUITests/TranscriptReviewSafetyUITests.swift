@@ -113,10 +113,12 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             test: self,
             types: AcceptanceAudit.types
         )
-        if !unwaived.isEmpty {
-            print("Review inspector AX hierarchy: \(app.scrollViews["ww.inspector"].debugDescription)")
-        }
         XCTAssertTrue(unwaived.isEmpty, unwaived.joined(separator: "\n"))
+        XCTAssertLessThanOrEqual(
+            inspector.frame.height,
+            app.windows["ww.show.window"].frame.height,
+            "The inspector AX parent must fit the show window, not report its unscrolled content height"
+        )
 
         filter.click()
         if UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0 {
