@@ -47,6 +47,23 @@ final class LibraryWorkspaceUITests: XCTestCase {
 
     private func value(_ element: XCUIElement) -> String { element.value as? String ?? "\(element.value ?? "")" }
 
+    private func keyboardFocusSnapshot(sidebar: XCUIElement, entries: XCUIElement) -> String {
+        let candidates: [(String, XCUIElement)] = [
+            ("sidebar", sidebar),
+            ("entries", entries),
+            ("new-collection", app.buttons["ww.library.collections.add"]),
+            ("open-show", app.buttons["ww.library.detail.open"])
+        ]
+        var focused: [String] = []
+        let states = candidates.map { name, candidate -> String in
+            guard candidate.exists else { return "\(name)=unknown" }
+            let hasFocus = Acceptance.hasKeyboardFocus(candidate)
+            if hasFocus { focused.append(name) }
+            return "\(name)=\(hasFocus ? "yes" : "no")"
+        }
+        return "focus=\(focused.isEmpty ? "unknown" : focused.joined(separator: ",")); \(states.joined(separator: " "))"
+    }
+
     private func waitForValue(_ element: XCUIElement, _ expected: String, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line) {
         let predicate = NSPredicate { _, _ in self.value(element) == expected }
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: nil)
@@ -301,13 +318,11 @@ final class LibraryWorkspaceUITests: XCTestCase {
         // New collection is selected and empty; Move Up (⌥⌘↑) moves it above the last fixture collection.
         waitForValue(created, "0 items")
         app.typeKey(.upArrow, modifierFlags: [.command, .option])
-        let rows = app.outlines["ww.library.sidebar"].descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.sidebar.collection.'")).allElementsBoundByIndex.map(\.label)
-        let moved = rows.firstIndex(of: "Season Two, collection")
-        let last = rows.firstIndex(of: "Synthetic Collection 5, collection")
-        XCTAssertNotNil(moved)
-        XCTAssertNotNil(last)
-        if let moved, let last { XCTAssertLessThan(moved, last, "Move Collection Up reorders without drag") }
+        let sidebar = app.outlines["ww.library.sidebar"]
+        let lastCollection = sidebar.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.sidebar.collection.' AND label == %@", "Synthetic Collection 5, collection")).firstMatch
+        waitFor(lastCollection)
+        XCTAssertLessThan(created.frame.minY, lastCollection.frame.minY, "Move Collection Up reorders without drag")
 
         // Add a show via File › Library › Add to Collection ▸ (non-drag path), keyboard-selected (K05).
         for _ in 0..<10 { app.typeKey(.upArrow, modifierFlags: []) }
@@ -316,6 +331,16 @@ final class LibraryWorkspaceUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [showsSelected], timeout: 5), .completed, "Up arrows reach Shows: \(table.label)")
         app.typeKey("\t", modifierFlags: [])
         app.typeKey(.downArrow, modifierFlags: [])
+        let showName = table.staticTexts.matching(NSPredicate(format: "label == %@", "Synthetic Show 001")).firstMatch
+        XCTAssertTrue(showName.waitForExistence(timeout: 5), "exact synthetic target Synthetic Show 001 exists")
+        XCTAssertEqual(showName.elementType, .staticText, "synthetic target element type")
+        XCTAssertTrue(showName.identifier.hasPrefix("ww.library.entry."), "synthetic target identifier: \(showName.identifier)")
+        let showRow = table.outlineRows.containing(NSPredicate(format: "identifier == %@", showName.identifier)).firstMatch
+        XCTAssertTrue(showRow.waitForExistence(timeout: 5), "outline row containing \(showName.identifier)")
+        XCTAssertEqual(showRow.elementType, .outlineRow, "synthetic target row element type")
+        let selected = showRow.isSelected
+        XCTAssertTrue(selected, "Down must select Synthetic Show 001 before menu interaction; rowSelected=\(selected); \(keyboardFocusSnapshot(sidebar: sidebar, entries: table))")
+        print("KEYBOARD FOCUS after Down: rowSelected=\(selected); \(keyboardFocusSnapshot(sidebar: sidebar, entries: table))")
         menuItem("Add to Collection").hover()
         let target = app.menuBars.menuItems["Season Two"].firstMatch
         waitFor(target)
