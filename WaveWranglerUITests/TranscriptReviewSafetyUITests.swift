@@ -143,8 +143,14 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
                 assertTextSize200()
             }
             scrollToFullyVisible(second, in: content)
-            XCTAssertTrue(content.frame.contains(second.frame), "\(textSize)% proposal 002 is fully inside its scroll viewport")
-            XCTAssertTrue(window.frame.contains(second.frame), "\(textSize)% proposal 002 is fully inside the minimum window")
+            XCTAssertTrue(
+                content.frame.contains(second.frame),
+                "\(textSize)% proposal 002 is fully inside its scroll viewport: row \(second.frame), viewport \(content.frame)"
+            )
+            XCTAssertTrue(
+                window.frame.contains(second.frame),
+                "\(textSize)% proposal 002 is fully inside the minimum window: row \(second.frame), window \(window.frame)"
+            )
         }
     }
 
@@ -407,13 +413,24 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
     }
 
     private func scrollToFullyVisible(_ element: XCUIElement, in scroll: XCUIElement) {
-        for _ in 0..<18 where element.exists {
+        for _ in 0..<36 where element.exists {
+            let viewport = scroll.frame
             let frame = element.frame
-            let visible = frame.height > scroll.frame.height
-                ? scroll.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
-                : scroll.frame.contains(frame)
+            let visible = frame.height > viewport.height
+                ? viewport.contains(CGPoint(x: frame.midX, y: frame.midY))
+                : viewport.contains(frame)
             if visible { break }
-            scroll.scroll(byDeltaX: 0, deltaY: frame.midY < scroll.frame.minY ? 180 : -180)
+            let deltaY: CGFloat
+            if frame.height > viewport.height {
+                deltaY = frame.midY < viewport.minY ? 40 : -40
+            } else if frame.minY < viewport.minY {
+                deltaY = 40
+            } else if frame.maxY > viewport.maxY {
+                deltaY = -40
+            } else {
+                break
+            }
+            scroll.scroll(byDeltaX: 0, deltaY: deltaY)
         }
     }
 

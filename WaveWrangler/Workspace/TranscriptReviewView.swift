@@ -58,7 +58,7 @@ struct TranscriptReviewView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 12) {
                             transcriptPane
-                                .frame(minHeight: 210, idealHeight: 250)
+                                .fixedSize(horizontal: false, vertical: true)
                             timelinePane
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)

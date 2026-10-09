@@ -193,6 +193,7 @@ final class TranscriptReviewUITests: XCTestCase {
     func testReturnAndEscapeWhileFilteringDoNotAcceptOrAudition() {
         let filter = app.textFields["ww.review.filter"]
         XCTAssertTrue(filter.waitForExistence(timeout: 3))
+        XCTAssertTrue(filter.isHittable, "The filter must be visible before keyboard focus is requested")
         filter.click()
         XCTAssertTrue(Acceptance.hasKeyboardFocus(filter))
         filter.typeText("synthetic")
