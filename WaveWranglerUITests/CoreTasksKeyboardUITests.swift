@@ -216,11 +216,15 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             if offer.exists {
                 Acceptance.record(self, "T17 offer buttons: \(offer.buttons.allElementsBoundByIndex.map(\.title))")
                 try audit("T17 recovery offer")
-                let open = offer.buttons.matching(NSPredicate(format: "title CONTAINS[c] 'Open' OR title CONTAINS[c] 'Copy' OR title CONTAINS[c] 'Earlier'")).firstMatch
-                check(open.exists, "an action opens the kept complete version")
-                if open.exists { open.click() }
+                let newest = offer.buttons["Open Newest Prior Copy (revision 2)"]
+                let older = offer.buttons["Open Prior Copy 2 (revision 1)"]
+                check(newest.exists && newest.isEnabled && newest.label == newest.title,
+                      "VoiceOver identifies the actionable newest prior, not another generic Open: \(offer.buttons.allElementsBoundByIndex.map(\.label))")
+                check(older.exists && older.isEnabled && older.label == older.title,
+                      "the older prior has its own distinct VoiceOver action")
+                if newest.exists { app.typeKey(.return, modifierFlags: []) }
                 let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
-                check(copy.waitForExistence(timeout: 10), "the complete version opens")
+                check(newest.exists && copy.waitForExistence(timeout: 10), "Return opens the newest prior copy")
                 let title = copy.textFields["Show title"]
                 let info = copy.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
                 check(info.waitForExistence(timeout: 5), "Show Info is available on the recovered copy")

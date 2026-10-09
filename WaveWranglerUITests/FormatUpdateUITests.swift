@@ -82,11 +82,15 @@ final class FormatUpdateUITests: XCTestCase {
             app.typeKey(.return, modifierFlags: [])
             let bar = window.descendants(matching: .any).matching(identifier: "ww.show.messageBar").firstMatch
             check(bar.waitForExistence(timeout: 10), "identity refusal is shown in the read-only window")
-            check(texts(in: bar).contains { $0.contains("Couldn't update") || $0.contains("originating file") },
-                  "the update does not claim success")
+            check(bar.label == "This show is read-only" &&
+                  texts(in: bar).contains { $0.contains("originating file's identity") && $0.contains("Reopen") },
+                  "a changed originating item requires reopening, not a retry: \(bar.label) \(texts(in: bar))")
+            check(!texts(in: bar).contains { $0.contains("The original is unchanged") } && !bar.buttons["Try Again"].exists,
+                  "byte-identical replacement is not reported as the original unchanged")
             check(diskSchemaVersion(document) == 1 && diskSchemaVersion(moved) == 1, "neither original nor replacement was overwritten")
             check((try? Data(contentsOf: document)) == original && (try? Data(contentsOf: moved)) == original,
                   "both exact schema 1 files remain unchanged")
+            checkMessageBarAccessibility(bar, surface: "T21 replaced-origin refusal")
             try audit("T21 replaced-origin refusal")
         }
     }
@@ -199,6 +203,7 @@ final class FormatUpdateUITests: XCTestCase {
             check((try? Data(contentsOf: document)) == original, "the original file is byte-unchanged")
             let tryAgain = bar.buttons["Try Again"], details = bar.buttons["Show Details"]
             check(tryAgain.exists && details.exists, "Try Again and Show Details: \(bar.buttons.allElementsBoundByIndex.map(\.title))")
+            checkMessageBarAccessibility(bar, surface: "T21 D15 failure")
             try audit("T21 D15 failure bar")
             // Keyboard navigation of buttons depends on the host's Full Keyboard Access setting.
             activate(tryAgain, step: "D15 Tab/Space to Try Again")
@@ -396,6 +401,16 @@ final class FormatUpdateUITests: XCTestCase {
 
     private func texts(in element: XCUIElement) -> [String] {
         element.staticTexts.allElementsBoundByIndex.map { ($0.value as? String) ?? $0.label }
+    }
+
+    private func checkMessageBarAccessibility(_ bar: XCUIElement, surface: String) {
+        check(!bar.label.isEmpty, "\(surface): recovery message has a VoiceOver heading")
+        let undescribed = bar.descendants(matching: .other).allElementsBoundByIndex.filter {
+            $0.label.isEmpty && ($0.value as? String ?? "").isEmpty
+        }
+        check(undescribed.isEmpty, "\(surface): no undescribed AX Other elements (\(undescribed.count))")
+        check(bar.buttons.allElementsBoundByIndex.allSatisfy { !$0.label.isEmpty && $0.isEnabled },
+              "\(surface): every recovery action is a labelled, enabled VoiceOver button")
     }
 
     private func tabTo(_ target: XCUIElement, limit: Int = 40) -> Bool {
