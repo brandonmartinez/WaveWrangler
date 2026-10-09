@@ -25,21 +25,38 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
 
 ## Pipeline
 
-1. **Build on the dev Mac** (counts toward the 3-native-build limit, `-jobs 4`, isolated DerivedData):
+1. **Build the exact pushed SHA on the dev Mac** (counts toward the 3-native-build limit, `-jobs 4`, isolated DerivedData). `wwpersist-probe` is required by UI test setup; a run without it is **NOT PASS**, even if `xcodebuild` exits zero after skipping tests.
    ```sh
    source "$HOME/.shell/exports-core.sh"
-   # Run the clean-tree check before build-for-testing.
+   # Run the clean-tree check before build-for-testing and do not switch commits afterwards.
    test -z "$(git status --porcelain --untracked-files=all)" || { echo "Working tree not clean"; exit 1; }
-   xcodebuild build-for-testing -project WaveWrangler.xcodeproj -scheme WaveWranglerUITests \
-     -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/DerivedData-ui -jobs 4
-   ```
-2. **Copy to the chosen GUI host** (source `"$HOME/.shell/exports.sh"` for GitHub fetches and SSH to the mini; VM aliases themselves use a dedicated key):
-   ```sh
-   PRODUCTS=.build/DerivedData-ui/Build/Products
-   COMMIT=$(git rev-parse HEAD); SHA=${COMMIT:0:12}
+   COMMIT=$(git rev-parse HEAD)
+   SHA=${COMMIT:0:12}
+   source "$HOME/.shell/exports.sh"
    git fetch origin
    git branch -r --contains "$COMMIT" | grep -q 'origin/' ||
      { echo "Commit $COMMIT is not pushed"; exit 1; }
+
+   xcodebuild build-for-testing -project WaveWrangler.xcodeproj -scheme WaveWranglerUITests \
+     -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/DerivedData-ui -jobs 4
+
+   # This is the same synthetic-fixture probe build used by scripts/test.sh --ui.
+   swift build \
+     --package-path Packages/WaveWranglerKit \
+     --scratch-path .build/swiftpm \
+     --jobs 4 \
+     --product wwpersist-probe
+   PROBE="$(swift build --package-path Packages/WaveWranglerKit \
+     --scratch-path .build/swiftpm --show-bin-path)/wwpersist-probe"
+   test -x "$PROBE" || { echo "Missing executable wwpersist-probe: $PROBE"; exit 1; }
+
+   # Fail closed if the build ceased to represent the requested exact SHA.
+   test "$(git rev-parse HEAD)" = "$COMMIT" ||
+     { echo "HEAD changed during build; do not stage this output"; exit 1; }
+   ```
+2. **Atomically stage Products *and the probe* in one unique host run folder.** Set `GUI_HOST` to the Mini address or exactly one VM alias, and keep the generated `RUN`, `LANE`, `SHA`, and `RUN_ID` for every artifact and PR record. Do not reuse a previous folder or its logs.
+   ```sh
+   PRODUCTS=.build/DerivedData-ui/Build/Products
    find "$PRODUCTS" -maxdepth 1 -name 'WaveWranglerUITests_*.xctestrun' -print -quit |
      grep -q 'WaveWranglerUITests' ||
      { echo "Missing WaveWranglerUITests xctestrun"; exit 1; }
@@ -48,43 +65,148 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
 
    GUI_HOST=brandonmartinez@192.168.18.8 # for a VM, use ww-ui-1 or ww-ui-2
    LANE=your-lane
+   SHARD=your-test-class-or-full-01
+   EXPECTED_SKIPS=0 # A nonzero value needs a documented waiver; missing-probe skips are never expected.
    REMOTE_HOME=$(ssh "$GUI_HOST" 'printf %s "$HOME"')
    TS=$(date +%Y%m%dT%H%M%S)
-   TMP="$REMOTE_HOME/ww-uitest-runs/.tmp-$LANE-$SHA-$TS"
-   RUN="$REMOTE_HOME/ww-uitest-runs/$LANE-$SHA-$TS"
+   RUN_ID="$LANE-$SHA-$TS"
+   TMP="$REMOTE_HOME/ww-uitest-runs/.tmp-$RUN_ID"
+   RUN="$REMOTE_HOME/ww-uitest-runs/$RUN_ID"
+   LOCAL_MANIFEST=$(mktemp)
+   {
+     printf 'requested_sha\t%s\nactual_sha\t%s\nhost\t%s\nlane\t%s\nshard\t%s\nrun_id\t%s\n' \
+       "$COMMIT" "$(git rev-parse HEAD)" "$GUI_HOST" "$LANE" "$SHARD" "$RUN_ID"
+     shasum -a 256 "$PROBE"
+     find "$PRODUCTS" -maxdepth 1 -name 'WaveWranglerUITests_*.xctestrun' -exec shasum -a 256 {} \;
+   } >"$LOCAL_MANIFEST"
+
    ssh "$GUI_HOST" "test ! -e '$TMP' && test ! -e '$RUN' && mkdir -p '$TMP/Products'"
+   ssh_status=$?
+   test "$ssh_status" -eq 0 || { echo "stage mkdir SSH status=$ssh_status"; rm -f "$LOCAL_MANIFEST"; exit "$ssh_status"; }
    rsync -a "$PRODUCTS/" "$GUI_HOST:$TMP/Products/"
-   CHANGES=$(rsync -a -c --dry-run --itemize-changes "$PRODUCTS/" "$GUI_HOST:$TMP/Products/")
-   test -z "$CHANGES" || { printf '%s\n' "$CHANGES"; exit 1; }
+   rsync_products_status=$?
+   test "$rsync_products_status" -eq 0 || { echo "Products rsync status=$rsync_products_status"; rm -f "$LOCAL_MANIFEST"; exit "$rsync_products_status"; }
+   rsync -a "$PROBE" "$GUI_HOST:$TMP/Products/wwpersist-probe"
+   rsync_probe_status=$?
+   test "$rsync_probe_status" -eq 0 || { echo "probe rsync status=$rsync_probe_status"; rm -f "$LOCAL_MANIFEST"; exit "$rsync_probe_status"; }
+   rsync -a "$LOCAL_MANIFEST" "$GUI_HOST:$TMP/identity.tsv"
+   rsync_identity_status=$?
+   test "$rsync_identity_status" -eq 0 || { echo "identity rsync status=$rsync_identity_status"; rm -f "$LOCAL_MANIFEST"; exit "$rsync_identity_status"; }
+   rm -f "$LOCAL_MANIFEST"
+
+   # Verify both the copied executable and all xctestruns before making the run visible.
+   ssh "$GUI_HOST" "test -x '$TMP/Products/wwpersist-probe' && cd '$TMP' && \
+     shasum -a 256 Products/wwpersist-probe Products/WaveWranglerUITests_*.xctestrun > staged-checksums.tsv"
+   stage_verify_status=$?
+   test "$stage_verify_status" -eq 0 ||
+     { echo "staged executable/checksum verification status=$stage_verify_status"; exit "$stage_verify_status"; }
+   PRODUCTS_CHANGES=$(rsync -a -c --dry-run --itemize-changes "$PRODUCTS/" "$GUI_HOST:$TMP/Products/")
+   products_verify_status=$?
+   test "$products_verify_status" -eq 0 ||
+     { echo "Products checksum transport status=$products_verify_status"; exit "$products_verify_status"; }
+   test -z "$PRODUCTS_CHANGES" || { printf '%s\n' "$PRODUCTS_CHANGES"; echo "Products checksum mismatch"; exit 1; }
+   PROBE_CHANGES=$(rsync -a -c --dry-run --itemize-changes "$PROBE" "$GUI_HOST:$TMP/Products/wwpersist-probe")
+   probe_verify_status=$?
+   test "$probe_verify_status" -eq 0 ||
+     { echo "probe checksum transport status=$probe_verify_status"; exit "$probe_verify_status"; }
+   test -z "$PROBE_CHANGES" || { printf '%s\n' "$PROBE_CHANGES"; echo "probe checksum mismatch"; exit 1; }
    ssh "$GUI_HOST" "mv '$TMP' '$RUN'"
+   publish_status=$?
+   test "$publish_status" -eq 0 || { echo "stage publish SSH status=$publish_status"; exit "$publish_status"; }
    ```
-3. **Run one command under a lease on the selected host**, not on the
-   development Mac. Keep `RUN`, `LANE`, `SHA`, and `GUI_HOST` from step 2:
+3. **Run exactly one selected shard under one host lease, preserving original statuses.** Do not use `set -e` or pipe `xcodebuild` through `tee`: either can hide which original SSH, lease, or test command failed. This wrapper writes the xcodebuild status before returning it to the lease helper, then records the lease and outer SSH statuses. `TEST_RUNNER_WW_PROBE` is attached to the actual `xcodebuild` process, so XCTest receives `WW_PROBE`; a shell variable alone is insufficient.
    ```sh
    PR=123
-   TEST_CLASS=YourUITestClass
-   printf -v REMOTE_ARGS ' %q' "$RUN" "$LANE" "$SHA" "$PR" "$TEST_CLASS"
+   TEST_CLASS=YourUITestClass # use a class list shard for full suites
+   LEASE_CLASS=pr # use full for full-suite shards
+   printf -v REMOTE_ARGS ' %q' "$RUN" "$LANE" "$COMMIT" "$SHA" "$PR" "$SHARD" "$TEST_CLASS" "$EXPECTED_SKIPS"
    ssh "$GUI_HOST" "bash -s --$REMOTE_ARGS" <<'REMOTE'
-   set -euo pipefail
-   RUN=$1; LANE=$2; SHA=$3; PR=$4; TEST_CLASS=$5
-   ~/ww-uitest-runs/gui-lock status
+   set -u -o pipefail
+   RUN=$1; LANE=$2; COMMIT=$3; SHA=$4; PR=$5; SHARD=$6; TEST_CLASS=$7; EXPECTED_SKIPS=$8
+   STATUS="$RUN/command-status.tsv"
+   printf 'run_id\t%s\nrequested_sha\t%s\nshort_sha\t%s\nhost\t%s\nlane\t%s\nshard\t%s\nexpected_skips\t%s\n' \
+     "$(basename "$RUN")" "$COMMIT" "$SHA" "$(hostname)" "$LANE" "$SHARD" "$EXPECTED_SKIPS" >"$STATUS"
+   printf 'preflight_probe\t' >>"$STATUS"
+   test -x "$RUN/Products/wwpersist-probe"; probe_status=$?
+   printf '%s\n' "$probe_status" >>"$STATUS"
+   if [ "$probe_status" -ne 0 ]; then exit "$probe_status"; fi
+   shopt -s nullglob
+   xctestruns=("$RUN"/Products/WaveWranglerUITests_*.xctestrun)
+   if [ "${#xctestruns[@]}" -ne 1 ]; then
+     printf 'preflight_xctestrun\t1\n' >>"$STATUS"
+     exit 1
+   fi
+   ~/ww-uitest-runs/gui-lock status >>"$RUN/lease.log" 2>&1
+   lock_status_status=$?
+   printf 'lease_status_preflight\t%s\n' "$lock_status_status" >>"$STATUS"
+   if [ "$lock_status_status" -ne 0 ]; then exit "$lock_status_status"; fi
+
    ~/ww-uitest-runs/gui-lock run \
-     --lane "$LANE" --class pr --pr "$PR" --sha "$SHA" --dir "$RUN" \
+     --lane "$LANE" --class "$LEASE_CLASS" --pr "$PR" --sha "$SHA" --dir "$RUN" \
      --result "$RUN/result.xcresult" --lease-minutes 30 --queue-timeout 3600 -- \
-     xcodebuild test-without-building \
-       -xctestrun "$RUN"/Products/WaveWranglerUITests_*.xctestrun \
-       -destination 'platform=macOS,arch=arm64' -parallel-testing-enabled NO \
-       -only-testing:"WaveWranglerUITests/$TEST_CLASS" \
-       -resultBundlePath "$RUN/result.xcresult"
+     env TEST_RUNNER_WW_PROBE="$RUN/Products/wwpersist-probe" bash -c '
+       xcodebuild test-without-building \
+         -xctestrun "$1" \
+         -destination "platform=macOS,arch=arm64" -parallel-testing-enabled NO \
+         -only-testing:"WaveWranglerUITests/$2" \
+         -resultBundlePath "$3" >"$4" 2>&1
+       status=$?
+       printf "xcodebuild\t%s\n" "$status" >"$5"
+       exit "$status"
+     ' _ "${xctestruns[0]}" "$TEST_CLASS" "$RUN/result.xcresult" "$RUN/xcodebuild.log" "$RUN/xcodebuild-status.tsv" \
+     >>"$RUN/lease.log" 2>&1
+   lease_status=$?
+   printf 'lease_run\t%s\n' "$lease_status" >>"$STATUS"
+   if [ -f "$RUN/xcodebuild-status.tsv" ]; then cat "$RUN/xcodebuild-status.tsv" >>"$STATUS"; else printf 'xcodebuild\tmissing\n' >>"$STATUS"; fi
+   exit "$lease_status"
    REMOTE
+   ssh_status=$?
+   printf 'ssh\t%s\n' "$ssh_status"
+   test "$ssh_status" -eq 0 || { echo "remote run failed; retain $RUN"; exit "$ssh_status"; }
    ```
-   The helper renews the lease only while the wrapped PID is alive and its output log advances. It verifies the
+   For a full suite, use a declared class-to-host shard plan: one `RUN_ID`, one `SHARD`, one lease and one
+   `.xcresult` per `xcodebuild` invocation. Keep the planned and completed shard counts together; a missing or
+   overwritten shard is **NOT RUN**, not a pass. The helper renews the lease only while the wrapped PID is alive and its output log advances. It verifies the
    xcresult, restores `$RUN/restore-settings.sh` when present, kills only recorded run PIDs, and releases on
    `EXIT`, `INT`, or `TERM`. A queue timeout keeps the ticket in place and continues waiting.
-4. **Copy the xcresult back** from `"$GUI_HOST:$RUN/result.xcresult/"`
-   to a unique local `.xcresult` directory and analyse it here
-   (`xcrun xcresulttool`).
-5. **Post on the PR:** SHA, host, classes, pass/fail/skip counts, xcresult location, and any new audit finding versus the pinned waiver baseline.
+4. **Retrieve and fail closed on results, including unexpected skips.** Retrieve the status log, identity,
+   test log, xcresult and checksum manifest as one artifact set; do not associate a prior run's logs with this
+   SHA. The result remains **NOT PASS** if a required artifact, expected SHA, status, or count is missing.
+   ```sh
+   LOCAL_RUN=".build/gui-runs/$RUN_ID"
+   mkdir -p "$LOCAL_RUN"
+   rsync -a "$GUI_HOST:$RUN/" "$LOCAL_RUN/"
+   retrieve_status=$?
+   test "$retrieve_status" -eq 0 || { echo "artifact retrieval status=$retrieve_status"; exit "$retrieve_status"; }
+   printf 'retrieve_rsync\t%s\nremote_ssh\t%s\n' "$retrieve_status" "$ssh_status" >"$LOCAL_RUN/transport-status.tsv"
+   grep -Fx "requested_sha	$COMMIT" "$LOCAL_RUN/command-status.tsv" >/dev/null &&
+     grep -Fx "actual_sha	$COMMIT" "$LOCAL_RUN/identity.tsv" >/dev/null ||
+     { echo "artifact SHA identity mismatch or missing"; exit 1; }
+   test -f "$LOCAL_RUN/xcodebuild-status.tsv" ||
+     { echo "xcodebuild status missing; NOT PASS"; exit 1; }
+
+   xcrun xcresulttool get test-results summary --path "$LOCAL_RUN/result.xcresult" --format json >"$LOCAL_RUN/summary.json"
+   summary_status=$?
+   test "$summary_status" -eq 0 || { echo "xcresult summary status=$summary_status"; exit "$summary_status"; }
+   passed=$(plutil -extract passedTests raw "$LOCAL_RUN/summary.json")
+   failed=$(plutil -extract failedTests raw "$LOCAL_RUN/summary.json")
+   skipped=$(plutil -extract skippedTests raw "$LOCAL_RUN/summary.json")
+   counts_line=$(printf 'run_id=%s host=%s requested_sha=%s shard=%s passed=%s failed=%s skipped=%s expected_skips=%s\n' \
+     "$RUN_ID" "$GUI_HOST" "$COMMIT" "$SHARD" "$passed" "$failed" "$skipped" "$EXPECTED_SKIPS")
+   printf '%s\n' "$counts_line" >"$LOCAL_RUN/counts.txt"
+   cat "$LOCAL_RUN/counts.txt"
+   case "$passed:$failed:$skipped:$EXPECTED_SKIPS" in *[!0-9:]*)
+     echo "invalid or absent xcresult counts; NOT PASS"; exit 1 ;;
+   esac
+   if [ "$failed" -ne 0 ] || [ "$skipped" -ne "$EXPECTED_SKIPS" ]; then
+     echo "failed or unexpected skipped tests; retain original shard artifact as NOT PASS"
+     exit 1
+   fi
+   ```
+5. **Post on the PR:** exact requested and actual SHA, `RUN_ID`, host, planned/completed shard counts,
+   classes, pass/fail/skip/expected-skip counts, original SSH/lease/xcodebuild statuses, xcresult location,
+   and any new audit finding versus the pinned waiver baseline. Do not call this a product or gate success until
+   every required shard has its own matching artifact and zero unexpected skips.
 
 For VM runs, use only synthetic fixtures; never mount or copy the user's recordings or test media.
 Build on the development Mac, not in the guest. Keep the two VMs at four vCPUs
