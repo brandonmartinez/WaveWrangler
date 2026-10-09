@@ -173,6 +173,47 @@ struct DerivedJobCoordinatorTests {
         #expect(await coordinator.readyPayload(for: slot) == Data("replacement".utf8))
     }
 
+    @Test func boundedRestorationNeverReadsAnOversizedDisplacedCurrentAsset() async throws {
+        let directory = try TemporaryDirectory("displaced-restoration")
+        let reads = DisplacedAssetReadGuard()
+        let store = try DerivedAssetStore(
+            root: directory.file("cache/DerivedAssets/v1"), sourceLocations: [], files: reads
+        )
+        let coordinator = DerivedJobCoordinator(store: store, inputs: inputs)
+        let small = key(mapRevision: 1)
+        let large = key(mapRevision: 2)
+        let limit = 48 << 20
+        #expect(await coordinator.submit(slot, key: small) { Data("small".utf8) }.outcome == .published(small))
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 2))
+        #expect(await coordinator.submit(slot, key: large) {
+            Data(repeating: 0x5A, count: limit + 1)
+        }.outcome == .published(large))
+        let largeURL = try store.assetURL(digest: large.digest)
+        let largeFileBytes = try #require(largeURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+        #expect(largeFileBytes > limit)
+
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 1))
+        #expect(await coordinator.state(of: slot) == .stale(large, reasons: [.mapChanged(episode)]))
+        reads.refuseReads(of: largeURL)
+        await coordinator.restoreCachedCurrentSlots(maximumFileBytes: limit)
+        #expect(reads.refusedReads == 0, "restoring a bounded candidate must not read the displaced payload")
+        #expect(await coordinator.state(of: slot) == .ready(small))
+        reads.allowReads()
+
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 2))
+        await coordinator.restoreCachedCurrentSlots(maximumFileBytes: largeFileBytes)
+        #expect(await coordinator.state(of: slot) == .ready(large), "the displaced key remains available")
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 1))
+        await coordinator.restoreCachedCurrentSlots(maximumFileBytes: limit)
+        #expect(await coordinator.state(of: slot) == .ready(small))
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 2))
+        await coordinator.restoreCachedCurrentSlots(maximumFileBytes: limit)
+        #expect(await coordinator.state(of: slot) == .stale(small, reasons: [.mapChanged(episode)]))
+        #expect(await coordinator.submit(slot, key: large) {
+            Data("unexpected recomputation".utf8)
+        }.outcome == .reused(large), "ordinary on-demand adoption still verifies oversized assets")
+    }
+
     @Test func explicitInvalidationIsNeverUndoneByHistoryReconciliation() async throws {
         let directory = try TemporaryDirectory("jobs")
         let coordinator = try coordinator(directory)
@@ -182,6 +223,38 @@ struct DerivedJobCoordinatorTests {
         await coordinator.restoreCachedCurrentSlots()
         #expect(await coordinator.state(of: slot) == .stale(key, reasons: [.superseded]))
         #expect(await coordinator.readyPayload(for: slot) == nil)
+    }
+
+    private final class DisplacedAssetReadGuard: FileOperations, @unchecked Sendable {
+        private let base = LocalFileOperations()
+        private let lock = NSLock()
+        private var refusedURL: URL?
+        private var refusedCount = 0
+
+        var refusedReads: Int { lock.withLock { refusedCount } }
+
+        func refuseReads(of url: URL) { lock.withLock { refusedURL = url } }
+        func allowReads() { lock.withLock { refusedURL = nil } }
+
+        func read(_ url: URL) throws -> Data {
+            let refused = lock.withLock {
+                guard url == refusedURL else { return false }
+                refusedCount += 1
+                return true
+            }
+            if refused { throw POSIXError(.EFBIG) }
+            return try base.read(url)
+        }
+        func exists(_ url: URL) -> Bool { base.exists(url) }
+        func createDirectory(_ url: URL) throws { try base.createDirectory(url) }
+        func writeNew(_ data: Data, to url: URL) throws { try base.writeNew(data, to: url) }
+        func replace(_ destination: URL, withStaged staged: URL) throws { try base.replace(destination, withStaged: staged) }
+        func moveNew(_ source: URL, to destination: URL) throws { try base.moveNew(source, to: destination) }
+        func remove(_ url: URL) throws { try base.remove(url) }
+        func contentsOfDirectory(_ url: URL) throws -> [URL] { try base.contentsOfDirectory(url) }
+        func makeStagingDirectory(appropriateFor destination: URL) throws -> URL {
+            try base.makeStagingDirectory(appropriateFor: destination)
+        }
     }
 
     @Test func explicitInvalidationOfAnAlreadyStaleSlotIsNeverUndone() async throws {

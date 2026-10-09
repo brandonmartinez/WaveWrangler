@@ -420,7 +420,22 @@ struct RenderEnvelopeTests {
             configuration: fixture.configuration, testHooks: fixture.hooks,
             processAdmission: measuredGate
         )
+        let displacedSlot = DerivedSlot("displaced/map-history")
+        let asset = AssetSpec(kind: "displaced-map-history", revision: 1)
+        let small = DerivedAssetKey(asset: asset, map: second.revision)
+        let large = DerivedAssetKey(
+            asset: asset, map: MapRevisionReference(episode: fixture.episodeID, revision: oldRevision)
+        )
+        await fixture.coordinator.setAssetRevision(asset)
+        await fixture.coordinator.acceptMap(second.revision)
+        #expect(await fixture.coordinator.submit(displacedSlot, key: small) {
+            Data("restorable".utf8)
+        }.outcome == .published(small))
         try await pipeline.activate(model: first, episode: fixture.episodeID)
+        #expect(await fixture.coordinator.submit(displacedSlot, key: large) {
+            Data(repeating: 0x5A, count: (48 << 20) + 1)
+        }.outcome == .published(large))
+        #expect(await fixture.coordinator.state(of: displacedSlot) == .ready(large))
         for _ in 0 ..< 4 { try await measuredGate.acquire(bytes: 0) }
         let cancelled = Task {
             try await pipeline.activate(model: second.model, episode: fixture.episodeID)
@@ -433,6 +448,7 @@ struct RenderEnvelopeTests {
         for _ in 0 ..< 4 { await measuredGate.release(bytes: 0) }
         #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == oldRevision)
         #expect(await fixture.coordinator.state(of: PipelineSlots.acceptedMapIdentity(fixture.episodeID)) == oldIdentity)
+        #expect(await fixture.coordinator.state(of: displacedSlot) == .ready(large))
         baseline.value = 600 << 20
         do throws(AlignmentAcceptanceError) {
             try await pipeline.activate(model: second.model, episode: fixture.episodeID)
@@ -445,6 +461,7 @@ struct RenderEnvelopeTests {
         }
         #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == oldRevision)
         #expect(await fixture.coordinator.state(of: PipelineSlots.acceptedMapIdentity(fixture.episodeID)) == oldIdentity)
+        #expect(await fixture.coordinator.state(of: displacedSlot) == .ready(large))
         _ = try await pipeline.reviseAcceptedMap(
             model: first, episode: fixture.episodeID,
             decisions: [fixture.epochs[1]: .numeric(ppm: 27, offsetMilliseconds: 0)]
@@ -455,6 +472,7 @@ struct RenderEnvelopeTests {
         baseline.value = 442 << 20
         try await pipeline.activate(model: second.model, episode: fixture.episodeID)
         #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == second.revision.revision)
+        #expect(await fixture.coordinator.state(of: displacedSlot) == .ready(small))
         _ = try await pipeline.reviseAcceptedMap(
             model: second.model, episode: fixture.episodeID,
             decisions: [fixture.epochs[1]: .numeric(ppm: 30, offsetMilliseconds: 0)]

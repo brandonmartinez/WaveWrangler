@@ -376,7 +376,8 @@ public actor DerivedJobCoordinator {
                             store.boundedPayload(for: candidate, maximumFileBytes: limit) != nil
                         } ?? (store.payload(for: candidate) != nil))
                 }) else { continue }
-                rememberCachedCandidate(current, for: slot)
+                // The displaced key is verified only if selected later; bounded restoration must not read it.
+                rememberCachedCandidate(current, for: slot, verifyPayload: maximumFileBytes == nil)
                 var updated = record
                 updated.state = .ready(restored)
                 updated.currentJob = nil
@@ -481,8 +482,9 @@ public actor DerivedJobCoordinator {
         continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
     }
 
-    private func rememberCachedCandidate(_ key: DerivedAssetKey?, for slot: DerivedSlot) {
-        guard let key, store.payload(for: key) != nil else { return }
+    private func rememberCachedCandidate(_ key: DerivedAssetKey?, for slot: DerivedSlot, verifyPayload: Bool = true) {
+        guard let key else { return }
+        if verifyPayload && store.payload(for: key) == nil { return }
         var candidates = cachedCandidates[slot] ?? []
         candidates.removeAll(where: { $0 == key })
         candidates.insert(key, at: 0)
