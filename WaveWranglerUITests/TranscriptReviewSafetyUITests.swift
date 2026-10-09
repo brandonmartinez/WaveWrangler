@@ -168,6 +168,10 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
                 let blocked = app.descendants(matching: .any)["ww.review.blockedReason"]
                 XCTAssertTrue(blocked.exists, "\(appearance) \(percent)% blocked copy must exist")
                 if blocked.exists {
+                    XCTAssertTrue(
+                        app.windows["ww.show.window"].frame.contains(blocked.frame),
+                        "\(appearance) \(percent)% blocked copy must not extend beyond the window"
+                    )
                     measureVisibleText(blocked, in: app.windows["ww.show.window"], label: "\(appearance) \(percent)% blocked")
                 }
             }
