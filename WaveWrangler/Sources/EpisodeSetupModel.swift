@@ -4,6 +4,16 @@ import Observation
 import SwiftUI
 import WWCore
 import WWEpisodeSetup
+import WWSpeech
+
+/// A captured UI intent, not a source or content grant. Only this Setup model can create one.
+struct SelectedPrimarySourceIntent: Equatable, Sendable {
+    let episode: EpisodeID
+    let speaker: SpeakerID
+    let channel: ChannelReference
+    let epoch: RecordingEpochID
+    fileprivate let generation: UInt64
+}
 
 /// Main-actor view model for one episode's Setup content in one window.
 ///
@@ -74,17 +84,30 @@ final class EpisodeSetupModel {
 
     var statuses: [SourceID: SourceStatusSnapshot] = [:]
     var selection: Set<SetupRowID> = [] {
-        didSet { if selection != oldValue { pendingInspectorFocus = false } }
+        didSet {
+            if selection != oldValue {
+                pendingInspectorFocus = false
+                sourceReadSelectionGeneration.advance()
+            }
+        }
     }
     var speakerSelection: Set<SpeakerID> = [] {
-        didSet { if speakerSelection != oldValue { pendingInspectorFocus = false } }
+        didSet {
+            if speakerSelection != oldValue {
+                pendingInspectorFocus = false
+                sourceReadSelectionGeneration.advance()
+            }
+        }
     }
+    @ObservationIgnored private var sourceReadSelectionGeneration = DocumentMutationGeneration()
     var onlyNeedingAttention = false
     enum FocusedTable: Hashable { case sources, speakers }
     /// Which Setup table has keyboard focus (nil = neither).
     var focusedTable: FocusedTable?
     /// Whether the Setup content is currently shown in a window.
-    var isOnScreen = false
+    var isOnScreen = false {
+        didSet { if isOnScreen != oldValue { sourceReadSelectionGeneration.advance() } }
+    }
     /// Narrow windows: the user's choice to show (true) or hide (false) the details; nil = automatic (#104).
     var detailsExpanded: Bool?
     /// Set by the layout: whether the details are on screen, and whether the current layout can collapse
@@ -184,6 +207,51 @@ final class EpisodeSetupModel {
         case .group:
             return nil
         }
+    }
+
+    /// The two visible Setup tables must identify the same speaker and the confirmed Primary row.
+    /// Selection away and back (including leaving Setup) permanently invalidates an older intent.
+    func captureSelectedPrimarySource() throws -> SelectedPrimarySourceIntent {
+        guard isOnScreen, let generation = sourceReadSelectionGeneration.current,
+              selection.count == 1, speakerSelection.count == 1,
+              let row = selection.first, let speaker = speakerSelection.first,
+              let episode,
+              let channel = episode.assignment(for: speaker)?.primary,
+              let source = episode.source(channel.sourceID),
+              let epoch = source.placement.epochID,
+              let group = source.placement.recorderGroupID,
+              episode.recorderGroup(group)?.epochs.contains(where: { $0.id == epoch }) == true
+        else { throw SelectedPrimarySourceReadRefusal.selectionUnavailable }
+        let references = episode.references(to: source.id)
+        switch row {
+        case let .source(id) where id == source.id:
+            guard references.count == 1, references[0].speakerID == speaker,
+                  references[0].isPrimary, references[0].channel == channel
+            else { throw SelectedPrimarySourceReadRefusal.selectionUnavailable }
+        case let .channel(id, rowSpeaker) where id == source.id && rowSpeaker == speaker:
+            let matching = references.filter { $0.speakerID == speaker }
+            guard references.count > 1, matching.count == 1,
+                  matching[0].isPrimary, matching[0].channel == channel
+            else { throw SelectedPrimarySourceReadRefusal.selectionUnavailable }
+        default:
+            throw SelectedPrimarySourceReadRefusal.selectionUnavailable
+        }
+        do {
+            try SpeechInference.requireSelectedPrimary(
+                model: store.model, episodeID: episodeID, speakerID: speaker, channel: channel
+            )
+        } catch {
+            throw SelectedPrimarySourceReadRefusal.selectionUnavailable
+        }
+        return SelectedPrimarySourceIntent(
+            episode: episodeID, speaker: speaker, channel: channel, epoch: epoch,
+            generation: generation
+        )
+    }
+
+    func isCurrentSelectedPrimarySource(_ intent: SelectedPrimarySourceIntent) -> Bool {
+        sourceReadSelectionGeneration.matches(intent.generation)
+            && (try? captureSelectedPrimarySource()) == intent
     }
 
     var inspectorSubject: InspectorSubject {

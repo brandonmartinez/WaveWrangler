@@ -134,6 +134,20 @@ struct EpisodeOpenShowBindingTests {
         }
     }
 
+    @Test func equalModelAfterReloadDoesNotRestoreAnOldBinding() async throws {
+        let opened = try open()
+        defer { opened.close() }
+        let binding = try OpenShowSourceBinding.capture(for: opened.document)
+        var other = opened.document.store.model
+        other.show.title = "Other synthetic title"
+        opened.document.store.replaceLoadedModel(other)
+        opened.document.store.replaceLoadedModel(try #require(opened.document.verifiedModel))
+        #expect(opened.document.currentSourcePublication != nil)
+        await #expect(throws: EpisodeSourceAccessRefusal.changedDuringVerification) {
+            try await binding.current()
+        }
+    }
+
     @Test func oldCopiedShowCannotStandInForReplacedOpenShow() async throws {
         let opened = try open()
         defer { opened.close() }
@@ -225,6 +239,210 @@ struct EpisodeOpenShowBindingTests {
         }
         await #expect(throws: CancellationError.self) {
             try await request.value
+        }
+    }
+
+    @Test func issuerRefusesAnUnregisteredWindowWithoutOpeningAnySource() async throws {
+        let opened = try open()
+        defer { opened.close() }
+        let unrelatedWindow = NSWindow(
+            contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false
+        )
+        await #expect(throws: SelectedPrimarySourceReadRefusal.selectionUnavailable) {
+            try await SelectedPrimarySourceReadIssuer.requireSourceReadAuthority(
+                for: opened.document, in: unrelatedWindow, startingAt: 0
+            )
+        }
+        let cancelled = Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            try await SelectedPrimarySourceReadIssuer.requireSourceReadAuthority(
+                for: opened.document, in: unrelatedWindow, startingAt: 0
+            )
+        }
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+    }
+}
+
+@MainActor
+@Suite("App-owned selected Primary intent")
+struct SelectedPrimarySourceIntentTests {
+    private func setup() -> (
+        EpisodeSetupModel, EpisodeID, SpeakerID, SourceID, SourceID
+    ) {
+        let speaker = Speaker(name: "Synthetic speaker")
+        let epoch = RecordingEpoch(label: "Synthetic take")
+        let group = RecorderGroup(name: "Synthetic recorder", epochs: [epoch])
+        let primary = SourceRecord(
+            displayNameHint: "generated-primary", observations: .init(channelCount: .known(2)),
+            placement: .init(recorderGroupID: group.id, epochID: epoch.id),
+            role: .primary, roleConfirmation: .userConfirmed
+        )
+        let backup = SourceRecord(
+            displayNameHint: "generated-backup", observations: .init(channelCount: .known(1)),
+            role: .backup, roleConfirmation: .userConfirmed
+        )
+        let episode = Episode(
+            title: "Synthetic", recorderGroups: [group], sources: [primary, backup],
+            speakerAssignments: [SpeakerAssignment(
+                speakerID: speaker.id,
+                primary: ChannelReference(sourceID: primary.id, statedChannel: 1),
+                primaryConfirmation: .userConfirmed,
+                backups: [ChannelReference(sourceID: backup.id, statedChannel: 0)]
+            )]
+        )
+        let document = ShowDocumentModel(
+            show: Show(title: "Synthetic"), speakers: [speaker], episodes: [episode]
+        )
+        let engine = WWSourcesSetupEngine(
+            showID: document.show.id, store: InMemoryDeviceAccessStore()
+        )
+        let setup = EpisodeSetupModel(
+            store: ShowDocumentStore(model: document), episodeID: episode.id,
+            engine: engine, preference: AppSettingsDownloadPreference.shared
+        )
+        setup.isOnScreen = true
+        setup.speakerSelection = [speaker.id]
+        setup.selection = [.source(primary.id)]
+        return (setup, episode.id, speaker.id, primary.id, backup.id)
+    }
+
+    @Test func selectionDoesNotReplayAfterSpeakerOrSourceABA() throws {
+        let (setup, episode, speaker, primary, backup) = setup()
+        let first = try setup.captureSelectedPrimarySource()
+        #expect(first.episode == episode)
+        #expect(first.speaker == speaker)
+        #expect(first.channel == ChannelReference(sourceID: primary, statedChannel: 1))
+        #expect(setup.isCurrentSelectedPrimarySource(first))
+
+        setup.speakerSelection = []
+        setup.speakerSelection = [speaker]
+        #expect(!setup.isCurrentSelectedPrimarySource(first))
+        let second = try setup.captureSelectedPrimarySource()
+        setup.selection = [.source(backup)]
+        setup.selection = [.source(primary)]
+        #expect(!setup.isCurrentSelectedPrimarySource(second))
+        let third = try setup.captureSelectedPrimarySource()
+        setup.isOnScreen = false
+        setup.isOnScreen = true
+        #expect(!setup.isCurrentSelectedPrimarySource(third))
+    }
+
+    @Test func sidebarAndDestinationABACannotRestoreWindowIntent() throws {
+        let (setup, episode, _, _, _) = setup()
+        let windowState = ShowWindowState(store: setup.store)
+        let initial = try #require(windowState.captureSourceReadGeneration())
+        windowState.sidebarSelection = .showInfo
+        windowState.sidebarSelection = .episode(episode)
+        #expect(!windowState.isCurrentSourceReadGeneration(initial))
+        let returned = try #require(windowState.captureSourceReadGeneration())
+        windowState.destination = .alignment
+        windowState.destination = .setup
+        #expect(!windowState.isCurrentSourceReadGeneration(returned))
+    }
+
+    @Test func backupAndUnconfirmedSelectionsNeverProduceIntent() throws {
+        let (setup, _, _, primary, backup) = setup()
+        setup.selection = [.source(backup)]
+        #expect(throws: SelectedPrimarySourceReadRefusal.selectionUnavailable) {
+            try setup.captureSelectedPrimarySource()
+        }
+        setup.selection = [.source(primary)]
+        var changed = setup.store.model
+        changed.episodes[0].speakerAssignments[0].primaryConfirmation = .provisional
+        setup.store.replaceLoadedModel(changed)
+        #expect(throws: SelectedPrimarySourceReadRefusal.selectionUnavailable) {
+            try setup.captureSelectedPrimarySource()
+        }
+    }
+
+    @Test func multipleReferencesRequireTheSpecificPrimaryChannelRow() throws {
+        let (setup, _, speaker, primary, _) = setup()
+        var changed = setup.store.model
+        let other = Speaker(name: "Other synthetic speaker")
+        changed.speakers.append(other)
+        changed.episodes[0].speakerAssignments.append(SpeakerAssignment(
+            speakerID: other.id,
+            backups: [ChannelReference(sourceID: primary, statedChannel: 0)]
+        ))
+        setup.store.replaceLoadedModel(changed)
+        #expect(throws: SelectedPrimarySourceReadRefusal.selectionUnavailable) {
+            try setup.captureSelectedPrimarySource()
+        }
+        setup.selection = [.channel(primary, speaker)]
+        #expect(try setup.captureSelectedPrimarySource().channel
+                == ChannelReference(sourceID: primary, statedChannel: 1))
+        setup.speakerSelection = [other.id]
+        #expect(throws: SelectedPrimarySourceReadRefusal.selectionUnavailable) {
+            try setup.captureSelectedPrimarySource()
+        }
+    }
+
+    @Test func sameSpeakerDuplicateChannelRowsAreAmbiguous() {
+        let (setup, _, speaker, primary, _) = setup()
+        var changed = setup.store.model
+        changed.episodes[0].speakerAssignments[0].backups.append(
+            ChannelReference(sourceID: primary, statedChannel: 0)
+        )
+        setup.store.replaceLoadedModel(changed)
+        setup.selection = [.channel(primary, speaker)]
+        #expect(throws: SelectedPrimarySourceReadRefusal.selectionUnavailable) {
+            try setup.captureSelectedPrimarySource()
+        }
+    }
+
+    @Test func portableMapWindowChecksAreNotContentGrants() throws {
+        let (setup, episodeID, _, primary, _) = setup()
+        let episode = try #require(setup.store.model.episode(episodeID))
+        let group = try #require(episode.recorderGroups.first)
+        let epoch = try #require(group.epochs.first)
+        let occurrence = try SourceOccurrence(
+            source: primary, nominalRate: NominalRate(16_000), frameCount: 40_000
+        )
+        let reference = TimelineReference(
+            group: group.id, epoch: epoch.id, occurrence: occurrence.id
+        )
+        let clock = try AffineClockSegment(
+            groupClockStart: .zero, groupClockEnd: ExactRational(Int64(3)),
+            rateRatio: .one, alignedOffset: .zero
+        )
+        let groupMap = try GroupTimeMap(
+            group: group.id, reference: reference,
+            epochs: [EpochClockMap(epoch: epoch.id, mapping: .mapped(
+                segments: [clock], provenance: .timelineReference
+            ))],
+            placements: [OccurrencePlacement(
+                occurrence: occurrence,
+                spans: [EpochSpan(
+                    startFrame: 0, endFrame: 40_000, epoch: epoch.id, groupClockOffset: .zero
+                )]
+            )]
+        )
+        let map = try AlignedTimelineMap(reference: reference, groups: [groupMap])
+        let recorded = try setup.store.model.recordingMap(map, in: episodeID)
+        let accepted = try recorded.model.acceptingMap(
+            revision: recorded.revision.revision, in: episodeID
+        )
+        setup.store.replaceLoadedModel(accepted)
+        let intent = try setup.captureSelectedPrimarySource()
+        try SelectedPrimarySourceReadIssuer.validatePortableMapWindow(
+            model: accepted, selection: intent, startingAt: 0
+        )
+        try SelectedPrimarySourceReadIssuer.validatePortableMapWindow(
+            model: accepted, selection: intent, startingAt: 8_000
+        )
+        for start in [-1, 8_001, Int64.max] {
+            #expect(throws: SelectedPrimarySourceReadRefusal.windowOutsideMappedEpoch) {
+                try SelectedPrimarySourceReadIssuer.validatePortableMapWindow(
+                    model: accepted, selection: intent, startingAt: start
+                )
+            }
+        }
+        var stale = accepted
+        stale.episodes[0].alignment?.acceptedRevision = nil
+        #expect(throws: SelectedPrimarySourceReadRefusal.acceptedMapUnavailable) {
+            try SelectedPrimarySourceReadIssuer.validatePortableMapWindow(
+                model: stale, selection: intent, startingAt: 0
+            )
         }
     }
 }

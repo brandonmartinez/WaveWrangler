@@ -2,7 +2,9 @@ import AppKit
 import Foundation
 import WWAlignPipeline
 import WWCore
+import WWDerived
 import WWPersistence
+import WWTimeMap
 
 /// The only app-owned binding of a source inventory to the canonical document that AppKit actually has
 /// open. Callers cannot provide a URL, model, base, stamp, or arbitrary document callback here.
@@ -14,20 +16,27 @@ final class OpenShowSourceBinding {
     private let url: URL
     private let model: ShowDocumentModel
     private let base: RevisionFingerprint
+    private let mutationGeneration: UInt64
 
-    private init(document: ShowDocument, url: URL, model: ShowDocumentModel, base: RevisionFingerprint) {
+    private init(
+        document: ShowDocument, url: URL, model: ShowDocumentModel,
+        base: RevisionFingerprint, mutationGeneration: UInt64
+    ) {
         self.document = document
         self.url = url
         self.model = model
         self.base = base
+        self.mutationGeneration = mutationGeneration
     }
 
     static func capture(for document: ShowDocument) throws -> OpenShowSourceBinding {
-        guard let snapshot = document.currentSourcePublication else {
+        guard let snapshot = document.currentSourcePublication,
+              let generation = document.store.captureMutationGeneration() else {
             throw EpisodeSourceAccessRefusal.changedDuringVerification
         }
         let binding = OpenShowSourceBinding(
-            document: document, url: snapshot.url, model: snapshot.model, base: snapshot.base
+            document: document, url: snapshot.url, model: snapshot.model, base: snapshot.base,
+            mutationGeneration: generation
         )
         try binding.requireOpenAndUnchanged()
         return binding
@@ -38,7 +47,8 @@ final class OpenShowSourceBinding {
     func requireOpenAndUnchanged() throws {
         guard let document,
               let present = document.currentSourcePublication,
-              present.url == url, present.model == model, present.base == base
+              present.url == url, present.model == model, present.base == base,
+              document.store.isCurrentMutationGeneration(mutationGeneration)
         else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
         let matches = NSDocumentController.shared.documents
             .compactMap { $0 as? ShowDocument }
@@ -72,6 +82,84 @@ final class OpenShowSourceBinding {
         try Task.checkCancellation()
         try requireOpenAndUnchanged()
         return document
+    }
+}
+
+enum SelectedPrimarySourceReadRefusal: Error, Equatable, Sendable {
+    case selectionUnavailable
+    case acceptedMapUnavailable
+    case windowOutsideMappedEpoch
+    case trustedSourceOpenUnavailable
+}
+
+/// App-only preparation; it cannot issue PCM. Neither the metadata inventory nor a cached access
+/// record can authorize the decoder's open descriptor, so the last step remains an explicit refusal.
+@MainActor
+enum SelectedPrimarySourceReadIssuer {
+    static func requireSourceReadAuthority(
+        for document: ShowDocument, in window: NSWindow, startingAt start: Int64
+    ) async throws -> Never {
+        try Task.checkCancellation()
+        let binding = try OpenShowSourceBinding.capture(for: document)
+        guard window.isKeyWindow,
+              document.windowControllers.contains(where: { $0.window === window }),
+              let state = ShowWindowRegistry.state(for: window),
+              state.store === document.store, state.destination == .setup,
+              let windowGeneration = state.captureSourceReadGeneration(),
+              let controller = EpisodeSetupViewController.controller(for: window),
+              controller.model.store === document.store,
+              state.selectedEpisodeID == controller.model.episodeID
+        else { throw SelectedPrimarySourceReadRefusal.selectionUnavailable }
+        let selection = try controller.model.captureSelectedPrimarySource()
+        let current = try await binding.current()
+        try Task.checkCancellation()
+        guard state.isCurrentSourceReadGeneration(windowGeneration),
+              controller.model.isCurrentSelectedPrimarySource(selection) else {
+            throw SelectedPrimarySourceReadRefusal.selectionUnavailable
+        }
+        try validatePortableMapWindow(
+            model: current.model, selection: selection, startingAt: start
+        )
+        _ = try await binding.current()
+        try Task.checkCancellation()
+        guard window.isKeyWindow, state.destination == .setup,
+              state.selectedEpisodeID == selection.episode,
+              state.isCurrentSourceReadGeneration(windowGeneration),
+              EpisodeSetupViewController.controller(for: window) === controller,
+              controller.model.isCurrentSelectedPrimarySource(selection)
+        else { throw SelectedPrimarySourceReadRefusal.selectionUnavailable }
+        throw SelectedPrimarySourceReadRefusal.trustedSourceOpenUnavailable
+    }
+
+    /// A portable-map shape check only; an active map/source revision and opened descriptor still need proof.
+    static func validatePortableMapWindow(
+        model: ShowDocumentModel, selection: SelectedPrimarySourceIntent, startingAt start: Int64
+    ) throws {
+        guard let episode = model.episode(selection.episode),
+              let revision = episode.alignment?.acceptedRevision,
+              let applicability = try? episode.applicability(ofMapRevision: revision),
+              applicability.isCurrent,
+              let map = try? model.timeMap(revision: revision, in: selection.episode),
+              let source = episode.source(selection.channel.sourceID),
+              source.placement.epochID == selection.epoch,
+              let groupID = source.placement.recorderGroupID,
+              let group = map.groups.first(where: { $0.group == groupID }),
+              group.epochs.filter({ $0.epoch == selection.epoch }).count == 1,
+              let epoch = group.epochs.first(where: { $0.epoch == selection.epoch }),
+              case .mapped = epoch.mapping
+        else { throw SelectedPrimarySourceReadRefusal.acceptedMapUnavailable }
+        let placements = map.groups.flatMap { $0.placements.filter { $0.occurrence.source == source.id } }
+        guard placements.count == 1, let placement = placements.first,
+              group.placements.contains(where: { $0.occurrence.id == placement.occurrence.id }),
+              placement.spans.count == 1, let span = placement.spans.first,
+              span.epoch == selection.epoch, span.startFrame == 0,
+              span.endFrame == placement.occurrence.frameCount,
+              placement.occurrence.nominalRate.framesPerSecond == 16_000
+        else { throw SelectedPrimarySourceReadRefusal.acceptedMapUnavailable }
+        let (end, overflow) = start.addingReportingOverflow(32_000)
+        guard !overflow, start >= 0, end <= span.endFrame else {
+            throw SelectedPrimarySourceReadRefusal.windowOutsideMappedEpoch
+        }
     }
 }
 

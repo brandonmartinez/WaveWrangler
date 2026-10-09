@@ -16,9 +16,17 @@ final class ShowWindowState {
     }
 
     var sidebarSelection: SidebarSelection? {
-        didSet { if oldValue != sidebarSelection, reportsInteractions { Responsiveness.interaction("show.sidebarSelection") } }
+        didSet {
+            if oldValue != sidebarSelection {
+                sourceReadWindowGeneration.advance()
+                if reportsInteractions { Responsiveness.interaction("show.sidebarSelection") }
+            }
+        }
     }
-    var destination: ShowDestination = .setup
+    var destination: ShowDestination = .setup {
+        didSet { if destination != oldValue { sourceReadWindowGeneration.advance() } }
+    }
+    @ObservationIgnored private var sourceReadWindowGeneration = DocumentMutationGeneration()
     var inspectorPresented = true
     var sidebarVisibility: NavigationSplitViewVisibility = .all
     var renamingEpisodeID: EpisodeID?
@@ -47,6 +55,14 @@ final class ShowWindowState {
     init(store: ShowDocumentStore) {
         self.store = store
         sidebarSelection = store.model.episodes.first.map { .episode($0.id) }
+    }
+
+    func captureSourceReadGeneration() -> UInt64? {
+        sourceReadWindowGeneration.current
+    }
+
+    func isCurrentSourceReadGeneration(_ expected: UInt64) -> Bool {
+        sourceReadWindowGeneration.matches(expected)
     }
 
     // MARK: - Status

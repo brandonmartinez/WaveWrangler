@@ -29,7 +29,8 @@ public struct SpeechInference: Sendable {
         throw .engineUnavailable
     }
 
-    package static func requireSelectedPrimary(
+    /// Checks the canonical assignment only. This does not grant source access or authorize inference.
+    public static func requireSelectedPrimary(
         model: ShowDocumentModel, episodeID: EpisodeID, speakerID: SpeakerID,
         channel: ChannelReference
     ) throws(SpeechRefusal) {
