@@ -130,4 +130,78 @@ struct RecoveryChoiceIntegrationTests {
         #expect(try fixture.recovery.checkedCheckpoints(for: fixture.bKey).count == 1)
         try fixture.unchanged()
     }
+
+    @Test func reusedLocationOffersLaterSavedShowWithIdentityBoundBytes() throws {
+        let fixture = try ReusedPath(savedPriors: true)
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let candidates = DocumentOpener.show(recovery: fixture.recovery).candidates(url: fixture.original, key: nil)
+        #expect(candidates.map(\.checkpoint.key) == [fixture.bKey, fixture.aKey])
+        let later = try #require(candidates.first)
+        let earlier = try #require(candidates.last)
+        let laterSaved = try #require(later.checkpoint.savedAt)
+        let earlierSaved = try #require(earlier.checkpoint.savedAt)
+        #expect(laterSaved > earlierSaved)
+        let records: [RecoveryChoicePresentation.Record] = candidates.map {
+            .init(recordID: $0.checkpoint.url.path, kind: .savedPrior,
+                  documentID: $0.document.payload.show.id.rawValue.uuidString,
+                  savedAt: $0.checkpoint.savedAt, createdAt: nil,
+                  revision: $0.document.revision, disposition: .open)
+        }
+        let plan = RecoveryChoicePresentation.plan(records: records)
+        #expect(plan.choices.map(\.record.documentID) ==
+                [fixture.bKey, fixture.aKey].map { String($0.rawValue.dropFirst("show-".count)) })
+        #expect(plan.choices.map(\.label).allSatisfy { $0.contains("Saved") && $0.contains("Show ID") })
+        #expect(plan.choices[0].label.contains("FFFFFFFF") && plan.choices[1].label.contains("00000000"))
+        #expect(plan.choices[0].label != plan.choices[1].label)
+        #expect(!plan.choices.map(\.label).joined().contains("Newest"))
+        #expect(plan.defaultRecordID == nil)
+        let first = try fixture.recovery.selectRecord(.priorCheckpoint, at: later.checkpoint.url, for: fixture.bKey)
+        let second = try fixture.recovery.selectRecord(.priorCheckpoint, at: earlier.checkpoint.url, for: fixture.aKey)
+        #expect(first.key == fixture.bKey && second.key == fixture.aKey)
+        #expect(try coder.decode(fixture.recovery.readSelectedRecord(first)).payload.show.id.rawValue.uuidString ==
+                String(fixture.bKey.rawValue.dropFirst("show-".count)))
+        #expect(try Data(contentsOf: fixture.original) == fixture.damagedBytes)
+        #expect(try Data(contentsOf: fixture.moved) == fixture.aBytes)
+        #expect(fixture.recovery.editCheckpoints(for: fixture.aKey).count == 1)
+        #expect(fixture.recovery.editCheckpoints(for: fixture.bKey).count == 1)
+    }
+
+    @Test func missingAndTiedSaveDatesHaveHonestLabelsAndNoDefault() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "WWRecoveryDate-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let path = folder.appending(path: "Damaged.wwshow")
+        let recovery = RecoveryStore(root: folder.appending(path: "Recovery"))
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let model = ShowDocumentModel.untitled(title: "Missing save date")
+        let key = DocumentKey.show(model.show.id)
+        let first = try recovery.retainCheckpoint(coder.encode(model, revision: 1), for: key)
+        try recovery.recordLocation(path, for: key)
+        let opener = DocumentOpener.show(recovery: recovery)
+
+        func plan() -> RecoveryChoicePresentation.Plan {
+            RecoveryChoicePresentation.plan(records: opener.candidates(url: path, key: nil).map {
+                .init(recordID: $0.checkpoint.url.path, kind: .savedPrior,
+                      documentID: $0.document.payload.show.id.rawValue.uuidString,
+                      savedAt: $0.checkpoint.savedAt, createdAt: nil,
+                      revision: $0.document.revision, disposition: .open)
+            })
+        }
+        let unknown = plan()
+        #expect(unknown.defaultRecordID == nil)
+        #expect(unknown.choices.first?.label.contains("Saved date unknown") == true)
+        #expect(unknown.choices.first?.label.contains(model.show.id.rawValue.uuidString) == true)
+
+        let second = try recovery.retainCheckpoint(coder.encode(model.renamingShow(to: "Another version"), revision: 2), for: key)
+        let sameTime = Date(timeIntervalSince1970: 1_700_000_000)
+        try recovery.recordVerifiedSave(first.fingerprint, for: key, at: sameTime)
+        try recovery.recordVerifiedSave(second.fingerprint, for: key, at: sameTime)
+        let tied = plan()
+        #expect(tied.choices.count == 2 && tied.choices[0].label != tied.choices[1].label)
+        #expect(tied.choices.allSatisfy { $0.label.contains("Saved 2023-") })
+        #expect(!tied.choices.map(\.label).joined().contains("Newest"))
+        #expect(tied.defaultRecordID == nil)
+        #expect(try recovery.checkedCheckpoints(for: key).count == 2)
+    }
 }
