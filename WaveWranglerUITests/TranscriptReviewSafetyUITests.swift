@@ -113,6 +113,9 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             test: self,
             types: AcceptanceAudit.types
         )
+        if !unwaived.isEmpty {
+            print("Review inspector AX hierarchy: \(app.scrollViews["ww.inspector"].debugDescription)")
+        }
         XCTAssertTrue(unwaived.isEmpty, unwaived.joined(separator: "\n"))
 
         filter.click()

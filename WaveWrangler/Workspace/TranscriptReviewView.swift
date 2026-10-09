@@ -22,6 +22,7 @@ final class TranscriptReviewState {
 
 struct TranscriptReviewView: View {
     @Bindable var state: TranscriptReviewState
+    @FocusState private var occurrencesFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -93,7 +94,6 @@ struct TranscriptReviewView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .tag(occurrence.id)
-                        .focusable()
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel(occurrence.title)
                         .accessibilityValue(occurrence.note)
@@ -101,6 +101,7 @@ struct TranscriptReviewView: View {
                     }
                 }
                 .listStyle(.inset)
+                .focused($occurrencesFocused)
                 .accessibilityLabel("Transcript occurrences")
                 .accessibilityValue("\(state.visibleOccurrences.count) synthetic occurrences; none analyzed")
                 .accessibilityIdentifier("ww.review.occurrences")
@@ -179,6 +180,13 @@ struct TranscriptReviewInspector: View {
             Text("Selected occurrence: \(state.selectedOccurrence?.title ?? "No occurrence selected")")
                 .fixedSize(horizontal: false, vertical: true)
 
+            Text("Analysis state: None")
+                .fontWeight(.semibold)
+                .foregroundStyle(.primary)
+                .accessibilityLabel("Analysis state")
+                .accessibilityValue("None — this shell contains no analysis")
+                .accessibilityIdentifier("ww.review.inspector.analysisState")
+
             actionButton("Accept Shorten when safe", id: "acceptShorten", reason: TranscriptReviewShellPresentation.acceptBlockedReason)
             actionButton("Lift — preserve timing", id: "lift", reason: TranscriptReviewShellPresentation.liftBlockedReason)
             actionButton("Reject proposal", id: "reject", reason: TranscriptReviewShellPresentation.rejectBlockedReason)
@@ -213,12 +221,6 @@ struct TranscriptReviewInspector: View {
             .accessibilityLabel("Proposal selection")
             .accessibilityValue(TranscriptReviewShellPresentation.noProposalState)
             .accessibilityIdentifier("ww.review.inspector.proposal")
-
-            Text("Analysis state: None")
-                .foregroundStyle(Color(nsColor: .labelColor))
-                .accessibilityLabel("Analysis state")
-                .accessibilityValue("None — this shell contains no analysis")
-                .accessibilityIdentifier("ww.review.inspector.analysisState")
 
             Text("Primary role: synthetic example, not analyzed")
                 .foregroundStyle(.primary)
@@ -260,8 +262,6 @@ struct TranscriptReviewInspector: View {
                 .accessibilityIdentifier("ww.review.inspector.previewBlockedReason")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Review Inspector")
     }
 
     private func actionButton(_ title: String, id: String, reason: String) -> some View {

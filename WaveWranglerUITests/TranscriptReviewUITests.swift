@@ -92,7 +92,8 @@ final class TranscriptReviewUITests: XCTestCase {
         let firstOccurrence = app.descendants(matching: .any)["ww.review.occurrence.synthetic-001"]
         XCTAssertTrue(firstOccurrence.waitForExistence(timeout: 3))
         firstOccurrence.click()
-        XCTAssertTrue(Acceptance.hasKeyboardFocus(firstOccurrence), "The selected occurrence keeps keyboard focus")
+        let occurrences = app.descendants(matching: .any)["ww.review.occurrences"]
+        XCTAssertTrue(Acceptance.hasKeyboardFocus(occurrences), "The native occurrence list owns keyboard focus")
         XCTAssertTrue(
             inspectorHeading.exists,
             "The Review inspector remains selected after choosing an occurrence"
