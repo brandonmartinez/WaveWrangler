@@ -43,8 +43,7 @@ static WWTokenTimingObservation observe_tokens(struct whisper_context *context, 
         const int tokens = whisper_full_n_tokens(context, i);
         observation.token_count += tokens;
         for (int j = 0; j < tokens; ++j) {
-            const whisper_token_data token = whisper_full_get_token_data(context, i, j);
-            if (token.id >= whisper_token_eot(context)) {
+            if (whisper_full_get_token_id(context, i, j) >= whisper_token_eot(context)) {
                 previous_text_token = 0;
                 continue;
             }
@@ -75,8 +74,13 @@ static WWTokenTimingObservation observe_tokens(struct whisper_context *context, 
                 previous_text_token && !previous_ended_in_whitespace && !isspace(*text);
             previous_text_token = 1;
             previous_ended_in_whitespace = ended_in_whitespace;
-            if (ww_whisper_classify_token_timing(enabled, token.t0, token.t1)) {
-                ++observation.experimental_text_token_count;
+            if (enabled == 1) {
+                const whisper_token_data token = whisper_full_get_token_data(context, i, j);
+                if (ww_whisper_classify_token_timing(enabled, token.t0, token.t1)) {
+                    ++observation.experimental_text_token_count;
+                } else {
+                    ++observation.absent_text_token_count;
+                }
             } else {
                 ++observation.absent_text_token_count;
             }
