@@ -206,6 +206,10 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
                 print("PARENT-CHILD filter-focused-after-sidebar: \(Acceptance.hasKeyboardFocus(app.textFields["ww.review.filter"]))")
                 let sidebarFindings = try AcceptanceAudit.run(app, surface: "reviewDetailSidebar", test: self, types: .parentChild)
                 print("PARENT-CHILD reviewDetailSidebar: \(sidebarFindings)")
+                app.typeKey(.tab, modifierFlags: [])
+                print("PARENT-CHILD filter-focused-after-tab: \(Acceptance.hasKeyboardFocus(app.textFields["ww.review.filter"]))")
+                let tabFindings = try AcceptanceAudit.run(app, surface: "reviewDetailTab", test: self, types: .parentChild)
+                print("PARENT-CHILD reviewDetailTab: \(tabFindings)")
             }
         }
     }
