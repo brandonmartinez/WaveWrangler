@@ -25,15 +25,23 @@ The candidate is `ggml-tiny.en.bin` from the official `ggerganov/whisper.cpp`
 Hugging Face revision `5359861c739e955e79d9a303bcbc70fb988958b1`:
 77,704,715 bytes and SHA-256
 `921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f`.
-This public pin does not establish a locally installed model, a redistribution
-license or an accepted derivation chain.
+The pin alone does not establish installed bytes, redistribution rights or
+an accepted derivation chain.
 The native call uses two CPU threads, a two-second window and a 16-token /
 16-segment result cap, suppresses upstream diagnostics, checks cancellation and
 copies bounded segment text into memory. Only valid bounded segment intervals
 are surfaced; unsupported intervals are nil. There are no word boundaries,
 confidence values, file output or transcript logs. Ordinary unit tests use
 synthetic PCM and incorrect model bytes; a model-backed sine-wave test is
-opt-in via `WW_TINY_MODEL_PATH`, not a passing gate when skipped.
+opt-in via `WW_TINY_MODEL_PATH`, not a passing gate when skipped. After explicit
+authorization on 2026-10-09, the exact revision-qualified body was downloaded
+once to private non-synced storage outside Git on the working Mac; independent
+local file checks observed 77,704,715 bytes and the full SHA-256 above before
+use. On the clean pushed adapter code head `1ca7bb8e`, the generated-PCM
+model-backed focused run passed **4/4** bounded-adapter tests and **6/6**
+existing tiny-probe tests, with **zero skips** (`--jobs 2`, one test worker).
+This is a local synthetic run, not a physical-Mini RTF/peak-memory measurement
+or a signed sandboxed app inference/offline proof. No media was opened.
 
 **Integration remains disabled:** `SpeechInference.infer` and `AppSpeech.infer`
 still refuse `engineUnavailable`. `RecordedIdentity.rawWitness`, ordinary
@@ -42,7 +50,7 @@ This lower-level method cannot establish which source produced PCM, the
 user-confirmed Primary, current same-descriptor witness, source-frame mapping,
 consent or result currency. Production requires a separate sealed issuer
 before any decoded media can enter it; Backup must never be opened in M3.
-Exact model-artifact rights/provisioning, signed-app in-process endpoint/FD
-proof and measured offline inference are still unqualified. No word-level
+Model-artifact redistribution/derivation rights, signed-app in-process
+endpoint/FD proof and measured offline inference are still unqualified. No word-level
 producer or #21 frozen boundary/proposal evidence exists. These are STOP
 gates, not acceptance for #23, #32, #41 or M3.
