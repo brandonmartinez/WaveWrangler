@@ -6,8 +6,11 @@ Refs #21 #25 #27 #41. The pure `WWCutPolicy` target is not connected to the app,
 `WWCommonEdit`; it cannot activate or render a cut. The Alignment-owned
 `WWCommonEdit.KeyedCutMapping` now computes exact rounded pre-edit aligned-output
 frame endpoints (`qStart`, `qEnd`) at output rate `R` in a **synthetic, provisional**
-path. It requires ordered unique lane/revision/epoch keys, source and grid coverage,
-and final merged source-frame fades for every declared lane; both Shorten and Lift
+path. For the M3 selected-Primary scope, its untrusted manifest must declare every
+admitted selected Primary as an audio lane and each Backup as an explicit excluded
+occurrence; an excluded Backup is never a proof, silence, preview or render lane.
+It requires ordered unique lane/revision/epoch keys, source and grid coverage,
+and final merged source-frame fades for every admitted lane; both Shorten and Lift
 refuse gaps, stale or cross-revision keys, partial coverage and protected removals
 or fades. Each conservative source footprint includes the rounded start inverse
 and every forward-mapped source frame inside the grid interval, through the exact
@@ -15,7 +18,7 @@ exclusive-end inverse rounded **up**; adjacent source frames are checked on both
 sides. A frame beyond the requested source end can therefore be in the rounded
 grid cut and is checked for protection in either mode. Grid protection and final
 rounded-grid fade overlap with the reserved cut also refuse Shorten and Lift alike.
-Full-map inspection is limited to 8,192 grid frames, 16 lanes, 65,536 frame/lane
+Full-map inspection is limited to 8,192 grid frames, 16 total admitted/excluded lanes, 65,536 frame/lane
 pairs and 32 intervals per map/survey/source-proof collection; excess refuses
 before per-lane inspection. A separate aggregate 65,536-source-frame scan budget
 charges every affected cut footprint and each requested and final merged fade
@@ -30,8 +33,13 @@ does not implement `CutFootprintMapping` or mint `ProtectionProof`.
 Do not use native source duration as the common ripple. No trusted organizer lane-manifest adapter
 or native person-action adapter exists yet. Their snapshot and review-action constructors are
 non-public; **external callers cannot approve a cut**. Missing authority or review action explicitly
-refuses. Until both adapters and every-lane renderer integration are reviewed, these tests establish
+refuses. Until both adapters and selected-Primary renderer integration are reviewed, these tests establish
 synthetic refusal behavior only, not full edit safety or a usable review workflow.
+Every excluded Backup must display `backup not verified; excluded from cut proof`.
+There is no M3 Backup open or positive Backup proof: that work requires separate
+consent and M4 #420 review. Because the manifest and lane roles remain caller-supplied,
+omitting or misclassifying a selected Primary cannot confer authority; the production
+organizer must attest its complete current selected-Primary set before any positive path.
 
 ## Frozen prospective measurement rules (no holdout attempted)
 
@@ -69,8 +77,9 @@ Never label a recognition confidence as a timing proof or cut authorization. If 
 confidence, record `absent`, not zero or an invented probability.
 
 Independent reviewers label each proposed interval as safe contextual filler or false accept under
-the pre-frozen rubric using the whole affected-lane context, including meaningful uses, overlap,
-other-speaker speech, backup tracks and final merged fades. Holdout requires **at least 300 emitted
+the pre-frozen rubric using the whole admitted selected-Primary context, including meaningful uses,
+overlap, protected speech and final merged fades. Backups are excluded and flagged, not opened
+or evaluated under M3 consent; M4 #420 requires separate consent. Holdout requires **at least 300 emitted
 proposals**; precision is `safe proposed intervals / all emitted proposals` (including blocked,
 untimed, hallucinated and unsupported proposals as false accepts if they were emitted as eligible
 cuts). Gate precision **>=98%** and its **95% Wilson score lower bound >=95%** (two-sided interval,
@@ -99,22 +108,24 @@ classifications are blocked. A proposal begins pending and inert. Admission requ
 authorized selected Primary and an exact current analysis key (Primary/occurrence/epoch,
 source, model, transcript/correction, format/asset, alignment,
 protection, output recipe, other-cut and immutable episode-lane-manifest revisions). The current key
-and complete affected-lane manifest must come from the trusted organizer adapter, never from a
-caller-provided lane subset. The footprint must have the same manifest revision and exactly one proof
-per manifest lane, with no omissions, duplicates or extras. Admission also requires a unique, typed
+and complete selected-Primary manifest plus explicit Backup exclusions must come from the trusted
+organizer adapter, never from a caller-provided lane subset. The footprint must have the same
+manifest revision and exactly one proof per admitted selected-Primary lane, with no omissions,
+duplicates or extras; no Backup proof may be silently counted as selected Primary. Admission
+also requires a unique, typed
 person-initiated review action bound to the proposal, request, evidence key and manifest revision;
 no generated proposal can mint one or automatically accept. The common rounded grid interval and
-output rate must agree for both modes, and proof must cover **each** affected lane. An
+output rate must agree for both modes, and proof must cover **each** admitted selected Primary. An
 inaccessible, unmapped or ambiguously invertible audio lane must be `unsupported`, not silent. A
 silent lane must have a separately supported timed grid interval. Each audio lane needs current
 backing, matching occurrence/channel/epoch, complete protection coverage, <=1 output-frame endpoint
 error and the actual source-frame removal and **final merged** fade footprint. Intersections at the
 last frame refuse Shorten and Lift alike; Lift is an equal-duration gap alternative, not a waiver.
 No fade is enabled without an Alignment/renderer-verified final footprint and output-frame lengths.
-Proof is typed as selected-Primary or independently reviewed non-Primary protection, tied to that
-lane's source occurrence and protection revision. Unknown, overlap, Backup without independent
-proof, unsupported boundary, mismatched provenance and uninspectable lanes refuse; an empty
-transcript or recognition confidence is never protection evidence. Audio analysis consent remains
+Proof for M3 must be tied to each selected Primary's source occurrence and protection revision.
+Backup is always excluded/flagged in M3, not treated as independently verified; unknown,
+overlap, unsupported boundary, mismatched provenance and uninspectable selected Primary lanes
+refuse. An empty transcript or recognition confidence is never protection evidence. Audio analysis consent remains
 limited to the selected authorized Primary, not to Backups or other speakers.
 
 The public package `EpisodeSourceInventorySurveyor` yields an **untrusted metadata inventory**:
@@ -130,8 +141,9 @@ it checks records and the ready key again after the last awaited document callba
 the final awaited store read; cancellation refuses after suspension. A missing
 grant, changed publication or incompatible source refuses; the app-private snapshot is not
 a lock on a future provider update or an authorization for work after another await.
-non-Primary sources are only observed through already granted metadata access, never decoded or
-downloaded. The channel count is still a recorded declaration, **not** a freshly certified physical
+Non-Primary sources were only observed through previously granted metadata access, never decoded or
+downloaded; that earlier inventory shape does **not** authorize any M3 Backup file open or
+admission. The channel count is still a recorded declaration, **not** a freshly certified physical
 channel survey. Its witness reports protection survey absent and complete-cut preparation refused
 until independent lane protection, final merged fade and atomic map/history/preview publication
 are certified. Reverify after awaits and before any future admission; it does not mint the
@@ -139,12 +151,14 @@ policy's sealed verified types or enable a cut.
 
 `ReviewJournal` records named pending/adjusted/accepted/rejected/restored/abstained/blocked states;
 Restore keeps the accepted cut's evidence and removes activity. Undo Restore and redo Accept require
-fresh identical all-lane proof or leave the inactive state and history untouched. The app must
+fresh identical proof for all admitted selected Primaries and explicit Backup exclusions or
+leave the inactive state and history untouched. The app must
 coordinate one common-map revision change and preview/render invalidation atomically on publication;
 this pure target deliberately does neither. All journal transitions, including Undo/Redo, append
 with parent-head and branch identity; a new acceptance after Undo forks the active path without
 erasing the prior accepted transition. The current synthetic tests include 120 distinct adversarial
-placements (Primary, Backup, other-speaker and omitted-lane cases) under both modes, plus
+placements (Primary, Backup, other-speaker and omitted-lane cases) under both modes as legacy
+synthetic controls, not M3 Backup participation, plus
 absent/hallucinated timing, ambiguous inverse, uncovered lane, last-frame merged fade, stale keys,
 explicit human-action refusal and append-only Undo/Redo/branch history.
 They are a **bounded precursor**, not the frozen precision or real-material gates.

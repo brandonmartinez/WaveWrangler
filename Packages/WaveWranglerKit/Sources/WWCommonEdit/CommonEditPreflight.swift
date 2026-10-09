@@ -19,14 +19,28 @@ public enum CommonEditManifestLane: Sendable, Hashable {
     case intentionalSilence(String)
 }
 
+public struct ExcludedBackupLane: Sendable {
+    public let key: CommonEditLaneKey
+    public var status: String { "backup not verified; excluded from cut proof" }
+
+    fileprivate init(key: CommonEditLaneKey) {
+        self.key = key
+    }
+}
+
 /// Untrusted input: the caller must not infer episode completeness from this value or its revision.
 public struct CommonEditLaneManifest: Sendable {
     public let revision: String
+    /// Admitted lanes must all be selected Primaries or explicitly supported output silence.
     public let lanes: [CommonEditManifestLane]
+    /// Metadata only: these occurrences have no survey, source proof or render participation.
+    public let excludedBackups: [CommonEditLaneKey]
 
-    public init(revision: String, lanes: [CommonEditManifestLane]) {
+    public init(revision: String, lanes: [CommonEditManifestLane],
+                excludedBackups: [CommonEditLaneKey] = []) {
         self.revision = revision
         self.lanes = lanes
+        self.excludedBackups = excludedBackups
     }
 }
 
@@ -72,10 +86,13 @@ public enum CommonEditAttestationRefusal: Error, Equatable, Sendable {
 public struct ProvisionalCommonEditCheck: Sendable {
     public let inspectedFrames: Int64
     public let audioLanes: Int
+    public let excludedBackups: [ExcludedBackupLane]
 
-    fileprivate init(inspectedFrames: Int64, audioLanes: Int) {
+    fileprivate init(inspectedFrames: Int64, audioLanes: Int,
+                     excludedBackups: [CommonEditLaneKey]) {
         self.inspectedFrames = inspectedFrames
         self.audioLanes = audioLanes
+        self.excludedBackups = excludedBackups.map(ExcludedBackupLane.init(key:))
     }
 }
 
@@ -90,7 +107,11 @@ public enum CommonEditPreflight {
         map: CommonEpisodeEditMap, manifest: CommonEditLaneManifest,
         surveys: [CommonEditLaneSurvey]
     ) throws(CommonEditAttestationRefusal) -> ProvisionalCommonEditCheck {
-        guard withinInspectionBudget(map: map, laneCount: manifest.lanes.count, surveyCount: surveys.count),
+        guard manifest.excludedBackups.count <= maximumInspectedLanes,
+              manifest.lanes.count <= maximumInspectedLanes - manifest.excludedBackups.count,
+              withinInspectionBudget(map: map,
+                                     laneCount: manifest.lanes.count + manifest.excludedBackups.count,
+                                     surveyCount: surveys.count),
               surveys.allSatisfy({ withinIntervalBudget($0) })
         else { throw CommonEditAttestationRefusal.inspectionLimit }
         let placements = map.alignment.groups.flatMap(\.placements)
@@ -99,9 +120,17 @@ public enum CommonEditPreflight {
             if case let .audio(key) = lane { return key }
             return nil
         }
+        let audioOccurrences = Set(audio.map(\.occurrence))
+        let excludedOccurrences = manifest.excludedBackups.map(\.occurrence)
         guard !manifest.revision.isEmpty, !placements.isEmpty, !manifest.lanes.isEmpty,
-              Set(audio.map(\.occurrence)) == Set(occurrences.keys),
+              audioOccurrences.union(excludedOccurrences) == Set(occurrences.keys),
+              Set(excludedOccurrences).count == excludedOccurrences.count,
+              audioOccurrences.isDisjoint(with: excludedOccurrences),
+              Set(audio.map(\.source)).isDisjoint(with: manifest.excludedBackups.map(\.source)),
               audio.allSatisfy({ key in
+                  key.channel >= 0 && occurrences[key.occurrence]?.source == key.source
+              }),
+              manifest.excludedBackups.allSatisfy({ key in
                   key.channel >= 0 && occurrences[key.occurrence]?.source == key.source
               }),
               manifest.lanes.allSatisfy({ lane in
@@ -188,7 +217,9 @@ public enum CommonEditPreflight {
                 }
             }
         }
-        return ProvisionalCommonEditCheck(inspectedFrames: map.alignedFrameCount, audioLanes: audio.count)
+        return ProvisionalCommonEditCheck(inspectedFrames: map.alignedFrameCount,
+                                          audioLanes: audio.count,
+                                          excludedBackups: manifest.excludedBackups)
     }
 
     static func withinInspectionBudget(

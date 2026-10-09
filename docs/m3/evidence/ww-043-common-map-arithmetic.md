@@ -69,12 +69,15 @@ loss, fade safety, no-dither preview/export null (at most one PCM step), safe li
 deterministic undo/history. None of those audio or human-acceptance gates is established here.
 
 **Provisional structural preflight (separate M3 unit):** `CommonEditPreflight.check` takes a
-caller-supplied `CommonEditLaneManifest` and one grid survey per declared audio or intentional-silence
-lane. Both the manifest and the map's caller-owned revision tokens are **untrusted inputs**: matching
+caller-supplied `CommonEditLaneManifest` and one grid survey per admitted selected-Primary audio
+or intentional-silence lane. Excluded Backup occurrences have no survey or inverse: each is
+reported `backup not verified; excluded from cut proof`. Both the manifest, its role/exclusion
+claims and the map's caller-owned revision tokens are **untrusted inputs**: matching
 them does not prove organizer completeness, current source identity, device-local grant, access,
 consent, decoded backing, protection-survey accuracy, cut acceptance or render readiness. The
 finite check compares every supplied manifest lane to exactly one survey, requires every mapped
-occurrence to have a declared audio lane, validates source/occurrence/channel shape and ordered
+occurrence to have a declared admitted audio lane or an explicit excluded Backup, rejects
+admitted/excluded source aliases, validates source/occurrence/channel shape and ordered
 in-domain intervals, inspects every grid frame (including negative origin and silence) for exact
 common-map round-trip and per-occurrence inverse/coverage, refuses gaps/unsupported inverses,
 protected removals and unsafe final merged fade spans. A missing survey, duplicated lane, missing
@@ -91,8 +94,9 @@ positive gap. Synthetic tests exercise both mixed-rate coverage and adjacent spa
 unavailable-source-frame and gap refusals.
 
 **Interface decision needed before removing that refusal:** Mac must supply a fresh, trusted
-organizer/source-access witness for every selected Primary, Backup, other-speaker and explicitly
-silent lane, and own atomic common-map/history publication with preview invalidation. Alignment
+organizer/source-access witness for every admitted selected Primary and explicitly silent output
+lane, enumerate and visibly flag every excluded Backup without opening it, refuse unsupported
+non-Primary lanes, and own atomic common-map/history publication with preview invalidation. Alignment
 must bind accepted-map *content*, current source/format revisions and each occurrence's complete
 footprint/inverse to that witness. Independent whole-lane protected-speech surveys, complete
 final merged fade proof and a person-initiated review action remain hard prerequisites. Existing
@@ -100,13 +104,14 @@ final merged fade proof and a person-initiated review action remain hard prerequ
 neither bypasses them nor grants new access to unselected audio. No #40/#41 acceptance claim follows
 from the provisional result.
 
-**Keyed all-lane adapter (provisional):** `KeyedCutMapping.map` consumes the existing common map,
-an ordered episode manifest and exact lane/epoch/alignment-revision keys, the explicitly selected
+**Keyed selected-Primary adapter (provisional):** `KeyedCutMapping.map` consumes the existing common map,
+an ordered manifest of admitted selected-Primary and intentional-silence lanes, explicit Backup
+exclusions, and exact lane/epoch/alignment-revision keys, the explicitly selected
 Primary and source-frame request, and one keyed source/grid survey per lane. It maps both supported
 Primary boundaries forward exactly and HALF-UP rounds them once at the base map's output rate; the
 same `[qStart,qEnd)` is used for Shorten removal or Lift reservation. It refuses pre-existing removal
 overlap, domain/rate/revision mismatch and every missing/duplicate/reordered/cross-keyed lane.
-For each audio lane it inverts both shared endpoints, checks source coverage as an adjacent-only
+For each admitted selected-Primary lane it inverts both shared endpoints, checks source coverage as an adjacent-only
 union, and inspects every output-grid and conservatively affected source frame for one epoch and
 a supported inverse. The source footprint starts at the rounded inverse of `qStart` (which can
 contribute at the first grid sample), but ends at the **ceiling of the exact inverse** of `qEnd`,
@@ -128,7 +133,7 @@ derived arrays or per-lane scans when the full map exceeds 8,192 frames, there a
 16 lanes or 65,536 checked full-map frame/lane combinations, or there are more than 32
 intervals in any map, survey or source-proof collection. Alignment groups, occurrences,
 epochs and segments are bounded at entry too. A separate checked aggregate
-65,536-source-frame budget charges the source cut in every audio lane, both requested
+65,536-source-frame budget charges the source cut in every admitted selected-Primary lane, both requested
 fade conversions and all final merged fade conversions (including repeated requested
 spans). Oversized fades refuse before allocating a derived cut map; after rounding
 the grid, all cut-source lengths are inverted and charged before derived map/lane
@@ -141,8 +146,12 @@ request `[9,11)`, grid `[10,12)` includes source frame 11 even though its rounde
 is 11; the corrected source footprint `[9,12)` catches protection at frame 11 for both modes.
 The immediately adjacent retained source/grid frames remain outside this removal.
 
-All keys, backing, protection and final fade observations are **caller-supplied**. The result is a
+All keys, lane-role/exclusion claims, backing, protection and final fade observations are
+**caller-supplied**. A caller can omit or misclassify an actual selected Primary; therefore this
+structural result cannot authorize an edit without a separate trusted complete organizer witness.
+No excluded Backup is opened, inverted, surveyed, previewed or rendered by this adapter. The result is a
 `ProvisionalKeyedCutMapping`, not a `WWCutPolicy.CutFootprint`, `ApprovedCut`, source witness or render
 permit. No trusted organizer or independent protection constructor, human review action, atomic
 map/history publication, or preview/render invalidation is introduced. The finite synthetic tests
 are not a qualified real-episode or protected-speech acceptance gate; #41 remains pending.
+Positive Backup access and common proof move to M4 #420 with separate exact consent.

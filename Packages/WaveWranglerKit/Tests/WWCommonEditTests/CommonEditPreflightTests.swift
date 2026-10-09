@@ -49,6 +49,33 @@ struct CommonEditPreflightTests {
         #expect(throws: CommonEditAttestationRefusal.missingSurvey) { try fx.check() }
     }
 
+    @Test func excludedBackupIsNeitherSurveyedNorSilence() throws {
+        var fx = try Fixture()
+        fx.manifest = .init(revision: "supplied", lanes: [.audio(fx.primary)],
+                            excludedBackups: [fx.secondary])
+        fx.surveys = [fx.survey(fx.primary)]
+        let result = try fx.check()
+        #expect(result.audioLanes == 1)
+        #expect(result.excludedBackups.map(\.key) == [fx.secondary])
+        #expect(result.excludedBackups[0].status == "backup not verified; excluded from cut proof")
+        #expect(throws: CommonEditAttestationRefusal.trustedAuthorityUnavailable) {
+            try CommonEditAttestation.prepare(map: fx.map, manifest: fx.manifest, surveys: fx.surveys)
+        }
+        fx.manifest = .init(revision: "supplied", lanes: [.audio(fx.primary)])
+        #expect(throws: CommonEditAttestationRefusal.invalidManifest) { try fx.check() }
+        fx.manifest = .init(revision: "supplied", lanes: [.audio(fx.primary)],
+                            excludedBackups: [fx.secondary, fx.secondary])
+        #expect(throws: CommonEditAttestationRefusal.invalidManifest) { try fx.check() }
+        fx.manifest = .init(revision: "supplied", lanes: [.audio(fx.primary), .audio(fx.secondary)],
+                            excludedBackups: [fx.secondary])
+        fx.surveys.append(fx.survey(fx.secondary))
+        #expect(throws: CommonEditAttestationRefusal.invalidManifest) { try fx.check() }
+        fx.manifest = .init(revision: "supplied", lanes: [.audio(fx.primary)],
+                            excludedBackups: [fx.secondary, fx.primary])
+        fx.surveys.removeLast()
+        #expect(throws: CommonEditAttestationRefusal.invalidManifest) { try fx.check() }
+    }
+
     @Test func explicitlySuppliedSilenceLaneIsCheckedButNotTrusted() throws {
         var fx = try Fixture()
         fx.manifest = .init(revision: "supplied", lanes: [
@@ -248,6 +275,14 @@ struct CommonEditPreflightTests {
         surveys[0] = .init(lane: fx.manifest.lanes[0], coverage: tooManySpans)
         #expect(throws: CommonEditAttestationRefusal.inspectionLimit) {
             try CommonEditPreflight.check(map: fx.map, manifest: fx.manifest, surveys: surveys)
+        }
+        #expect(throws: CommonEditAttestationRefusal.inspectionLimit) {
+            try CommonEditPreflight.check(
+                map: fx.map,
+                manifest: .init(revision: "supplied", lanes: [.audio(fx.primary)],
+                                excludedBackups: Array(repeating: fx.secondary, count: 16)),
+                surveys: [fx.survey(fx.primary)]
+            )
         }
     }
 }
