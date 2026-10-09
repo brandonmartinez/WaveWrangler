@@ -114,11 +114,13 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             types: AcceptanceAudit.types
         )
         XCTAssertTrue(unwaived.isEmpty, unwaived.joined(separator: "\n"))
-        XCTAssertLessThanOrEqual(
-            app.scrollViews["ww.inspector"].frame.height,
-            app.windows["ww.show.window"].frame.height,
-            "The inspector AX parent must fit the show window, not report its unscrolled content height"
+        let showWindow = app.windows["ww.show.window"]
+        XCTAssertTrue(
+            showWindow.frame.contains(app.scrollViews["ww.inspector"].frame),
+            "The scrollable inspector AX viewport must remain inside the show window"
         )
+        XCTAssertTrue(showWindow.frame.contains(setupRemedy.frame), "The remedy remains inside the show window")
+        XCTAssertTrue(setupRemedy.isHittable, "The remedy has a visible hit point without scrolling")
 
         filter.click()
         if UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0 {

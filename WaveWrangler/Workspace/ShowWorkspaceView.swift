@@ -48,7 +48,6 @@ private struct ShowWindowContent: View {
                     // re-entrant constraint-update loop (crash) on macOS 27; the default inspector width is used.
                     .inspector(isPresented: $state.inspectorPresented) {
                         InspectorContainer(state: state)
-                            .frame(height: geometry.size.height)
                     }
             }
         }

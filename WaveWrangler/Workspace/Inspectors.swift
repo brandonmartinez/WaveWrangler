@@ -1,9 +1,23 @@
+import AppKit
 import SwiftUI
 import WWCore
 import WWOrganizer
 
 /// Trailing inspector (IA §4.4): selection-driven; heading names the kind.
 struct InspectorContainer: View {
+    @Bindable var state: ShowWindowState
+
+    var body: some View {
+        if state.sidebarSelection != .showInfo && state.destination == .review {
+            ReviewInspectorViewport(state: state)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            InspectorScrollContent(state: state)
+        }
+    }
+}
+
+private struct InspectorScrollContent: View {
     @Bindable var state: ShowWindowState
 
     var body: some View {
@@ -31,6 +45,35 @@ struct InspectorContainer: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Inspector")
         .accessibilityIdentifier("ww.inspector")
+    }
+}
+
+private struct ReviewInspectorViewport: NSViewRepresentable {
+    let state: ShowWindowState
+
+    func makeNSView(context: Context) -> HostedView {
+        HostedView(state: state)
+    }
+
+    func updateNSView(_ view: HostedView, context: Context) {
+        view.hostingView.rootView = InspectorScrollContent(state: state)
+    }
+
+    final class HostedView: NSView {
+        let hostingView: NSHostingView<InspectorScrollContent>
+
+        init(state: ShowWindowState) {
+            hostingView = NSHostingView(rootView: InspectorScrollContent(state: state))
+            hostingView.sizingOptions = []
+            super.init(frame: .zero)
+            setAccessibilityElement(false)
+            hostingView.frame = bounds
+            hostingView.autoresizingMask = [.width, .height]
+            addSubview(hostingView)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     }
 }
 
