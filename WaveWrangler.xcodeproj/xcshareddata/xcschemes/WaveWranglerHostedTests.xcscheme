@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Scheme
+   LastUpgradeVersion = "2700"
+   version = "1.7">
+   <BuildAction
+      parallelizeBuildables = "YES"
+      buildImplicitDependencies = "YES">
+      <BuildActionEntries>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "04EB296F827131170B2A4D94"
+               BuildableName = "WaveWrangler.app"
+               BlueprintName = "WaveWrangler"
+               ReferencedContainer = "container:WaveWrangler.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "A6E217D71C470B6700000004"
+               BuildableName = "WaveWranglerHostedTests.xctest"
+               BlueprintName = "WaveWranglerHostedTests"
+               ReferencedContainer = "container:WaveWrangler.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <TestAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.IDEFoundation.Launcher.PosixSpawn"
+      shouldUseLaunchSchemeArgsEnv = "YES">
+      <CommandLineArguments>
+         <CommandLineArgument argument = "-WWUITestHooks" isEnabled = "YES"/>
+         <CommandLineArgument argument = "YES" isEnabled = "YES"/>
+         <CommandLineArgument argument = "-WWUITestAutosave" isEnabled = "YES"/>
+         <CommandLineArgument argument = "OFF" isEnabled = "YES"/>
+      </CommandLineArguments>
+      <Testables>
+         <TestableReference skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "A6E217D71C470B6700000004"
+               BuildableName = "WaveWranglerHostedTests.xctest"
+               BlueprintName = "WaveWranglerHostedTests"
+               ReferencedContainer = "container:WaveWrangler.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+      </Testables>
+   </TestAction>
+   <LaunchAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.IDEFoundation.Launcher.LLDB"
+      launchStyle = "0"
+      useCustomWorkingDirectory = "NO"
+      ignoresPersistentStateOnLaunch = "NO"
+      debugDocumentVersioning = "YES"
+      debugServiceExtension = "internal"
+      allowLocationSimulation = "YES">
+      <CommandLineArguments>
+         <CommandLineArgument argument = "-WWUITestHooks" isEnabled = "YES"/>
+         <CommandLineArgument argument = "YES" isEnabled = "YES"/>
+         <CommandLineArgument argument = "-WWUITestAutosave" isEnabled = "YES"/>
+         <CommandLineArgument argument = "OFF" isEnabled = "YES"/>
+      </CommandLineArguments>
+      <BuildableProductRunnable runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "04EB296F827131170B2A4D94"
+            BuildableName = "WaveWrangler.app"
+            BlueprintName = "WaveWrangler"
+            ReferencedContainer = "container:WaveWrangler.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </LaunchAction>
+</Scheme>
