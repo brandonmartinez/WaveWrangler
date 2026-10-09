@@ -1,0 +1,11 @@
+{
+  "snapshots": 159,
+  "pidSamples": 279,
+  "helperSnapshots": 80,
+  "maximumConservativeGapSeconds": 0.110472,
+  "launchToFirstSampleSeconds": 0.003818,
+  "lastSampleToExitSeconds": 0.000194,
+  "maximumPIDCPUPercent": 207.29,
+  "maximumWholeTreeCPUPercent": 207.29,
+  "errors": []
+}

@@ -1,0 +1,1 @@
+PASS: objective test, record count, whole-tree CPU <400% and <=1s sampling coverage

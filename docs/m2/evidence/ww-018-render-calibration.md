@@ -342,3 +342,45 @@ CPU TSV SHA-256 `a66735191a30c6730e1b28e908d2e6330edd16c6d7aa2fe8c0dc7abfc2065ec
 Revisions 1 and 2, their pins and original records remain untouched. No full
 `scripts/test.sh`, Mini or GUI result is claimed; the final-head full test
 process CPU gate is still coordinator-owned and outstanding. #310 stays open.
+
+## Pre-freeze revision-4 CPU sampler calibration (#310)
+
+**Calibration proof only; no revision-4 freeze or holdout was run at this point.**
+The descendant-aware [sampler](../../../scripts/render-cpu-sampler.py) walks
+`proc_listchildpids` from the SwiftPM test PID, including helpers in different
+process groups, and reads each PID's cumulative `proc_taskinfo` user+system CPU
+ticks. It converts Mach ticks using `mach_timebase_info` (125/3 nanoseconds per
+tick on this host) before dividing CPU deltas by monotonic nanosecond windows.
+`pti_threads_*` is already included in `pti_total_*` and is **not** added again.
+Newly observed children contribute their entire CPU lifetime to the first
+observed interval. Every snapshot records its monotonic beginning and end;
+the conservative gap is the *next end minus previous beginning*. A missing
+sample over one second, failed process query, returning PID after an unobserved
+interval, or whole-tree sample **>=400%** rejects the run. The first and last
+samples must cover launch and exit within one second. The runner's `self-test`
+injects a missed sample and exactly 400% CPU and rejects both; its `probe`
+sees a separate-process-group child through PPID ancestry in under one
+millisecond. Earlier exploratory traces with incomplete or mis-scaled counters
+are not accepted calibration proof and were not holdouts.
+
+Two independent repeats of the original 16-case-plus-fixed-multi-span
+**calibration** (466 records each, identical to
+[`calibration.jsonl`](ww-018/calibration.jsonl), SHA-256
+`f8a1ee31900ba9526879242f5e0d218e7aaf16e1155890ad17ba351092d27889`)
+passed their seven objective gates with the same sampler SHA-256
+`72f01e42430479ccb618fcc4b64106853d2a500b52a143a9c1a9eb2b71c62b85`.
+Host `Macatron.local`, macOS 27.0.1, Xcode 27.0, Swift 6.4; both started
+with no other native build or test helper and one-minute load below 24.
+
+| Calibration | Start UTC | Start load | Runtime | Snapshots / PID rows / helper snapshots | Worst conservative gap | Tree CPU peak | Launch / exit edges |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| [12](ww-018/calibration-rev4-12-cpu.tsv) | 2026-10-09 00:40:37 | 10.96 | 16.745 s | 159 / 279 / 80 | 0.110472 s | 207.29% | 0.003818 / 0.000194 s |
+| [13](ww-018/calibration-rev4-13-cpu.tsv) | 2026-10-09 00:40:58 | 9.82 | 15.332 s | 146 / 274 / 75 | 0.110637 s | 210.93% | 0.009695 / 0.005562 s |
+
+For each repeat, raw [CPU](ww-018/calibration-rev4-12-cpu.tsv) and
+[snapshot](ww-018/calibration-rev4-12-samples.tsv) TSVs, plus the corresponding
+`calibration-rev4-{12,13}-{preflight.json,timing.json,cpu-summary.json,run.log,verdict.txt,command.txt}`
+files are preserved. A helper with its own PGID was observed in both.
+This establishes sampler coverage on repeatable calibration only; it does
+**not** qualify a revision-4 holdout or change the incomplete revision-2/-3
+verdicts. The full exact-head `scripts/test.sh` remains coordinator-owned.

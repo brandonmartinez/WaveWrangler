@@ -1,0 +1,12 @@
+Building for debugging...
+[Computing dependencies]
+[1 / 5]
+Build complete! (0.68 sec)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Render calibration (M2-RENDER-001)" started.
+◇ Test calibrationSplitMeetsEveryObjectiveGate() started.
+✔ Test calibrationSplitMeetsEveryObjectiveGate() passed after 5.819 seconds.
+✔ Suite "Render calibration (M2-RENDER-001)" passed after 5.820 seconds.
+✔ Test run with 1 test in 1 suite passed after 5.820 seconds.

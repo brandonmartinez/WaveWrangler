@@ -1,0 +1,1 @@
+swift test --package-path /Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-verbose-happiness/Packages/WaveWranglerKit --scratch-path /Users/brandonmartinez/src/copilot-worktrees/WaveWrangler/brandonmartinez-verbose-happiness/.build/swiftpm --jobs 4 --no-parallel --filter calibrationSplitMeetsEveryObjectiveGate

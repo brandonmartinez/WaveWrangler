@@ -1,0 +1,14 @@
+{
+  "mode": "calibration",
+  "host": "Macatron.local",
+  "oneMinuteLoad": "9.82",
+  "otherNativeBuilds": 0,
+  "otherTestHelpers": 0,
+  "macOS": "27.0.1",
+  "Xcode": "Xcode 27.0 / Build version 27A266a",
+  "Swift": "swift-driver version: 1.168.6 Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)",
+  "sourceTree": "94604633d6464391ade116b363f8874675381bf5",
+  "testTree": "125b552184db93f506e193dd08fd9610d5c7fabe",
+  "samplerSHA256": "72f01e42430479ccb618fcc4b64106853d2a500b52a143a9c1a9eb2b71c62b85",
+  "machTimebaseNanosecondsPerTick": "125/3"
+}
