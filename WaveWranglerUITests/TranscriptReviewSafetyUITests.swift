@@ -200,6 +200,12 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
                 app.buttons["ww.show.destination.review"].click()
                 let blurredFindings = try AcceptanceAudit.run(app, surface: "reviewDetailBlurred", test: self, types: .parentChild)
                 print("PARENT-CHILD reviewDetailBlurred: \(blurredFindings)")
+                let episode = app.descendants(matching: .any)
+                    .matching(NSPredicate(format: "identifier BEGINSWITH %@", "ww.show.sidebar.episode.")).firstMatch
+                episode.click()
+                print("PARENT-CHILD filter-focused-after-sidebar: \(Acceptance.hasKeyboardFocus(app.textFields["ww.review.filter"]))")
+                let sidebarFindings = try AcceptanceAudit.run(app, surface: "reviewDetailSidebar", test: self, types: .parentChild)
+                print("PARENT-CHILD reviewDetailSidebar: \(sidebarFindings)")
             }
         }
     }
