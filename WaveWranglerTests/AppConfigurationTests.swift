@@ -44,6 +44,43 @@ struct AppConfigurationTests {
         ] as NSDictionary)
     }
 
+    @Test func offlineDiagnosticRequiresAnInAppEffectiveEntitlementAudit() throws {
+        let source = try String(contentsOf: Self.appFolder.appending(path: "App/OfflineSocketProbe.swift"), encoding: .utf8)
+        #expect(source.contains("SecTaskCreateFromSelf"))
+        #expect(source.contains("SecTaskCopyValueForEntitlement"))
+        #expect(source.contains("getpeername("))
+        let entry = try String(contentsOf: Self.appFolder.appending(path: "App/AppDelegate.swift"), encoding: .utf8)
+        #expect(entry.contains("OfflineSocketProbe.captureStartupDescriptors()"))
+        #expect(entry.contains("OfflineSocketProbe.runIfRequested()"))
+    }
+
+    @Test func speechSourceScanHasNoLaunchOrDescriptorRelayPath() throws {
+        let root = Self.appFolder.deletingLastPathComponent()
+        let sources = ["WaveWrangler", "Packages/WaveWranglerKit/Sources"].map { root.appending(path: $0) }
+        let forbidden = try NSRegularExpression(
+            pattern: #"\b(Process\s*\(|NSTask\b|posix_spawn\w*\b|NSXPC\w*|xpc_\w+|fork\s*\(|execv\w*\s*\(|(?<!\.)system\s*\(|popen\s*\(|SCM_RIGHTS\b|sendmsg\s*\(|recvmsg\s*\(|socketpair\s*\(|launch_activate_socket\b|launch_data_get_fd\b|bootstrap_look_up\b|NSFileHandle\b|FileHandle\s*\(\s*fileDescriptor\s*:)"#
+        )
+        var speechFiles: [URL] = []
+        for directory in sources {
+            let enumerator = try #require(FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil))
+            while let file = enumerator.nextObject() as? URL {
+                guard ["swift", "m", "mm", "c", "h", "cc", "cpp"].contains(file.pathExtension) else { continue }
+                let isSpeechPath = file.pathComponents.contains { component in
+                    ["speech", "transcri", "whisper", "asr", "recognition"].contains {
+                        component.localizedCaseInsensitiveContains($0)
+                    }
+                }
+                if isSpeechPath { speechFiles.append(file) }
+                let text = try String(contentsOf: file, encoding: .utf8)
+                let range = NSRange(text.startIndex..., in: text)
+                #expect(forbidden.firstMatch(in: text, range: range) == nil, "\(file.lastPathComponent) has a launch/relay token")
+            }
+        }
+        // An empty list is NOT evidence of a safe speech implementation. The scanner includes future speech
+        // paths automatically, but engine/path acceptance remains pending until one exists and is tested.
+        #expect(speechFiles.isEmpty, "A speech path now exists: inspect its runtime boundary independently")
+    }
+
     @Test func showDocumentRoundTripsThroughAFileInATemporaryDirectory() throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "ww-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

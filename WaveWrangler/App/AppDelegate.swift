@@ -7,6 +7,9 @@ import WWOrganizer
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static func main() {
+        #if DEBUG
+        OfflineSocketProbe.captureStartupDescriptors()
+        #endif
         // The first `shared` access creates NSApp, so this makes it a WaveWranglerApplication (#126).
         let app = WaveWranglerApplication.shared
         let delegate = AppDelegate()
@@ -25,6 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        OfflineSocketProbe.runIfRequested()
+        #endif
         // Load the canonical library before any show window can record bookkeeping into it.
         Task { await LibraryUIStore.shared.load() }
         LaunchFixtures.applyAfterLaunch()
