@@ -8,3 +8,6 @@
 
 # Installed reference templates use portable LF line endings.
 .squad/templates/** text eol=lf
+
+# Preserve the pinned upstream bytes while checking new first-party files normally.
+Packages/WaveWranglerKit/Sources/WWWhisperNative/upstream/ggml-quants.h whitespace=-blank-at-eof
