@@ -57,7 +57,7 @@ not to read `t0/t1` when they were not computed (`upstream/whisper.h:129-145,
 upstream can fill missing intervals by proportional voice length and adjust
 them for overlap and voice activity (`upstream/whisper.cpp:6759-6962`);
 `split_on_word` only affects wrapping when `max_len > 0`, not a word-time
-API (`upstream/whisper.cpp:6120-6128,6165-6171`). The probe never requests
+API (`upstream/whisper.cpp:6120-6128,6165-6171`). Neither original pass requests
 DTW (`upstream/whisper.h:119-120`). Nonpositive/reversed/partly missing
 token intervals and all disabled-mode intervals classify absent; other
 enabled-mode intervals classify **experimental/unsupported**, even when
