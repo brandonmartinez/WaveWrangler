@@ -38,6 +38,7 @@ final class ScriptedContentIO: SourceContentIO, @unchecked Sendable {
         /// The open descriptor's state after decoding (default: unchanged).
         var stateAfterDecode: OpenedFileState?
         var onRead: (@Sendable (Int) -> Void)?
+        var sampleScale: Float = 1
     }
 
     struct Record {
@@ -95,7 +96,9 @@ final class ScriptedContentIO: SourceContentIO, @unchecked Sendable {
             let count = Int(min(Int64(min(buffer.capacityFrames, owner.script.maximumFramesPerRead)), owner.script.streamFrames - position))
             for channel in 0..<buffer.channelCount {
                 let samples = buffer.channel(channel)
-                for frame in 0..<count { samples[frame] = Float(position + Int64(frame)) + Float(channel) / 4 }
+                for frame in 0..<count {
+                    samples[frame] = (Float(position + Int64(frame)) + Float(channel) / 4) * owner.script.sampleScale
+                }
             }
             position += Int64(count)
             return count
@@ -145,10 +148,10 @@ struct ScriptedSource {
     static var aacRemainder: Int64 { aacPackets * 1024 - aacPriming - aacValid }
 
     /// AAC in M4A, 48 kHz, with the usual 2112-frame priming.
-    func aacFacts(channels: UInt32 = 2, priming: Int64 = aacPriming, valid: Int64 = aacValid, remainder: Int64 = aacRemainder, readerLength: Int64? = nil) -> EncodedStreamFacts {
+    func aacFacts(channels: UInt32 = 2, priming: Int64 = aacPriming, valid: Int64 = aacValid, remainder: Int64 = aacRemainder, readerLength: Int64? = nil, sampleRate: Double = 48_000) -> EncodedStreamFacts {
         EncodedStreamFacts(
             containerTypeCode: FourCharacterCode.code("m4af"), formatID: FourCharacterCode.code("aac "), formatFlags: 0,
-            sampleRate: 48_000, bytesPerPacket: 0, framesPerPacket: 1024, bytesPerFrame: 0, channelsPerFrame: channels, bitsPerChannel: 0,
+            sampleRate: sampleRate, bytesPerPacket: 0, framesPerPacket: 1024, bytesPerFrame: 0, channelsPerFrame: channels, bitsPerChannel: 0,
             packetCount: (priming + valid + remainder) / 1024, maximumPacketSize: 600, audioDataByteCount: 3000, dataOffset: 100, averageBitRate: 128_000,
             packetTable: PacketTableFacts(validFrames: valid, primingFrames: priming, remainderFrames: remainder),
             readerLengthFrames: readerLength ?? valid, openedFile: opened
