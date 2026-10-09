@@ -27,6 +27,7 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
 
 1. **Bind and build the externally requested exact SHA on the dev Mac** (counts toward the 3-native-build limit, `-jobs 4`, isolated DerivedData). Do not derive this identity from the current checkout: set `PR` and `REQUESTED_SHA` from the PR/main record being tested. `wwpersist-probe` is required by UI test setup; a run without it is **NOT PASS**, even if `xcodebuild` exits zero after skipping tests.
    ```sh
+   set -euo pipefail
    source "$HOME/.shell/exports-core.sh"
    source "$HOME/.shell/exports.sh"
    PR=123 # Use main for a main checkpoint.
@@ -48,49 +49,63 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
      { echo "Checkout does not match externally requested SHA"; exit 1; }
    COMMIT="$REQUESTED_SHA"
    SHA=${COMMIT:0:12}
+   mkdir -p .build
+   BUILD_ROOT=$(mktemp -d ".build/gui-build-$SHA-XXXXXXXX")
+   PRODUCTS="$BUILD_ROOT/DerivedData/Build/Products"
 
    xcodebuild build-for-testing -project WaveWrangler.xcodeproj -scheme WaveWranglerUITests \
-     -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/DerivedData-ui -jobs 4
+     -destination 'platform=macOS,arch=arm64' -derivedDataPath "$BUILD_ROOT/DerivedData" -jobs 4 ||
+     { echo "build-for-testing failed; do not stage Products"; exit 1; }
 
    # This is the same synthetic-fixture probe build used by scripts/test.sh --ui.
    swift build \
      --package-path Packages/WaveWranglerKit \
-     --scratch-path .build/swiftpm \
+     --scratch-path "$BUILD_ROOT/swiftpm" \
      --jobs 4 \
-     --product wwpersist-probe
+     --product wwpersist-probe ||
+     { echo "probe build failed; do not stage Products"; exit 1; }
    PROBE="$(swift build --package-path Packages/WaveWranglerKit \
-     --scratch-path .build/swiftpm --show-bin-path)/wwpersist-probe"
+     --scratch-path "$BUILD_ROOT/swiftpm" --show-bin-path)/wwpersist-probe" ||
+     { echo "Cannot locate newly built probe"; exit 1; }
    test -x "$PROBE" || { echo "Missing executable wwpersist-probe: $PROBE"; exit 1; }
 
-   # Fail closed if the build ceased to represent the externally requested exact SHA.
+   # Both outputs came from this new build root; a prior SHA's Products/probe cannot satisfy these checks.
    test "$(git rev-parse HEAD)" = "$REQUESTED_SHA" ||
      { echo "HEAD changed during build; do not stage this output"; exit 1; }
+   test -z "$(git status --porcelain --untracked-files=all)" ||
+     { echo "Working tree changed during build; do not stage this output"; exit 1; }
+   set +e # Later steps capture nonzero lease/SSH statuses and inspect them before deciding PASS.
    ```
-2. **Atomically stage Products *and the probe* in one unique host run folder.** Set `GUI_HOST` to the Mini address or exactly one VM alias, and keep the generated `RUN`, `LANE`, `SHA`, and `RUN_ID` for every artifact and PR record. Do not reuse a previous folder or its logs.
+2. **Atomically stage Products *and the probe* from that successful build in one unique host run folder.** Run this in the same shell as step 1; do not substitute a prior build root or proceed after either build fails. Set `GUI_HOST` to the Mini address or exactly one VM alias, and keep the generated `RUN`, `LANE`, `SHA`, and `RUN_ID` for every artifact and PR record. Do not reuse a previous folder or its logs.
    ```sh
-   PRODUCTS=.build/DerivedData-ui/Build/Products
-   find "$PRODUCTS" -maxdepth 1 -name 'WaveWranglerUITests_*.xctestrun' -print -quit |
-     grep -q 'WaveWranglerUITests' ||
-     { echo "Missing WaveWranglerUITests xctestrun"; exit 1; }
-   codesign --verify --deep "$PRODUCTS/Debug/WaveWrangler.app"
-   codesign --verify --deep "$PRODUCTS/Debug/WaveWranglerUITests-Runner.app"
+   shopt -s nullglob
+   xctestruns=("$PRODUCTS"/WaveWranglerUITests_*.xctestrun)
+   test "${#xctestruns[@]}" -eq 1 ||
+     { echo "Expected exactly one newly built WaveWranglerUITests xctestrun"; exit 1; }
+   plutil -extract WaveWranglerUITests xml1 -o - "${xctestruns[0]}" >/dev/null ||
+     { echo "xctestrun does not name WaveWranglerUITests"; exit 1; }
+   codesign --verify --deep "$PRODUCTS/Debug/WaveWrangler.app" ||
+     { echo "App signature invalid"; exit 1; }
+   codesign --verify --deep "$PRODUCTS/Debug/WaveWranglerUITests-Runner.app" ||
+     { echo "Runner signature invalid"; exit 1; }
 
    GUI_HOST=brandonmartinez@192.168.18.8 # for a VM, use ww-ui-1 or ww-ui-2
    LANE=your-lane
    SHARD=your-test-class-or-full-01
    EXPECTED_SKIPS=0 # A nonzero value needs a documented waiver; missing-probe skips are never expected.
-   REMOTE_HOME=$(ssh "$GUI_HOST" 'printf %s "$HOME"')
+   REMOTE_HOME=$(ssh "$GUI_HOST" 'printf %s "$HOME"') ||
+     { echo "Cannot read GUI host home"; exit 1; }
    TS=$(date +%Y%m%dT%H%M%S)
    RUN_ID="$LANE-$SHA-$TS"
    TMP="$REMOTE_HOME/ww-uitest-runs/.tmp-$RUN_ID"
    RUN="$REMOTE_HOME/ww-uitest-runs/$RUN_ID"
-   LOCAL_MANIFEST=$(mktemp)
+   LOCAL_MANIFEST=$(mktemp) || { echo "Cannot create identity manifest"; exit 1; }
    {
-     printf 'requested_sha\t%s\nactual_sha\t%s\nhost\t%s\nlane\t%s\nshard\t%s\nrun_id\t%s\n' \
-       "$COMMIT" "$(git rev-parse HEAD)" "$GUI_HOST" "$LANE" "$SHARD" "$RUN_ID"
-     shasum -a 256 "$PROBE"
-     find "$PRODUCTS" -maxdepth 1 -name 'WaveWranglerUITests_*.xctestrun' -exec shasum -a 256 {} \;
-   } >"$LOCAL_MANIFEST"
+     printf 'requested_sha\t%s\nactual_sha\t%s\nbuild_root\t%s\nhost\t%s\nlane\t%s\nshard\t%s\nrun_id\t%s\n' \
+       "$COMMIT" "$(git rev-parse HEAD)" "$BUILD_ROOT" "$GUI_HOST" "$LANE" "$SHARD" "$RUN_ID"
+     shasum -a 256 "$PROBE" &&
+       shasum -a 256 "${xctestruns[0]}"
+   } >"$LOCAL_MANIFEST" || { echo "Cannot hash new artifacts"; rm -f "$LOCAL_MANIFEST"; exit 1; }
 
    ssh "$GUI_HOST" "test ! -e '$TMP' && test ! -e '$RUN' && mkdir -p '$TMP/Products'"
    ssh_status=$?
@@ -128,12 +143,13 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
    publish_status=$?
    test "$publish_status" -eq 0 || { echo "stage publish SSH status=$publish_status"; exit "$publish_status"; }
    ```
-3. **Run exactly one selected shard under one host lease, preserving original statuses.** Do not use `set -e`, a shell wrapper, or a pipe around `xcodebuild`: `gui-lock` permits only direct `xcodebuild test-without-building`, and it can renew only when the supplied output log advances. Exporting `TEST_RUNNER_WW_PROBE` in the remote parent shell propagates it to that direct executable. With a required xcresult present, `lease_run` is the direct `xcodebuild` status; retain it separately from the outer SSH status.
+3. **Run exactly one selected shard under one host lease, reporting only observable statuses.** The remote script does not use `set -e`, a shell wrapper, or a pipe around `xcodebuild`: `gui-lock` permits only direct `xcodebuild test-without-building`, and it renews only when its output log advances. Exporting `TEST_RUNNER_WW_PROBE` in the remote parent propagates it to that executable. `lease_status` is the **helper's** exit status, not a retained raw `xcodebuild` status: it returns 75 on lease loss/expiry after discarding the child status, and can turn a zero child status into 2 if xcresult is missing. The raw child status is **UNKNOWN** here; fully satisfying #389's raw-status requirement needs a separate helper code change outside this docs-only recipe.
    ```sh
    TEST_CLASS=YourUITestClass # use a class list shard for full suites
    LEASE_CLASS=pr # use full for full-suite shards
    printf -v REMOTE_ARGS ' %q' "$RUN" "$LANE" "$COMMIT" "$SHA" "$PR" "$SHARD" "$TEST_CLASS" "$EXPECTED_SKIPS" "$LEASE_CLASS"
-   ssh "$GUI_HOST" "bash -s --$REMOTE_ARGS" <<'REMOTE'
+   ssh_status=0
+   ssh "$GUI_HOST" "bash -s --$REMOTE_ARGS" <<'REMOTE' || ssh_status=$?
    set -u -o pipefail
    RUN=$1; LANE=$2; COMMIT=$3; SHA=$4; PR=$5; SHARD=$6; TEST_CLASS=$7; EXPECTED_SKIPS=$8; LEASE_CLASS=$9
    STATUS="$RUN/command-status.tsv"
@@ -166,17 +182,17 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
        -resultBundlePath "$RUN/result.xcresult" \
      >>"$RUN/lease.log" 2>&1
    lease_status=$?
-   printf 'lease_run\t%s\n' "$lease_status" >>"$STATUS"
-   if ! test -e "$RUN/result.xcresult"; then
+   printf 'lease_status\t%s\nxcodebuild_raw_status\tunknown\n' "$lease_status" >>"$STATUS"
+   if test -d "$RUN/result.xcresult"; then
+     printf 'xcresult\tpresent\n' >>"$STATUS"
+   else
      printf 'xcresult\tmissing\n' >>"$STATUS"
-     [ "$lease_status" -ne 0 ] || lease_status=2
    fi
-   printf 'xcodebuild_direct\t%s\n' "$lease_status" >>"$STATUS"
+   if [ "$lease_status" -eq 0 ] && ! test -d "$RUN/result.xcresult"; then exit 2; fi
    exit "$lease_status"
    REMOTE
-   ssh_status=$?
    printf 'ssh\t%s\n' "$ssh_status"
-   test "$ssh_status" -eq 0 || { echo "remote run failed; retain $RUN"; exit "$ssh_status"; }
+   test "$ssh_status" -eq 0 || echo "remote run failed; retrieve $RUN for diagnosis, never mark PASS"
    ```
    For a full suite, use a declared class-to-host shard plan: one `RUN_ID`, one `SHARD`, one lease and one
    `.xcresult` per `xcodebuild` invocation. Keep the planned and completed shard counts together; a missing or
@@ -188,7 +204,8 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
    SHA. The result remains **NOT PASS** if a required artifact, requested SHA, status, or count is missing.
    ```sh
    LOCAL_RUN=".build/gui-runs/$RUN_ID"
-   mkdir -p "$LOCAL_RUN"
+   mkdir -p .build/gui-runs
+   mkdir "$LOCAL_RUN" || { echo "Local run already exists; refuse stale artifacts"; exit 1; }
    rsync -a "$GUI_HOST:$RUN/" "$LOCAL_RUN/"
    retrieve_status=$?
    test "$retrieve_status" -eq 0 || { echo "artifact retrieval status=$retrieve_status"; exit "$retrieve_status"; }
@@ -196,8 +213,12 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
    grep -Fx "requested_sha	$COMMIT" "$LOCAL_RUN/command-status.tsv" >/dev/null &&
      grep -Fx "actual_sha	$COMMIT" "$LOCAL_RUN/identity.tsv" >/dev/null ||
      { echo "artifact SHA identity mismatch or missing"; exit 1; }
-   grep -Eq '^xcodebuild_direct	[0-9]+$' "$LOCAL_RUN/command-status.tsv" ||
-     { echo "direct xcodebuild status missing; NOT PASS"; exit 1; }
+   grep -Fx 'lease_status	0' "$LOCAL_RUN/command-status.tsv" &&
+     grep -Fx 'xcresult	present' "$LOCAL_RUN/command-status.tsv" &&
+     grep -Fx 'xcodebuild_raw_status	unknown' "$LOCAL_RUN/command-status.tsv" &&
+     test "$ssh_status" -eq 0 &&
+     test -d "$LOCAL_RUN/result.xcresult" ||
+     { echo "lease/SSH status nonzero or result/status missing; NOT PASS"; exit 1; }
 
    xcrun xcresulttool get test-results summary --path "$LOCAL_RUN/result.xcresult" --format json >"$LOCAL_RUN/summary.json"
    summary_status=$?
@@ -224,13 +245,14 @@ Learned in M1 (see `docs/planning/retrospectives/m1.md` §3 #2): a single GUI ho
    reliably normalize every `xcresulttool` test-result schema.
    ```sh
    xcrun xcresulttool get test-results tests \
-     --path "$LOCAL_RUN/result.xcresult" --format json >"$LOCAL_RUN/tests.json"
+     --path "$LOCAL_RUN/result.xcresult" --format json >"$LOCAL_RUN/tests.json" ||
+     { echo "Cannot inspect skipped-test identities; NOT PASS"; exit 1; }
    # Manually verify every skipped identity/reason in tests.json against the approved waiver list.
    grep -F 'WW_PROBE is not set' "$LOCAL_RUN/tests.json" >/dev/null &&
      { echo "WW_PROBE propagation skip detected; NOT PASS"; exit 1; }
    ```
-5. **Post on the PR:** exact requested and actual SHA, `RUN_ID`, host, planned/completed shard counts,
-   classes, pass/fail/skip/expected-skip counts, original SSH/lease/xcodebuild statuses, xcresult location,
+5. **Post on the PR:** exact requested and actual SHA, unique build root, `RUN_ID`, host, planned/completed shard counts,
+   classes, pass/fail/skip/expected-skip counts, SSH and helper lease statuses, raw xcodebuild status **UNKNOWN** (not independently exposed), xcresult location,
    and any new audit finding versus the pinned waiver baseline. Do not call this a product or gate success until
    every required shard has its own matching artifact and zero unexpected skips.
 
