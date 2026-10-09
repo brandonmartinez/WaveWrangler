@@ -34,7 +34,7 @@ The synthetic WWDecode RED selectors are:
 | Selector in `SelectedPrimaryCheckedOpenRedTests` | Required result |
 | --- | --- |
 | `pathReplacementBeforeParserRefusesWithoutHeaderReads` (different/same size) | Atomic replacement between preflight and open refuses `sourceIdentityMismatch`; the selected-Primary opener runs, **zero** header-read callbacks, Backup untouched. Same-size replacement must still fail on file-object identity. |
-| `missingDescriptorIdentityRefusesBeforeParser` | Unknown volume evidence refuses before any header read. |
+| `missingOrWrongDescriptorVolumeRefusesBeforeParser` (unknown/wrong known volume) | Both must open the selected descriptor and refuse before any header read; never accept missing or mismatched volume evidence. |
 | `pushAndCursorPathsCannotBypassCheckedOpen` (push/cursor) | Both checked entry points receive the **correct Primary identity**, then replace its path with a different same-size file inside the opener. Both must open the selected path, refuse the wrong descriptor before a sink or header read, and leave Backup untouched. Passing a Backup fingerprint to preflight instead is not this test. |
 | `selectedPrimaryChannelUsesOneCheckedDescriptorAndNeverOpensBackup` | Generated 16 kHz two-channel Primary yields exactly **32,000** channel-1 source frames from one checked descriptor; generated Backup is never opened or modified. |
 | `cancellationAtLastWindowReadCannotPublishCheckedPCM` | Generated final-window read cancels the decoder task; checked PCM is never returned and the reader closes. |

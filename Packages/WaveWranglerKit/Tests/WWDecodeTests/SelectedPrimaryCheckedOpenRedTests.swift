@@ -98,20 +98,27 @@ struct SelectedPrimaryCheckedOpenRedTests {
         #expect(try FileSnapshot(backup) == backupBefore)
     }
 
-    @Test func missingDescriptorIdentityRefusesBeforeParser() async throws {
+    @Test(arguments: [false, true])
+    func missingOrWrongDescriptorVolumeRefusesBeforeParser(wrongVolume: Bool) async throws {
         let directory = try FixtureDirectory("selected-primary-unknown")
         let primary = try directory.write(
             spec, signal: LandmarkSignal(frames: 40_000, channelCount: 2, seed: 606)
         )
         var expected = try fingerprint(primary)
-        expected.volumeUUID = .unknown
+        expected.volumeUUID = wrongVolume ? .known("not-the-primary-volume") : .unknown
         let reads = ReadPolicyRecorder()
+        let probe = CheckedOpenProbe()
         var gateway = SystemSourceContentIO()
         gateway.readPolicyObserver = { reads.record($0) }
+        gateway.descriptorOpener = { path in
+            probe.recordOpen(String(cString: path))
+            return Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        }
         #expect(throws: DecodeFailure.sourceIdentityMismatch) {
             let reader = try gateway.openForDecoding(primary, expectedIdentity: expected)
             reader.close()
         }
+        #expect(probe.openedPaths == [primary.path])
         #expect(reads.policies.isEmpty)
     }
 
