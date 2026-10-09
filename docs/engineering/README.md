@@ -102,9 +102,13 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
   state, but only for episodes deleted from a current-base snapshot with no intervening live edits; ordinary
   no-map restore still applies as one undoable edit. A refused restore leaves the offered checkpoint available,
   and saved selections remain inert without fresh proof. A restored checkpoint is discarded only after
-  independent verification of a save of that exact restored snapshot; Revert to Last Saved and a later
-  unrelated save leave the checkpoint offer intact. Deleting an offered record retires its Undo/Redo
-  restore callbacks without removing the model's Undo history; a failed deletion does not retire it.
+  an in-place Save/autosave of that exact restored snapshot to its captured original URL/key with the
+  same restore marked at save start and completion, a matching publication receipt, and a fresh
+  coordinated origin-file byte/decode check. Save As and Save a Copy write only their destinations
+  and never resolve the original offer; their panels suspend queued autosaves of the original.
+  Revert to Last Saved and a later unrelated save also leave the checkpoint offer intact.
+  Deleting an offered record retires its Undo/Redo restore callbacks without removing the model's
+  Undo history; a failed deletion does not retire it.
   No production proof
   provider or mapped render/speech consumer is wired yet: admission refuses until validated lane coverage,
   inverse/grid/fades, source backing and protected decisions are available. Schema 1, 2 and 3

@@ -38,6 +38,20 @@ final class ShowDocument: NSDocument {
     /// Offered C2b restores stay on disk until their exact snapshot is verified on disk or the user
     /// explicitly discards the offer. Reload supersedes both the marks and their undo callbacks.
     private var restoredOffers = RestoredEditCheckpoints.State<ShowDocumentModel>()
+    private struct RestoredOfferOrigin {
+        let url: URL
+        let key: DocumentKey
+        let generation: UInt64
+    }
+    private var restoredOfferOrigin: RestoredOfferOrigin?
+    private struct RestoreSaveStart {
+        let marks: RestoredEditCheckpoints.State<ShowDocumentModel>.SaveStart
+        let origin: RestoredOfferOrigin?
+        let documentURL: URL?
+        let key: DocumentKey
+        let copyIntentSerial: UInt64
+        let copyIntent: Bool
+    }
     /// Offered records opened as a separate copy (kept until that copy is saved) or hidden by the user.
     private var setAsideOfferURLs: Set<URL> = []
     /// An in-place refusal stays copy-only in this window, including after the offer bar refreshes.
@@ -70,6 +84,8 @@ final class ShowDocument: NSDocument {
     private var uncertainCandidate: Data?
     /// ST-16 "Save a Copy Elsewhere…" in progress: set while its save panel and save run.
     private var copyElsewhere: CopyElsewhereRequest?
+    private var saveAsOfferInProgress = false
+    private var copyIntentSerial: UInt64 = 0
     /// Suspends automatic saves of the original while Save a Copy Elsewhere… runs (#197 review).
     private var copyRetryGate = CopyElsewhereRetryGate()
     /// The key of the candidate being saved when it isn't this document's current show (a copy with a new ID).
@@ -171,6 +187,7 @@ final class ShowDocument: NSDocument {
         switch outcome {
         case let .editable(document, fingerprint):
             restoredOffers.supersede()
+            restoredOfferOrigin = nil
             copyOnlyOfferURLs.removeAll()
             status.setEditCheckpointOffer(nil)
             undoManager?.removeAllActions()
@@ -202,6 +219,7 @@ final class ShowDocument: NSDocument {
             case let .damaged(error, candidates): throw DocumentRecoveryOffer.error(for: error, candidates: candidates)
             }
             restoredOffers.supersede()
+            restoredOfferOrigin = nil
             copyOnlyOfferURLs.removeAll()
             status.setEditCheckpointOffer(nil)
             undoManager?.removeAllActions()
@@ -262,13 +280,18 @@ final class ShowDocument: NSDocument {
         lastReceipt = nil
         let adopts = Self.adoptsPublication(saveOperation)
         if adopts { status.set(.saving) }
-        let candidateBytes = pendingCandidate?.data
+        let candidate = pendingCandidate
+        let candidateBytes = candidate?.data
         let candidateModel = store.model
-        let restoredAtSaveStart = restoredOffers.startingSave()
+        let restoredAtSaveStart = RestoreSaveStart(
+            marks: restoredOffers.startingSave(), origin: restoredOfferOrigin,
+            documentURL: fileURL, key: documentKey, copyIntentSerial: copyIntentSerial,
+            copyIntent: copyElsewhere != nil || saveAsOfferInProgress
+        )
         super.save(to: url, ofType: typeName, for: saveOperation) { [weak self] error in
             guard let self else { return completionHandler(error) }
             self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error, url: url, candidateBytes: candidateBytes,
-                            candidateModel: candidateModel, restoredAtSaveStart: restoredAtSaveStart)
+                            candidateModel: candidateModel, candidate: candidate, restoredAtSaveStart: restoredAtSaveStart)
             completionHandler(error)
         }
     }
@@ -313,12 +336,24 @@ final class ShowDocument: NSDocument {
 
     private func finishSave(
         saveOperation: NSDocument.SaveOperationType, adopts: Bool, error: Error?, url: URL, candidateBytes: Data?, candidateModel: ShowDocumentModel,
-        restoredAtSaveStart: RestoredEditCheckpoints.State<ShowDocumentModel>.SaveStart
+        candidate: EncodedDocument?, restoredAtSaveStart: RestoreSaveStart
     ) {
         let receipt = lastReceipt
         lastReceipt = nil
         pendingCandidate = nil
         if error == nil, adopts, let receipt {
+            resolveOfferRecordsAfterVerifiedSave(
+                restoredAtSaveStart: restoredAtSaveStart, saveOperation: saveOperation,
+                target: url, receipt: receipt, candidate: candidate, published: candidateModel
+            )
+            if case .acknowledgementUncertain = status.saveStatus.state {
+                publication = nil
+                onDiskBase = nil
+                verifiedModel = nil
+                uncertainCandidate = candidateBytes
+                refreshEditCheckpointOffer()
+                return
+            }
             cancelSaveRetry()
             uncertainCandidate = nil
             publication = receipt.publication
@@ -342,7 +377,7 @@ final class ShowDocument: NSDocument {
                 scheduler?.cancelPending()
                 try? recovery.discardEditCheckpoints(for: documentKey)
             }
-            resolveOfferRecordsAfterVerifiedSave(restoredAtSaveStart: restoredAtSaveStart, published: candidateModel)
+            refreshEditCheckpointOffer()
             if isAutosaveInPlace, isDocumentEdited {
                 status.set(.edited(autosaveEnabled: gate.isEnabled))
             } else {
@@ -387,6 +422,38 @@ final class ShowDocument: NSDocument {
         let completion: ((Bool) -> Void)?
     }
 
+    override func saveAs(_ sender: Any?) {
+        guard !restoredOffers.isEmpty else { super.saveAs(sender); return }
+        guard !saveAsOfferInProgress, copyElsewhere == nil else { return }
+        saveAsOfferInProgress = true
+        copyIntentSerial &+= 1
+        copyRetryGate.begin(retryPending: saveRetry != nil)
+        cancelSaveRetry()
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = showFileName
+        if let type = fileType.flatMap({ UTType($0) }) { panel.allowedContentTypes = [type] }
+        panel.directoryURL = fileURL?.deletingLastPathComponent()
+        panel.canCreateDirectories = true
+        let window = windowForSheet
+        let chosen: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                guard response == .OK, let url = panel.url, let typeName = self.fileType else {
+                    self.saveAsOfferInProgress = false
+                    self.endCopyFlow(copySaved: false)
+                    return
+                }
+                self.save(to: url, ofType: typeName, for: .saveAsOperation) { [weak self] error in
+                    guard let self else { return }
+                    self.saveAsOfferInProgress = false
+                    self.endCopyFlow(copySaved: error == nil)
+                    if let error { _ = self.presentError(error) }
+                }
+            }
+        }
+        if let window { panel.beginSheetModal(for: window, completionHandler: chosen) } else { chosen(panel.runModal()) }
+    }
+
     /// Opens the native save panel named "<Show> copy" and saves the show there as a new, separate show (new show
     /// ID, titled after the chosen name), like Save As: the window then edits the copy. The original file and its
     /// last saved version are untouched. `completion` gets whether the copy was saved.
@@ -396,9 +463,10 @@ final class ShowDocument: NSDocument {
     /// abandons the copy, and when the folder is reachable it would change the original. The panel is ours; the save
     /// is NSDocument's own Save As publication (`save(to:ofType:for:)`), with the same verification.
     func saveACopyElsewhere(completion: ((Bool) -> Void)? = nil) {
-        guard copyElsewhere == nil else { completion?(false); return }
+        guard copyElsewhere == nil, !saveAsOfferInProgress else { completion?(false); return }
         let request = CopyElsewhereRequest(originalFolder: fileURL?.deletingLastPathComponent().lastPathComponent ?? "", completion: completion)
         copyElsewhere = request
+        copyIntentSerial &+= 1
         // The original keeps its last saved version while the copy is chosen and saved: no automatic save of it.
         copyRetryGate.begin(retryPending: saveRetry != nil)
         cancelSaveRetry()
@@ -459,7 +527,12 @@ final class ShowDocument: NSDocument {
         pendingCandidateKey = .show(copy.show.id)
         lastReceipt = nil
         status.set(.saving)
-        let candidateBytes = pendingCandidate?.data
+        let candidate = pendingCandidate
+        let candidateBytes = candidate?.data
+        let restoredAtSaveStart = RestoreSaveStart(
+            marks: restoredOffers.startingSave(), origin: restoredOfferOrigin, documentURL: fileURL,
+            key: originalKey, copyIntentSerial: copyIntentSerial, copyIntent: true
+        )
         super.save(to: url, ofType: typeName, for: .saveAsOperation) { [weak self] error in
             guard let self else { return completionHandler(error) }
             self.pendingCandidateKey = nil
@@ -468,13 +541,14 @@ final class ShowDocument: NSDocument {
                 // (whose changes the copy now holds) don't carry over.
                 self.store.replaceLoadedModel(copy)
                 self.restoredOffers.supersede()
+                self.restoredOfferOrigin = nil
                 self.undoManager?.removeAllActions()
                 try? self.recovery.discardEditCheckpoints(for: originalKey)
                 self.status.setCopyNotice(Self.copyMessage(copyName: name, folder: url.deletingLastPathComponent().lastPathComponent,
                                                            originalFolder: request.originalFolder))
             }
             self.finishSave(saveOperation: .saveAsOperation, adopts: true, error: error, url: url, candidateBytes: candidateBytes,
-                            candidateModel: copy, restoredAtSaveStart: restoredOffers.startingSave())
+                            candidateModel: copy, candidate: candidate, restoredAtSaveStart: restoredAtSaveStart)
             completionHandler(error)
         }
     }
@@ -741,6 +815,7 @@ final class ShowDocument: NSDocument {
         undo?.beginUndoGrouping()
         let restored = store.restoreEditCheckpoint(candidate.payload, basedOn: verifiedModel)
         if restored {
+            restoredOfferOrigin = RestoredOfferOrigin(url: url.standardizedFileURL, key: documentKey, generation: restoredOffers.currentGeneration)
             markRestored(candidate.url, snapshot: candidate.payload, generation: restoredOffers.currentGeneration)
             undo?.setActionName("Restore Unsaved Changes")
         }
@@ -803,6 +878,7 @@ final class ShowDocument: NSDocument {
         do {
             try recovery.discardOfferedEditCheckpoints([candidate.url], for: documentKey)
             restoredOffers.retire(candidate.url)
+            if restoredOffers.isEmpty { restoredOfferOrigin = nil }
         } catch {
             _ = presentError(error)
         }
@@ -823,27 +899,60 @@ final class ShowDocument: NSDocument {
 
     /// Only a verified publication of the exact restored snapshot resolves its offered record.
     private func resolveOfferRecordsAfterVerifiedSave(
-        restoredAtSaveStart: RestoredEditCheckpoints.State<ShowDocumentModel>.SaveStart, published: ShowDocumentModel
+        restoredAtSaveStart: RestoreSaveStart, saveOperation: NSDocument.SaveOperationType, target: URL,
+        receipt: PublicationReceipt, candidate: EncodedDocument?, published: ShowDocumentModel
     ) {
-        let contained = restoredOffers.resolved(started: restoredAtSaveStart, published: published, current: store.model)
-        if !contained.isEmpty {
-            do {
-                try recovery.discardOfferedEditCheckpoints(Array(contained), for: documentKey)
-                for url in contained { restoredOffers.retire(url) }
-            } catch {
-                _ = presentError(error)
+        let origin = restoredAtSaveStart.origin
+        let originSave = (saveOperation == .saveOperation || saveOperation == .autosaveInPlaceOperation)
+            && !restoredAtSaveStart.copyIntent && copyElsewhere == nil && !saveAsOfferInProgress
+            && restoredAtSaveStart.copyIntentSerial == copyIntentSerial
+            && origin?.generation == restoredOffers.currentGeneration
+            && origin?.key == restoredAtSaveStart.key && origin?.key == documentKey
+            && origin?.generation == restoredOfferOrigin?.generation
+            && origin?.key == restoredOfferOrigin?.key
+            && origin?.url.standardizedFileURL == restoredOfferOrigin?.url.standardizedFileURL
+            && origin?.url.standardizedFileURL == restoredAtSaveStart.documentURL?.standardizedFileURL
+            && origin?.url.standardizedFileURL == fileURL?.standardizedFileURL
+            && origin?.url.standardizedFileURL == target.standardizedFileURL
+        if originSave, let origin {
+            guard let candidate, receipt.url.standardizedFileURL == origin.url.standardizedFileURL else {
+                status.set(.acknowledgementUncertain(message: "The origin save did not produce its expected publication receipt."))
+                return
             }
-        } else if published == store.model, !restoredOffers.isEmpty {
+            let contained: Set<URL>
+            do {
+                contained = try restoredOffers.resolvedAfterVerifiedOriginSave(
+                    started: restoredAtSaveStart.marks, published: published, current: store.model,
+                    origin: origin.url, receipt: receipt, candidate: candidate, coder: coder,
+                    coordination: PresenterFileCoordination(presenter: self)
+                )
+            } catch {
+                status.set(.acknowledgementUncertain(message: error.localizedDescription))
+                _ = presentError(error)
+                return
+            }
+            if !contained.isEmpty {
+                do {
+                    try recovery.discardOfferedEditCheckpoints(Array(contained), for: documentKey)
+                    for url in contained { restoredOffers.retire(url) }
+                    restoredOfferOrigin = nil
+                } catch {
+                    _ = presentError(error)
+                }
+            } else if published == store.model, !restoredOffers.isEmpty {
+                restoredOffers.supersede()
+                restoredOfferOrigin = nil
+            }
+        } else if originSave, published == store.model, !restoredOffers.isEmpty {
             // Another model is now disk truth. Keep the offer, but don't let a later Don't Save
             // or an old undo callback mistake this former restore for an active one.
             restoredOffers.supersede()
+            restoredOfferOrigin = nil
         }
         if let copy = sourceOfferCopy {
             sourceOfferCopy = nil
             copy.source?.offerCopyWasSaved(Set(copy.urls))
         }
-        // A restore offer becomes "based on an older revision" once a newer version is saved.
-        refreshEditCheckpointOffer()
     }
 
     fileprivate func offerCopyWasSaved(_ urls: Set<URL>) {

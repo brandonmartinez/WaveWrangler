@@ -304,6 +304,147 @@ struct ShowDocumentStoreEditMapTests {
         ).candidate?.relation == .basedOnOtherRevision)
     }
 
+    @Test(arguments: [false, true])
+    func saveAsOfRestoredCheckpointNeverResolvesOriginalOffer(autosaveEnabled: Bool) throws {
+        let base = ShowDocumentModel.untitled(title: "Original")
+        let restored = try base.renamingShow(to: "Restored")
+        let key = DocumentKey.show(base.show.id)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let root = FileManager.default.temporaryDirectory.appending(path: "ww-restore-save-as-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let recovery = RecoveryStore(root: root.appending(path: "Recovery"))
+        let origin = root.appending(path: "Original.wwshow")
+        let destination = root.appending(path: "Saved As.wwshow")
+        let originalBytes = try coder.encode(base, revision: 2)
+        try originalBytes.write(to: origin)
+        try recovery.writeEditCheckpoint(
+            snapshot: coder.encode(restored, revision: 3), base: RevisionFingerprint(of: originalBytes),
+            schemaVersion: SchemaVersion.show, for: key
+        )
+        try recovery.setAsideEditCheckpoints(for: key)
+        let offered = try #require(EditCheckpointOffer.assess(
+            recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue,
+            onDisk: RevisionFingerprint(of: originalBytes), coder: coder,
+            belongsToDocument: { $0.show.id == base.show.id }
+        ).candidate)
+        let document = ShowDocument()
+        let store = ShowDocumentStore(model: base)
+        store.document = document
+        #expect(store.restoreEditCheckpoint(offered.payload, basedOn: base))
+        var restores = RestoredEditCheckpoints.State<ShowDocumentModel>()
+        restores.mark(offered.url, snapshot: store.model, generation: restores.currentGeneration)
+        let saveStart = restores.startingSave()
+
+        var copyGate = CopyElsewhereRetryGate()
+        if autosaveEnabled {
+            copyGate.begin(retryPending: true)
+            #expect(!copyGate.allowsAutomaticSave, "a queued autosave must not publish the original during the copy panel")
+        }
+        let encoded = try coder.encodeDocument(restored, revision: 3, publicationID: UUID())
+        let publisher = DocumentPublisher(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery)
+        let receipt = try publisher.publish(
+            encoded: encoded, key: key, to: destination, target: .saveAs(replacingExisting: true),
+            retainPrior: false, isCancelled: { false }, step: .stagedReplace, followUp: .none
+        )
+        #expect(receipt.url == destination)
+        #expect(try Data(contentsOf: origin) == originalBytes)
+        #expect(try coder.decode(Data(contentsOf: destination)).payload == restored)
+        let resolved = try restores.resolvedAfterVerifiedOriginSave(
+            started: saveStart, published: restored, current: store.model, origin: origin,
+            receipt: receipt, candidate: encoded, coder: coder, coordination: AlreadyCoordinated()
+        )
+        #expect(resolved.isEmpty, "Save As published only the destination, never the offered checkpoint's origin")
+        try recovery.discardOfferedEditCheckpoints(Array(resolved), for: key)
+        let originAfterSave = try Data(contentsOf: origin)
+        #expect(EditCheckpointOffer.assess(
+            recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue,
+            onDisk: RevisionFingerprint(of: originAfterSave), coder: coder,
+            belongsToDocument: { $0.show.id == base.show.id }
+        ).candidate?.url == offered.url, "reopening the original must still offer its checkpoint")
+
+        // Only a later, genuine in-place publication of the offered bytes at the origin may retire it.
+        let originCandidate = try coder.encodeDocument(restored, revision: 3, publicationID: UUID())
+        let originReceipt = try publisher.publish(
+            encoded: originCandidate, key: key, to: origin, target: .inPlace(expectedBase: RevisionFingerprint(of: originalBytes)),
+            retainPrior: true, isCancelled: { false }, step: .stagedReplace, followUp: .none
+        )
+        let publishedBytes = try Data(contentsOf: origin)
+        try coder.encode(base, revision: 4).write(to: origin)
+        #expect(throws: PublicationError.self) {
+            try restores.resolvedAfterVerifiedOriginSave(
+                started: saveStart, published: restored, current: store.model, origin: origin,
+                receipt: originReceipt, candidate: originCandidate, coder: coder, coordination: AlreadyCoordinated()
+            )
+        }
+        #expect(recovery.offeredEditCheckpoints(for: key).map(\.url) == [offered.url])
+        try publishedBytes.write(to: origin)
+        let originResolved = try restores.resolvedAfterVerifiedOriginSave(
+            started: saveStart, published: restored, current: store.model, origin: origin,
+            receipt: originReceipt, candidate: originCandidate, coder: coder, coordination: AlreadyCoordinated()
+        )
+        #expect(originResolved == [offered.url])
+        try recovery.discardOfferedEditCheckpoints(Array(originResolved), for: key)
+        #expect(try coder.decode(Data(contentsOf: origin)).payload == restored)
+        #expect(recovery.offeredEditCheckpoints(for: key).isEmpty)
+    }
+
+    @Test func saveACopyWithQueuedRetryLeavesOriginAndOfferUntouched() throws {
+        let base = ShowDocumentModel.untitled(title: "Original")
+        let restored = try base.renamingShow(to: "Restored")
+        let key = DocumentKey.show(base.show.id)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let root = FileManager.default.temporaryDirectory.appending(path: "ww-restore-copy-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let recovery = RecoveryStore(root: root.appending(path: "Recovery"))
+        let origin = root.appending(path: "Original.wwshow")
+        let destination = root.appending(path: "Copy.wwshow")
+        let originalBytes = try coder.encode(base, revision: 2)
+        try originalBytes.write(to: origin)
+        try recovery.writeEditCheckpoint(
+            snapshot: coder.encode(restored, revision: 3), base: RevisionFingerprint(of: originalBytes),
+            schemaVersion: SchemaVersion.show, for: key
+        )
+        try recovery.setAsideEditCheckpoints(for: key)
+        let offer = try #require(EditCheckpointOffer.assess(
+            recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue,
+            onDisk: RevisionFingerprint(of: originalBytes), coder: coder,
+            belongsToDocument: { $0.show.id == base.show.id }
+        ).candidate)
+        var restores = RestoredEditCheckpoints.State<ShowDocumentModel>()
+        restores.mark(offer.url, snapshot: restored, generation: restores.currentGeneration)
+        let saveStart = restores.startingSave()
+        var gate = CopyElsewhereRetryGate()
+        gate.begin(retryPending: true)
+        #expect(!gate.allowsAutomaticSave)
+        let retryRearmed = gate.end(copySaved: false)
+        #expect(retryRearmed, "a cancelled or failed copy re-arms the old retry")
+        #expect(recovery.offeredEditCheckpoints(for: key).map(\.url) == [offer.url])
+
+        gate.begin(retryPending: true)
+        let copy = restored.duplicatedAsNewShow()
+        let encoded = try coder.encodeDocument(copy, revision: 1, publicationID: UUID())
+        let receipt = try DocumentPublisher(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery).publish(
+            encoded: encoded, key: .show(copy.show.id), to: destination, target: .saveAs(replacingExisting: true),
+            retainPrior: false, isCancelled: { false }, step: .stagedReplace, followUp: .none
+        )
+        #expect(!gate.allowsAutomaticSave)
+        #expect(try restores.resolvedAfterVerifiedOriginSave(
+            started: saveStart, published: copy, current: copy, origin: origin,
+            receipt: receipt, candidate: encoded, coder: coder, coordination: AlreadyCoordinated()
+        ).isEmpty)
+        let retryAfterCopy = gate.end(copySaved: true)
+        #expect(!retryAfterCopy, "the window now edits the new show, not the original")
+        #expect(try Data(contentsOf: origin) == originalBytes)
+        #expect(try coder.decode(Data(contentsOf: destination)).payload == copy)
+        #expect(EditCheckpointOffer.assess(
+            recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue,
+            onDisk: RevisionFingerprint(of: originalBytes), coder: coder,
+            belongsToDocument: { $0.show.id == base.show.id }
+        ).candidate?.url == offer.url)
+    }
+
     @Test func changedSourceAndAlignmentInputsWithEqualEditMapsRefuseExactCheckpoint() throws {
         let base = try savedPersistableShow().model
         let key = DocumentKey.show(base.show.id)

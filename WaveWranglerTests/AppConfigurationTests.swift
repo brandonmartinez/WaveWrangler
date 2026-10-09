@@ -72,12 +72,25 @@ struct AppConfigurationTests {
         let saveResolution = try #require(document.range(of: "private func resolveOfferRecordsAfterVerifiedSave("))
         let afterResolution = try #require(document[saveResolution.upperBound...].range(of: "\n    fileprivate func offerCopyWasSaved("))
         let body = document[saveResolution.lowerBound..<afterResolution.lowerBound]
-        #expect(body.contains("restoredOffers.resolved(started: restoredAtSaveStart, published: published, current: store.model)"))
+        #expect(body.contains("restoredOffers.resolvedAfterVerifiedOriginSave("))
         #expect(body.contains("try recovery.discardOfferedEditCheckpoints(Array(contained), for: documentKey)"))
         #expect(!body.contains("discardOfferedEditCheckpoints(resolution.urls"))
         let close = try #require(document.range(of: "override func close()"))
         let afterClose = try #require(document[close.upperBound...].range(of: "\n    // MARK: - Provider versions"))
         #expect(!document[close.lowerBound..<afterClose.lowerBound].contains("discardOfferedEditCheckpoints"))
+    }
+
+    @Test func showDocumentBindsCheckpointResolutionToVerifiedOriginFile() throws {
+        let source = try String(contentsOf: Self.appFolder.appending(path: "Document/ShowDocument.swift"), encoding: .utf8)
+        let start = try #require(source.range(of: "private func resolveOfferRecordsAfterVerifiedSave("))
+        let end = try #require(source[start.upperBound...].range(of: "\n    fileprivate func offerCopyWasSaved("))
+        let resolution = source[start.lowerBound..<end.lowerBound]
+        #expect(resolution.contains("PresenterFileCoordination(presenter: self)"))
+        #expect(resolution.contains("receipt.url.standardizedFileURL == origin.url.standardizedFileURL"))
+        #expect(resolution.contains("saveOperation == .saveOperation || saveOperation == .autosaveInPlaceOperation"))
+        #expect(resolution.contains("restoredAtSaveStart.copyIntentSerial == copyIntentSerial"))
+        #expect(source.contains("override func saveAs(_ sender: Any?)"))
+        #expect(source.contains("copyRetryGate.begin(retryPending: saveRetry != nil)"))
     }
 
     /// #126: windowless error presentation is routed to the opaque panel by `WaveWranglerApplication`, so it

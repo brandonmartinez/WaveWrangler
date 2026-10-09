@@ -203,5 +203,28 @@ public enum RestoredEditCheckpoints {
             else { return [] }
             return [url]
         }
+
+        /// A destination receipt is not evidence that the original show was saved. Re-read the origin
+        /// independently before permitting removal of its offered checkpoint.
+        public func resolvedAfterVerifiedOriginSave(
+            started: SaveStart, published: Payload, current: Payload, origin: URL,
+            receipt: PublicationReceipt, candidate: EncodedDocument,
+            coder: JSONEnvelopeCoder<Payload>, coordination: any FileCoordinating
+        ) throws -> Set<URL> where Payload: Codable & Sendable {
+            guard receipt.url.standardizedFileURL == origin.standardizedFileURL else { return [] }
+            guard receipt.fingerprint == RevisionFingerprint(of: candidate.data),
+                  receipt.publication == candidate.publication, !receipt.followUpIncomplete else {
+                throw PublicationError.acknowledgementUncertain("the origin publication receipt does not match the saved candidate")
+            }
+            let actual = try coordination.coordinateReading(at: origin) { url in
+                try LocalFileOperations().read(url)
+            }
+            guard actual == candidate.data, let decoded = try? coder.decode(actual),
+                  decoded.publication == receipt.publication, decoded.payload == published
+            else {
+                throw PublicationError.acknowledgementUncertain("the original show's bytes no longer match the restored checkpoint publication")
+            }
+            return resolved(started: started, published: published, current: current)
+        }
     }
 }
