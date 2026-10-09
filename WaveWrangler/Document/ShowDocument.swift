@@ -335,8 +335,9 @@ final class ShowDocument: NSDocument {
         pendingSave = nil
         let result: Error? = error ?? (receipt == nil
             ? PublicationError.acknowledgementUncertain("No independently verified publication receipt was returned.")
-            : adopts && (receipt?.itemIdentity == nil || receipt?.itemIdentity != FileItemIdentity.observe(at: url))
-                ? PublicationError.acknowledgementUncertain("The verified file's identity changed before adoption.")
+            : adopts && (receipt?.itemIdentity == nil || receipt?.itemIdentity != FileItemIdentity.observe(at: url)
+                         || candidateBytes == nil || (try? Data(contentsOf: url)) != candidateBytes)
+                ? PublicationError.acknowledgementUncertain("The verified file changed before adoption.")
                 : nil)
         if result == nil, adopts, let receipt {
             cancelSaveRetry()
@@ -646,8 +647,9 @@ final class ShowDocument: NSDocument {
                 )
                 if Self.adoptsPublication(saveOperation),
                    let receipt = lastReceipt,
-                   receipt.itemIdentity == nil || receipt.itemIdentity != FileItemIdentity.observe(at: url) {
-                    throw PublicationError.acknowledgementUncertain("The verified file's identity changed before the safe write completed.")
+                   receipt.itemIdentity == nil || receipt.itemIdentity != FileItemIdentity.observe(at: url)
+                       || (try? Data(contentsOf: url)) != candidate.data {
+                    throw PublicationError.acknowledgementUncertain("The verified file changed before the safe write completed.")
                 }
             } catch {
                 if !isDocumentEdited { updateChangeCount(.changeDone) }
