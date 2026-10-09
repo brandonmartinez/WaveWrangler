@@ -195,7 +195,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertTrue(inspector.waitForExistence(timeout: 3))
         XCTAssertTrue(window.frame.contains(inspector.frame), "The AX scroll viewport must stay within the show window")
         XCTAssertTrue(heading.exists && heading.isHittable, "The Review heading is exposed and reachable")
-        XCTAssertEqual(heading.label, "Review Inspector")
+        XCTAssertEqual(heading.value as? String, "Review Inspector")
         XCTAssertTrue(blocked.exists && blocked.isHittable, "The blocked state is exposed in the detail")
         XCTAssertTrue((blocked.value as? String ?? "").contains("No live Primary"))
         XCTAssertTrue(inspector.descendants(matching: .staticText)["ww.review.inspector.analysisState"].exists)
