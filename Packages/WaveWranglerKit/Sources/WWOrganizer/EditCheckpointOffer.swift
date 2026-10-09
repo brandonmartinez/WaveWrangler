@@ -1,4 +1,5 @@
 import Foundation
+import WWCore
 
 /// The unpublished edit checkpoint (contracts C2b) found when a show was opened, as the show window presents it
 /// in its message bar (`ww.show.messageBar`, #84). Pure: no clocks, no I/O.
@@ -42,7 +43,8 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
     public var announcement: String { heading }
 
     public init(
-        _ state: EditCheckpointOfferState, showName: String, position: (index: Int, total: Int)? = nil,
+        _ state: EditCheckpointOfferState, showName: String, choice: RecoveryChoicePresentation.Choice? = nil,
+        position: (index: Int, total: Int)? = nil,
         formatTime: (Date) -> String = SaveStatusPresentation.defaultTime
     ) {
         switch state {
