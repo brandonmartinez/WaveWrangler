@@ -646,3 +646,9 @@
 Close test-only diagnostic drafts [#402](https://github.com/brandonmartinez/WaveWrangler/pull/402) and [#404](https://github.com/brandonmartinez/WaveWrangler/pull/404) **unmerged**, retaining both pushed branches and recording their exact incomplete evidence on [#387](https://github.com/brandonmartinez/WaveWrangler/issues/387) and [#386](https://github.com/brandonmartinez/WaveWrangler/issues/386), respectively. #402's latest Xcode CLI exit 64 executed zero tests; #404 built signed products but never ran its new-head selector. Neither closes the real M3 essential-AX/keyboard finding. Their held GUI selectors require reviewed VM reboot/readiness fencing from [#415](https://github.com/brandonmartinez/WaveWrangler/issues/415), a valid leased exact-SHA run and independent applicable acceptance.
 
 **Unchanged:** No required M3 issue closes, no failed/incomplete gate is waived, and no Backup, original recording, real model or production editing is admitted.
+
+### 2026-10-09 11:57 EDT: Bound transient Mini SSH readiness retries
+
+**By:** Brandon Martinez via the relay, after #425's pre-lease SSH timeout.
+
+**What:** The physical Mini was subsequently reachable by direct BatchMode SSH. This Mac has two interfaces on the same subnet, which may briefly flap routes; failed ICMP is not authoritative SSH-readiness evidence. When a Mini readiness probe fails, retry direct bounded BatchMode SSH up to three total attempts with 10 seconds between attempts before declaring it unavailable. Keep all GUI lease, exact-head product, console, ownership and original-status checks; a failed preflight remains incomplete, never a counted selector or a passed gate. Resume #425's functional Mini GUI first; #423's quiet-Mini full and #360's distinct full remain separately held and must not contend.
