@@ -122,16 +122,16 @@ final class SheetKeyboardUITests: XCTestCase {
                        "back on Shows: \(entries.label)")
         app.typeKey("\t", modifierFlags: [])
         app.typeKey(.downArrow, modifierFlags: [])
-        let showName = entries.staticTexts.matching(NSPredicate(format: "label == %@", "Synthetic Show 001")).firstMatch
-        XCTAssertTrue(showName.waitForExistence(timeout: 5), "exact synthetic target Synthetic Show 001 exists")
-        XCTAssertEqual(showName.elementType, .staticText, "synthetic target element type")
-        XCTAssertTrue(showName.identifier.hasPrefix("ww.library.entry."), "synthetic target identifier: \(showName.identifier)")
-        let showRow = entries.outlineRows.containing(NSPredicate(format: "identifier == %@", showName.identifier)).firstMatch
-        XCTAssertTrue(showRow.waitForExistence(timeout: 5), "outline row containing \(showName.identifier)")
-        XCTAssertEqual(showRow.elementType, .outlineRow, "synthetic target row element type")
-        let selected = showRow.isSelected
-        XCTAssertTrue(selected, "Down must select Synthetic Show 001 before delete; rowSelected=\(selected); \(keyboardFocusSnapshot(sidebar: sidebar, entries: entries))")
-        print("KEYBOARD FOCUS before Delete: rowSelected=\(selected); \(keyboardFocusSnapshot(sidebar: sidebar, entries: entries))")
+        let removeShowName = entries.staticTexts.matching(NSPredicate(format: "label == %@", "Synthetic Show 001")).firstMatch
+        XCTAssertTrue(removeShowName.waitForExistence(timeout: 5), "exact synthetic target Synthetic Show 001 exists")
+        XCTAssertEqual(removeShowName.elementType, .staticText, "synthetic target element type")
+        XCTAssertTrue(removeShowName.identifier.hasPrefix("ww.library.entry."), "synthetic target identifier: \(removeShowName.identifier)")
+        let removeShowRow = entries.outlineRows.containing(NSPredicate(format: "identifier == %@", removeShowName.identifier)).firstMatch
+        XCTAssertTrue(removeShowRow.waitForExistence(timeout: 5), "outline row containing \(removeShowName.identifier)")
+        XCTAssertEqual(removeShowRow.elementType, .outlineRow, "synthetic target row element type")
+        let removeShowSelected = removeShowRow.isSelected
+        XCTAssertTrue(removeShowSelected, "Down must select Synthetic Show 001 before delete; rowSelected=\(removeShowSelected); \(keyboardFocusSnapshot(sidebar: sidebar, entries: entries))")
+        print("KEYBOARD FOCUS before Delete: rowSelected=\(removeShowSelected); \(keyboardFocusSnapshot(sidebar: sidebar, entries: entries))")
         app.typeKey(.delete, modifierFlags: [])
         sheet = app.sheets.firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 5), "Remove from Library asks first")
