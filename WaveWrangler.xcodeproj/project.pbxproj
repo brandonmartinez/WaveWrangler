@@ -16,6 +16,7 @@
 		A10220000000000000000002 /* WWDerived in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000012 /* WWDerived */; };
 		A10220000000000000000003 /* WWDecode in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000013 /* WWDecode */; };
 		A10220000000000000000004 /* WWTimeMap in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000014 /* WWTimeMap */; };
+		A10220000000000000000005 /* WWSpeech in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000015 /* WWSpeech */; };
 		6B1E5CB5C9CA81007F6A81B8 /* WWCore in Frameworks */ = {isa = PBXBuildFile; productRef = 16B37CD1081A7D1F8BD805E3 /* WWCore */; };
 		4D283E5538B35FC08990F6D5 /* WWPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 9E46055AA9A5DEF6E328B117 /* WWPersistence */; };
 		5E8F2A71C4B39D6E0A1F7C82 /* WWOrganizer in Frameworks */ = {isa = PBXBuildFile; productRef = 9B3D6E1F2A4C7085D2E6F193 /* WWOrganizer */; };
@@ -106,6 +107,7 @@
 				A10220000000000000000002 /* WWDerived in Frameworks */,
 				A10220000000000000000003 /* WWDecode in Frameworks */,
 				A10220000000000000000004 /* WWTimeMap in Frameworks */,
+				A10220000000000000000005 /* WWSpeech in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -190,6 +192,7 @@
 				A10220000000000000000012 /* WWDerived */,
 				A10220000000000000000013 /* WWDecode */,
 				A10220000000000000000014 /* WWTimeMap */,
+				A10220000000000000000015 /* WWSpeech */,
 			);
 			productName = WaveWrangler;
 			productReference = 2793E8D2F64EF711A331B014 /* WaveWrangler.app */;
@@ -605,6 +608,10 @@
 		A10220000000000000000014 /* WWTimeMap */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = WWTimeMap;
+		};
+		A10220000000000000000015 /* WWSpeech */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WWSpeech;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
