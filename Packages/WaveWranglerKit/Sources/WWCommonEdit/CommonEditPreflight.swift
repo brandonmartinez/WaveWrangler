@@ -1,0 +1,214 @@
+import WWCore
+import WWTimeMap
+
+/// A caller's lane assertion. Source/channel identity is not evidence of access or complete backing.
+public struct CommonEditLaneKey: Sendable, Hashable {
+    public let source: SourceID
+    public let occurrence: SourceOccurrenceID
+    public let channel: Int
+
+    public init(source: SourceID, occurrence: SourceOccurrenceID, channel: Int) {
+        self.source = source
+        self.occurrence = occurrence
+        self.channel = channel
+    }
+}
+
+public enum CommonEditManifestLane: Sendable, Hashable {
+    case audio(CommonEditLaneKey)
+    case intentionalSilence(String)
+}
+
+/// Untrusted input: the caller must not infer episode completeness from this value or its revision.
+public struct CommonEditLaneManifest: Sendable {
+    public let revision: String
+    public let lanes: [CommonEditManifestLane]
+
+    public init(revision: String, lanes: [CommonEditManifestLane]) {
+        self.revision = revision
+        self.lanes = lanes
+    }
+}
+
+/// Supplied half-open absolute grid intervals, not independently reviewed protection evidence.
+public struct CommonEditLaneSurvey: Sendable {
+    public let lane: CommonEditManifestLane
+    public let coverage: [RemovedFrameSpan]
+    public let intentionalSilence: [RemovedFrameSpan]
+    public let protected: [RemovedFrameSpan]
+    public let requestedFades: [RemovedFrameSpan]
+    public let finalMergedFades: [RemovedFrameSpan]
+
+    public init(
+        lane: CommonEditManifestLane, coverage: [RemovedFrameSpan],
+        intentionalSilence: [RemovedFrameSpan] = [],
+        protected: [RemovedFrameSpan] = [],
+        requestedFades: [RemovedFrameSpan] = [],
+        finalMergedFades: [RemovedFrameSpan] = []
+    ) {
+        self.lane = lane
+        self.coverage = coverage
+        self.intentionalSilence = intentionalSilence
+        self.protected = protected
+        self.requestedFades = requestedFades
+        self.finalMergedFades = finalMergedFades
+    }
+}
+
+public enum CommonEditAttestationRefusal: Error, Equatable, Sendable {
+    case invalidManifest
+    case duplicateLane
+    case missingSurvey
+    case invalidSurvey
+    case uncoveredFrame
+    case ambiguousInverse
+    case protectedFrame
+    case unsafeFade
+    case inspectionLimit
+    case trustedAuthorityUnavailable
+}
+
+/// A structural result only; it is not a render authorization, source/access witness or accepted cut.
+public struct ProvisionalCommonEditCheck: Sendable {
+    public let inspectedFrames: Int64
+    public let audioLanes: Int
+
+    fileprivate init(inspectedFrames: Int64, audioLanes: Int) {
+        self.inspectedFrames = inspectedFrames
+        self.audioLanes = audioLanes
+    }
+}
+
+public enum CommonEditPreflight {
+    /// A finite exhaustive structural check; longer episodes refuse until an interval proof exists.
+    public static let maximumInspectedFrames: Int64 = 8_192
+
+    public static func check(
+        map: CommonEpisodeEditMap, manifest: CommonEditLaneManifest,
+        surveys: [CommonEditLaneSurvey]
+    ) throws(CommonEditAttestationRefusal) -> ProvisionalCommonEditCheck {
+        guard map.alignedFrameCount <= maximumInspectedFrames else { throw CommonEditAttestationRefusal.inspectionLimit }
+        let placements = map.alignment.groups.flatMap(\.placements)
+        let occurrences = Dictionary(uniqueKeysWithValues: placements.map { ($0.occurrence.id, $0.occurrence) })
+        let audio = manifest.lanes.compactMap { lane -> CommonEditLaneKey? in
+            if case let .audio(key) = lane { return key }
+            return nil
+        }
+        guard !manifest.revision.isEmpty, !placements.isEmpty, !manifest.lanes.isEmpty,
+              Set(audio.map(\.occurrence)) == Set(occurrences.keys),
+              audio.allSatisfy({ key in
+                  key.channel >= 0 && occurrences[key.occurrence]?.source == key.source
+              }),
+              manifest.lanes.allSatisfy({ lane in
+                  if case let .intentionalSilence(id) = lane { return !id.isEmpty }
+                  return true
+              })
+        else { throw CommonEditAttestationRefusal.invalidManifest }
+        guard Set(manifest.lanes).count == manifest.lanes.count,
+              Set(surveys.map(\.lane)).count == surveys.count else {
+            throw CommonEditAttestationRefusal.duplicateLane
+        }
+        guard manifest.lanes.count == surveys.count,
+              Set(manifest.lanes) == Set(surveys.map(\.lane)) else {
+            throw CommonEditAttestationRefusal.missingSurvey
+        }
+        for survey in surveys {
+            for spans in [survey.coverage, survey.intentionalSilence, survey.protected,
+                          survey.requestedFades, survey.finalMergedFades] {
+                guard valid(spans, in: map) else { throw CommonEditAttestationRefusal.invalidSurvey }
+            }
+            guard survey.protected.allSatisfy({ contained($0, in: survey.coverage) }),
+                  survey.requestedFades.allSatisfy({ contained($0, in: survey.finalMergedFades) })
+            else { throw CommonEditAttestationRefusal.invalidSurvey }
+            guard !survey.protected.contains(where: { p in map.removals.contains(where: { intersects(p, $0) }) })
+            else { throw CommonEditAttestationRefusal.protectedFrame }
+            for fade in survey.finalMergedFades {
+                guard contained(fade, in: survey.coverage),
+                      !map.removals.contains(where: { intersects(fade, $0) }),
+                      !survey.protected.contains(where: { intersects(fade, $0) })
+                else { throw CommonEditAttestationRefusal.unsafeFade }
+            }
+            for frame in map.alignedFrameOrigin..<map.alignedFrameEnd {
+                let instant = map.outputRate.instant(ofFrame: frame)
+                let output: CommonAlignedOutputMapping
+                do { output = try map.outputPosition(atAlignedInstant: instant) }
+                catch { throw .ambiguousInverse }
+                switch output {
+                case .mapped(let position):
+                    guard map.alignedInstant(atOutputFrame: position.nearestFrame) == instant else {
+                        throw CommonEditAttestationRefusal.ambiguousInverse
+                    }
+                case .removed(let span):
+                    guard span.start <= frame && frame < span.end else { throw CommonEditAttestationRefusal.ambiguousInverse }
+                case .outsideCoverage:
+                    throw CommonEditAttestationRefusal.ambiguousInverse
+                }
+                let covered = survey.coverage.contains { $0.start <= frame && frame < $0.end }
+                let silent = survey.intentionalSilence.contains { $0.start <= frame && frame < $0.end }
+                switch survey.lane {
+                case .intentionalSilence:
+                    guard !covered, silent else { throw CommonEditAttestationRefusal.uncoveredFrame }
+                case .audio(let key):
+                    let inverse: InverseMapping
+                    do { inverse = try map.alignment.sourceFrame(at: instant, in: key.occurrence) }
+                    catch { throw .ambiguousInverse }
+                    switch inverse {
+                    case .source(let position):
+                        guard covered, !silent, let occurrence = occurrences[key.occurrence],
+                              position.frame >= 0, position.frame < occurrence.frameCount
+                        else { throw CommonEditAttestationRefusal.uncoveredFrame }
+                        let mapped: ForwardMapping
+                        do { mapped = try map.alignment.alignedTime(ofFrame: position.frame, in: key.occurrence) }
+                        catch { throw .ambiguousInverse }
+                        guard case let .aligned(forward) = mapped, forward.epoch == position.epoch else {
+                            throw CommonEditAttestationRefusal.ambiguousInverse
+                        }
+                        let error: ExactRational
+                        do { error = try forward.instant.subtracting(instant) }
+                        catch { throw .ambiguousInverse }
+                        guard error.magnitude <= map.outputRate.instant(ofFrame: 1) else {
+                            throw CommonEditAttestationRefusal.ambiguousInverse
+                        }
+                    case .outsideCoverage:
+                        guard silent, !covered else { throw CommonEditAttestationRefusal.uncoveredFrame }
+                    case .gap, .unsupported:
+                        throw CommonEditAttestationRefusal.ambiguousInverse
+                    }
+                }
+            }
+        }
+        return ProvisionalCommonEditCheck(inspectedFrames: map.alignedFrameCount, audioLanes: audio.count)
+    }
+
+    private static func intersects(_ a: RemovedFrameSpan, _ b: RemovedFrameSpan) -> Bool {
+        a.start < b.end && b.start < a.end
+    }
+
+    private static func contained(_ span: RemovedFrameSpan, in spans: [RemovedFrameSpan]) -> Bool {
+        spans.contains { $0.start <= span.start && span.end <= $0.end }
+    }
+
+    private static func valid(_ spans: [RemovedFrameSpan], in map: CommonEpisodeEditMap) -> Bool {
+        spans.enumerated().allSatisfy { index, span in
+            span.start >= map.alignedFrameOrigin && span.start < span.end &&
+            span.end <= map.alignedFrameEnd &&
+            (index == 0 || spans[index - 1].end <= span.start)
+        }
+    }
+}
+
+/// Never grants rendering: a live organizer/access witness, independently complete protection survey,
+/// accepted-map content proof and Mac-owned atomic map/history publication are not provided here.
+public enum CommonEditAttestation {
+    public static func prepare(
+        map: CommonEpisodeEditMap, manifest: CommonEditLaneManifest,
+        surveys: [CommonEditLaneSurvey]
+    ) throws(CommonEditAttestationRefusal) -> Never {
+        _ = try CommonEditPreflight.check(map: map, manifest: manifest, surveys: surveys)
+        throw CommonEditAttestationRefusal.trustedAuthorityUnavailable
+    }
+}
+
+private extension ExactRational {
+    var magnitude: ExactRational { numerator < 0 ? negated() : self }
+}
