@@ -80,6 +80,62 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         }
     }
 
+    func testBlockedReviewCoreAXAndKeyboardSetupRecovery() throws {
+        let window = app.windows["ww.show.window"]
+        let inspector = app.scrollViews["ww.inspector"]
+        let setup = app.buttons["ww.review.remedy.setup"]
+        let heading = app.staticTexts["ww.review.inspector.heading"]
+        let blocked = app.descendants(matching: .any)["ww.review.blockedReason"]
+        let accept = app.buttons["ww.review.action.acceptShorten"]
+        let reason = app.staticTexts["ww.review.action.acceptShorten.reason"]
+        let refusal = "Accept is blocked: no current proposal or transcript timing is connected; the alignment map, all-lane backing, protection coverage, and edit policy are unverified."
+
+        XCTAssertTrue(inspector.waitForExistence(timeout: 3))
+        XCTAssertTrue(window.frame.contains(inspector.frame), "The AX scroll viewport must stay within the show window")
+        XCTAssertTrue(heading.exists && heading.isHittable, "The Review heading is exposed and reachable")
+        XCTAssertEqual(heading.label, "Review Inspector")
+        XCTAssertTrue(blocked.exists && blocked.isHittable, "The blocked state is exposed in the detail")
+        XCTAssertTrue((blocked.value as? String ?? "").contains("No live Primary"))
+        XCTAssertTrue(inspector.descendants(matching: .staticText)["ww.review.inspector.analysisState"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.review.occurrence.synthetic-001"].exists)
+        XCTAssertTrue(setup.exists && setup.isEnabled && setup.isHittable, "Setup is a fixed, actionable AX button")
+        XCTAssertEqual(setup.label, "Go to Setup (⌘1)")
+        XCTAssertTrue(window.frame.contains(setup.frame))
+        XCTAssertTrue(accept.exists && !accept.isEnabled, "Accept remains blocked")
+        XCTAssertEqual(accept.label, "Accept Shorten when safe")
+        XCTAssertEqual(accept.value as? String, refusal)
+        XCTAssertTrue(reason.exists && inspector.descendants(matching: .staticText)["ww.review.action.acceptShorten.reason"].exists)
+        XCTAssertEqual(reason.value as? String, refusal, "The entire refusal is reachable in AX")
+
+        for _ in 0..<18 where !inspector.frame.contains(reason.frame) {
+            inspector.scroll(byDeltaX: 0, deltaY: -180)
+        }
+        XCTAssertTrue(reason.isHittable, "The refusal scrolls to an in-window hit point")
+        XCTAssertTrue(setup.isHittable, "Setup remains fixed after scrolling the inspector")
+
+        let filter = app.textFields["ww.review.filter"]
+        filter.click()
+        XCTAssertTrue(Acceptance.hasKeyboardFocus(filter))
+        app.typeKey(.tab, modifierFlags: [])
+        XCTAssertFalse(Acceptance.hasKeyboardFocus(filter), "Audit after the field editor relinquishes focus")
+        let unwaived = try AcceptanceAudit.run(
+            app, surface: "transcript-review-core-ax", test: self, types: AcceptanceAudit.essentialTypes
+        )
+        XCTAssertTrue(unwaived.isEmpty, unwaived.joined(separator: "\n"))
+
+        filter.click()
+        XCTAssertTrue(Acceptance.hasKeyboardFocus(filter))
+        if UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0 {
+            XCTAssertTrue(tabToFocus(setup), "With Full Keyboard Access, Tab reaches the Setup remedy")
+            XCTAssertTrue(Acceptance.hasKeyboardFocus(setup))
+            app.typeKey(.space, modifierFlags: [])
+        } else {
+            app.typeKey("1", modifierFlags: .command)
+        }
+        XCTAssertTrue(app.outlines["ww.setup.sources"].waitForExistence(timeout: 5), "Keyboard-only recovery opens Setup")
+        XCTAssertFalse(app.buttons["ww.review.action.acceptShorten"].exists, "Recovery leaves blocked Review")
+    }
+
     func testBlockedReviewKeepsVisibleFocusAndKeyboardRecoveryAndPassesAudits() throws {
         let filter = app.textFields["ww.review.filter"]
         XCTAssertTrue(filter.waitForExistence(timeout: 3))
