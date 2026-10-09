@@ -525,3 +525,27 @@
 - The one-time authorized maintainer `ggml-tiny.en` official asset measured 77,704,715 bytes with hash `921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f` and stays private outside Git; no inferred converter bitwise or redistribution proof, and no production engine.
 - [#220](https://github.com/brandonmartinez/WaveWrangler/issues/220) remains blocked: the strict physical-Mini episode-switch target is p95 < 100 ms over 100 samples and is not superseded by M2's accepted <= 122.5 ms baseline.
 - Author-only reports do not count as passing evidence; keep the record aggregate-only and avoid private model/media paths, transcripts, IP, sample names, PID, `xcresult`, or machine paths.
+
+### 2026-10-09 ~04:37 EDT: #385 GUI probe-lease recipe stop
+
+**By:** Lead, [#385 process decision](https://github.com/brandonmartinez/WaveWrangler/issues/385#issuecomment-6077149709); recorded by Scribe.
+- After rejected, closed-unmerged recipe revisions [#390](https://github.com/brandonmartinez/WaveWrangler/pull/390), [#391](https://github.com/brandonmartinez/WaveWrangler/pull/391), and [#392](https://github.com/brandonmartinez/WaveWrangler/pull/392), do not start an automatic fourth recipe revision. The existing recipe is not established runnable.
+- Any future separately scoped recipe requires fresh evidence from a real generated Xcode v2 `.xctestrun` schema, including the `TestConfigurations[].TestTargets[]` target layout, and an independently verified manual run on the requested exact SHA with staged probe and propagation, valid lease, complete class-to-host and result records, original statuses, and per-identity unexpected-skip verification. Absent or failed evidence remains NOT RUN/INCOMPLETE, never PASS; this records no gate pass, waiver, merge, or closure.
+
+### 2026-10-09 ~04:37 EDT: #41 decoder-owned source proof remains required
+
+**By:** Lead, [#41 process/architecture decision](https://github.com/brandonmartinez/WaveWrangler/issues/41#issuecomment-6077226260); recorded by Scribe.
+- Public cached facts, keys, and hashes cannot mint a complete-channel result. A future eligible independent unit must establish fresh decoder-owned, per-source proof bound to the actual source, current access identity, decoder interpretation, and rechecked generation/payload; same-key replacement must refuse by generation. Budget raw model/show shape, maps, placements, reference arrays, and payload sizes before materialization.
+- A Backup header probe is a source open and requires a **new explicit user grant**; no actual Backup source open is authorized here. Pure cut preparation remains refusal-only until all source, protection, and render evidence exists. Open draft [#394](https://github.com/brandonmartinez/WaveWrangler/pull/394) is synthetic-only and provisional; it does not change this STOP or grant permission.
+
+### 2026-10-09 ~05:17 EDT: #41 private descriptor-open design prerequisite
+
+**By:** Lead, [#41 process decision](https://github.com/brandonmartinez/WaveWrangler/issues/41#issuecomment-6077951041); recorded by Scribe.
+- Following safety rejections of [#394](https://github.com/brandonmartinez/WaveWrangler/pull/394) and [#398](https://github.com/brandonmartinez/WaveWrangler/pull/398), and a clean third-author STOP, authorize only a fresh-main written design for a private transactional per-source grant and descriptor-open boundary. It must coordinate cross-store/process mutation, recheck current scope, generation, and consent, verify descriptor identity before parser read, and hold the mutation gate through bounded header read; checked bounds precede sink creation.
+- Lead and an independent source-boundary reviewer must sign that design before any code writer. Existing cache-derived inventory and Backup-consent STOPs remain: no Backup header open, production issuer, or positive all-lane receipt without an exact per-source user grant and tested interface. If external OS revocation or uncoordinated mutation cannot guarantee no revoked header open, choose refusal-only de-scope; no waiver or automatic reviewer-fix follows.
+
+### 2026-10-09 ~05:23 EDT: #41 descriptor-open path adjudicated refusal-only
+
+**By:** Lead and an independent source-boundary reviewer, [#41 adjudication](https://github.com/brandonmartinez/WaveWrangler/issues/41#issuecomment-6078140284) and [#399 exact-head pre-code review](https://github.com/brandonmartinez/WaveWrangler/pull/399#issuecomment-6078140329); recorded by Scribe.
+- The signed design outcome is STOP/B refusal-only, not an approved positive descriptor-open interface. A cooperative mutation gate and pre-parser descriptor check cannot prove zero revoked Backup opens against OS scope revocation, provider or uncoordinated mutation; the last-await show/role gap and unbounded `AudioFileOpenWithCallbacks` hold also remain.
+- No Backup grant, positive issuer, code unit, all-lane receipt, acceptance, waiver, or M3 completion follows. Reconsidering a positive path requires a user-scoped change and independently reviewed external-boundary proof; preserve refusal-only behavior until then.
