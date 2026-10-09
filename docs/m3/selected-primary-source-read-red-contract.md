@@ -6,8 +6,12 @@ This test-only unit does **not** authorize a source read. The current
 Backup, cut, speech or actual-episode open follows. The new
 `SelectedPrimaryCheckedOpenRedTests` intentionally refer to
 `expectedIdentity:` overloads that do not yet exist; a native compile failure
-is the expected RED control, **not** a test pass. No native test/build has run
-for this unit. Keep ordinary unselected alignment decoding available through
+is the expected RED control, **not** a test pass. At `149654bd` a scoped package
+JIT exited 1 on those absent overloads with zero tests run; the unhosted
+`WaveWranglerTests` app-intent selector exited 65 with zero tests because
+`EpisodeSetupModel` is app-only. This revision moves that coverage into the
+existing app-linked `WaveWranglerHostedTests` target; no JIT has run on this
+revised head. Keep ordinary unselected alignment decoding available through
 its existing APIs; never treat that path as selected-source authorization.
 
 ## Checked-open contract
@@ -50,11 +54,14 @@ The current app has no injection seam for an open registered `ShowDocument`,
 Setup window, keyed inventory/access read and the checked decoder in one
 synthetic test; inventing a caller-owned fake receipt would test the fake, not
 the app. An independent reviewer must agree on that private seam before the
-separate implementation/JIT. Executable `WaveWranglerTests/SelectedPrimarySourceIntentTests.swift`
-now exercises the real Setup model: confirmed channel-1 Primary row/speaker,
-Backup and mismatched row/speaker refusal, selection-away-and-back generation,
-source removal/restoration, alignment/document value ABA generation, missing accepted
-map refusal and offscreen refusal. These are **intent and generation tests**,
+separate implementation/JIT. The app-hosted
+`WaveWranglerHostedTests/EpisodeOpenShowBindingTests.swift` now exercises the
+real Setup model: confirmed channel-1 Primary row/speaker, Backup and
+mismatched row/speaker/invalid channel/provisional role or assignment refusal,
+selection-away-and-back generation, source removal/restoration,
+alignment/document value ABA generation, and missing accepted map and window
+refusal. Its existing issuer test also cancels before source open. These are
+**intent and generation/refusal tests** (pending an exact-head hosted JIT),
 not an issued source grant, access-store ABA test, checked app read, or proof of
 positive publication. The app issuer still returns `Never` and throws
 `trustedSourceOpenUnavailable`; there is no test-only injection point for an

@@ -355,6 +355,57 @@ struct SelectedPrimarySourceIntentTests {
         }
     }
 
+    @Test func primaryRequiresConfirmedRoleAndInRangeChannel() throws {
+        let (setup, _, speaker, primary, _) = setup()
+        let original = setup.store.model
+        for channel in [-1, 2] {
+            var changed = original
+            changed.episodes[0].speakerAssignments[0].primary =
+                ChannelReference(sourceID: primary, statedChannel: channel)
+            setup.store.replaceLoadedModel(changed)
+            #expect(throws: SelectedPrimarySourceReadRefusal.selectionUnavailable) {
+                try setup.captureSelectedPrimarySource()
+            }
+        }
+        var unconfirmed = original
+        unconfirmed.episodes[0].sources[0].roleConfirmation = .provisional
+        setup.store.replaceLoadedModel(unconfirmed)
+        #expect(throws: SelectedPrimarySourceReadRefusal.selectionUnavailable) {
+            try setup.captureSelectedPrimarySource()
+        }
+        setup.store.replaceLoadedModel(original)
+        setup.speakerSelection = [SpeakerID()]
+        #expect(throws: SelectedPrimarySourceReadRefusal.selectionUnavailable) {
+            try setup.captureSelectedPrimarySource()
+        }
+        setup.speakerSelection = [speaker]
+        #expect(try setup.captureSelectedPrimarySource().channel.statedChannel == 1)
+    }
+
+    @Test func sourceRemovalAndAlignmentDocumentABANeverRestoreOldGeneration() throws {
+        let (setup, _, _, primary, _) = setup()
+        let intent = try setup.captureSelectedPrimarySource()
+        let original = setup.store.model
+        let beforeRemoval = try #require(setup.store.captureMutationGeneration())
+        var removed = original
+        removed.episodes[0].sources.removeAll { $0.id == primary }
+        setup.store.replaceLoadedModel(removed)
+        #expect(throws: SelectedPrimarySourceReadRefusal.selectionUnavailable) {
+            try setup.captureSelectedPrimarySource()
+        }
+        setup.store.replaceLoadedModel(original)
+        #expect(!setup.store.isCurrentMutationGeneration(beforeRemoval))
+        #expect(setup.isCurrentSelectedPrimarySource(intent),
+                "intent alone cannot attest to document or access-store generation")
+
+        let beforeAlignment = try #require(setup.store.captureMutationGeneration())
+        var changed = original
+        changed.episodes[0].alignment = EpisodeAlignment()
+        setup.store.replaceLoadedModel(changed)
+        setup.store.replaceLoadedModel(original)
+        #expect(!setup.store.isCurrentMutationGeneration(beforeAlignment))
+    }
+
     @Test func multipleReferencesRequireTheSpecificPrimaryChannelRow() throws {
         let (setup, _, speaker, primary, _) = setup()
         var changed = setup.store.model
