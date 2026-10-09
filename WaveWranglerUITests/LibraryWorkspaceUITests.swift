@@ -47,6 +47,33 @@ final class LibraryWorkspaceUITests: XCTestCase {
 
     private func value(_ element: XCUIElement) -> String { element.value as? String ?? "\(element.value ?? "")" }
 
+    private func collectionSelectionSnapshot(in entries: XCUIElement, stage: String) -> (valid: Bool, details: String) {
+        let sidebarShows = element("ww.library.sidebar.shows")
+        let sidebarValue = sidebarShows.exists ? value(sidebarShows) : "<missing>"
+        let entriesLabel = entries.exists ? entries.label : "<missing>"
+        let showMatches = entries.exists
+            ? entries.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.' AND label BEGINSWITH 'Synthetic Show'")).allElementsBoundByIndex
+            : []
+        let show = showMatches.first { $0.exists }
+        var showIdentifier = "<missing>"
+        var showLabel = "<missing>"
+        var showRowExists = false
+        var showRowSelected = false
+        if let show {
+            showIdentifier = show.identifier
+            showLabel = show.label
+            let row = entries.outlineRows.containing(.staticText, identifier: show.identifier).firstMatch
+            showRowExists = row.exists
+            if showRowExists { showRowSelected = row.isSelected }
+        }
+        let selectedRows = entries.exists
+            ? entries.outlineRows.allElementsBoundByIndex.filter(\.isSelected).map(\.label)
+            : []
+        let valid = entriesLabel == "Shows (100)" && sidebarValue == "100 shows" && showRowSelected
+        let details = "\(stage): entries=\(entriesLabel), sidebarShows=\(sidebarValue), entry=\(showIdentifier) [\(showLabel)], rowExists=\(showRowExists), rowSelected=\(showRowSelected), selectedRows=\(selectedRows)"
+        return (valid, details)
+    }
+
     private func waitForValue(_ element: XCUIElement, _ expected: String, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line) {
         let predicate = NSPredicate { _, _ in self.value(element) == expected }
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: nil)
@@ -316,16 +343,13 @@ final class LibraryWorkspaceUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [showsSelected], timeout: 5), .completed, "Up arrows reach Shows: \(table.label)")
         app.typeKey("\t", modifierFlags: [])
         app.typeKey(.downArrow, modifierFlags: [])
+        let afterKeyboardDown = collectionSelectionSnapshot(in: table, stage: "after keyboard Down, before menu hover")
         menuItem("Add to Collection").hover()
         let target = app.menuBars.menuItems["Season Two"].firstMatch
         waitFor(target)
-        let shows = element("ww.library.sidebar.shows")
-        let show = table.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.' AND label BEGINSWITH 'Synthetic Show'")).firstMatch
-        let showRow = table.outlineRows.containing(.staticText, identifier: show.identifier).firstMatch
-        let selectedEntryRows = table.outlineRows.allElementsBoundByIndex.filter(\.isSelected).map(\.label)
-        XCTAssertTrue(show.exists && showRow.exists && showRow.isSelected &&
-                      table.label == "Shows (100)" && value(shows) == "100 shows",
-                      "After keyboard-only Up/Tab/Down, Add to Collection should target a selected Synthetic Show in Shows; entry \(show.identifier) label=\(show.label), rowExists=\(showRow.exists), rowSelected=\(showRow.isSelected), selectedRows=\(selectedEntryRows), entries=\(table.label), sidebarShows=\(value(shows))")
+        let beforeSubmenuClick = collectionSelectionSnapshot(in: table, stage: "after submenu hover, before click")
+        XCTAssertTrue(afterKeyboardDown.valid && beforeSubmenuClick.valid,
+                      "Add to Collection requires the keyboard-selected Synthetic Show in Shows.\n\(afterKeyboardDown.details)\n\(beforeSubmenuClick.details)")
         target.click()
         waitForValue(created, "1 item")
 

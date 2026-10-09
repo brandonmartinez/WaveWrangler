@@ -25,6 +25,33 @@ final class SheetKeyboardUITests: XCTestCase {
 
     private func value(_ element: XCUIElement) -> String { element.value as? String ?? "\(element.value ?? "")" }
 
+    private func collectionSelectionSnapshot(in entries: XCUIElement, stage: String) -> (valid: Bool, details: String) {
+        let sidebarShows = element("ww.library.sidebar.shows")
+        let sidebarValue = sidebarShows.exists ? value(sidebarShows) : "<missing>"
+        let entriesLabel = entries.exists ? entries.label : "<missing>"
+        let showMatches = entries.exists
+            ? entries.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.' AND label BEGINSWITH 'Synthetic Show'")).allElementsBoundByIndex
+            : []
+        let show = showMatches.first { $0.exists }
+        var showIdentifier = "<missing>"
+        var showLabel = "<missing>"
+        var showRowExists = false
+        var showRowSelected = false
+        if let show {
+            showIdentifier = show.identifier
+            showLabel = show.label
+            let row = entries.outlineRows.containing(.staticText, identifier: show.identifier).firstMatch
+            showRowExists = row.exists
+            if showRowExists { showRowSelected = row.isSelected }
+        }
+        let selectedRows = entries.exists
+            ? entries.outlineRows.allElementsBoundByIndex.filter(\.isSelected).map(\.label)
+            : []
+        let valid = entriesLabel == "Shows (100)" && sidebarValue == "100 shows" && showRowSelected
+        let details = "\(stage): entries=\(entriesLabel), sidebarShows=\(sidebarValue), entry=\(showIdentifier) [\(showLabel)], rowExists=\(showRowExists), rowSelected=\(showRowSelected), selectedRows=\(selectedRows)"
+        return (valid, details)
+    }
+
     private func waitForValue(_ element: XCUIElement, _ expected: String, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line) {
         let done = XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.value(element) == expected }, object: nil)], timeout: timeout)
         XCTAssertEqual(done, .completed, "\(element) value \(value(element)), expected \(expected)", file: file, line: line)
@@ -62,20 +89,17 @@ final class SheetKeyboardUITests: XCTestCase {
         XCTAssertTrue(created.waitForExistence(timeout: 5))
 
         // Menu use: add the first show to it with File › Library › Add to Collection ▸ (submenu tracking).
+        let entries = app.outlines["ww.library.entries"]
         for _ in 0..<10 { app.typeKey(.upArrow, modifierFlags: []) }
         app.typeKey("\t", modifierFlags: [])
         app.typeKey(.downArrow, modifierFlags: [])
-        let entries = app.outlines["ww.library.entries"]
-        let shows = element("ww.library.sidebar.shows")
+        let afterKeyboardDown = collectionSelectionSnapshot(in: entries, stage: "after keyboard Down, before menu hover")
         app.menuBars.menuItems["Add to Collection"].firstMatch.hover()
         let target = app.menuBars.menuItems["Keyboard Sheet"].firstMatch
         XCTAssertTrue(target.waitForExistence(timeout: 5))
-        let show = entries.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.' AND label BEGINSWITH 'Synthetic Show'")).firstMatch
-        let showRow = entries.outlineRows.containing(.staticText, identifier: show.identifier).firstMatch
-        let selectedEntryRows = entries.outlineRows.allElementsBoundByIndex.filter(\.isSelected).map(\.label)
-        XCTAssertTrue(show.exists && showRow.exists && showRow.isSelected &&
-                      entries.label == "Shows (100)" && value(shows) == "100 shows",
-                      "After keyboard-only Up/Tab/Down, Add to Collection should target a selected Synthetic Show in Shows; entry \(show.identifier) label=\(show.label), rowExists=\(showRow.exists), rowSelected=\(showRow.isSelected), selectedRows=\(selectedEntryRows), entries=\(entries.label), sidebarShows=\(value(shows))")
+        let beforeSubmenuClick = collectionSelectionSnapshot(in: entries, stage: "after submenu hover, before click")
+        XCTAssertTrue(afterKeyboardDown.valid && beforeSubmenuClick.valid,
+                      "Add to Collection requires the keyboard-selected Synthetic Show in Shows.\n\(afterKeyboardDown.details)\n\(beforeSubmenuClick.details)")
         target.click()
         waitForValue(created, "1 item")
 
