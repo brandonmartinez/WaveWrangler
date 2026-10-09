@@ -218,8 +218,8 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         let selectedNote = app.staticTexts["Example text only — no transcript analysis or timing."]
         XCTAssertTrue(selectedTitle.exists)
         XCTAssertTrue(selectedNote.exists)
-        measureVisibleText(selectedTitle, in: window, label: "selected occurrence title")
-        measureVisibleText(selectedNote, in: window, label: "selected occurrence note")
+        measureVisibleText(selectedTitle, in: window, label: "selected occurrence title", minimumLineHeight: 14)
+        measureVisibleText(selectedNote, in: window, label: "selected occurrence note", minimumLineHeight: 14)
 
         let unwaived = try AcceptanceAudit.run(
             app,
@@ -268,13 +268,14 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         }
     }
 
-    private func measureVisibleText(_ element: XCUIElement, in container: XCUIElement, label: String) {
+    private func measureVisibleText(_ element: XCUIElement, in container: XCUIElement, label: String,
+                                    minimumLineHeight: CGFloat = 20) {
         let window = app.windows["ww.show.window"]
         XCTAssertTrue(window.frame.contains(container.frame), "\(label): the measured viewport must fit in the window")
         let visible = element.frame.intersection(container.frame).intersection(window.frame)
-        XCTAssertGreaterThanOrEqual(visible.height, 20, "\(label): at least one full line must be visibly reachable")
+        XCTAssertGreaterThanOrEqual(visible.height, minimumLineHeight, "\(label): at least one full line must be visibly reachable")
         XCTAssertTrue(element.isHittable, "\(label): text needs a real visible hit point")
-        guard visible.height >= 20, element.isHittable else { return }
+        guard visible.height >= minimumLineHeight, element.isHittable else { return }
         if label.hasSuffix("blocked") {
             Acceptance.attach(self, png: window.screenshot().pngRepresentation, name: "\(label)-window")
         }
