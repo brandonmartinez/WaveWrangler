@@ -175,6 +175,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
     }
 
     func testDiagnoseParentChildSurfaces() throws {
+        Acceptance.attach(self, png: app.windows["ww.show.window"].screenshot().pngRepresentation, name: "initial-review-window")
         let showInfo = app.descendants(matching: .any)["ww.show.sidebar.showInfo"]
         showInfo.click()
         XCTAssertTrue(app.staticTexts["ww.show.showInfoSummary.title"].waitForExistence(timeout: 3))
@@ -185,6 +186,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
                 app.buttons["ww.show.destination.setup"].click()
             case "reviewDetail":
                 app.buttons["ww.show.destination.review"].click()
+                app.textFields["ww.review.filter"].click()
                 app.buttons["Hide Inspector"].click()
                 XCTAssertFalse(app.scrollViews["ww.inspector"].exists)
             case "reviewInspector":
@@ -194,6 +196,11 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             }
             let findings = try AcceptanceAudit.run(app, surface: name, test: self, types: .parentChild)
             print("PARENT-CHILD \(name): \(findings)")
+            if name == "reviewDetail" {
+                app.buttons["ww.show.destination.review"].click()
+                let blurredFindings = try AcceptanceAudit.run(app, surface: "reviewDetailBlurred", test: self, types: .parentChild)
+                print("PARENT-CHILD reviewDetailBlurred: \(blurredFindings)")
+            }
         }
     }
 
