@@ -406,3 +406,24 @@
 - Essential accessibility remains a HARD gate with no waiver. First, run only the #329 final exact clean safety class (`7865344793867243c2f33742d14400c245b63818`) on the physical Mac mini under the required GUI lease, with no source edit. Separate VM scale artifacts from real parent/child clipping; this entry does not claim the diagnostic has run.
 - Before code, Lead publishes a short minimum-window, 200%-text AX containment/scroll-and-clip/refusal-reason reachability design that differs from #315, #320, and #329, and an independent Reviewer agrees in writing. This entry does not claim either design or agreement exists.
 - Then a fresh author independent of all prior #315, #320, and #329 authors writes red-first containment, refusal-reachability, and correction failures. Permit at most three clean renewed correction GUI rounds on the Mini, each safety-gated; VMs are functional supplements only. Any candidate requires cumulative independent review and the full exact-head script. If the bounded work fails, stop for an explicit user scope/timing decision. #22, #26, #30, and #48 remain open; #330 rev4's separate CPU rejection is not a pass.
+
+### 2026-10-08: Host compute budgets are scheduling courtesies, not acceptance gates (#310)
+
+**By:** the user (20:58, via the relay), recorded by a fresh independent Docs/Scribe writer.
+- This supersedes prior #310 frozen CPU acceptance interpretations: the working-Mac limits of at most four courtesy cores and load around 24 are operational scheduling constraints only, not product, merge, or acceptance gates. A full headless suite on the Mac mini may use its available cores without a per-process CPU gate.
+- M3 code PRs still require review, one fresh full functional `scripts/test.sh` on the exact clean pushed head, and affected GUI coverage. No CPU-pass claim is required or permitted. Rev2, rev3, and rev4 remain valid objective-result records, but their overall CPU protocols are incomplete or withdrawn; close the draft CPU PRs unmerged and retain #310 as P3 Future work.
+- One small reviewed follow-up may cap test workers or internal task groups and serialize Release render execution for working-Mac courtesy scheduling, but it must not shrink the test set or redefine functional acceptance.
+
+### 2026-10-08: One final origin-file checkpoint recovery correction after #335
+
+**By:** the user (21:00, via the relay), recorded by a fresh independent Docs/Scribe writer.
+- Permit exactly one final correction by a fresh author independent of the rejected #296, #301, #303, #307, #309, #314, and #335 authors. Save As and Save a Copy must never clear the checkpoint associated with the original file.
+- Clear that checkpoint only after independently verifying that the exact offered payload was saved to its origin file, with the same restore identity recorded at save start and save completion. Red-first destination tests must cover autosave OFF and ON, plus reopening the original file and recovering its retained checkpoint after Save As and Save a Copy.
+- A fresh independent cumulative review, one full exact-clean-pushed-head `scripts/test.sh`, and the affected Mac mini recovery GUI classes gate merge. If this correction is rejected, stop and return to the user; no further automatic recovery revision is authorized.
+
+### 2026-10-08: One new design-first OS-enforced offline speech containment architecture (#23)
+
+**By:** the user (21:00, via the relay), recorded by a fresh independent Docs/Scribe writer.
+- Replace group-only containment with a different OS-enforced offline architecture. Prefer an App Sandbox XPC service or sandboxed helper with no network-client entitlement, inherited by every descendant; alternatively use in-process on-device APIs with no child processes. Red-first proof must show that even a `setsid`-escaped grandchild cannot open a network socket or write outside its container, and must preserve provenance plus worker access limited to locally selected Primary tracks.
+- Before code, the Lead writes the design note and an independent Reviewer agrees in writing. Only then may a new independent GPT-6 xhigh author, distinct from the rejected #321 and #324 authors, implement it. Any later verification using the approved selected-Primary material remains LOCAL and aggregate-only under the existing consent.
+- Rejection stops for the user. This authorization permits no model, media, credential, or network trial, and no implementation or GUI work before the design gate is accepted.
