@@ -572,3 +572,19 @@
 - Carry forward every #359 red-first target: correct Format Update identity after byte-identical origin substitution; preserve the original C3 location hint through Save As; expose every retained older checkpoint newest-first with an independent non-destructive action; offer damaged C2b as an honest accessible, unrestorable retained-byte choice with reveal/export; and refuse older-schema C3 Open Copy honestly while retaining bytes and offering reveal/export. Full damaged-C2b recovery (#366) and older-schema C3 migration-on-copy (#365) remain M4 follow-ups, not M3 acceptance.
 - Merge remains gated on a fresh independent cumulative review, a fresh full `scripts/test.sh` run on the exact clean pushed head, and affected physical-Mini recovery GUI/keyboard/AX evidence. Record no pass, #30 acceptance, or recovery completion until each required result is actually evidenced; #30 remains open.
 - If this one independent revision is rejected, stop for the user: no further automatic author, retry, waiver, source-permission expansion, Backup work, or media work is authorized.
+
+### 2026-10-09 07:35 EDT: B — Rescope M3 common edits to selected Primary tracks; no Backup opens
+
+**By:** Brandon Martinez; relayed by the coordinator and recorded by Scribe.
+
+**What:** M3 proves common edits on selected Primary tracks only. Backup lanes must visibly say `backup not verified; excluded from cut proof`, never participate silently, and fail closed. Do not open Backup files or seek new Backup consent in M3. Positive Backup handling transfers to M4 issue [#420](https://github.com/brandonmartinez/WaveWrangler/issues/420), where all-lane source verification and the no-revoked-open boundary require separate exact Backup-access consent. M3 source immutability, protected-speech, stale-publication, and other existing gates remain unchanged; [#41](https://github.com/brandonmartinez/WaveWrangler/issues/41) stays open until its revised acceptance is proven.
+
+**Why:** Rescope the common-edit proof without treating unverified Backup sources as safe or implying any M3 acceptance or source-access permission.
+
+### 2026-10-09 07:35 EDT: A — Authorize bounded synthetic VM reboot design and validation
+
+**By:** Brandon Martinez; relayed by the coordinator and recorded by Scribe.
+
+**What:** Authorize design and tightly scoped validation restarts between synthetic functional UI-test leases on existing VMs `ww-ui-1` and `ww-ui-2` only, with no change in VM count and no rollout before independent review. No restart has yet occurred. The host must `tart stop` the same VM and launch detached `tart run --no-graphics --no-clipboard --no-audio <vm>` so it outlives any Copilot session or archiving. Redesign [#415](https://github.com/brandonmartinez/WaveWrangler/issues/415) around a hard end-to-end deadline for preflight, queue, test, cleanup, reboot, and readiness; failed or unverified cleanup fails closed. Do not claim PID-tree/FD-marker or OS-level `testmanagerd` ownership proof. Keep [#386](https://github.com/brandonmartinez/WaveWrangler/issues/386) and [#387](https://github.com/brandonmartinez/WaveWrangler/issues/387) held until independent review and scoped verification succeed; no physical-Mini, performance, recording, model, or media scope is authorized.
+
+**Why:** Bound synthetic GUI lease cleanup and reboot validation to the two existing VMs without treating design approval as rollout or product-gate evidence.
