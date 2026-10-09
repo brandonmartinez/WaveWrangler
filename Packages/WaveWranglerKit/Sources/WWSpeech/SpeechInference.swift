@@ -25,11 +25,11 @@ public struct SpeechInference: Sendable {
         model: ShowDocumentModel, episodeID: EpisodeID, speakerID: SpeakerID,
         channel: ChannelReference
     ) throws(SpeechRefusal) {
-        try requireSelectedPrimary(model: model, episodeID: episodeID, speakerID: speakerID, channel: channel)
+        try Self.requireSelectedPrimary(model: model, episodeID: episodeID, speakerID: speakerID, channel: channel)
         throw .engineUnavailable
     }
 
-    private func requireSelectedPrimary(
+    package static func requireSelectedPrimary(
         model: ShowDocumentModel, episodeID: EpisodeID, speakerID: SpeakerID,
         channel: ChannelReference
     ) throws(SpeechRefusal) {
@@ -57,7 +57,7 @@ public struct SpeechInference: Sendable {
         model: ShowDocumentModel, episodeID: EpisodeID, speakerID: SpeakerID,
         channel: ChannelReference
     ) throws(SpeechRefusal) -> SyntheticSpeechProbeResult {
-        try requireSelectedPrimary(model: model, episodeID: episodeID, speakerID: speakerID, channel: channel)
+        try Self.requireSelectedPrimary(model: model, episodeID: episodeID, speakerID: speakerID, channel: channel)
         let probe = ww_whisper_cpu_probe()
         guard probe.linked == 1, probe.inference_available == 0,
               probe.synthetic_frame_count == 4, probe.recognized_word_count == 0

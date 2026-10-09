@@ -60,7 +60,7 @@ let package = Package(
         .target(name: "WWAlignSegment", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
         .target(name: "WWAlignPipeline", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWDerived", "WWPersistence", "WWAlignEstimate", "WWRender"]),
         .target(name: "WWWordEvaluation"),
-        .target(name: "WWSpeech", dependencies: ["WWCore", "WWWhisperNative"]),
+        .target(name: "WWSpeech", dependencies: ["WWCore", "WWDecode", "WWTimeMap", "WWWhisperNative"]),
         .target(
             name: "WWWhisperNative",
             exclude: ["upstream/LICENSE"],
@@ -90,7 +90,7 @@ let package = Package(
         .testTarget(name: "WWAlignSegmentTests", dependencies: ["WWAlignSegment", "WWAlignEstimate", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWAlignPipelineTests", dependencies: ["WWAlignPipeline", "WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWAlignEstimate", "WWRender", "WWCore"]),
         .testTarget(name: "WWWordEvaluationTests", dependencies: ["WWWordEvaluation"]),
-        .testTarget(name: "WWSpeechTests", dependencies: ["WWSpeech", "WWCore", "WWWhisperNative"]),
+        .testTarget(name: "WWSpeechTests", dependencies: ["WWSpeech", "WWCore", "WWDecode", "WWTimeMap", "WWWhisperNative"]),
         .testTarget(name: "WWTinyPCMProbeTests", dependencies: ["WWTinyPCMProbe"]),
         .testTarget(name: "WWCutPolicyTests", dependencies: ["WWCutPolicy"]),
         // Headless validation on a user-approved local episode copy. Skipped unless WW_LOCAL_EPISODE_DIR is
