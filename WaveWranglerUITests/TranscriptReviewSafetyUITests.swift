@@ -148,15 +148,15 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 5))
             selectFirstEpisode()
             app.buttons["ww.show.destination.review"].click()
+            XCTAssertTrue(app.chooseMenu(["View", "Hide Inspector"]))
+            XCTAssertFalse(app.scrollViews["ww.inspector"].exists)
+            XCTAssertTrue(app.chooseMenu(["View", "Hide Sidebar"]))
             for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
             assertTextSize200()
 
             let window = app.windows["ww.show.window"]
             XCTAssertEqual(window.frame.width, 760, accuracy: 2)
             XCTAssertEqual(window.frame.height, 492, accuracy: 2)
-            app.buttons["Hide Inspector"].click()
-            XCTAssertFalse(app.scrollViews["ww.inspector"].exists)
-            XCTAssertTrue(app.chooseMenu(["View", "Hide Sidebar"]))
 
             let scroll = app.scrollViews["ww.review.wideContentScroll"]
             XCTAssertTrue(scroll.waitForExistence(timeout: 3), "\(appearance): wide Review needs a vertical viewport")
