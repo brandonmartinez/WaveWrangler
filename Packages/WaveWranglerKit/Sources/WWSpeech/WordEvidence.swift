@@ -87,6 +87,43 @@ public struct SourceWordBoundaries: Sendable, Equatable, Codable {
     }
 }
 
+/// Per-word proof required before a future bridge may label either boundary supported.
+/// No current inference path verifies the independent word evidence or proxy/map chain,
+/// so this type intentionally has no public issuer.
+public struct SupportedWordBoundaryProvenance: Sendable, Equatable {
+    public let wordID: String
+    public let origin: SpeechWordOrigin
+    public let versions: SpeechWordVersions
+    public let sourceFrames: SourceWordBoundaries
+    public let proxyChunkID: String
+    public let proxyFramesPerSecond: Int64
+    public let proxyToSourceRevision: String
+    public let acceptedAlignmentRevision: Int
+    public let independentBoundaryEvidenceID: String
+
+    private init(wordID: String, origin: SpeechWordOrigin, versions: SpeechWordVersions,
+                 sourceFrames: SourceWordBoundaries, proxyChunkID: String,
+                 proxyFramesPerSecond: Int64, proxyToSourceRevision: String,
+                 acceptedAlignmentRevision: Int, independentBoundaryEvidenceID: String) {
+        self.wordID = wordID
+        self.origin = origin
+        self.versions = versions
+        self.sourceFrames = sourceFrames
+        self.proxyChunkID = proxyChunkID
+        self.proxyFramesPerSecond = proxyFramesPerSecond
+        self.proxyToSourceRevision = proxyToSourceRevision
+        self.acceptedAlignmentRevision = acceptedAlignmentRevision
+        self.independentBoundaryEvidenceID = independentBoundaryEvidenceID
+    }
+}
+
+/// A raw segment timestamp is never proof of the words inside that segment.
+public enum WordBoundaryProvenance: Sendable, Equatable {
+    case unavailable
+    case unsupported
+    case supported(SupportedWordBoundaryProvenance)
+}
+
 /// Only an actually supplied engine value, in its reported units (not assumed to be a probability).
 public struct WordRecognitionConfidence: Sendable, Equatable, Codable {
     public let value: Double
@@ -204,6 +241,14 @@ public struct ValidatedSpeechWordEvidence: Sendable {
     public let origin: SpeechWordOrigin
     public let versions: SpeechWordVersions
     public let words: [SpeechWordEvidence]
+
+    /// Validation of source-frame ranges alone never upgrades raw or missing times to supported.
+    public var boundaryProvenance: [WordBoundaryProvenance] {
+        words.map { word in
+            guard word.boundaries != nil else { return .unavailable }
+            return .unsupported
+        }
+    }
 
     fileprivate init(version: Int, origin: SpeechWordOrigin, versions: SpeechWordVersions,
                      words: [SpeechWordEvidence]) {

@@ -86,6 +86,35 @@ struct WordEvidenceTests {
         }
     }
 
+    @Test func syntheticSegmentTimingCannotSupportWords() throws {
+        let f = try fixture()
+        let first = f.word(id: "synthetic-word-1", text: "first")
+        let second = f.word(id: "synthetic-word-2", text: "second")
+        let inferred = try f.validate(f.batch([first, second]))
+        #expect(inferred.boundaryProvenance == [.unavailable, .unavailable])
+        #expect(inferred.words.allSatisfy { $0.boundaries == nil && $0.confidence == nil })
+
+        let fragments = try f.validate(f.batch([
+            f.word(id: "subword", text: "inter"),
+            f.word(id: "punctuation", text: "!"),
+            f.word(id: "remainder", text: "national"),
+        ]))
+        #expect(fragments.boundaryProvenance == [.unavailable, .unavailable, .unavailable])
+
+        let segmentFrames = SourceWordBoundaries(startFrame: 0, endFrame: 48_000)
+        let segmentShapedWord = f.word(id: "segment-shaped", boundaries: segmentFrames)
+        let unproven = try f.validate(f.batch([segmentShapedWord]))
+        #expect(unproven.boundaryProvenance == [.unsupported])
+        #expect(unproven.words[0].boundaries == segmentFrames)
+        #expect(unproven.words[0].confidence == nil)
+        #expect(throws: SpeechWordEvidenceError.invalidOrder) {
+            try f.validate(f.batch([
+                f.word(id: "overlap-1", boundaries: SourceWordBoundaries(startFrame: 0, endFrame: 30_000)),
+                f.word(id: "overlap-2", boundaries: SourceWordBoundaries(startFrame: 10_000, endFrame: 48_000)),
+            ]))
+        }
+    }
+
     @Test func rejectsUnknownVersionDuplicateIDsAndEmptyWords() throws {
         let f = try fixture()
         let word = f.word()
