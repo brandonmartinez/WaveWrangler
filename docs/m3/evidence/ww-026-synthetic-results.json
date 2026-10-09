@@ -1,0 +1,83 @@
+{
+  "cases": [
+    {
+      "case": 1,
+      "input": "locally synthesized en-US PCM",
+      "native": {
+        "reason": "supportedOnly",
+        "state": "NOT_RUN"
+      },
+      "whisper": {
+        "durationSeconds": 2.543,
+        "network": "DENIED for inference process by validated sandbox; system-level egress unobserved",
+        "observedProcessPeakRSSBytes": 381763584,
+        "recognizedWords": 8,
+        "rtf": 0.087,
+        "segmentTiming": {
+          "segments": 1,
+          "timedSegments": 1
+        },
+        "wallSeconds": 0.222,
+        "wordErrorRate": 0.0
+      }
+    },
+    {
+      "case": 2,
+      "input": "locally synthesized en-US PCM",
+      "native": {
+        "reason": "supportedOnly",
+        "state": "NOT_RUN"
+      },
+      "whisper": {
+        "durationSeconds": 2.854,
+        "network": "DENIED for inference process by validated sandbox; system-level egress unobserved",
+        "observedProcessPeakRSSBytes": 382042112,
+        "recognizedWords": 9,
+        "rtf": 0.078,
+        "segmentTiming": {
+          "segments": 1,
+          "timedSegments": 1
+        },
+        "wallSeconds": 0.223,
+        "wordErrorRate": 0.0
+      }
+    }
+  ],
+  "gate": "synthetic calibration only; neither candidate adopted",
+  "host": {
+    "architecture": "arm64",
+    "bootEpochSeconds": 1790975765,
+    "macOS": "27.0.1",
+    "physicalRAMBytes": 137438953472
+  },
+  "model": {
+    "bytes": 147964211,
+    "license": "MIT upstream code/weights claim; conversion and redistribution not cleared",
+    "name": "ggml-base.en.bin",
+    "sha256": "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+    "source": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en.bin",
+    "tokenizer": "embedded in this ggml model; no separate tokenizer or Hub loader",
+    "version": "ggerganov/whisper.cpp@5359861c739e955e79d9a303bcbc70fb988958b1"
+  },
+  "nativeAsset": {
+    "assetHash": "UNKNOWN-system-managed",
+    "assetVersion": "UNKNOWN-system-managed",
+    "availability": "supportedOnly",
+    "locale": "en_US",
+    "probeSHA256": "5ecaa0ff84c4c5dbd177bb8bd1ae89cfa48a4c205b976fd63b7b3ef077d7942d"
+  },
+  "runtime": {
+    "executableSHA256": "13650fc8ffaaa4e637c6951f7d2e492916877e70bd1b7a266fbfd0bdc597719e",
+    "license": "MIT; installed Homebrew build and linked ggml/Apple dependencies, not a redistribution BOM",
+    "name": "whisper.cpp",
+    "source": "https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.4",
+    "version": "1.9.4"
+  },
+  "unsupported": [
+    "macOS 26, 16 GB, cold-restart, thermal, long-episode, and representative-audio strata UNKNOWN",
+    "process-family and Speech service peak RAM UNKNOWN; observed RSS is only the timed process",
+    "native asset hash/version/update and system Speech service network activity UNKNOWN",
+    "Whisper word-level boundary accuracy and chosen-build redistribution rights UNKNOWN",
+    "no private or episode media processed; synthetic recognition alone cannot select an engine"
+  ]
+}
