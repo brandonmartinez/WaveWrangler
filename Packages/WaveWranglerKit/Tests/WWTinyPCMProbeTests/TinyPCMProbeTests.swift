@@ -107,6 +107,36 @@ struct TinyPCMProbeTests {
                 "experimental/unsupported")
     }
 
+    @Test func dtwRequiresExactOptInAndPresetBeforeAnyModelRead() throws {
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        #expect(throws: ProbeError.invalidDTWPreset) {
+            try TinyModelProbe.parseArguments(["ww-tiny-pcm-probe", "--model", missing, "--experimental-dtw"])
+        }
+        #expect(throws: ProbeError.invalidDTWPreset) {
+            try TinyModelProbe.run(path: missing, dtwPreset: "tiny")
+        }
+        #expect(throws: ProbeError.invalidDTWPreset) {
+            try TinyModelProbe.run(path: missing, dtwPreset: "")
+        }
+        #expect(throws: ProbeError.missingModel) {
+            try TinyModelProbe.run(path: missing, dtwPreset: "tiny.en")
+        }
+        let plain = try TinyModelProbe.parseArguments(["ww-tiny-pcm-probe", "--model", missing])
+        #expect(plain.dtwPreset == nil)
+        let optedIn = try TinyModelProbe.parseArguments([
+            "ww-tiny-pcm-probe", "--model", missing, "--experimental-dtw", "tiny.en"
+        ])
+        #expect(optedIn.dtwPreset == "tiny.en")
+    }
+
+    @Test func dtwPointClassificationNeverProducesSupportedWordEvidence() {
+        #expect(TinyModelProbe.classifyDTWPoint(enabled: false, point: 20) == "absent")
+        #expect(TinyModelProbe.classifyDTWPoint(enabled: true, point: -1) == "absent")
+        #expect(TinyModelProbe.classifyDTWPoint(enabled: true, point: 201) == "absent")
+        #expect(TinyModelProbe.classifyDTWPoint(enabled: true, point: 0) == "experimental/unsupported")
+        #expect(TinyModelProbe.classifyDTWPoint(enabled: true, point: 200) == "experimental/unsupported")
+    }
+
     @Test func generatedProbeJSONHasOnlyAggregateUnsupportedTokenEvidence() throws {
         let disabled = TinyTokenTimingObservation(
             mode: "disabled", provenance: "experimental/unsupported", tokenCount: 4,
@@ -124,7 +154,7 @@ struct TinyPCMProbeTests {
             loaded: true, inferred: true, sampleCount: 32_000, threads: 2,
             segmentCount: 1, whitespaceWordCount: 2, segmentTimingAvailable: true,
             loadSeconds: 0.25, inferenceSeconds: 0.5, enabledInferenceSeconds: 0.75,
-            tokenTimingDisabled: disabled, tokenTimingEnabled: enabled
+            tokenTimingDisabled: disabled, tokenTimingEnabled: enabled, dtw: nil
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -132,6 +162,25 @@ struct TinyPCMProbeTests {
         let expectedDisabled = #"{"absentTextTokenCount":3,"experimentalTextTokenCount":0,"internalWhitespaceTokenCount":0,"leadingWhitespaceTokenCount":1,"mode":"disabled","provenance":"experimental/unsupported","textTokenCount":3,"tokenCount":4,"unseparatedAdjacentTokenCount":1}"#
         let expectedEnabled = #"{"absentTextTokenCount":2,"experimentalTextTokenCount":1,"internalWhitespaceTokenCount":0,"leadingWhitespaceTokenCount":1,"mode":"experimental-enabled","provenance":"experimental/unsupported","textTokenCount":3,"tokenCount":4,"unseparatedAdjacentTokenCount":1}"#
         #expect(json == #"{"enabledInferenceSeconds":0.75,"inferenceSeconds":0.5,"inferred":true,"loadSeconds":0.25,"loaded":true,"sampleCount":32000,"segmentCount":1,"segmentTimingAvailable":true,"supportedWordBoundaryCount":0,"threads":2,"tokenTimingDisabled":\#(expectedDisabled),"tokenTimingEnabled":\#(expectedEnabled),"whitespaceWordCount":2,"wordTimingAvailable":false,"wordTimingProvenance":"experimental/unsupported"}"#)
+
+        let dtw = TinyDTWObservation(
+            alignmentHeadPreset: "tiny.en", loadSeconds: 0.125, inferenceSeconds: 1.25,
+            tokenTiming: TinyTokenTimingObservation(
+                mode: "dtw-experimental", provenance: "experimental/unsupported", tokenCount: 4,
+                textTokenCount: 3, absentTextTokenCount: 2, experimentalTextTokenCount: 1,
+                leadingWhitespaceTokenCount: 1, internalWhitespaceTokenCount: 0,
+                unseparatedAdjacentTokenCount: 1
+            )
+        )
+        let withDTW = TinyProbeResult(
+            loaded: true, inferred: true, sampleCount: 32_000, threads: 2,
+            segmentCount: 1, whitespaceWordCount: 2, segmentTimingAvailable: true,
+            loadSeconds: 0.25, inferenceSeconds: 0.5, enabledInferenceSeconds: 0.75,
+            tokenTimingDisabled: disabled, tokenTimingEnabled: enabled, dtw: dtw
+        )
+        let dtwJSON = try String(decoding: encoder.encode(withDTW), as: UTF8.self)
+        let expectedDTW = #"{"alignmentHeadPreset":"tiny.en","inferenceSeconds":1.25,"loadSeconds":0.125,"tokenTiming":{"absentTextTokenCount":2,"experimentalTextTokenCount":1,"internalWhitespaceTokenCount":0,"leadingWhitespaceTokenCount":1,"mode":"dtw-experimental","provenance":"experimental/unsupported","textTokenCount":3,"tokenCount":4,"unseparatedAdjacentTokenCount":1}}"#
+        #expect(dtwJSON == #"{"dtw":\#(expectedDTW),"enabledInferenceSeconds":0.75,"inferenceSeconds":0.5,"inferred":true,"loadSeconds":0.25,"loaded":true,"sampleCount":32000,"segmentCount":1,"segmentTimingAvailable":true,"supportedWordBoundaryCount":0,"threads":2,"tokenTimingDisabled":\#(expectedDisabled),"tokenTimingEnabled":\#(expectedEnabled),"whitespaceWordCount":2,"wordTimingAvailable":false,"wordTimingProvenance":"experimental/unsupported"}"#)
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_TINY_MODEL_PATH"] != nil))
@@ -155,5 +204,22 @@ struct TinyPCMProbeTests {
         #expect(result.tokenTimingEnabled.absentTextTokenCount +
                 result.tokenTimingEnabled.experimentalTextTokenCount ==
                 result.tokenTimingEnabled.textTokenCount)
+        #expect(result.dtw == nil)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_TINY_MODEL_PATH"] != nil))
+    func dtwGeneratedProbeOnlyWhenExplicitlyOptedIn() throws {
+        let path = try #require(ProcessInfo.processInfo.environment["WW_TINY_MODEL_PATH"])
+        let result = try TinyModelProbe.run(path: path, dtwPreset: "tiny.en")
+        let dtw = try #require(result.dtw)
+        #expect(dtw.alignmentHeadPreset == "tiny.en")
+        #expect(dtw.loadSeconds >= 0)
+        #expect(dtw.inferenceSeconds >= 0)
+        #expect(dtw.tokenTiming.mode == "dtw-experimental")
+        #expect(dtw.tokenTiming.provenance == "experimental/unsupported")
+        #expect(dtw.tokenTiming.absentTextTokenCount + dtw.tokenTiming.experimentalTextTokenCount ==
+                dtw.tokenTiming.textTokenCount)
+        #expect(result.wordTimingAvailable == false)
+        #expect(result.supportedWordBoundaryCount == 0)
     }
 }

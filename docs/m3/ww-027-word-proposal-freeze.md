@@ -68,3 +68,37 @@ word boundaries or cuts. The no-model synthetic shape/classification tests
 do not run the engine or validate transcription. The frozen >=1,000 reference
 boundary and >=300 proposal gates and approved-media/offline validation
 remain unrun.
+
+### Explicit experimental DTW pass (stacked on #408)
+
+The headless probe additionally accepts `--experimental-dtw tiny.en` **only**
+alongside `--model` and the existing verified local tiny.en descriptor. Without
+the option its two existing non-DTW passes and JSON shape are unchanged. An
+absent or different alignment-head preset refuses before opening any model;
+the native bridge also refuses mismatched preset strings. The third pass
+reuses the same two-second generated 16 kHz tone and bounded decoding options,
+but opens a separate CPU context with `dtw_token_timestamps=true` and the
+upstream `WHISPER_AHEADS_TINY_EN` preset. It does not run if either original
+pass fails; any DTW initialization or inference failure refuses the entire
+opt-in result rather than publishing a partial success. `dtw.loadSeconds` and
+`dtw.inferenceSeconds` are separate observations of this extra context and
+inference, not a representative audio workload or product latency.
+
+Pinned v1.6.2 computes DTW **token points** in `t_dtw` (10 ms ticks), not
+start/end intervals (`upstream/whisper.cpp:7280-7285`); the public header
+marks them experimental (`upstream/whisper.h:119-125,141-146`). With regular
+token timestamps off in this third pass, a text token's `t_dtw` is counted
+as present only when in the generated two-second window [0, 200]; missing
+(-1) and out-of-window points are absent/invalid. The opt-in JSON adds only
+`dtw.alignmentHeadPreset`, `dtw.loadSeconds`, `dtw.inferenceSeconds` and
+`dtw.tokenTiming`: aggregate text-token, present/absent point and token
+whitespace-shape counts. The mode is `dtw-experimental` and the provenance
+remains `experimental/unsupported`. No individual point, interval, token
+text, transcript, confidence or word time is serialized. Even if every token
+has a plausible point, `wordTimingAvailable=false` and
+`supportedWordBoundaryCount=0`; DTW token points cannot establish a
+word's two independently validated source-frame boundaries. The synthetic
+no-model classification/JSON tests are source-only at this writing because
+the working-Mac full suite occupies host capacity; a red-first test run and
+model-backed opt-in pass require a separately released test window. No
+approved-media gate, holdout or threshold has run.

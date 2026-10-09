@@ -29,6 +29,10 @@ typedef struct {
 // Enabled token times may have been interpolated or adjusted by upstream code.
 int32_t ww_whisper_classify_token_timing(int32_t enabled, int64_t t0, int64_t t1);
 
+// DTW reports a token point in 10 ms ticks, NOT an interval or word boundary.
+// 0 = absent/invalid/out of the generated two-second window, 1 = experimental/unsupported.
+int32_t ww_whisper_classify_dtw_point(int32_t enabled, int64_t point);
+
 typedef struct {
     int32_t loaded;
     int32_t inferred;
@@ -40,13 +44,23 @@ typedef struct {
     double load_seconds;
     double inference_seconds;
     double enabled_inference_seconds;
+    double dtw_load_seconds;
+    double dtw_inference_seconds;
+    int32_t dtw_inferred;
     WWTokenTimingObservation disabled_token_timing;
     WWTokenTimingObservation enabled_token_timing;
+    WWTokenTimingObservation dtw_token_timing;
 } WWTinyPCMProbeResult;
 
 // Only the separate headless probe invokes this on generated PCM after model validation.
 // Both modes have DTW disabled; observations are never source-frame word timings.
 WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe(void *model_bytes, size_t model_size);
+
+// Third pass is opt-in and refuses any preset other than the pinned tiny.en heads.
+// The caller must verify the tiny.en model descriptor before invoking this ABI.
+WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe_with_dtw(
+    void *model_bytes, size_t model_size, const char *alignment_head_preset
+);
 
 // This lower-level ABI has no source reader. Call only after verifying the pinned
 // model and validating exactly two seconds of caller-owned 16 kHz mono PCM.

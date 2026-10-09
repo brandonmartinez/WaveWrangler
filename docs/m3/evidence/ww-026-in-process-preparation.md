@@ -38,3 +38,26 @@ in-process sandbox endpoint/FD proof and measured offline inference remain unrun
 No word-level producer, source-frame mapping, stale invalidation or #21 frozen
 1000-boundary / 300-proposal evidence is provided. These are explicit STOP gates,
 not acceptance evidence for #23, #32, #41 or M3.
+
+## Third synthetic probe pass: experimental DTW preparation
+
+The separate `ww-tiny-pcm-probe` can explicitly request
+`--experimental-dtw tiny.en` with its existing `--model` descriptor. The
+verified local tiny.en loader refuses absent/mismatched model descriptors and
+the opt-in refuses absent/mismatched preset strings before reading model
+content. The native bridge accepts only the exact tiny.en alignment-head
+preset; it runs the two preexisting non-DTW passes first, then (only on
+successful opt-in) initializes a new CPU context and runs pinned v1.6.2
+experimental DTW over the same generated two-second tone. An unsuccessful
+third pass refuses the probe. Output is aggregate-only with separate DTW
+load/inference duration and present/absent **token point** counts, not DTW
+intervals, validated words or confidence; `wordTimingAvailable=false` and
+`supportedWordBoundaryCount=0` always. See
+[WW-027's characterization](../ww-027-word-proposal-freeze.md) for the
+field classification and unchanged holdout STOP.
+
+This does not alter `BoundedPCMInference`, `SpeechInference.infer`, or any
+selected-Primary admission path. Source/diff checks only are permitted while
+host capacity is held by other gates; no compiler, model-backed run, app
+sandbox network/FD proof, rights chain or approved-media evidence is
+established here. #23, #32 and #21 remain open.

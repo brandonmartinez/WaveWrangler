@@ -16,6 +16,7 @@ enum ProbeError: Error, Equatable {
     case hashMismatch
     case loadFailed
     case inferenceFailed
+    case invalidDTWPreset
 }
 
 struct TinyTokenTimingObservation: Encodable {
@@ -29,9 +30,9 @@ struct TinyTokenTimingObservation: Encodable {
     let internalWhitespaceTokenCount: Int
     let unseparatedAdjacentTokenCount: Int
 
-    static func fromNative(_ native: WWTokenTimingObservation, enabled: Bool) -> Self {
+    static func fromNative(_ native: WWTokenTimingObservation, mode: String) -> Self {
         Self(
-            mode: enabled ? "experimental-enabled" : "disabled",
+            mode: mode,
             provenance: "experimental/unsupported",
             tokenCount: Int(native.token_count),
             textTokenCount: Int(native.text_token_count),
@@ -42,6 +43,13 @@ struct TinyTokenTimingObservation: Encodable {
             unseparatedAdjacentTokenCount: Int(native.unseparated_adjacent_token_count)
         )
     }
+}
+
+struct TinyDTWObservation: Encodable {
+    let alignmentHeadPreset: String
+    let loadSeconds: Double
+    let inferenceSeconds: Double
+    let tokenTiming: TinyTokenTimingObservation
 }
 
 struct TinyProbeResult: Encodable {
@@ -57,18 +65,39 @@ struct TinyProbeResult: Encodable {
     let enabledInferenceSeconds: Double
     let tokenTimingDisabled: TinyTokenTimingObservation
     let tokenTimingEnabled: TinyTokenTimingObservation
+    let dtw: TinyDTWObservation?
     let wordTimingAvailable = false
     let wordTimingProvenance = "experimental/unsupported"
     let supportedWordBoundaryCount = 0
 }
 
 enum TinyModelProbe {
+    static func parseArguments(_ arguments: [String]) throws -> (path: String, dtwPreset: String?) {
+        guard arguments.count >= 3, arguments[1] == "--model", !arguments[2].isEmpty else {
+            throw ProbeError.invalidInput
+        }
+        if arguments.count >= 4, arguments[3] == "--experimental-dtw" {
+            guard arguments.count == 5, arguments[4] == "tiny.en" else {
+                throw ProbeError.invalidDTWPreset
+            }
+            return (arguments[2], "tiny.en")
+        }
+        guard arguments.count == 3 else { throw ProbeError.invalidInput }
+        return (arguments[2], nil)
+    }
+
     static func classifyTokenTiming(enabled: Bool, start: Int64, end: Int64) -> String {
         ww_whisper_classify_token_timing(enabled ? 1 : 0, start, end) == 1
             ? "experimental/unsupported" : "absent"
     }
 
-    static func run(path: String) throws -> TinyProbeResult {
+    static func classifyDTWPoint(enabled: Bool, point: Int64) -> String {
+        ww_whisper_classify_dtw_point(enabled ? 1 : 0, point) == 1
+            ? "experimental/unsupported" : "absent"
+    }
+
+    static func run(path: String, dtwPreset: String? = nil) throws -> TinyProbeResult {
+        guard dtwPreset == nil || dtwPreset == "tiny.en" else { throw ProbeError.invalidDTWPreset }
         let model: VerifiedTinyModel
         do {
             model = try VerifiedTinyModel.load(path: path)
@@ -76,10 +105,19 @@ enum TinyModelProbe {
             throw ProbeError(error)
         }
         let native = model.withNativeBytes { pointer, count in
-            ww_whisper_tiny_pcm_probe(pointer, count)
+            if dtwPreset != nil {
+                return ww_whisper_tiny_pcm_probe_with_dtw(pointer, count, "tiny.en")
+            }
+            return ww_whisper_tiny_pcm_probe(pointer, count)
         }
         guard native.loaded == 1 else { throw ProbeError.loadFailed }
         guard native.inferred == 1 else { throw ProbeError.inferenceFailed }
+        if dtwPreset != nil, native.dtw_inferred != 1 { throw ProbeError.inferenceFailed }
+        let dtw: TinyDTWObservation? = dtwPreset == nil ? nil : TinyDTWObservation(
+            alignmentHeadPreset: "tiny.en",
+            loadSeconds: native.dtw_load_seconds, inferenceSeconds: native.dtw_inference_seconds,
+            tokenTiming: .fromNative(native.dtw_token_timing, mode: "dtw-experimental")
+        )
         return TinyProbeResult(
             loaded: true, inferred: true,
             sampleCount: Int(native.sample_count), threads: Int(native.threads),
@@ -87,8 +125,9 @@ enum TinyModelProbe {
             segmentTimingAvailable: native.segment_timing_available == 1,
             loadSeconds: native.load_seconds, inferenceSeconds: native.inference_seconds,
             enabledInferenceSeconds: native.enabled_inference_seconds,
-            tokenTimingDisabled: TinyTokenTimingObservation.fromNative(native.disabled_token_timing, enabled: false),
-            tokenTimingEnabled: TinyTokenTimingObservation.fromNative(native.enabled_token_timing, enabled: true)
+            tokenTimingDisabled: TinyTokenTimingObservation.fromNative(native.disabled_token_timing, mode: "disabled"),
+            tokenTimingEnabled: TinyTokenTimingObservation.fromNative(native.enabled_token_timing, mode: "experimental-enabled"),
+            dtw: dtw
         )
     }
 
@@ -127,12 +166,9 @@ extension ProbeError {
 @main
 struct TinyPCMProbeCLI {
     static func main() {
-        guard CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--model" else {
-            fputs("usage: ww-tiny-pcm-probe --model <local model path>\n", stderr)
-            exit(2)
-        }
         do {
-            let result = try TinyModelProbe.run(path: CommandLine.arguments[2])
+            let arguments = try TinyModelProbe.parseArguments(CommandLine.arguments)
+            let result = try TinyModelProbe.run(path: arguments.path, dtwPreset: arguments.dtwPreset)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             let data = try encoder.encode(result)
@@ -141,6 +177,10 @@ struct TinyPCMProbeCLI {
             }
             print(output)
         } catch let error as ProbeError {
+            if error == .invalidInput || error == .invalidDTWPreset {
+                fputs("usage: ww-tiny-pcm-probe --model <local model path> [--experimental-dtw tiny.en]\n", stderr)
+                exit(2)
+            }
             fputs("probe refused: \(error)\n", stderr)
             exit(1)
         } catch {

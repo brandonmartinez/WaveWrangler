@@ -37,7 +37,11 @@ int32_t ww_whisper_classify_token_timing(int32_t enabled, int64_t t0, int64_t t1
     return enabled == 1 && t0 >= 0 && t1 > t0 ? 1 : 0;
 }
 
-static WWTokenTimingObservation observe_tokens(struct whisper_context *context, int32_t enabled) {
+int32_t ww_whisper_classify_dtw_point(int32_t enabled, int64_t point) {
+    return enabled == 1 && point >= 0 && point <= 200 ? 1 : 0;
+}
+
+static WWTokenTimingObservation observe_tokens(struct whisper_context *context, int32_t mode) {
     WWTokenTimingObservation observation = { 0 };
     const int segments = whisper_full_n_segments(context);
     for (int i = 0; i < segments; ++i) {
@@ -77,9 +81,12 @@ static WWTokenTimingObservation observe_tokens(struct whisper_context *context, 
                 previous_text_token && !previous_ended_in_whitespace && !isspace(*text);
             previous_text_token = 1;
             previous_ended_in_whitespace = ended_in_whitespace;
-            if (enabled == 1) {
+            if (mode != 0) {
                 const whisper_token_data token = whisper_full_get_token_data(context, i, j);
-                if (ww_whisper_classify_token_timing(enabled, token.t0, token.t1)) {
+                const int32_t present = mode == 2
+                    ? ww_whisper_classify_dtw_point(1, token.t_dtw)
+                    : ww_whisper_classify_token_timing(1, token.t0, token.t1);
+                if (present) {
                     ++observation.experimental_text_token_count;
                 } else {
                     ++observation.absent_text_token_count;
@@ -92,7 +99,7 @@ static WWTokenTimingObservation observe_tokens(struct whisper_context *context, 
     return observation;
 }
 
-WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe(void *model_bytes, size_t model_size) {
+static WWTinyPCMProbeResult run_tiny_pcm_probe(void *model_bytes, size_t model_size, int32_t run_dtw) {
     WWTinyPCMProbeResult result = { 0 };
     if (!model_bytes || model_size != 77704715) {
         return result;
@@ -172,7 +179,41 @@ WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe(void *model_bytes, size_t model_s
         }
     }
     whisper_free(context);
+    if (run_dtw && result.inferred == 1) {
+        context_params.dtw_token_timestamps = true;
+        context_params.dtw_aheads_preset = WHISPER_AHEADS_TINY_EN;
+        clock_gettime(CLOCK_MONOTONIC, &before);
+        struct whisper_context *dtw_context =
+            whisper_init_from_buffer_with_params(model_bytes, model_size, context_params);
+        clock_gettime(CLOCK_MONOTONIC, &after);
+        result.dtw_load_seconds = elapsed_seconds(before, after);
+        if (dtw_context) {
+            full_params.token_timestamps = false;
+            clock_gettime(CLOCK_MONOTONIC, &before);
+            const int dtw_status = whisper_full(dtw_context, full_params, pcm, sample_count);
+            clock_gettime(CLOCK_MONOTONIC, &after);
+            result.dtw_inference_seconds = elapsed_seconds(before, after);
+            if (dtw_status == 0) {
+                result.dtw_inferred = 1;
+                result.dtw_token_timing = observe_tokens(dtw_context, 2);
+            }
+            whisper_free(dtw_context);
+        }
+    }
     return result;
+}
+
+WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe(void *model_bytes, size_t model_size) {
+    return run_tiny_pcm_probe(model_bytes, model_size, 0);
+}
+
+WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe_with_dtw(
+    void *model_bytes, size_t model_size, const char *alignment_head_preset
+) {
+    if (!alignment_head_preset || strcmp(alignment_head_preset, "tiny.en") != 0) {
+        return (WWTinyPCMProbeResult) { 0 };
+    }
+    return run_tiny_pcm_probe(model_bytes, model_size, 1);
 }
 
 static pthread_mutex_t inference_lock = PTHREAD_MUTEX_INITIALIZER;
