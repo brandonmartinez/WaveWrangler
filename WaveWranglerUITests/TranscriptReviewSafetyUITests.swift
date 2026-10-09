@@ -88,7 +88,11 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
         XCTAssertEqual(window.frame.height, 492, accuracy: 2)
         let inspector = app.scrollViews["ww.inspector"]
         XCTAssertTrue(inspector.waitForExistence(timeout: 3))
-        XCTAssertTrue(window.frame.contains(inspector.frame), "The AX scroll viewport must be bounded by the window: \(inspector.frame)")
+        let content = app.descendants(matching: .any)["ww.show.contentInspector"]
+        XCTAssertTrue(
+            window.frame.contains(inspector.frame),
+            "The AX scroll viewport must be bounded by the window: scroll \(inspector.frame), content \(content.frame), window \(window.frame)"
+        )
         XCTAssertLessThan(inspector.frame.height, 440, "The inspector must not report its document height as its viewport")
         let clip = app.descendants(matching: .any)["ww.inspector.clip"]
         XCTAssertTrue(clip.waitForExistence(timeout: 3), "The clip owns the visible scroll region")

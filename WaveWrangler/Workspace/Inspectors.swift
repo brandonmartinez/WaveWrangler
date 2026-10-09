@@ -56,11 +56,6 @@ private struct ReviewInspectorViewport: NSViewRepresentable {
     func updateNSView(_ view: ReviewInspectorPanel, context: Context) {
         view.update(selectedOccurrence: selectedOccurrence, textSize: textSize)
     }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: ReviewInspectorPanel, context: Context) -> CGSize? {
-        // The scroll document has no say in the split's ideal height; the panel fills only its proposed slot.
-        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
-    }
 }
 
 private final class ReviewInspectorClipView: NSClipView {
@@ -118,6 +113,7 @@ private final class ReviewInspectorPanel: NSView {
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
     }
+    override var fittingSize: NSSize { .zero }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.windowBackgroundColor.setFill()
