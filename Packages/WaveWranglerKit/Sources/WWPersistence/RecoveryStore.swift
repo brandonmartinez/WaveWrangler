@@ -200,8 +200,17 @@ public struct RecoveryStore: Sendable {
         let entries = try ops.contentsOfDirectory(directory)
         var found: [DocumentKey] = []
         for entry in entries {
+            let kind = try entry.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
+            guard kind.isSymbolicLink != true else { continue }
+            let hints: [URL]
+            if entry.pathExtension == "json", kind.isRegularFile == true {
+                hints = [entry] // Legacy <key>.json hint.
+            } else if kind.isDirectory == true {
+                hints = try ops.contentsOfDirectory(entry)
+            } else {
+                continue
+            }
             let key = DocumentKey(rawValue: entry.deletingPathExtension().lastPathComponent)
-            let hints = entry.pathExtension == "json" ? [entry] : try ops.contentsOfDirectory(entry)
             for hintURL in hints where hintURL.pathExtension == "json" {
                 let hint = try JSONDecoder().decode(LocationHint.self, from: ops.read(hintURL))
                 if hint.path == path {
@@ -221,6 +230,7 @@ public struct RecoveryStore: Sendable {
         let fingerprint = RevisionFingerprint(of: bytes)
         let url = folder("conflicts", key).appending(path: "\(fingerprint.shortDigest).wwconflict")
         try writeRecord(bytes, to: url)
+        guard try ops.read(url) == bytes else { throw CocoaError(.fileWriteUnknown) }
         return url
     }
 

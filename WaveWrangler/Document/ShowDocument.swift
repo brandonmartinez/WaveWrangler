@@ -326,8 +326,10 @@ final class ShowDocument: NSDocument {
 
     private func finishSave(
         saveOperation: NSDocument.SaveOperationType, adopts: Bool, error: Error?, url: URL, candidateBytes: Data?, candidateModel: ShowDocumentModel,
+        adoptingCopy: CopyElsewhereRequest? = nil
     ) -> Error? {
         let receipt = lastReceipt
+        let originURL = pendingSave?.originURL
         lastReceipt = nil
         pendingCandidate = nil
         pendingSave = nil
@@ -339,6 +341,16 @@ final class ShowDocument: NSDocument {
         if result == nil, adopts, let receipt {
             cancelSaveRetry()
             uncertainCandidate = nil
+            if let adoptingCopy {
+                store.replaceLoadedModel(candidateModel)
+                undoManager?.removeAllActions()
+                restoredOfferURLs.removeAll()
+                selectedOfferURL = nil
+                selectedOfferRecord = nil
+                status.setCopyNotice(Self.copyMessage(copyName: url.deletingPathExtension().lastPathComponent,
+                                                      folder: url.deletingLastPathComponent().lastPathComponent,
+                                                      originalFolder: adoptingCopy.originalFolder))
+            }
             publication = receipt.publication
             onDiskBase = receipt.fingerprint
             originatingItem = FileItemIdentity.observe(at: url)
@@ -367,6 +379,13 @@ final class ShowDocument: NSDocument {
             }
             acknowledgeToLibrary(receipt.publication)
         } else if let error = result {
+            if saveOperation == .saveAsOperation, fileURL?.standardizedFileURL == url.standardizedFileURL,
+               originURL != url.standardizedFileURL {
+                fileURL = originURL
+                fileModificationDate = originURL.flatMap {
+                    (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                }
+            }
             let cocoaError = error as NSError
             if !isDocumentEdited, !(cocoaError.domain == NSCocoaErrorDomain && cocoaError.code == NSUserCancelledError) {
                 updateChangeCount(.changeDone)
@@ -468,9 +487,9 @@ final class ShowDocument: NSDocument {
     var showFileName: String { fileURL?.deletingPathExtension().lastPathComponent ?? displayName }
 
     private func saveCopy(_ request: CopyElsewhereRequest, to url: URL, ofType typeName: String, completionHandler: @escaping (Error?) -> Void) {
-        let name = url.deletingPathExtension().lastPathComponent
-        let copy = (try? store.model.duplicatedAsNewShow().renamingShow(to: name)) ?? store.model.duplicatedAsNewShow()
+        let copy: ShowDocumentModel
         do {
+            copy = try store.model.duplicatedAsNewShow().renamingShow(to: url.deletingPathExtension().lastPathComponent)
             pendingCandidate = try coder.encodeDocument(copy, revision: 1, publicationID: UUID())
         } catch {
             status.set(.saveFailed(retainedRevision: publication?.revision, kind: .other, message: error.localizedDescription))
@@ -484,19 +503,9 @@ final class ShowDocument: NSDocument {
         let candidateBytes = pendingCandidate?.data
         super.save(to: url, ofType: typeName, for: .saveAsOperation) { [weak self] error in
             guard let self else { return completionHandler(error) }
-            self.pendingCandidateKey = nil
-            if error == nil, self.lastReceipt != nil {
-                // The window now edits the copy; the original's recovery records remain under its own key.
-                self.store.replaceLoadedModel(copy)
-                self.undoManager?.removeAllActions()
-                self.restoredOfferURLs.removeAll()
-                self.selectedOfferURL = nil
-                self.selectedOfferRecord = nil
-                self.status.setCopyNotice(Self.copyMessage(copyName: name, folder: url.deletingLastPathComponent().lastPathComponent,
-                                                           originalFolder: request.originalFolder))
-            }
             let result = self.finishSave(saveOperation: .saveAsOperation, adopts: true, error: error, url: url,
-                                         candidateBytes: candidateBytes, candidateModel: copy)
+                                         candidateBytes: candidateBytes, candidateModel: copy, adoptingCopy: request)
+            self.pendingCandidateKey = nil
             completionHandler(result)
         }
     }
@@ -614,9 +623,6 @@ final class ShowDocument: NSDocument {
                 guard let expectedBase = onDiskBase else {
                     throw PublicationError.originConflict("The originating file's saved base is unknown. Reopen it or save a separate copy.")
                 }
-                guard let originatingItem, FileItemIdentity.observe(at: url) == originatingItem else {
-                    throw PublicationError.originConflict("The originating file's identity is missing or has changed. Reopen it or save a separate copy.")
-                }
                 target = .inPlace(expectedBase: expectedBase)
             } else {
                 // User-confirmed Save As / Save To destination, or AppKit's own autosave-elsewhere location.
@@ -631,13 +637,18 @@ final class ShowDocument: NSDocument {
             do {
                 lastReceipt = try publisher.publish(
                     encoded: candidate, key: pendingSave.key, to: url, target: target, retainPrior: inPlace,
-                    expectedOriginItem: inPlace ? originatingItem : nil,
+                    expectedOriginItem: inPlace ? originatingItem : nil, requiresOriginIdentity: inPlace,
                     isCancelled: { false },
                     step: .external { _, _ in
                         try super.writeSafely(to: url, ofType: typeName, for: saveOperation)
                     },
                     followUp: .none
                 )
+                if Self.adoptsPublication(saveOperation),
+                   let receipt = lastReceipt,
+                   receipt.itemIdentity == nil || receipt.itemIdentity != FileItemIdentity.observe(at: url) {
+                    throw PublicationError.acknowledgementUncertain("The verified file's identity changed before the safe write completed.")
+                }
             } catch {
                 if !isDocumentEdited { updateChangeCount(.changeDone) }
                 throw error

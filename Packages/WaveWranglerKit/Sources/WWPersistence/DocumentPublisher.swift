@@ -260,6 +260,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
         target: PublicationTarget,
         retainPrior: Bool = true,
         expectedOriginItem: FileItemIdentity? = nil,
+        requiresOriginIdentity: Bool = false,
         isCancelled: () -> Bool = { false },
         step: PublishStep = .stagedReplace,
         followUp: PublicationFollowUp = .none
@@ -274,7 +275,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
             throw PublicationError.invalidCandidate(.invalidRevision(revision))
         }
         return try publish(encoded: encoded, key: key, to: url, target: target, retainPrior: retainPrior,
-                           expectedOriginItem: expectedOriginItem,
+                           expectedOriginItem: expectedOriginItem, requiresOriginIdentity: requiresOriginIdentity,
                            isCancelled: isCancelled, step: step, followUp: followUp)
     }
 
@@ -287,6 +288,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
         target: PublicationTarget,
         retainPrior: Bool,
         expectedOriginItem: FileItemIdentity? = nil,
+        requiresOriginIdentity: Bool = false,
         isCancelled: () -> Bool,
         step: PublishStep,
         followUp: PublicationFollowUp
@@ -303,7 +305,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
 
             // Step 4: retain the prior only when its SHA-256 matches the expected base.
             var prior: RecoveryCheckpoint?
-            if retainPrior, case let .inPlace(expected) = target, let recovery {
+            if retainPrior, case let .inPlace(expected) = target, let recovery, ops.exists(url) {
                 let onDisk: Data
                 do {
                     onDisk = try ops.read(url)
@@ -327,18 +329,17 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
             switch target {
             case let .inPlace(expected):
                 if onDiskFingerprint?.byteDigest != expected.byteDigest {
-                    throw conflict(expected: expected, onDisk: onDiskFingerprint, candidate: candidate, key: key)
+                    throw try conflict(expected: expected, onDisk: onDiskFingerprint, candidate: candidate, key: key)
                 }
             case .newLocation, .saveAs(replacingExisting: false):
                 if onDiskFingerprint != nil {
-                    throw conflict(expected: nil, onDisk: onDiskFingerprint, candidate: candidate, key: key)
+                    throw try conflict(expected: nil, onDisk: onDiskFingerprint, candidate: candidate, key: key)
                 }
             case .saveAs(replacingExisting: true):
                 break
             }
-            if let expectedOriginItem, FileItemIdentity.observe(at: url) != expectedOriginItem {
-                throw PublicationError.originConflict("The originating file's identity changed before publication.")
-            }
+            try verifyOriginItem(at: url, expected: expectedOriginItem, required: requiresOriginIdentity,
+                                 target: target, candidate: candidate, key: key, stage: .priorRetained)
             try hooks.reached(.baseChecked)
 
             // Step 6: stage + flush + verify, then replace (or the external safe-save).
@@ -362,9 +363,8 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
                 try hooks.reached(.stagedFlushed)
             }
             if !isCancelled() {
-                if let expectedOriginItem, FileItemIdentity.observe(at: url) != expectedOriginItem {
-                    throw PublicationError.originConflict("The originating file's identity changed before the write.")
-                }
+                try verifyOriginItem(at: url, expected: expectedOriginItem, required: requiresOriginIdentity,
+                                     target: target, candidate: candidate, key: key, stage: .baseChecked)
                 do {
                     switch step {
                     case .stagedReplace: try ops.replace(url, withStaged: staged!)
@@ -442,9 +442,40 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
         return receipt
     }
 
-    private func conflict(expected: RevisionFingerprint?, onDisk: RevisionFingerprint?, candidate: Data, key: DocumentKey) -> PublicationError {
-        let preserved = try? recovery?.preserveConflictCandidate(candidate, for: key)
-        return .conflict(PublicationConflict(expected: expected, onDisk: onDisk, preservedCandidate: preserved))
+    private func verifyOriginItem(
+        at url: URL, expected: FileItemIdentity?, required: Bool, target: PublicationTarget,
+        candidate: Data, key: DocumentKey, stage: PublicationBoundary
+    ) throws {
+        guard required || expected != nil else { return }
+        guard let expected, FileItemIdentity.observe(at: url) == expected else {
+            let onDisk: Data?
+            do {
+                onDisk = ops.exists(url) ? try ops.read(url) : nil
+            } catch where !(error is any InjectedInterruption) {
+                throw PublicationError.failed(stage: stage, kind: WriteFailureKind(classifying: error), detail: "\(error)")
+            }
+            let fingerprint = onDisk.map(RevisionFingerprint.init(of:))
+            if case let .inPlace(base) = target, fingerprint?.byteDigest != base.byteDigest {
+                throw try conflict(expected: base, onDisk: fingerprint, candidate: candidate, key: key, stage: stage)
+            }
+            throw PublicationError.originConflict("The originating file's identity is missing or has changed. Reopen it or save a separate copy.")
+        }
+    }
+
+    private func conflict(
+        expected: RevisionFingerprint?, onDisk: RevisionFingerprint?, candidate: Data,
+        key: DocumentKey, stage: PublicationBoundary = .priorRetained
+    ) throws -> PublicationError {
+        guard let recovery else {
+            throw PublicationError.failed(stage: stage, kind: .other, detail: "No recovery store is available to preserve the competing candidate.")
+        }
+        do {
+            let preserved = try recovery.preserveConflictCandidate(candidate, for: key)
+            return .conflict(PublicationConflict(expected: expected, onDisk: onDisk, preservedCandidate: preserved))
+        } catch where !(error is any InjectedInterruption) {
+            throw PublicationError.failed(stage: stage, kind: WriteFailureKind(classifying: error),
+                                          detail: "The competing candidate could not be retained: \(error)")
+        }
     }
 }
 

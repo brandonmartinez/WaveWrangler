@@ -163,7 +163,10 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
   P7 library acknowledgement → derived index. Failures keep the prior revision and dirty state; a
   post-publication doubt is `acknowledgementUncertain`, never "saved". `ShowDocument` runs the same order
   inside its `writeSafely` override around stock `super.writeSafely` (`AlreadyCoordinated`; P4 is inside
-  AppKit). Only Save, Save As and autosave-in-place adopt the new publication.
+  AppKit). A changed-byte origin is classified and its candidate retained before a changed item identity
+  refuses the write; a byte-identical replacement is still refused. If the candidate cannot be retained,
+  the save fails explicitly rather than reporting a preserved conflict. Only Save, Save As and
+  autosave-in-place adopt the new publication.
 - **Recovery store** (Application Support, device-local, keyed by logical ID so it survives moves): all
   validated priors and C2b unpublished edit checkpoints, conflict candidates, migration backups.
   Neither Save/Save As/Copy, autosave, Revert, Don't Save nor close removes them. Only a separately
@@ -173,7 +176,10 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
   save-status popover reports retained C3 priors and exposes individual review/Discard. Save As adds
   a location hint without replacing the original hint, so either path can locate retained copies if
   damaged. This is not cross-device recovery; the pending-library-edits journal has its own
-  verified-replay clearing rule.
+  verified-replay clearing rule. Ordinary files such as `.DS_Store` under `locations/` are not hint
+  directories and do not hide the indexed recovery choices. Save a Copy switches the live model, undo
+  and offer selection only after the destination's verified receipt and identity still match; uncertainty
+  keeps the original window dirty and prevents a successful Close.
 - **Open:** unknown-newer refuses (never written); a damaged canonical show offers individually
   validated C3 and C2b records only as separate copies. A damaged C2b payload is never "restored":
   the refusal reports it as unusable and can reveal its retained raw file in Finder. Older-schema C3

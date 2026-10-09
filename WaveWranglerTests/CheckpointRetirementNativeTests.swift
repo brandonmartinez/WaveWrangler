@@ -17,7 +17,7 @@ struct CheckpointRetirementNativeTests {
         #expect(!source.contains("resolveOfferRecordsAfterVerifiedSave"))
         #expect(!source.contains("copy.resolvesOffer"))
         #expect(source.contains("override func writeSafely("))
-        #expect(source.contains("guard let originatingItem, FileItemIdentity.observe(at: url) == originatingItem"))
+        #expect(source.contains("expectedOriginItem: inPlace ? originatingItem : nil, requiresOriginIdentity: inPlace"))
         #expect(source.contains("if !isDocumentEdited { updateChangeCount(.changeDone) }"))
         let toolbar = try String(contentsOf: Self.documentSource.deletingLastPathComponent()
             .deletingLastPathComponent().appending(path: "Workspace/WorkspaceToolbar.swift"), encoding: .utf8)

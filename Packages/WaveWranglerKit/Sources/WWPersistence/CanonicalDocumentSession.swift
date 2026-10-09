@@ -127,20 +127,14 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
         }
         // Nothing pending for automatic work. An explicit Save still republishes and verifies disk truth.
         if automatic, !isDirty, base != nil { return .failure(.cancelled) }
-        if base != nil {
-            guard let originatingItem, FileItemIdentity.observe(at: url) == originatingItem else {
-                isDirty = true
-                let error = PublicationError.originConflict("The originating file's identity is missing or has changed. Reopen it or save a separate copy.")
-                status.state = DocumentSaveState.from(error, retainedRevision: base?.revision)
-                return .failure(error)
-            }
-        }
         status.state = .saving
         let target: PublicationTarget = base.map { .inPlace(expectedBase: $0) } ?? .newLocation
         let next = max(revision, base?.revision ?? 0) + 1
         do {
             let receipt = try publisher.publish(
-                payload, revision: next, key: key, to: url, target: target, isCancelled: isCancelled, followUp: followUp
+                payload, revision: next, key: key, to: url, target: target,
+                expectedOriginItem: originatingItem, requiresOriginIdentity: base != nil,
+                isCancelled: isCancelled, followUp: followUp
             )
             base = receipt.fingerprint
             originatingItem = FileItemIdentity.observe(at: url)

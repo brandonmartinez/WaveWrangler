@@ -240,6 +240,20 @@ struct CheckpointRetirementTests {
         #expect(try Data(contentsOf: url) == competingBytes)
     }
 
+    @Test func conflictCandidateMustReadBackBeforeReportingPreserved() throws {
+        let rig = Rig()
+        let key = DocumentKey.show(Fixtures.show(seed: 2718).show.id)
+        let bytes = Data("unsaved candidate".utf8)
+        let digest = RevisionFingerprint(of: bytes).shortDigest
+        let url = rig.recovery.root.appending(path: "conflicts/\(key.rawValue)/\(digest).wwconflict")
+        let store = RecoveryStore(root: rig.recovery.root, ops: FaultingFileOperations(readFailureURL: url))
+
+        #expect(throws: POSIXError.self) {
+            try store.preserveConflictCandidate(bytes, for: key)
+        }
+        #expect(try Data(contentsOf: url) == bytes)
+    }
+
     @Test func unknownOriginIdentityRefusesSaveAndSubsequentVerifiedSavesRefreshIdentity() async throws {
         let rig = Rig()
         let model = Fixtures.show(seed: 2704)
