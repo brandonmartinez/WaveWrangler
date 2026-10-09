@@ -27,6 +27,22 @@ struct KeyedCutMappingTests {
         }
     }
 
+    @Test func neitherMappedModeAttestsCallerSuppliedManifest() throws {
+        let fx = try Fixture()
+        let proofs = fx.fadeFreeProofs()
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            let result = try fx.map(mode: mode, proofs: proofs, fadeOutOutputFrames: 0,
+                                    fadeInOutputFrames: 0)
+            #expect(throws: CommonEditAttestationRefusal.trustedAuthorityUnavailable) {
+                try CommonEditAttestation.prepare(
+                    map: result.map,
+                    manifest: .init(revision: "episode", lanes: fx.identities.map(\.lane)),
+                    surveys: proofs.map(\.survey)
+                )
+            }
+        }
+    }
+
     @Test func mixedRateRoundsPrimaryBoundariesOnceForAllLanes() throws {
         let fx = try Fixture(primaryRate: 44_100)
         for mode in [ProvisionalCutMode.shorten, .lift] {
