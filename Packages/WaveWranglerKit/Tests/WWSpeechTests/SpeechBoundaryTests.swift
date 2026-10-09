@@ -50,6 +50,23 @@ struct SpeechBoundaryTests {
         }
     }
 
+    @Test func selectedPrimaryWithOutOfRangeChannelIndexRefusesBeforeInference() throws {
+        let f = fixture()
+        let negative = ChannelReference(sourceID: f.primary.sourceID, statedChannel: -1)
+        let firstOutOfRange = ChannelReference(sourceID: f.primary.sourceID, statedChannel: 1)
+
+        for invalidChannel in [negative, firstOutOfRange] {
+            #expect(throws: SpeechRefusal.unselectedPrimary) {
+                try SpeechInference().infer(
+                    model: f.model,
+                    episodeID: f.episodeID,
+                    speakerID: f.speakerID,
+                    channel: invalidChannel
+                )
+            }
+        }
+    }
+
     @Test func backupAndProvisionalAssignmentRefuseBeforeAnyInference() throws {
         let f = fixture()
         #expect(throws: SpeechRefusal.unselectedPrimary) {
