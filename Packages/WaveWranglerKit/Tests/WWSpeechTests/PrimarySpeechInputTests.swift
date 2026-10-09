@@ -25,7 +25,7 @@ private struct SpeechFixtureIO: SourceIO {
     func listItems(under directory: URL) -> DirectoryListing { system.listItems(under: directory) }
     func makeReadOnlyBookmark(for url: URL) throws -> Data { Data(url.path.utf8) }
     func resolveBookmark(_ data: Data) -> BookmarkResolution {
-        .resolved(data == Data("fixture".utf8) ? bookmarkTarget?.current ?? url
+        .resolved(data == Data("fixture".utf8) ? bookmarkTarget?.resolve() ?? url
                   : URL(fileURLWithPath: String(decoding: data, as: UTF8.self)),
                   isStale: false)
     }
@@ -38,10 +38,26 @@ private struct SpeechFixtureIO: SourceIO {
 private final class SpeechBookmarkTarget: @unchecked Sendable {
     private let lock = NSLock()
     private var url: URL
+    private let retargetAfterThirdResolution: URL?
+    private var resolutions = 0
 
-    init(_ url: URL) { self.url = url }
+    init(_ url: URL, retargetAfterThirdResolution: URL? = nil) {
+        self.url = url
+        self.retargetAfterThirdResolution = retargetAfterThirdResolution
+    }
     var current: URL { lock.withLock { url } }
     func set(_ next: URL) { lock.withLock { url = next } }
+    var resolutionCount: Int { lock.withLock { resolutions } }
+    func resolve() -> URL {
+        lock.withLock {
+            resolutions += 1
+            let answer = url
+            if resolutions == 3, let retargetAfterThirdResolution {
+                url = retargetAfterThirdResolution
+            }
+            return answer
+        }
+    }
 }
 
 private struct SpeechUnavailableIO: SourceIO {
@@ -164,6 +180,54 @@ private actor SpeechSuspendedSnapshot {
     }
 }
 
+private final class SpeechSynchronizedSnapshot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: PrimarySpeechInputState
+
+    init(_ value: PrimarySpeechInputState) { self.value = value }
+    var current: PrimarySpeechInputState { lock.withLock { value } }
+    func change(_ next: PrimarySpeechInputState) { lock.withLock { value = next } }
+}
+
+private actor SpeechFinalCheckOrganizer {
+    nonisolated let storage: SpeechSynchronizedSnapshot
+
+    init(_ initial: PrimarySpeechInputState) { storage = SpeechSynchronizedSnapshot(initial) }
+    func read() -> PrimarySpeechInputState { storage.current }
+}
+
+private struct SpeechFinalMetadataSwitchIO: SourceIO {
+    let base: SpeechFixtureIO
+    let bookmarkTarget: SpeechBookmarkTarget
+    let switchPrimary: @Sendable () -> Void
+
+    var provenance: ObservationProvenance { .simulated }
+    func metadata(at url: URL) -> MetadataResult {
+        let result = base.metadata(at: url)
+        if bookmarkTarget.resolutionCount == 3 { switchPrimary() }
+        return result
+    }
+    func listItems(under directory: URL) -> DirectoryListing { base.listItems(under: directory) }
+    func makeReadOnlyBookmark(for url: URL) throws -> Data { try base.makeReadOnlyBookmark(for: url) }
+    func resolveBookmark(_ data: Data) -> BookmarkResolution { base.resolveBookmark(data) }
+    func startAccessingSecurityScope(_ url: URL) -> Bool { base.startAccessingSecurityScope(url) }
+    func stopAccessingSecurityScope(_ url: URL) { base.stopAccessingSecurityScope(url) }
+    func requestDownload(of url: URL) throws { try base.requestDownload(of: url) }
+    func downloadFraction(of url: URL) async -> Knowledge<Double> { await base.downloadFraction(of: url) }
+}
+
+private func anonymousSealedPCMDescriptors(byteCount: Int) -> Set<Int32> {
+    var result: Set<Int32> = []
+    for fd in 0..<min(getdtablesize(), 16_384) {
+        var info = stat()
+        if fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+           info.st_uid == getuid(), info.st_nlink == 0, info.st_size == byteCount {
+            result.insert(fd)
+        }
+    }
+    return result
+}
+
 private final class CapturedSpeechFD: @unchecked Sendable {
     var descriptor: Int32 = -1
     var invocations = 0
@@ -212,7 +276,7 @@ private final class SpeechMidReadReader: DecodingContentReader {
     func close() { reader.close() }
 }
 
-@Suite("Selected primary source bytes")
+@Suite("Selected primary source bytes", .serialized)
 struct PrimarySpeechInputTests {
     private func wav(channel0: Int16 = 100, channel1: Int16 = -200, frames: Int = 64,
                      rate: Int = 16_000, selectedSamples: [Int16]? = nil) -> Data {
@@ -556,6 +620,130 @@ struct PrimarySpeechInputTests {
         var after = stat()
         #expect(caught.descriptor >= 0)
         #expect(fstat(caught.descriptor, &after) == 0)
+        #expect(after.st_nlink == 0)
+        #expect(after.st_size == 0)
+    }
+
+    @Test func thirdResolutionRetargetMustNotDeliverOldPCM() async throws {
+        let (directory, url, _, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let replacement = directory.appendingPathComponent("new-primary.wav")
+        try wav(channel1: -400).write(to: replacement)
+        let target = SpeechBookmarkTarget(url, retargetAfterThirdResolution: replacement)
+        let access = SourceAccessContext(io: SpeechFixtureIO(url: url, bookmarkTarget: target))
+        let stub = directory.appendingPathComponent("stub")
+        try Data("abc".utf8).write(to: stub)
+        let pin = LocalSpeechAssetPin(
+            name: "synthetic-stub", version: "1", sizeBytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            license: "synthetic", source: "fixture")
+        let captured = CapturedSpeechFD()
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: access).withSealedSyntheticWorkerInput(
+                episodeID: episode, speakerID: speaker,
+                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                availability: .on, current: { snapshot }, workerURL: stub, workerPin: pin
+            ) { _ in captured.invocations += 1; return 1 }
+            Issue.record("retargeted bookmark was accepted")
+        } catch { #expect(error == .sourceAliasOrChanged) }
+        #expect(target.resolutionCount == 4)
+        #expect(target.current == replacement)
+        #expect(captured.invocations == 0)
+    }
+
+    @Test func finalMetadataPrimarySwitchMustNotDeliverOldPCM() async throws {
+        let (directory, url, _, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var changedShow = snapshot.show
+        changedShow.episodes[0].speakerAssignments[0].primary?.channel = .known(0)
+        changedShow.episodes[0].sources[0].placement.channelLabels[0].channel = 0
+        let changed = PrimarySpeechInputState(
+            show: changedShow, showRevision: 2, accessRecords: snapshot.accessRecords,
+            sourceRevision: snapshot.sourceRevision, inputAssetRevision: snapshot.inputAssetRevision)
+        let organizer = SpeechFinalCheckOrganizer(snapshot)
+        let target = SpeechBookmarkTarget(url)
+        let io = SpeechFinalMetadataSwitchIO(
+            base: SpeechFixtureIO(url: url, bookmarkTarget: target), bookmarkTarget: target,
+            switchPrimary: { organizer.storage.change(changed) })
+        let stub = directory.appendingPathComponent("stub")
+        try Data("abc".utf8).write(to: stub)
+        let pin = LocalSpeechAssetPin(
+            name: "synthetic-stub", version: "1", sizeBytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            license: "synthetic", source: "fixture")
+        let captured = CapturedSpeechFD()
+        do {
+            _ = try await PrimarySpeechInputAdapter(access: SourceAccessContext(io: io))
+                .withSealedSyntheticWorkerInput(
+                    episodeID: episode, speakerID: speaker,
+                    authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                    availability: .on, current: { await organizer.read() },
+                    workerURL: stub, workerPin: pin
+                ) { _ in captured.invocations += 1; return 1 }
+            Issue.record("changed Primary was accepted")
+        } catch { #expect(error == .sourceRevisionChanged) }
+        #expect(target.resolutionCount == 4)
+        #expect(captured.invocations == 0)
+    }
+
+    @Test func cancellationDuringHeldThirdReadMustReleaseSealedPCMWithoutUnblock() async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stub = directory.appendingPathComponent("stub")
+        try Data("abc".utf8).write(to: stub)
+        let pin = LocalSpeechAssetPin(
+            name: "synthetic-stub", version: "1", sizeBytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            license: "synthetic", source: "fixture")
+        let before = anonymousSealedPCMDescriptors(byteCount: 64 * 4)
+        let state = SpeechSuspendedSnapshot(snapshot, suspendedRead: 3)
+        let task = Task {
+            try await PrimarySpeechInputAdapter(access: access).withSealedSyntheticWorkerInput(
+                episodeID: episode, speakerID: speaker,
+                authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                availability: .on, current: { await state.read() },
+                workerURL: stub, workerPin: pin
+            ) { _ in 1 }
+        }
+        await state.waitUntilSuspendedRead()
+        let staged = anonymousSealedPCMDescriptors(byteCount: 64 * 4).subtracting(before)
+        #expect(staged.count == 2)
+        task.cancel()
+        for _ in 0..<32 { await Task.yield() }
+        let retained = anonymousSealedPCMDescriptors(byteCount: 64 * 4).intersection(staged)
+        #expect(retained.isEmpty)
+        await state.resume()
+        do {
+            _ = try await task.value
+            Issue.record("cancelled handoff returned success")
+        } catch { #expect(error as? SpeechAdmissionRefusal == .decode(.cancelled)) }
+        #expect(anonymousSealedPCMDescriptors(byteCount: 64 * 4).intersection(staged).isEmpty)
+    }
+
+    @Test func failedScrubMustNotSilentlyRetainSealedBytes() async throws {
+        let (directory, _, access, snapshot, episode, speaker) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let proxy = try await PrimarySpeechInputAdapter(access: access).preparePCMProxy(
+            episodeID: episode, speakerID: speaker,
+            authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+            availability: .on, current: { snapshot })
+        let before = anonymousSealedPCMDescriptors(byteCount: 64 * 4)
+        var sealed: SealedPrimaryPCMWorkerInput? = try SealedPrimaryPCMWorkerInput(proxy: proxy)
+        let staged = anonymousSealedPCMDescriptors(byteCount: 64 * 4).subtracting(before)
+        #expect(staged.count == 2)
+        let writer = try #require(staged.first {
+            fcntl($0, F_GETFL) & O_ACCMODE == O_RDWR
+        })
+        let retained = try sealed!.withBorrowedDescriptor { input throws(SpeechAdmissionRefusal) in
+            let duplicate = dup(input.descriptor)
+            guard duplicate >= 0 else { throw .workerInputNotSealed }
+            return duplicate
+        }
+        defer { _ = close(retained) }
+        #expect(close(writer) == 0)
+        sealed = nil
+        var after = stat()
+        #expect(fstat(retained, &after) == 0)
         #expect(after.st_nlink == 0)
         #expect(after.st_size == 0)
     }
