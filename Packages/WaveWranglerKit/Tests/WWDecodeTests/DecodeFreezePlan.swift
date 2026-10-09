@@ -6,7 +6,7 @@ import WWCore
 import WWSources
 @testable import WWDecode
 
-// M2-DECODE-002: WW-050 decode truth cases (m2-freeze-decode-2, docs/m2/fixtures/m2-freeze-decode-2.json).
+// M3-DECODE-003: WW-050 decode truth cases (m3-freeze-decode-3, docs/m2/fixtures/m3-freeze-decode-3.json).
 //
 // Recipe: 13 strata, stratum = case index mod 13. Nine supported strata write a seeded LandmarkSignal in an
 // envelope format (priming per lossy codec and container, lossless and PCM bit depth / channel metadata,
@@ -15,10 +15,10 @@ import WWSources
 // generator: the written samples, frame count, format, channel count and landmark positions, never the
 // decoder's own report. Every file is synthetic and lives under $TMPDIR.
 //
-// Gates are `DecodeGates`, unchanged from m2-freeze-decode and frozen as m2-freeze-decode-2. The
-// revision-2 holdout split runs only with WW_M2_DECODE_2_HOLDOUT=1 and has NOT been run.
+// Gates are `DecodeGates`, unchanged from both M2 revisions. The revision-3 holdout split runs only
+// with WW_M3_DECODE_3_HOLDOUT=1, after this freeze merges, and has NOT been run.
 
-/// The frozen decode gates (m2-freeze-decode-2; DecodeFreezeTests fails on drift).
+/// The frozen decode gates (m3-freeze-decode-3; DecodeFreezeTests fails on drift).
 enum DecodeGates {
     /// "100% of supported truth cases mapped correctly": supported cases with any mapping failure.
     static let maximumSupportedMappingFailures = 0
@@ -38,10 +38,10 @@ enum DecodeGates {
 }
 
 enum DecodeFixture {
-    static let fixtureID = "M2-DECODE-002"
+    static let fixtureID = "M3-DECODE-003"
     static let calibrationCases = 130
     static let holdoutCases = 520
-    static let holdoutEnabled = ProcessInfo.processInfo.environment["WW_M2_DECODE_2_HOLDOUT"] == "1"
+    static let holdoutEnabled = ProcessInfo.processInfo.environment["WW_M3_DECODE_3_HOLDOUT"] == "1"
     /// The calibration split writes and decodes 130 files, so it runs in its own serialized pass
     /// (scripts/test.sh) instead of the parallel package run.
     static let calibrationEnabled = ProcessInfo.processInfo.environment["WW_DECODE_CALIBRATION"] == "1"
@@ -67,7 +67,7 @@ enum DecodeFixture {
     }
 
     static func recordsFileName(split: String) -> String {
-        "\(split)-2.jsonl"
+        "\(split)-3.jsonl"
     }
 
     static let minimumFrames = 9000
@@ -708,7 +708,7 @@ func outputSettingsRecord(split: String, interpretations: [FormatInterpretation]
 }
 
 func runDecodeSplit(_ split: String, cases: Int) async throws -> [DecodeCaseRecord] {
-    let directory = try FixtureDirectory("m2-freeze-decode-2-\(split)")
+    let directory = try FixtureDirectory("m3-freeze-decode-3-\(split)")
     let measured = try await withThrowingTaskGroup(of: (DecodeCaseRecord, FormatInterpretation?).self) { group in
         var next = 0
         func addNext() {
