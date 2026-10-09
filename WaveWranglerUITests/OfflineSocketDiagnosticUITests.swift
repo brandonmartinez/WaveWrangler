@@ -91,18 +91,48 @@ final class OfflineSocketDiagnosticUITests: XCTestCase {
         }
     }
 
+    private func makePeers(create: (Int32, Int32) throws -> Peer) throws -> [Peer] {
+        var peers: [Peer] = []
+        do {
+            for (domain, kind) in [(AF_INET, SOCK_STREAM), (AF_INET, SOCK_DGRAM),
+                                   (AF_INET6, SOCK_STREAM), (AF_INET6, SOCK_DGRAM)] {
+                peers.append(try create(domain, kind))
+            }
+            return peers
+        } catch {
+            peers.forEach { close($0.socket) }
+            throw error
+        }
+    }
+
+    func testPeerSetupClosesEarlierSocketsOnFailure() throws {
+        var opened: [Int32] = []
+        defer { opened.filter { fcntl($0, F_GETFD) != -1 }.forEach { close($0) } }
+        XCTAssertThrowsError(try makePeers { _, _ in
+            if opened.count == 2 { throw NSError(domain: "injected peer failure", code: -1) }
+            let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+            guard fd >= 0 else { throw NSError(domain: "test socket", code: Int(errno)) }
+            opened.append(fd)
+            return Peer(socket: fd, port: 0)
+        }) { error in
+            XCTAssertEqual((error as NSError).domain, "injected peer failure")
+        }
+        XCTAssertEqual(opened.count, 2)
+        for fd in opened {
+            let result = fcntl(fd, F_GETFD)
+            let failure = errno
+            XCTAssertEqual(result, -1, "Earlier peer socket \(fd) must close when later setup throws")
+            XCTAssertEqual(failure, EBADF)
+        }
+    }
+
     func testBoundedInAppSocketDenial() throws {
         guard ProcessInfo.processInfo.environment["WW_OFFLINE_DIAGNOSTIC"] == "1" else {
             throw XCTSkip("Offline diagnostic not requested; run the selector on a leased GUI host")
         }
         let board = NSPasteboard(name: NSPasteboard.Name("com.brandonmartinez.wavewrangler.offline-diagnostic"))
         board.clearContents()
-        let peers = try [
-            listeningPeer(domain: AF_INET, kind: SOCK_STREAM),
-            listeningPeer(domain: AF_INET, kind: SOCK_DGRAM),
-            listeningPeer(domain: AF_INET6, kind: SOCK_STREAM),
-            listeningPeer(domain: AF_INET6, kind: SOCK_DGRAM),
-        ]
+        let peers = try makePeers(create: listeningPeer)
         defer { peers.forEach { close($0.socket) } }
         let bundle = "com.brandonmartinez.wavewrangler"
         let before = Set(NSRunningApplication.runningApplications(withBundleIdentifier: bundle).map(\.processIdentifier))

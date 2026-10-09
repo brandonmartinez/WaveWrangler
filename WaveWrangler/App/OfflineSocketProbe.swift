@@ -148,14 +148,27 @@ enum OfflineSocketProbe {
             for operation in ["connect", "bind", "send", "receive"] {
                 let fd = socket(domain, kind, 0)
                 guard fd >= 0 else {
-                    cells.append(Cell(family: prefix, operation: operation, outcome: "socket-failed", errorNumber: errno))
+                    let socketError = errno
+                    cells.append(Cell(family: prefix, operation: operation,
+                                      outcome: "socket-failed", errorNumber: socketError))
+                    if transport == "TCP" && operation == "bind" {
+                        cells.append(Cell(family: prefix, operation: "listen",
+                                          outcome: "not-reachable-after-socket", errorNumber: socketError))
+                    }
                     continue
                 }
                 defer { close(fd) }
-                _ = fcntl(fd, F_SETFL, O_NONBLOCK)
+                let flags = fcntl(fd, F_GETFL)
                 var noSigPipe: Int32 = 1
-                guard setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
-                    cells.append(Cell(family: prefix, operation: operation, outcome: "socket-setup-failed", errorNumber: errno))
+                guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0,
+                      setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+                    let setupError = errno
+                    cells.append(Cell(family: prefix, operation: operation,
+                                      outcome: "socket-setup-failed", errorNumber: setupError))
+                    if transport == "TCP" && operation == "bind" {
+                        cells.append(Cell(family: prefix, operation: "listen",
+                                          outcome: "not-reachable-after-setup", errorNumber: setupError))
+                    }
                     continue
                 }
                 let value: Int
@@ -208,6 +221,12 @@ enum OfflineSocketProbe {
                           errorNumber: rawError))
         if raw >= 0 {
             defer { close(raw) }
+            let flags = fcntl(raw, F_GETFL)
+            guard flags >= 0, fcntl(raw, F_SETFL, flags | O_NONBLOCK) == 0 else {
+                cells.append(Cell(family: family, operation: "raw-send",
+                                  outcome: "socket-setup-failed", errorNumber: errno))
+                return cells
+            }
             guard let (endpoint, size) = address(domain: domain, port: 0) else { preconditionFailure() }
             var local = endpoint
             let sent = payload.withUnsafeBytes { bytes in

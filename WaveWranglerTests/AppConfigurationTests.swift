@@ -54,6 +54,20 @@ struct AppConfigurationTests {
         #expect(entry.contains("OfflineSocketProbe.runIfRequested()"))
     }
 
+    @Test func offlineDiagnosticNeverReceivesOnAnUncheckedBlockingSocket() throws {
+        let source = try String(contentsOf: Self.appFolder.appending(path: "App/OfflineSocketProbe.swift"), encoding: .utf8)
+        #expect(source.contains("guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0,"))
+        #expect(source.contains("outcome: \"socket-setup-failed\""))
+        #expect(!source.contains("_ = fcntl(fd, F_SETFL"))
+    }
+
+    @Test func offlineDiagnosticPeerSetupClosesEarlierPeersOnFailure() throws {
+        let source = try String(contentsOf: Self.appFolder.deletingLastPathComponent()
+            .appending(path: "WaveWranglerUITests/OfflineSocketDiagnosticUITests.swift"), encoding: .utf8)
+        #expect(source.contains("catch {\n            peers.forEach { close($0.socket) }"))
+        #expect(source.contains("testPeerSetupClosesEarlierSocketsOnFailure"))
+    }
+
     @Test func uiDiagnosticRunnerCanHostLocalPeersWithoutGrantingTheAppNetworking() throws {
         let appEntitlements = try Self.plist("WaveWrangler.entitlements")
         #expect(appEntitlements["com.apple.security.network.client"] == nil)

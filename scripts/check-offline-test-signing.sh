@@ -28,11 +28,18 @@ def signed_entitlements(name):
 
 app = signed_entitlements("WaveWrangler.app")
 runner = signed_entitlements("WaveWranglerUITests-Runner.app")
-assert app.get("com.apple.security.app-sandbox") is True, "signed app is not sandboxed"
+
+
+def require(condition, message):
+    if not condition:
+        raise SystemExit(message)
+
+
+require(app.get("com.apple.security.app-sandbox") is True, "signed app is not sandboxed")
 for key in ("com.apple.security.network.client", "com.apple.security.network.server"):
-    assert key not in app, f"signed app unexpectedly has {key}"
-assert runner.get("com.apple.security.app-sandbox") is True, "signed test runner is not sandboxed"
-assert runner.get("com.apple.security.network.client") is True, "test runner cannot reach local peers"
-assert runner.get("com.apple.security.network.server") is True, "test runner cannot bind local peers"
+    require(key not in app, f"signed app unexpectedly has {key}")
+require(runner.get("com.apple.security.app-sandbox") is True, "signed test runner is not sandboxed")
+require(runner.get("com.apple.security.network.client") is True, "test runner cannot reach local peers")
+require(runner.get("com.apple.security.network.server") is True, "test runner cannot bind local peers")
 print("Signed app has no network entitlements; signed UI runner can bind local synthetic peers.")
 PY

@@ -192,6 +192,15 @@ scripts/test.sh --package-only
 scripts/test.sh --ui        # XCUITests only (launches the app); needs GUI permission + the coordinator's GUI lock
 ```
 
+For the DEBUG-only synthetic offline socket diagnostic, check the signed Debug
+Products with `bash scripts/check-offline-test-signing.sh <DerivedData>/Build/Products`.
+`bash scripts/test-offline-test-signing.sh <DerivedData>/Build/Products` also
+re-signs disposable copies with incorrect app/runner entitlements and verifies
+rejection both normally and with `PYTHONOPTIMIZE=1`. These checks audit
+signatures, not in-app network denial or offline inference; the opt-in UI
+diagnostic still requires a leased GUI host and remains fail-closed on missing
+endpoint/log/FD evidence.
+
 For headless functional XCUITests, build on the development Mac and run the
 signed Products inside the [macOS VM GUI hosts](ui-test-vm-hosts.md) through
 their own lease helpers. `scripts/test.sh --ui` launches on the **current
