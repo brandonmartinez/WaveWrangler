@@ -14,7 +14,6 @@ struct MessageBar: View {
     var recoveryActions: [EditCheckpointAction] = []
 
     var body: some View {
-        let choice: RecoveryChoicePresentation.Choice? = recoveryChoice
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: symbolName)
                 .wwFont(.title3)
@@ -31,20 +30,7 @@ struct MessageBar: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !actions.isEmpty {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 128, maximum: 220), alignment: .leading)],
-                              alignment: .leading, spacing: 4) {
-                        ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
-                            let shortcut = shortcut(for: index, choice: choice)
-                            Button(shortcut.map { "\($0.label) \(action.0)" } ?? action.0, action: action.1)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .keyboardShortcut(shortcut?.key, modifiers: shortcut?.modifiers ?? .command)
-                        }
-                    }
-                    .padding(.top, 2)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel("\(heading) actions")
-                    .accessibilityValue("\(actions.count) actions")
-                    .accessibilityIdentifier("\(identifier).actions")
+                    actionGrid
                 }
             }
             Spacer(minLength: 0)
@@ -61,6 +47,28 @@ struct MessageBar: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(heading)
         .accessibilityIdentifier(identifier)
+    }
+
+    private var actionGrid: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 128, maximum: 220), alignment: .leading)],
+                  alignment: .leading, spacing: 4) {
+            ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
+                actionButton(index: index, action: action)
+            }
+        }
+        .padding(.top, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(heading) actions")
+        .accessibilityValue("\(actions.count) actions")
+        .accessibilityIdentifier("\(identifier).actions")
+    }
+
+    private func actionButton(index: Int, action: (String, () -> Void)) -> some View {
+        let hotkey = shortcut(for: index, choice: recoveryChoice)
+        let title = hotkey.map { "\($0.label) \(action.0)" } ?? action.0
+        return Button(title, action: action.1)
+            .fixedSize(horizontal: false, vertical: true)
+            .keyboardShortcut(hotkey?.key, modifiers: hotkey?.modifiers ?? .command)
     }
 
     private func shortcut(
