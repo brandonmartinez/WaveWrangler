@@ -372,3 +372,16 @@
 **By:** Lead, after independent review rejected #319; recorded by the M3 coordinator.
 - Permit one new author independent of the rejected #293 Alignment, #299 Pipeline, #311 Mac and #319 Lead authors to address only the unbounded displaced-current payload reread during bounded cache restoration. Preserve the displaced key without loading its payload or separately bound verification; keep oversized assets eligible for ordinary on-demand adoption and retain refusal-before-publication and cancellation behavior.
 - Write a failing regression first for a current asset over 48 MiB displaced by a smaller restorable candidate, proving no unbounded read or premature map-identity/ledger publication. A fresh independent review and exact-head full gate are required; this neither proves the universal every-admitted <=1 GiB target nor closes #235. If rejected, stop automatic revisions and request a user scope/timing decision on the memory architecture.
+
+### 2026-10-08: Conditional, once-only render holdout rev4 (#310)
+
+**By:** Lead, corrected process decision after independent review rejected the weaker CPU boundary in draft #325; recorded by an independent Docs/Tester author.
+- Rev2 lacks contemporaneous CPU evidence and rev3 has five sampling gaps over one second; both frozen runs remain permanently **INCOMPLETE**, cannot rerun, and do not permit reduced or relabelled gates. Permit one conditional prospective rev4 only by a new Pipeline render-harness author distinct from #313 Alignment, #316 Scribe, and #323 Lead.
+- Before any new freeze or holdout, calibrate a descendant-aware per-PID sampler that reliably provides at-most-one-second coverage and detects missed samples. If that proof fails, stop and seek a user scope/timing decision. Only then commit a fresh, disjoint, pinned-tree rev4 freeze with the unchanged 1,370-record objective cases and gates, explicit whole-tree CPU strictly **<400%** for the full run (exactly 400% fails), and the coverage gate.
+- Run rev4 once only, with independent review and a fresh final-head full `scripts/test.sh`. Any coverage gap or failure stops for user scope/timing; no fifth automatic freeze and no #310 closure, merge, or CPU-budget acceptance follows.
+
+### 2026-10-08: Bounded native review accessibility correction (#320)
+
+**By:** Lead, process decision after both permitted clean GUI rounds failed; recorded by an independent Docs/Tester author.
+- Permit one new AppKit/AX author who authored none of #267, #315, or #320. Replace gesture/`@FocusState` reliance with native first-responder list focus, make the inspector a window-bounded scrollable AX viewport, and eliminate below-window remedy hit-point regressions.
+- Allow one clean candidate GUI round and at most one evidence-informed correction. Both affected essential classes must pass without skips, including AX Parent/Child, keyboard focus, blocked-state contrast, and reachable remedy hitpoints. Failure stops for user scope/timing; essential accessibility and separate M3 200% light/dark gates are unwaived, and #22, #26, #30, #48, #315, and #320 remain open/blocked as applicable.
