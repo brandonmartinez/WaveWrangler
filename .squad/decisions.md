@@ -372,3 +372,16 @@
 **By:** Lead, after independent review rejected #319; recorded by the M3 coordinator.
 - Permit one new author independent of the rejected #293 Alignment, #299 Pipeline, #311 Mac and #319 Lead authors to address only the unbounded displaced-current payload reread during bounded cache restoration. Preserve the displaced key without loading its payload or separately bound verification; keep oversized assets eligible for ordinary on-demand adoption and retain refusal-before-publication and cancellation behavior.
 - Write a failing regression first for a current asset over 48 MiB displaced by a smaller restorable candidate, proving no unbounded read or premature map-identity/ledger publication. A fresh independent review and exact-head full gate are required; this neither proves the universal every-admitted <=1 GiB target nor closes #235. If rejected, stop automatic revisions and request a user scope/timing decision on the memory architecture.
+
+### 2026-10-08: Conditional final render CPU holdout revision (#310)
+
+**By:** Lead, after independent review verified the rev3 evidence as accurately incomplete; recorded by the M3 coordinator.
+- Rev2's once-only holdout lacks a CPU sample; rev3 has five gaps over its frozen one-second CPU coverage limit. Both retain their valid objective records but remain **INCOMPLETE** as whole protocols, and neither may rerun. The observed rev3 peak of 199.1% does not prove the whole process tree stayed within four cores.
+- Allow one fresh Pipeline render-harness author, distinct from the #313 Alignment, #316 Scribe and #323 Lead authors, to validate a descendant-aware per-PID CPU sampler on calibration **before** committing a new prospective freeze or running another holdout. If that calibration cannot establish complete <=1-second coverage and missed-sample detection, stop for a user scope/timing decision.
+- Only after that proof, commit a dated rev4 freeze with fresh disjoint cases, unchanged 1,370-record objective counts/gates, source and test-tree pins and CPU coverage requirement; run its holdout once. Require whole-process-tree <=400% CPU, independent review and a fresh cap-compliant full script on the final head. Any rev4 coverage gap or failure stops automatic revisions; no fifth freeze, gate waiver or #310 closure follows here.
+
+### 2026-10-08: One native first-responder review correction (#320)
+
+**By:** Lead, after both newly permitted clean ww-ui-2 GUI rounds failed; recorded by the M3 coordinator.
+- Assign one fresh AppKit/AX author independent of the #267 Mac, #315 Design and #320 correction authors. Replace gesture or `@FocusState` dependence with native first-responder list focus; constrain the inspector to a window-bounded scrollable AX viewport rather than sizing it from outer geometry, and remove the new below-window remedy hit-point regression.
+- Allow one clean candidate GUI round and at most one evidence-informed correction round, then stop for a user scope/timing decision on any remaining failure. Both affected essential classes must pass without skips, including keyboard focus, AX Parent/Child, blocked-state contrast and reachable remedies. The separate M3 200% light/dark checkpoint remains required; no prior failure becomes a pass and no #22, #26, #30 or #48 closure is authorized.
