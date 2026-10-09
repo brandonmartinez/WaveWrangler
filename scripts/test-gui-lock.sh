@@ -82,6 +82,7 @@ expire_current_lease() {
   mv "$owner.expired" "$owner"
 }
 
+if [ "${GUI_LOCK_TEST_VM_ONLY:-0}" != 1 ]; then
 echo "test: one run and result collection"
 reset_state
 run_lane single pr 0 > "$ROOT/single.out"
@@ -673,6 +674,7 @@ if (
   fail "direct bash -c wrapper was accepted"
 fi
 
+fi
 echo "test: VM fence disallows direct or repeated guest leases"
 reset_state
 export GUI_LOCK_TEST_VM_HOST=1 GUI_LOCK_TEST_VM_CONSOLE_STATE=unlocked GUI_LOCK_TEST_BOOT_ID=boot1
@@ -701,6 +703,13 @@ assert_contains "$ROOT/vm-ready.out" "VM_READY token=vm-a boot=boot2"
 [ ! -d "$ROOT/.gui.lock" ] || fail "old boot lease remained after proved reboot"
 export GUI_LOCK_TEST_BOOT_ID=boot2
 "$SCRIPT" vm-arm vm-b > "$ROOT/vm-next.out"
+GUI_LOCK_TEST_BOOT_ID=boot2 "$SCRIPT" vm-verify vm-b boot2
+if GUI_LOCK_TEST_BOOT_ID=boot2 "$SCRIPT" vm-verify vm-b boot1 > "$ROOT/vm-wrong-boot.out" 2>&1; then
+  fail "VM fence verification accepted another boot"
+fi
+if GUI_LOCK_TEST_BOOT_ID=boot2 "$SCRIPT" vm-verify foreign boot2 > "$ROOT/vm-wrong-token.out" 2>&1; then
+  fail "VM fence verification accepted another token"
+fi
 GUI_LOCK_TEST_BOOT_ID=boot3 "$SCRIPT" vm-release vm-b boot2 > "$ROOT/vm-next-ready.out"
 unset GUI_LOCK_TEST_VM_HOST GUI_LOCK_TEST_VM_CONSOLE_STATE GUI_LOCK_TEST_BOOT_ID
 
@@ -777,6 +786,135 @@ fi
 [ "$(cat "$GUI_VM_ROOT/ww-ui-1.synthetic.state")" = stopped ] ||
   fail "missing detached restart left VM running"
 assert_contains "$GUI_VM_ROOT/ww-ui-1.state" "phase=blocked"
+
+echo "test: refused guest arm does not stop another VM lease"
+export GUI_VM_ROOT="$ROOT/host-foreign"
+mkdir -p "$GUI_VM_ROOT/ww-ui-1.synthetic.guest"
+printf 'running\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.state"
+printf 'foreign-boot\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.boot"
+GUI_LOCK_ROOT="$GUI_VM_ROOT/ww-ui-1.synthetic.guest" GUI_LOCK_TEST_VM_HOST=1 \
+  GUI_LOCK_TEST_BOOT_ID=foreign-boot "$SCRIPT" vm-arm foreign-token > "$ROOT/foreign-arm.out"
+GUI_LOCK_ROOT="$GUI_VM_ROOT/ww-ui-1.synthetic.guest" GUI_LOCK_TEST_VM_HOST=1 \
+  GUI_LOCK_TEST_BOOT_ID=foreign-boot "$SCRIPT" run --lane foreign --class pr --sha test \
+    --dir "$ROOT/foreign-run" --vm-token foreign-token \
+    --result "$ROOT/foreign-run/result.xcresult" -- \
+    bash -c 'sleep 7; mkdir -p "$1"' _ "$ROOT/foreign-run/result.xcresult" \
+    > "$ROOT/foreign-run.out" 2>&1 &
+foreign_pid=$!
+for attempt in $(seq 1 12); do
+  [ "$(sed -n 's/^state=//p' "$GUI_VM_ROOT/ww-ui-1.synthetic.guest/.gui.vm.fence")" = spent ] && break
+  sleep 1
+done
+[ "$(sed -n 's/^state=//p' "$GUI_VM_ROOT/ww-ui-1.synthetic.guest/.gui.vm.fence")" = spent ] ||
+  fail "foreign guest lease did not start"
+if "$HOST" run --vm ww-ui-1 --deadline 5 -- run --lane refused --class pr \
+  --sha test --dir "$ROOT/refused-run" --result "$ROOT/refused-run/result.xcresult" -- \
+  bash -c true > "$ROOT/refused.out" 2>&1; then
+  fail "refused host arm reported success"
+fi
+assert_contains "$ROOT/refused.out" "guest refused fence"
+assert_contains "$GUI_VM_ROOT/ww-ui-1.state" "phase=blocked"
+[ "$(cat "$GUI_VM_ROOT/ww-ui-1.synthetic.state")" = running ] ||
+  fail "refused host arm stopped the foreign VM"
+kill -0 "$foreign_pid" 2>/dev/null || fail "refused host arm interrupted the foreign test"
+if "$HOST" recover --vm ww-ui-1 --deadline 5 -- > "$ROOT/refused-recover.out" 2>&1; then
+  fail "recovery without owned guest fence reported success"
+fi
+[ "$(cat "$GUI_VM_ROOT/ww-ui-1.synthetic.state")" = running ] ||
+  fail "recovery without guest fence stopped the foreign VM"
+wait "$foreign_pid" || fail "foreign test was interrupted"
+
+echo "test: reboot close to deadline has an independent safety stop"
+export GUI_VM_ROOT="$ROOT/host-late-reboot"
+mkdir -p "$GUI_VM_ROOT"
+printf 'running\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.state"
+printf 'boot1\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.boot"
+GUI_VM_TEST_STOP_DELAY=1 "$HOST" run --vm ww-ui-1 --deadline 18 -- run \
+  --lane late-reboot --class pr --sha test --dir "$ROOT/late-reboot-run" \
+  --result "$ROOT/late-reboot-run/result.xcresult" -- \
+  bash -c 'mkdir -p "$1"' _ "$ROOT/late-reboot-run/result.xcresult" \
+  > "$ROOT/late-reboot.out" 2>&1 &
+late_pid=$!
+for attempt in $(seq 1 12); do
+  [ "$(sed -n 's/^phase=//p' "$GUI_VM_ROOT/ww-ui-1.state" 2>/dev/null)" = awaiting-detached-restart ] && break
+  sleep 1
+done
+[ "$(sed -n 's/^phase=//p' "$GUI_VM_ROOT/ww-ui-1.state")" = awaiting-detached-restart ] ||
+  fail "late-reboot host never reached detached restart"
+[ "$(cat "$GUI_VM_ROOT/ww-ui-1.synthetic.state")" = stopped ] ||
+  fail "late-reboot host never reached stopped state"
+printf 'boot2\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.boot"
+printf 'running\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.state"
+if wait "$late_pid"; then fail "late reboot without acknowledgment reported success"; fi
+assert_contains "$ROOT/late-reboot.out" "SAFETY_STOPPED vm=ww-ui-1"
+assert_contains "$GUI_VM_ROOT/ww-ui-1.state" "phase=blocked"
+if [ "$(cat "$GUI_VM_ROOT/ww-ui-1.synthetic.state")" != stopped ]; then
+  cat "$ROOT/late-reboot.out" >&2
+  fail "late reboot escaped the safety stop"
+fi
+[ ! -e "$GUI_VM_ROOT/ww-ui-1.ack.$(sed -n 's/^token=//p' "$GUI_VM_ROOT/ww-ui-1.state")" ] ||
+  fail "late reboot acknowledged without proof"
+
+echo "test: failed guest readiness safety-stops the rebooted VM"
+export GUI_VM_ROOT="$ROOT/host-not-ready"
+mkdir -p "$GUI_VM_ROOT"
+printf 'running\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.state"
+printf 'boot1\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.boot"
+GUI_LOCK_TEST_VM_READY=0 "$HOST" run --vm ww-ui-1 --deadline 18 -- run \
+  --lane not-ready --class pr --sha test --dir "$ROOT/not-ready-run" \
+  --result "$ROOT/not-ready-run/result.xcresult" -- \
+  bash -c 'mkdir -p "$1"' _ "$ROOT/not-ready-run/result.xcresult" \
+  > "$ROOT/not-ready.out" 2>&1 &
+not_ready_pid=$!
+for attempt in $(seq 1 12); do
+  [ "$(sed -n 's/^phase=//p' "$GUI_VM_ROOT/ww-ui-1.state" 2>/dev/null)" = awaiting-detached-restart ] && break
+  sleep 1
+done
+[ "$(sed -n 's/^phase=//p' "$GUI_VM_ROOT/ww-ui-1.state")" = awaiting-detached-restart ] ||
+  fail "readiness test never reached detached restart"
+token=$(sed -n 's/^token=//p' "$GUI_VM_ROOT/ww-ui-1.state")
+printf 'boot2\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.boot"
+printf 'running\n' > "$GUI_VM_ROOT/ww-ui-1.synthetic.state"
+"$HOST" acknowledge-detached ww-ui-1 "$token" > "$ROOT/not-ready-ack.out"
+if wait "$not_ready_pid"; then fail "failed readiness reported success"; fi
+assert_contains "$ROOT/not-ready.out" "SAFETY_STOPPED vm=ww-ui-1"
+assert_contains "$GUI_VM_ROOT/ww-ui-1.state" "phase=blocked"
+[ "$(cat "$GUI_VM_ROOT/ww-ui-1.synthetic.state")" = stopped ] ||
+  fail "failed readiness left the rebooted VM running"
+if grep -F "VM_READY vm=" "$ROOT/not-ready.out" > /dev/null; then
+  fail "failed readiness admitted a successor"
+fi
+
+echo "test: failed safety stop is bounded and never admits readiness"
+export GUI_VM_ROOT="$ROOT/host-stop-timeout"
+mkdir -p "$GUI_VM_ROOT"
+printf 'running\n' > "$GUI_VM_ROOT/ww-ui-2.synthetic.state"
+printf 'boot1\n' > "$GUI_VM_ROOT/ww-ui-2.synthetic.boot"
+started=$(date +%s)
+if GUI_VM_TEST_STOP_DELAY=20 "$HOST" run --vm ww-ui-2 --deadline 8 -- run \
+  --lane stop-timeout --class pr --sha test --dir "$ROOT/stop-timeout-run" \
+  --result "$ROOT/stop-timeout-run/result.xcresult" -- \
+  bash -c 'sleep 20' > "$ROOT/stop-timeout.out" 2>&1; then
+  fail "failed safety stop reported success"
+fi
+[ $(( $(date +%s) - started )) -lt 20 ] || fail "safety stop exceeded bounded failure path"
+assert_contains "$ROOT/stop-timeout.out" "VM stop unproved; manual intervention required"
+assert_contains "$GUI_VM_ROOT/ww-ui-2.state" "phase=blocked"
+[ "$(cat "$GUI_VM_ROOT/ww-ui-2.synthetic.state")" = running ] ||
+  fail "timed-out stop did not preserve failure state"
+if grep -F "VM_READY" "$ROOT/stop-timeout.out" > /dev/null; then
+  fail "timed-out stop emitted VM_READY"
+fi
+sed 's/^token=.*/token=foreign-token/' "$GUI_VM_ROOT/ww-ui-2.synthetic.guest/.gui.vm.fence" \
+  > "$GUI_VM_ROOT/ww-ui-2.synthetic.guest/.gui.vm.fence.tmp"
+mv "$GUI_VM_ROOT/ww-ui-2.synthetic.guest/.gui.vm.fence.tmp" \
+  "$GUI_VM_ROOT/ww-ui-2.synthetic.guest/.gui.vm.fence"
+if "$HOST" recover --vm ww-ui-2 --deadline 5 -- > "$ROOT/foreign-recovery.out" 2>&1; then
+  fail "recovery accepted a changed guest fence"
+fi
+assert_contains "$ROOT/foreign-recovery.out" "guest fence ownership not proved"
+[ "$(cat "$GUI_VM_ROOT/ww-ui-2.synthetic.state")" = running ] ||
+  fail "recovery stopped a VM with a changed guest fence"
 unset GUI_VM_ROOT GUI_VM_TEST_MODE GUI_VM_TEST_GUEST_SCRIPT
 
 echo "PASS: gui-lock lease tests"

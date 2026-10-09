@@ -45,7 +45,10 @@ arms a guest token, and allows one guest `gui-lock run` with an absolute
 monotonic startup/queue deadline. It records the guest status and leaves
 the old guest lease fenced rather than treating a PID snapshot as proof that
 XCTest runners are gone. Choose a total `--deadline` that leaves at least
-90 seconds after the guest run for stopping and restarting. A sample
+90 seconds after the guest run for stopping and restarting. A refused or
+unconfirmed guest arm does **not** authorize stopping the VM: the host
+transaction remains blocked for manual reconciliation, without disturbing
+the foreign guest lease. A sample
 invocation (fill in a unique verified run directory, SHA, selector and result):
 
 ```sh
@@ -88,12 +91,19 @@ persisted guest owner and tickets before removing the fence. `VM_READY` is
 the sole admission signal for the next ticket. If stop, detached launch,
 acknowledgment, readiness, or the end-to-end deadline fails, the state file
 remains blocked; **never remove the fence or guard manually**. A separately
-authorized `gui-vm-lease recover --vm ww-ui-1 --deadline 300 --` stops the
-same guest and repeats the detached-restart handshake under a fresh recovery
-budget; it never converts the failed prior run into a pass. Stop the guest
-before investigating a failed readiness probe; do not presume host `timeout`
-on SSH has terminated guest-side XCTest. Preserve host logs, the guest run
-log and any `.xcresult` for diagnosis before trying another test. A guest
+authorized `gui-vm-lease recover --vm ww-ui-1 --deadline 300 --` requires
+a previously confirmed guest arm (and verifies that same guest fence before
+stopping a running VM), then repeats the detached-restart handshake under a
+fresh recovery budget; it never converts the failed prior run into a pass.
+An unconfirmed/refused arm needs manual reconciliation, not automatic recovery.
+On any owned-lease failure, including a reboot at the deadline, the helper
+attempts a separate, independently bounded safety stop and confirms the VM
+is stopped; this emergency stop may finish after the transaction deadline
+and **never** produces `VM_READY`. If it cannot prove stop, the guest may
+still be running and the lifecycle remains blocked for manual intervention.
+Stop the guest before investigating a failed readiness probe; do not presume
+host `timeout` on SSH has terminated guest-side XCTest. Preserve host logs,
+the guest run log and any `.xcresult` for diagnosis before trying another test. A guest
 settings-restore script requires a guest `timeout` implementation; without
 it readiness fails closed after reboot.
 

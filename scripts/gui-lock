@@ -342,6 +342,19 @@ vm_fence_command() {
   case "$requested" in ""|*[!a-zA-Z0-9_-]*) echo "invalid VM fence token" >&2; return 2;; esac
   acquire_guard
   boot=$(vm_boot) || { release_guard; return 1; }
+  if [ "$action" = vm-verify ]; then
+    recorded=$(field "$VM_FENCE" token)
+    state=$(field "$VM_FENCE" state)
+    if [ -z "$previous" ] || [ "$recorded" != "$requested" ] ||
+      [ "$(field "$VM_FENCE" boot)" != "$previous" ] ||
+      { [ "$state" != armed ] && [ "$state" != spent ]; }; then
+      echo "guest fence ownership not proved" >&2
+      release_guard
+      return 1
+    fi
+    release_guard
+    return 0
+  fi
   if [ "$action" = vm-arm ]; then
     if [ -f "$VM_FENCE" ] || [ -d "$LOCK" ] || [ -n "$(first_ticket)" ] ||
       block_if_test_active; then
@@ -349,7 +362,12 @@ vm_fence_command() {
       release_guard
       return 1
     fi
-    { printf 'token=%s\nboot=%s\nstate=armed\n' "$requested" "$boot"; } | atomic_write "$VM_FENCE"
+    if ! { printf 'token=%s\nboot=%s\nstate=armed\n' "$requested" "$boot"; } |
+      atomic_write "$VM_FENCE"; then
+      echo "cannot publish VM fence" >&2
+      release_guard
+      return 1
+    fi
     printf 'VM_ARMED token=%s boot=%s\n' "$requested" "$boot"
   else
     recorded=$(field "$VM_FENCE" token)
@@ -848,8 +866,12 @@ command="${1:-status}"
 [ $# -gt 0 ] && shift
 case "$command" in
   status) status; exit 0;;
-  vm-arm|vm-release)
-    [ $# -ge 1 ] && [ $# -le 2 ] || exit 2
+  vm-arm|vm-release|vm-verify)
+    if [ "$command" = vm-arm ]; then
+      [ $# -eq 1 ] || exit 2
+    else
+      [ $# -eq 2 ] || exit 2
+    fi
     LANE=vm-fence
     vm_fence_command "$command" "$@"
     exit $?
