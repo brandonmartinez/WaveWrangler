@@ -77,6 +77,7 @@ struct PrimaryOpenAppHostedTests {
 
     @Test func staleOrForgedRelinkContextNeverReachesDeviceEngine() {
         let (store, setup, engine, _, source, _) = fixture()
+        let refusal = "The source or show changed while relinking. Choose the file again; nothing was changed."
         let comparison = RelinkComparison(rows: [], outcome: .match)
         let context = RelinkContext(sourceID: source.id, displayName: "synthetic",
                                     candidate: URL(fileURLWithPath: "/synthetic/never-opened"),
@@ -85,16 +86,27 @@ struct PrimaryOpenAppHostedTests {
                                     documentGeneration: store.modelGeneration)
         setup.confirmRelink(context)
         #expect(engine.calls.isEmpty)
-        #expect(setup.message != nil)
+        #expect(setup.message == refusal)
 
         setup.sheet = .relink(context)
         var forged = context
         forged.comparison = RelinkComparison(rows: [], outcome: .unknown(reason: "synthetic"))
         setup.confirmRelink(forged)
         #expect(engine.calls.isEmpty)
+        #expect(setup.message == refusal)
+        guard case let .relink(retainedAfterForgery)? = setup.sheet else {
+            Issue.record("A forged confirmation must retain the relink sheet")
+            return
+        }
+        #expect(retainedAfterForgery.generation == context.generation)
         store.replaceLoadedModel(store.model)
         setup.confirmRelink(context)
         #expect(engine.calls.isEmpty)
-        #expect(setup.message != nil)
+        #expect(setup.message == refusal)
+        guard case let .relink(retainedAfterStale)? = setup.sheet else {
+            Issue.record("A stale confirmation must retain the relink sheet")
+            return
+        }
+        #expect(retainedAfterStale.generation == context.generation)
     }
 }
