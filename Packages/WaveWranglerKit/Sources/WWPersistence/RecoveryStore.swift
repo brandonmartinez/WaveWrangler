@@ -84,7 +84,7 @@ public struct RecoveryStore: Sendable {
         #if DEBUG
         timingObserver?("retain-enumerate")
         #endif
-        let checkpoints = urls
+        let checkpoints: [RecoveryCheckpoint] = urls
             .compactMap { url in
                 guard let data = try? ops.read(url) else { return nil }
                 return RecoveryCheckpoint(key: key, url: url, fingerprint: RevisionFingerprint(of: data))
