@@ -444,11 +444,9 @@ private final class ProposalCellView: NSTableCellView {
         title.font = NSFont.systemFont(ofSize: pointSize)
         title.textColor = .labelColor
         title.setAccessibilityIdentifier("ww.review.proposal.\(proposal.id)")
-        title.setAccessibilityLabel(title.stringValue)
+        title.setAccessibilityLabel("Provisional review candidate \(proposal.id)")
         title.accessibilityValueOverride = details
-        note.stringValue = "Timing unavailable · Protection unsupported"
-        note.font = NSFont.systemFont(ofSize: pointSize, weight: .medium)
-        note.textColor = .labelColor
+        note.isHidden = true
         toolTip = details
         needsLayout = true
     }
@@ -457,9 +455,8 @@ private final class ProposalCellView: NSTableCellView {
         super.layout()
         let width = max(0, bounds.width - 12)
         let titleHeight = title.intrinsicContentSize.height
-        let noteHeight = note.intrinsicContentSize.height
-        let top = max(0, (bounds.height - titleHeight - noteHeight - 3) / 2)
+        let top = max(0, (bounds.height - titleHeight) / 2)
         title.frame = NSRect(x: 6, y: top, width: width, height: titleHeight)
-        note.frame = NSRect(x: 6, y: top + titleHeight + 3, width: width, height: noteHeight)
+        note.frame = .zero
     }
 }
