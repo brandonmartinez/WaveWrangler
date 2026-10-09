@@ -49,9 +49,10 @@ final class ShowDocument: NSDocument {
     /// live inspection never treats the mutable in-memory model as persisted truth.
     private(set) var verifiedModel: ShowDocumentModel?
 
-    /// Only the last independently decoded on-disk publication can serve as a source witness base.
+    /// Only a clean, last independently decoded on-disk publication can be proposed to the
+    /// app-owned open-show binding. The binding additionally checks registration and rereads disk.
     var currentSourcePublication: (url: URL, model: ShowDocumentModel, base: RevisionFingerprint)? {
-        guard !isAwaitingFormatUpdate,
+        guard !isAwaitingFormatUpdate, !isDocumentEdited,
               let url = fileURL, let model = verifiedModel, let base = onDiskBase,
               publication == base.publication, store.model == model
         else { return nil }

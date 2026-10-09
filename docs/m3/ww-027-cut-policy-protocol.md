@@ -95,14 +95,18 @@ proof, unsupported boundary, mismatched provenance and uninspectable lanes refus
 transcript or recognition confidence is never protection evidence. Audio analysis consent remains
 limited to the selected authorized Primary, not to Backups or other speakers.
 
-The Mac-owned `EpisodeSourceAccessVerifier` is a separate, read-only precursor: against an
-independently coordinated read-back of the open show's exact verified on-disk publication base and
-active accepted-map **content** key, it enumerates complete mapped source/occurrence/epoch
+The public package `EpisodeSourceInventorySurveyor` yields an **untrusted metadata inventory**:
+its caller-controlled document callback is not evidence of which show is open. Only the app-owned
+`OpenEpisodeSourceSnapshot` issuer can bind that inventory to the registered `ShowDocument` object,
+its real `fileURL`, clean verified model and private on-disk base. It independently coordinates a
+read-back of that canonical file, rejects duplicate open documents with the same ShowID, and
+rechecks the active accepted-map **content** key. The inventory enumerates mapped source/occurrence/epoch
 coverage and its declared channels. Partial or unused epochs and physical aliases refuse. It
 rechecks each device-local bookmark, grant, confirmed file identity and fresh metadata revision
 against both the registered token and the map dependencies, including non-Primary sources;
-it checks records and the ready key again after the last awaited document callback. A missing
-grant, changed publication or incompatible source refuses; a returned witness is a snapshot, not
+it checks records and the ready key again after the last awaited document callback **and** after
+the final awaited store read; cancellation refuses after suspension. A missing
+grant, changed publication or incompatible source refuses; the app-private snapshot is not
 a lock on a future provider update or an authorization for work after another await.
 non-Primary sources are only observed through already granted metadata access, never decoded or
 downloaded. The channel count is still a recorded declaration, **not** a freshly certified physical

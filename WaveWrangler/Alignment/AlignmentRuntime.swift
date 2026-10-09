@@ -427,37 +427,12 @@ enum AlignmentRuntimeProvider {
         return runtime
     }
 
-    /// A read-only metadata witness for a verified, unmodified publication. This does not authorize a cut:
-    /// declared channels are not a fresh content survey and protection/fade/publication proofs are absent.
-    static func verifyEpisodeSourceAccess(
+    /// Only the app may bind an untrusted package inventory to its actual open ShowDocument. This
+    /// private snapshot is not an edit authorization or a protection/fade/publication proof.
+    static func sourceInventorySnapshot(
         for document: ShowDocument, episode episodeID: EpisodeID
-    ) async throws -> EpisodeSourceAccessWitness {
-        let runtime = try await runtime(for: document, episode: episodeID)
-        let verifier = EpisodeSourceAccessVerifier(
-            showID: document.store.model.show.id, coordinator: runtime.coordinator,
-            accessStore: SetupEngineProvider.store, access: SetupEngineProvider.context
-        )
-        return try await verifier.verify(episode: episodeID) {
-            let snapshot = try await MainActor.run {
-                guard let snapshot = document.currentSourcePublication else {
-                    throw EpisodeSourceAccessRefusal.changedDuringVerification
-                }
-                return snapshot
-            }
-            let url = snapshot.url
-            let model = snapshot.model
-            let base = snapshot.base
-            let current = try await Task.detached(priority: .userInitiated) {
-                try EpisodeSourceDocument.current(at: url, expectedModel: model, expectedBase: base)
-            }.value
-            try await MainActor.run {
-                guard let latest = document.currentSourcePublication,
-                      latest.url == url, latest.model == model, latest.base == base else {
-                    throw EpisodeSourceAccessRefusal.changedDuringVerification
-                }
-            }
-            return current
-        }
+    ) async throws -> OpenEpisodeSourceSnapshot {
+        try await OpenEpisodeSourceSnapshot.issue(for: document, episode: episodeID)
     }
 
     static func reconcileActive(for document: ShowDocument) {

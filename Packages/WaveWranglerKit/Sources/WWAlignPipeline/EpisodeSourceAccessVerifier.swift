@@ -6,51 +6,16 @@ import WWPersistence
 import WWSources
 import WWTimeMap
 
-/// A publication read back from the current canonical show file against the document's verified base.
-/// A caller cannot manufacture one from an in-memory model and a claimed publication stamp.
-public struct EpisodeSourceDocument: Sendable {
+/// UNTRUSTED survey input. Neither model nor publication proves which show is open; only the app can
+/// bind a private snapshot to its actual registered ShowDocument and verify its private on-disk base.
+public struct EpisodeSourceSurveyInput: Sendable, Equatable {
     public let model: ShowDocumentModel
     public let publication: PublicationStamp
-    private let url: URL?
-    private let base: RevisionFingerprint?
 
-    private init(model: ShowDocumentModel, publication: PublicationStamp, url: URL?, base: RevisionFingerprint?) {
+    public init(model: ShowDocumentModel, publication: PublicationStamp) {
         self.model = model
         self.publication = publication
-        self.url = url
-        self.base = base
     }
-
-    /// The expected base must be the one the open document independently verified on read/save. This
-    /// coordinated read verifies the complete on-disk envelope, not just the stamp or cached model.
-    public static func current(
-        at url: URL, expectedModel: ShowDocumentModel, expectedBase: RevisionFingerprint
-    ) throws -> EpisodeSourceDocument {
-        let opener = DocumentOpener(
-            coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: nil,
-            identityOf: { .show($0.show.id) }
-        )
-        guard case let .editable(decoded, fingerprint) = opener.open(
-            url, key: .show(expectedModel.show.id)
-        ), fingerprint == expectedBase, decoded.publication == expectedBase.publication,
-           decoded.payload == expectedModel
-        else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
-        return EpisodeSourceDocument(
-            model: decoded.payload, publication: decoded.publication, url: url.standardizedFileURL, base: fingerprint
-        )
-    }
-
-    func requireCurrent() throws {
-        guard let url, let base else { return }
-        _ = try Self.current(at: url, expectedModel: model, expectedBase: base)
-    }
-
-    #if DEBUG
-    // Test-only construction for in-memory invalid-map and grant fixtures; never exposed to app clients.
-    init(model: ShowDocumentModel, publication: PublicationStamp) {
-        self.init(model: model, publication: publication, url: nil, base: nil)
-    }
-    #endif
 }
 
 /// A metadata-only inventory of *declared* channels on every accepted-map occurrence. Not a content,
@@ -78,7 +43,9 @@ public enum EpisodeCompleteCutPreparation: Sendable, Equatable {
     case refused([EpisodeCompleteCutBlocker])
 }
 
-public struct EpisodeSourceAccessWitness: Sendable, Equatable {
+/// UNTRUSTED metadata inventory. A caller may supply arbitrary survey documents; this value is never
+/// a verified open-show publication, an access lease, a cut authorization or a protection survey.
+public struct EpisodeSourceInventory: Sendable, Equatable {
     public let show: ShowID
     public let episode: EpisodeID
     public let publication: PublicationStamp
@@ -89,7 +56,7 @@ public struct EpisodeSourceAccessWitness: Sendable, Equatable {
         .refused([.protectionSurveyAbsent, .fadeNotCertified, .atomicPublicationNotCertified])
     }
 
-    // No public constructor: only the verifier can produce this read-only snapshot.
+    // No public constructor: the package performs metadata observation, never trusted issuance.
     fileprivate init(show: ShowID, episode: EpisodeID, publication: PublicationStamp, acceptedMapKey: DerivedAssetKey, lanes: [EpisodeSourceLane]) {
         self.show = show
         self.episode = episode
@@ -119,11 +86,10 @@ public enum EpisodeSourceAccessRefusal: Error, Sendable, Equatable {
     case changedDuringVerification
 }
 
-/// The document callback supplies the open document's verified base; file-backed values are independently
-/// read back even if the callback returns a cached value. Device-local grants and the accepted-map content
-/// identity are rechecked. Future cut admission must repeat the checks after its own awaits and separately
-/// certify protection, fades and atomic publication.
-public struct EpisodeSourceAccessVerifier: Sendable {
+/// An UNTRUSTED read-only lane survey. Its callback is caller-controlled and cannot attest the open
+/// ShowDocument. Only the app-owned issuer may bind the resulting inventory to a live open document,
+/// recheck it after awaits, and return a private snapshot (never a WWCutPolicy proof).
+public struct EpisodeSourceInventorySurveyor: Sendable {
     public let showID: ShowID
     public let coordinator: DerivedJobCoordinator
     public let accessStore: any DeviceAccessStore
@@ -136,19 +102,36 @@ public struct EpisodeSourceAccessVerifier: Sendable {
         self.access = access
     }
 
-    public func verify(
+    public func survey(
         episode episodeID: EpisodeID,
-        currentDocument: @Sendable () async throws -> EpisodeSourceDocument
-    ) async throws -> EpisodeSourceAccessWitness {
+        currentDocument: @Sendable () async throws -> EpisodeSourceSurveyInput
+    ) async throws -> EpisodeSourceInventory {
+        try await verify(episode: episodeID, currentDocument: currentDocument)
+    }
+
+    public func resurvey(
+        _ inventory: EpisodeSourceInventory,
+        currentDocument: @Sendable () async throws -> EpisodeSourceSurveyInput
+    ) async throws {
+        try await reverify(inventory, currentDocument: currentDocument)
+    }
+
+    // Internal names retained for package fixture tests; app clients have only survey/resurvey.
+    func verify(
+        episode episodeID: EpisodeID,
+        currentDocument: @Sendable () async throws -> EpisodeSourceSurveyInput
+    ) async throws -> EpisodeSourceInventory {
+        try Task.checkCancellation()
         let first = try await sample(episode: episodeID, currentDocument: currentDocument)
         let second = try await sample(episode: episodeID, currentDocument: currentDocument)
+        try Task.checkCancellation()
         guard first == second else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
         return second.witness
     }
 
-    public func reverify(
-        _ witness: EpisodeSourceAccessWitness,
-        currentDocument: @Sendable () async throws -> EpisodeSourceDocument
+    func reverify(
+        _ witness: EpisodeSourceInventory,
+        currentDocument: @Sendable () async throws -> EpisodeSourceSurveyInput
     ) async throws {
         guard witness.show == showID else { throw EpisodeSourceAccessRefusal.wrongShow }
         let fresh = try await verify(episode: witness.episode, currentDocument: currentDocument)
@@ -156,9 +139,9 @@ public struct EpisodeSourceAccessVerifier: Sendable {
     }
 
     private struct Sample: Equatable {
-        let document: EpisodeSourceDocument
+        let document: EpisodeSourceSurveyInput
         let accessRecords: [DeviceAccessRecord]
-        let witness: EpisodeSourceAccessWitness
+        let witness: EpisodeSourceInventory
     }
 
     private struct LaneAddress: Hashable {
@@ -201,10 +184,11 @@ public struct EpisodeSourceAccessVerifier: Sendable {
 
     private func sample(
         episode episodeID: EpisodeID,
-        currentDocument: @Sendable () async throws -> EpisodeSourceDocument
+        currentDocument: @Sendable () async throws -> EpisodeSourceSurveyInput
     ) async throws -> Sample {
+        try Task.checkCancellation()
         let document = try await currentDocument()
-        try document.requireCurrent()
+        try Task.checkCancellation()
         let model = document.model
         guard model.show.id == showID else { throw EpisodeSourceAccessRefusal.wrongShow }
         guard let episode = model.episode(episodeID) else { throw EpisodeSourceAccessRefusal.episodeMissing }
@@ -236,7 +220,7 @@ public struct EpisodeSourceAccessVerifier: Sendable {
 
         let records = try await accessStore.records(in: showID)
         let latest = try await currentDocument()
-        try latest.requireCurrent()
+        try Task.checkCancellation()
         guard latest.model == model, latest.publication == document.publication else {
             throw EpisodeSourceAccessRefusal.changedDuringVerification
         }
@@ -303,6 +287,7 @@ public struct EpisodeSourceAccessVerifier: Sendable {
                     ))
                 }
             }
+
         }
         guard Set(lanes.map {
             LaneAddress(source: $0.source, channel: $0.channel, occurrence: $0.occurrence, epoch: $0.epoch)
@@ -325,6 +310,7 @@ public struct EpisodeSourceAccessVerifier: Sendable {
               await coordinator.state(of: identity.slot) == .ready(identity.key)
         else { throw EpisodeSourceAccessRefusal.acceptedMapNotActive }
         let finalRecords = try await accessStore.records(in: showID)
+        try Task.checkCancellation()
         guard finalRecords.count == Set(finalRecords.map(\.key)).count else {
             throw EpisodeSourceAccessRefusal.duplicateOccurrence
         }
@@ -338,11 +324,19 @@ public struct EpisodeSourceAccessVerifier: Sendable {
                   physicalOwners[physical] == source.id
             else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
         }
-        try latest.requireCurrent()
-        return Sample(document: document, accessRecords: usedRecords, witness: EpisodeSourceAccessWitness(
+        // The final records read is an await: it can invalidate the coordinator even if it returns
+        // unchanged records. Cancellation is checked after every suspension and immediately before return.
+        let postRecordsInputs = await coordinator.inputs
+        guard postRecordsInputs == inputs,
+              await coordinator.state(of: identity.slot) == .ready(identity.key)
+        else { throw EpisodeSourceAccessRefusal.acceptedMapNotActive }
+        try Task.checkCancellation()
+        return Sample(document: document, accessRecords: usedRecords, witness: EpisodeSourceInventory(
             show: showID, episode: episodeID, publication: document.publication, acceptedMapKey: identity.key, lanes: lanes
         ))
     }
 }
 
-extension EpisodeSourceDocument: Equatable {}
+// Legacy names are available to @testable package fixtures only, not external clients.
+typealias EpisodeSourceAccessVerifier = EpisodeSourceInventorySurveyor
+typealias EpisodeSourceDocument = EpisodeSourceSurveyInput

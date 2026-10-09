@@ -7,7 +7,7 @@ import WWSources
 import WWTimeMap
 @testable import WWAlignPipeline
 
-@Suite("Episode source-access witness (metadata only)")
+@Suite("Untrusted episode source inventory (metadata only)")
 struct EpisodeSourceAccessTests {
     fileprivate static let publication = PublicationStamp(
         revision: 1, publicationID: UUID(uuidString: "00000000-0000-0000-0000-000000000081")!,
@@ -47,17 +47,17 @@ struct EpisodeSourceAccessTests {
         ))
     }
 
-    @Test func exhaustiveAuthorizedWitnessNeverAdmitsACut() async throws {
+    @Test func exhaustiveAuthorizedInventoryNeverAdmitsACut() async throws {
         let (fixture, _, verifier) = try await fixture()
         let opens = fixture.content.total.opens
-        let witness = try await verifier.verify(episode: fixture.episodeID) { Self.document(fixture.model) }
-        #expect(witness.lanes.count == 4)
-        #expect(Set(witness.lanes.map(\.source)).count == 2)
-        #expect(witness.protectionSurvey == .absent)
-        #expect(witness.completeCutPreparation == .refused([
+        let inventory = try await verifier.survey(episode: fixture.episodeID) { Self.document(fixture.model) }
+        #expect(inventory.lanes.count == 4)
+        #expect(Set(inventory.lanes.map(\.source)).count == 2)
+        #expect(inventory.protectionSurvey == .absent)
+        #expect(inventory.completeCutPreparation == .refused([
             .protectionSurveyAbsent, .fadeNotCertified, .atomicPublicationNotCertified
         ]))
-        try await verifier.reverify(witness) { Self.document(fixture.model) }
+        try await verifier.resurvey(inventory) { Self.document(fixture.model) }
         #expect(fixture.content.total.opens == opens, "verification and recheck open no audio beyond fixture analysis")
     }
 
@@ -220,17 +220,24 @@ struct EpisodeSourceAccessTests {
         let original = try coder.encodeDocument(fixture.model, revision: 1, publicationID: UUID())
         try original.data.write(to: url)
         let base = RevisionFingerprint(of: original.data)
-        let cached = try EpisodeSourceDocument.current(
-            at: url, expectedModel: fixture.model, expectedBase: base
-        )
+        let current: @Sendable () throws -> EpisodeSourceDocument = {
+            let opener = DocumentOpener(
+                coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: nil,
+                identityOf: { .show($0.show.id) }
+            )
+            guard case let .editable(decoded, fingerprint) = opener.open(url, key: .show(fixture.model.show.id)),
+                  fingerprint == base, decoded.payload == fixture.model
+            else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
+            return EpisodeSourceDocument(model: decoded.payload, publication: decoded.publication)
+        }
         let opens = fixture.content.total.opens
-        let witness = try await verifier.verify(episode: fixture.episodeID) { cached }
-        #expect(witness.publication == original.publication)
+        let inventory = try await verifier.verify(episode: fixture.episodeID) { try current() }
+        #expect(inventory.publication == original.publication)
         #expect(fixture.content.total.opens == opens)
         let replacement = try coder.encodeDocument(fixture.model, revision: 2, publicationID: UUID())
         try replacement.data.write(to: url, options: [.atomic])
         await #expect(throws: EpisodeSourceAccessRefusal.changedDuringVerification) {
-            try await verifier.verify(episode: fixture.episodeID) { cached }
+            try await verifier.verify(episode: fixture.episodeID) { try current() }
         }
         try original.data.write(to: url, options: [.atomic])
         let calls = Box(0)
@@ -239,7 +246,7 @@ struct EpisodeSourceAccessTests {
                 if calls.update({ $0 += 1; return $0 }) == 4 {
                     try replacement.data.write(to: url, options: [.atomic])
                 }
-                return cached
+                return try current()
             }
         }
         #expect(calls.value >= 4)
@@ -264,17 +271,17 @@ struct EpisodeSourceAccessTests {
         let accessStore = FinalReadInvalidatingStore(
             backing: store, coordinator: fixture.coordinator, source: fixture.id("backup")
         )
-        let verifier = EpisodeSourceAccessVerifier(
+        let verifier = EpisodeSourceInventorySurveyor(
             showID: fixture.model.show.id, coordinator: fixture.coordinator,
             accessStore: accessStore, access: SourceAccessContext(io: SystemSourceIO())
         )
         await #expect(throws: EpisodeSourceAccessRefusal.acceptedMapNotActive) {
-            try await verifier.verify(episode: fixture.episodeID) { Self.document(fixture.model) }
+            try await verifier.survey(episode: fixture.episodeID) { Self.document(fixture.model) }
         }
         #expect(await accessStore.reads == 4)
     }
 
-    @Test func copiedOldShowCannotAssertItIsTheOpenShow() async throws {
+    @Test func copiedOldShowYieldsOnlyUntrustedInventory() async throws {
         let (fixture, _, verifier) = try await fixture()
         let openURL = fixture.directory.url.appendingPathComponent("open.wwshow")
         let oldCopy = fixture.directory.url.appendingPathComponent("old-copy.wwshow")
@@ -284,26 +291,32 @@ struct EpisodeSourceAccessTests {
         try original.data.write(to: oldCopy)
         let replacement = try coder.encodeDocument(fixture.model, revision: 2, publicationID: UUID())
         try replacement.data.write(to: openURL, options: [.atomic])
-        let forgedBase = RevisionFingerprint(of: original.data)
-        await #expect(throws: EpisodeSourceAccessRefusal.changedDuringVerification) {
-            try await verifier.verify(episode: fixture.episodeID) {
-                try EpisodeSourceDocument.current(
-                    at: oldCopy, expectedModel: fixture.model, expectedBase: forgedBase
-                )
-            }
+        // Deliberately caller-forged data can only yield an UNTRUSTED inventory from this package API.
+        let forged = try coder.decode(Data(contentsOf: oldCopy))
+        let inventory = try await verifier.survey(episode: fixture.episodeID) {
+            EpisodeSourceDocument(model: forged.payload, publication: forged.publication)
         }
+        #expect(inventory.publication == original.publication)
+        #expect(inventory.completeCutPreparation == .refused([
+            .protectionSurveyAbsent, .fadeNotCertified, .atomicPublicationNotCertified
+        ]))
     }
 
     @Test func cancellingFourthDocumentCallbackCannotIssueWitness() async throws {
         let (fixture, _, verifier) = try await fixture()
         let calls = Box(0)
-        await #expect(throws: CancellationError.self) {
-            try await verifier.verify(episode: fixture.episodeID) {
+        // Cancel the verification *task*, not Swift Testing's enclosing test task (a cancelled
+        // test is skipped and cannot establish this regression).
+        let request = Task.detached {
+            try await verifier.survey(episode: fixture.episodeID) {
                 if calls.update({ $0 += 1; return $0 }) == 4 {
                     withUnsafeCurrentTask { $0?.cancel() }
                 }
                 return Self.document(fixture.model)
             }
+        }
+        await #expect(throws: CancellationError.self) {
+            try await request.value
         }
         #expect(calls.value >= 4)
     }
