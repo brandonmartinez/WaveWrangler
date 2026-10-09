@@ -192,7 +192,9 @@ final class OpaqueErrorPanel: NSPanel {
             nextPageButton = next
         }
         // Keep longer, individually labelled recovery choices inside a narrow, keyboard-reachable dialog.
-        let buttons = optionButtons + [previousPageButton, nextPageButton].compactMap { $0 }
+        let buttons = choicePlan == nil
+            ? Array(optionButtons.reversed())
+            : optionButtons + [previousPageButton, nextPageButton].compactMap { $0 }
         let buttonRow = NSStackView(views: buttons)
         buttonRow.orientation = choicePlan == nil ? .horizontal : .vertical
         buttonRow.alignment = .trailing
