@@ -209,10 +209,9 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             Thread.sleep(forTimeInterval: 2)
             let texts = app.descendants(matching: .staticText).allElementsBoundByIndex.prefix(40).map { "\($0.value ?? $0.label)" }
             Acceptance.record(self, "T17 after reopen: windows \(app.windows.allElementsBoundByIndex.map(\.title)) texts \(texts)")
-            let bar = element("ww.show.messageBar")
             _ = reopened
             let offer = app.dialogs.firstMatch.exists ? app.dialogs.firstMatch : app.sheets.firstMatch
-            check(offer.exists || bar.exists, "a recovery offer or message bar appears")
+            check(offer.exists, "the damaged-show recovery offer appears")
             if offer.exists {
                 Acceptance.record(self, "T17 offer buttons: \(offer.buttons.allElementsBoundByIndex.map(\.title))")
                 try audit("T17 recovery offer")
