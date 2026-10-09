@@ -149,6 +149,62 @@ else in Setup or the inspector inherits this treatment. Source bundles:
 `~/ww-uitest-runs/m2-exit-mini-final-3b56f8f19426-20261008T030815/`
 (failing), both on Macsimus.
 
+### Baseline revision 2026-10-08: WW-029 blocked review text (PR #270)
+
+On the synthetic blocked-review surface, XCTest's contrast audit reported four
+text elements whose own crops met the existing per-element floor of 40 glyph
+pixels and p75 contrast of 4.5:1. These are pixel-measurement artefacts, not a
+waiver for the blocked state: each run recaptures the exact element and leaves
+it unwaived if either threshold fails. The handler is restricted to the four
+identifiers below; all other contrast findings remain unwaived.
+
+| Identifier | Finding SHA | Glyph pixels | p75 contrast |
+| --- | --- | ---: | ---: |
+| `ww.review.lane.speaker-b-primary` | `284dd1336fcd952cb0be5ec30f963701330e8028` | 16,139 | 4.71:1 |
+| `ww.review.timeline.domain.source` | `284dd1336fcd952cb0be5ec30f963701330e8028` | 16,435 | 10.23:1 |
+| `ww.review.inspector.primaryState` | `284dd1336fcd952cb0be5ec30f963701330e8028` | 22,045 | 9.17:1 |
+| `ww.review.inspector.backupState` | `284dd1336fcd952cb0be5ec30f963701330e8028` | 17,930 | 10.72:1 |
+
+Evidence: `VM ww-ui-2 (Virtualization.framework, macOS 27, 4 vCPU)`,
+`~/ww-uitest-runs/ww029-pr270-284dd1336fcd-20261008T193456/TranscriptReviewSafetyUITests.xcresult`.
+The separate `ww.review.inspector.analysisState` finding measured 853 glyph
+pixels at p75 2.66:1 and is **not waived**; the UI uses the system label color
+for that text. The AX parent/child mismatch is also not waived.
+
+### Independent WW-029 correction (draft PR #320, 2026-10-08)
+
+On ww-ui-2, the first clean candidate `80b7a2282651` passed 2/3
+`TranscriptReviewSafetyUITests` and 4/5 `TranscriptReviewUITests` (0 skips).
+Moving the analysis state to the visible inspector summary removed its contrast
+finding; no waiver was added. The unwaived Parent/Child audit still failed,
+and native keyboard focus was not obtained on occurrence click. Its AX dump
+showed an inspector ScrollView frame of 270 x 2928 inside a 1024 x 572 show
+window. The prior analysis-state crop sampled background beyond the actual
+inspector viewport, not legible text. The next candidate bounds the native
+inspector to the window geometry and focuses the List after a row click.
+Neither the AX nor keyboard failure is accepted without a clean GUI pass.
+First-round result bundles: ww-ui-2
+`~/ww-uitest-runs/ww029-pr320-80b7a2282651-20261008T200740/`.
+The final #320 head `e92f5975f7d3` still failed the unwaived Parent/Child
+audit and keyboard focus; its inspector AX origin shifted to y=1340 below the
+572-point window, preventing a remedy hit point. This was a regression, not a
+pass: `~/ww-uitest-runs/ww029-pr320-e92f5975f7d3-20261008T201251/`.
+
+### Native first-responder correction (draft PR #329, 2026-10-08)
+
+On ww-ui-2, clean `607e00d88c2f` passed 5/5 `TranscriptReviewUITests` and
+2/3 `TranscriptReviewSafetyUITests` (0 skips). The AppKit occurrence table
+gained actual keyboard focus, arrow selection and a clickable Setup remedy;
+the only remaining failure was unwaived Parent/Child. The blocked audit's AX
+tree still showed a 2928-point-tall inspector group inside a 572-point window.
+Four exact-ID contrast artefacts passed their live 40-glyph / p75 4.5:1 tests;
+`analysisState` was not waived. Evidence:
+`~/ww-uitest-runs/ww029-native-607e00d88c2f-20261008T203833/`.
+The follow-up revision replaces the inspector's SwiftUI scroll container
+with a native scroll viewport whose proposed height is capped to the owning
+window's content height; the document can scroll independently. Both essential
+classes and a fully in-window AX viewport remain required, with no new waiver.
+
 ### Broad (M5) observations
 
 ### Baseline revision 2026-10-08: Format-update fixture and inactive inspector text (#242, #245, #246)
