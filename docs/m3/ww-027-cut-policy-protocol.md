@@ -27,15 +27,22 @@ Each conversion's alignment and map lookups are additionally bounded by the
 same entry limits on occurrences, epochs, segments and removal intervals.
 Its caller-supplied manifest and protection remain untrusted, and it
 does not implement `CutFootprintMapping` or mint `ProtectionProof`.
-Do not use native source duration as the common ripple. `WWAlignPipeline.inspectCutLanes` now offers a **non-authorizing, metadata-only**
-episode inventory: it enumerates every recorded source channel in canonical episode order
-with occurrence, epoch and coordinator-registered source revision after checking the active
-accepted map. It refuses absent/duplicate organizer records, changed map dependencies,
-unknown channel counts and unmapped lanes. These are recorded coordinates, **not** a
-verified channel-count or source-content witness: the canonical document is caller-supplied,
-registration can predate a source change, and neither live backing nor independently
-complete per-lane protection nor final merged fades are available. Its `mappingInputs()`
-always refuses, specifically identifying a Backup without independent proof. It does not
+Do not use native source duration as the common ripple.
+`WWAlignPipeline.inspectCutLanes` is a **fail-closed, metadata-only structural check**,
+not a complete episode inventory. It checks the active accepted map, recorded
+source/occurrence/epoch structure, organizer counts and coordinator registrations but
+ultimately refuses with `unverifiedChannels` rather than return a lane list: the caller
+can lower a two-channel source's recorded count to one while leaving the Primary channel
+and accepted map valid, silently omitting its unassigned second channel. The existing
+consent-gated `SourceProbe.run` (`WWAlignPipeline/AnalysisJob.swift`) reads the format
+through `WWDecode/SourceDecoder.withDecodingCursor` and its read-only
+`WWDecode/SystemSourceContentIO` gateway,
+but this inspection API has neither current authorized locations for every source nor
+a live source-backed all-channel witness; cached facts and registration tokens alone do
+not authenticate current media. It still refuses missing/duplicate organizer records,
+changed map dependencies, unknown counts and unmapped lanes with their specific errors.
+`mappingInputs()` always refuses even for a provisional value, specifically identifying
+a Backup without independent proof. No Backup content is read under Primary consent. It does not
 mint a trusted `CommonEditLaneManifest`, `KeyedLaneFootprintInput`, `ProtectionProof`,
 `VerifiedEpisodeState` or a render permit; no app cut caller uses it. No trusted organizer
 lane-manifest adapter or native person-action adapter exists yet. Their snapshot and

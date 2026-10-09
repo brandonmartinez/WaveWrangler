@@ -6,36 +6,31 @@ import WWTimeMap
 
 @Suite("Organizer cut-lane inventory (synthetic, non-authorizing)")
 struct OrganizerCutLaneInventoryTests {
-    @Test func includesEverySourceChannelInEpisodeOrderButNeverSuppliesMappingProof() async throws {
+    @Test func knownOrganizerCountsStillCannotProveCompleteLanes() async throws {
         let fixture = try await InventoryFixture()
-        let inventory = try await fixture.inspect()
-        #expect(inventory.acceptedAlignmentRevision == 1)
-        #expect(inventory.lanes.map(\.kind) == [
-            .selectedPrimary, .unassigned, .backup, .backup,
-        ])
-        #expect(inventory.lanes.map(\.key.channel) == [0, 1, 0, 1])
-        #expect(inventory.lanes.map(\.key.source) == [
-            fixture.id("primary"), fixture.id("primary"),
-            fixture.id("backup"), fixture.id("backup"),
-        ])
-        #expect(Set(inventory.lanes.map(\.key)).count == inventory.lanes.count)
-        #expect(inventory.lanes.map(\.key.occurrence) == [
-            alignmentOccurrenceID(for: fixture.id("primary")),
-            alignmentOccurrenceID(for: fixture.id("primary")),
-            alignmentOccurrenceID(for: fixture.id("backup")),
-            alignmentOccurrenceID(for: fixture.id("backup")),
-        ])
-        #expect(inventory.lanes.map(\.epoch) == [
-            fixture.fixture.epochs[0], fixture.fixture.epochs[0],
-            fixture.fixture.epochs[1], fixture.fixture.epochs[1],
-        ])
-        let registered = await fixture.fixture.coordinator.inputs.sources
-        #expect(inventory.lanes.allSatisfy {
-            $0.registeredSourceRevision == registered[$0.key.source]
-        })
+        await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
+            try await fixture.inspect()
+        }
         #expect(fixture.fixture.content.total.opens == 0)
+    }
+
+    @Test func mappingInputsAlwaysRefusesEvenForProvisionalValues() throws {
+        let fixture = ProvisionalOrganizerCutLanes(
+            episode: EpisodeID(), acceptedAlignmentRevision: 1, lanes: []
+        )
+        #expect(throws: OrganizerCutLaneRefusal.independentProtectionUnavailable) {
+            try fixture.mappingInputs()
+        }
+        let source = SourceID()
+        let backup = ProvisionalOrganizerCutLanes(
+            episode: EpisodeID(), acceptedAlignmentRevision: 1,
+            lanes: [.init(
+                key: .init(source: source, occurrence: alignmentOccurrenceID(for: source), channel: 0),
+                epoch: RecordingEpochID(), registeredSourceRevision: "synthetic", kind: .backup
+            )]
+        )
         #expect(throws: OrganizerCutLaneRefusal.backupWithoutIndependentProof) {
-            try inventory.mappingInputs()
+            try backup.mappingInputs()
         }
     }
 
@@ -75,6 +70,16 @@ struct OrganizerCutLaneInventoryTests {
         }
     }
 
+    @Test func staleKnownChannelCountCannotOmitAnUnassignedPrimaryLane() async throws {
+        let fixture = try await InventoryFixture()
+        var stale = fixture.model
+        stale.episodes[0].sources[0].observations.channelCount = .known(1)
+        await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
+            try await fixture.inspect(model: stale)
+        }
+        #expect(fixture.fixture.content.total.opens == 0)
+    }
+
     @Test func changedSourceAndAcceptedMapRefuseStaleInventory() async throws {
         let fixture = try await InventoryFixture()
         await fixture.fixture.coordinator.updateSource(.init(
@@ -93,11 +98,10 @@ struct OrganizerCutLaneInventoryTests {
     @Test func registeredRevisionAloneCannotProveAnUnchangedSource() async throws {
         let fixture = try await InventoryFixture()
         try fixture.fixture.rewrite("backup")
-        let inventory = try await fixture.inspect()
-        #expect(fixture.fixture.content.total.opens == 0)
-        #expect(throws: OrganizerCutLaneRefusal.backupWithoutIndependentProof) {
-            try inventory.mappingInputs()
+        await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
+            try await fixture.inspect()
         }
+        #expect(fixture.fixture.content.total.opens == 0)
     }
 
     @Test func unmappedOrUnknownBackingAndPrimaryOnlyProofRefuse() async throws {
@@ -126,9 +130,8 @@ struct OrganizerCutLaneInventoryTests {
         var unassigned = fixture.model
         unassigned.episodes[0].speakerAssignments[0].backups = []
         unassigned.episodes[0].sources[1].role = .unassigned
-        let inventory = try await fixture.inspect(model: unassigned)
-        #expect(throws: OrganizerCutLaneRefusal.independentProtectionUnavailable) {
-            try inventory.mappingInputs()
+        await #expect(throws: OrganizerCutLaneRefusal.unverifiedChannels) {
+            try await fixture.inspect(model: unassigned)
         }
     }
 }

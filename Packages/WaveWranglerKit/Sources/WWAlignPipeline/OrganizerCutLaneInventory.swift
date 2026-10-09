@@ -24,6 +24,7 @@ public enum OrganizerCutLaneRefusal: Error, Equatable, Sendable {
     case noAcceptedMap
     case staleMap
     case incompleteEpisode
+    /// The recorded count is unknown or has no independent, current source-backed proof.
     case unverifiedChannels
     case unmappedLane
     case ambiguousSelectedPrimary
@@ -32,8 +33,8 @@ public enum OrganizerCutLaneRefusal: Error, Equatable, Sendable {
     case independentProtectionUnavailable
 }
 
-/// An ordered, metadata-only enumeration; not a CommonEditLaneManifest or an admission witness.
-/// Neither the canonical channel count nor a coordinator registration proves live media backing.
+/// A provisional metadata shape, not a CommonEditLaneManifest or an admission witness.
+/// The current inspection API never returns one: organizer counts cannot prove lane completeness.
 public struct ProvisionalOrganizerCutLanes: Sendable {
     public let episode: EpisodeID
     public let acceptedAlignmentRevision: Int
@@ -50,9 +51,9 @@ public struct ProvisionalOrganizerCutLanes: Sendable {
 }
 
 extension AlignmentPipeline {
-    /// Enumerates every recorded source/channel/occurrence in canonical episode order without opening
-    /// content. Requires the exact active accepted map and registered revisions, but does not validate
-    /// source bytes or manufacture protection from a transcript, role, or empty speech interval.
+    /// Checks recorded source/channel/occurrence structure without opening content, then refuses.
+    /// An accepted map and registered revisions cannot certify the caller's mutable channel counts.
+    /// No source-backed, consent-gated all-source count witness is available at this boundary.
     public func inspectCutLanes(
         model: ShowDocumentModel, episode episodeID: EpisodeID, selectedSpeaker: SpeakerID
     ) async throws(OrganizerCutLaneRefusal) -> ProvisionalOrganizerCutLanes {
@@ -153,8 +154,8 @@ extension AlignmentPipeline {
         guard lanes.filter({ $0.kind == .selectedPrimary }).count == 1 else {
             throw .ambiguousSelectedPrimary
         }
-        return ProvisionalOrganizerCutLanes(
-            episode: episodeID, acceptedAlignmentRevision: revision, lanes: lanes
-        )
+        // A valid organizer count can still omit a real unassigned channel. The coordinator's source
+        // revision is not a live format probe, so these recorded coordinates cannot be returned as complete.
+        throw .unverifiedChannels
     }
 }
