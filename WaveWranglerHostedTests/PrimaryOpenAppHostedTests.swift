@@ -35,7 +35,7 @@ struct PrimaryOpenAppHostedTests {
     }
 
     @Test func selectionABAAndRemovalRestoreAdvanceLiveGenerations() {
-        let (store, setup, engine, _, source, channel) = fixture()
+        let (store, setup, engine, speaker, source, channel) = fixture()
         let initial = setup.primaryOpenState()
         setup.selection = []
         setup.selection = [.source(source.id)]
@@ -46,11 +46,28 @@ struct PrimaryOpenAppHostedTests {
         var removed = store.model
         removed.episodes[0].sources.removeAll()
         store.replaceLoadedModel(removed)
-        #expect(setup.primaryOpenState().selectedChannel == nil)
+        let missing = setup.primaryOpenState()
+        #expect(missing.model.episode(setup.episodeID)?.source(source.id) == nil)
+        #expect(missing.documentGeneration != initial.documentGeneration)
+        #expect(throws: PrimaryOpenRefusal.accessRecordUnversioned) {
+            try setup.beginPrimaryContentOpen(speakerID: speaker.id, channel: channel)
+        }
+        let syntheticVersioned = PrimaryOpenState(
+            model: missing.model, episodeID: missing.episodeID,
+            documentGeneration: missing.documentGeneration, selectionGeneration: missing.selectionGeneration,
+            relinkGeneration: missing.relinkGeneration, accessRecordGeneration: UUID(),
+            outstandingRelink: missing.outstandingRelink, selectedSpeakerID: missing.selectedSpeakerID,
+            selectedChannel: missing.selectedChannel
+        )
+        #expect(throws: PrimaryOpenRefusal.invalidPrimary) {
+            try PrimaryOpenRequestGate().begin(speakerID: speaker.id, channel: channel, state: syntheticVersioned)
+        }
+        #expect(engine.calls.isEmpty)
         store.replaceLoadedModel(initial.model)
         let restoredDocument = setup.primaryOpenState()
         #expect(restoredDocument.model == initial.model)
         #expect(restoredDocument.documentGeneration != initial.documentGeneration)
+        #expect(restoredDocument.documentGeneration != missing.documentGeneration)
         #expect(engine.calls.isEmpty)
     }
 
