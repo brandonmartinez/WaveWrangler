@@ -158,7 +158,7 @@ private struct DescriptorVolume {
 private func descriptorVolumeUUID(_ descriptor: Int32) -> UUID? {
     var attributes = attrlist()
     attributes.bitmapcount = UInt16(ATTR_BIT_MAP_COUNT)
-    attributes.volattr = UInt32(ATTR_VOL_INFO | ATTR_VOL_UUID)
+    attributes.volattr = UInt32(ATTR_VOL_INFO) | UInt32(ATTR_VOL_UUID)
     var volume = DescriptorVolume()
     guard fgetattrlist(descriptor, &attributes, &volume, MemoryLayout<DescriptorVolume>.size, 0) == 0,
           volume.length >= MemoryLayout<DescriptorVolume>.size else { return nil }
