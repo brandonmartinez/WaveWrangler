@@ -1,4 +1,5 @@
 import WWCore
+import WWWhisperNative
 
 #if DEBUG
 import Darwin
@@ -10,9 +11,15 @@ public enum SpeechRefusal: Error, Sendable, Equatable {
 }
 
 /// Media-free admission boundary. The caller must supply the current canonical show model, not a
-/// cached selection. No engine, source reader, model loader, or transcript publisher is installed.
+/// cached selection. The linked CPU engine has no model, source reader, or transcript publisher.
 public struct SpeechInference: Sendable {
     public init() {}
+
+    /// Verifies only that the built-in CPU C ABI responds to generated data; no model is available.
+    public static var nativeCPULinked: Bool {
+        let probe = ww_whisper_cpu_probe()
+        return probe.linked == 1 && probe.inference_available == 0
+    }
 
     public func infer(
         model: ShowDocumentModel, episodeID: EpisodeID, speakerID: SpeakerID,
@@ -45,17 +52,20 @@ public struct SpeechInference: Sendable {
     }
 
     #if DEBUG
-    /// Exercises the same selection gate with generated numbers only. It never recognizes speech
-    /// and cannot accept a media buffer, a path, an engine, or a model asset.
+    /// Exercises the linked C ABI with its own generated numbers only; no recognition is possible.
     public func syntheticProbe(
         model: ShowDocumentModel, episodeID: EpisodeID, speakerID: SpeakerID,
         channel: ChannelReference
     ) throws(SpeechRefusal) -> SyntheticSpeechProbeResult {
         try requireSelectedPrimary(model: model, episodeID: episodeID, speakerID: speakerID, channel: channel)
-        let samples: [Float] = [0, 0.25, -0.25, 0]
-        let energy = samples.reduce(Float.zero) { $0 + $1 * $1 }
-        return SyntheticSpeechProbeResult(processID: getpid(), syntheticFrameCount: samples.count,
-                                          signalEnergy: energy, recognizedWordCount: 0)
+        let probe = ww_whisper_cpu_probe()
+        guard probe.linked == 1, probe.inference_available == 0,
+              probe.synthetic_frame_count == 4, probe.recognized_word_count == 0
+        else { throw .engineUnavailable }
+        return SyntheticSpeechProbeResult(
+            processID: getpid(), syntheticFrameCount: Int(probe.synthetic_frame_count),
+            signalEnergy: probe.synthetic_energy, recognizedWordCount: Int(probe.recognized_word_count)
+        )
     }
     #endif
 }

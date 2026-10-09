@@ -37,6 +37,7 @@ let package = Package(
         .library(name: "WWWordEvaluation", targets: ["WWWordEvaluation"]),
         // Provisional, media-free selected-Primary speech boundary; production inference refuses until qualified.
         .library(name: "WWSpeech", targets: ["WWSpeech"]),
+        .library(name: "WWWhisperNative", type: .static, targets: ["WWWhisperNative"]),
         // Pure M3 proposal and protected-cut admission policy; mapping is supplied by an Alignment adapter.
         .library(name: "WWCutPolicy", targets: ["WWCutPolicy"]),
         // Headless persistence probe for multi-process and observed-provider trials (synthetic documents only).
@@ -57,7 +58,19 @@ let package = Package(
         .target(name: "WWAlignSegment", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
         .target(name: "WWAlignPipeline", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWDerived", "WWPersistence", "WWAlignEstimate", "WWRender"]),
         .target(name: "WWWordEvaluation"),
-        .target(name: "WWSpeech", dependencies: ["WWCore"]),
+        .target(name: "WWSpeech", dependencies: ["WWCore", "WWWhisperNative"]),
+        .target(
+            name: "WWWhisperNative",
+            exclude: ["upstream/LICENSE"],
+            sources: [
+                "CPUBridge.c",
+                "upstream/ggml.c", "upstream/ggml-alloc.c", "upstream/ggml-backend.c",
+                "upstream/ggml-quants.c", "upstream/whisper.cpp",
+            ],
+            publicHeadersPath: "include",
+            cSettings: [.headerSearchPath("upstream")],
+            cxxSettings: [.headerSearchPath("upstream")]
+        ),
         .target(name: "WWCutPolicy", dependencies: ["WWCore"]),
         .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
@@ -80,5 +93,7 @@ let package = Package(
         // set at run time (never on CI); see docs/m2/evidence/m2-local-episode-validation.md.
         .testTarget(name: "WWLocalEpisodeValidationTests", dependencies: ["WWDecode", "WWSources", "WWAlignEstimate", "WWRender", "WWTimeMap", "WWCore", "WWDerived", "WWPersistence", "WWAlignPipeline"]),
     ],
-    swiftLanguageModes: [.v6]
+    swiftLanguageModes: [.v6],
+    cLanguageStandard: .c11,
+    cxxLanguageStandard: .cxx11
 )

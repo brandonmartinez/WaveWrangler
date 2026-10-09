@@ -42,6 +42,10 @@ struct SpeechBoundaryTests {
         return Fixture(model: model, episodeID: episode.id, speakerID: speaker.id, primary: primary, backup: backup)
     }
 
+    @Test func pinnedCPULibraryLinksButCannotInferWithoutAModel() {
+        #expect(SpeechInference.nativeCPULinked)
+    }
+
     @Test func selectedPrimaryIsStillUnavailableInProductionPath() throws {
         let f = fixture()
         #expect(throws: SpeechRefusal.engineUnavailable) {
