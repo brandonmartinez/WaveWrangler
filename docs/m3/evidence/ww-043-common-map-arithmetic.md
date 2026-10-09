@@ -67,3 +67,31 @@ every preview/export track including silent tracks. The renderer must implement 
 crossfades and common padding, with separate finite proof of zero protected/meaningful/other-speech
 loss, fade safety, no-dither preview/export null (at most one PCM step), safe lift alternatives and
 deterministic undo/history. None of those audio or human-acceptance gates is established here.
+
+**Provisional structural preflight (separate M3 unit):** `CommonEditPreflight.check` takes a
+caller-supplied `CommonEditLaneManifest` and one grid survey per declared audio or intentional-silence
+lane. Both the manifest and the map's caller-owned revision tokens are **untrusted inputs**: matching
+them does not prove organizer completeness, current source identity, device-local grant, access,
+consent, decoded backing, protection-survey accuracy, cut acceptance or render readiness. The
+finite check compares every supplied manifest lane to exactly one survey, requires every mapped
+occurrence to have a declared audio lane, validates source/occurrence/channel shape and ordered
+in-domain intervals, inspects every grid frame (including negative origin and silence) for exact
+common-map round-trip and per-occurrence inverse/coverage, refuses gaps/unsupported inverses,
+protected removals and unsafe final merged fade spans. A missing survey, duplicated lane, missing
+grid coverage or >8,192-frame domain refuses; this limit is deliberately **not** a real-episode
+qualification. Off-grid rounded end positions remain positions, not sample addresses.
+`CommonEditAttestation.prepare` always refuses, including after structural success. No renderer,
+accepted-map history or preview is published by this package. The synthetic tests exercise
+structural success followed by mandatory refusal and negative mismatched supplied keys/revision,
+duplicate/missing surveys, negative-grid/coverage, unsupported inverse, protected cut and
+merged-fade cases. They do **not** decode a source or verify a live grant.
+
+**Interface decision needed before removing that refusal:** Mac must supply a fresh, trusted
+organizer/source-access witness for every selected Primary, Backup, other-speaker and explicitly
+silent lane, and own atomic common-map/history publication with preview invalidation. Alignment
+must bind accepted-map *content*, current source/format revisions and each occurrence's complete
+footprint/inverse to that witness. Independent whole-lane protected-speech surveys, complete
+final merged fade proof and a person-initiated review action remain hard prerequisites. Existing
+`WWCutPolicy` manifest/review-action constructors are internal to that module; this preflight
+neither bypasses them nor grants new access to unselected audio. No #40/#41 acceptance claim follows
+from the provisional result.
