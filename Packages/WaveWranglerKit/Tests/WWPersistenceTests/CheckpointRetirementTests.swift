@@ -215,6 +215,26 @@ struct CheckpointRetirementTests {
         #expect(await session.status.state == .conflict(onDiskRevision: 2, missing: false))
     }
 
+    @Test func failedExplicitSaveOfCleanSessionBecomesDirty() async throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 2719)
+        let key = DocumentKey.show(model.show.id)
+        let url = rig.url()
+        let first = try rig.publisher.publish(model, revision: 1, key: key, to: url, target: .newLocation)
+        let session = CanonicalDocumentSession(key: key, url: url, payload: model,
+                                               base: first.fingerprint, revision: 1, publisher: rig.publisher)
+        #expect(await !session.isDirty)
+        let other = try model.renamingShow(to: "Competing")
+        _ = try rig.publisher.publish(other, revision: 2, key: key, to: url,
+                                      target: .inPlace(expectedBase: first.fingerprint))
+
+        guard case .failure(.conflict) = await session.save() else {
+            Issue.record("The changed file must refuse an explicit Save")
+            return
+        }
+        #expect(await session.isDirty)
+    }
+
     @Test func failedConflictPreservationIsReportedAsFailureNotAPreservedConflict() throws {
         let rig = Rig()
         let model = Fixtures.show(seed: 2717)
