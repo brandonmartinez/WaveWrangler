@@ -25,6 +25,62 @@ struct CheckpointRetirementTests {
         #expect(reopened.keys(forLocation: destination).contains(key))
     }
 
+    @Test func movedShowHintDoesNotPutItsOlderCopyAheadOfLaterShowAtSamePath() throws {
+        let rig = Rig()
+        let path = rig.url("Reused.wwshow")
+        let moved = rig.url("Moved.wwshow")
+        let a = ShowDocumentModel.untitled(
+            id: ShowID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!), title: "Older A"
+        )
+        let b = ShowDocumentModel.untitled(
+            id: ShowID(UUID(uuidString: "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")!), title: "Later B"
+        )
+        let aKey = DocumentKey.show(a.show.id)
+        let bKey = DocumentKey.show(b.show.id)
+        #expect(aKey.rawValue < bKey.rawValue)
+
+        let aFirst = try rig.publisher.publish(a, revision: 1, key: aKey, to: path, target: .newLocation)
+        _ = try rig.publisher.publish(a.renamingShow(to: "Retained A"), revision: 2, key: aKey,
+                                      to: path, target: .inPlace(expectedBase: aFirst.fingerprint))
+        try FileManager.default.moveItem(at: path, to: moved)
+        let movedBytes = try Data(contentsOf: moved)
+        let bFirst = try rig.publisher.publish(b, revision: 1, key: bKey, to: path, target: .newLocation)
+        _ = try rig.publisher.publish(b.renamingShow(to: "Retained B"), revision: 2, key: bKey,
+                                      to: path, target: .inPlace(expectedBase: bFirst.fingerprint))
+        let savedB = try Data(contentsOf: path)
+        try Data(savedB.prefix(savedB.count / 2)).write(to: path)
+
+        #expect(rig.recovery.keys(forLocation: path) == [aKey, bKey])
+        let candidates = DocumentOpener.show(recovery: rig.recovery).candidates(url: path, key: nil)
+        #expect(candidates.map(\.checkpoint.key) == [bKey, aKey], "saved recency, not key order, ranks the copies")
+        let bSavedAt = try #require(candidates.first?.checkpoint.savedAt)
+        let aSavedAt = try #require(candidates.last?.checkpoint.savedAt)
+        #expect(bSavedAt > aSavedAt)
+        #expect(candidates.map(\.document.payload.show.title) == ["Later B", "Older A"])
+        #expect(try rig.recovery.checkedCheckpoints(for: aKey).count == 1)
+        #expect(try rig.recovery.checkedCheckpoints(for: bKey).count == 1)
+        #expect(try Data(contentsOf: moved) == movedBytes)
+        #expect(try Data(contentsOf: path) != savedB)
+    }
+
+    @Test func missingSaveMetadataNeverFallsBackToAFileModificationTime() throws {
+        let rig = Rig()
+        let model = Fixtures.show(seed: 2721)
+        let key = DocumentKey.show(model.show.id)
+        let path = rig.url()
+        let first = try rig.publisher.publish(model, revision: 1, key: key, to: path, target: .newLocation)
+        _ = try rig.publisher.publish(model.renamingShow(to: "Saved later"), revision: 2,
+                                      key: key, to: path, target: .inPlace(expectedBase: first.fingerprint))
+        let checkpoint = try #require(rig.recovery.checkedCheckpoints(for: key).first)
+        #expect(checkpoint.savedAt != nil)
+        let metadata = rig.recovery.root.appending(path: "saved-publications/\(key.rawValue)/\(checkpoint.fingerprint.byteDigest).json")
+        try FileManager.default.removeItem(at: metadata)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 2_200_000_000)],
+                                              ofItemAtPath: checkpoint.url.path)
+        #expect(try rig.recovery.checkedCheckpoints(for: key).first?.savedAt == nil)
+        #expect(DocumentOpener.show(recovery: rig.recovery).candidates(url: path, key: nil).first?.checkpoint.savedAt == nil)
+    }
+
     @Test func legacyOriginHintSurvivesANewDestinationHint() throws {
         let rig = Rig()
         let key = DocumentKey.show(Fixtures.show(seed: 2712).show.id)

@@ -56,6 +56,94 @@ struct CheckpointRetirementNativeTests {
         #expect(implementation.contains("NSRecoveryAttempterErrorKey"))
     }
 
+    @Test func reusedLocationOffersLaterShowFirstWithoutDefaultingToAnUnverifiedNewest() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "WWRecoveryOrder-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let path = folder.appending(path: "Reused.wwshow")
+        let moved = folder.appending(path: "Moved.wwshow")
+        let recovery = RecoveryStore(root: folder.appending(path: "Recovery"))
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let publisher = DocumentPublisher(coder: coder, recovery: recovery)
+        let a = ShowDocumentModel.untitled(
+            id: ShowID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!), title: "Older A"
+        )
+        let b = ShowDocumentModel.untitled(
+            id: ShowID(UUID(uuidString: "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")!), title: "Later B"
+        )
+        let aKey = DocumentKey.show(a.show.id)
+        let bKey = DocumentKey.show(b.show.id)
+        let aFirst = try publisher.publish(a, revision: 1, key: aKey, to: path, target: .newLocation)
+        _ = try publisher.publish(a.renamingShow(to: "A moved"), revision: 2, key: aKey, to: path,
+                                  target: .inPlace(expectedBase: aFirst.fingerprint))
+        try FileManager.default.moveItem(at: path, to: moved)
+        let bFirst = try publisher.publish(b, revision: 1, key: bKey, to: path, target: .newLocation)
+        _ = try publisher.publish(b.renamingShow(to: "B damaged"), revision: 2, key: bKey, to: path,
+                                  target: .inPlace(expectedBase: bFirst.fingerprint))
+        try Data("damaged".utf8).write(to: path)
+
+        let candidates = DocumentOpener.show(recovery: recovery).candidates(url: path, key: nil)
+        #expect(candidates.map(\.checkpoint.key) == [bKey, aKey])
+        let bSavedAt = try #require(candidates.first?.checkpoint.savedAt)
+        let aSavedAt = try #require(candidates.last?.checkpoint.savedAt)
+        #expect(bSavedAt > aSavedAt)
+        let error = DocumentRecoveryOffer.error(for: .malformed("damaged"), candidates: candidates, recovery: recovery, url: path)
+        let names = try #require(error.localizedRecoveryOptions)
+        #expect(names.count == 3)
+        #expect(names.first?.contains("Saved") == true && names.first?.contains("Show") == true)
+        #expect(names[1].contains("Saved") && names[1].contains("Show"))
+        #expect(names[0].contains("FFFFFFFF") && names[1].contains("00000000"))
+        #expect(names[0] != names[1] && !names.joined().contains("Newest"))
+        #expect(OpaqueErrorContent(error: error).defaultIndex == nil)
+        #expect(OpaqueErrorPresenter.route(for: error, window: .init(isVisible: true, isMiniaturized: false)) == .opaquePanel)
+        let panel = OpaqueErrorPanel(error: error)
+        #expect(panel.optionButtons.allSatisfy { $0.keyEquivalent != "\r" && !$0.title.isEmpty })
+        #expect(panel.optionButtons.allSatisfy(\.isEnabled))
+        #expect(panel.defaultButtonCell == nil && panel.initialFirstResponder === panel.optionButtons.last)
+        let attempter = try #require(error.recoveryAttempter as? DocumentRecoveryOffer.RecoveryAttempter)
+        guard case let .prior(first, _) = attempter.actions[0],
+              case let .prior(second, _) = attempter.actions[1] else {
+            Issue.record("Each show needs its own selectable retained copy")
+            return
+        }
+        #expect(first.key == bKey && second.key == aKey)
+        #expect(try coder.decode(recovery.readSelectedRecord(first)).payload.show.id == b.show.id)
+        #expect(try Data(contentsOf: path) == Data("damaged".utf8))
+    }
+
+    @Test func missingAndTiedRecordedSaveDatesRequireAnExplicitRecoveryChoice() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "WWRecoveryDate-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let path = folder.appending(path: "Damaged.wwshow")
+        let recovery = RecoveryStore(root: folder.appending(path: "Recovery"))
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let model = ShowDocumentModel.untitled(title: "Missing save date")
+        let key = DocumentKey.show(model.show.id)
+        let first = try recovery.retainCheckpoint(coder.encode(model, revision: 1), for: key)
+        try recovery.recordLocation(path, for: key)
+        let opener = DocumentOpener.show(recovery: recovery)
+
+        let unknown = DocumentRecoveryOffer.error(for: .malformed("damaged"),
+            candidates: opener.candidates(url: path, key: nil), recovery: recovery, url: path)
+        #expect(OpaqueErrorContent(error: unknown).defaultIndex == nil)
+        #expect(unknown.localizedRecoveryOptions?.first?.contains("Saved date unknown") == true)
+        #expect(unknown.localizedRecoveryOptions?.first?.contains(String(model.show.id.rawValue.uuidString.prefix(8))) == true)
+
+        let second = try recovery.retainCheckpoint(coder.encode(model.renamingShow(to: "Another version"), revision: 2), for: key)
+        let sameTime = Date(timeIntervalSince1970: 1_700_000_000)
+        try recovery.recordVerifiedSave(first.fingerprint, for: key, at: sameTime)
+        try recovery.recordVerifiedSave(second.fingerprint, for: key, at: sameTime)
+        let tied = DocumentRecoveryOffer.error(for: .malformed("damaged"),
+            candidates: opener.candidates(url: path, key: nil), recovery: recovery, url: path)
+        let tiedLabels = try #require(tied.localizedRecoveryOptions)
+        #expect(tiedLabels.count == 3 && tiedLabels[0] != tiedLabels[1])
+        #expect(tiedLabels[0].contains("Saved 2023-") && tiedLabels[1].contains("Saved 2023-"))
+        #expect(!tiedLabels.joined().contains("Newest"))
+        #expect(OpaqueErrorContent(error: tied).defaultIndex == nil)
+        #expect(try recovery.checkedCheckpoints(for: key).count == 2)
+    }
+
     @Test func saveCopyDoesNotAdoptUnverifiedDestinationOrClearUndoAndOffers() throws {
         let source = try String(contentsOf: Self.documentSource, encoding: .utf8)
         let start = try #require(source.range(of: "private func saveCopy("))

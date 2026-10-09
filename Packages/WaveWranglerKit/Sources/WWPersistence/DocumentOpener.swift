@@ -74,8 +74,9 @@ public struct DocumentOpener<Coder: CanonicalDocumentCoding>: Sendable {
         self.recoveryDecode = recoveryDecode
     }
 
-    /// Opens `url`. `key` (when known, e.g. from the library) locates recovery checkpoints; otherwise the
-    /// last-known location hint is used.
+    /// Opens `url`. `key` (when known, e.g. from the library) locates recovery checkpoints; otherwise
+    /// historical location hints are used. Candidates are ordered by recorded verified save time across
+    /// document identities; missing or tied times do not imply a verified newest copy.
     public func open(_ url: URL, key: DocumentKey? = nil) -> OpenOutcome<Coder.Payload> {
         let data: Data
         do {
@@ -115,12 +116,25 @@ public struct DocumentOpener<Coder: CanonicalDocumentCoding>: Sendable {
         guard let recovery else { return [] }
         var keys: [DocumentKey] = key.map { [$0] } ?? []
         if let url { keys += recovery.keys(forLocation: url).filter { !keys.contains($0) } }
-        return keys.flatMap { key in
+        let candidates = keys.flatMap { key in
             let records = recoveryDecode.map { try? recovery.validatedCheckpoints(for: key, decode: $0) }
                 ?? (try? recovery.validatedCheckpoints(for: key, coder: coder))
-            return (records ?? []).map {
+            return (records ?? []).filter { identityOf?($0.document.payload) == key || identityOf == nil }.map {
                 RecoveryCandidate(checkpoint: $0.checkpoint, document: $0.document)
             }
+        }
+        return candidates.sorted { left, right in
+            switch (left.checkpoint.savedAt, right.checkpoint.savedAt) {
+            case let (a?, b?) where a != b: return a > b
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: break
+            }
+            if left.checkpoint.key != right.checkpoint.key {
+                return left.checkpoint.key.rawValue < right.checkpoint.key.rawValue
+            }
+            return (left.document.revision, left.checkpoint.fingerprint.byteDigest)
+                > (right.document.revision, right.checkpoint.fingerprint.byteDigest)
         }
     }
 }

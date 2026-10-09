@@ -182,6 +182,7 @@ final class ShowDocument: NSDocument {
         // until the user chooses Update (#159). Schema 1 recovery checkpoints stay offerable, upgraded in memory.
         let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery,
                                     migratableSchemas: ShowSchemaMigration.migratableSchemas,
+                                    identityOf: { .show($0.show.id) },
                                     recoveryDecode: { try ShowSchemaMigration.decodeUpgradingOlder($0) })
         let outcome = OpenSignposts.measure("document.decode") { opener.outcome(for: data, url: url) }
         switch outcome {
@@ -207,7 +208,7 @@ final class ShowDocument: NSDocument {
         case let .needsMigration(_, fingerprint):
             // #159 D14: view the whole older show upgraded in memory (the same decode the migration stages), read-only.
             // An older file that can't be decoded and verified whole is refused as damaged, unchanged, with its
-            // validated recovery checkpoints offered as a new copy (M1's "Open Recovered Copy").
+            // validated recovery checkpoints offered as new copies, never overwriting the older file.
             let upgraded: DecodedDocument<ShowDocumentModel>
             switch opener.olderShowForViewing(data, url: url) {
             case let .viewable(document): upgraded = document
@@ -1236,16 +1237,15 @@ enum DocumentRecoveryOffer {
         }
         var damagedURLs: [URL] = []
         var scanFailures: [String] = []
+        var locationKeys: [DocumentKey] = []
         if let url {
-            let keys: [DocumentKey]
             do {
-                keys = try recovery.checkedKeys(forLocation: url)
+                locationKeys = try recovery.checkedKeys(forLocation: url)
             } catch {
-                keys = []
                 scanFailures.append("location hints: \(error.localizedDescription)")
                 damagedURLs.append(recovery.root)
             }
-            for key in keys {
+            for key in locationKeys {
                 do {
                     let validPriorURLs = Set(candidates.map(\.checkpoint.url))
                     for prior in try recovery.checkedCheckpoints(for: key) where !validPriorURLs.contains(prior.url) {
@@ -1288,17 +1288,36 @@ enum DocumentRecoveryOffer {
                 if case let .prior(record, _) = $0 { return record.kind == .verifiedCurrent }
                 return false
             }.count
+            let savedDates = candidates.compactMap(\.checkpoint.savedAt)
+            let newestVerified = url != nil && locationKeys.count == 1
+                && Set(candidates.map(\.checkpoint.key)) == Set(locationKeys)
+                && !candidates.isEmpty && savedDates.count == candidates.count
+                && Set(savedDates).count == candidates.count
+                && scanFailures.isEmpty && damagedURLs.isEmpty
+            let explicitSelection = priorCount + verifiedCount > 0 && !newestVerified
+            let ids = Set(candidates.map { $0.document.payload.show.id.rawValue.uuidString })
+            let idLength = (8...36).first { length in
+                Set(ids.map { String($0.prefix(length)) }).count == ids.count
+            } ?? 36
             let copyCount = actions.filter { if case .unsaved = $0 { return true }; return false }.count
             var priorNumber = 0
             var copyNumber = 0
             let names = actions.enumerated().map { index, action in
                 switch action {
                 case let .prior(record, revision):
-                    if record.kind == .verifiedCurrent { return "Open Last Verified Copy (revision \(revision))" }
                     priorNumber += 1
-                    if priorCount == 1 && verifiedCount == 0 { return "Open Recovered Copy" }
-                    return priorNumber == 1 ? "Open Newest Prior Copy (revision \(revision))"
-                        : "Open Prior Copy \(priorNumber) (revision \(revision))"
+                    if newestVerified {
+                        if record.kind == .verifiedCurrent { return "Open Last Verified Copy (revision \(revision))" }
+                        if priorCount == 1 && verifiedCount == 0 { return "Open Recovered Copy" }
+                        return priorNumber == 1 ? "Open Newest Prior Copy (revision \(revision))"
+                            : "Open Prior Copy \(priorNumber) (revision \(revision))"
+                    }
+                    let candidate = candidates.first { $0.checkpoint.url == record.url && $0.checkpoint.key == record.key }
+                    let date = candidate?.checkpoint.savedAt.map {
+                        ISO8601DateFormatter().string(from: $0)
+                    } ?? "date unknown"
+                    let id = String(record.key.rawValue.dropFirst("show-".count).prefix(idLength))
+                    return "Open Recovery Copy \(priorNumber) (Saved \(date); Show ID \(id); revision \(revision))"
                 case .unsaved:
                     copyNumber += 1
                     return copyCount == 1 ? "Open Unsaved Copy" : "Open Unsaved Copy \(copyNumber)"
@@ -1308,6 +1327,7 @@ enum DocumentRecoveryOffer {
             }
             userInfo[NSLocalizedRecoveryOptionsErrorKey] = names + ["Cancel"]
             userInfo[NSRecoveryAttempterErrorKey] = RecoveryAttempter(recovery: recovery, actions: actions + [.cancel])
+            if explicitSelection { userInfo[OpaqueErrorContent.requiresExplicitSelectionKey] = true }
         }
         let damaged = damagedURLs.isEmpty ? "" :
             " The recovery copy is damaged and cannot be restored. Its raw bytes are kept; use Show in Finder to export them."
@@ -1318,7 +1338,10 @@ enum DocumentRecoveryOffer {
             : ""
         let scan = scanFailures.isEmpty ? "" :
             " Some recovery records could not be listed: \(scanFailures.joined(separator: "; ")). They remain on this Mac."
-        userInfo[NSLocalizedRecoverySuggestionErrorKey] = (error.recoverySuggestion ?? "") + available + damaged + scan
+        let caution = (userInfo[OpaqueErrorContent.requiresExplicitSelectionKey] as? Bool) == true
+            ? " Saved recency or document identity cannot establish a newest copy at this location. Choose a labelled copy explicitly; Return will not open one."
+            : ""
+        userInfo[NSLocalizedRecoverySuggestionErrorKey] = (error.recoverySuggestion ?? "") + available + damaged + scan + caution
         return NSError(domain: "com.brandonmartinez.wavewrangler.persistence", code: 1, userInfo: userInfo)
     }
 

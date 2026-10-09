@@ -8,12 +8,14 @@ import AppKit
 ///
 /// Wording and buttons are the ones `NSAlert(error:)` shows: message = `localizedDescription`, informative
 /// text = `localizedRecoverySuggestion`, buttons = `localizedRecoveryOptions` (or OK), first button trailing.
-/// Keys follow A13: the first option is the default (Return); a button titled "Cancel" (or the only button)
-/// answers Esc. Recovery goes through the error's own recovery attempter, exactly as `presentError` does.
+/// Keys follow A13: the first option is normally Return's default; an explicitly selected recovery offer
+/// has no Return action. A button titled "Cancel" (or the only button) answers Esc. Recovery goes through
+/// the error's own recovery attempter, exactly as `presentError` does.
 ///
 /// Also compiled into the unhosted WaveWranglerTests target, so content, keys and opacity are checked
 /// without launching the app.
 struct OpaqueErrorContent: Equatable {
+    static let requiresExplicitSelectionKey = "WWRecoveryRequiresExplicitSelection"
     var message: String
     var informative: String
     var options: [String]
@@ -30,7 +32,8 @@ struct OpaqueErrorContent: Equatable {
         options = recoveryOptions.isEmpty ? [String(localized: "OK")] : recoveryOptions
         let cancel = options.firstIndex(of: String(localized: "Cancel"))
         cancelIndex = cancel ?? (options.count == 1 ? 0 : nil)
-        defaultIndex = cancel == 0 && options.count > 1 ? nil : 0
+        let requiresExplicitSelection = error.userInfo[Self.requiresExplicitSelectionKey] as? Bool == true
+        defaultIndex = requiresExplicitSelection || (cancel == 0 && options.count > 1) ? nil : 0
     }
 }
 
@@ -101,9 +104,10 @@ final class OpaqueErrorPanel: NSPanel {
             button.keyEquivalent = index == content.defaultIndex ? "\r" : (index == content.cancelIndex ? "\u{1b}" : "")
             return button
         }
-        // NSAlert order: the first option is trailing.
-        let buttonRow = NSStackView(views: optionButtons.reversed())
-        buttonRow.orientation = .horizontal
+        // Keep longer, individually labelled recovery choices inside a narrow, keyboard-reachable dialog.
+        let buttonRow = NSStackView(views: content.defaultIndex == nil ? optionButtons : Array(optionButtons.reversed()))
+        buttonRow.orientation = content.defaultIndex == nil ? .vertical : .horizontal
+        buttonRow.alignment = .trailing
         buttonRow.spacing = 12
 
         let column = NSStackView(views: [texts, buttonRow])
@@ -123,7 +127,8 @@ final class OpaqueErrorPanel: NSPanel {
         ])
         contentView = background
         setContentSize(background.fittingSize)
-        initialFirstResponder = content.defaultIndex.map { optionButtons[$0] } ?? optionButtons.first
+        if content.defaultIndex == nil { defaultButtonCell = nil }
+        initialFirstResponder = (content.defaultIndex ?? content.cancelIndex).map { optionButtons[$0] } ?? optionButtons.first
     }
 
     private static func label(_ text: String, font: NSFont, identifier: String) -> NSTextField {
@@ -181,6 +186,9 @@ enum OpaqueErrorPresenter {
     /// panel, deliberately: a sheet on a window in the Dock would be out of sight until the window is restored,
     /// while the panel is shown at once. `error` is the one after `prepare` (cancellation is checked on it).
     static func route(for error: Error, window: WindowState?) -> Route {
+        if (error as NSError).userInfo[OpaqueErrorContent.requiresExplicitSelectionKey] as? Bool == true {
+            return .opaquePanel
+        }
         if let window, window.isVisible, !window.isMiniaturized { return .sheet }
         let error = error as NSError
         return error.domain == NSCocoaErrorDomain && error.code == NSUserCancelledError ? .suppressed : .opaquePanel

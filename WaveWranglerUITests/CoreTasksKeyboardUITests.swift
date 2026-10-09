@@ -189,8 +189,8 @@ final class CoreTasksKeyboardUITests: XCTestCase {
         }
     }
 
-    /// T17 (K17): the newest file is damaged; the app opens the last complete version from its device-local
-    /// recovery store and says so in a persistent message bar.
+    /// T17 (K17): the newest file is damaged; undated external-fixture revisions remain selectable without
+    /// claiming a verified newest copy or opening one on Return.
     func testT17RecoverPriorWork() throws {
         let document = try makeDocument("Recover")
         try task("T17") {
@@ -216,14 +216,19 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             if offer.exists {
                 Acceptance.record(self, "T17 offer buttons: \(offer.buttons.allElementsBoundByIndex.map(\.title))")
                 try audit("T17 recovery offer")
-                let newest = offer.buttons["Open Newest Prior Copy (revision 2)"]
-                let older = offer.buttons["Open Prior Copy 2 (revision 1)"]
+                let newest = offer.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@",
+                    "Open Recovery Copy 1 (Saved ", "revision 2")).firstMatch
+                let older = offer.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@",
+                    "Open Recovery Copy 2 (Saved date unknown;", "revision 1")).firstMatch
                 check(newest.exists && newest.isEnabled && newest.label == newest.title,
-                      "VoiceOver identifies the actionable newest prior, not another generic Open: \(offer.buttons.allElementsBoundByIndex.map(\.label))")
+                      "VoiceOver identifies the newer saved revision without an unverified Newest claim: \(offer.buttons.allElementsBoundByIndex.map(\.label))")
                 check(older.exists && older.isEnabled && older.label == older.title,
-                      "the older prior has its own distinct VoiceOver action")
+                      "the undated older prior has its own VoiceOver action and an honest missing date")
                 if newest.exists {
                     app.typeKey(.return, modifierFlags: [])
+                    check(app.windows.matching(identifier: "ww.show.window").count == 0,
+                          "Return never selects a copy when a saved date is missing")
+                    newest.click()
                     let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
                     if copy.waitForExistence(timeout: 10) {
                         let title = copy.textFields["Show title"]
@@ -236,7 +241,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
                         }
                         Acceptance.record(self, "T17 opened window title: \(copy.title)")
                     } else {
-                        check(false, "Return opens the newest prior copy")
+                        check(false, "explicit choice opens the later saved copy")
                     }
                 }
             }
@@ -267,12 +272,16 @@ final class CoreTasksKeyboardUITests: XCTestCase {
                 return
             }
             let buttons = offer.buttons.allElementsBoundByIndex
-            let newest = offer.buttons["Open Newest Prior Copy (revision 2)"]
-            let older = offer.buttons["Open Prior Copy 2 (revision 1)"]
-            let expected = Set(["Cancel", "Open Newest Prior Copy (revision 2)", "Open Prior Copy 2 (revision 1)"])
-            check(Set(buttons.map(\.label)) == expected && buttons.allSatisfy {
+            let newest = offer.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@",
+                "Open Recovery Copy 1 (Saved ", "revision 2")).firstMatch
+            let older = offer.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@",
+                "Open Recovery Copy 2 (Saved date unknown;", "revision 1")).firstMatch
+            let labels = Set(buttons.map(\.label))
+            check(buttons.count == 3 && labels.count == 3 && labels.contains("Cancel")
+                  && newest.exists && older.exists && !labels.contains(where: { $0.contains("Newest") })
+                  && buttons.allSatisfy {
                 $0.elementType == .button && $0.isEnabled
-            }, "three distinct, enabled AX buttons with their own roles: \(buttons.map(\.label))")
+            }, "three distinct, enabled AX buttons; the older copy has no saved date: \(buttons.map(\.label))")
             try audit("T17 recovery action AX walk")
 
             let keyboardNavigation = UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0
@@ -284,7 +293,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
                     }
                     app.typeKey("\t", modifierFlags: [])
                 }
-                check(Set(focusOrder) == expected, "Tab reaches each named recovery action: \(focusOrder)")
+                check(Set(focusOrder) == labels, "Tab reaches each named recovery action: \(focusOrder)")
                 for _ in 0..<(buttons.count + 1) where !Acceptance.hasKeyboardFocus(newest) {
                     app.typeKey("\t", modifierFlags: [])
                 }
@@ -294,14 +303,17 @@ final class CoreTasksKeyboardUITests: XCTestCase {
                 "buttonLabels": buttons.map(\.label), "focusOrder": focusOrder,
                 "keyboardNavigation": keyboardNavigation, "spokenVoiceOverCaptured": false,
             ], test: self)
-            if keyboardNavigation {
-                if Acceptance.hasKeyboardFocus(newest) { app.typeKey(" ", modifierFlags: []) }
-            } else {
+            if keyboardNavigation && Acceptance.hasKeyboardFocus(newest) {
+                app.typeKey(" ", modifierFlags: [])
+            } else if newest.exists {
                 app.typeKey(.return, modifierFlags: [])
+                check(app.windows.matching(identifier: "ww.show.window").count == 0,
+                      "Return does not pick an unverified newest")
+                newest.click()
             }
 
             let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
-            check(copy.waitForExistence(timeout: 10), "keyboard activation opens the newest prior")
+            check(copy.waitForExistence(timeout: 10), "explicit action opens the later saved prior")
             if copy.exists {
                 let info = copy.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
                 check(info.waitForExistence(timeout: 5), "recovered copy has Show Info")

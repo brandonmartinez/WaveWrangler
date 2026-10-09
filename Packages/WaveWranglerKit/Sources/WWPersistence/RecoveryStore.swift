@@ -22,6 +22,8 @@ public struct RecoveryCheckpoint: Sendable, Equatable {
     public let key: DocumentKey
     public let url: URL
     public let fingerprint: RevisionFingerprint
+    /// Date of a read-back-verified publication, if this Mac recorded it. Legacy records have no such date.
+    public let savedAt: Date?
 }
 
 public enum RecoveryRecordKind: Sendable, Equatable {
@@ -43,6 +45,8 @@ public struct SelectedRecoveryRecord: Sendable {
 /// Device-local recovery records inside the app container (C2 placement decision):
 ///
 /// - `checkpoints/<key>/` — all validated coherent prior revisions, exact envelope bytes.
+/// - `saved-publications/<key>/<digest>.json` — recorded time of a read-back-verified show publication;
+///   legacy or unverified bytes have no timestamp and cannot establish a newest copy.
 /// - `edit-checkpoints/<key>/` and `edit-checkpoints-offered/<key>/` — every quiescent unpublished draft.
 /// - `conflicts/<key>/` — competing candidates preserved when a save detected another revision on disk.
 /// - `migration-backups/<key>/` — non-overwriting copies of pre-migration originals.
@@ -93,7 +97,7 @@ public struct RecoveryStore: Sendable {
         try ops.createDirectory(directory)
         try ops.moveNew(staged, to: url)
         guard try ops.read(url) == bytes else { throw CocoaError(.fileWriteUnknown) }
-        return RecoveryCheckpoint(key: key, url: url, fingerprint: fingerprint)
+        return RecoveryCheckpoint(key: key, url: url, fingerprint: fingerprint, savedAt: recordedSaveDate(for: fingerprint, key: key))
     }
 
     /// Retained checkpoints, newest revision first. Bytes are fingerprinted but not decoded here.
@@ -101,7 +105,9 @@ public struct RecoveryStore: Sendable {
         try records(in: folder("checkpoints", key), extension: "wwcheckpoint")
             .compactMap { url in
                 guard let data = try? ops.read(url) else { return nil }
-                return RecoveryCheckpoint(key: key, url: url, fingerprint: RevisionFingerprint(of: data))
+                let fingerprint = RevisionFingerprint(of: data)
+                return RecoveryCheckpoint(key: key, url: url, fingerprint: fingerprint,
+                                          savedAt: recordedSaveDate(for: fingerprint, key: key))
             }
             .sorted { ($0.fingerprint.revision ?? 0, $0.url.lastPathComponent) > ($1.fingerprint.revision ?? 0, $1.url.lastPathComponent) }
     }
@@ -109,7 +115,11 @@ public struct RecoveryStore: Sendable {
     /// UI listing: a directory/read failure is reported instead of concealing a retained prior.
     public func checkedCheckpoints(for key: DocumentKey) throws -> [RecoveryCheckpoint] {
         try records(in: folder("checkpoints", key), extension: "wwcheckpoint")
-            .map { url in RecoveryCheckpoint(key: key, url: url, fingerprint: RevisionFingerprint(of: try ops.read(url))) }
+            .map { url -> RecoveryCheckpoint in
+                let fingerprint = RevisionFingerprint(of: try ops.read(url))
+                return RecoveryCheckpoint(key: key, url: url, fingerprint: fingerprint,
+                                          savedAt: recordedSaveDate(for: fingerprint, key: key))
+            }
             .sorted { ($0.fingerprint.revision ?? 0, $0.url.lastPathComponent) > ($1.fingerprint.revision ?? 0, $1.url.lastPathComponent) }
     }
 
@@ -162,11 +172,50 @@ public struct RecoveryStore: Sendable {
     public func verifiedCurrent(for key: DocumentKey) -> RecoveryCheckpoint? {
         let url = folder("verified-current", key).appending(path: "current.wwcheckpoint")
         guard let data = try? ops.read(url) else { return nil }
-        return RecoveryCheckpoint(key: key, url: url, fingerprint: RevisionFingerprint(of: data))
+        let fingerprint = RevisionFingerprint(of: data)
+        return RecoveryCheckpoint(key: key, url: url, fingerprint: fingerprint,
+                                  savedAt: recordedSaveDate(for: fingerprint, key: key))
     }
 
     public func bytes(of checkpoint: RecoveryCheckpoint) throws -> Data {
         try ops.read(checkpoint.url)
+    }
+
+    /// Records the verified save of exact publication bytes, not a file's mutable modification date. A missing
+    /// record (including pre-existing recovery copies) leaves recency unknown without hiding the checkpoint.
+    public func recordVerifiedSave(_ fingerprint: RevisionFingerprint, for key: DocumentKey, at date: Date) throws {
+        let record = VerifiedSaveDate(documentID: key.rawValue, byteDigest: fingerprint.byteDigest, savedAt: date)
+        let bytes = try JSONEncoder().encode(record)
+        let url = savedDateURL(for: fingerprint, key: key)
+        try withMutationLock {
+            if ops.exists(url) {
+                let previous = try JSONDecoder().decode(VerifiedSaveDate.self, from: ops.read(url))
+                guard previous.documentID == key.rawValue, previous.byteDigest == fingerprint.byteDigest else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                return
+            }
+            try writeRecord(bytes, to: url)
+            guard try ops.read(url) == bytes else { throw CocoaError(.fileWriteUnknown) }
+        }
+    }
+
+    private struct VerifiedSaveDate: Codable {
+        let documentID: String
+        let byteDigest: String
+        let savedAt: Date
+    }
+
+    private func savedDateURL(for fingerprint: RevisionFingerprint, key: DocumentKey) -> URL {
+        folder("saved-publications", key).appending(path: "\(fingerprint.byteDigest).json")
+    }
+
+    private func recordedSaveDate(for fingerprint: RevisionFingerprint, key: DocumentKey) -> Date? {
+        guard let bytes = try? ops.read(savedDateURL(for: fingerprint, key: key)),
+              let record = try? JSONDecoder().decode(VerifiedSaveDate.self, from: bytes),
+              record.documentID == key.rawValue, record.byteDigest == fingerprint.byteDigest
+        else { return nil }
+        return record.savedAt
     }
 
     // MARK: - Location hints (only for finding recovery records of a damaged file)

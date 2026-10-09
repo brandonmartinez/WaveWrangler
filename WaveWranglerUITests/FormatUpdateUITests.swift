@@ -298,8 +298,8 @@ final class FormatUpdateUITests: XCTestCase {
     }
 
     /// F-OLDER-BAD: an older file whose payload doesn't match its checksum is refused as damaged, without the update
-    /// prompt, and left unchanged. Its M1-era retained checkpoint is still offered (M1 "Open Recovered Copy", #175
-    /// review): choosing it opens the last complete version, upgraded in memory, as a new unsaved copy.
+    /// prompt, and left unchanged. Its M1-era retained checkpoint has no recorded save date: it stays
+    /// explicitly selectable without claiming to be the newest or becoming Return's default.
     func testOlderDamagedFileIsRefusedUnchanged() throws {
         var bytes = ShowSchema1Fixtures.placeholderOnly
         let range = try XCTUnwrap(bytes.range(of: Data("Placeholder Show".utf8)))
@@ -317,11 +317,14 @@ final class FormatUpdateUITests: XCTestCase {
             if refusal.exists {
                 try audit("F-OLDER-BAD refusal")
                 Acceptance.record(self, "F-OLDER-BAD offer buttons: \(refusal.buttons.allElementsBoundByIndex.map(\.title))")
-                let recovered = refusal.buttons["Open Recovered Copy"]
-                check(recovered.exists, "the retained checkpoint is offered as a recovered copy")
+                let recovered = refusal.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Open Recovery Copy 1 (Saved date unknown;'")).firstMatch
+                check(recovered.exists && recovered.isEnabled, "the undated retained checkpoint is an explicitly selectable copy")
                 if recovered.exists {
-                    // Keyboard only: the recovered copy is the default action.
+                    // Return must not silently select a legacy checkpoint whose save date was never recorded.
                     app.typeKey(.return, modifierFlags: [])
+                    check(app.windows.matching(identifier: "ww.show.window").count == 0,
+                          "Return does not open an undated recovery copy")
+                    recovered.click()
                     let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
                     check(copy.waitForExistence(timeout: 10), "the recovered copy opens")
                     let showInfo = copy.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch

@@ -412,10 +412,13 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
         try hooks.reached(.readBackVerified)
 
         do {
+            if key != .library {
+                try recovery?.recordVerifiedSave(candidateFingerprint, for: key, at: verifiedAt)
+            }
             try recovery?.recordLocation(url, for: key)
         } catch {
             throw PublicationError.acknowledgementUncertain(
-                "The file was written, but its recovery-location hint could not be retained: \(error)"
+                "The file was written, but its recovery metadata could not be retained: \(error)"
             )
         }
         var receipt = PublicationReceipt(
