@@ -39,20 +39,26 @@ struct CommonEditPreflightTests {
 
     @Test func missingLaneSurveyAndExtraOrMissingBackingRefuse() throws {
         var fx = try Fixture()
+        let roles = fx.manifest.roleClaims
         fx.surveys.removeLast()
         #expect(throws: CommonEditAttestationRefusal.missingSurvey) { try fx.check() }
         fx.surveys = [fx.survey(fx.primary), fx.survey(fx.secondary)]
         fx.manifest = .init(revision: "supplied", lanes: [.audio(fx.primary)])
         #expect(throws: CommonEditAttestationRefusal.invalidManifest) { try fx.check() }
         fx.manifest = .init(revision: "supplied", lanes: [.audio(fx.primary), .audio(fx.secondary),
-                                                         .intentionalSilence("supplied silence")])
+                                                         .intentionalSilence("supplied silence")],
+                            roleClaims: roles)
         #expect(throws: CommonEditAttestationRefusal.missingSurvey) { try fx.check() }
     }
 
     @Test func excludedBackupIsNeitherSurveyedNorSilence() throws {
         var fx = try Fixture()
         fx.manifest = .init(revision: "supplied", lanes: [.audio(fx.primary)],
-                            excludedBackups: [fx.secondary])
+                            excludedBackups: [fx.secondary],
+                            roleClaims: [
+                                .init(key: fx.primary, role: .selectedPrimary),
+                                .init(key: fx.secondary, role: .backup),
+                            ])
         fx.surveys = [fx.survey(fx.primary)]
         let result = try fx.check()
         #expect(result.audioLanes == 1)
@@ -80,7 +86,7 @@ struct CommonEditPreflightTests {
         var fx = try Fixture()
         fx.manifest = .init(revision: "supplied", lanes: [
             .audio(fx.primary), .audio(fx.secondary), .intentionalSilence("bed"),
-        ])
+        ], roleClaims: fx.manifest.roleClaims)
         fx.surveys.append(.init(
             lane: .intentionalSilence("bed"), coverage: [],
             intentionalSilence: [RemovedFrameSpan(start: -2, end: 34)]
@@ -89,6 +95,25 @@ struct CommonEditPreflightTests {
         fx.surveys[2] = .init(lane: .intentionalSilence("bed"), coverage: [],
                               intentionalSilence: [RemovedFrameSpan(start: -2, end: 33)])
         #expect(throws: CommonEditAttestationRefusal.uncoveredFrame) { try fx.check() }
+    }
+
+    @Test func missingOrConflictingRolesNeverPassStructuralPreflight() throws {
+        var fx = try Fixture()
+        let valid = fx.manifest
+        let primary = CommonEditAudioRoleClaim(key: fx.primary, role: .selectedPrimary)
+        let secondary = CommonEditAudioRoleClaim(key: fx.secondary, role: .selectedPrimary)
+        for claims in [
+            [],
+            [primary],
+            [primary, secondary, secondary],
+            [primary, .init(key: fx.secondary, role: .backup)],
+            [.init(key: fx.primary, role: .backup), secondary],
+            [.init(key: .init(source: fx.primary.source, occurrence: fx.primary.occurrence,
+                              channel: 1), role: .selectedPrimary), secondary],
+        ] {
+            fx.manifest = .init(revision: valid.revision, lanes: valid.lanes, roleClaims: claims)
+            #expect(throws: CommonEditAttestationRefusal.invalidManifest) { try fx.check() }
+        }
     }
 
     @Test func negativeGridGapAndTrailingSilenceRefuseWhenNotCovered() throws {
@@ -258,7 +283,9 @@ struct CommonEditPreflightTests {
         }
         #expect(throws: CommonEditAttestationRefusal.missingSurvey) {
             try CommonEditPreflight.check(
-                map: full, manifest: .init(revision: "supplied", lanes: fx.manifest.lanes + more.dropLast()),
+                map: full, manifest: .init(revision: "supplied",
+                                          lanes: fx.manifest.lanes + more.dropLast(),
+                                          roleClaims: fx.manifest.roleClaims),
                 surveys: []
             )
         }
@@ -310,7 +337,9 @@ private struct Fixture {
             offset: q(-2, 48_000), provenance: .manual(ManualCorrection(basis: .numericEntry))
         )
         map = try Self.editMap(AlignedTimelineMap(reference: reference, groups: [own, other]))
-        manifest = .init(revision: "supplied-not-trusted", lanes: [.audio(primary), .audio(secondary)])
+        manifest = .init(revision: "supplied-not-trusted", lanes: [.audio(primary), .audio(secondary)],
+                         roleClaims: [.init(key: primary, role: .selectedPrimary),
+                                      .init(key: secondary, role: .selectedPrimary)])
         surveys = []
         surveys = [survey(primary), survey(secondary)]
     }
@@ -393,7 +422,8 @@ private struct LowRateFixture {
             alignmentRevision: 2, editRevision: 3, outputRate: NominalRate(48_000),
             alignedFrameOrigin: 0, alignedFrameCount: 6, removals: []
         )
-        manifest = .init(revision: "supplied-not-trusted", lanes: [.audio(lane)])
+        manifest = .init(revision: "supplied-not-trusted", lanes: [.audio(lane)],
+                         roleClaims: [.init(key: lane, role: .selectedPrimary)])
         surveys = [.init(lane: .audio(lane), coverage: [RemovedFrameSpan(start: 0, end: 6)])]
     }
 

@@ -85,7 +85,7 @@ public enum KeyedCutMapping {
     /// Rounds the selected Primary's two exact source boundaries once on the common output grid.
     /// Every admitted selected Primary must invert the interval in its own occurrence and epoch.
     /// Excluded Backups are metadata-only and have no source or grid survey.
-    /// The manifest, surveys, revisions, protection and fade observations remain untrusted.
+    /// Explicit role claims, surveys, revisions, protection and fades remain untrusted.
     public static func map(
         base: CommonEpisodeEditMap, manifest: CommonEditLaneManifest,
         manifestRevision: String, laneKeys: [KeyedEditLane],
@@ -97,6 +97,7 @@ public enum KeyedCutMapping {
         guard manifest.excludedBackups.count <= CommonEditPreflight.maximumInspectedLanes,
               manifest.lanes.count <=
                   CommonEditPreflight.maximumInspectedLanes - manifest.excludedBackups.count,
+              manifest.roleClaims.count <= CommonEditPreflight.maximumInspectedLanes,
               CommonEditPreflight.withinInspectionBudget(
                   map: base, laneCount: manifest.lanes.count + manifest.excludedBackups.count,
                   surveyCount: proofs.count
@@ -109,6 +110,7 @@ public enum KeyedCutMapping {
                $0.finalMergedFades.count <= CommonEditPreflight.maximumInspectedIntervals
            })
         else { throw .structuralPreflight(.inspectionLimit) }
+        guard manifest.hasCompleteSelectedPrimaryClassification() else { throw .invalidLanes }
         var remainingSourceFrames = try sourceScanAllowance(proofs)
         guard !manifestRevision.isEmpty, manifest.revision == manifestRevision,
               !laneKeys.isEmpty, laneKeys.count == manifest.lanes.count,

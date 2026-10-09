@@ -75,7 +75,9 @@ reported `backup not verified; excluded from cut proof`. Both the manifest, its 
 claims and the map's caller-owned revision tokens are **untrusted inputs**: matching
 them does not prove organizer completeness, current source identity, device-local grant, access,
 consent, decoded backing, protection-survey accuracy, cut acceptance or render readiness. The
-finite check compares every supplied manifest lane to exactly one survey, requires every mapped
+finite check requires one explicit key/role claim for every admitted audio or excluded Backup
+(none may be absent, duplicated or assigned a contradictory role). It compares every supplied
+manifest lane to exactly one survey, requires every mapped
 occurrence to have a declared admitted audio lane or an explicit excluded Backup, rejects
 admitted/excluded source aliases, validates source/occurrence/channel shape and ordered
 in-domain intervals, inspects every grid frame (including negative origin and silence) for exact
@@ -106,7 +108,7 @@ from the provisional result.
 
 **Keyed selected-Primary adapter (provisional):** `KeyedCutMapping.map` consumes the existing common map,
 an ordered manifest of admitted selected-Primary and intentional-silence lanes, explicit Backup
-exclusions, and exact lane/epoch/alignment-revision keys, the explicitly selected
+exclusions and complete per-key role claims, and exact lane/epoch/alignment-revision keys, the explicitly selected
 Primary and source-frame request, and one keyed source/grid survey per lane. It maps both supported
 Primary boundaries forward exactly and HALF-UP rounds them once at the base map's output rate; the
 same `[qStart,qEnd)` is used for Shorten removal or Lift reservation. It refuses pre-existing removal
@@ -147,7 +149,9 @@ is 11; the corrected source footprint `[9,12)` catches protection at frame 11 fo
 The immediately adjacent retained source/grid frames remain outside this removal.
 
 All keys, lane-role/exclusion claims, backing, protection and final fade observations are
-**caller-supplied**. A caller can omit or misclassify an actual selected Primary; therefore this
+**caller-supplied**. Missing or contradictory roles refuse before source conversion; the default
+empty role-claim list cannot silently admit audio as selected Primary. A caller can still
+falsely claim a Backup is Primary or omit an actual selected Primary; therefore this
 structural result cannot authorize an edit without a separate trusted complete organizer witness.
 No excluded Backup is opened, inverted, surveyed, previewed or rendered by this adapter. The result is a
 `ProvisionalKeyedCutMapping`, not a `WWCutPolicy.CutFootprint`, `ApprovedCut`, source witness or render

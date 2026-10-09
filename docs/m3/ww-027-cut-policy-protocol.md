@@ -9,6 +9,11 @@ frame endpoints (`qStart`, `qEnd`) at output rate `R` in a **synthetic, provisio
 path. For the M3 selected-Primary scope, its untrusted manifest must declare every
 admitted selected Primary as an audio lane and each Backup as an explicit excluded
 occurrence; an excluded Backup is never a proof, silence, preview or render lane.
+It requires one explicit role claim for every audio/excluded key: admitted audio
+must claim selected Primary, excluded occurrences must claim Backup. Missing,
+duplicate or contradictory roles refuse before any source-footprint work;
+an empty exclusion list does not presume every audio lane is Primary. These
+claims are caller-supplied and cannot prove real organizer roles.
 It requires ordered unique lane/revision/epoch keys, source and grid coverage,
 and final merged source-frame fades for every admitted lane; both Shorten and Lift
 refuse gaps, stale or cross-revision keys, partial coverage and protected removals
