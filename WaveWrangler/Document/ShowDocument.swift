@@ -1321,8 +1321,8 @@ enum DocumentRecoveryOffer {
                 case .unsaved:
                     copyNumber += 1
                     return copyCount == 1 ? "Open Unsaved Copy" : "Open Unsaved Copy \(copyNumber)"
-                case .reveal: "Show in Finder \(index + 1)"
-                case .cancel: "Cancel"
+                case .reveal: return "Show in Finder \(index + 1)"
+                case .cancel: return "Cancel"
                 }
             }
             userInfo[NSLocalizedRecoveryOptionsErrorKey] = names + ["Cancel"]
