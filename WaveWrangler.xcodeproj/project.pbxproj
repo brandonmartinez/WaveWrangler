@@ -23,6 +23,12 @@
 		A10220000000000000000021 /* WWAlignPipeline in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000011 /* WWAlignPipeline */; };
 		A10220000000000000000022 /* WWDecode in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000013 /* WWDecode */; };
 		A10220000000000000000023 /* WWTimeMap in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000014 /* WWTimeMap */; };
+		A6E217D71C470B6700000011 /* WWCore in Frameworks */ = {isa = PBXBuildFile; productRef = EFD0098BA1885BA053D2704C /* WWCore */; };
+		A6E217D71C470B6700000012 /* WWPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 69CABF447993DF3333764DC0 /* WWPersistence */; };
+		A6E217D71C470B6700000013 /* WWAlignPipeline in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000011 /* WWAlignPipeline */; };
+		A6E217D71C470B6700000014 /* WWDerived in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000012 /* WWDerived */; };
+		A6E217D71C470B6700000015 /* WWSources in Frameworks */ = {isa = PBXBuildFile; productRef = 8503CC32FED0C1A6A832807D /* WWSources */; };
+		A6E217D71C470B6700000016 /* WWTimeMap in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000014 /* WWTimeMap */; };
 		5C1A9E3B7D2F4A6E8B0C2D42 /* ShowSchema1Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1A9E3B7D2F4A6E8B0C2D41 /* ShowSchema1Fixtures.swift */; };
 /* End PBXBuildFile section */
 
@@ -39,6 +45,7 @@
 /* Begin PBXFileReference section */
 		2793E8D2F64EF711A331B014 /* WaveWrangler.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WaveWrangler.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		65BA5EA7D383BDC1C1B6760D /* WaveWranglerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WaveWranglerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A6E217D71C470B6700000001 /* WaveWranglerHostedTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WaveWranglerHostedTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E932B07FC4428F442F2A99D1 /* WaveWranglerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WaveWranglerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5C1A9E3B7D2F4A6E8B0C2D41 /* ShowSchema1Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Packages/WaveWranglerKit/Tests/WWPersistenceTests/ShowSchema1Fixtures.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
@@ -91,6 +98,11 @@
 			path = WaveWranglerUITests;
 			sourceTree = "<group>";
 		};
+		A6E217D71C470B6700000003 /* WaveWranglerHostedTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = WaveWranglerHostedTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -131,6 +143,19 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A6E217D71C470B6700000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A6E217D71C470B6700000011 /* WWCore in Frameworks */,
+				A6E217D71C470B6700000012 /* WWPersistence in Frameworks */,
+				A6E217D71C470B6700000013 /* WWAlignPipeline in Frameworks */,
+				A6E217D71C470B6700000014 /* WWDerived in Frameworks */,
+				A6E217D71C470B6700000015 /* WWSources in Frameworks */,
+				A6E217D71C470B6700000016 /* WWTimeMap in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -140,6 +165,7 @@
 				B28B916FDF2C4DB2572E1227 /* WaveWrangler */,
 				64588220B0AF205B4D9A35D0 /* WaveWranglerTests */,
 				1F7EA7BCA174E803041CF1A9 /* WaveWranglerUITests */,
+				A6E217D71C470B6700000003 /* WaveWranglerHostedTests */,
 				5C1A9E3B7D2F4A6E8B0C2D43 /* Shared Fixtures */,
 				CBECE766B90506CB71FA4DEC /* Products */,
 			);
@@ -159,6 +185,7 @@
 				2793E8D2F64EF711A331B014 /* WaveWrangler.app */,
 				65BA5EA7D383BDC1C1B6760D /* WaveWranglerTests.xctest */,
 				E932B07FC4428F442F2A99D1 /* WaveWranglerUITests.xctest */,
+				A6E217D71C470B6700000001 /* WaveWranglerHostedTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -226,6 +253,35 @@
 			productReference = 65BA5EA7D383BDC1C1B6760D /* WaveWranglerTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		A6E217D71C470B6700000004 /* WaveWranglerHostedTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A6E217D71C470B6700000005 /* Build configuration list for PBXNativeTarget "WaveWranglerHostedTests" */;
+			buildPhases = (
+				A6E217D71C470B6700000006 /* Sources */,
+				A6E217D71C470B6700000002 /* Frameworks */,
+				A6E217D71C470B6700000007 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				950AD5FCDBF21EE65212DF53 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A6E217D71C470B6700000003 /* WaveWranglerHostedTests */,
+			);
+			name = WaveWranglerHostedTests;
+			packageProductDependencies = (
+				EFD0098BA1885BA053D2704C /* WWCore */,
+				69CABF447993DF3333764DC0 /* WWPersistence */,
+				A10220000000000000000011 /* WWAlignPipeline */,
+				A10220000000000000000012 /* WWDerived */,
+				8503CC32FED0C1A6A832807D /* WWSources */,
+				A10220000000000000000014 /* WWTimeMap */,
+			);
+			productName = WaveWranglerHostedTests;
+			productReference = A6E217D71C470B6700000001 /* WaveWranglerHostedTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		77746556A807AB1774029007 /* WaveWranglerUITests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = FF956C9032B8EEB356A182B9 /* Build configuration list for PBXNativeTarget "WaveWranglerUITests" */;
@@ -269,6 +325,10 @@
 						CreatedOnToolsVersion = 27.0;
 						TestTargetID = 04EB296F827131170B2A4D94;
 					};
+					A6E217D71C470B6700000004 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 04EB296F827131170B2A4D94;
+					};
 				};
 			};
 			buildConfigurationList = B2BC4494C354D05F0E040A06 /* Build configuration list for PBXProject "WaveWrangler" */;
@@ -291,6 +351,7 @@
 				04EB296F827131170B2A4D94 /* WaveWrangler */,
 				C13E785C401E67854374EF9C /* WaveWranglerTests */,
 				77746556A807AB1774029007 /* WaveWranglerUITests */,
+				A6E217D71C470B6700000004 /* WaveWranglerHostedTests */,
 			);
 		};
 /* End PBXProject section */
@@ -311,6 +372,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		897B3DCCCF228EB63E2213EB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A6E217D71C470B6700000007 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -339,6 +407,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				5C1A9E3B7D2F4A6E8B0C2D42 /* ShowSchema1Fixtures.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A6E217D71C470B6700000006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -484,6 +559,42 @@
 			};
 			name = Release;
 		};
+		A6E217D71C470B6700000008 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brandonmartinez.wavewrangler.hostedtests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WaveWrangler.app/Contents/MacOS/WaveWrangler";
+			};
+			name = Debug;
+		};
+		A6E217D71C470B6700000009 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brandonmartinez.wavewrangler.hostedtests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WaveWrangler.app/Contents/MacOS/WaveWrangler";
+			};
+			name = Release;
+		};
 		677E75DBA68CFE4DDF54A969 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -547,6 +658,15 @@
 			buildConfigurations = (
 				677E75DBA68CFE4DDF54A969 /* Debug */,
 				6762AC438239D46DF6FF58F8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A6E217D71C470B6700000005 /* Build configuration list for PBXNativeTarget "WaveWranglerHostedTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A6E217D71C470B6700000008 /* Debug */,
+				A6E217D71C470B6700000009 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
