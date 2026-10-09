@@ -122,11 +122,12 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             let shot = reason.screenshot()
             guard let cg = shot.image.cgImage(forProposedRect: nil, context: nil, hints: nil),
                   let lastLine = cg.cropping(to: CGRect(x: 0, y: CGFloat(cg.height) * 0.7,
-                                                       width: cg.width, height: CGFloat(cg.height) * 0.3)) else {
+                                                       width: CGFloat(cg.width), height: CGFloat(cg.height) * 0.3)) else {
                 return XCTFail("The refusal's last line must produce visible pixels")
             }
-            let pixels = ContrastMeter.measure(NSImage(cgImage: lastLine, size: .init(width: CGFloat(lastLine.width), height: CGFloat(lastLine.height))))
-            XCTAssertGreaterThanOrEqual(pixels?["glyphPixels"] as? Int ?? 0, 40, "The last line must be rendered, not just in AX")
+            let lastLineImage = NSImage(cgImage: lastLine, size: CGSize(width: CGFloat(lastLine.width), height: CGFloat(lastLine.height)))
+            let glyphPixels = ContrastMeter.measure(lastLineImage)?["glyphPixels"] as? Int ?? 0
+            XCTAssertGreaterThanOrEqual(glyphPixels, 40, "The last line must be rendered, not just in AX")
         }
         XCTAssertTrue(app.buttons["ww.review.remedy.setup"].isHittable, "Setup remains fixed after scrolling to the refusal")
     }
