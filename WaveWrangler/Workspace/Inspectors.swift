@@ -56,6 +56,11 @@ private struct ReviewInspectorViewport: NSViewRepresentable {
     func updateNSView(_ view: ReviewInspectorPanel, context: Context) {
         view.update(selectedOccurrence: selectedOccurrence, textSize: textSize)
     }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: ReviewInspectorPanel, context: Context) -> CGSize? {
+        // Zero ideal height leaves the split free to allocate its real viewport; the document never sizes it.
+        CGSize(width: proposal.width ?? 0, height: 0)
+    }
 }
 
 private final class ReviewInspectorClipView: NSClipView {
