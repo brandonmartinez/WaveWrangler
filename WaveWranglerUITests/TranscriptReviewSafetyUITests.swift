@@ -138,7 +138,10 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
 
         assertTextSize100()
         for textSize in [100, 200] {
-            if textSize == 200 { assertTextSize200() }
+            if textSize == 200 {
+                for _ in 0..<5 { app.typeKey("+", modifierFlags: .command) }
+                assertTextSize200()
+            }
             scrollToFullyVisible(second, in: content)
             XCTAssertTrue(content.frame.contains(second.frame), "\(textSize)% proposal 002 is fully inside its scroll viewport")
             XCTAssertTrue(window.frame.contains(second.frame), "\(textSize)% proposal 002 is fully inside the minimum window")
