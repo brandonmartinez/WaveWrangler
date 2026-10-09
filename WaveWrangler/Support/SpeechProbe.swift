@@ -52,6 +52,10 @@ enum SpeechProbe {
         }
         do {
             let inference = SpeechInference()
+            guard SpeechInference.nativeCPULinked else {
+                fputs("speech native CPU bridge unavailable\n", stderr)
+                return 1
+            }
             do {
                 _ = try inference.syntheticProbe(
                     model: model, episodeID: episode.id, speakerID: speaker.id, channel: backup
@@ -71,7 +75,7 @@ enum SpeechProbe {
                 fputs("speech synthetic process identity failed\n", stderr)
                 return 1
             }
-            print("WW_SPEECH_SYNTHETIC_IN_APP pid=\(result.processID) frames=4 words=0 backup=refused")
+            print("WW_SPEECH_SYNTHETIC_IN_APP pid=\(result.processID) frames=4 words=0 backup=refused native=linked")
             return 0
         } catch {
             fputs("speech synthetic admission failed\n", stderr)

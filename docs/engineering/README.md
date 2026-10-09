@@ -192,6 +192,29 @@ scripts/test.sh --package-only
 scripts/test.sh --ui        # XCUITests only (launches the app); needs GUI permission + the coordinator's GUI lock
 ```
 
+The isolated `ww-tiny-pcm-probe` is a **headless experiment**, not app inference. Standard
+package tests exercise missing, wrong-size and wrong-hash model refusal, descriptor I/O
+failure and nonlocal/unknown filesystem rejection without a model;
+the model-backed test is explicitly disabled unless `WW_TINY_MODEL_PATH` is set. To run
+the executable against a separately approved, locally supplied `ggml-tiny.en.bin`:
+
+```sh
+swift run --package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm --jobs 4 ww-tiny-pcm-probe --model "$LOCAL_TINY_MODEL_PATH"
+```
+
+It opens only that path read-only without following the final symlink, disables dataless
+provider materialization for the open/read thread, and refuses dataless descriptors and
+descriptors whose filesystem is not confirmed locally mounted. Checked, bounded `pread`
+refuses I/O errors and short reads instead of aborting; it reads exactly 77,704,715 bytes,
+checks the descriptor before/after, and hashes the bytes against
+`921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f`
+before loading them from memory into the pinned CPU library. It generates two seconds
+of 16 kHz mono PCM with two inference threads and at most 16 decoded tokens. Output is
+aggregate only; segment timing availability is **not** word timing or accuracy.
+Never put model bytes in the repo. `SpeechInference.infer` still refuses even for a
+selected primary; no production source binding, sandbox offline proof or media use is
+established by this command.
+
 For headless functional XCUITests, build on the development Mac and run the
 signed Products inside the [macOS VM GUI hosts](ui-test-vm-hosts.md) through
 their own lease helpers. `scripts/test.sh --ui` launches on the **current

@@ -37,10 +37,13 @@ let package = Package(
         .library(name: "WWWordEvaluation", targets: ["WWWordEvaluation"]),
         // Provisional, media-free selected-Primary speech boundary; production inference refuses until qualified.
         .library(name: "WWSpeech", targets: ["WWSpeech"]),
+        .library(name: "WWWhisperNative", type: .static, targets: ["WWWhisperNative"]),
         // Pure M3 proposal and protected-cut admission policy; mapping is supplied by an Alignment adapter.
         .library(name: "WWCutPolicy", targets: ["WWCutPolicy"]),
         // Headless persistence probe for multi-process and observed-provider trials (synthetic documents only).
         .executable(name: "wwpersist-probe", targets: ["WWPersistenceProbe"]),
+        // Explicitly opted-in, generated-PCM-only model experiment; not linked by the app.
+        .executable(name: "ww-tiny-pcm-probe", targets: ["WWTinyPCMProbe"]),
     ],
     targets: [
         .target(name: "WWCore"),
@@ -57,9 +60,22 @@ let package = Package(
         .target(name: "WWAlignSegment", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
         .target(name: "WWAlignPipeline", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWDerived", "WWPersistence", "WWAlignEstimate", "WWRender"]),
         .target(name: "WWWordEvaluation"),
-        .target(name: "WWSpeech", dependencies: ["WWCore"]),
+        .target(name: "WWSpeech", dependencies: ["WWCore", "WWWhisperNative"]),
+        .target(
+            name: "WWWhisperNative",
+            exclude: ["upstream/LICENSE"],
+            sources: [
+                "CPUBridge.c",
+                "upstream/ggml.c", "upstream/ggml-alloc.c", "upstream/ggml-backend.c",
+                "upstream/ggml-quants.c", "upstream/whisper.cpp",
+            ],
+            publicHeadersPath: "include",
+            cSettings: [.headerSearchPath("upstream")],
+            cxxSettings: [.headerSearchPath("upstream")]
+        ),
         .target(name: "WWCutPolicy", dependencies: ["WWCore"]),
         .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),
+        .executableTarget(name: "WWTinyPCMProbe", dependencies: ["WWWhisperNative"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
         .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore", "WWPersistenceProbe", "WWOrganizer", "WWTimeMap"]),
         .testTarget(name: "WWSourcesTests", dependencies: ["WWSources", "WWCore"]),
@@ -75,10 +91,13 @@ let package = Package(
         .testTarget(name: "WWAlignPipelineTests", dependencies: ["WWAlignPipeline", "WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWAlignEstimate", "WWRender", "WWCore"]),
         .testTarget(name: "WWWordEvaluationTests", dependencies: ["WWWordEvaluation"]),
         .testTarget(name: "WWSpeechTests", dependencies: ["WWSpeech", "WWCore"]),
+        .testTarget(name: "WWTinyPCMProbeTests", dependencies: ["WWTinyPCMProbe"]),
         .testTarget(name: "WWCutPolicyTests", dependencies: ["WWCutPolicy", "WWCore"]),
         // Headless validation on a user-approved local episode copy. Skipped unless WW_LOCAL_EPISODE_DIR is
         // set at run time (never on CI); see docs/m2/evidence/m2-local-episode-validation.md.
         .testTarget(name: "WWLocalEpisodeValidationTests", dependencies: ["WWDecode", "WWSources", "WWAlignEstimate", "WWRender", "WWTimeMap", "WWCore", "WWDerived", "WWPersistence", "WWAlignPipeline"]),
     ],
-    swiftLanguageModes: [.v6]
+    swiftLanguageModes: [.v6],
+    cLanguageStandard: .c11,
+    cxxLanguageStandard: .cxx11
 )
