@@ -28,6 +28,19 @@ Tart's [personal-workstation license](https://tart.run/licensing/)
 is royalty-free; Apple's [macOS license](https://www.apple.com/legal/sla/docs/macOSGoldenGate.pdf)
 limits this Mac to two additional macOS virtualized instances.
 
+**M3/M4 operating exception (Brandon, 2026-10-09 15:50 EDT):** The two
+currently running guests may remain owned by the persistent main-checkout
+relay session for **synthetic functional GUI tests only**; the relay will not
+be archived during M3/M4. This supersedes the session-independent lifetime
+requirement below for these two existing processes during that scope, not
+the #415 reboot-between-leases validation. Use each guest's existing
+`gui-lock` with fresh readiness checks and post-run cleanup, and check for
+leftover test processes between leases. Do not stop or restart either guest;
+coordinate that with the relay. If the relay session or either guest stops,
+do not assume the exception establishes a replacement host: re-establish
+readiness and ownership before dispatching further tests. The physical
+Mac mini remains the required host for performance and physical GUI gates.
+
 After a host reboot, start each guest in its **own** detached,
 session-independent background process. The VM service must not be owned by
 an app/agent session that can be archived later; otherwise archiving that
