@@ -24,7 +24,8 @@ struct SelectedPrimaryIssuerRedTests {
             #expect(result.channel == 1)
             #expect(result.sourceFrames == 4_000..<36_000)
             #expect(result.samples.count == 32_000)
-            #expect(result.samples.allSatisfy(\.isFinite))
+            let allFinite = result.samples.allSatisfy { $0.isFinite }
+            #expect(allFinite)
             #expect(result.samples == Array(fixture.primaryChannel1[4_000..<36_000]))
             #expect(opened == [fixture.primaryID])
             try fixture.assertMediaUnchanged()
