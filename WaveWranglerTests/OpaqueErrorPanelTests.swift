@@ -90,6 +90,76 @@ struct OpaqueErrorPanelTests {
         #expect(refusal.optionButtons[0].keyEquivalent == "\r")
     }
 
+    @Test func numberedRecoveryChoicesWorkWithFullKeyboardAccessOff() throws {
+        let error = NSError(domain: "test.recovery", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: "Choose the original show.",
+            NSLocalizedRecoveryOptionsErrorKey: [
+                "⌘1 Open Unsaved Copy (Created 2023-11-14; Show ID FFFFFFFF)",
+                "⌘2 Show in Finder (Created date unknown; Show ID 00000000)",
+                "Cancel",
+            ],
+            OpaqueErrorContent.requiresExplicitSelectionKey: true,
+        ])
+        let panel = OpaqueErrorPanel(error: error)
+        var chosen: [Int] = []
+        panel.onChoose = { chosen.append($0) }
+        #expect(panel.content.defaultIndex == nil && panel.defaultButtonCell == nil)
+        #expect(panel.optionButtons.map(\.keyEquivalent) == ["1", "2", "\u{1b}"])
+        #expect(panel.optionButtons[0].keyEquivalentModifierMask == .command)
+        #expect(panel.optionButtons[1].keyEquivalentModifierMask == .command)
+        #expect(panel.optionButtons.prefix(2).allSatisfy { $0.title.contains("⌘") && $0.accessibilityLabel() == $0.title })
+
+        let second = try #require(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+            windowNumber: panel.windowNumber, context: nil, characters: "2",
+            charactersIgnoringModifiers: "2", isARepeat: false, keyCode: 19
+        ))
+        #expect(panel.performKeyEquivalent(second), "a key equivalent works even when Tab cannot focus buttons")
+        #expect(chosen == [1], "⌘2 reveals precisely the second retained record")
+        panel.cancelOperation(nil)
+        #expect(chosen == [1, 2], "Esc cancels without selecting another copy")
+    }
+
+    @Test func twelveRetainedCopiesStayReachableOnNumberedKeyboardPages() throws {
+        let labels = (0..<12).map { "Open Recovery Copy \($0) (Show ID \($0))" } + ["Cancel"]
+        let error = NSError(domain: "test.recovery", code: 2, userInfo: [
+            NSLocalizedDescriptionKey: "Choose a retained copy.",
+            NSLocalizedRecoveryOptionsErrorKey: labels,
+            OpaqueErrorContent.requiresExplicitSelectionKey: true,
+        ])
+        let panel = OpaqueErrorPanel(error: error)
+        var chosen: [Int] = []
+        panel.onChoose = { chosen.append($0) }
+        #expect(panel.optionButtons.count == 13, "no retained copy can be capped or dropped")
+        #expect(panel.optionButtons.prefix(12).filter { !$0.isHiddenOrHasHiddenAncestor }.count == 9)
+
+        func buttons(in view: NSView) -> [NSButton] {
+            view.subviews.flatMap { child -> [NSButton] in
+                let current = (child as? NSButton).map { [$0] } ?? []
+                return current + buttons(in: child)
+            }
+        }
+        let next = try #require(buttons(in: panel.contentView!).first { $0.title.contains("Next Recovery Page") })
+        #expect(next.title.contains("⌘]") && next.keyEquivalent == "]" && next.keyEquivalentModifierMask == .command)
+        let nextKey = try #require(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+            windowNumber: panel.windowNumber, context: nil, characters: "]",
+            charactersIgnoringModifiers: "]", isARepeat: false, keyCode: 30
+        ))
+        #expect(panel.performKeyEquivalent(nextKey))
+        #expect(panel.optionButtons.prefix(12).filter { !$0.isHiddenOrHasHiddenAncestor }.count == 3)
+        #expect(panel.optionButtons[9].title.contains("⌘1"))
+        let firstOnNextPage = try #require(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+            windowNumber: panel.windowNumber, context: nil, characters: "1",
+            charactersIgnoringModifiers: "1", isARepeat: false, keyCode: 18
+        ))
+        #expect(panel.performKeyEquivalent(firstOnNextPage))
+        #expect(chosen == [9], "⌘1 on page two chooses only the tenth retained copy")
+        panel.cancelOperation(nil)
+        #expect(chosen == [9, 12], "Esc is Cancel on every page")
+    }
+
     // MARK: - Recovery stays the error's own (copy-only) attempter
 
     @Test func recoveryGoesThroughTheErrorsAttempter() {

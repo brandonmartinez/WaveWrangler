@@ -216,19 +216,20 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             if offer.exists {
                 Acceptance.record(self, "T17 offer buttons: \(offer.buttons.allElementsBoundByIndex.map(\.title))")
                 try audit("T17 recovery offer")
-                let newest = offer.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@",
-                    "Open Recovery Copy 1 (Saved ", "revision 2")).firstMatch
-                let older = offer.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@",
-                    "Open Recovery Copy 2 (Saved date unknown;", "revision 1")).firstMatch
+                let newest = offer.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@",
+                    "⌘1", "revision 2")).firstMatch
+                let older = offer.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@",
+                    "⌘2", "revision 1")).firstMatch
                 check(newest.exists && newest.isEnabled && newest.label == newest.title,
-                      "VoiceOver identifies the newer saved revision without an unverified Newest claim: \(offer.buttons.allElementsBoundByIndex.map(\.label))")
-                check(older.exists && older.isEnabled && older.label == older.title,
-                      "the undated older prior has its own VoiceOver action and an honest missing date")
+                      "VoiceOver identifies the saved revision and ⌘1 without an unverified Newest claim: \(offer.buttons.allElementsBoundByIndex.map(\.label))")
+                check(older.exists && older.isEnabled && older.label == older.title &&
+                      older.label.contains("Saved date unknown"),
+                      "the undated older prior has its own numbered VoiceOver action and an honest missing date")
                 if newest.exists {
                     app.typeKey(.return, modifierFlags: [])
                     check(app.windows.matching(identifier: "ww.show.window").count == 0,
                           "Return never selects a copy when a saved date is missing")
-                    newest.click()
+                    app.typeKey("1", modifierFlags: .command)
                     let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
                     if copy.waitForExistence(timeout: 10) {
                         let title = copy.textFields["Show title"]
@@ -272,10 +273,10 @@ final class CoreTasksKeyboardUITests: XCTestCase {
                 return
             }
             let buttons = offer.buttons.allElementsBoundByIndex
-            let newest = offer.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@",
-                "Open Recovery Copy 1 (Saved ", "revision 2")).firstMatch
-            let older = offer.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@",
-                "Open Recovery Copy 2 (Saved date unknown;", "revision 1")).firstMatch
+            let newest = offer.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@",
+                "⌘1", "revision 2")).firstMatch
+            let older = offer.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@",
+                "⌘2", "revision 1")).firstMatch
             let labels = Set(buttons.map(\.label))
             check(buttons.count == 3 && labels.count == 3 && labels.contains("Cancel")
                   && newest.exists && older.exists && !labels.contains(where: { $0.contains("Newest") })
@@ -303,14 +304,10 @@ final class CoreTasksKeyboardUITests: XCTestCase {
                 "buttonLabels": buttons.map(\.label), "focusOrder": focusOrder,
                 "keyboardNavigation": keyboardNavigation, "spokenVoiceOverCaptured": false,
             ], test: self)
-            if keyboardNavigation && Acceptance.hasKeyboardFocus(newest) {
-                app.typeKey(" ", modifierFlags: [])
-            } else if newest.exists {
-                app.typeKey(.return, modifierFlags: [])
-                check(app.windows.matching(identifier: "ww.show.window").count == 0,
-                      "Return does not pick an unverified newest")
-                newest.click()
-            }
+            app.typeKey(.return, modifierFlags: [])
+            check(app.windows.matching(identifier: "ww.show.window").count == 0,
+                  "Return does not pick an unverified newest even without Full Keyboard Access")
+            app.typeKey("1", modifierFlags: .command)
 
             let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
             check(copy.waitForExistence(timeout: 10), "explicit action opens the later saved prior")

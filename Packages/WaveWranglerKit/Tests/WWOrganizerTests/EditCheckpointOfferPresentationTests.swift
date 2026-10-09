@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import WWCore
 @testable import WWOrganizer
 
 /// C2b recovery offer wording, actions and confirmations (contracts C2b; #84).
@@ -80,7 +81,8 @@ struct EditCheckpointOfferPresentationTests {
         let newest = EditCheckpointOfferPresentation(.restore(createdAt: date), showName: "Show",
                                                       position: (index: 1, total: 3), formatTime: time)
         #expect(newest.actions == [.restore, .openAsCopy, .discard, .next])
-        #expect(newest.body.contains("Recovery copy 1 of 3, newest first"))
+        #expect(newest.body.contains("Recovery copy 1 of 3"))
+        #expect(!newest.body.contains("newest first"), "a position alone cannot attest chronological recency")
         let middle = EditCheckpointOfferPresentation(.olderRevision(createdAt: date), showName: "Show",
                                                       position: (index: 2, total: 3), formatTime: time)
         #expect(middle.actions == [.openAsCopy, .discard, .previous, .next])
@@ -89,5 +91,19 @@ struct EditCheckpointOfferPresentationTests {
         #expect(oldest.actions == [.openAsCopy, .discard, .previous])
         let changed = EditCheckpointOfferPresentation(.selectionChanged, showName: "Show")
         #expect(changed.actions == [.checkAgain] && !changed.actions.contains(.restore))
+    }
+
+    @Test func selectedCopyUsesSharedCreationProvenanceAndDocumentIdentity() throws {
+        let id = "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"
+        let plan = RecoveryChoicePresentation.plan(records: [
+            .init(recordID: "b-draft", kind: .unsavedCheckpoint, documentID: id, savedAt: nil,
+                  createdAt: date, revision: 3, disposition: .open),
+        ])
+        let choice = try #require(plan.choices.first)
+        let presentation = EditCheckpointOfferPresentation(.olderRevision(createdAt: date), showName: "Show",
+            choice: choice, position: (index: 1, total: 2), formatTime: time)
+        #expect(presentation.body.contains(id))
+        #expect(presentation.body.contains("Created") && !presentation.body.contains("Saved 10:42 PM"))
+        #expect(presentation.body.contains("1 of 2") && !presentation.body.contains("newest"))
     }
 }

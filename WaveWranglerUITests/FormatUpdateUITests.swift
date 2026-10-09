@@ -111,7 +111,10 @@ final class FormatUpdateUITests: XCTestCase {
             check(popover.waitForExistence(timeout: 5), "prior copies are in the save-status popover")
             let prior = popover.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.show.recovery.openPrior.'")).firstMatch
             check(prior.waitForExistence(timeout: 5), "the schema 1 checkpoint is individually offerable")
-            if prior.exists { prior.click() }
+            if prior.exists {
+                check(prior.label.contains("⌘1"), "the retained older-schema copy has a visible shortcut")
+                app.typeKey("1", modifierFlags: .command)
+            }
             let copy = app.windows.matching(identifier: "ww.show.window").matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
             check(copy.waitForExistence(timeout: 10), "the older prior opens as a new current-schema copy")
             check(diskSchemaVersion(document) == Self.currentShowSchema,
@@ -131,8 +134,8 @@ final class FormatUpdateUITests: XCTestCase {
             check(refusal.waitForExistence(timeout: 10), "damaged canonical file shows a refusal")
             check(texts(in: refusal).contains { $0.contains("recovery copy is damaged and cannot be restored") },
                   "the damaged C2b payload is described honestly")
-            check(refusal.buttons.matching(NSPredicate(format: "title BEGINSWITH 'Show in Finder'")).firstMatch.exists,
-                  "the exact retained raw record can be revealed non-destructively")
+            check(refusal.buttons.matching(NSPredicate(format: "label CONTAINS 'Show in Finder' AND label CONTAINS '⌘1'")).firstMatch.exists,
+                  "the exact retained raw record has a keyboard-reachable reveal action")
             check(!refusal.buttons["Open Unsaved Copy"].exists && !refusal.buttons["Restore Unsaved Changes"].exists,
                   "damaged bytes are never offered as a successful restore")
             check((try? Data(contentsOf: document)) == damaged, "canonical bytes remain unchanged")
@@ -317,14 +320,16 @@ final class FormatUpdateUITests: XCTestCase {
             if refusal.exists {
                 try audit("F-OLDER-BAD refusal")
                 Acceptance.record(self, "F-OLDER-BAD offer buttons: \(refusal.buttons.allElementsBoundByIndex.map(\.title))")
-                let recovered = refusal.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Open Recovery Copy 1 (Saved date unknown;'")).firstMatch
+                let recovered = refusal.buttons.matching(NSPredicate(
+                    format: "label CONTAINS '⌘1' AND label CONTAINS 'Saved date unknown;'"
+                )).firstMatch
                 check(recovered.exists && recovered.isEnabled, "the undated retained checkpoint is an explicitly selectable copy")
                 if recovered.exists {
                     // Return must not silently select a legacy checkpoint whose save date was never recorded.
                     app.typeKey(.return, modifierFlags: [])
                     check(app.windows.matching(identifier: "ww.show.window").count == 0,
                           "Return does not open an undated recovery copy")
-                    recovered.click()
+                    app.typeKey("1", modifierFlags: .command)
                     let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
                     check(copy.waitForExistence(timeout: 10), "the recovered copy opens")
                     let showInfo = copy.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch

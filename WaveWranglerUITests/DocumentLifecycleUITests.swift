@@ -46,10 +46,11 @@ final class DocumentLifecycleUITests: XCTestCase {
         // VoiceOver: a group labelled by its heading; the heading (header trait) and body are its children.
         let body = bar.staticTexts.matching(NSPredicate(format: "value CONTAINS 'recovery copy' OR label CONTAINS 'recovery copy'")).firstMatch
         XCTAssertTrue(body.exists, "the body text is exposed to VoiceOver")
-        XCTAssertTrue(bar.buttons["Restore Unsaved Changes"].exists && bar.buttons["Discard…"].exists)
+        XCTAssertTrue(recoveryAction("Restore Unsaved Changes", in: bar).exists &&
+                      recoveryAction("Discard…", in: bar).exists)
         XCTAssertEqual(diskTitle(document), "Synthetic Trial Show 1", "opening never applies or publishes the checkpoint")
 
-        bar.buttons["Discard…"].click()
+        try chooseRecoveryAction("Discard…", in: bar)
         let confirm = app.sheets.firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Discard asks for confirmation")
         record("discard sheet buttons: \(confirm.buttons.allElementsBoundByIndex.map(\.title))")
@@ -57,7 +58,7 @@ final class DocumentLifecycleUITests: XCTestCase {
         XCTAssertTrue(waitFor(timeout: 3) { !confirm.exists })
         XCTAssertTrue(bar.exists, "Cancel keeps the offer")
 
-        bar.buttons["Restore Unsaved Changes"].click()
+        try chooseRecoveryAction("Restore Unsaved Changes", in: bar)
         XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).label.hasPrefix("Recovery copy kept from ") },
                       "Restore keeps its independently discardable recovery copy")
         let field = showTitleField(window)
@@ -130,9 +131,14 @@ final class DocumentLifecycleUITests: XCTestCase {
         let refusal = app.dialogs.firstMatch.exists ? app.dialogs.firstMatch : app.sheets.firstMatch
         XCTAssertTrue(refusal.waitForExistence(timeout: 10), "damaged canonical show refuses open")
         XCTAssertFalse(refusal.buttons["Restore Unsaved Changes"].exists, "no in-place restore over damage")
-        let copy = refusal.buttons["Open Unsaved Copy"]
-        XCTAssertTrue(copy.exists, "the retained C2b session is reachable by its original-location hint")
-        if copy.exists { copy.click() }
+        let copy = refusal.buttons.matching(NSPredicate(
+            format: "label CONTAINS '⌘1' AND label CONTAINS 'Created' AND label CONTAINS 'Show ID'"
+        )).firstMatch
+        XCTAssertTrue(copy.exists, "the retained C2b session is identified by creation time and show ID")
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertFalse(app.windows.matching(identifier: "ww.show.window").firstMatch.exists,
+                       "Return never chooses an ambiguous copy")
+        app.typeKey("1", modifierFlags: .command)
         let opened = app.windows.matching(identifier: "ww.show.window").firstMatch
         XCTAssertTrue(opened.waitForExistence(timeout: 10), "the C2b edit opens only as a separate show")
         XCTAssertEqual(showTitleField(opened).value as? String, "Retained unsaved edit")
@@ -149,13 +155,13 @@ final class DocumentLifecycleUITests: XCTestCase {
         let bar = messageBar(window)
         XCTAssertTrue(bar.waitForExistence(timeout: 10))
         XCTAssertTrue(bar.label.contains("damaged and cannot be restored"))
-        XCTAssertTrue(bar.buttons["Show in Finder"].exists, "the damaged newest record is offered with raw reveal")
-        XCTAssertFalse(bar.buttons["Restore Unsaved Changes"].exists, "damaged data is never restored")
-        XCTAssertTrue(bar.buttons["Next Recovery Copy"].exists, "the older usable session is reachable without Discard")
-        bar.buttons["Next Recovery Copy"].click()
+        XCTAssertTrue(recoveryAction("Show in Finder", in: bar).exists, "the damaged newest record is offered with raw reveal")
+        XCTAssertFalse(recoveryAction("Restore Unsaved Changes", in: bar).exists, "damaged data is never restored")
+        XCTAssertTrue(recoveryAction("Next Recovery Copy", in: bar).exists, "the older usable session is reachable without Discard")
+        try chooseRecoveryAction("Next Recovery Copy", in: bar)
         XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).label.contains("2 of 2") })
-        XCTAssertTrue(messageBar(window).buttons["Open as Separate Copy"].exists, "the usable older session can be opened")
-        messageBar(window).buttons["Previous Recovery Copy"].click()
+        XCTAssertTrue(recoveryAction("Open as Separate Copy", in: messageBar(window)).exists, "the usable older session can be opened")
+        try chooseRecoveryAction("Previous Recovery Copy", in: messageBar(window))
         XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).label.contains("1 of 2") },
                       "the damaged session remains accessible after reviewing the usable one")
         XCTAssertEqual(try Data(contentsOf: document), canonical)
@@ -177,23 +183,23 @@ final class DocumentLifecycleUITests: XCTestCase {
         let bar = messageBar(window)
         XCTAssertTrue(bar.waitForExistence(timeout: 10))
         let first = bar.label
-        XCTAssertTrue(bar.buttons["Next Recovery Copy"].exists, "older sessions are reachable without Discard")
-        bar.buttons["Next Recovery Copy"].click()
+        XCTAssertTrue(recoveryAction("Next Recovery Copy", in: bar).exists, "older sessions are reachable without Discard")
+        try chooseRecoveryAction("Next Recovery Copy", in: bar)
         XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).label.contains("2 of 2") },
                       "the older session is selected independently")
-        XCTAssertTrue(messageBar(window).buttons["Open as Separate Copy"].exists, "every session offers Open Copy")
-        messageBar(window).buttons["Previous Recovery Copy"].click()
+        XCTAssertTrue(recoveryAction("Open as Separate Copy", in: messageBar(window)).exists, "every session offers Open Copy")
+        try chooseRecoveryAction("Previous Recovery Copy", in: messageBar(window))
         XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).label == first },
                       "the newest session is reselected without deleting the older one")
-        bar.buttons["Restore Unsaved Changes"].click()
+        try chooseRecoveryAction("Restore Unsaved Changes", in: bar)
         XCTAssertEqual(showTitleField(window).value as? String, "Session B edits", "the newest record is offered first")
-        XCTAssertTrue(messageBar(window).buttons["Next Recovery Copy"].exists)
-        messageBar(window).buttons["Next Recovery Copy"].click()
+        XCTAssertTrue(recoveryAction("Next Recovery Copy", in: messageBar(window)).exists)
+        try chooseRecoveryAction("Next Recovery Copy", in: messageBar(window))
         // The other session's record is copy-only while B's restore is in effect.
         XCTAssertTrue(waitFor(timeout: 5) { self.messageBar(window).label.hasPrefix("More unsaved changes from ") })
         record("two sessions: first \(first) | then \(messageBar(window).label)")
-        XCTAssertFalse(messageBar(window).buttons["Restore Unsaved Changes"].exists)
-        messageBar(window).buttons["Open as Separate Copy"].click()
+        XCTAssertFalse(recoveryAction("Restore Unsaved Changes", in: messageBar(window)).exists)
+        try chooseRecoveryAction("Open as Separate Copy", in: messageBar(window))
         let copy = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
         XCTAssertTrue(copy.waitForExistence(timeout: 10))
         XCTAssertEqual(showTitleField(copy).value as? String, "Session A edits")
@@ -217,8 +223,8 @@ final class DocumentLifecycleUITests: XCTestCase {
         XCTAssertTrue(bar.waitForExistence(timeout: 10))
         record("offer: \(bar.label) | \(bar.value as? String ?? "")")
         XCTAssertEqual(bar.label, "Unsaved changes based on an older revision")
-        XCTAssertFalse(bar.buttons["Restore Unsaved Changes"].exists)
-        bar.buttons["Open as Separate Copy"].click()
+        XCTAssertFalse(recoveryAction("Restore Unsaved Changes", in: bar).exists)
+        try chooseRecoveryAction("Open as Separate Copy", in: bar)
         let copy = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
         XCTAssertTrue(copy.waitForExistence(timeout: 10), "a separate untitled copy opens")
         let copyField = showTitleField(copy)
@@ -386,6 +392,18 @@ final class DocumentLifecycleUITests: XCTestCase {
 
     private func messageBar(_ window: XCUIElement) -> XCUIElement {
         window.descendants(matching: .any).matching(identifier: "ww.show.messageBar").firstMatch
+    }
+
+    private func recoveryAction(_ title: String, in bar: XCUIElement) -> XCUIElement {
+        bar.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
+    }
+
+    private func chooseRecoveryAction(_ title: String, in bar: XCUIElement) throws {
+        let action = recoveryAction(title, in: bar)
+        XCTAssertTrue(action.exists && action.isEnabled, "\(title) is keyboard reachable")
+        let shortcut = try XCTUnwrap((1...9).first { action.label.contains("⌘\($0)") },
+                                     "\(title) exposes its numbered shortcut to VoiceOver")
+        app.typeKey(String(shortcut), modifierFlags: .command)
     }
 
     private func showTitleField(_ window: XCUIElement) -> XCUIElement {
