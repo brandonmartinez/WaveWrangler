@@ -14,7 +14,7 @@
   "https://github.com/brandonmartinez/WaveWrangler/issues/310"
  ],
  "protocol": "docs/m2/ww-019-m2-contracts.md §4 (freeze plan) and §5 (gates)",
- "status": "Records are dated individually; read each entry for its effective freeze and holdout status. The original render holdout passed, revisions 2 and 3 have valid objective rows but permanently INCOMPLETE frozen CPU protocols, and the conditional revision-4 holdout has NOT RUN. m2-freeze-decode holdout passed once in PR #202 and is retained unchanged as historical evidence; it is superseded for the pull-cursor trees by m2-freeze-decode-2, whose calibration passed and whose holdout has NOT RUN. m2-freeze-timemap holdout passed once in PR #202. Discontinuity revision status and evidence remain recorded on their entries and evidence note.",
+ "status": "Records are dated individually; read each entry for its effective freeze and holdout status. The original render holdout passed, revisions 2 and 3 retain valid objective rows but permanently INCOMPLETE frozen CPU protocols, and the conditional revision-4 holdout passed its whole frozen synthetic CPU/objective protocol once (independent review and final-head full tests still pending). m2-freeze-decode holdout passed once in PR #202 and is retained unchanged as historical evidence; it is superseded for the pull-cursor trees by m2-freeze-decode-2, whose calibration passed and whose holdout has NOT RUN. m2-freeze-timemap holdout passed once in PR #202. Discontinuity revision status and evidence remain recorded on their entries and evidence note.",
  "freezeRule": "Each family is frozen (recipe, truth, split and counts, gate, generator tree IDs) in a dated freeze record under docs/m2/fixtures/ before its first holdout case runs. Counts may increase before a freeze and never decrease after one without an explicit, dated user decision.",
  "freezes": [
   {
@@ -173,7 +173,7 @@
    "fixtures": [
     "M2-RENDER-001"
    ],
-   "status": "prospective freeze; pre-freeze CPU sampler calibrated twice with complete <=1 s coverage and strict whole-tree <400%; disjoint holdout-4 NOT RUN; revisions 2 and 3 remain INCOMPLETE; listening BLOCKED",
+   "status": "once-only holdout-4 objective gates and complete <=1 s per-PID, strict whole-tree <400% CPU protocol PASSED on clean freeze 573e5fc954c2431ddf3ef2bce7b5e7b0387f3bfb; independent review and final-head full suite pending; revisions 2 and 3 remain INCOMPLETE; listening BLOCKED",
    "supersedesForExecution": "m2-freeze-render-3",
    "counts": {
     "fixtures": 1,
@@ -204,7 +204,7 @@
       "unit": "cases",
       "multiSpanCasePerSplit": 1
      },
-     "evidenceStatus": "prospective freeze; sampler calibrated twice (raw calibration-rev4-12 and -13 traces in ww-018); holdout-4 NOT RUN until clean freeze commit; revisions 2 and 3 remain INCOMPLETE; listening BLOCKED"
+     "evidenceStatus": "sampler calibrated twice before prospective freeze (raw calibration-rev4-12/-13); holdout-4 ran exactly once on clean freeze 573e5fc954c2431ddf3ef2bce7b5e7b0387f3bfb: 1370 objective records SHA-256 ff6a0dce9da8f4c3fda766e6ce3845b66b59769edda0daae36390e5f819e727d, seven gates PASS; 232 CPU snapshots/441 PID rows, worst conservative gap 0.110482 s, peak whole tree 207.41% (<400%) PASS; raw records/traces in ww-018; independent review and final-head full suite pending, no #310 closure; revisions 2/3 INCOMPLETE, listening BLOCKED"
     }
    ]
   },

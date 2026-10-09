@@ -1,0 +1,9 @@
+gate	n	nearestRankP95	worst	limit	result
+landmarks	588	0.167443926	0.16967732	1	PASS
+passband	288	0.000135920561	0.000146705267	0.1	PASS
+alias	396	-98.3056132	-93.3612903	-80	PASS
+skew	98	2.31830445e-06	0.0536575194	1	PASS
+inversions-swaps	588	0	0	0	PASS
+inactive	240	-inf	-inf	-80	PASS
+phase	288	4.01436248e-06	2.26269459e-05	0.001	PASS
+cases	49	48 seeded + 1 fixed multi-span	9 strata	1370 records	PASS

@@ -384,3 +384,73 @@ files are preserved. A helper with its own PGID was observed in both.
 This establishes sampler coverage on repeatable calibration only; it does
 **not** qualify a revision-4 holdout or change the incomplete revision-2/-3
 verdicts. The full exact-head `scripts/test.sh` remains coordinator-owned.
+
+## Once-only revision-4 holdout: frozen objective and CPU protocol PASSED
+
+The prospective [revision-4 freeze](../fixtures/m2-freeze-render-4.json)
+was committed as **`573e5fc954c2431ddf3ef2bce7b5e7b0387f3bfb` before
+the run**. `git status` was clean at launch. The sampler verified that commit,
+its own SHA-256 `72f01e42...c62b85`, the unchanged WWRender source tree
+`94604633d6464391ade116b363f8874675381bf5`, and frozen WWRenderTests
+tree `e6a93761701c87407b14b3597b27872e9df72d63`. The source, recipe,
+truth, two-case scheduler, 16/48 seed counts and seven gate limits did not
+change. The 48 new `holdout-4` identities are unique and disjoint from all
+160 prior seeded identities; the shared fixed multi-span regression case is
+disclosed and not counted as held out.
+
+The sole invocation used `python3 -B scripts/render-cpu-sampler.py holdout
+<new outside-repo evidence directory>` on `Macatron.local` (macOS 27.0.1,
+Xcode 27.0, Swift 6.4). Preflight one-minute load **9.56**, zero other native
+builds/test helpers; `swift test` used `--jobs 4 --no-parallel`, one top-level
+test and at most two cases in flight. Start
+`2026-10-09T00:43:48.494634Z`, end `00:44:13.013497Z`, **24.516799 s**
+command runtime, exit 0. The render holdout test passed in **17.179 s**;
+unrelated decode/time-map tests sharing the filter name were skipped, not
+counted as render evidence. The original [run log](ww-018/holdout-4-run.log)
+has SHA-256 `be7cc7e9012b68495089a7603bbf907960d4f810bb070ecad8dc457b8450a38f`.
+
+The canonical [raw records](ww-018/holdout-4.jsonl) contain **1,370 rows**:
+48 newly seeded cases and the fixed multi-span case (49 case indices, nine
+strata), all labelled `holdout-4`. SHA-256
+`ff6a0dce9da8f4c3fda766e6ce3845b66b59769edda0daae36390e5f819e727d`.
+The table below independently recomputes each gate from those rows; nearest
+rank p95 is rank `ceil(0.95*n)` in ascending failure direction, so higher
+negative dBc is worse. Full values are in the [derived gate table](ww-018/holdout-4-gates.tsv).
+
+| Gate | Frozen limit | n | Nearest-rank p95 | Worst | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Landmark absolute error | <=1 frame | 588 | 0.167443926 frames | 0.169677320 frames | **PASS** |
+| Passband absolute gain | <=0.1 dB through 80% lower Nyquist | 288 | 0.000135921 dB | 0.000146705 dB | **PASS** |
+| Alias residual | <=-80 dBc | 396 | -98.305613 dBc | -93.361290 dBc | **PASS** |
+| Interchannel skew | <=1 frame | 98 | 0.000002318 frames | 0.053657519 frames | **PASS** |
+| Inversions/swaps | 0 | 588 | 0 | 0 of 588 | **PASS** |
+| Inactive output | <=-80 dBFS | 240 | -infinity | -infinity (exact zero) | **PASS** |
+| Phase absolute error | <=0.001 degrees | 288 | 0.000004014 degrees | 0.000022627 degrees | **PASS** |
+
+The [raw per-PID CPU trace](ww-018/holdout-4-cpu.tsv) and
+[snapshot boundaries](ww-018/holdout-4-samples.tsv) contain **441 PID rows
+across 232 snapshots**, including **180 SwiftPM helper snapshots** in a
+different process group than its parent. Worst conservative snapshot gap
+**0.110482 s** (<1 s), first sample **0.003730 s** after launch, last
+**0.000220 s** before observed exit; zero sampler errors. Peak individual
+PID **207.41%** (SwiftPM testing helper); peak **whole process tree 207.41%**
+and nearest-rank tree p95 **202.62%**, strictly under 400% including the
+exact-400%-fails boundary. The [per-PID peak/gap table](ww-018/holdout-4-pid-summary.tsv)
+is derived from the raw Mach-tick counters; CPU TSV SHA-256
+`fc562c5fc86c83ec0cb7af7619589c808585a46cb1627ce9808690c72fd9f283`,
+snapshot TSV SHA-256
+`ddd4c99f537660d9c8952f064a2d73fa59427511e8f0eb4c4a23c09d086c2610`.
+The [preflight](ww-018/holdout-4-preflight.json),
+[timing](ww-018/holdout-4-timing.json),
+[CPU summary](ww-018/holdout-4-cpu-summary.json) and
+[unaltered verdict](ww-018/holdout-4-verdict.txt) are retained.
+
+The **once-only synthetic revision-4 objective-plus-CPU freeze protocol
+PASSED** on this host. The 38.5 MiB resident family-peak measurement and
+self-written-only license finding are unchanged **historical same-source
+evidence**, not new revision-4 measurements. Listening remains **BLOCKED**
+without consented participants; the renderer is not fully qualified.
+Revisions 2 and 3 remain permanently **INCOMPLETE**, not retroactively
+passed. Independent review and a fresh cap-compliant full `scripts/test.sh`
+on the exact final head are still required by the M3 coordinator; no Mini,
+GUI, full-suite or #310 closure is claimed here.
