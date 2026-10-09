@@ -65,16 +65,23 @@ final class SheetKeyboardUITests: XCTestCase {
         for _ in 0..<10 { app.typeKey(.upArrow, modifierFlags: []) }
         app.typeKey("\t", modifierFlags: [])
         app.typeKey(.downArrow, modifierFlags: [])
+        let entries = app.outlines["ww.library.entries"]
+        let shows = element("ww.library.sidebar.shows")
         app.menuBars.menuItems["Add to Collection"].firstMatch.hover()
         let target = app.menuBars.menuItems["Keyboard Sheet"].firstMatch
         XCTAssertTrue(target.waitForExistence(timeout: 5))
+        let show = entries.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.' AND label BEGINSWITH 'Synthetic Show'")).firstMatch
+        let showRow = entries.outlineRows.containing(.staticText, identifier: show.identifier).firstMatch
+        let selectedEntryRows = entries.outlineRows.allElementsBoundByIndex.filter(\.isSelected).map(\.label)
+        XCTAssertTrue(show.exists && showRow.exists && showRow.isSelected &&
+                      entries.label == "Shows (100)" && value(shows) == "100 shows",
+                      "After keyboard-only Up/Tab/Down, Add to Collection should target a selected Synthetic Show in Shows; entry \(show.identifier) label=\(show.label), rowExists=\(showRow.exists), rowSelected=\(showRow.isSelected), selectedRows=\(selectedEntryRows), entries=\(entries.label), sidebarShows=\(value(shows))")
         target.click()
         waitForValue(created, "1 item")
 
         // Delete Collection: Esc cancels, Return confirms; the collection's show stays in the library.
         app.typeKey("\t", modifierFlags: .shift)
         for _ in 0..<10 { app.typeKey(.downArrow, modifierFlags: []) }
-        let entries = app.outlines["ww.library.entries"]
         XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Keyboard Sheet (1)'"), object: entries)], timeout: 5), .completed,
                        "arrowed to the new collection: \(entries.label)")
         app.typeKey(.delete, modifierFlags: [])

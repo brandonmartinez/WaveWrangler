@@ -319,6 +319,13 @@ final class LibraryWorkspaceUITests: XCTestCase {
         menuItem("Add to Collection").hover()
         let target = app.menuBars.menuItems["Season Two"].firstMatch
         waitFor(target)
+        let shows = element("ww.library.sidebar.shows")
+        let show = table.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.library.entry.' AND label BEGINSWITH 'Synthetic Show'")).firstMatch
+        let showRow = table.outlineRows.containing(.staticText, identifier: show.identifier).firstMatch
+        let selectedEntryRows = table.outlineRows.allElementsBoundByIndex.filter(\.isSelected).map(\.label)
+        XCTAssertTrue(show.exists && showRow.exists && showRow.isSelected &&
+                      table.label == "Shows (100)" && value(shows) == "100 shows",
+                      "After keyboard-only Up/Tab/Down, Add to Collection should target a selected Synthetic Show in Shows; entry \(show.identifier) label=\(show.label), rowExists=\(showRow.exists), rowSelected=\(showRow.isSelected), selectedRows=\(selectedEntryRows), entries=\(table.label), sidebarShows=\(value(shows))")
         target.click()
         waitForValue(created, "1 item")
 
