@@ -70,6 +70,8 @@ struct CheckpointRetirementNativeTests {
         let finishFlow = source[finish.lowerBound..<next.lowerBound]
         #expect(finishFlow.contains("if let adoptingCopy"))
         #expect(finishFlow.contains("if result == nil, adopts, let receipt"))
+        #expect(finishFlow.contains("(try? Data(contentsOf: url)) != candidateBytes"))
+        #expect(source.contains("(try? Data(contentsOf: url)) != candidate.data"))
     }
 
     @Test(arguments: [true, false])
