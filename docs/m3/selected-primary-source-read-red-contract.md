@@ -3,15 +3,17 @@
 This test-only unit does **not** authorize a source read. The current
 `SelectedPrimarySourceReadIssuer.requireSourceReadAuthority` still throws
 `trustedSourceOpenUnavailable`, `SpeechInference.infer` still refuses, and no
-Backup, cut, speech or actual-episode open follows. The new
-`SelectedPrimaryCheckedOpenRedTests` intentionally refer to
-`expectedIdentity:` overloads that do not yet exist; a native compile failure
-is the expected RED control, **not** a test pass. At `149654bd` a scoped package
-JIT exited 1 on those absent overloads with zero tests run; the unhosted
+Backup, cut, speech or actual-episode open follows. The
+`SelectedPrimaryCheckedOpenRedTests` now refer to fail-closed
+`expectedIdentity:` overloads that always throw `sourceIdentityMismatch`;
+they cannot issue a checked descriptor or PCM. At `149654bd` a scoped package
+JIT exited 1 on the then-absent overloads with zero tests run; the unhosted
 `WaveWranglerTests` app-intent selector exited 65 with zero tests because
-`EpisodeSetupModel` is app-only. This revision moves that coverage into the
-existing app-linked `WaveWranglerHostedTests` target; no JIT has run on this
-revised head. Keep ordinary unselected alignment decoding available through
+`EpisodeSetupModel` is app-only. The app intent coverage moved into the
+hosted target; `b4743237` subsequently compiled and produced a genuine
+15-case behavioral RED on its fail-closed issuer scaffold. The package
+checked-open overloads on this new head have not had native validation;
+static parsing is not a test pass. Keep ordinary unselected alignment decoding available through
 its existing APIs; never treat that path as selected-source authorization.
 
 ## Checked-open contract

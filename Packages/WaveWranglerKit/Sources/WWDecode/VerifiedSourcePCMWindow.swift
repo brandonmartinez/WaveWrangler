@@ -1,4 +1,5 @@
 import Foundation
+import WWSources
 import WWCore
 
 /// The verified content of a single selected *channel* at source rate. The source ID was supplied
@@ -27,6 +28,15 @@ package enum VerifiedPCMWindowFailure: Error, Sendable, Equatable {
 }
 
 extension SourceDecoder {
+    /// Checked selected-window entry point remains a refusal until the descriptor gate exists.
+    @concurrent
+    package func readVerifiedPCMWindow(
+        _ url: URL, source: SourceID, channel: Int, startingAt start: Int64,
+        expectedIdentity: FileSystemFingerprint
+    ) async throws -> VerifiedSourcePCMWindow {
+        throw DecodeFailure.sourceIdentityMismatch
+    }
+
     /// Package-internal content primitive, not a speech authorization entry point. It uses the same
     /// read-only source gateway and consumes the *entire* stream so even a short tail after the
     /// requested window refuses before a result escapes. This currently admits only native 16 kHz;

@@ -110,6 +110,17 @@ public struct SourceDecoder: Sendable {
         }
     }
 
+    /// Checked selected-source entry point; no unchecked open is permitted while its FD gate is absent.
+    @concurrent
+    public func decode<Sink: DecodedAudioSink>(
+        _ url: URL,
+        source: SourceID,
+        expectedIdentity: FileSystemFingerprint,
+        makeSink: @escaping @Sendable (FormatInterpretation) throws -> Sink
+    ) async throws(DecodeFailure) -> DecodedSource<Sink.Product> {
+        throw .sourceIdentityMismatch
+    }
+
     @concurrent
     private func run<Sink: DecodedAudioSink>(
         _ url: URL,

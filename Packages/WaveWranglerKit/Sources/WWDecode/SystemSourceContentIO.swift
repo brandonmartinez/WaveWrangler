@@ -1,6 +1,7 @@
 import AudioToolbox
 import Darwin
 import Foundation
+import WWSources
 
 /// The production `SourceContentIO`. This is the only file in the codebase allowed to open source
 /// content, and it opens it read-only:
@@ -33,6 +34,13 @@ package struct SystemSourceContentIO: SourceContentIO {
 
     package func openForDecoding(_ url: URL) throws(DecodeFailure) -> any DecodingContentReader {
         try SystemDecodingReader.make(url, gateway: self)
+    }
+
+    /// Fail closed until the expected identity is verified on the opened descriptor before callbacks.
+    package func openForDecoding(
+        _ url: URL, expectedIdentity: FileSystemFingerprint
+    ) throws(DecodeFailure) -> any DecodingContentReader {
+        throw .sourceIdentityMismatch
     }
 }
 

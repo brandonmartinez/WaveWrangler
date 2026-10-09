@@ -6,7 +6,7 @@ import WWSources
 @testable import WWDecode
 
 /// RED contract: the selected-source identity must reach the only content gateway before any header byte.
-/// The expectedIdentity overloads do not exist yet. Do not remove these calls to make this suite green.
+/// The checked overloads currently refuse every request. Do not use ordinary opens to make this suite green.
 @Suite("RED selected-Primary checked descriptor open")
 struct SelectedPrimaryCheckedOpenRedTests {
     private let spec = FixtureSpec(

@@ -329,6 +329,17 @@ public actor DecodingCursor {
 }
 
 extension SourceDecoder {
+    /// Checked selected-source entry point; it cannot fall back to the ordinary cursor.
+    @concurrent
+    public func withDecodingCursor<T: Sendable>(
+        _ url: URL,
+        source: SourceID,
+        expectedIdentity: FileSystemFingerprint,
+        _ body: @Sendable (DecodingCursor) async throws -> T
+    ) async throws -> T {
+        throw DecodeFailure.sourceIdentityMismatch
+    }
+
     /// Opens one source exactly as `decode` does (security scope → metadata preflight → read-only open →
     /// opened-file identity → envelope interpretation) and lends a `DecodingCursor` to `body`. After
     /// `body` returns, any terminal cursor failure is rethrown and every result derived from reads receives
