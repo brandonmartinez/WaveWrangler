@@ -147,6 +147,55 @@ struct SelectedPrimaryCheckedOpenRedTests {
         #expect(reads.policies.isEmpty)
     }
 
+    @Test func unchangedDescriptorIdentityDiagnosticReadsNoContent() throws {
+        let directory = try FixtureDirectory("selected-primary-identity-diagnostic")
+        let primary = try directory.write(
+            spec, signal: LandmarkSignal(frames: 40_000, channelCount: 2, seed: 710)
+        )
+        let expected = try fingerprint(primary)
+        let expectedIdentifier = try #require(expected.fileIdentifier.value)
+        let expectedSize = try #require(expected.fileSize.value)
+        let expectedVolume = try #require(expected.volumeUUID.value.flatMap(UUID.init(uuidString:)))
+        let expectedModified = try #require(expected.contentModificationDate.value)
+        let expectedCreated = try #require(expected.creationDate.value)
+        try #require(expectedIdentifier != 0)
+        var refused = expected
+        refused.fileIdentifier = .known(0)
+        let reads = ReadPolicyRecorder()
+        let opened = CheckedOpenProbe()
+        let diagnostic = CheckedDescriptorDiagnostic()
+        var gateway = SystemSourceContentIO()
+        gateway.readPolicyObserver = { reads.record($0) }
+        gateway.descriptorOpener = { path in
+            opened.recordOpen(String(cString: path))
+            let descriptor = Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+            if descriptor >= 0 {
+                diagnostic.observe(descriptor, url: primary, expected: expected)
+            }
+            return descriptor
+        }
+
+        #expect(throws: DecodeFailure.sourceIdentityMismatch) {
+            let reader = try gateway.openForDecoding(primary, expectedIdentity: refused)
+            reader.close()
+        }
+        #expect(opened.openedPaths == [primary.path])
+        #expect(reads.policies.isEmpty, "the intentionally wrong identity must stop before header reads")
+        let observation = try #require(diagnostic.observation)
+        #expect(observation.metadataFailure == nil, "\(String(describing: observation.metadataFailure))")
+        #expect(observation.metadataComparison?.isExactMatch == true, "\(String(describing: observation.metadataComparison))")
+        #expect(observation.statResult == 0, "fstat errno: \(String(describing: observation.statErrno))")
+        #expect(observation.volumeResult == 0, "fgetattrlist errno: \(String(describing: observation.volumeErrno))")
+        #expect(observation.volumeLength >= UInt32(MemoryLayout<CheckedDescriptorVolume>.size))
+        #expect(observation.volumeUUID == expectedVolume)
+        #expect(observation.inode == expectedIdentifier)
+        #expect(observation.size == expectedSize)
+        #expect(observation.modified == expectedModified,
+                "fstat mtime delta (ns): \(String(describing: observation.modified.map { $0.timeIntervalSince(expectedModified) * 1e9 }))")
+        #expect(observation.created == expectedCreated,
+                "fstat birth delta (ns): \(String(describing: observation.created.map { $0.timeIntervalSince(expectedCreated) * 1e9 }))")
+    }
+
     @Test func birthTimeDriftOnOpenedDescriptorCannotPublishCheckedPCM() async throws {
         let directory = try FixtureDirectory("selected-primary-birth-drift")
         let fixture = try directory.write(
@@ -329,6 +378,76 @@ private final class CheckedOpenProbe: @unchecked Sendable {
     var openedPaths: [String] { lock.withLock { paths } }
     func recordReplacement(_ result: Bool) { lock.withLock { replaced = result } }
     func recordOpen(_ path: String) { lock.withLock { paths.append(path) } }
+}
+
+private struct CheckedDescriptorVolume {
+    var length: UInt32 = 0
+    var identifier: uuid_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+}
+
+private final class CheckedDescriptorDiagnostic: @unchecked Sendable {
+    struct Observation: Sendable {
+        let metadataComparison: IdentityComparison?
+        let metadataFailure: String?
+        let statResult: Int32
+        let statErrno: Int32?
+        let volumeResult: Int32
+        let volumeErrno: Int32?
+        let volumeLength: UInt32
+        let volumeUUID: UUID?
+        let inode: UInt64?
+        let size: Int64?
+        let modified: Date?
+        let created: Date?
+    }
+
+    private let lock = NSLock()
+    private var stored: Observation?
+    var observation: Observation? { lock.withLock { stored } }
+
+    func observe(_ descriptor: Int32, url: URL, expected: FileSystemFingerprint) {
+        let metadataComparison: IdentityComparison?
+        let metadataFailure: String?
+        switch SystemSourceIO().metadata(at: url) {
+        case let .success(metadata):
+            metadataComparison = expected.compare(to: metadata.fingerprint)
+            metadataFailure = nil
+        case let .failure(error):
+            metadataComparison = nil
+            metadataFailure = String(describing: error)
+        }
+        var info = stat()
+        let statResult = fstat(descriptor, &info)
+        let statErrno = statResult == 0 ? nil : errno
+        var attributes = attrlist()
+        attributes.bitmapcount = UInt16(ATTR_BIT_MAP_COUNT)
+        attributes.volattr = UInt32(ATTR_VOL_INFO) | UInt32(ATTR_VOL_UUID)
+        var volume = CheckedDescriptorVolume()
+        let volumeResult = fgetattrlist(
+            descriptor, &attributes, &volume, MemoryLayout<CheckedDescriptorVolume>.size, 0
+        )
+        let volumeErrno = volumeResult == 0 ? nil : errno
+        let observed = Observation(
+            metadataComparison: metadataComparison,
+            metadataFailure: metadataFailure,
+            statResult: statResult,
+            statErrno: statErrno,
+            volumeResult: volumeResult,
+            volumeErrno: volumeErrno,
+            volumeLength: volume.length,
+            volumeUUID: volumeResult == 0 && volume.length >= MemoryLayout<CheckedDescriptorVolume>.size
+                ? UUID(uuid: volume.identifier) : nil,
+            inode: statResult == 0 ? UInt64(info.st_ino) : nil,
+            size: statResult == 0 ? Int64(info.st_size) : nil,
+            modified: statResult == 0 ? Date(
+                timeIntervalSince1970: Double(info.st_mtimespec.tv_sec) + Double(info.st_mtimespec.tv_nsec) / 1e9
+            ) : nil,
+            created: statResult == 0 ? Date(
+                timeIntervalSince1970: Double(info.st_birthtimespec.tv_sec) + Double(info.st_birthtimespec.tv_nsec) / 1e9
+            ) : nil
+        )
+        lock.withLock { stored = observed }
+    }
 }
 
 private final class BirthDateMutation: @unchecked Sendable {
