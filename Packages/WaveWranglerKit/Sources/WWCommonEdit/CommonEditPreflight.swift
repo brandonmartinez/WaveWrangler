@@ -31,7 +31,7 @@ public struct CommonEditLaneManifest: Sendable {
 }
 
 /// Supplied half-open absolute grid intervals, not independently reviewed protection evidence.
-public struct CommonEditLaneSurvey: Sendable {
+public struct CommonEditLaneSurvey: Sendable, Equatable {
     public let lane: CommonEditManifestLane
     public let coverage: [RemovedFrameSpan]
     public let intentionalSilence: [RemovedFrameSpan]

@@ -10,6 +10,7 @@ struct KeyedCutMappingTests {
         for mode in [ProvisionalCutMode.shorten, .lift] {
             let result = try fx.map(mode: mode)
             #expect(result.grid == RemovedFrameSpan(start: 10, end: 12))
+            #expect(result.manifestRevision == "episode")
             #expect(result.map.outputRate.framesPerSecond == 48_000)
             #expect(result.map.removals == (mode == .shorten ? [result.grid] : []))
             #expect(result.lanes.map(\.identity) == fx.identities)
@@ -23,6 +24,9 @@ struct KeyedCutMappingTests {
             #expect(result.lanes[1].finalMergedGridFades == [
                 RemovedFrameSpan(start: 8, end: 10), RemovedFrameSpan(start: 12, end: 14),
             ])
+            #expect(result.lanes[1].requestedFadeOutGrid == RemovedFrameSpan(start: 8, end: 10))
+            #expect(result.lanes[1].requestedFadeInGrid == RemovedFrameSpan(start: 12, end: 14))
+            #expect(result.lanes[1].survey.finalMergedFades == result.lanes[1].finalMergedGridFades)
             #expect(result.lanes[3].finalMergedGridFades.isEmpty)
         }
     }

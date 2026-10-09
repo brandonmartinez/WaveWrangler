@@ -14,7 +14,7 @@ enum SyntheticCommonEditPCMError: Error, Equatable {
     case structuralPreflight(CommonEditAttestationRefusal)
 }
 
-enum SyntheticFadeDirection: Sendable {
+enum SyntheticFadeDirection: Sendable, Equatable {
     case fadeOut
     case fadeIn
 }
@@ -65,9 +65,15 @@ struct SyntheticCommonEditPCMPlan: Sendable {
                   ($0.identity.epoch != nil) == ($0.sourceRemoval != nil)
               }),
               !manifest.revision.isEmpty,
+              manifest.revision == mapping.manifestRevision,
               surveys.map(\.lane) == manifest.lanes,
               zip(mapping.lanes, surveys).allSatisfy({
-                  $0.finalMergedGridFades == $1.finalMergedFades
+                  $0.survey == $1 && $0.finalMergedGridFades == $1.finalMergedFades
+              }),
+              surveys.allSatisfy({ survey in
+                  !survey.protected.contains {
+                      $0.start < mapping.grid.end && mapping.grid.start < $0.end
+                  }
               })
         else { throw .invalidPlan }
         let (revision, overflow) = base.editRevision.addingReportingOverflow(1)
@@ -107,8 +113,24 @@ struct SyntheticCommonEditPCMPlan: Sendable {
             }
             let claimed = lane.finalMergedGridFades
             guard claimed.allSatisfy({ $0.start < $0.end }),
-                  Self.union(covered) == Self.union(claimed)
+                  lane.survey.requestedFades ==
+                      [lane.requestedFadeOutGrid, lane.requestedFadeInGrid].compactMap({ $0 })
             else { throw .invalidFade }
+            let merged = Self.union(claimed)
+            guard envelope.count == merged.count else { throw .invalidFade }
+            for (fade, footprint) in zip(envelope, merged) {
+                let out = lane.requestedFadeOutGrid.map {
+                    $0.start >= footprint.start && $0.end <= footprint.end &&
+                    footprint.end <= mapping.grid.start
+                } ?? false
+                let inside = lane.requestedFadeInGrid.map {
+                    $0.start >= footprint.start && $0.end <= footprint.end &&
+                    footprint.start >= mapping.grid.end
+                } ?? false
+                guard out != inside, fade.frames == footprint,
+                      fade.direction == (out ? .fadeOut : .fadeIn)
+                else { throw .invalidFade }
+            }
         }
         guard fades.allSatisfy({ fade in mapping.lanes.contains { $0.identity == fade.identity } })
         else { throw .invalidFade }

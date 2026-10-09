@@ -93,6 +93,122 @@ struct SyntheticCommonEditPCMTests {
         #expect(throws: SyntheticCommonEditPCMError.invalidFade) {
             try fixture.prepare(.shorten, withFades: true, fades: crossed)
         }
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            let authorized = fixture.identities.prefix(2).flatMap { identity in
+                [SyntheticLaneFade(identity: identity, frames: .init(start: 2, end: 4),
+                                   direction: .fadeOut),
+                 SyntheticLaneFade(identity: identity, frames: .init(start: 6, end: 8),
+                                   direction: .fadeIn)]
+            }
+            for identity in fixture.identities.prefix(2) {
+                let reversed = authorized.map { fade in
+                    SyntheticLaneFade(identity: fade.identity, frames: fade.frames,
+                                      direction: fade.identity == identity
+                                          ? (fade.direction == .fadeOut ? .fadeIn : .fadeOut)
+                                          : fade.direction)
+                }
+                #expect(throws: SyntheticCommonEditPCMError.invalidFade) {
+                    try fixture.prepare(mode, withFades: true, fades: reversed)
+                }
+                let split = authorized.filter {
+                    $0.identity != identity || $0.direction != .fadeOut
+                } + [
+                    SyntheticLaneFade(identity: identity, frames: .init(start: 2, end: 3),
+                                      direction: .fadeOut),
+                    SyntheticLaneFade(identity: identity, frames: .init(start: 3, end: 4),
+                                      direction: .fadeIn),
+                ]
+                #expect(throws: SyntheticCommonEditPCMError.invalidFade) {
+                    try fixture.prepare(mode, withFades: true, fades: split)
+                }
+            }
+        }
+    }
+
+    @Test func adjacentMergedFadesUseOneContinuousDirectionalGain() throws {
+        let fixture = try PCMFixture()
+        let merged: [Int: [SourceFrameSpan]] = [
+            0: [.init(start: 1, end: 2), .init(start: 2, end: 4),
+                .init(start: 6, end: 8), .init(start: 8, end: 9)],
+            1: [.init(start: 3, end: 4), .init(start: 4, end: 6),
+                .init(start: 8, end: 10), .init(start: 10, end: 11)],
+        ]
+        let envelopes = fixture.identities.prefix(2).flatMap { identity in
+            [SyntheticLaneFade(identity: identity, frames: .init(start: 1, end: 4),
+                               direction: .fadeOut),
+             SyntheticLaneFade(identity: identity, frames: .init(start: 6, end: 9),
+                               direction: .fadeIn)]
+        }
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            let (plan, input) = try fixture.prepare(
+                mode, withFades: true, fades: envelopes, finalFades: merged
+            )
+            let output = Self.lanes(try SyntheticCommonEditPCMRenderer.render(
+                plan, input: input, chunkFrames: 2
+            ))
+            let afterCut = mode == .shorten ? 6 : 8
+            #expect(output[0][3] == Float(2) * (Float(2) / 3))
+            #expect(output[0][4] == Float(3) * (Float(1) / 3))
+            #expect(output[0][5] == 0)
+            #expect(output[0][afterCut] == Float(7) * (Float(1) / 3))
+            #expect(output[0][afterCut + 1] == Float(8) * (Float(2) / 3))
+            #expect(output[0][afterCut + 2] == 9)
+            #expect(output[1][3] == Float(103) * (Float(2) / 3))
+            #expect(output[1][4] == Float(104) * (Float(1) / 3))
+            #expect(output[1][5] == 0)
+            #expect(output[1][afterCut] == Float(108) * (Float(1) / 3))
+            #expect(output[1][afterCut + 1] == Float(109) * (Float(2) / 3))
+            #expect(output[1][afterCut + 2] == 110)
+            #expect(output[2].allSatisfy { $0 == 0 })
+            let split = fixture.identities.prefix(2).flatMap { identity in
+                [SyntheticLaneFade(identity: identity, frames: .init(start: 1, end: 2),
+                                   direction: .fadeOut),
+                 SyntheticLaneFade(identity: identity, frames: .init(start: 2, end: 4),
+                                   direction: .fadeOut),
+                 SyntheticLaneFade(identity: identity, frames: .init(start: 6, end: 9),
+                                   direction: .fadeIn)]
+            }
+            #expect(throws: SyntheticCommonEditPCMError.invalidFade) {
+                try fixture.prepare(mode, withFades: true, fades: split, finalFades: merged)
+            }
+        }
+    }
+
+    @Test func unboundMergedFootprintAndChangedEnvelopeRefuse() throws {
+        let fixture = try PCMFixture()
+        let merged: [Int: [SourceFrameSpan]] = [
+            0: [.init(start: 0, end: 1), .init(start: 2, end: 4),
+                .init(start: 6, end: 8)],
+        ]
+        let laneZeroFades = [
+            SyntheticLaneFade(identity: fixture.identities[0],
+                              frames: .init(start: 0, end: 1), direction: .fadeOut),
+            SyntheticLaneFade(identity: fixture.identities[0],
+                              frames: .init(start: 2, end: 4), direction: .fadeOut),
+            SyntheticLaneFade(identity: fixture.identities[0],
+                              frames: .init(start: 6, end: 8), direction: .fadeIn),
+        ]
+        let laneOneFades = [
+            SyntheticLaneFade(identity: fixture.identities[1],
+                              frames: .init(start: 2, end: 4), direction: .fadeOut),
+            SyntheticLaneFade(identity: fixture.identities[1],
+                              frames: .init(start: 6, end: 8), direction: .fadeIn),
+        ]
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            #expect(throws: SyntheticCommonEditPCMError.invalidFade) {
+                try fixture.prepare(mode, withFades: true,
+                                    fades: laneZeroFades + laneOneFades, finalFades: merged)
+            }
+            let shifted = [
+                SyntheticLaneFade(identity: fixture.identities[0],
+                                  frames: .init(start: 1, end: 4), direction: .fadeOut),
+                SyntheticLaneFade(identity: fixture.identities[0],
+                                  frames: .init(start: 6, end: 8), direction: .fadeIn),
+            ]
+            #expect(throws: SyntheticCommonEditPCMError.invalidFade) {
+                try fixture.prepare(mode, withFades: true, fades: shifted + laneOneFades)
+            }
+        }
     }
 
     @Test func staleKeysIncompleteInputAndInvalidSamplesRefuse() throws {
@@ -170,6 +286,26 @@ struct SyntheticCommonEditPCMTests {
             try fixture.mapping(.shorten, surveys: protected)
         }
         let mapping = try fixture.mapping(.shorten)
+        for mode in [ProvisionalCutMode.shorten, .lift] {
+            let original = try fixture.mapping(mode)
+            let (_, input) = try fixture.prepare(mode)
+            for laneIndex in [0, 1] {
+                var changed = fixture.surveys
+                let survey = changed[laneIndex]
+                changed[laneIndex] = .init(
+                    lane: survey.lane, coverage: survey.coverage,
+                    intentionalSilence: survey.intentionalSilence,
+                    protected: [.init(start: 4, end: 5)]
+                )
+                #expect(throws: SyntheticCommonEditPCMError.invalidPlan) {
+                    try SyntheticCommonEditPCMPlan(
+                        base: fixture.base, mapping: original, mode: mode,
+                        manifest: fixture.manifest, surveys: changed, fades: []
+                    )
+                }
+                #expect(input.lanes[laneIndex].samples[6] == (laneIndex == 0 ? 5 : 106))
+            }
+        }
         #expect(throws: SyntheticCommonEditPCMError.invalidPlan) {
             try SyntheticCommonEditPCMPlan(
                 base: fixture.base, mapping: mapping, mode: .shorten,
@@ -265,7 +401,9 @@ private struct PCMFixture {
 
     func mapping(_ mode: ProvisionalCutMode, base suppliedBase: CommonEpisodeEditMap? = nil,
                  surveys: [CommonEditLaneSurvey]? = nil,
-                 withFades: Bool = false) throws -> ProvisionalKeyedCutMapping {
+                 withFades: Bool = false,
+                 finalFades: [Int: [SourceFrameSpan]] = [:]
+    ) throws -> ProvisionalKeyedCutMapping {
         let laneSurveys = surveys ?? self.surveys
         let proofs = identities.enumerated().map { index, key in
             KeyedLaneFootprintInput(
@@ -276,9 +414,9 @@ private struct PCMFixture {
                     ? .init(start: index == 0 ? 2 : 4, end: index == 0 ? 4 : 6) : nil,
                 requestedFadeIn: withFades && index < 2
                     ? .init(start: index == 0 ? 6 : 8, end: index == 0 ? 8 : 10) : nil,
-                finalMergedFades: withFades && index < 2
+                finalMergedFades: finalFades[index] ?? (withFades && index < 2
                     ? [.init(start: index == 0 ? 2 : 4, end: index == 0 ? 4 : 6),
-                       .init(start: index == 0 ? 6 : 8, end: index == 0 ? 8 : 10)] : []
+                       .init(start: index == 0 ? 6 : 8, end: index == 0 ? 8 : 10)] : [])
             )
         }
         return try KeyedCutMapping.map(
@@ -292,14 +430,12 @@ private struct PCMFixture {
 
     func prepare(
         _ mode: ProvisionalCutMode, withFades: Bool = false,
-        fades supplied: [SyntheticLaneFade]? = nil, base suppliedBase: CommonEpisodeEditMap? = nil
+        fades supplied: [SyntheticLaneFade]? = nil, base suppliedBase: CommonEpisodeEditMap? = nil,
+        finalFades: [Int: [SourceFrameSpan]] = [:]
     ) throws -> (SyntheticCommonEditPCMPlan, SyntheticAlignedPCM) {
-        let mapping = try mapping(mode, base: suppliedBase, withFades: withFades)
-        let finalSurveys: [CommonEditLaneSurvey] = zip(surveys, mapping.lanes).map { survey, lane in
-            .init(lane: survey.lane, coverage: survey.coverage,
-                  intentionalSilence: survey.intentionalSilence,
-                  finalMergedFades: lane.finalMergedGridFades)
-        }
+        let mapping = try mapping(mode, base: suppliedBase, withFades: withFades,
+                                  finalFades: finalFades)
+        let finalSurveys = mapping.lanes.map(\.survey)
         let fades: [SyntheticLaneFade] = supplied ?? (withFades ? identities.prefix(2).flatMap { identity in
             [SyntheticLaneFade(identity: identity, frames: .init(start: 2, end: 4),
                                direction: .fadeOut),
