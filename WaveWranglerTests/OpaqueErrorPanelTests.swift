@@ -114,7 +114,7 @@ struct OpaqueErrorPanelTests {
             windowNumber: panel.windowNumber, context: nil, characters: "2",
             charactersIgnoringModifiers: "2", isARepeat: false, keyCode: 19
         ))
-        #expect(panel.performKeyEquivalent(second), "a key equivalent works even when Tab cannot focus buttons")
+        #expect(panel.performKeyEquivalent(with: second), "a key equivalent works even when Tab cannot focus buttons")
         #expect(chosen == [1], "⌘2 reveals precisely the second retained record")
         panel.cancelOperation(nil)
         #expect(chosen == [1, 2], "Esc cancels without selecting another copy")
@@ -146,7 +146,7 @@ struct OpaqueErrorPanelTests {
             windowNumber: panel.windowNumber, context: nil, characters: "]",
             charactersIgnoringModifiers: "]", isARepeat: false, keyCode: 30
         ))
-        #expect(panel.performKeyEquivalent(nextKey))
+        #expect(panel.performKeyEquivalent(with: nextKey))
         #expect(panel.optionButtons.prefix(12).filter { !$0.isHiddenOrHasHiddenAncestor }.count == 3)
         #expect(panel.optionButtons[9].title.contains("⌘1"))
         let firstOnNextPage = try #require(NSEvent.keyEvent(
@@ -154,7 +154,7 @@ struct OpaqueErrorPanelTests {
             windowNumber: panel.windowNumber, context: nil, characters: "1",
             charactersIgnoringModifiers: "1", isARepeat: false, keyCode: 18
         ))
-        #expect(panel.performKeyEquivalent(firstOnNextPage))
+        #expect(panel.performKeyEquivalent(with: firstOnNextPage))
         #expect(chosen == [9], "⌘1 on page two chooses only the tenth retained copy")
         panel.cancelOperation(nil)
         #expect(chosen == [9, 12], "Esc is Cancel on every page")
