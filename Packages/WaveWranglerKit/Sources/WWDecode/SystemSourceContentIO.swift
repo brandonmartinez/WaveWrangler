@@ -1,6 +1,7 @@
 import AudioToolbox
 import Darwin
 import Foundation
+import WWSources
 
 /// The production `SourceContentIO`. This is the only file in the codebase allowed to open source
 /// content, and it opens it read-only:
@@ -29,10 +30,17 @@ package struct SystemSourceContentIO: SourceContentIO {
     package var readPolicyObserver: (@Sendable (Int32) -> Void)?
     /// Test only: replaces the descriptor open so the read-only access-mode check can be exercised.
     package var descriptorOpener: (@Sendable (UnsafePointer<CChar>) -> Int32)?
+    /// Negative-only challenge after real fstat; never substitutes a matching observation.
+    package var rawIdentityChallenge: (@Sendable (RawSourceIdentity) -> RawSourceIdentity)?
     #endif
 
     package func openForDecoding(_ url: URL) throws(DecodeFailure) -> any DecodingContentReader {
         try SystemDecodingReader.make(url, gateway: self)
+    }
+
+    /// The caller must already have obtained a confirmed witness under a separate authority gate.
+    package func openForDecoding(_ url: URL, matching witness: RawSourceIdentity) throws(DecodeFailure) -> any DecodingContentReader {
+        try SystemDecodingReader.make(url, gateway: self, expected: witness)
     }
 }
 
@@ -152,6 +160,10 @@ private final class SystemDecodingReader: DecodingContentReader {
     private let audioFile: AudioFileID
     private let extFile: ExtAudioFileRef
     private let bufferList: UnsafeMutableAudioBufferListPointer
+    private let expectedRaw: RawSourceIdentity?
+    #if DEBUG
+    private let rawIdentityChallenge: (@Sendable (RawSourceIdentity) -> RawSourceIdentity)?
+    #endif
     private var streamFramesRead: Int64 = 0
     private var isClosed = false
 
@@ -160,19 +172,25 @@ private final class SystemDecodingReader: DecodingContentReader {
         file: ReadOnlyDescriptor,
         retainedFile: Unmanaged<ReadOnlyDescriptor>,
         audioFile: AudioFileID,
-        extFile: ExtAudioFileRef
+        extFile: ExtAudioFileRef,
+        expectedRaw: RawSourceIdentity?,
+        gateway: SystemSourceContentIO
     ) {
         self.facts = facts
         self.file = file
         self.retainedFile = retainedFile
         self.audioFile = audioFile
         self.extFile = extFile
+        self.expectedRaw = expectedRaw
+        #if DEBUG
+        rawIdentityChallenge = gateway.rawIdentityChallenge
+        #endif
         bufferList = AudioBufferList.allocate(maximumBuffers: Int(facts.channelsPerFrame))
     }
 
     deinit { close() }
 
-    static func make(_ url: URL, gateway: SystemSourceContentIO) throws(DecodeFailure) -> SystemDecodingReader {
+    static func make(_ url: URL, gateway: SystemSourceContentIO, expected: RawSourceIdentity? = nil) throws(DecodeFailure) -> SystemDecodingReader {
         guard url.isFileURL else { throw .notFound }
         let (descriptor, openErrno): (Int32, Int32) = withoutMaterializingDataless {
             url.withUnsafeFileSystemRepresentation { path -> (Int32, Int32) in
@@ -216,6 +234,22 @@ private final class SystemDecodingReader: DecodingContentReader {
         guard info.st_size > 0 else {
             Darwin.close(descriptor)
             throw .emptyFile
+        }
+        if let expected {
+            guard expected.isUsable, let observed = RawSourceIdentity.onDescriptor(descriptor) else {
+                Darwin.close(descriptor)
+                throw .sourceIdentityMismatch
+            }
+            #if DEBUG
+            let challenged = gateway.rawIdentityChallenge?(observed) ?? observed
+            #else
+            let challenged = observed
+            #endif
+            guard challenged == expected, observed == expected,
+                  RawSourceIdentity(info, volumeUUID: observed.volumeUUID) == observed else {
+                Darwin.close(descriptor)
+                throw .sourceIdentityMismatch
+            }
         }
 
         let file = ReadOnlyDescriptor(descriptor: descriptor, sizeBytes: Int64(info.st_size), gateway: gateway)
@@ -350,7 +384,10 @@ private final class SystemDecodingReader: DecodingContentReader {
             containerLength: length,
             openedFile: openedState(info)
         )
-        return SystemDecodingReader(facts: facts, file: file, retainedFile: retained, audioFile: audioFile, extFile: extFile)
+        return SystemDecodingReader(
+            facts: facts, file: file, retainedFile: retained, audioFile: audioFile, extFile: extFile,
+            expectedRaw: expected, gateway: gateway
+        )
     }
 
     func readRawFrames(into buffer: RawDecodeBuffer) throws(DecodeFailure) -> Int {
@@ -379,6 +416,16 @@ private final class SystemDecodingReader: DecodingContentReader {
         precondition(!isClosed, "state after close")
         var info = stat()
         guard fstat(file.descriptor, &info) == 0 else { throw .readFailed(errno: errno) }
+        if let expectedRaw {
+            guard let observed = RawSourceIdentity.onDescriptor(file.descriptor), observed == expectedRaw else {
+                throw .sourceChangedDuringDecode
+            }
+            #if DEBUG
+            if let rawIdentityChallenge, rawIdentityChallenge(observed) != expectedRaw {
+                throw .sourceChangedDuringDecode
+            }
+            #endif
+        }
         return openedState(info)
     }
 

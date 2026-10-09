@@ -21,7 +21,7 @@ public struct DeviceAccessKey: Sendable, Codable, Hashable, CustomStringConverti
 /// on another Mac has no records there and every source starts as "relink required".
 public struct DeviceAccessRecord: Sendable, Codable, Equatable, Identifiable {
     /// Independently versioned access-record schema (see WW-009 C2 version records).
-    public static let schemaVersion = 1
+    public static let schemaVersion = 2
 
     public var showID: ShowID
     public var sourceID: SourceID

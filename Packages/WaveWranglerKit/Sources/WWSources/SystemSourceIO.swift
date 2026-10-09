@@ -67,6 +67,26 @@ public struct SystemSourceIO: SourceIO {
         ))
     }
 
+    /// Metadata-only, no-follow observation. Bracket URL volume evidence with kernel observations
+    /// so a path replacement while collecting metadata cannot yield a usable witness.
+    package func rawIdentity(at url: URL) -> RawSourceIdentity? {
+        var first = stat()
+        guard lstat(url.path, &first) == 0 else { return nil }
+        guard case let .success(metadata) = self.metadata(at: url),
+              let volume = metadata.fingerprint.volumeUUID.value,
+              metadata.fingerprint.fileIdentifier.value == UInt64(first.st_ino),
+              metadata.fingerprint.fileSize.value == Int64(first.st_size),
+              metadata.isRegularFile.value == true,
+              metadata.isSymbolicLink.value == false,
+              metadata.isDataless.value == false
+        else { return nil }
+        var second = stat()
+        guard lstat(url.path, &second) == 0 else { return nil }
+        let before = RawSourceIdentity(first, volumeUUID: volume)
+        let after = RawSourceIdentity(second, volumeUUID: volume)
+        return before == after && before.isUsable ? before : nil
+    }
+
     public func listItems(under directory: URL) -> DirectoryListing {
         final class ErrorCounter: @unchecked Sendable { var count = 0 }
         let counter = ErrorCounter()

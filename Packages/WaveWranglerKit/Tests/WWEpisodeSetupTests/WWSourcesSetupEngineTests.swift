@@ -75,6 +75,34 @@ struct WWSourcesSetupEngineTests {
         return last
     }
 
+    @Test func relinkRejectsCandidateChangedAfterComparison() async throws {
+        let root = try makeTree()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let store = InMemoryDeviceAccessStore()
+        let engine = WWSourcesSetupEngine(
+            showID: ShowID(), store: store, context: SourceAccessContext(io: CountingIO()),
+            preference: FixedPreference(false)
+        )
+        let scan = try await engine.scanForImport([root], episodeSourceIDs: [])
+        let items = ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: []).importItems()
+        try await engine.commitImport(
+            Dictionary(uniqueKeysWithValues: items.map { ($0.candidateID, $0.item.source.id) }),
+            fromScan: scan.token
+        )
+        let sourceID = try #require(items.first?.item.source.id)
+        let key = DeviceAccessKey(showID: engine.showID, sourceID: sourceID)
+        let before = try #require(await store.record(for: key))
+        let candidate = root.appending(path: "candidate.wav")
+        try Data(repeating: 7, count: 64).write(to: candidate)
+        let comparison = await engine.compare(candidate: candidate, for: sourceID)
+        #expect(comparison.canConfirm)
+        try Data(repeating: 7, count: 65).write(to: candidate)
+        await #expect(throws: SourceEngineError.self) {
+            _ = try await engine.commitRelink(sourceID, to: candidate, identity: comparison.acceptedIdentity)
+        }
+        #expect(await store.record(for: key) == before)
+    }
+
     @Test(.timeLimit(.minutes(1))) func importObserveDeniedAndRelink() async throws {
         let root = try makeTree()
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }

@@ -187,7 +187,7 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     /// Import plans keyed by scan token, so concurrent scans in different windows never mix.
     private var plans: [UUID: ImportPlan] = [:]
     private var isShutDown = false
-    private var proposals: [SourceID: (url: URL, proposal: RelinkProposal)] = [:]
+    private var proposals: [SourceID: (url: URL, proposal: RelinkProposal, previous: DeviceAccessRecord?)] = [:]
     private var previousRecords: [UUID: DeviceAccessRecord?] = [:]
     private var defaultsObserver: NSObjectProtocol?
     /// Engine-owned work that touches the monitor; shutdown cancels and awaits it before stopping.
@@ -392,17 +392,34 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         let others = (try? await store.records(in: showID)) ?? []
         let evaluator = RelinkEvaluator(context: context)
         let proposal = await Task.detached { evaluator.evaluate(candidate: url, for: key, record: record, otherRecords: others) }.value
-        proposals[sourceID] = (url, proposal)
+        proposals[sourceID] = (url, proposal, record)
         return WWSourcesStatusMapping.comparison(recorded: record, proposal: proposal, chosenName: url.lastPathComponent, otherSourceName: sourceNames)
     }
 
     public func commitRelink(_ sourceID: SourceID, to url: URL, identity: IdentityStatus) async throws(SourceEngineError) -> RelinkReceipt {
         guard let stored = proposals[sourceID], stored.url == url else { throw .failed(reason: "choose the file again") }
         let key = key(sourceID)
-        let previous = try? await store.record(for: key)
+        let previous: DeviceAccessRecord?
+        do {
+            previous = try await store.record(for: key)
+        } catch {
+            throw .failed(reason: error.localizedDescription)
+        }
+        guard previous?.recordedIdentity == stored.previous?.recordedIdentity,
+              previous?.bookmark == stored.previous?.bookmark,
+              previous?.lastKnownPath == stored.previous?.lastKnownPath,
+              previous?.relinkHistory == stored.previous?.relinkHistory
+        else { throw .failed(reason: "the source record changed; choose the file again") }
+        let evaluator = RelinkEvaluator(context: context)
+        let current = evaluator.evaluate(candidate: url, for: key, record: previous)
+        guard current.canApply,
+              current.candidateFingerprint == stored.proposal.candidateFingerprint,
+              current.candidateRaw == stored.proposal.candidateRaw,
+              current.comparison == stored.proposal.comparison
+        else { throw .failed(reason: "the chosen file changed; choose it again") }
         let updated: DeviceAccessRecord
         do {
-            updated = try RelinkEvaluator(context: context).apply(stored.proposal, to: previous, userConfirmed: true)
+            updated = try evaluator.apply(current, to: previous, userConfirmed: true)
         } catch {
             throw .failed(reason: "the chosen file can't be used")
         }

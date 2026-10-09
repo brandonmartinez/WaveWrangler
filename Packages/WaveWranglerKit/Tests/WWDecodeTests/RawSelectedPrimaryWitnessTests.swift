@@ -22,7 +22,7 @@ private struct ExpectedRawIdentity: Decodable, Equatable {
 
     init(_ info: stat, volumeUUID: String) {
         version = 1
-        self.volumeUUID = volumeUUID
+        self.volumeUUID = volumeUUID.lowercased()
         device = Int64(info.st_dev)
         inode = UInt64(info.st_ino)
         sizeBytes = Int64(info.st_size)
@@ -56,7 +56,7 @@ private func rawIdentity(at url: URL, volumeUUID: String) throws -> ExpectedRawI
     return ExpectedRawIdentity(info, volumeUUID: volumeUUID)
 }
 
-@Suite("Selected Primary raw source identity (RED: production contract absent)")
+@Suite("Selected Primary raw source identity (mechanical checks, not issuance)")
 struct RawSelectedPrimaryWitnessTests {
     @Test("Unchanged copied Primary decodes exactly 32000 frames; Backup stays unopened; confirmation persists raw identity")
     func copiedPrimaryNeedsRawConfirmation() async throws {
@@ -73,12 +73,15 @@ struct RawSelectedPrimaryWitnessTests {
         guard case let .success(metadata) = io.metadata(at: primary),
               let volume = metadata.fingerprint.volumeUUID.value
         else { throw POSIXError(.EIO) }
-        let confirmed = DeviceAccessRecord(
+        let provisional = DeviceAccessRecord(
             showID: ShowID(), sourceID: SourceID(), lastKnownPath: primary.path,
             recordedIdentity: RecordedIdentity(
-                fingerprint: metadata.fingerprint, confirmation: .userConfirmed, recordedAt: Date()
+                fingerprint: metadata.fingerprint, confirmation: .provisional, recordedAt: Date()
             ), createdAt: Date()
         )
+        let relink = RelinkEvaluator(context: SourceAccessContext(io: io))
+        let proposal = relink.evaluate(candidate: primary, for: provisional.key, record: provisional)
+        let confirmed = try relink.apply(proposal, to: provisional, userConfirmed: true)
         let expected = try rawIdentity(at: primary, volumeUUID: volume)
         let backupOpens = Counter()
         var gateway = SystemSourceContentIO()
@@ -92,40 +95,93 @@ struct RawSelectedPrimaryWitnessTests {
         #expect(backupOpens.count == 0)
         #expect(expected.mode & UInt16(S_IFMT) == UInt16(S_IFREG) && !expected.dataless)
 
-        // RED: Date-only schema 1 has no rawWitness. Passing the ordinary decoder above proves only
-        // that its old path still works; it does not prove selected-Primary authorization.
+        // Decoding through the ordinary gateway above is not selected-Primary authorization.
         let persisted = try JSONEncoder().encode(confirmed)
         let recovered = try JSONDecoder().decode(ExpectedConfirmedRecord.self, from: persisted)
         #expect(recovered.recordedIdentity.rawWitness == expected)
         #expect(DeviceAccessRecord.schemaVersion > 1)
     }
 
-    @Test("A 211ns pre-open raw mtime difference must refuse before a decoded frame or sink")
-    func sub500NanosecondPreOpenDrift() async throws {
-        let source = try ScriptedSource()
-        guard case let .success(metadata) = SystemSourceIO().metadata(at: source.url),
+    @Test("A real descriptor refuses a 211ns challenged mtime before any header byte")
+    func sub500NanosecondPreOpenDrift() throws {
+        let directory = try FixtureDirectory("raw-pre-header")
+        let spec = FixtureSpec(
+            container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
+            sampleRate: 48_000, channelCount: 1
+        )
+        let primary = try directory.write(spec, signal: LandmarkSignal(frames: 32_000, channelCount: 1, seed: 413))
+        let io = SystemSourceIO()
+        guard case let .success(metadata) = io.metadata(at: primary),
               let volume = metadata.fingerprint.volumeUUID.value
         else { throw POSIXError(.EIO) }
-        let confirmedRaw = try rawIdentity(at: source.url, volumeUUID: volume)
-        let observedRaw = confirmedRaw.movingModification(by: 211)
-        #expect(observedRaw != confirmedRaw)
-        #expect(observedRaw.modificationSeconds * 1_000_000_000 + observedRaw.modificationNanoseconds
-                - confirmedRaw.modificationSeconds * 1_000_000_000 - confirmedRaw.modificationNanoseconds == 211)
-        var facts = source.aacFacts()
-        facts.openedFile.modificationSeconds = observedRaw.modificationSeconds
-        facts.openedFile.modificationNanoseconds = observedRaw.modificationNanoseconds
-        let content = ScriptedContentIO(source.script(facts))
-        let attempt = await runAttempt(source.url, content: content)
+        let confirmedRaw = try #require(io.rawIdentity(at: primary))
+        var info = stat()
+        guard lstat(primary.path, &info) == 0 else { throw POSIXError(.EIO) }
+        let delta = info.st_mtimespec.tv_nsec < 1_000_000_000 - 211 ? 211 : -211
+        info.st_mtimespec.tv_nsec += delta
+        let challenged = RawSourceIdentity(info, volumeUUID: volume)
+        #expect(abs(challenged.modificationNanoseconds - confirmedRaw.modificationNanoseconds) == 211)
+        #expect(challenged.birthNanoseconds == confirmedRaw.birthNanoseconds)
+        #expect(challenged.sizeBytes == confirmedRaw.sizeBytes)
+        let reads = Counter()
+        var gateway = SystemSourceContentIO()
+        gateway.readPolicyObserver = { _ in reads.increment() }
+        gateway.rawIdentityChallenge = { _ in challenged }
+        #expect(throws: DecodeFailure.sourceIdentityMismatch) {
+            _ = try gateway.openForDecoding(primary, matching: confirmedRaw)
+        }
+        #expect(reads.count == 0)
+    }
 
-        // Negative-only scripted descriptor seam: the exact raw difference is deterministic,
-        // but this cannot prove pre-header refusal or platform timestamp precision. Both require
-        // the absent checked-descriptor opener; a frame-read count is not a header-read count.
-        // RED: the existing Date-tolerant decoder reads and finishes instead of refusing.
-        #expect(attempt.failure == .sourceIdentityMismatch)
-        #expect(content.record.opens == 1)
-        #expect(content.record.reads == 0)
-        #expect(attempt.sinksMade == 0)
-        expectNothingPublished(attempt)
+    @Test("A post-open birth-only challenge on the same descriptor refuses publication")
+    func birthOnlyPostOpenDrift() throws {
+        let directory = try FixtureDirectory("raw-birth-after-open")
+        let spec = FixtureSpec(
+            container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
+            sampleRate: 48_000, channelCount: 1
+        )
+        let primary = try directory.write(spec, signal: LandmarkSignal(frames: 32_000, channelCount: 1, seed: 414))
+        let io = SystemSourceIO()
+        guard case let .success(metadata) = io.metadata(at: primary),
+              let volume = metadata.fingerprint.volumeUUID.value
+        else { throw POSIXError(.EIO) }
+        let confirmedRaw = try #require(io.rawIdentity(at: primary))
+        var info = stat()
+        guard lstat(primary.path, &info) == 0 else { throw POSIXError(.EIO) }
+        info.st_birthtimespec.tv_nsec += info.st_birthtimespec.tv_nsec < 1_000_000_000 - 1 ? 1 : -1
+        let challenged = RawSourceIdentity(info, volumeUUID: volume)
+        #expect(challenged.birthNanoseconds != confirmedRaw.birthNanoseconds)
+        #expect(challenged.modificationSeconds == confirmedRaw.modificationSeconds)
+        #expect(challenged.modificationNanoseconds == confirmedRaw.modificationNanoseconds)
+        #expect(challenged.sizeBytes == confirmedRaw.sizeBytes)
+        let checks = Counter()
+        var gateway = SystemSourceContentIO()
+        gateway.rawIdentityChallenge = { observed in
+            checks.increment()
+            return checks.count == 1 ? observed : challenged
+        }
+        let reader = try gateway.openForDecoding(primary, matching: confirmedRaw)
+        defer { reader.close() }
+        #expect(throws: DecodeFailure.sourceChangedDuringDecode) {
+            _ = try reader.currentOpenedFileState()
+        }
+        #expect(checks.count == 2)
+    }
+
+    @Test("Old Date-only confirmations remain without an exact witness")
+    func dateOnlyRecordDoesNotMintRawIdentity() throws {
+        let record = DeviceAccessRecord(
+            showID: ShowID(), sourceID: SourceID(),
+            recordedIdentity: RecordedIdentity(fingerprint: FileSystemFingerprint(), confirmation: .userConfirmed, recordedAt: .now),
+            createdAt: .now
+        )
+        let data = try JSONEncoder().encode(record)
+        var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var identity = try #require(json["recordedIdentity"] as? [String: Any])
+        identity.removeValue(forKey: "rawWitness")
+        json["recordedIdentity"] = identity
+        let legacy = try JSONDecoder().decode(DeviceAccessRecord.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(legacy.recordedIdentity?.rawWitness == nil)
     }
 
     @Test("Appending to an open synthetic Primary changes raw same-file state and cannot finish")
