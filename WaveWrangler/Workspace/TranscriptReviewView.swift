@@ -440,14 +440,14 @@ private final class ProposalCellView: NSTableCellView {
 
     func configure(_ proposal: TranscriptReviewShellProposal, pointSize: CGFloat) {
         let details = "\(proposal.rationale) \(proposal.timingState) \(proposal.sourceState) \(proposal.protectionState) \(proposal.status)"
-        title.stringValue = proposal.title
+        title.stringValue = "\(proposal.title) — Provisional"
         title.font = NSFont.systemFont(ofSize: pointSize)
         title.textColor = .labelColor
         title.setAccessibilityIdentifier("ww.review.proposal.\(proposal.id)")
-        title.setAccessibilityLabel("Synthetic proposal: \(proposal.title)")
+        title.setAccessibilityLabel(title.stringValue)
         title.accessibilityValueOverride = details
-        note.stringValue = proposal.status
-        note.font = NSFont.systemFont(ofSize: max(10, pointSize * 0.85))
+        note.stringValue = "Timing unavailable · Protection unsupported"
+        note.font = NSFont.systemFont(ofSize: pointSize, weight: .medium)
         note.textColor = .labelColor
         toolTip = details
         needsLayout = true

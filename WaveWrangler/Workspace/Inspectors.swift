@@ -176,13 +176,6 @@ private final class ReviewInspectorDocument: NSView {
         action("Reject proposal", id: "reject", reason: TranscriptReviewShellPresentation.rejectBlockedReason)
         append(occurrenceID)
         append(tokenID)
-        append(proposal)
-        append(proposalID)
-        append(proposalRationale)
-        append(proposalTiming)
-        append(proposalSource)
-        append(proposalProtection)
-        append(proposalStatus)
         append(Self.makeLabel("Primary role: synthetic example, not analyzed", identifier: "ww.review.inspector.primaryState"))
         append(Self.makeLabel("Backup role: synthetic example, not analyzed; no transcript",
                               identifier: "ww.review.inspector.backupState"))
@@ -200,6 +193,13 @@ private final class ReviewInspectorDocument: NSView {
         append(Self.makeLabel(TranscriptReviewShellPresentation.fullPreviewBlockedReason,
                               identifier: "ww.review.inspector.previewBlockedReason", label: "Complete preview blocked",
                               value: TranscriptReviewShellPresentation.fullPreviewBlockedReason))
+        append(proposal)
+        append(proposalID)
+        append(proposalRationale)
+        append(proposalTiming)
+        append(proposalSource)
+        append(proposalProtection)
+        append(proposalStatus)
         rows = content
         super.init(frame: .zero)
         setAccessibilityElement(false)

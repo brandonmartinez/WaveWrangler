@@ -127,7 +127,7 @@ public enum TranscriptReviewShellPresentation {
     public static let rejectBlockedReason =
         "Reject is blocked: this synthetic proposal has no verified source, word timing, current map, protection coverage, or human review intent."
     public static let fullPreviewBlockedReason =
-        "Complete preview is blocked: this synthetic proposal has no verified source, word timing, current map, all-lane backing, or protection coverage."
+        "Complete preview is blocked: every affected lane has no verified source, word timing, current map, all-lane backing, or protection coverage."
     public static let singleLaneAuditionBlockedReason =
         "Single-lane audition — not a full preview. Disabled because no authorized Primary source is bound."
     public static let timeNotEstablished = "Not established — no analysis or current map"
