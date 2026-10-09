@@ -17,6 +17,8 @@ let package = Package(
         .library(name: "WWOrganizer", targets: ["WWOrganizer"]),
         // Pure exact clock-epoch / coordinate maps (WW-015). No I/O, no decoding.
         .library(name: "WWTimeMap", targets: ["WWTimeMap"]),
+        // Provisional M3 common episode edit-frame prescription, outside the frozen M2 WWTimeMap tree.
+        .library(name: "WWCommonEdit", targets: ["WWCommonEdit"]),
         .library(name: "WWDecode", targets: ["WWDecode"]),
         // Versioned-map API, consent-gated content digest and the cancellable derived-asset/job layer (WW-020).
         .library(name: "WWDerived", targets: ["WWDerived"]),
@@ -31,6 +33,10 @@ let package = Package(
         .library(name: "WWAlignSegment", targets: ["WWAlignSegment"]),
         // WW-021/WW-023 integration: headless analysis -> proposal -> accepted map -> aligned derived assets.
         .library(name: "WWAlignPipeline", targets: ["WWAlignPipeline"]),
+        // Pure WW-027 word/proposal evaluation; no recognizer, media access, or cut authorization.
+        .library(name: "WWWordEvaluation", targets: ["WWWordEvaluation"]),
+        // Pure M3 proposal and protected-cut admission policy; mapping is supplied by an Alignment adapter.
+        .library(name: "WWCutPolicy", targets: ["WWCutPolicy"]),
         // Headless persistence probe for multi-process and observed-provider trials (synthetic documents only).
         .executable(name: "wwpersist-probe", targets: ["WWPersistenceProbe"]),
     ],
@@ -41,12 +47,15 @@ let package = Package(
         .target(name: "WWEpisodeSetup", dependencies: ["WWCore", "WWSources"]),
         .target(name: "WWOrganizer", dependencies: ["WWCore"]),
         .target(name: "WWTimeMap", dependencies: ["WWCore"]),
+        .target(name: "WWCommonEdit", dependencies: ["WWCore", "WWTimeMap"]),
         .target(name: "WWDecode", dependencies: ["WWCore", "WWSources"]),
         .target(name: "WWDerived", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWPersistence"]),
         .target(name: "WWAlignEstimate", dependencies: ["WWCore", "WWTimeMap"]),
         .target(name: "WWRender", dependencies: ["WWCore", "WWTimeMap"]),
         .target(name: "WWAlignSegment", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
         .target(name: "WWAlignPipeline", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWDerived", "WWPersistence", "WWAlignEstimate", "WWRender"]),
+        .target(name: "WWWordEvaluation"),
+        .target(name: "WWCutPolicy"),
         .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
         .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore", "WWPersistenceProbe", "WWOrganizer", "WWTimeMap"]),
@@ -54,12 +63,15 @@ let package = Package(
         .testTarget(name: "WWEpisodeSetupTests", dependencies: ["WWEpisodeSetup", "WWCore", "WWSources"]),
         .testTarget(name: "WWOrganizerTests", dependencies: ["WWOrganizer", "WWCore", "WWPersistence"]),
         .testTarget(name: "WWTimeMapTests", dependencies: ["WWTimeMap", "WWCore"]),
+        .testTarget(name: "WWCommonEditTests", dependencies: ["WWCommonEdit", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWDecodeTests", dependencies: ["WWDecode", "WWSources", "WWCore"]),
         .testTarget(name: "WWDerivedTests", dependencies: ["WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWCore"]),
         .testTarget(name: "WWAlignEstimateTests", dependencies: ["WWAlignEstimate", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWRenderTests", dependencies: ["WWRender", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWAlignSegmentTests", dependencies: ["WWAlignSegment", "WWAlignEstimate", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWAlignPipelineTests", dependencies: ["WWAlignPipeline", "WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWAlignEstimate", "WWRender", "WWCore"]),
+        .testTarget(name: "WWWordEvaluationTests", dependencies: ["WWWordEvaluation"]),
+        .testTarget(name: "WWCutPolicyTests", dependencies: ["WWCutPolicy"]),
         // Headless validation on a user-approved local episode copy. Skipped unless WW_LOCAL_EPISODE_DIR is
         // set at run time (never on CI); see docs/m2/evidence/m2-local-episode-validation.md.
         .testTarget(name: "WWLocalEpisodeValidationTests", dependencies: ["WWDecode", "WWSources", "WWAlignEstimate", "WWRender", "WWTimeMap", "WWCore", "WWDerived", "WWPersistence", "WWAlignPipeline"]),
