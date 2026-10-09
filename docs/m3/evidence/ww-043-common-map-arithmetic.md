@@ -68,6 +68,17 @@ crossfades and common padding, with separate finite proof of zero protected/mean
 loss, fade safety, no-dither preview/export null (at most one PCM step), safe lift alternatives and
 deterministic undo/history. None of those audio or human-acceptance gates is established here.
 
+**Structural preflight (synthetic only):** `CommonEditPreflight.check` exhaustively checks at most
+8,192 supplied output-grid frames against a caller-supplied lane manifest and surveys. The corrected
+inverse test quantizes on the *source* frame grid for mixed sample rates; protected and final-fade
+containment accepts adjacent coverage/fade intervals as a contiguous union but refuses positive
+gaps. Unsupported or gap inverses, absent coverage, protected removals and unsafe fades refuse.
+Its `ProvisionalCommonEditCheck` is not an authority or source survey: the manifest and protections
+remain untrusted, `CommonEditAttestation.prepare` always refuses, and no trusted `WWCutPolicy`
+constructor, source read, app publication or renderer is added. A separate organizer-owned complete
+source/access/protection witness and atomic map/history publication are still required before any
+render or acceptance claim.
+
 **Provisional structural preflight (separate M3 unit):** `CommonEditPreflight.check` takes a
 caller-supplied `CommonEditLaneManifest` and one grid survey per declared audio or intentional-silence
 lane. Both the manifest and the map's caller-owned revision tokens are **untrusted inputs**: matching
