@@ -30,6 +30,8 @@ import Foundation
 ///   have left them, so a damaged older file can offer its recovered copy.
 /// - `-WWUITestRetainDamagedEditCheckpoint <base64 valid show>`: before opening a damaged canonical file,
 ///   stores a C2b record with a damaged payload for that show. The raw record must remain revealable.
+/// - `-WWUITestReusedRecoveryMode distinct|unknown|tied` with `-WWUITestReusedSavedA/B <base64 show>`:
+///   before opening a damaged reused path, retains both identities' saved and C2b copies. Test data only.
 ///
 /// Debug builds only: in Release the whole type is compiled out, so `-WWUITestHooks YES` and the
 /// distributed notifications have no effect (`PersistenceEnvironment.isUITestRun` is always `false`).
@@ -64,8 +66,12 @@ enum UITestHooks {
 
     /// `-WWUITestRetainOlderCheckpoint`: see the type's documentation. Runs before launch, after any storage reset.
     static func seedOlderCheckpointIfRequested() {
-        guard PersistenceEnvironment.isUITestRun,
-              let encoded = UserDefaults.standard.string(forKey: "WWUITestRetainOlderCheckpoint")
+        guard PersistenceEnvironment.isUITestRun else { return }
+        if let mode = UserDefaults.standard.string(forKey: "WWUITestReusedRecoveryMode") {
+            seedReusedRecovery(mode: mode)
+            return
+        }
+        guard let encoded = UserDefaults.standard.string(forKey: "WWUITestRetainOlderCheckpoint")
                   ?? UserDefaults.standard.string(forKey: "WWUITestRetainDamagedEditCheckpoint"),
               let bytes = Data(base64Encoded: encoded),
               let older = try? ShowSchemaMigration.decodeUpgradingOlder(bytes) else { return }
@@ -85,6 +91,50 @@ enum UITestHooks {
                     _ = try recovery.retainCheckpoint(bytes, for: key)
                 }
                 try recovery.recordLocation(url, for: key)
+            } catch {
+                NSApp.presentError(error)
+            }
+        }
+    }
+
+    private static func seedReusedRecovery(mode: String) {
+        guard PersistenceEnvironment.isUITestRun,
+              ["distinct", "unknown", "tied"].contains(mode),
+              let aEncoded = UserDefaults.standard.string(forKey: "WWUITestReusedSavedA"),
+              let bEncoded = UserDefaults.standard.string(forKey: "WWUITestReusedSavedB"),
+              let aBytes = Data(base64Encoded: aEncoded),
+              let bBytes = Data(base64Encoded: bEncoded),
+              let a = try? JSONEnvelopeCoder<ShowDocumentModel>.show.decode(aBytes),
+              let b = try? JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bBytes),
+              a.payload.show.id != b.payload.show.id else {
+            NSApp.presentError(PersistenceError.malformed("Invalid synthetic reused-path recovery fixture."))
+            return
+        }
+        ShowDocument.debugBeforeRead = { url in
+            ShowDocument.debugBeforeRead = nil
+            let recovery = PersistenceEnvironment.recovery
+            let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+            let aKey = DocumentKey.show(a.payload.show.id)
+            let bKey = DocumentKey.show(b.payload.show.id)
+            do {
+                _ = try recovery.retainCheckpoint(aBytes, for: aKey)
+                _ = try recovery.retainCheckpoint(bBytes, for: bKey)
+                let savedAt = Date(timeIntervalSince1970: 1_700_000_000)
+                if mode != "unknown" {
+                    try recovery.recordVerifiedSave(RevisionFingerprint(of: aBytes), for: aKey, at: savedAt)
+                    try recovery.recordVerifiedSave(RevisionFingerprint(of: bBytes), for: bKey,
+                                                    at: mode == "tied" ? savedAt : savedAt.addingTimeInterval(100))
+                }
+                let aDraft = try coder.encode(a.payload.renamingShow(to: "A unsaved"), revision: a.revision + 1)
+                let bDraft = try coder.encode(b.payload.renamingShow(to: "B unsaved"), revision: b.revision + 1)
+                try recovery.writeEditCheckpoint(snapshot: aDraft, base: RevisionFingerprint(of: aBytes),
+                                                 schemaVersion: SchemaVersion.show, for: aKey,
+                                                 at: savedAt.addingTimeInterval(200))
+                try recovery.writeEditCheckpoint(snapshot: bDraft, base: RevisionFingerprint(of: bBytes),
+                                                 schemaVersion: SchemaVersion.show, for: bKey,
+                                                 at: savedAt.addingTimeInterval(mode == "tied" ? 200 : 300))
+                try recovery.recordLocation(url, for: aKey)
+                try recovery.recordLocation(url, for: bKey)
             } catch {
                 NSApp.presentError(error)
             }

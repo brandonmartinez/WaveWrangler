@@ -1,4 +1,6 @@
 import SwiftUI
+import WWCore
+import WWOrganizer
 
 /// Persistent message bar at the top of a window's content (IA §6). Never time-boxed (ST-05); stays until
 /// resolved or dismissed. Heading + body + buttons; the whole bar is one accessibility group.
@@ -8,8 +10,11 @@ struct MessageBar: View {
     let symbolName: String
     let actions: [(String, () -> Void)]
     var identifier = "ww.show.messageBar"
+    var recoveryChoice: RecoveryChoicePresentation.Choice?
+    var recoveryActions: [EditCheckpointAction] = []
 
     var body: some View {
+        let choice: RecoveryChoicePresentation.Choice? = recoveryChoice
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: symbolName)
                 .wwFont(.title3)
@@ -28,9 +33,11 @@ struct MessageBar: View {
                 if !actions.isEmpty {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 128, maximum: 220), alignment: .leading)],
                               alignment: .leading, spacing: 4) {
-                        ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
-                            Button(action.0, action: action.1)
+                        ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
+                            let shortcut = shortcut(for: index, choice: choice)
+                            Button(shortcut.map { "\($0.label) \(action.0)" } ?? action.0, action: action.1)
                                 .fixedSize(horizontal: false, vertical: true)
+                                .keyboardShortcut(shortcut?.key, modifiers: shortcut?.modifiers ?? .command)
                         }
                     }
                     .padding(.top, 2)
@@ -54,5 +61,22 @@ struct MessageBar: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(heading)
         .accessibilityIdentifier(identifier)
+    }
+
+    private func shortcut(
+        for index: Int, choice: RecoveryChoicePresentation.Choice?
+    ) -> (key: KeyEquivalent, modifiers: EventModifiers, label: String)? {
+        guard let choice, recoveryActions.indices.contains(index) else { return nil }
+        switch recoveryActions[index] {
+        case .openAsCopy, .showInFinder:
+            guard let digit = choice.shortcut.last else { return nil }
+            return (KeyEquivalent(digit), .command, choice.shortcut)
+        case .restore: return ("r", [.command, .shift], "⇧⌘R")
+        case .discard: return ("d", [.command, .shift], "⇧⌘D")
+        case .checkAgain: return ("k", [.command, .shift], "⇧⌘K")
+        case .dismiss: return ("h", [.command, .shift], "⇧⌘H")
+        case .previous: return ("[", .command, "⌘[")
+        case .next: return ("]", .command, "⌘]")
+        }
     }
 }

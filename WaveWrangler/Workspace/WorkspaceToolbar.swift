@@ -1,4 +1,5 @@
 import SwiftUI
+import WWCore
 import WWOrganizer
 
 /// Destination control (IA §4.2). Segments are separate accessibility elements with stable identifiers
@@ -102,6 +103,7 @@ private struct SaveStatusPopover: View {
     let presentation: SaveStatusPresentation
     @FocusState private var focusedAction: Int?
     @FocusState private var focusedRecoveryURL: URL?
+    @State private var recoveryPage = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -115,26 +117,51 @@ private struct SaveStatusPopover: View {
             if let warning = state.store.document?.status.recoveryWarning {
                 Text(warning).wwFont(.body)
             }
-            if let document = state.store.document, !document.status.priorCheckpoints.isEmpty {
+            if let document = state.store.document,
+               let recoveryPlan: RecoveryChoicePresentation.Plan = document.priorChoicePlan,
+               !recoveryPlan.pages.isEmpty {
                 Text("\(document.status.priorCheckpoints.count) prior recovery copies are kept on this Mac. Storage use can grow without a limit until you discard them individually.")
                     .wwFont(.body)
                     .fixedSize(horizontal: false, vertical: true)
+                let page = recoveryPlan.pages[min(recoveryPage, recoveryPlan.pages.count - 1)]
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(document.status.priorCheckpoints, id: \.url) { prior in
-                            HStack {
-                                Text("Revision \(prior.fingerprint.revision.map(String.init) ?? "unknown") — \(prior.url.lastPathComponent)")
-                                    .lineLimit(1)
-                                Button("Open Copy") { state.openPriorAsCopy(prior) }
-                                    .focused($focusedRecoveryURL, equals: prior.url)
-                                    .accessibilityIdentifier("ww.show.recovery.openPrior.\(prior.url.lastPathComponent)")
-                                Button("Discard…") { state.discardPrior(prior) }
-                                    .accessibilityIdentifier("ww.show.recovery.discardPrior.\(prior.url.lastPathComponent)")
+                        ForEach(page.choices, id: \.record.recordID) { choice in
+                            if let prior = document.status.priorCheckpoints.first(where: { $0.url.path == choice.record.recordID }) {
+                                HStack {
+                                    Text(choice.label)
+                                        .lineLimit(2)
+                                    if choice.record.disposition == .open {
+                                        Button("Open Copy") { state.openPriorAsCopy(prior) }
+                                            .keyboardShortcut(KeyEquivalent(choice.shortcut.last ?? "1"), modifiers: .command)
+                                            .focused($focusedRecoveryURL, equals: prior.url)
+                                            .accessibilityLabel(choice.label)
+                                            .accessibilityIdentifier("ww.show.recovery.openPrior.\(prior.url.lastPathComponent)")
+                                    } else {
+                                        Button("Show in Finder") { state.revealPrior(prior) }
+                                            .keyboardShortcut(KeyEquivalent(choice.shortcut.last ?? "1"), modifiers: .command)
+                                            .accessibilityLabel(choice.label)
+                                            .accessibilityIdentifier("ww.show.recovery.revealPrior.\(prior.url.lastPathComponent)")
+                                    }
+                                    Button("Discard…") { state.discardPrior(prior) }
+                                        .keyboardShortcut(KeyEquivalent(choice.shortcut.last ?? "1"), modifiers: [.command, .shift])
+                                        .accessibilityIdentifier("ww.show.recovery.discardPrior.\(prior.url.lastPathComponent)")
+                                }
+                            } else {
+                                Text("This recovery copy could not be located. Refresh the save status before choosing it.")
                             }
                         }
                     }
                 }
                 .frame(maxHeight: 260)
+                if page.previousShortcut != nil {
+                    Button("Previous Recovery Page (⌘[)") { recoveryPage -= 1 }
+                        .keyboardShortcut("[", modifiers: .command)
+                }
+                if page.nextShortcut != nil {
+                    Button("Next Recovery Page (⌘])") { recoveryPage += 1 }
+                        .keyboardShortcut("]", modifiers: .command)
+                }
             }
             if !presentation.actions.isEmpty {
                 HStack {
@@ -154,6 +181,7 @@ private struct SaveStatusPopover: View {
         // The popover itself (AppKit's frame around this content) needs a description too (A11Y audit, #157).
         .background(PopoverAccessibilityLabel(label: "Save status details"))
         .onAppear {
+            recoveryPage = 0
             focusedAction = presentation.actions.isEmpty ? nil : 0
             focusedRecoveryURL = presentation.actions.isEmpty ? state.store.document?.status.priorCheckpoints.first?.url : nil
         }

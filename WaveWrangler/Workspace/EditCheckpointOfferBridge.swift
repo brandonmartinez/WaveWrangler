@@ -1,4 +1,5 @@
 import AppKit
+import WWCore
 import WWOrganizer
 import WWPersistence
 
@@ -7,6 +8,7 @@ import WWPersistence
 protocol EditCheckpointOfferProviding: AnyObject {
     var editCheckpointOfferState: EditCheckpointOfferState? { get }
     var editCheckpointOfferPosition: (index: Int, total: Int)? { get }
+    var editCheckpointOfferChoice: RecoveryChoicePresentation.Choice? { get }
     func selectedEditCheckpointForDiscard() throws -> SelectedRecoveryRecord
     /// Performs an already-confirmed action (Discard and Dismiss are confirmed by the window first).
     func performConfirmedEditCheckpointAction(_ action: EditCheckpointAction, selected: SelectedRecoveryRecord?) throws
@@ -14,9 +16,12 @@ protocol EditCheckpointOfferProviding: AnyObject {
 
 extension ShowDocument: EditCheckpointOfferProviding {
     var editCheckpointOfferPosition: (index: Int, total: Int)? { selectedEditCheckpointPosition }
+    var editCheckpointOfferChoice: RecoveryChoicePresentation.Choice? { selectedEditCheckpointChoice }
 
     var editCheckpointOfferState: EditCheckpointOfferState? {
         guard let offer = status.editCheckpointOffer else { return nil }
+        let choice: RecoveryChoicePresentation.Choice? = editCheckpointOfferChoice
+        if let selectedOfferURL, choice?.record.recordID != selectedOfferURL.path { return .selectionChanged }
         if let candidate = selectedEditCheckpointCandidate {
             let mode = offer.mode(for: candidate, restoreInEffect: isEditCheckpointRestoreInEffect)
             let createdAt = candidate.record.createdAt

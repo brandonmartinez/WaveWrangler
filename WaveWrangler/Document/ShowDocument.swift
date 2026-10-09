@@ -44,6 +44,8 @@ final class ShowDocument: NSDocument {
     /// The one displayed C2b choice, bound to its physical file until the user explicitly selects another.
     private(set) var selectedOfferURL: URL?
     private(set) var selectedOfferRecord: SelectedRecoveryRecord?
+    private(set) var editCheckpointChoicePlan: RecoveryChoicePresentation.Plan?
+    private(set) var priorChoicePlan: RecoveryChoicePresentation.Plan?
     var recoveryBaseVerified = false
     /// Explicitly dismissed unusable-record reports; the underlying records remain on disk.
     private var dismissedProblemURLs: Set<URL> = []
@@ -790,6 +792,18 @@ final class ShowDocument: NSDocument {
             decodeOlder: ShowSchemaMigration.decodeUpgradingOlder,
             belongsToDocument: { $0.show.id == showID }
         ).excluding(dismissedProblemURLs)
+        let usableURLs = Set(offer.usable.map(\.url))
+        let offeredURLs = Set(offer.orderedURLs)
+        let records: [RecoveryChoicePresentation.Record] = stored.filter { offeredURLs.contains($0.url) }.map { entry in
+            let record: EditCheckpointRecord? = if case let .success(value) = entry.record { value } else { nil }
+            let usable = usableURLs.contains(entry.url)
+            return .init(recordID: entry.url.path, kind: usable ? .unsavedCheckpoint : .damagedUnsaved,
+                         documentID: String((record?.documentID ?? documentKey.rawValue).dropFirst("show-".count)),
+                         savedAt: nil, createdAt: record?.createdAt,
+                         revision: record.flatMap { EnvelopeHeaderInfo.peek($0.snapshot)?.revision },
+                         disposition: usable ? .open : .reveal)
+        }
+        editCheckpointChoicePlan = RecoveryChoicePresentation.plan(records: records)
         var selectionError: Error?
         if selectedOfferURL == nil, let firstURL = offer.orderedURLs.first {
             do {
@@ -815,9 +829,14 @@ final class ShowDocument: NSDocument {
     }
 
     var selectedEditCheckpointPosition: (index: Int, total: Int)? {
-        guard let offer = status.editCheckpointOffer, let selectedOfferURL,
-              let index = offer.orderedURLs.firstIndex(of: selectedOfferURL) else { return nil }
-        return (index + 1, offer.orderedURLs.count)
+        guard let plan = editCheckpointChoicePlan, let selectedOfferURL,
+              let index = plan.choices.firstIndex(where: { $0.record.recordID == selectedOfferURL.path }) else { return nil }
+        return (index + 1, plan.choices.count)
+    }
+
+    var selectedEditCheckpointChoice: RecoveryChoicePresentation.Choice? {
+        guard let selectedOfferURL else { return nil }
+        return editCheckpointChoicePlan?.choices.first { $0.record.recordID == selectedOfferURL.path }
     }
 
     func advanceEditCheckpointOffer(by offset: Int) throws {
@@ -860,7 +879,29 @@ final class ShowDocument: NSDocument {
     }
 
     func refreshPriorCheckpoints() {
-        do { status.setPriorCheckpoints(try recovery.checkedCheckpoints(for: documentKey)) }
+        do {
+            let priors = try recovery.checkedCheckpoints(for: documentKey)
+            let records: [RecoveryChoicePresentation.Record] = priors.map { prior in
+                let bytes = try? recovery.bytes(of: prior)
+                let decoded = bytes.flatMap { try? ShowSchemaMigration.decodeUpgradingOlder($0) }
+                let usable = decoded?.payload.show.id == store.model.show.id
+                let older = prior.fingerprint.schemaVersion.map { $0 < coder.format.currentSchemaVersion } == true
+                return .init(recordID: prior.url.path,
+                             kind: usable ? .savedPrior : (older ? .olderSchema : .damagedSaved),
+                             documentID: String(prior.key.rawValue.dropFirst("show-".count)),
+                             savedAt: prior.savedAt, createdAt: nil, revision: prior.fingerprint.revision,
+                             disposition: usable ? .open : .reveal)
+            }
+            let plan = RecoveryChoicePresentation.plan(records: records)
+            let byID = Dictionary(uniqueKeysWithValues: priors.map { ($0.url.path, $0) })
+            priorChoicePlan = plan
+            status.setPriorCheckpoints(plan.choices.map { choice in
+                guard let prior = byID[choice.record.recordID] else {
+                    preconditionFailure("Recovery choice lost its retained prior")
+                }
+                return prior
+            })
+        }
         catch { status.setPriorCheckpointWarning("Could not list recovery copies: \(error.localizedDescription)") }
     }
 
@@ -871,31 +912,39 @@ final class ShowDocument: NSDocument {
             selected = try recovery.selectRecord(.priorCheckpoint, at: prior.url, for: documentKey,
                                                  allowingDamagedRecord: true)
         } catch {
-            throw Self.unusablePriorError(at: prior.url, reason: error)
+            throw Self.unusablePriorError(for: prior, reason: error)
         }
         let bytes: Data
         do {
             bytes = try recovery.readSelectedRecord(selected)
             guard selected.byteDigest == prior.fingerprint.byteDigest else { throw CocoaError(.fileReadUnknown) }
         } catch {
-            throw Self.unusablePriorError(at: prior.url, reason: error)
+            throw Self.unusablePriorError(for: prior, reason: error)
         }
         let model: ShowDocumentModel
         do {
             model = try ShowSchemaMigration.decodeUpgradingOlder(bytes).payload
             guard DocumentKey.show(model.show.id) == documentKey else { throw CocoaError(.fileReadCorruptFile) }
         } catch {
-            throw Self.unusablePriorError(at: prior.url, reason: error)
+            throw Self.unusablePriorError(for: prior, reason: error)
         }
         _ = Self.openUntitledCopy(of: model.duplicatedAsNewShow())
     }
 
-    private static func unusablePriorError(at url: URL, reason: Error) -> NSError {
-        NSError(domain: "com.brandonmartinez.wavewrangler.recovery", code: 2, userInfo: [
+    private static func unusablePriorError(for prior: RecoveryCheckpoint, reason: Error) -> NSError {
+        let plan = RecoveryChoicePresentation.plan(records: [
+            .init(recordID: prior.url.path,
+                  kind: prior.fingerprint.schemaVersion.map { $0 < SchemaVersion.show } == true ? .olderSchema : .damagedSaved,
+                  documentID: String(prior.key.rawValue.dropFirst("show-".count)),
+                  savedAt: prior.savedAt, createdAt: nil, revision: prior.fingerprint.revision, disposition: .reveal),
+        ])
+        return NSError(domain: "com.brandonmartinez.wavewrangler.recovery", code: 2, userInfo: [
             NSLocalizedDescriptionKey: "This older recovery copy cannot be opened.",
             NSLocalizedRecoverySuggestionErrorKey: "It has been kept unchanged on this Mac. Show it in Finder to export the raw file. \(reason.localizedDescription)",
-            NSLocalizedRecoveryOptionsErrorKey: ["Show in Finder", "Cancel"],
-            NSRecoveryAttempterErrorKey: RawRecoveryRevealer(url: url),
+            NSLocalizedRecoveryOptionsErrorKey: plan.choices.map(\.label) + ["Cancel"],
+            OpaqueErrorContent.recoveryPlanKey: plan,
+            OpaqueErrorContent.requiresExplicitSelectionKey: true,
+            NSRecoveryAttempterErrorKey: RawRecoveryRevealer(url: prior.url),
         ])
     }
 
@@ -1224,40 +1273,62 @@ enum DocumentRecoveryOffer {
             NSLocalizedDescriptionKey: error.errorDescription ?? "The document is damaged.",
             NSLocalizedFailureReasonErrorKey: error.failureReason ?? "",
         ]
-        var actions: [RecoveryAttempter.Action] = []
+        var entries: [(RecoveryChoicePresentation.Record, RecoveryAttempter.Action)] = []
+        func showID(_ key: DocumentKey) -> String {
+            key.rawValue.hasPrefix("show-") ? String(key.rawValue.dropFirst("show-".count)) : key.rawValue
+        }
+        func reveal(_ path: URL, kind: RecoveryChoicePresentation.Kind, key: DocumentKey?,
+                    savedAt: Date? = nil, createdAt: Date? = nil, revision: Int? = nil) {
+            guard !entries.contains(where: { $0.0.recordID == path.path }) else { return }
+            entries.append((.init(recordID: path.path, kind: kind, documentID: key.map(showID) ?? "",
+                                  savedAt: savedAt, createdAt: createdAt, revision: revision, disposition: .reveal),
+                            .reveal(path)))
+        }
         for candidate in candidates {
-            let kind: RecoveryRecordKind = candidate.checkpoint.url.lastPathComponent == "current.wwcheckpoint"
+            let checkpoint = candidate.checkpoint
+            let kind: RecoveryRecordKind = checkpoint.url.lastPathComponent == "current.wwcheckpoint"
                 ? .verifiedCurrent : .priorCheckpoint
-            if let selected = try? recovery.selectRecord(kind, at: candidate.checkpoint.url,
-                                                         for: candidate.checkpoint.key, allowingDamagedRecord: true) {
-                actions.append(.prior(selected, revision: candidate.document.revision))
+            if let selected = try? recovery.selectRecord(kind, at: checkpoint.url,
+                                                         for: checkpoint.key, allowingDamagedRecord: true) {
+                entries.append((.init(recordID: checkpoint.url.path,
+                                      kind: kind == .verifiedCurrent ? .verifiedCurrent : .savedPrior,
+                                      documentID: showID(checkpoint.key), savedAt: checkpoint.savedAt, createdAt: nil,
+                                      revision: candidate.document.revision, disposition: .open),
+                                .prior(selected, revision: candidate.document.revision)))
             } else {
-                actions.append(.reveal(candidate.checkpoint.url))
+                reveal(checkpoint.url, kind: .damagedSaved, key: checkpoint.key,
+                       savedAt: checkpoint.savedAt, revision: candidate.document.revision)
             }
         }
-        var damagedURLs: [URL] = []
         var scanFailures: [String] = []
-        var locationKeys: [DocumentKey] = []
         if let url {
+            let locationKeys: [DocumentKey]
             do {
                 locationKeys = try recovery.checkedKeys(forLocation: url)
             } catch {
                 scanFailures.append("location hints: \(error.localizedDescription)")
-                damagedURLs.append(recovery.root)
+                locationKeys = []
             }
             for key in locationKeys {
                 do {
                     let validPriorURLs = Set(candidates.map(\.checkpoint.url))
                     for prior in try recovery.checkedCheckpoints(for: key) where !validPriorURLs.contains(prior.url) {
-                        damagedURLs.append(prior.url)
+                        let older = prior.fingerprint.schemaVersion.map { $0 < SchemaVersion.show } == true
+                        reveal(prior.url, kind: older ? .olderSchema : .damagedSaved, key: key,
+                               savedAt: prior.savedAt, revision: prior.fingerprint.revision)
+                    }
+                    if let current = recovery.verifiedCurrent(for: key),
+                       !validPriorURLs.contains(current.url) {
+                        reveal(current.url, kind: .damagedSaved, key: key,
+                               savedAt: current.savedAt, revision: current.fingerprint.revision)
                     }
                 } catch {
                     scanFailures.append("prior copies for \(key.rawValue): \(error.localizedDescription)")
-                    damagedURLs.append(recovery.root)
                 }
                 do {
                     try recovery.setAsideEditCheckpoints(for: key)
                     let stored = try recovery.checkedOfferedEditCheckpoints(for: key)
+                    let byURL = Dictionary(uniqueKeysWithValues: stored.map { ($0.url, $0) })
                     let offer = EditCheckpointOffer.assess(
                         stored, documentID: key.rawValue, onDisk: nil,
                         coder: JSONEnvelopeCoder<ShowDocumentModel>.show,
@@ -1266,82 +1337,59 @@ enum DocumentRecoveryOffer {
                     )
                     for candidate in offer.usable {
                         if let selected = try? recovery.selectRecord(.offeredEditCheckpoint, at: candidate.url, for: key) {
-                            actions.append(.unsaved(selected))
+                            entries.append((.init(recordID: candidate.url.path, kind: .unsavedCheckpoint,
+                                                  documentID: showID(key), savedAt: nil,
+                                                  createdAt: candidate.record.createdAt,
+                                                  revision: EnvelopeHeaderInfo.peek(candidate.record.snapshot)?.revision,
+                                                  disposition: .open),
+                                            .unsaved(selected)))
                         } else {
-                            damagedURLs.append(candidate.url)
+                            reveal(candidate.url, kind: .damagedUnsaved, key: key,
+                                   createdAt: candidate.record.createdAt,
+                                   revision: EnvelopeHeaderInfo.peek(candidate.record.snapshot)?.revision)
                         }
                     }
-                    damagedURLs += offer.problems.map(\.url)
+                    for problem in offer.problems {
+                        let record: EditCheckpointRecord? =
+                            if let entry = byURL[problem.url], case let .success(value) = entry.record { value } else { nil }
+                        reveal(problem.url, kind: .damagedUnsaved, key: key,
+                               createdAt: record?.createdAt,
+                               revision: record.flatMap { EnvelopeHeaderInfo.peek($0.snapshot)?.revision })
+                    }
                 } catch {
                     scanFailures.append("unsaved copies for \(key.rawValue): \(error.localizedDescription)")
-                    damagedURLs.append(recovery.root)
                 }
             }
         }
-        actions += damagedURLs.map(RecoveryAttempter.Action.reveal)
-        if !actions.isEmpty {
-            let priorCount = actions.filter {
-                if case let .prior(record, _) = $0 { return record.kind == .priorCheckpoint }
-                return false
-            }.count
-            let verifiedCount = actions.filter {
-                if case let .prior(record, _) = $0 { return record.kind == .verifiedCurrent }
-                return false
-            }.count
-            let savedDates = candidates.compactMap(\.checkpoint.savedAt)
-            let newestVerified = url != nil && locationKeys.count == 1
-                && Set(candidates.map(\.checkpoint.key)) == Set(locationKeys)
-                && !candidates.isEmpty && savedDates.count == candidates.count
-                && Set(savedDates).count == candidates.count
-                && scanFailures.isEmpty && damagedURLs.isEmpty
-            let explicitSelection = priorCount + verifiedCount > 0 && !newestVerified
-            let ids = Set(candidates.map { $0.document.payload.show.id.rawValue.uuidString })
-            let idLength = (8...36).first { length in
-                Set(ids.map { String($0.prefix(length)) }).count == ids.count
-            } ?? 36
-            let copyCount = actions.filter { if case .unsaved = $0 { return true }; return false }.count
-            var priorNumber = 0
-            var copyNumber = 0
-            let names = actions.enumerated().map { index, action in
-                switch action {
-                case let .prior(record, revision):
-                    priorNumber += 1
-                    if newestVerified {
-                        if record.kind == .verifiedCurrent { return "Open Last Verified Copy (revision \(revision))" }
-                        if priorCount == 1 && verifiedCount == 0 { return "Open Recovered Copy" }
-                        return priorNumber == 1 ? "Open Newest Prior Copy (revision \(revision))"
-                            : "Open Prior Copy \(priorNumber) (revision \(revision))"
-                    }
-                    let candidate = candidates.first { $0.checkpoint.url == record.url && $0.checkpoint.key == record.key }
-                    let date = candidate?.checkpoint.savedAt.map {
-                        ISO8601DateFormatter().string(from: $0)
-                    } ?? "date unknown"
-                    let id = String(record.key.rawValue.dropFirst("show-".count).prefix(idLength))
-                    return "Open Recovery Copy \(priorNumber) (Saved \(date); Show ID \(id); revision \(revision))"
-                case .unsaved:
-                    copyNumber += 1
-                    return copyCount == 1 ? "Open Unsaved Copy" : "Open Unsaved Copy \(copyNumber)"
-                case .reveal: return "Show in Finder \(index + 1)"
-                case .cancel: return "Cancel"
+        if !scanFailures.isEmpty {
+            reveal(recovery.root, kind: .damagedSaved, key: nil)
+        }
+        let plan = RecoveryChoicePresentation.plan(records: entries.map(\.0))
+        if !plan.choices.isEmpty {
+            let actionsByID = Dictionary(uniqueKeysWithValues: entries.map { ($0.0.recordID, $0.1) })
+            let actions = plan.choices.map { choice -> RecoveryAttempter.Action in
+                guard let action = actionsByID[choice.record.recordID] else {
+                    preconditionFailure("Recovery choice lost its selected action")
                 }
+                return action
             }
-            userInfo[NSLocalizedRecoveryOptionsErrorKey] = names + ["Cancel"]
+            userInfo[NSLocalizedRecoveryOptionsErrorKey] = plan.choices.map(\.label) + ["Cancel"]
             userInfo[NSRecoveryAttempterErrorKey] = RecoveryAttempter(recovery: recovery, actions: actions + [.cancel])
-            if explicitSelection { userInfo[OpaqueErrorContent.requiresExplicitSelectionKey] = true }
+            userInfo[OpaqueErrorContent.recoveryPlanKey] = plan
+            if plan.defaultRecordID == nil { userInfo[OpaqueErrorContent.requiresExplicitSelectionKey] = true }
         }
-        let damaged = damagedURLs.isEmpty ? "" :
+        let raw = entries.contains(where: { $0.0.disposition == .reveal }) ?
             " The recovery copy is damaged and cannot be restored. Its raw bytes are kept; use Show in Finder to export them."
-        let available = actions.contains {
-            switch $0 { case .prior, .unsaved: true; case .reveal, .cancel: false }
-        }
+            : ""
+        let available = entries.contains(where: { $0.0.disposition == .open })
             ? " Complete recovery copies can be opened as separate unsaved shows. The damaged file is not changed."
             : ""
         let scan = scanFailures.isEmpty ? "" :
             " Some recovery records could not be listed: \(scanFailures.joined(separator: "; ")). They remain on this Mac."
         let caution = (userInfo[OpaqueErrorContent.requiresExplicitSelectionKey] as? Bool) == true
-            ? " Saved recency or document identity cannot establish a newest copy at this location. Choose a labelled copy explicitly; Return will not open one."
+            ? " This location has no safe automatic recovery choice. Choose a labelled copy explicitly; Return will not open one."
             : ""
-        userInfo[NSLocalizedRecoverySuggestionErrorKey] = (error.recoverySuggestion ?? "") + available + damaged + scan + caution
+        userInfo[NSLocalizedRecoverySuggestionErrorKey] = (error.recoverySuggestion ?? "") + available + raw + scan + caution
         return NSError(domain: "com.brandonmartinez.wavewrangler.persistence", code: 1, userInfo: userInfo)
     }
 

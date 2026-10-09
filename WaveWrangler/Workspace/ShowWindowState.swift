@@ -216,6 +216,7 @@ final class ShowWindowState {
     var editCheckpointOffer: (state: EditCheckpointOfferState, presentation: EditCheckpointOfferPresentation)? {
         guard let provider: EditCheckpointOfferProviding = store.document, let state = provider.editCheckpointOfferState else { return nil }
         return (state, EditCheckpointOfferPresentation(state, showName: store.model.show.title,
+                                                       choice: provider.editCheckpointOfferChoice,
                                                        position: provider.editCheckpointOfferPosition))
     }
 
@@ -254,6 +255,10 @@ final class ShowWindowState {
     func openPriorAsCopy(_ prior: RecoveryCheckpoint) {
         do { try store.document?.openPriorAsCopy(prior) }
         catch { _ = store.document?.presentError(error) }
+    }
+
+    func revealPrior(_ prior: RecoveryCheckpoint) {
+        NSWorkspace.shared.activateFileViewerSelecting([prior.url])
     }
 
     func discardPrior(_ prior: RecoveryCheckpoint) {

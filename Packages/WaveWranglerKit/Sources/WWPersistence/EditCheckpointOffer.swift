@@ -1,4 +1,5 @@
 import Foundation
+import WWCore
 
 /// An edit-checkpoint record file in the device-local recovery store, read or not.
 public struct StoredEditCheckpoint: Sendable, Equatable {
@@ -40,13 +41,13 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
         public let payload: Payload
     }
 
-    /// Every usable record, newest first.
+    /// Every usable record in shared presentation order (recorded creation time, with stable ties).
     public let usable: [Candidate]
     public let problems: [Problem]
-    /// All records in store sequence order, including those whose contents cannot be decoded.
+    /// All retained records in shared presentation order, including those whose contents cannot be decoded.
     public let orderedURLs: [URL]
 
-    /// The newest usable record: what the message bar offers. Every action applies to this record only; other
+    /// The first usable record: what the message bar offers. Every action applies to this record only; other
     /// records (each from a different session, with different edits) are offered one after another.
     public var candidate: Candidate? { usable.first }
 
@@ -120,13 +121,31 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
             guard belongsToDocument(decoded.payload) else { problems.append(.damaged(entry.url)); continue }
             usable.append(Candidate(url: entry.url, record: record, relation: record.relation(to: onDisk), payload: decoded.payload))
         }
-        usable.sort { ($0.record.createdAt, $0.record.checkpointSequence) > ($1.record.createdAt, $1.record.checkpointSequence) }
-        let orderedURLs = stored.enumerated().sorted { left, right in
-            if let a = RecoveryStore.sequence(of: left.element.url),
-               let b = RecoveryStore.sequence(of: right.element.url), a != b { return a > b }
-            return left.offset < right.offset
-        }.map(\.element.url)
-        return EditCheckpointOffer(usable: usable, problems: problems, orderedURLs: orderedURLs)
+        let usableURLs = Set(usable.map(\.url))
+        let plan = RecoveryChoicePresentation.plan(records: stored.map { entry in
+            let record: EditCheckpointRecord? = if case let .success(value) = entry.record { value } else { nil }
+            return .init(recordID: entry.url.path,
+                         kind: usableURLs.contains(entry.url) ? .unsavedCheckpoint : .damagedUnsaved,
+                         documentID: record?.documentID ?? documentID,
+                         savedAt: nil, createdAt: record?.createdAt,
+                         revision: record.flatMap { EnvelopeHeaderInfo.peek($0.snapshot)?.revision },
+                         disposition: usableURLs.contains(entry.url) ? .open : .reveal)
+        })
+        let order = Dictionary(uniqueKeysWithValues: plan.choices.enumerated().map { ($0.element.record.recordID, $0.offset) })
+        func position(_ url: URL) -> Int {
+            guard let index = order[url.path] else { preconditionFailure("Recovery choice lost its C2b record") }
+            return index
+        }
+        usable.sort { position($0.url) < position($1.url) }
+        problems.sort { position($0.url) < position($1.url) }
+        let storedURLs = Dictionary(uniqueKeysWithValues: stored.map { ($0.url.path, $0.url) })
+        return EditCheckpointOffer(usable: usable, problems: problems,
+                                   orderedURLs: plan.choices.map { choice in
+                                       guard let url = storedURLs[choice.record.recordID] else {
+                                           preconditionFailure("Recovery choice lost its offered file")
+                                       }
+                                       return url
+                                   })
     }
 
     /// The same offer with its relation re-checked against what is on disk now (for example after a save

@@ -1,4 +1,5 @@
 import AppKit
+import WWCore
 
 /// #126: app-level error messages (e.g. the T17 recovery offer and the T20 unknown-newer refusal, shown when a
 /// show could not be opened and so has no window) on an **opaque** panel. On macOS 27 an app-modal `NSAlert`
@@ -16,9 +17,11 @@ import AppKit
 /// without launching the app.
 struct OpaqueErrorContent: Equatable {
     static let requiresExplicitSelectionKey = "WWRecoveryRequiresExplicitSelection"
+    static let recoveryPlanKey = "WWRecoveryChoicePlan"
     var message: String
     var informative: String
     var options: [String]
+    var recoveryPlan: RecoveryChoicePresentation.Plan?
     /// The option that answers Return.
     var defaultIndex: Int?
     /// The option that answers Esc.
@@ -30,10 +33,21 @@ struct OpaqueErrorContent: Equatable {
         informative = error.localizedRecoverySuggestion ?? ""
         let recoveryOptions = error.localizedRecoveryOptions ?? []
         options = recoveryOptions.isEmpty ? [String(localized: "OK")] : recoveryOptions
+        recoveryPlan = error.userInfo[Self.recoveryPlanKey] as? RecoveryChoicePresentation.Plan
+        if let recoveryPlan {
+            precondition(options.count == recoveryPlan.choices.count + 1,
+                         "Recovery options and choice plan must agree")
+        }
         let cancel = options.firstIndex(of: String(localized: "Cancel"))
         cancelIndex = cancel ?? (options.count == 1 ? 0 : nil)
         let requiresExplicitSelection = error.userInfo[Self.requiresExplicitSelectionKey] as? Bool == true
-        defaultIndex = requiresExplicitSelection || (cancel == 0 && options.count > 1) ? nil : 0
+        if let recoveryPlan {
+            defaultIndex = recoveryPlan.defaultRecordID.flatMap { id in
+                recoveryPlan.choices.firstIndex { $0.record.recordID == id }
+            }
+        } else {
+            defaultIndex = requiresExplicitSelection || (cancel == 0 && options.count > 1) ? nil : 0
+        }
     }
 }
 
@@ -47,6 +61,10 @@ final class OpaqueErrorPanel: NSPanel {
     private(set) var messageField: NSTextField!
     private(set) var informativeField: NSTextField!
     var onChoose: ((Int) -> Void)?
+    private var choicePlan: RecoveryChoicePresentation.Plan?
+    private var pageIndex = 0
+    private var previousPageButton: NSButton?
+    private var nextPageButton: NSButton?
 
     init(error: Error) {
         content = OpaqueErrorContent(error: error)
@@ -82,6 +100,41 @@ final class OpaqueErrorPanel: NSPanel {
         onChoose?(sender.tag)
     }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           let key = event.charactersIgnoringModifiers {
+            if key == "]", nextPageButton?.isHidden == false { showPage(pageIndex + 1); return true }
+            if key == "[", previousPageButton?.isHidden == false { showPage(pageIndex - 1); return true }
+            if let digit = Int(key), (1...9).contains(digit), let choicePlan,
+               choicePlan.pages.indices.contains(pageIndex),
+               choicePlan.pages[pageIndex].choices.indices.contains(digit - 1) {
+                let id = choicePlan.pages[pageIndex].choices[digit - 1].record.recordID
+                guard let index = choicePlan.choices.firstIndex(where: { $0.record.recordID == id }) else {
+                    preconditionFailure("Recovery page lost its choice")
+                }
+                onChoose?(index)
+                return true
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    @objc private func previousPage(_ sender: NSButton) { showPage(pageIndex - 1) }
+    @objc private func nextPage(_ sender: NSButton) { showPage(pageIndex + 1) }
+
+    private func showPage(_ index: Int) {
+        guard let choicePlan, choicePlan.pages.indices.contains(index) else { return }
+        pageIndex = index
+        let visible = Set(choicePlan.pages[index].choices.map(\.record.recordID))
+        for (offset, choice) in choicePlan.choices.enumerated() {
+            optionButtons[offset].isHidden = !visible.contains(choice.record.recordID)
+        }
+        previousPageButton?.isHidden = choicePlan.pages[index].previousShortcut == nil
+        nextPageButton?.isHidden = choicePlan.pages[index].nextShortcut == nil
+        contentView?.layoutSubtreeIfNeeded()
+        setContentSize(contentView?.fittingSize ?? contentRect(forFrameRect: frame).size)
+    }
+
     private func buildContent() {
         let background = OpaqueBackgroundView()
 
@@ -96,17 +149,52 @@ final class OpaqueErrorPanel: NSPanel {
         texts.alignment = .leading
         texts.spacing = 8
 
+        if let plan = content.recoveryPlan {
+            choicePlan = plan
+        } else if content.defaultIndex == nil, content.options.count > 1 {
+            choicePlan = RecoveryChoicePresentation.plan(records: content.options.indices
+                .filter { $0 != content.cancelIndex }
+                .map { index in
+                    .init(recordID: String(format: "%010d", index), kind: .unsavedCheckpoint,
+                          documentID: "", savedAt: nil, createdAt: nil, revision: nil, disposition: .open)
+                })
+        }
         optionButtons = content.options.enumerated().map { index, title in
-            let button = NSButton(title: title, target: self, action: #selector(chooseOption(_:)))
+            let choice = choicePlan?.choices.indices.contains(index) == true ? choicePlan?.choices[index] : nil
+            let label = if let choice, !title.contains(choice.shortcut) {
+                "\(choice.shortcut) \(title)"
+            } else {
+                title
+            }
+            let button = NSButton(title: label, target: self, action: #selector(chooseOption(_:)))
             button.tag = index
             button.bezelStyle = .push
             button.setAccessibilityIdentifier("ww.app.errorDialog.option.\(index)")
-            button.keyEquivalent = index == content.defaultIndex ? "\r" : (index == content.cancelIndex ? "\u{1b}" : "")
+            button.setAccessibilityLabel(label)
+            if let choice {
+                button.keyEquivalent = String(choice.shortcut.suffix(1))
+                button.keyEquivalentModifierMask = .command
+            } else {
+                button.keyEquivalent = index == content.defaultIndex ? "\r" : (index == content.cancelIndex ? "\u{1b}" : "")
+            }
             return button
         }
+        if let choicePlan, choicePlan.pages.count > 1 {
+            let previous = NSButton(title: "Previous Recovery Page (⌘[)", target: self, action: #selector(previousPage(_:)))
+            previous.keyEquivalent = "["
+            previous.keyEquivalentModifierMask = .command
+            previous.setAccessibilityLabel(previous.title)
+            previousPageButton = previous
+            let next = NSButton(title: "Next Recovery Page (⌘])", target: self, action: #selector(nextPage(_:)))
+            next.keyEquivalent = "]"
+            next.keyEquivalentModifierMask = .command
+            next.setAccessibilityLabel(next.title)
+            nextPageButton = next
+        }
         // Keep longer, individually labelled recovery choices inside a narrow, keyboard-reachable dialog.
-        let buttonRow = NSStackView(views: content.defaultIndex == nil ? optionButtons : Array(optionButtons.reversed()))
-        buttonRow.orientation = content.defaultIndex == nil ? .vertical : .horizontal
+        let buttons = optionButtons + [previousPageButton, nextPageButton].compactMap { $0 }
+        let buttonRow = NSStackView(views: buttons)
+        buttonRow.orientation = choicePlan == nil ? .horizontal : .vertical
         buttonRow.alignment = .trailing
         buttonRow.spacing = 12
 
@@ -127,7 +215,8 @@ final class OpaqueErrorPanel: NSPanel {
         ])
         contentView = background
         setContentSize(background.fittingSize)
-        if content.defaultIndex == nil { defaultButtonCell = nil }
+        if choicePlan != nil { showPage(0) }
+        defaultButtonCell = content.defaultIndex.flatMap { optionButtons[$0].cell as? NSButtonCell }
         initialFirstResponder = (content.defaultIndex ?? content.cancelIndex).map { optionButtons[$0] } ?? optionButtons.first
     }
 

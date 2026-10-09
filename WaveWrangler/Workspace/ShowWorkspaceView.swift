@@ -347,11 +347,15 @@ private struct ShowMessageBar: View {
         let presentation = state.presentation
         // The unsaved-changes offer (C2b) takes the bar first; save-state messages follow once it is resolved.
         if state.isWindowAttached, let offer = state.editCheckpointOffer {
+            let recoveryChoice: RecoveryChoicePresentation.Choice? =
+                state.saveStatusPopoverShown ? nil : offer.presentation.choice
             MessageBar(
                 heading: offer.presentation.heading,
                 message: offer.presentation.body,
                 symbolName: offer.presentation.symbolName,
-                actions: offer.presentation.actions.map { action in (action.rawValue, { state.performEditCheckpointAction(action) }) }
+                actions: offer.presentation.actions.map { action in (action.rawValue, { state.performEditCheckpointAction(action) }) },
+                recoveryChoice: recoveryChoice,
+                recoveryActions: recoveryChoice == nil ? [] : offer.presentation.actions
             )
             .onAppear { state.editCheckpointOfferDidAppear(offer.presentation) }
             .onChange(of: offer.presentation.heading) { _, _ in state.editCheckpointOfferDidAppear(offer.presentation) }

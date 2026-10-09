@@ -123,18 +123,19 @@ public struct DocumentOpener<Coder: CanonicalDocumentCoding>: Sendable {
                 RecoveryCandidate(checkpoint: $0.checkpoint, document: $0.document)
             }
         }
-        return candidates.sorted { left, right in
-            switch (left.checkpoint.savedAt, right.checkpoint.savedAt) {
-            case let (a?, b?) where a != b: return a > b
-            case (_?, nil): return true
-            case (nil, _?): return false
-            default: break
+        let byID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.checkpoint.url.path, $0) })
+        let plan = RecoveryChoicePresentation.plan(records: candidates.map { candidate in
+            .init(recordID: candidate.checkpoint.url.path,
+                  kind: candidate.checkpoint.url.lastPathComponent == "current.wwcheckpoint" ? .verifiedCurrent : .savedPrior,
+                  documentID: candidate.checkpoint.key.rawValue,
+                  savedAt: candidate.checkpoint.savedAt, createdAt: nil,
+                  revision: candidate.document.revision, disposition: .open)
+        })
+        return plan.choices.map { choice in
+            guard let candidate = byID[choice.record.recordID] else {
+                preconditionFailure("Recovery choice lost its validated checkpoint")
             }
-            if left.checkpoint.key != right.checkpoint.key {
-                return left.checkpoint.key.rawValue < right.checkpoint.key.rawValue
-            }
-            return (left.document.revision, left.checkpoint.fingerprint.byteDigest)
-                > (right.document.revision, right.checkpoint.fingerprint.byteDigest)
+            return candidate
         }
     }
 }

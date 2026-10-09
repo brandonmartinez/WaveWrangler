@@ -1,5 +1,6 @@
 import AppKit
 import Testing
+import WWCore
 import WWPersistence
 
 /// #126: the T17 recovery offer and T20 unknown-newer refusal are shown without a window. They use
@@ -118,6 +119,36 @@ struct OpaqueErrorPanelTests {
         #expect(chosen == [1], "⌘2 reveals precisely the second retained record")
         panel.cancelOperation(nil)
         #expect(chosen == [1, 2], "Esc cancels without selecting another copy")
+    }
+
+    @Test func typedRecoveryPlanSurvivesNSErrorAndRoutesItsSelectedRecord() throws {
+        let plan = RecoveryChoicePresentation.plan(records: [
+            .init(recordID: "a", kind: .unsavedCheckpoint, documentID: "00000000-0000-0000-0000-000000000001",
+                  savedAt: nil, createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                  revision: 1, disposition: .open),
+            .init(recordID: "b", kind: .unsavedCheckpoint, documentID: "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF",
+                  savedAt: nil, createdAt: Date(timeIntervalSince1970: 1_700_000_100),
+                  revision: 1, disposition: .open),
+        ])
+        let error = NSError(domain: "test.recovery", code: 3, userInfo: [
+            NSLocalizedDescriptionKey: "Choose a retained copy.",
+            NSLocalizedRecoveryOptionsErrorKey: plan.choices.map(\.label) + ["Cancel"],
+            OpaqueErrorContent.recoveryPlanKey: plan,
+        ])
+        let panel = OpaqueErrorPanel(error: error)
+        #expect(panel.content.recoveryPlan == plan && panel.content.defaultIndex == nil)
+        #expect(panel.optionButtons[0].title.contains("FFFFFFFF") && panel.optionButtons[1].title.contains("00000000"))
+        var chosen: [Int] = []
+        panel.onChoose = { chosen.append($0) }
+        let first = try #require(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+            windowNumber: panel.windowNumber, context: nil, characters: "1",
+            charactersIgnoringModifiers: "1", isARepeat: false, keyCode: 18
+        ))
+        #expect(panel.performKeyEquivalent(with: first))
+        #expect(chosen == [0] && plan.choices[chosen[0]].record.recordID == "b")
+        panel.cancelOperation(nil)
+        #expect(chosen == [0, 2])
     }
 
     @Test func twelveRetainedCopiesStayReachableOnNumberedKeyboardPages() throws {

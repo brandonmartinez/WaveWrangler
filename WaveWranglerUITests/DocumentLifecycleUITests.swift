@@ -145,6 +145,68 @@ final class DocumentLifecycleUITests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: document), damaged, "the damaged canonical bytes remain untouched")
     }
 
+    func testReusedPathOffersBothShowsAndKeyboardActionsOpenOnlySelectedBBytes() throws {
+        let fixture = try reusedRecoveryFixture()
+        let refusal = launchReusedRecovery(fixture, mode: "distinct")
+        let buttons = refusal.buttons.allElementsBoundByIndex
+        XCTAssertEqual(buttons.count, 5, "both saved priors and both C2b sessions remain individually selectable")
+        XCTAssertTrue(buttons[0].label.contains("⌘1") && buttons[0].label.contains("Created") &&
+                      buttons[0].label.contains(fixture.bID), "B's later C2b bytes, not A's smaller UUID, lead")
+        XCTAssertTrue(buttons[1].label.contains("⌘2") && buttons[1].label.contains(fixture.aID))
+        XCTAssertTrue(buttons[2].label.contains("⌘3") && buttons[2].label.contains("Saved") &&
+                      buttons[2].label.contains(fixture.bID), "B's saved prior has its own identity-bound action")
+        XCTAssertTrue(buttons[3].label.contains("⌘4") && buttons[3].label.contains(fixture.aID))
+        XCTAssertEqual(Set(buttons.map(\.label)).count, buttons.count)
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertFalse(app.windows.matching(identifier: "ww.show.window").firstMatch.exists,
+                       "Return never opens a copy from either identity")
+        app.typeKey("1", modifierFlags: .command)
+        let draft = app.windows.matching(identifier: "ww.show.window").firstMatch
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        XCTAssertEqual(showTitleField(draft).value as? String, "B unsaved",
+                       "the actual app recovery attempter opened B's unpublished snapshot")
+        XCTAssertEqual(try Data(contentsOf: fixture.original), fixture.damaged)
+        XCTAssertEqual(try Data(contentsOf: fixture.moved), fixture.aBytes)
+
+        app.open(fixture.original)
+        let remaining = app.dialogs.firstMatch.exists ? app.dialogs.firstMatch : app.sheets.firstMatch
+        XCTAssertTrue(remaining.waitForExistence(timeout: 10))
+        XCTAssertEqual(remaining.buttons.count, 5, "choosing B did not remove A or B's other retained records")
+        app.typeKey("3", modifierFlags: .command)
+        let saved = app.windows.matching(identifier: "ww.show.window")
+            .matching(NSPredicate(format: "title BEGINSWITH 'Untitled'")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 10))
+        XCTAssertEqual(showTitleField(saved).value as? String, "B saved",
+                       "the saved-prior action opened B's exact selected model, not A or B's C2b version")
+        XCTAssertEqual(try Data(contentsOf: fixture.original), fixture.damaged)
+        XCTAssertEqual(try Data(contentsOf: fixture.moved), fixture.aBytes)
+    }
+
+    func testReusedPathWithUnknownOrTiedSaveDatesNeverDefaultsToARecoveryCopy() throws {
+        let fixture = try reusedRecoveryFixture()
+        for mode in ["unknown", "tied"] {
+            let refusal = launchReusedRecovery(fixture, mode: mode)
+            let buttons = refusal.buttons.allElementsBoundByIndex
+            XCTAssertEqual(buttons.count, 5, "\(mode): both identities' saved and C2b records remain")
+            let saved = buttons.filter { $0.label.contains("Saved") }
+            XCTAssertEqual(saved.count, 2)
+            XCTAssertTrue(saved.contains { $0.label.contains(fixture.aID) } &&
+                          saved.contains { $0.label.contains(fixture.bID) })
+            XCTAssertTrue(saved.allSatisfy {
+                $0.label.contains(mode == "unknown" ? "Saved date unknown" : "Saved 2023-")
+            }, "\(mode): each candidate carries honest save provenance")
+            XCTAssertEqual(Set(buttons.map(\.label)).count, buttons.count)
+            XCTAssertFalse(buttons.map(\.label).joined().contains("Newest"))
+            app.typeKey(.return, modifierFlags: [])
+            XCTAssertFalse(app.windows.matching(identifier: "ww.show.window").firstMatch.exists,
+                           "\(mode): Return cannot guess a copy with missing or tied provenance")
+            app.typeKey(.escape, modifierFlags: [])
+            XCTAssertEqual(try Data(contentsOf: fixture.original), fixture.damaged)
+            XCTAssertEqual(try Data(contentsOf: fixture.moved), fixture.aBytes)
+            app.terminate()
+        }
+    }
+
     func testDamagedRecordIsReachableWithoutDiscardingAUsableSession() throws {
         let document = try makeDocument("Usable and Damaged")
         try crashWithUnpublishedEdit(document, title: "Usable unsaved edit")
@@ -340,6 +402,50 @@ final class DocumentLifecycleUITests: XCTestCase {
 
     // MARK: - Helpers
 
+    private typealias ReusedRecoveryFixture = (
+        original: URL, moved: URL, damaged: Data, aBytes: Data, bBytes: Data, aID: String, bID: String
+    )
+
+    private func reusedRecoveryFixture() throws -> ReusedRecoveryFixture {
+        let first = try makeDocument("Recovery Identity 1")
+        let second = try makeDocument("Recovery Identity 2")
+        func id(_ url: URL) throws -> String {
+            let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+            let payload = try XCTUnwrap(envelope["payload"] as? [String: Any])
+            let show = try XCTUnwrap(payload["show"] as? [String: Any])
+            return try XCTUnwrap(show["id"] as? String)
+        }
+        let (a, b) = try id(first) < id(second) ? (first, second) : (second, first)
+        try runProbe(["save", "--file", a.path, "--title", "A saved"])
+        try runProbe(["save", "--file", b.path, "--title", "B saved"])
+        let aID = try id(a)
+        let bID = try id(b)
+        let original = workDirectory.appending(path: "Reused.wwshow")
+        let moved = workDirectory.appending(path: "Moved A.wwshow")
+        try FileManager.default.copyItem(at: a, to: original)
+        try FileManager.default.moveItem(at: original, to: moved)
+        try FileManager.default.copyItem(at: b, to: original)
+        let bBytes = try Data(contentsOf: original)
+        let damaged = Data("damaged replacement of B".utf8)
+        try damaged.write(to: original)
+        return (original, moved, damaged, try Data(contentsOf: moved), bBytes, aID, bID)
+    }
+
+    private func launchReusedRecovery(_ fixture: ReusedRecoveryFixture, mode: String) -> XCUIElement {
+        app = XCUIApplication()
+        app.launchArguments = [
+            "-WWUITestHooks", "YES", "-WWUITestAutosave", "OFF", "-WWUITestResetStorage", "YES",
+            "-ApplePersistenceIgnoreState", "YES",
+            "-WWUITestReusedRecoveryMode", mode,
+            "-WWUITestReusedSavedA", fixture.aBytes.base64EncodedString(),
+            "-WWUITestReusedSavedB", fixture.bBytes.base64EncodedString(),
+        ]
+        app.launchOnce(opening: fixture.original)
+        let refusal = app.dialogs.firstMatch.exists ? app.dialogs.firstMatch : app.sheets.firstMatch
+        XCTAssertTrue(refusal.waitForExistence(timeout: 10), "damaged reused path presents its retained records")
+        return refusal
+    }
+
     private func makeDocument(_ name: String) throws -> URL {
         let url = workDirectory.appending(path: "\(name).wwshow")
         let probe = Process()
@@ -401,9 +507,23 @@ final class DocumentLifecycleUITests: XCTestCase {
     private func chooseRecoveryAction(_ title: String, in bar: XCUIElement) throws {
         let action = recoveryAction(title, in: bar)
         XCTAssertTrue(action.exists && action.isEnabled, "\(title) is keyboard reachable")
-        let shortcut = try XCTUnwrap((1...9).first { action.label.contains("⌘\($0)") },
-                                     "\(title) exposes its numbered shortcut to VoiceOver")
-        app.typeKey(String(shortcut), modifierFlags: .command)
+        if let number = (1...9).first(where: { action.label.contains("⌘\($0)") }) {
+            app.typeKey(String(number), modifierFlags: .command)
+        } else if action.label.contains("⇧⌘R") {
+            app.typeKey("r", modifierFlags: [.command, .shift])
+        } else if action.label.contains("⇧⌘D") {
+            app.typeKey("d", modifierFlags: [.command, .shift])
+        } else if action.label.contains("⇧⌘K") {
+            app.typeKey("k", modifierFlags: [.command, .shift])
+        } else if action.label.contains("⇧⌘H") {
+            app.typeKey("h", modifierFlags: [.command, .shift])
+        } else if action.label.contains("⌘[") {
+            app.typeKey("[", modifierFlags: .command)
+        } else if action.label.contains("⌘]") {
+            app.typeKey("]", modifierFlags: .command)
+        } else {
+            XCTFail("\(title) has no visible keyboard shortcut")
+        }
     }
 
     private func showTitleField(_ window: XCUIElement) -> XCUIElement {

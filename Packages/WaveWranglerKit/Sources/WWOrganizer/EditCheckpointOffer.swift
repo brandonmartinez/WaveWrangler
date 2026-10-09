@@ -38,6 +38,7 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
     public var body: String
     public var symbolName: String
     public var actions: [EditCheckpointAction]
+    public var choice: RecoveryChoicePresentation.Choice?
 
     /// Announced once when the bar first appears (states §7, "Recovered … on open"); never moves focus.
     public var announcement: String { heading }
@@ -47,6 +48,7 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
         position: (index: Int, total: Int)? = nil,
         formatTime: (Date) -> String = SaveStatusPresentation.defaultTime
     ) {
+        self.choice = choice
         switch state {
         case let .restore(createdAt):
             heading = "Restore unsaved changes from \(formatTime(createdAt))?"
@@ -100,10 +102,11 @@ public struct EditCheckpointOfferPresentation: Sendable, Equatable {
         }
         if let position, position.total > 1 {
             heading += " (\(position.index) of \(position.total))"
-            body += " Recovery copy \(position.index) of \(position.total), newest first."
+            body += " Recovery copy \(position.index) of \(position.total)."
             if position.index > 1 { actions.append(.previous) }
             if position.index < position.total { actions.append(.next) }
         }
+        if let choice { body += " \(choice.label)." }
         body += " Recovery copies use local storage without a limit until you discard them individually."
     }
 

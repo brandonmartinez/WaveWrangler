@@ -171,9 +171,13 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
   validated priors and C2b unpublished edit checkpoints, conflict candidates, migration backups.
   Neither Save/Save As/Copy, autosave, Revert, Don't Save nor close removes them. Only a separately
   confirmed, identity-bound Discard removes one selected record; local storage can grow without bound.
-  The message bar offers each C2b session newest first, with Previous/Next, independent Restore/Open
-  Copy/Discard actions and a recheck of the selected record's physical identity and full bytes. The
-  save-status popover reports retained C3 priors and exposes individual review/Discard. Save As adds
+  One recovery-choice policy orders C2b and saved priors by recorded creation/save time across show
+  identities, never by a key or filename as a recency claim. Each candidate names its show and
+  provenance; missing/tied dates do not authorize Return to choose a copy. The message bar offers
+  each C2b session with Previous/Next, independent Restore/Open Copy/Discard actions and a recheck
+  of the selected record's physical identity and full bytes. Open/reveal choices expose visible
+  numbered Command-key equivalents even without Full Keyboard Access; more than nine use reachable
+  pages. The save-status popover reports retained C3 priors and exposes individual review/Discard. Save As adds
   a location hint without replacing the original hint, so either path can locate retained copies if
   damaged. This is not cross-device recovery; the pending-library-edits journal has its own
   verified-replay clearing rule. Ordinary files such as `.DS_Store` under `locations/` are not hint
