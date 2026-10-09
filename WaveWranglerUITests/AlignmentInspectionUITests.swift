@@ -264,13 +264,17 @@ final class AlignmentInspectionUITests: XCTestCase {
         let episodeRows = sidebar.descendants(matching: .any).matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "ww.show.sidebar.episode."
         ))
+        let expectedEpisodeTitle = "1 Synthetic Episode 1"
         let episodeRowCount = episodeRows.count
         let episodeRow = episodeRows.firstMatch
         let episodeRowExists = episodeRow.waitForExistence(timeout: 2)
         let episodeRowType = episodeRow.elementType.rawValue
         let episodeRowIdentifier = episodeRow.identifier
         let episodeRowLabel = episodeRow.label
-        let episodeRowValue = String(describing: episodeRow.value)
+        let episodeRowAXStringValue = episodeRow.value as? String
+        let episodeRowValue = episodeRowAXStringValue ?? String(describing: episodeRow.value)
+        let episodeRowTitleSurface = episodeRowLabel == expectedEpisodeTitle
+            ? "label" : episodeRowAXStringValue == expectedEpisodeTitle ? "value" : nil
         let episodeRowFrame = episodeRow.frame
         let episodeRowChildren = episodeRowExists
             ? episodeRow.children(matching: .any).allElementsBoundByIndex : []
@@ -291,7 +295,9 @@ final class AlignmentInspectionUITests: XCTestCase {
         Episode row AX diagnostic before assertions:
         matchingIdentifierCount=\(episodeRowCount) exists=\(episodeRowExists)
         type=\(episodeRowType) id=\(episodeRowIdentifier) label=\(episodeRowLabel)
-        value=\(episodeRowValue) frame=\(episodeRowFrame)
+        value=\(episodeRowValue) titleSurface=\(episodeRowTitleSurface ?? "none")
+        frame=\(episodeRowFrame)
+        A matching title surface is meaningful AX text exposure, not proof of VoiceOver's spoken name.
         matched element:
         \(episodeRow.debugDescription)
         children(count=\(episodeRowChildren.count)):
@@ -309,9 +315,15 @@ final class AlignmentInspectionUITests: XCTestCase {
             "The synthetic fixture exposes exactly one episode row.\n\(episodeRowDiagnostic)"
         )
         XCTAssertTrue(episodeRowExists, "The synthetic episode row must be exposed.\n\(episodeRowDiagnostic)")
-        XCTAssertFalse(
-            episodeRowLabel.isEmpty,
-            "The episode row must retain its accessible label.\n\(episodeRowDiagnostic)"
+        XCTAssertEqual(
+            episodeRow.elementType,
+            .staticText,
+            "The matching episode element must remain StaticText.\n\(episodeRowDiagnostic)"
+        )
+        XCTAssertNotNil(
+            episodeRowTitleSurface,
+            "The exact synthetic episode title must be exposed as AX label or string value. " +
+                "This verifies meaningful AX text exposure, not VoiceOver's spoken name.\n\(episodeRowDiagnostic)"
         )
         let neutralPoint = CGPoint(x: showInfo.frame.midX, y: showInfo.frame.midY)
         XCTAssertTrue(window.frame.contains(neutralPoint), "The neutral pointer target must stay inside the show window")
@@ -334,12 +346,21 @@ final class AlignmentInspectionUITests: XCTestCase {
             "HelpTagSeenAfter=\(helpTagSeenAfterNeutral); " +
             "current cursor position is not exposed by XCTest"
         )
-        XCTAssertTrue(episodeRow.exists, "The labelled episode row must remain reachable after pointer movement")
-        XCTAssertEqual(episodeRow.label, episodeRowLabel, "Pointer movement must not alter the episode row label")
+        let episodeRowLabelAfterPointer = episodeRow.label
+        let episodeRowValueAfterPointer = episodeRow.value as? String
+        let episodeRowTitleSurfaceAfterPointer = episodeRowLabelAfterPointer == expectedEpisodeTitle
+            ? "label" : episodeRowValueAfterPointer == expectedEpisodeTitle ? "value" : nil
         print(
-            "EPISODE ROW AX after pointer move type=\(episodeRow.elementType.rawValue) " +
-            "id=\(episodeRow.identifier) label=\(episodeRow.label) " +
-            "value=\(String(describing: episodeRow.value)) frame=\(episodeRow.frame)"
+            "EPISODE ROW AX after pointer move surface=\(episodeRowTitleSurfaceAfterPointer ?? "none") " +
+                "id=\(episodeRow.identifier) label=\(episodeRowLabelAfterPointer) " +
+                "value=\(episodeRowValueAfterPointer ?? "(not a string)") frame=\(episodeRow.frame); " +
+                "meaningful AX text exposure is not proof of VoiceOver's spoken name"
+        )
+        XCTAssertTrue(episodeRow.exists, "The labelled episode row must remain reachable after pointer movement")
+        XCTAssertEqual(episodeRowLabelAfterPointer, episodeRowLabel, "Pointer movement must not alter the episode row label")
+        XCTAssertNotNil(
+            episodeRowTitleSurfaceAfterPointer,
+            "The exact synthetic episode title must remain exposed as AX label or string value after pointer movement."
         )
         let workspaceRoot = app.descendants(matching: .any)["ww.alignment.workspaceRoot"]
         XCTAssertTrue(workspaceRoot.waitForExistence(timeout: 2))
