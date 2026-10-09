@@ -87,6 +87,7 @@ struct RecoveryChoicePresentationTests {
         #expect(plan.choices.count == 12)
         #expect(plan.pages.count == 2)
         #expect(plan.pages.flatMap(\.choices).map(\.record.recordID) == plan.choices.map(\.record.recordID))
+        guard plan.pages.count == 2 else { return }
         for page in plan.pages {
             #expect(page.choices.count <= 9)
             #expect(page.choices.map(\.shortcut) ==
