@@ -142,6 +142,13 @@ public enum EvaluationError: Error, Equatable {
 }
 
 public enum WordProposalScorer {
+    private struct ReferencePlacement: Hashable {
+        let occurrenceID: String
+        let normalizedText: String
+        let startMilliseconds: Double
+        let endMilliseconds: Double
+    }
+
     private static func normalized(_ text: String) -> String {
         text.trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines)).lowercased()
     }
@@ -161,12 +168,19 @@ public enum WordProposalScorer {
         var ordinalByID: [String: Int] = [:]
         var lastReferenceStart: [String: Double] = [:]
         var referencesByOccurrenceCount: [String: Int] = [:]
+        var referencePlacements = Set<ReferencePlacement>()
         for word in references {
             guard !word.id.isEmpty, !word.occurrenceID.isEmpty, !Self.normalized(word.text).isEmpty,
                   word.startMilliseconds.isFinite, word.endMilliseconds.isFinite,
                   word.startMilliseconds >= 0, word.endMilliseconds > word.startMilliseconds
             else { throw EvaluationError.invalidReference }
             guard referenceByID[word.id] == nil else { throw EvaluationError.duplicateIdentifier }
+            let placement = ReferencePlacement(
+                occurrenceID: word.occurrenceID,
+                normalizedText: Self.normalized(word.text),
+                startMilliseconds: word.startMilliseconds,
+                endMilliseconds: word.endMilliseconds)
+            guard referencePlacements.insert(placement).inserted else { throw EvaluationError.duplicateIdentifier }
             if let previous = lastReferenceStart[word.occurrenceID], word.startMilliseconds < previous {
                 throw EvaluationError.invalidReference
             }

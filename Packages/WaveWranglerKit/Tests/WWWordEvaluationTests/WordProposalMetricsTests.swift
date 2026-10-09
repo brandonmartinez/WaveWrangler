@@ -42,6 +42,41 @@ struct WordProposalMetricsTests {
         #expect((report.proposals.wilsonLower95 ?? 0) > 0.95)
     }
 
+    @Test func reidentifiedTruthPlacementsCannotInflateBoundaryAndTargetCounts() throws {
+        var words: [ReferenceWord] = [], observed: [ObservedWord] = []
+        var targets: [ReferenceProposal] = [], proposals: [ObservedProposal] = []
+        for (s, stratum) in Self.strata.enumerated() {
+            for index in 0..<100 {
+                let id = "\(s)-alias-\(index)"
+                words.append(ReferenceWord(id: id, occurrenceID: "occ-\(s)", text: "um,", stratum: stratum,
+                                           startMilliseconds: 1_000, endMilliseconds: 1_150))
+                observed.append(ObservedWord(id: id, matchedReferenceID: id, occurrenceID: "occ-\(s)",
+                                             stratum: stratum, text: "Um", start: .supported(milliseconds: 1_000),
+                                             end: .supported(milliseconds: 1_150)))
+                if index < 60 {
+                    targets.append(ReferenceProposal(id: id, stratum: stratum, wordIDs: [id]))
+                    proposals.append(ObservedProposal(id: id, targetID: id, stratum: stratum, wordIDs: [id]))
+                }
+            }
+        }
+        #expect(throws: EvaluationError.duplicateIdentifier) {
+            try WordProposalScorer.score(words: words, observations: observed, targets: targets,
+                                         proposals: proposals, abstentions: 0)
+        }
+    }
+
+    @Test func reidentifiedPlacementCannotChangeStratum() throws {
+        let fixture = Self.fixture()
+        var words = fixture.0
+        let alias = ReferenceWord(id: "stratum-alias", occurrenceID: "occ-0", text: "UM",
+                                  stratum: .noise, startMilliseconds: 0, endMilliseconds: 150)
+        words.insert(alias, at: 1)
+        #expect(throws: EvaluationError.duplicateIdentifier) {
+            try WordProposalScorer.score(words: words, observations: fixture.1,
+                                         targets: fixture.2, proposals: fixture.3, abstentions: 0)
+        }
+    }
+
     @Test func absentAndUnsupportedBoundariesStayInDenominator() throws {
         let (words, original, targets, proposals) = Self.fixture()
         let observed = original.map { word in
