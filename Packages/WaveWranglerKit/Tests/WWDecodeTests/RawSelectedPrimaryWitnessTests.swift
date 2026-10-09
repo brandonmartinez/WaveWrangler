@@ -142,10 +142,10 @@ struct RawSelectedPrimaryWitnessTests {
         defer { Darwin.close(fd) }
         var beforeInfo = stat()
         guard fstat(fd, &beforeInfo) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-        let accessSeconds = Int64(beforeInfo.st_atimespec.tv_sec)
-        let accessNanoseconds = Int64(beforeInfo.st_atimespec.tv_nsec)
-        let modifiedSeconds = Int64(beforeInfo.st_mtimespec.tv_sec) + 2
-        let modifiedNanoseconds = Int64(beforeInfo.st_mtimespec.tv_nsec)
+        let accessSeconds = beforeInfo.st_atimespec.tv_sec
+        let accessNanoseconds = beforeInfo.st_atimespec.tv_nsec
+        let modifiedSeconds = beforeInfo.st_mtimespec.tv_sec + 2
+        let modifiedNanoseconds = beforeInfo.st_mtimespec.tv_nsec
         let appended = Counter()
         let attempt = await runAttempt(
             primary, content: SystemSourceContentIO(), io: SystemSourceIO(), chunkFrames: 4096,
@@ -172,8 +172,8 @@ struct RawSelectedPrimaryWitnessTests {
         #expect(appended.count == 1)
         #expect(afterInfo.st_dev == beforeInfo.st_dev && afterInfo.st_ino == beforeInfo.st_ino)
         #expect(afterInfo.st_size == beforeInfo.st_size + 1)
-        #expect(Int64(afterInfo.st_mtimespec.tv_sec) == modifiedSeconds)
-        #expect(Int64(afterInfo.st_mtimespec.tv_nsec) == modifiedNanoseconds)
+        #expect(afterInfo.st_mtimespec.tv_sec == modifiedSeconds)
+        #expect(afterInfo.st_mtimespec.tv_nsec == modifiedNanoseconds)
         #expect(attempt.events.contains("append"))
         #expect(attempt.failure == .sourceChangedDuringDecode)
         expectNothingPublished(attempt)
