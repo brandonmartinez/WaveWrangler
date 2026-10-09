@@ -373,4 +373,152 @@ struct RenderEnvelopeTests {
         #expect(fixture.content.total.opens == opens)
         for pipeline in pipelines { #expect(await pipeline.gate.snapshot.activeBytes == 0) }
     }
+
+    @Test("A warm persisted map with no cached dependent slots activates and rerenders")
+    func warmPersistedMapAfterRender() async throws {
+        let fixture = try await Self.fixture(label: "warm-persisted-map")
+        #expect(try await fixture.render().isComplete)
+        let opens = fixture.content.total.opens
+        let coordinator = DerivedJobCoordinator(store: fixture.store)
+        for source in fixture.sources {
+            await coordinator.updateSource(try PipelineFixture.registration(source.id, source.url))
+        }
+        let pipeline = AlignmentPipeline(
+            coordinator: coordinator, decoder: fixture.decoder, configuration: fixture.configuration
+        )
+        try await pipeline.activate(model: fixture.model, episode: fixture.episodeID)
+        #expect(await coordinator.inputs.acceptedMaps[fixture.episodeID] == 1)
+        let report = try await pipeline.renderAlignedAssets(
+            model: fixture.model, episode: fixture.episodeID,
+            sources: fixture.sources, authorizations: fixture.authorizations
+        )
+        #expect(report.isComplete)
+        #expect(report.groups.allSatisfy { $0.segmentsReused == $0.segments })
+        #expect(fixture.content.total.opens == opens)
+        #expect(await ResourceGate.process.snapshot.activeBytes == 0)
+    }
+
+    @Test("A memory refusal leaves the old map, identity, cached segments and acceptance ledger intact")
+    func refusedPersistedActivationIsAtomic() async throws {
+        let fixture = try await Self.fixture(label: "atomic-restoration-refusal")
+        let first = fixture.model
+        let firstRender = try await fixture.render()
+        #expect(firstRender.isComplete)
+        let oldRevision = try #require(first.episode(fixture.episodeID)?.alignment?.acceptedRevision)
+        let oldIdentity = await fixture.coordinator.state(of: PipelineSlots.acceptedMapIdentity(fixture.episodeID))
+        let second = try await fixture.pipeline.reviseAcceptedMap(
+            model: first, episode: fixture.episodeID,
+            decisions: [fixture.epochs[1]: .numeric(ppm: 25, offsetMilliseconds: 0)]
+        )
+        let baseline = Box(442 << 20)
+        let measuredGate = ResourceGate(
+            permits: 4, budgetBytes: 512 << 20, processLimitBytes: 1 << 30,
+            measureProcess: { (baseline.value, baseline.value) }
+        )
+        let pipeline = AlignmentPipeline(
+            coordinator: fixture.coordinator, decoder: fixture.decoder,
+            configuration: fixture.configuration, testHooks: fixture.hooks,
+            processAdmission: measuredGate
+        )
+        try await pipeline.activate(model: first, episode: fixture.episodeID)
+        for _ in 0 ..< 4 { try await measuredGate.acquire(bytes: 0) }
+        let cancelled = Task {
+            try await pipeline.activate(model: second.model, episode: fixture.episodeID)
+        }
+        try await ConcurrencyTests.until { await measuredGate.snapshot.waiting > 0 }
+        cancelled.cancel()
+        await #expect(throws: AlignmentAcceptanceError.resourceUnavailable(
+            "cached map restoration was cancelled before publication"
+        )) { try await cancelled.value }
+        for _ in 0 ..< 4 { await measuredGate.release(bytes: 0) }
+        #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == oldRevision)
+        #expect(await fixture.coordinator.state(of: PipelineSlots.acceptedMapIdentity(fixture.episodeID)) == oldIdentity)
+        baseline.value = 600 << 20
+        do throws(AlignmentAcceptanceError) {
+            try await pipeline.activate(model: second.model, episode: fixture.episodeID)
+            Issue.record("activation must refuse the measured process envelope")
+        } catch {
+            guard case .resourceUnavailable = error else {
+                Issue.record("expected resource refusal, got \(error)")
+                return
+            }
+        }
+        #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == oldRevision)
+        #expect(await fixture.coordinator.state(of: PipelineSlots.acceptedMapIdentity(fixture.episodeID)) == oldIdentity)
+        _ = try await pipeline.reviseAcceptedMap(
+            model: first, episode: fixture.episodeID,
+            decisions: [fixture.epochs[1]: .numeric(ppm: 27, offsetMilliseconds: 0)]
+        )
+        let oldRender = try await fixture.render()
+        #expect(oldRender.isComplete)
+        #expect(oldRender.groups.allSatisfy { $0.segmentsReused == $0.segments })
+        baseline.value = 442 << 20
+        try await pipeline.activate(model: second.model, episode: fixture.episodeID)
+        #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == second.revision.revision)
+        _ = try await pipeline.reviseAcceptedMap(
+            model: second.model, episode: fixture.episodeID,
+            decisions: [fixture.epochs[1]: .numeric(ppm: 30, offsetMilliseconds: 0)]
+        )
+    }
+
+    @Test("Activation during an admitted render invalidates the old result; the new map rerenders")
+    func activationDuringRender() async throws {
+        let entered = Latch()
+        let release = Latch()
+        let fixture = try await PipelineFixture([
+            GroupSpec(name: "reference", sources: [
+                SourceSpec(name: "ref", channels: 2, seconds: 4, signal: .scene(seed: TwoRecorder.seed)),
+            ]),
+            GroupSpec(name: "target", sources: [
+                SourceSpec(name: "target-0", channels: 2, seconds: 4, signal: .scene(seed: TwoRecorder.seed)),
+            ]),
+        ], hooks: AlignmentPipelineTestHooks(beforeSegmentPublish: { _, _ in
+            await entered.open()
+            await release.wait()
+        }), label: "activation-during-render")
+        let analysis = try await fixture.analyse(preferredReference: "ref")
+        try await fixture.acceptAndActivate(analysis, [fixture.epochs[1]:
+            .numeric(ppm: 0, offsetMilliseconds: 0)])
+        let render = Task { try await fixture.render() }
+        await entered.wait()
+        let revised = try await fixture.pipeline.reviseAcceptedMap(
+            model: fixture.model, episode: fixture.episodeID,
+            decisions: [fixture.epochs[1]: .numeric(ppm: 25, offsetMilliseconds: 0)]
+        )
+        try await fixture.pipeline.activate(model: revised.model, episode: fixture.episodeID)
+        await release.open()
+        let stale = try await render.value
+        #expect(!stale.isComplete)
+        fixture.model = revised.model
+        let fresh = try await fixture.render()
+        #expect(fresh.isComplete)
+        #expect(await ResourceGate.process.snapshot.activeBytes == 0)
+    }
+
+    @Test("Cancelling before or while waiting at zero-byte preflight returns cancelled groups, not memory refusal")
+    func cancelledPreflight() async throws {
+        let fixture = try await Self.fixture(label: "cancelled-preflight")
+        let opens = fixture.content.total.opens
+        let before = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await fixture.render()
+        }
+        let cancelledBefore = try await before.value
+        #expect(!cancelledBefore.groups.isEmpty)
+        #expect(cancelledBefore.groups.allSatisfy { $0.failure == .cancelled })
+
+        for _ in 0 ..< AlignmentPipelineConfiguration.maximumConcurrency {
+            try await ResourceGate.process.acquire(bytes: 0)
+        }
+        let waiting = Task { try await fixture.render() }
+        try await ConcurrencyTests.until { await ResourceGate.process.snapshot.waiting > 0 }
+        waiting.cancel()
+        let cancelledWaiting = try await waiting.value
+        for _ in 0 ..< AlignmentPipelineConfiguration.maximumConcurrency {
+            await ResourceGate.process.release(bytes: 0)
+        }
+        #expect(cancelledWaiting.groups.allSatisfy { $0.failure == .cancelled })
+        #expect(fixture.content.total.opens == opens)
+        #expect(try await fixture.render().isComplete)
+    }
 }

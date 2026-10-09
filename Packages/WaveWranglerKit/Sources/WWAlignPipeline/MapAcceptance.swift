@@ -75,6 +75,8 @@ public enum AlignmentAcceptanceError: Error, Sendable, Equatable {
     case priorMapHasClockApproval(RecordingEpochID)
     case priorMapUnreadable(MapHistoryError)
     case invalidMap(String)
+    /// Process-memory admission refused activation before the persisted map was published.
+    case resourceUnavailable(String)
     case history(MapHistoryError)
     case coordinatorShutDown
     /// The analysis (or the accepted map) no longer describes the current sources, format or placements.

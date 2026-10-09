@@ -208,7 +208,7 @@ The process-wide gate now checks *current* resident size and physical footprint 
 when admitting every analysis, probe or render unit, including a waiter when it finally reaches the
 front of the queue. It refuses on measurement failure, or when
 `max(RSS, footprint) + already-reserved bytes + requested bytes + 256 MiB > 1 GiB`.
-The same check runs before map/render planning, with zero requested bytes; group admission still
+The same check runs before opening render cursors, with zero requested bytes; group admission still
 checks the full requested estimate before opening a render cursor. Refusal is typed
 (`renderEnvelope` for process-envelope/measurement failures), not a successful empty render.
 At the largest prior measured six-channel segment, the existing checked accounting reserves
@@ -246,6 +246,20 @@ refusal: the first instance completes; the second opens **zero** render cursors 
 507,570,560 B reservation plus 256 MiB headroom would cross 1 GiB. This changes the
 earlier #304 profile's second-instance completion, rather than treating its 443 MiB
 measured peak as permission to admit the same shape after arbitrary retained history.
+
+**#311 follow-up, scoped correction pending independent review.** Persisted-map activation
+now admits **before** publishing map identity or reconciling the acceptance ledger. Restoration
+reserves 192 MiB while it verifies cached files of at most 48 MiB one at a time; larger
+dependent assets remain stale and can be verified/adopted by the normal render job on demand.
+At a simulated 442 MiB live baseline the 192 MiB restoration reservation fits where the old
+unconditional 512 MiB reservation refused; at a simulated 600 MiB baseline activation reports
+a resource refusal without changing the prior accepted revision, identity, cached render or
+ledger. A new coordinator with no dependent slots activates a warm persisted map and rerenders
+from the same cache. Zero-byte render preflight now follows metadata planning, so cancellation
+before or while waiting produces cancelled group outcomes rather than a memory refusal.
+These are focused synthetic regressions, **not** a new full-media or every-admitted <=1 GiB
+qualification. The 256 MiB headroom remains empirical and #235 remains open.
+
 Two simultaneous eight-channel 10 s groups still complete and rerender from cache in
 one isolated Debug process (118,456,320 B `ru_maxrss`, 76,399,360 B footprint,
 119,129,088 B simultaneous estimates). The default 10 s / 75-minute six-channel

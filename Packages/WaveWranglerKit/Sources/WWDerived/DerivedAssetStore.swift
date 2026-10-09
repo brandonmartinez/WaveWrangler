@@ -200,6 +200,36 @@ public struct DerivedAssetStore: Sendable {
         return Self.decode(bytes, expecting: key)
     }
 
+    /// Restoration verifies only bounded published assets; larger ones remain stale until a normal job
+    /// adopts them. Read through one descriptor so replacement cannot change the checked file mid-read.
+    func boundedPayload(for key: DerivedAssetKey, maximumFileBytes: Int) -> Data? {
+        guard let url = try? assetURL(digest: key.digest), maximumFileBytes >= 0 else { return nil }
+        let fd = open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var info = stat()
+        guard fstat(fd, &info) == 0, info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+              info.st_size >= 0, info.st_size <= maximumFileBytes
+        else { return nil }
+        var bytes = Data()
+        bytes.reserveCapacity(Int(info.st_size))
+        var chunk = [UInt8](repeating: 0, count: 64 << 10)
+        while true {
+            let remaining = maximumFileBytes - bytes.count
+            let count = chunk.withUnsafeMutableBytes {
+                Darwin.read(fd, $0.baseAddress!, min($0.count, remaining + 1))
+            }
+            if count < 0 {
+                if errno == EINTR { continue }
+                return nil
+            }
+            if count == 0 { break }
+            if count > remaining { return nil }
+            bytes.append(contentsOf: chunk.prefix(count))
+        }
+        return Self.decode(bytes, expecting: key)
+    }
+
     /// Removes orphaned staging files left by an interrupted publication. Published assets are untouched.
     @discardableResult
     public func recover() -> Int {

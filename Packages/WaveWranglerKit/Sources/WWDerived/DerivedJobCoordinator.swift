@@ -359,7 +359,7 @@ public actor DerivedJobCoordinator {
     /// undo/redo. Ordinary `refresh()` only invalidates forward; this explicit path runs after the restored
     /// accepted-map identity has published, so upstream-dependent assets can become current again without
     /// rerunning work. Explicitly invalidated slots are never revived.
-    public func restoreCachedCurrentSlots() {
+    public func restoreCachedCurrentSlots(maximumFileBytes: Int? = nil) {
         var changed = true
         while changed {
             changed = false
@@ -369,9 +369,12 @@ public actor DerivedJobCoordinator {
                       case let .stale(current, _) = record.state
                 else { continue }
                 let candidates = [current] + (cachedCandidates[slot] ?? [])
-                guard let restored = candidates.first(where: {
-                    explicitlyInvalidated[slot]?.contains($0) != true
-                        && staleReasons(for: $0, ready: ready).isEmpty && store.payload(for: $0) != nil
+                guard let restored = candidates.first(where: { candidate in
+                    explicitlyInvalidated[slot]?.contains(candidate) != true
+                        && staleReasons(for: candidate, ready: ready).isEmpty
+                        && (maximumFileBytes.map { limit in
+                            store.boundedPayload(for: candidate, maximumFileBytes: limit) != nil
+                        } ?? (store.payload(for: candidate) != nil))
                 }) else { continue }
                 rememberCachedCandidate(current, for: slot)
                 var updated = record

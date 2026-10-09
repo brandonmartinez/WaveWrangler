@@ -75,6 +75,7 @@ public final class AlignmentPipeline: Sendable {
     public let decoder: SourceDecoder
     public let configuration: AlignmentPipelineConfiguration
     let gate: ResourceGate
+    let processAdmission: ResourceGate
     let ledger = AcceptanceLedger()
     let activation = AsyncSerial()
     /// Group renders (they hold gateway cursors outside coordinator jobs); `shutdown()` awaits them.
@@ -88,6 +89,7 @@ public final class AlignmentPipeline: Sendable {
         self.decoder = decoder
         self.configuration = configuration
         gate = ResourceGate(permits: configuration.concurrency, budgetBytes: configuration.analysisMemoryBudgetBytes)
+        processAdmission = .process
         #if DEBUG
         hooks = AlignmentPipelineTestHooks()
         #endif
@@ -108,11 +110,16 @@ public final class AlignmentPipeline: Sendable {
     #endif
 
     #if DEBUG
-    init(coordinator: DerivedJobCoordinator, decoder: SourceDecoder, configuration: AlignmentPipelineConfiguration = AlignmentPipelineConfiguration(), testHooks: AlignmentPipelineTestHooks) {
+    init(
+        coordinator: DerivedJobCoordinator, decoder: SourceDecoder,
+        configuration: AlignmentPipelineConfiguration = AlignmentPipelineConfiguration(),
+        testHooks: AlignmentPipelineTestHooks, processAdmission: ResourceGate = .process
+    ) {
         self.coordinator = coordinator
         self.decoder = decoder
         self.configuration = configuration
         gate = ResourceGate(permits: configuration.concurrency, budgetBytes: configuration.analysisMemoryBudgetBytes)
+        self.processAdmission = processAdmission
         hooks = testHooks
     }
     #endif
@@ -718,26 +725,34 @@ public final class AlignmentPipeline: Sendable {
         } catch {
             throw .invalidMap(String(describing: error))
         }
-        await coordinator.acceptMap(reference)
-        await coordinator.setRecipe(identity.recipe)
-        await coordinator.setAssetRevision(AlignmentAssetKinds.acceptedMapIdentity)
-        let canonical = Data(identity.digest.utf8)
-        let published = await coordinator.run(
-            identity.slot,
-            key: identity.key
-        ) { () throws(AlignmentWorkFailure) -> Data in canonical }
-        guard published.isAvailable else {
-            if await coordinator.isShutdown { throw .coordinatorShutDown }
-            throw .invalidMap("the restored map identity did not publish: \(published.outcome)")
-        }
-        // Undo/redo cache reconciliation reads each candidate's full payload. It must not run beside
-        // admitted renders from this or another pipeline instance outside the process envelope.
+        // Cache restoration reads one verified file at a time. Four copies of a 48 MiB encoded
+        // asset bound its read/verification intermediates; larger assets stay stale and are
+        // re-adopted on demand. Admission precedes any publication or ledger reconciliation.
+        let maximumRestorationFileBytes = 48 << 20
         do {
-            try await ResourceGate.process.withAdmission(bytes: AlignmentPipelineConfiguration.maximumMemoryBudgetBytes) {
-                await coordinator.restoreCachedCurrentSlots()
+            try await processAdmission.withAdmission(bytes: 4 * maximumRestorationFileBytes) {
+                try Task.checkCancellation()
+                if await coordinator.isShutdown { throw AlignmentAcceptanceError.coordinatorShutDown }
+                await coordinator.acceptMap(reference)
+                await coordinator.setRecipe(identity.recipe)
+                await coordinator.setAssetRevision(AlignmentAssetKinds.acceptedMapIdentity)
+                let canonical = Data(identity.digest.utf8)
+                let published = await coordinator.run(
+                    identity.slot,
+                    key: identity.key
+                ) { () throws(AlignmentWorkFailure) -> Data in canonical }
+                guard published.isAvailable else {
+                    if await coordinator.isShutdown { throw AlignmentAcceptanceError.coordinatorShutDown }
+                    throw AlignmentAcceptanceError.invalidMap("the restored map identity did not publish: \(published.outcome)")
+                }
+                await coordinator.restoreCachedCurrentSlots(maximumFileBytes: maximumRestorationFileBytes)
             }
+        } catch let error as AlignmentAcceptanceError {
+            throw error
+        } catch is CancellationError {
+            throw .resourceUnavailable("cached map restoration was cancelled before publication")
         } catch {
-            throw .invalidMap("cached map restoration was interrupted: \(error)")
+            throw .resourceUnavailable("cached map restoration admission refused: \(error)")
         }
         await ledger.reconcile(
             episode: episodeID,
@@ -1018,11 +1033,6 @@ public final class AlignmentPipeline: Sendable {
         if await coordinator.isShutdown { throw .coordinatorShutDown }
         let active = await coordinator.inputs.acceptedMaps[episodeID]
         guard active == revisionNumber else { throw .acceptedMapNotActive(document: revisionNumber, coordinator: active) }
-        do {
-            try await ResourceGate.process.withAdmission(bytes: 0) {}
-        } catch {
-            throw .renderEnvelope("process memory preflight refused: \(workFailure(error))")
-        }
         let map: AlignedTimelineMap
         let applicability: MapApplicability
         do throws(MapHistoryError) {
@@ -1153,6 +1163,16 @@ public final class AlignmentPipeline: Sendable {
                     notRendered: notRendered
                 )
             }
+        }
+        do {
+            try await processAdmission.withAdmission(bytes: 0) {}
+        } catch is CancellationError {
+            return AlignedAssetReport(
+                revision: revision, outputSettings: decision,
+                groups: failedGroups + jobs.map(Self.cancelledReport), notRendered: notRendered
+            )
+        } catch {
+            throw .renderEnvelope("process memory preflight refused: \(workFailure(error))")
         }
         let environment = environment
         let renders = renders

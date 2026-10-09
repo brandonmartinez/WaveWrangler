@@ -114,6 +114,22 @@ struct ResourceGateTests {
         #expect(await gate.snapshot.activeBytes == 0)
     }
 
+    @Test("A 442 MiB warm process admits bounded restoration, not the old unconditional 512 MiB reservation")
+    func warmRestorationEnvelope() async throws {
+        let mib = 1 << 20
+        let gate = ResourceGate(
+            permits: 2, budgetBytes: 512 * mib, processLimitBytes: 1 << 30,
+            measureProcess: { (442 * mib, 442 * mib) }
+        )
+        try await gate.withAdmission(bytes: 192 * mib) {
+            #expect(await gate.snapshot.activeBytes == 192 * mib)
+        }
+        await #expect(throws: ResourceGate.Refusal.self) {
+            try await gate.acquire(bytes: 512 * mib)
+        }
+        #expect(await gate.snapshot.activeBytes == 0)
+    }
+
     @Test("A waiting unit rechecks the process baseline before admission; measurement failure also refuses")
     func waitingProcessEnvelope() async throws {
         let mib = 1 << 20

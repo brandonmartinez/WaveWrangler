@@ -138,6 +138,41 @@ struct DerivedJobCoordinatorTests {
         #expect(await coordinator.readyPayload(for: slot) == Data("second".utf8))
     }
 
+    @Test func boundedRestorationLeavesLargeAssetsStaleUntilNormalVerifiedAdoption() async throws {
+        let directory = try TemporaryDirectory("bounded-restoration")
+        let coordinator = try coordinator(directory)
+        let first = key(mapRevision: 1)
+        let second = key(mapRevision: 2)
+        #expect(await coordinator.submit(slot, key: first) { Data("first".utf8) }.outcome == .published(first))
+        let url = try coordinator.store.assetURL(digest: first.digest)
+        let size = try #require(url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 2))
+        #expect(await coordinator.submit(slot, key: second) { Data("second".utf8) }.outcome == .published(second))
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 1))
+        await coordinator.restoreCachedCurrentSlots(maximumFileBytes: size - 1)
+        #expect(await coordinator.state(of: slot) == .stale(second, reasons: [.mapChanged(episode)]))
+        #expect(await coordinator.submit(slot, key: first) {
+            return Data("replacement".utf8)
+        }.outcome == .reused(first))
+        #expect(await coordinator.readyPayload(for: slot) == Data("first".utf8))
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 2))
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 1))
+        await coordinator.restoreCachedCurrentSlots(maximumFileBytes: size)
+        #expect(await coordinator.state(of: slot) == .ready(first))
+
+        var damaged = try Data(contentsOf: url)
+        damaged[damaged.count - 1] ^= 0xFF
+        try damaged.write(to: url)
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 2))
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 1))
+        await coordinator.restoreCachedCurrentSlots(maximumFileBytes: size)
+        #expect(await coordinator.state(of: slot) == .stale(first, reasons: [.mapChanged(episode)]))
+        #expect(await coordinator.submit(slot, key: first) {
+            Data("replacement".utf8)
+        }.outcome == .published(first))
+        #expect(await coordinator.readyPayload(for: slot) == Data("replacement".utf8))
+    }
+
     @Test func explicitInvalidationIsNeverUndoneByHistoryReconciliation() async throws {
         let directory = try TemporaryDirectory("jobs")
         let coordinator = try coordinator(directory)
