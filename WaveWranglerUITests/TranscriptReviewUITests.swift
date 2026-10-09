@@ -153,6 +153,33 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["ww.setup.sources"].waitForExistence(timeout: 3))
     }
 
+    func testEpisodeInfoFromReviewShowsEditableTitleAndKeepsReviewSelection() {
+        let occurrence = app.descendants(matching: .any)["ww.review.occurrence.synthetic-001"]
+        XCTAssertTrue(occurrence.waitForExistence(timeout: 3))
+        occurrence.click()
+        XCTAssertEqual(app.descendants(matching: .any)["ww.review.inspector.tokenID"].value as? String, "token-stub-001")
+
+        app.menuBars.menuBarItems["Episode"].click()
+        let episodeInfo = app.menuItems["Episode Info"]
+        XCTAssertTrue(episodeInfo.waitForExistence(timeout: 3))
+        XCTAssertTrue(episodeInfo.isEnabled, "Episode Info is available for the selected episode in Review")
+        episodeInfo.click()
+
+        let title = app.textFields["ww.inspector.episode.title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "Episode Info must render the episode inspector, not Review")
+        XCTAssertTrue(title.isEnabled && title.isHittable, "Episode Title must be editable")
+        XCTAssertTrue(Acceptance.hasKeyboardFocus(title), "Episode Info moves keyboard focus to Title")
+        title.typeText(" Review Edit")
+        XCTAssertTrue((title.value as? String ?? "").hasSuffix(" Review Edit"))
+
+        app.typeKey("3", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["ww.review.inspector.heading"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.descendants(matching: .any)["ww.review.inspector.tokenID"].value as? String, "token-stub-001")
+        app.typeKey("i", modifierFlags: .command)
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "The keyboard shortcut reopens Episode Info from Review")
+        XCTAssertTrue(Acceptance.hasKeyboardFocus(title))
+    }
+
     private func selectFirstEpisode() {
         let showInfo = app.descendants(matching: .any)["ww.show.sidebar.showInfo"]
         XCTAssertTrue(showInfo.waitForExistence(timeout: 5))
