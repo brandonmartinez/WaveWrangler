@@ -209,6 +209,11 @@ public struct SourceDecoder: Sendable {
         case nil: throw .residencyUnknown
         case false?: break
         }
+        switch metadata.volumeIsLocal.value {
+        case true?: break
+        case false?: throw .notMaterialized
+        case nil: throw .residencyUnknown
+        }
         guard metadata.isReadable.value != false else { throw .permissionDenied }
         guard let size = metadata.fingerprint.fileSize.value, metadata.fingerprint.contentModificationDate.isKnown else {
             throw .metadataUnavailable(nil)

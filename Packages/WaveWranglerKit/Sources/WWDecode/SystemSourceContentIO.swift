@@ -85,6 +85,11 @@ package struct SystemSourceContentIO: SourceContentIO {
     package func captureRawIdentity(
         _ url: URL, matching before: SourceMetadata, io: any SourceIO
     ) throws(DecodeFailure) -> RawSourceIdentity {
+        switch before.volumeIsLocal.value {
+        case true?: break
+        case false?: throw .notMaterialized
+        case nil: throw .residencyUnknown
+        }
         let fingerprint = before.fingerprint
         guard let fileID = fingerprint.fileIdentifier.value,
               let size = fingerprint.fileSize.value,
@@ -113,6 +118,7 @@ package struct SystemSourceContentIO: SourceContentIO {
               after.isRegularFile.value == true,
               after.isSymbolicLink.value == false,
               after.isDataless.value == false,
+              after.volumeIsLocal.value == true,
               fingerprint == after.fingerprint
         else { throw .sourceIdentityMismatch }
         var descriptorAfter = stat()

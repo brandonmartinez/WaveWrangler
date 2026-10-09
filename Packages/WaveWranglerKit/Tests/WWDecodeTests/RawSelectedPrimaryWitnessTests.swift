@@ -76,6 +76,7 @@ struct RawSelectedPrimaryWitnessTests {
         let io = SystemSourceIO()
         guard case let .success(metadata) = io.metadata(at: primary) else { throw POSIXError(.EIO) }
         let fingerprint = metadata.fingerprint
+        let before = try FileSnapshot(primary)
         let witness = try await SourceDecoder(access: SourceAccessContext(io: io))
             .captureRawIdentity(primary, matching: fingerprint)
         #expect(witness.isUsable)
@@ -86,6 +87,7 @@ struct RawSelectedPrimaryWitnessTests {
         gateway.readPolicyObserver = { _ in reads.increment() }
         #expect(try gateway.captureRawIdentity(primary, matching: metadata, io: io) == witness)
         #expect(reads.count == 0)
+        #expect(try FileSnapshot(primary) == before)
 
         var wrong = fingerprint
         wrong.fileIdentifier = .unknown
@@ -102,6 +104,69 @@ struct RawSelectedPrimaryWitnessTests {
         #expect(reads.count == 0)
     }
 
+    @Test("A known nonlocal volume refuses witness capture before the source descriptor opens")
+    func knownNonlocalRefusesBeforeOpen() async throws {
+        let directory = try FixtureDirectory("raw-nonlocal-refusal")
+        let spec = FixtureSpec(
+            container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
+            sampleRate: 48_000, channelCount: 1
+        )
+        let primary = try directory.write(spec, signal: LandmarkSignal(frames: 32_000, channelCount: 1, seed: 418))
+        let before = try FileSnapshot(primary)
+        let io = AdjustableIO { result, _ in result.modify { $0.volumeIsLocal = .known(false) } }
+        guard case let .success(metadata) = io.metadata(at: primary) else { throw POSIXError(.EIO) }
+        #expect(metadata.volumeIsLocal == .known(false))
+        let opens = Counter()
+        let reads = Counter()
+        var gateway = SystemSourceContentIO()
+        gateway.descriptorOpener = { path in
+            opens.increment()
+            return Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        }
+        gateway.readPolicyObserver = { _ in reads.increment() }
+        #expect(throws: DecodeFailure.notMaterialized) {
+            _ = try gateway.captureRawIdentity(primary, matching: metadata, io: io)
+        }
+        #expect(opens.count == 0)
+        #expect(reads.count == 0)
+        await #expect(throws: DecodeFailure.notMaterialized) {
+            _ = try await SourceDecoder(access: SourceAccessContext(io: io))
+                .captureRawIdentity(primary, matching: metadata.fingerprint)
+        }
+        #expect(try FileSnapshot(primary) == before)
+    }
+
+    @Test("Unknown local-volume evidence refuses witness capture without opening a descriptor")
+    func unknownLocalityRefusesBeforeOpen() async throws {
+        let directory = try FixtureDirectory("raw-unknown-volume")
+        let spec = FixtureSpec(
+            container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
+            sampleRate: 48_000, channelCount: 1
+        )
+        let primary = try directory.write(spec, signal: LandmarkSignal(frames: 32_000, channelCount: 1, seed: 419))
+        let before = try FileSnapshot(primary)
+        let io = AdjustableIO { result, _ in result.modify { $0.volumeIsLocal = .unknown } }
+        guard case let .success(metadata) = io.metadata(at: primary) else { throw POSIXError(.EIO) }
+        let opens = Counter()
+        let reads = Counter()
+        var gateway = SystemSourceContentIO()
+        gateway.descriptorOpener = { path in
+            opens.increment()
+            return Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        }
+        gateway.readPolicyObserver = { _ in reads.increment() }
+        #expect(throws: DecodeFailure.residencyUnknown) {
+            _ = try gateway.captureRawIdentity(primary, matching: metadata, io: io)
+        }
+        #expect(opens.count == 0)
+        #expect(reads.count == 0)
+        await #expect(throws: DecodeFailure.residencyUnknown) {
+            _ = try await SourceDecoder(access: SourceAccessContext(io: io))
+                .captureRawIdentity(primary, matching: metadata.fingerprint)
+        }
+        #expect(try FileSnapshot(primary) == before)
+    }
+
     @Test("Unchanged copied Primary decodes exactly 32000 frames; Backup stays unopened; synthetic witness round-trips")
     func copiedPrimaryNeedsRawConfirmation() async throws {
         let directory = try FixtureDirectory("raw-primary")
@@ -113,6 +178,9 @@ struct RawSelectedPrimaryWitnessTests {
         let original = try directory.write(spec, signal: signal, name: "original.wav")
         let primary = try directory.copy(original, as: "selected-primary.wav")
         let backup = try directory.writeBytes(Data(repeating: 0x5A, count: 128), as: "unselected-backup.wav")
+        let primaryBefore = try FileSnapshot(primary)
+        var backupBefore = stat()
+        guard lstat(backup.path, &backupBefore) == 0 else { throw POSIXError(.EIO) }
         let io = SystemSourceIO()
         guard case let .success(metadata) = io.metadata(at: primary),
               let volume = metadata.fingerprint.volumeUUID.value
@@ -143,6 +211,15 @@ struct RawSelectedPrimaryWitnessTests {
         #expect(result.interpretation.frames.validFrames == 32_000)
         #expect(result.product.channels == signal.channels)
         #expect(backupOpens.count == 0)
+        #expect(try FileSnapshot(primary) == primaryBefore)
+        var backupAfter = stat()
+        guard lstat(backup.path, &backupAfter) == 0 else { throw POSIXError(.EIO) }
+        #expect(backupAfter.st_dev == backupBefore.st_dev && backupAfter.st_ino == backupBefore.st_ino)
+        #expect(backupAfter.st_size == backupBefore.st_size)
+        #expect(backupAfter.st_mtimespec.tv_sec == backupBefore.st_mtimespec.tv_sec)
+        #expect(backupAfter.st_mtimespec.tv_nsec == backupBefore.st_mtimespec.tv_nsec)
+        #expect(backupAfter.st_ctimespec.tv_sec == backupBefore.st_ctimespec.tv_sec)
+        #expect(backupAfter.st_ctimespec.tv_nsec == backupBefore.st_ctimespec.tv_nsec)
         #expect(expected.mode & UInt16(S_IFMT) == UInt16(S_IFREG) && !expected.dataless)
 
         // This test-only constructed record and the ordinary decode above issue no read authority.
@@ -171,8 +248,14 @@ struct RawSelectedPrimaryWitnessTests {
         guard lstat(primary.path, &info) == 0 else { throw POSIXError(.EIO) }
         let delta = info.st_mtimespec.tv_nsec < 1_000_000_000 - 211 ? 211 : -211
         info.st_mtimespec.tv_nsec += delta
-        let challenged = RawSourceIdentity(info, volumeUUID: volume)
+        let fsid = (try #require(confirmedRaw.fileSystemID0), try #require(confirmedRaw.fileSystemID1))
+        let challenged = RawSourceIdentity(info, volumeUUID: volume, fileSystemID: fsid)
+        #expect(challenged.version == 2 && challenged.isUsable)
+        #expect(challenged.fileSystemID0 == confirmedRaw.fileSystemID0)
+        #expect(challenged.fileSystemID1 == confirmedRaw.fileSystemID1)
+        #expect(challenged.birthSeconds == confirmedRaw.birthSeconds)
         #expect(abs(challenged.modificationNanoseconds - confirmedRaw.modificationNanoseconds) == 211)
+        #expect(challenged.modificationSeconds == confirmedRaw.modificationSeconds)
         #expect(challenged.birthNanoseconds == confirmedRaw.birthNanoseconds)
         #expect(challenged.sizeBytes == confirmedRaw.sizeBytes)
         let reads = Counter()
@@ -228,8 +311,13 @@ struct RawSelectedPrimaryWitnessTests {
         var info = stat()
         guard lstat(primary.path, &info) == 0 else { throw POSIXError(.EIO) }
         info.st_birthtimespec.tv_nsec += info.st_birthtimespec.tv_nsec < 1_000_000_000 - 1 ? 1 : -1
-        let challenged = RawSourceIdentity(info, volumeUUID: volume)
-        #expect(challenged.birthNanoseconds != confirmedRaw.birthNanoseconds)
+        let fsid = (try #require(confirmedRaw.fileSystemID0), try #require(confirmedRaw.fileSystemID1))
+        let challenged = RawSourceIdentity(info, volumeUUID: volume, fileSystemID: fsid)
+        #expect(challenged.version == 2 && challenged.isUsable)
+        #expect(challenged.fileSystemID0 == confirmedRaw.fileSystemID0)
+        #expect(challenged.fileSystemID1 == confirmedRaw.fileSystemID1)
+        #expect(challenged.birthSeconds == confirmedRaw.birthSeconds)
+        #expect(abs(challenged.birthNanoseconds - confirmedRaw.birthNanoseconds) == 1)
         #expect(challenged.modificationSeconds == confirmedRaw.modificationSeconds)
         #expect(challenged.modificationNanoseconds == confirmedRaw.modificationNanoseconds)
         #expect(challenged.sizeBytes == confirmedRaw.sizeBytes)
