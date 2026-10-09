@@ -1,6 +1,6 @@
 /// All frame ranges are half-open. Source frames and pre-edit aligned output frames
 /// are different coordinates; the mapping adapter is the only bridge between them.
-public struct FrameSpan: Sendable, Equatable {
+public struct FrameSpan: Sendable, Equatable, Codable {
     public let start: Int64
     public let end: Int64
 
@@ -9,6 +9,20 @@ public struct FrameSpan: Sendable, Equatable {
         self.start = start
         self.end = end
     }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let start = try values.decode(Int64.self, forKey: .start)
+        let end = try values.decode(Int64.self, forKey: .end)
+        guard start >= 0, end > start else {
+            throw DecodingError.dataCorruptedError(forKey: .end, in: values,
+                                                   debugDescription: "Invalid half-open frame span")
+        }
+        self.start = start
+        self.end = end
+    }
+
+    private enum CodingKeys: String, CodingKey { case start, end }
 
     public func contains(_ other: FrameSpan) -> Bool {
         start <= other.start && other.end <= end
@@ -19,7 +33,7 @@ public struct FrameSpan: Sendable, Equatable {
     }
 }
 
-public struct SourceOccurrence: Sendable, Hashable {
+public struct SourceOccurrence: Sendable, Hashable, Codable {
     public let source: String
     public let channel: Int
     public let occurrence: String
@@ -34,7 +48,7 @@ public struct SourceOccurrence: Sendable, Hashable {
 }
 
 /// Captured at analysis time and compared at admission time. No path, media or transcript text is stored.
-public struct EvidenceKey: Sendable, Equatable {
+public struct EvidenceKey: Sendable, Equatable, Codable {
     public let primary: SourceOccurrence
     public let primaryAuthorization: PrimaryAuthorization
     public let sourceRevision: String
@@ -79,7 +93,7 @@ public struct EvidenceKey: Sendable, Equatable {
     }
 }
 
-public enum PrimaryAuthorization: Sendable, Equatable {
+public enum PrimaryAuthorization: Sendable, Equatable, Codable {
     case authorizedSelectedPrimary
     case notAuthorized
 }
@@ -129,14 +143,14 @@ public struct VerifiedEpisodeState: Sendable {
     }
 }
 
-public enum WordTiming: Sendable, Equatable {
+public enum WordTiming: Sendable, Equatable, Codable {
     case supported(start: Int64, end: Int64)
     case absent
     case unsupported
     case hallucinated
 }
 
-public struct CandidateWord: Sendable, Equatable {
+public struct CandidateWord: Sendable, Equatable, Codable {
     public let tokenID: String
     public let timing: WordTiming
 
@@ -146,7 +160,7 @@ public struct CandidateWord: Sendable, Equatable {
     }
 }
 
-public enum CandidateContext: Sendable, Equatable {
+public enum CandidateContext: Sendable, Equatable, Codable {
     case contextualFiller
     case meaningful
     case overlap
@@ -154,9 +168,9 @@ public enum CandidateContext: Sendable, Equatable {
     case transcriptEmpty
 }
 
-public enum CutMode: Sendable, Equatable { case shorten, lift }
+public enum CutMode: Sendable, Equatable, Codable { case shorten, lift }
 
-public struct CutRequest: Sendable, Equatable {
+public struct CutRequest: Sendable, Equatable, Codable {
     public let sourceFrames: FrameSpan
     public let mode: CutMode
     public let fadeOutFrames: Int64
@@ -171,7 +185,7 @@ public struct CutRequest: Sendable, Equatable {
     }
 }
 
-public struct CutProposal: Sendable, Equatable {
+public struct CutProposal: Sendable, Equatable, Codable {
     public let id: String
     public let key: EvidenceKey
     public let words: [CandidateWord]
