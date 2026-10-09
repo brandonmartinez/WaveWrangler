@@ -13,3 +13,36 @@ The official [`whisper.cpp` README](https://github.com/ggml-org/whisper.cpp/blob
 On the working Mac (macOS 27 / Xcode 27), the seven focused synthetic package cases and the 12 recursive source-content gateway checks passed without skips; Debug and Release app builds succeeded. `codesign --verify --deep --strict` succeeded on the ad-hoc signed builds, whose effective entitlements contained app-sandbox and **neither** network-client nor network-server. Direct headless execution of the signed Debug executable printed `WW_SPEECH_SYNTHETIC_IN_APP` with its own PID, four synthetic frames, zero words and `backup=refused`. The Release binary does not include the Debug probe argument. These checks were made on the branch's working tree, **not** a clean pushed exact-head acceptance run.
 
 **STOP before product or offline acceptance:** pin and review the precise in-process engine source, license/notices, compiler/link configuration, every transitive and exact model artifact's rights and SHA-256; add a trusted selected-Primary-only decode/occurrence/revision adapter; prove actual model execution inside the signed sandboxed app. Then run the in-app endpoint-establishing TCP/UDP/raw denial matrix with EPERM/EACCES **and correlated sandbox violation logs**, startup/inference FD inventories excluding AF_INET/AF_INET6 and ingress, effective entitlements, static no-launcher/no-relay audit and fully offline measured inference. A denied loopback bind alone (the earlier #369 diagnostic) is not this matrix. Until these gates pass, do not analyze even approved real media; keep #23 and #32 open, and do not claim an M3 exit.
+
+## Isolated caller-supplied PCM adapter (subsequent preparation)
+
+`WWSpeech.BoundedPCMInference` adds a synchronous in-process native path for
+**exactly 32,000 already-decoded finite mono Float samples at 16 kHz**. It takes
+a `VerifiedTinyModel`, loaded with the same pinned size, SHA-256 and
+nonmaterializing local-descriptor verification as the generated-PCM probe;
+the probe reuses that loader without changing its `wordCount` or plain-text CLI.
+The candidate is `ggml-tiny.en.bin` from the official `ggerganov/whisper.cpp`
+Hugging Face revision `5359861c739e955e79d9a303bcbc70fb988958b1`:
+77,704,715 bytes and SHA-256
+`921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f`.
+This public pin does not establish a locally installed model, a redistribution
+license or an accepted derivation chain.
+The native call uses two CPU threads, a two-second window and a 16-token /
+16-segment result cap, suppresses upstream diagnostics, checks cancellation and
+copies bounded segment text into memory. Only valid bounded segment intervals
+are surfaced; unsupported intervals are nil. There are no word boundaries,
+confidence values, file output or transcript logs. Ordinary unit tests use
+synthetic PCM and incorrect model bytes; a model-backed sine-wave test is
+opt-in via `WW_TINY_MODEL_PATH`, not a passing gate when skipped.
+
+**Integration remains disabled:** `SpeechInference.infer` and `AppSpeech.infer`
+still refuse `engineUnavailable`. `RecordedIdentity.rawWitness`, ordinary
+decoding and package-internal witness opens are not selected-Primary authority.
+This lower-level method cannot establish which source produced PCM, the
+user-confirmed Primary, current same-descriptor witness, source-frame mapping,
+consent or result currency. Production requires a separate sealed issuer
+before any decoded media can enter it; Backup must never be opened in M3.
+Exact model-artifact rights/provisioning, signed-app in-process endpoint/FD
+proof and measured offline inference are still unqualified. No word-level
+producer or #21 frozen boundary/proposal evidence exists. These are STOP
+gates, not acceptance for #23, #32, #41 or M3.
