@@ -1205,6 +1205,50 @@ struct PrimarySpeechInputTests {
         #expect(evidence.words[2].recognitionConfidence == 0.75)
     }
 
+    @Test(arguments: ["end-in-rounded-hop", "start-in-rounded-hop", "just-past-source-end",
+                      "at-source-end", "inside-source-end"])
+    func syntheticWordsBoundRoundedProxyHopToDecodedSource(_ scenario: String) async throws {
+        let (directory, _, access, state, episode, speaker) = try fixture(
+            rate: 48_000, frames: 48_001)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (url, pin) = try syntheticWorker(in: directory)
+        let sourceEnd = Double(48_001) / 48_000
+        let observation: SyntheticWordObservation
+        switch scenario {
+        case "end-in-rounded-hop":
+            observation = .init(text: "tail", startSeconds: 1, endSeconds: 1.000_050)
+        case "start-in-rounded-hop":
+            observation = .init(text: "tail", startSeconds: 1.000_030, endSeconds: 1.000_050)
+        case "just-past-source-end":
+            observation = .init(text: "tail", startSeconds: 1, endSeconds: sourceEnd.nextUp)
+        case "at-source-end":
+            observation = .init(text: "tail", startSeconds: 1, endSeconds: sourceEnd)
+        default:
+            observation = .init(text: "tail", startSeconds: 1, endSeconds: sourceEnd.nextDown)
+        }
+        let shouldRefuse = scenario != "at-source-end" && scenario != "inside-source-end"
+        do {
+            let evidence = try await PrimarySpeechInputAdapter(access: access)
+                .withSyntheticWordEvidence(
+                    episodeID: episode, speakerID: speaker,
+                    authorization: .explicitUserRequest(episodeID: episode, speakerID: speaker),
+                    availability: .on, current: { state }, workerURL: url, workerPin: pin
+                ) { input in
+                    #expect(input.interpretation.origin.sourceDuration
+                        == SourceFramePosition(frame: 48_001, sampleRate: 48_000))
+                    #expect(input.frameCount == 16_001)
+                    return [observation]
+                }
+            #expect(!shouldRefuse, "word beyond decoded source was published")
+            if !shouldRefuse {
+                #expect(evidence.words[0].endSeconds == observation.endSeconds)
+            }
+        } catch {
+            #expect(shouldRefuse)
+            #expect(error == .invalidWordEvidence)
+        }
+    }
+
     @Test(arguments: ["partial", "nan", "infinite", "negative", "reversed", "zero",
                       "overrun", "overlap", "confidence", "nan-confidence", "empty", "missing"])
     func syntheticWordsRefuseInvalidOrUnsupportedEvidence(_ scenario: String) async throws {

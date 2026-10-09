@@ -138,6 +138,14 @@ not a runnable Whisper WAV or a grant of actual inference. Real model/native rig
 actual worker execution and monitored cold-restart offline qualification remain blocked;
 no model, recording or network was used for this unit.
 
+**Synthetic word-boundary correction:** A rounded-up final 16 kHz proxy hop does not
+extend the decoded source clock. Debug-only synthetic word starts and ends must fit
+both proxy duration and the source endpoint from decoded frame count/source rate;
+missing boundary pairs remain absent. For 48,001 frames at 48 kHz, the 16,001-frame
+proxy reaches 1.0000625 s, but words beyond the source's 48,001/48,000 s endpoint
+refuse rather than acquiring a fictitious tail. Mapped episodes still refuse before
+decode; this does not qualify actual inference or word-timing coverage for #21/#32.
+
 ## Native status correction
 
 `SpeechTranscriber.isAvailable == true` and `en_US` in `installedLocales` were observed on

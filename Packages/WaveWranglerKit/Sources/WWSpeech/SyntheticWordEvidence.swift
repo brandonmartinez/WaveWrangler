@@ -60,7 +60,14 @@ package struct SyntheticPrimaryWordEvidence: Sendable {
               input.channelCount == 1, input.frameCount > 0,
               !observations.isEmpty, observations.count <= input.frameCount
         else { throw .invalidWordEvidence }
-        let duration = Double(input.frameCount) / Double(input.sampleRate)
+        let sourceEnd = input.interpretation.origin.sourceDuration
+        guard input.interpretation.origin.sourceFrameOfFirstDecodedFrame == 0,
+              sourceEnd.frame == input.interpretation.frames.validFrames,
+              sourceEnd.sampleRate == input.interpretation.sourceSampleRate,
+              sourceEnd.sampleRate > 0
+        else { throw .invalidWordEvidence }
+        let proxyDuration = Double(input.frameCount) / Double(input.sampleRate)
+        let sourceDuration = sourceEnd.seconds
         var lastEnd: Double = 0
         var validated: [SyntheticPrimaryWord] = []
         validated.reserveCapacity(observations.count)
@@ -71,7 +78,8 @@ package struct SyntheticPrimaryWordEvidence: Sendable {
             else { throw .invalidWordEvidence }
             if let start = word.startSeconds, let end = word.endSeconds {
                 guard start.isFinite, end.isFinite, start >= lastEnd,
-                      start < end, end <= duration
+                      start <= proxyDuration, start <= sourceDuration,
+                      start < end, end <= proxyDuration, end <= sourceDuration
                 else { throw .invalidWordEvidence }
                 lastEnd = end
             }
