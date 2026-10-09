@@ -228,7 +228,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             // With Full Keyboard Access off, macOS skips buttons in Tab order; use the visible View > Setup ⌘1 command.
             app.typeKey("1", modifierFlags: .command)
         }
-        XCTAssertTrue(app.tables["ww.setup.sources"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.outlines["ww.setup.sources"].waitForExistence(timeout: 5))
     }
 
     private func tabToFocus(_ element: XCUIElement) -> Bool {
