@@ -47,8 +47,15 @@ final class SheetKeyboardUITests: XCTestCase {
         let selectedRows = entries.exists
             ? entries.outlineRows.allElementsBoundByIndex.filter(\.isSelected).map(\.label)
             : []
+        let focusElements = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "hasKeyboardFocus == true")).allElementsBoundByIndex
+            .filter(\.exists)
+        let focusDetails = focusElements.map {
+            "type=\($0.elementType), id=\($0.identifier), label=\($0.label)"
+        }
+        let entriesHasKeyboardFocus = entries.exists && Acceptance.hasKeyboardFocus(entries)
         let valid = entriesLabel == "Shows (100)" && sidebarValue == "100 shows" && showRowSelected
-        let details = "\(stage): entries=\(entriesLabel), sidebarShows=\(sidebarValue), entry=\(showIdentifier) [\(showLabel)], rowExists=\(showRowExists), rowSelected=\(showRowSelected), selectedRows=\(selectedRows)"
+        let details = "\(stage): focus=\(focusDetails), entriesHasKeyboardFocus=\(entriesHasKeyboardFocus), entries=\(entriesLabel), sidebarShows=\(sidebarValue), entry=\(showIdentifier) [\(showLabel)], rowExists=\(showRowExists), rowSelected=\(showRowSelected), selectedRows=\(selectedRows)"
         return (valid, details)
     }
 
@@ -91,15 +98,19 @@ final class SheetKeyboardUITests: XCTestCase {
         // Menu use: add the first show to it with File › Library › Add to Collection ▸ (submenu tracking).
         let entries = app.outlines["ww.library.entries"]
         for _ in 0..<10 { app.typeKey(.upArrow, modifierFlags: []) }
+        let beforeTab = collectionSelectionSnapshot(in: entries, stage: "immediately before Tab")
         app.typeKey("\t", modifierFlags: [])
+        let afterTab = collectionSelectionSnapshot(in: entries, stage: "immediately after Tab")
         app.typeKey(.downArrow, modifierFlags: [])
-        let afterKeyboardDown = collectionSelectionSnapshot(in: entries, stage: "after keyboard Down, before menu hover")
+        let afterDown = collectionSelectionSnapshot(in: entries, stage: "immediately after Down")
+        let beforeMenuHover = collectionSelectionSnapshot(in: entries, stage: "immediately before menu hover")
         app.menuBars.menuItems["Add to Collection"].firstMatch.hover()
         let target = app.menuBars.menuItems["Keyboard Sheet"].firstMatch
         XCTAssertTrue(target.waitForExistence(timeout: 5))
         let beforeSubmenuClick = collectionSelectionSnapshot(in: entries, stage: "after submenu hover, before click")
-        XCTAssertTrue(afterKeyboardDown.valid && beforeSubmenuClick.valid,
-                      "Add to Collection requires the keyboard-selected Synthetic Show in Shows.\n\(afterKeyboardDown.details)\n\(beforeSubmenuClick.details)")
+        let snapshots = [beforeTab, afterTab, afterDown, beforeMenuHover, beforeSubmenuClick]
+        XCTAssertTrue([afterDown, beforeMenuHover, beforeSubmenuClick].allSatisfy { $0.valid },
+                      "Add to Collection requires the keyboard-selected Synthetic Show in Shows.\n\(snapshots.map(\.details).joined(separator: "\n"))")
         target.click()
         waitForValue(created, "1 item")
 

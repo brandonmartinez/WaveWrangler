@@ -69,8 +69,15 @@ final class LibraryWorkspaceUITests: XCTestCase {
         let selectedRows = entries.exists
             ? entries.outlineRows.allElementsBoundByIndex.filter(\.isSelected).map(\.label)
             : []
+        let focusElements = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "hasKeyboardFocus == true")).allElementsBoundByIndex
+            .filter(\.exists)
+        let focusDetails = focusElements.map {
+            "type=\($0.elementType), id=\($0.identifier), label=\($0.label)"
+        }
+        let entriesHasKeyboardFocus = entries.exists && Acceptance.hasKeyboardFocus(entries)
         let valid = entriesLabel == "Shows (100)" && sidebarValue == "100 shows" && showRowSelected
-        let details = "\(stage): entries=\(entriesLabel), sidebarShows=\(sidebarValue), entry=\(showIdentifier) [\(showLabel)], rowExists=\(showRowExists), rowSelected=\(showRowSelected), selectedRows=\(selectedRows)"
+        let details = "\(stage): focus=\(focusDetails), entriesHasKeyboardFocus=\(entriesHasKeyboardFocus), entries=\(entriesLabel), sidebarShows=\(sidebarValue), entry=\(showIdentifier) [\(showLabel)], rowExists=\(showRowExists), rowSelected=\(showRowSelected), selectedRows=\(selectedRows)"
         return (valid, details)
     }
 
@@ -341,15 +348,19 @@ final class LibraryWorkspaceUITests: XCTestCase {
         let table = app.outlines["ww.library.entries"]
         let showsSelected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Shows (100)'"), object: table)
         XCTAssertEqual(XCTWaiter().wait(for: [showsSelected], timeout: 5), .completed, "Up arrows reach Shows: \(table.label)")
+        let beforeTab = collectionSelectionSnapshot(in: table, stage: "immediately before Tab")
         app.typeKey("\t", modifierFlags: [])
+        let afterTab = collectionSelectionSnapshot(in: table, stage: "immediately after Tab")
         app.typeKey(.downArrow, modifierFlags: [])
-        let afterKeyboardDown = collectionSelectionSnapshot(in: table, stage: "after keyboard Down, before menu hover")
+        let afterDown = collectionSelectionSnapshot(in: table, stage: "immediately after Down")
+        let beforeMenuHover = collectionSelectionSnapshot(in: table, stage: "immediately before menu hover")
         menuItem("Add to Collection").hover()
         let target = app.menuBars.menuItems["Season Two"].firstMatch
         waitFor(target)
         let beforeSubmenuClick = collectionSelectionSnapshot(in: table, stage: "after submenu hover, before click")
-        XCTAssertTrue(afterKeyboardDown.valid && beforeSubmenuClick.valid,
-                      "Add to Collection requires the keyboard-selected Synthetic Show in Shows.\n\(afterKeyboardDown.details)\n\(beforeSubmenuClick.details)")
+        let snapshots = [beforeTab, afterTab, afterDown, beforeMenuHover, beforeSubmenuClick]
+        XCTAssertTrue([afterDown, beforeMenuHover, beforeSubmenuClick].allSatisfy { $0.valid },
+                      "Add to Collection requires the keyboard-selected Synthetic Show in Shows.\n\(snapshots.map(\.details).joined(separator: "\n"))")
         target.click()
         waitForValue(created, "1 item")
 
