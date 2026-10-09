@@ -49,6 +49,7 @@ struct SelectedPrimaryCheckedOpenRedTests {
         var gateway = SystemSourceContentIO()
         gateway.readPolicyObserver = { reads.record($0) }
         gateway.descriptorOpener = { path in
+            swap.recordOpen(String(cString: path))
             let didReplace = Darwin.rename(replacement.path, path) == 0
             swap.recordReplacement(didReplace)
             return Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
@@ -61,6 +62,7 @@ struct SelectedPrimaryCheckedOpenRedTests {
             )
         }
         #expect(swap.didReplace)
+        #expect(swap.openedPaths == [primary.path])
         #expect(reads.policies.isEmpty, "even container header callbacks must not see the wrong file")
         #expect(try FileSnapshot(backup) == backupBefore)
     }
@@ -113,37 +115,80 @@ struct SelectedPrimaryCheckedOpenRedTests {
         #expect(reads.policies.isEmpty)
     }
 
-    @Test func pushAndCursorPathsCannotBypassCheckedOpen() async throws {
+    @Test func cancellationAtLastWindowReadCannotPublishCheckedPCM() async throws {
+        let source = try ScriptedSource()
+        let expected = try fingerprint(source.url)
+        let cancellation = CancelProbe()
+        var script = source.script(
+            source.aacFacts(valid: 32_000, remainder: 0, sampleRate: 16_000),
+            streamFrames: ScriptedSource.aacPriming + 32_000
+        )
+        script.sampleScale = 1 / 100_000
+        script.onRead = { index in
+            if index == 2 { cancellation.cancelCurrentTask() }
+        }
+        let content = ScriptedContentIO(script)
+        await #expect(throws: DecodeFailure.cancelled) {
+            try await makeDecoder(chunkFrames: 16_000, content: content)
+                .readVerifiedPCMWindow(
+                    source.url, source: SourceID(), channel: 1, startingAt: 0,
+                    expectedIdentity: expected
+                )
+        }
+        #expect(cancellation.fired == 1)
+        #expect(content.record.closes == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func pushAndCursorPathsCannotBypassCheckedOpen(cursor: Bool) async throws {
         let directory = try FixtureDirectory("selected-primary-all-paths")
         let primary = try directory.write(
             spec, signal: LandmarkSignal(frames: 40_000, channelCount: 2, seed: 707)
         )
+        let expected = try fingerprint(primary)
+        let replacement = try directory.write(
+            spec, signal: LandmarkSignal(frames: 40_000, channelCount: 2, seed: 909),
+            name: "replacement.wav"
+        )
+        #expect(try FileSnapshot(primary).size == FileSnapshot(replacement).size)
         let backup = try directory.write(
             spec, signal: LandmarkSignal(frames: 40_000, channelCount: 2, seed: 808)
         )
-        let wrongIdentity = try fingerprint(backup)
+        let backupBefore = try FileSnapshot(backup)
         let reads = ReadPolicyRecorder()
+        let swap = CheckedOpenProbe()
         var gateway = SystemSourceContentIO()
         gateway.readPolicyObserver = { reads.record($0) }
+        gateway.descriptorOpener = { path in
+            swap.recordOpen(String(cString: path))
+            swap.recordReplacement(Darwin.rename(replacement.path, path) == 0)
+            return Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        }
         let decoder = makeDecoder(content: gateway)
         let journal = SinkJournal()
-        await #expect(throws: DecodeFailure.sourceIdentityMismatch) {
-            try await decoder.decode(
-                primary, source: SourceID(), expectedIdentity: wrongIdentity
-            ) { interpretation in
-                JournalingSink(
-                    inner: CollectingSink(channelCount: interpretation.channelCount),
-                    journal: journal
-                )
+        if cursor {
+            await #expect(throws: DecodeFailure.sourceIdentityMismatch) {
+                try await decoder.withDecodingCursor(
+                    primary, source: SourceID(), expectedIdentity: expected
+                ) { _ in 0 }
+            }
+        } else {
+            await #expect(throws: DecodeFailure.sourceIdentityMismatch) {
+                try await decoder.decode(
+                    primary, source: SourceID(), expectedIdentity: expected
+                ) { interpretation in
+                    JournalingSink(
+                        inner: CollectingSink(channelCount: interpretation.channelCount),
+                        journal: journal
+                    )
+                }
             }
         }
-        await #expect(throws: DecodeFailure.sourceIdentityMismatch) {
-            try await decoder.withDecodingCursor(
-                primary, source: SourceID(), expectedIdentity: wrongIdentity
-            ) { _ in 0 }
-        }
+        #expect(swap.openedPaths == [primary.path], "the selected Primary opener must actually run")
+        #expect(swap.didReplace, "replace the path after metadata preflight, before descriptor open")
         #expect(journal.events.isEmpty, "no sink may be created for a wrong opened descriptor")
-        #expect(reads.policies.isEmpty)
+        #expect(reads.policies.isEmpty, "even container header callbacks must read zero bytes")
+        #expect(try FileSnapshot(backup) == backupBefore)
     }
 }
 

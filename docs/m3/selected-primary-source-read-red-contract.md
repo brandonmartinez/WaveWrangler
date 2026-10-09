@@ -29,10 +29,11 @@ The synthetic WWDecode RED selectors are:
 
 | Selector in `SelectedPrimaryCheckedOpenRedTests` | Required result |
 | --- | --- |
-| `pathReplacementBeforeParserRefusesWithoutHeaderReads` (different/same size) | Atomic replacement between preflight and open refuses `sourceIdentityMismatch`; **zero** header-read callbacks, Backup untouched. Same-size replacement must still fail on file-object identity. |
+| `pathReplacementBeforeParserRefusesWithoutHeaderReads` (different/same size) | Atomic replacement between preflight and open refuses `sourceIdentityMismatch`; the selected-Primary opener runs, **zero** header-read callbacks, Backup untouched. Same-size replacement must still fail on file-object identity. |
 | `missingDescriptorIdentityRefusesBeforeParser` | Unknown volume evidence refuses before any header read. |
-| `pushAndCursorPathsCannotBypassCheckedOpen` | Both decode and cursor checked entry points refuse wrong descriptor before a sink or header read. |
+| `pushAndCursorPathsCannotBypassCheckedOpen` (push/cursor) | Both checked entry points receive the **correct Primary identity**, then replace its path with a different same-size file inside the opener. Both must open the selected path, refuse the wrong descriptor before a sink or header read, and leave Backup untouched. Passing a Backup fingerprint to preflight instead is not this test. |
 | `selectedPrimaryChannelUsesOneCheckedDescriptorAndNeverOpensBackup` | Generated 16 kHz two-channel Primary yields exactly **32,000** channel-1 source frames from one checked descriptor; generated Backup is never opened or modified. |
+| `cancellationAtLastWindowReadCannotPublishCheckedPCM` | Generated final-window read cancels the decoder task; checked PCM is never returned and the reader closes. |
 
 The existing `VerifiedSourcePCMWindowTests` cover negative/overflow starts,
 out-of-bounds channels and incomplete windows at the decoder primitive, not
@@ -43,14 +44,25 @@ paths. A newly introduced positive selected read must use the existing
 WWSources scope/metadata checks and the sole WWDecode
 `SystemSourceContentIO` content gateway.
 
-## App issuer cases required before positive release
+## App intent coverage and issuer cases required before positive release
 
 The current app has no injection seam for an open registered `ShowDocument`,
 Setup window, keyed inventory/access read and the checked decoder in one
 synthetic test; inventing a caller-owned fake receipt would test the fake, not
 the app. An independent reviewer must agree on that private seam before the
-separate implementation/JIT. Write these **behavioral** red cases against it
-before enabling a positive return (not just source-text assertions):
+separate implementation/JIT. Executable `WaveWranglerTests/SelectedPrimarySourceIntentTests.swift`
+now exercises the real Setup model: confirmed channel-1 Primary row/speaker,
+Backup and mismatched row/speaker refusal, selection-away-and-back generation,
+source removal/restoration, alignment/document value ABA generation, missing accepted
+map refusal and offscreen refusal. These are **intent and generation tests**,
+not an issued source grant, access-store ABA test, checked app read, or proof of
+positive publication. The app issuer still returns `Never` and throws
+`trustedSourceOpenUnavailable`; there is no test-only injection point for an
+actual registered document/window plus access store and decoder. Adding
+success-shaped fake issuance here would bypass the very boundary under test.
+
+Before a positive release, add these **behavioral** RED cases against the
+reviewed private seam (not just source-text assertions):
 
 | Planned selector | Fault injection / assertion |
 | --- | --- |
