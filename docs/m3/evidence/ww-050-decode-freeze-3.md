@@ -60,7 +60,11 @@ one-shot ran on a physical Mini Mac14,12 from a clean exact source head
 `9efbc16f91ce28e6823a6d85e363cd3dde9b095e`, with pinned WWDecode tree
 `4a1b0d919928facc61a1dc18e092c5f8519a417c` and test tree
 `3c3f339ad4b271af2287f1b23ebbb3a68843ce6c`. The independently
-static-approved private runner and one-time JIT were hash-verified before use.
+static-approved private runner SHA-256
+`ac1b5fc3cca29e4e1accf805c47912ab4a59db03119d6056d2291e090ef875a9` and
+one-time JIT SHA-256
+`18489b2241581067b7f929b538cd8c233f665fb40a801ea00d6b77397b7c4226` were
+hash-verified before use.
 
 The selected `DecodeCalibrationTests/holdoutSplitMeetsEveryFrozenGate` test
 passed **1/1**; Swift, timeout, and driver exits were each 0. It produced 520
@@ -72,8 +76,8 @@ and clean after the run, with no post-run native roots or GUI holder.
 
 **Current status: PASS — M3-DECODE-003 synthetic holdout only.** Historical M2
 holdouts were not rerun. This result does not authorize recordings, model or
-network inference, Backup access, source-content opens or writes, speech-rights
-claims, selected-Primary issuance, or product acceptance. The scoped public
-record is on [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23#issuecomment-6093569045);
+network inference, Backup access, user original source-content opens or writes,
+speech-rights claims, selected-Primary issuance, or product acceptance. The
+scoped public record is on [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23#issuecomment-6093569045);
 [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23) and
 [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32) remain open.
