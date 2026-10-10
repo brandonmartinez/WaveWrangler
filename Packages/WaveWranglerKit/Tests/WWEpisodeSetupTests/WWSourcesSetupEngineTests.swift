@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import WWCore
+import WWDecode
 import WWSources
 @testable import WWEpisodeSetup
 
@@ -73,6 +74,71 @@ struct WWSourcesSetupEngineTests {
             if until(update) { break }
         }
         return last
+    }
+
+    @Test func productionConfirmedUnchangedLocalRelinkStoresGuardedWitness() async throws {
+        let root = try makeTree()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let io = SystemSourceIO()
+        let context = SourceAccessContext(io: io)
+        let store = InMemoryDeviceAccessStore()
+        let engine = WWSourcesSetupEngine(
+            showID: ShowID(), store: store, context: context, preference: FixedPreference(false),
+            captureRawIdentity: { url, fingerprint in
+                try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+            }
+        )
+        let scan = try await engine.scanForImport([root], episodeSourceIDs: [])
+        let items = ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: []).importItems()
+        try await engine.commitImport(
+            Dictionary(uniqueKeysWithValues: items.map { ($0.candidateID, $0.item.source.id) }),
+            fromScan: scan.token
+        )
+        let sourceID = try #require(items.first { $0.item.source.displayNameHint == "tr1.wav" }?.item.source.id)
+        let candidate = root.appending(path: "ZOOM0001/tr1.wav")
+        let key = DeviceAccessKey(showID: engine.showID, sourceID: sourceID)
+        let original = try #require(await store.record(for: key))
+        let before = try Data(contentsOf: candidate)
+        let comparison = await engine.compare(candidate: candidate, for: sourceID)
+        #expect(comparison.canConfirm)
+        _ = try await engine.commitRelink(sourceID, to: candidate, identity: comparison.acceptedIdentity)
+        let confirmed = try #require(await store.record(for: key))
+        #expect(confirmed.recordedIdentity?.confirmation == .userConfirmed)
+        #expect(confirmed.recordedIdentity?.rawWitness?.isUsable == true)
+        #expect(confirmed.recordedIdentity?.fingerprint == original.recordedIdentity?.fingerprint)
+        #expect(try Data(contentsOf: candidate) == before)
+    }
+
+    @Test func productionRelinkRefusesAlreadyLinkedCandidate() async throws {
+        let root = try makeTree()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let context = SourceAccessContext(io: SystemSourceIO())
+        let store = InMemoryDeviceAccessStore()
+        let engine = WWSourcesSetupEngine(
+            showID: ShowID(), store: store, context: context, preference: FixedPreference(false),
+            captureRawIdentity: { url, fingerprint in
+                try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+            }
+        )
+        let scan = try await engine.scanForImport([root], episodeSourceIDs: [])
+        let items = ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: []).importItems()
+        try await engine.commitImport(
+            Dictionary(uniqueKeysWithValues: items.map { ($0.candidateID, $0.item.source.id) }),
+            fromScan: scan.token
+        )
+        let sourceID = try #require(items.first { $0.item.source.displayNameHint == "tr1.wav" }?.item.source.id)
+        let key = DeviceAccessKey(showID: engine.showID, sourceID: sourceID)
+        let original = try #require(await store.record(for: key))
+        var duplicate = original
+        duplicate.sourceID = SourceID()
+        await store.save(duplicate)
+        let candidate = root.appending(path: "ZOOM0001/tr1.wav")
+        let comparison = await engine.compare(candidate: candidate, for: sourceID)
+        #expect(comparison.canConfirm)
+        await #expect(throws: SourceEngineError.self) {
+            _ = try await engine.commitRelink(sourceID, to: candidate, identity: comparison.acceptedIdentity)
+        }
+        #expect(await store.record(for: key) == original)
     }
 
     @Test func relinkRejectsCandidateChangedAfterComparison() async throws {

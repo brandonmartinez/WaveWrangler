@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import WWCore
+import WWDecode
 import WWEpisodeSetup
 import WWSources
 
@@ -19,7 +20,13 @@ enum SetupEngineProvider {
     /// monitor stops and it no longer follows the download preference).
     static let registry = SetupEngineRegistry<ShowID> { showID in
         if let fixture = SetupFixtures.statesEngine() { return fixture }
-        return WWSourcesSetupEngine(showID: showID, store: store, context: context, preference: AppSettingsDownloadPreference.shared, connectivity: NetworkPathConnectivity())
+        return WWSourcesSetupEngine(
+            showID: showID, store: store, context: context,
+            preference: AppSettingsDownloadPreference.shared, connectivity: NetworkPathConnectivity(),
+            captureRawIdentity: { url, fingerprint in
+                try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+            }
+        )
     }
 
     /// Leases per show window: the engine stays alive while any window of the show is open (including

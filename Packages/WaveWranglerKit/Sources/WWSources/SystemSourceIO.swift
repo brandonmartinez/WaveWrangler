@@ -67,12 +67,6 @@ public struct SystemSourceIO: SourceIO {
         ))
     }
 
-    /// WWSources cannot open the source: O_EVTONLY was proven content-readable on macOS.
-    /// Until a content-gateway confirmation seam exists, no URL-only observation mints a witness.
-    package func rawIdentity(at url: URL) -> RawSourceIdentity? {
-        nil
-    }
-
     /// Called only with a source descriptor already held open by the content gateway.
     /// Opens metadata for its mount, not source bytes.
     package static func rawIdentity(onDescriptor fd: Int32) -> RawSourceIdentity? {

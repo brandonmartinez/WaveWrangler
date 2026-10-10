@@ -110,6 +110,52 @@ public struct RelinkEvaluator: Sendable {
         to record: DeviceAccessRecord?,
         userConfirmed: Bool
     ) throws(RelinkError) -> DeviceAccessRecord {
+        try apply(proposal, to: record, userConfirmed: userConfirmed, rawWitness: nil)
+    }
+
+    /// Only the explicit confirmation path may call the decoder-owned, read-only descriptor gateway.
+    /// An exact device-local candidate is checked again before and after capture; metadata-only
+    /// evaluation and unconfirmed relinks never invoke the gateway.
+    public func applyConfirmed(
+        _ proposal: RelinkProposal,
+        to record: DeviceAccessRecord?,
+        captureRawIdentity: @Sendable (URL, FileSystemFingerprint) async throws -> RawSourceIdentity
+    ) async throws(RelinkError) -> DeviceAccessRecord {
+        guard case let .ready(bookmark, resolvedPath) = proposal.availability,
+              record?.key == proposal.key,
+              proposal.comparison.isExactMatch, proposal.alreadyLinkedTo == nil,
+              let fingerprint = proposal.candidateFingerprint,
+              case let .resolved(scoped, isStale) = context.io.resolveBookmark(bookmark), !isStale,
+              scoped.standardizedFileURL.path == resolvedPath,
+              case let .success(before) = context.withScopedAccess(to: scoped, { context.io.metadata(at: $0) }),
+              before.isRegularFile.value == true, before.isSymbolicLink.value == false,
+              before.isDataless.value == false, before.volumeIsLocal.value == true,
+              before.fingerprint == fingerprint
+        else { throw .sourceMismatch }
+        let raw: RawSourceIdentity
+        do {
+            raw = try await captureRawIdentity(scoped, fingerprint)
+        } catch {
+            throw .sourceMismatch
+        }
+        guard raw.isUsable,
+              fingerprint.fileIdentifier.value == raw.inode,
+              fingerprint.fileSize.value == raw.sizeBytes,
+              fingerprint.volumeUUID.value?.lowercased() == raw.volumeUUID,
+              case let .success(after) = context.withScopedAccess(to: scoped, { context.io.metadata(at: $0) }),
+              after.isRegularFile.value == true, after.isSymbolicLink.value == false,
+              after.isDataless.value == false, after.volumeIsLocal.value == true,
+              after.fingerprint == fingerprint
+        else { throw .sourceMismatch }
+        return try apply(proposal, to: record, userConfirmed: true, rawWitness: raw)
+    }
+
+    private func apply(
+        _ proposal: RelinkProposal,
+        to record: DeviceAccessRecord?,
+        userConfirmed: Bool,
+        rawWitness: RawSourceIdentity?
+    ) throws(RelinkError) -> DeviceAccessRecord {
         guard case let .ready(bookmark, resolvedPath) = proposal.availability else {
             throw .candidateUnavailable(proposal.availability)
         }
@@ -123,10 +169,9 @@ public struct RelinkEvaluator: Sendable {
         updated.lastKnownPath = resolvedPath
         updated.lastKnownVolumeUUID = proposal.candidateFingerprint?.volumeUUID.value
         updated.lastBookmarkRefreshAt = now
-        if userConfirmed, let system = context.io as? SystemSourceIO {
+        if userConfirmed, context.io is SystemSourceIO {
             guard let fingerprint = proposal.candidateFingerprint,
-                  case let .resolved(scoped, isStale) = context.io.resolveBookmark(bookmark), !isStale,
-                  let raw = context.withScopedAccess(to: scoped, { system.rawIdentity(at: $0) }),
+                  let raw = rawWitness, raw.isUsable,
                   fingerprint.fileIdentifier.value == raw.inode,
                   fingerprint.fileSize.value == raw.sizeBytes,
                   fingerprint.volumeUUID.value?.lowercased() == raw.volumeUUID
@@ -148,19 +193,9 @@ public struct RelinkEvaluator: Sendable {
     /// Marks the recorded baseline as user-confirmed (the user verified the source is the right one).
     public func confirmIdentity(of record: DeviceAccessRecord) -> DeviceAccessRecord {
         var updated = record
-        if let system = context.io as? SystemSourceIO {
-            guard let bookmark = record.bookmark,
-                  case let .resolved(scoped, isStale) = context.io.resolveBookmark(bookmark), !isStale,
-                  let recorded = record.recordedIdentity,
-                  let raw = context.withScopedAccess(to: scoped, { system.rawIdentity(at: $0) }),
-                  recorded.fingerprint.fileIdentifier.value == raw.inode,
-                  recorded.fingerprint.fileSize.value == raw.sizeBytes,
-                  recorded.fingerprint.volumeUUID.value?.lowercased() == raw.volumeUUID
-            else {
-                updated.recordedIdentity?.rawWitness = nil
-                return updated
-            }
-            updated.recordedIdentity?.rawWitness = raw
+        if context.io is SystemSourceIO {
+            updated.recordedIdentity?.rawWitness = nil
+            return updated
         }
         updated.recordedIdentity?.confirmation = .userConfirmed
         return updated
