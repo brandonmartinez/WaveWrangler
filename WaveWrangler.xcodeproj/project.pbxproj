@@ -29,6 +29,8 @@
 		A6E217D71C470B6700000014 /* WWDerived in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000012 /* WWDerived */; };
 		A6E217D71C470B6700000015 /* WWSources in Frameworks */ = {isa = PBXBuildFile; productRef = 8503CC32FED0C1A6A832807D /* WWSources */; };
 		A6E217D71C470B6700000016 /* WWTimeMap in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000014 /* WWTimeMap */; };
+		A6E217D71C470B6700000017 /* WWDecode in Frameworks */ = {isa = PBXBuildFile; productRef = A10220000000000000000013 /* WWDecode */; };
+		A6E217D71C470B6700000018 /* WWEpisodeSetup in Frameworks */ = {isa = PBXBuildFile; productRef = 6F8B2D3C0E5A4F7B9C1D2E3F /* WWEpisodeSetup */; };
 		5C1A9E3B7D2F4A6E8B0C2D42 /* ShowSchema1Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1A9E3B7D2F4A6E8B0C2D41 /* ShowSchema1Fixtures.swift */; };
 /* End PBXBuildFile section */
 
@@ -153,6 +155,8 @@
 				A6E217D71C470B6700000014 /* WWDerived in Frameworks */,
 				A6E217D71C470B6700000015 /* WWSources in Frameworks */,
 				A6E217D71C470B6700000016 /* WWTimeMap in Frameworks */,
+				A6E217D71C470B6700000017 /* WWDecode in Frameworks */,
+				A6E217D71C470B6700000018 /* WWEpisodeSetup in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -277,6 +281,8 @@
 				A10220000000000000000012 /* WWDerived */,
 				8503CC32FED0C1A6A832807D /* WWSources */,
 				A10220000000000000000014 /* WWTimeMap */,
+				A10220000000000000000013 /* WWDecode */,
+				6F8B2D3C0E5A4F7B9C1D2E3F /* WWEpisodeSetup */,
 			);
 			productName = WaveWranglerHostedTests;
 			productReference = A6E217D71C470B6700000001 /* WaveWranglerHostedTests.xctest */;
