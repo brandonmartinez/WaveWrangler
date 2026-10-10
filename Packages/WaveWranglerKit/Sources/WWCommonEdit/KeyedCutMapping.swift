@@ -61,12 +61,16 @@ public struct ProvisionalLaneCutMapping: Sendable {
     public let sourceRemoval: SourceFrameSpan?
     public let finalMergedFades: [SourceFrameSpan]
     public let finalMergedGridFades: [RemovedFrameSpan]
+    public let survey: CommonEditLaneSurvey
+    public let requestedFadeOutGrid: RemovedFrameSpan?
+    public let requestedFadeInGrid: RemovedFrameSpan?
 }
 
 /// Neither a WWCutPolicy footprint nor an accepted cut, source witness or render permit.
 public struct ProvisionalKeyedCutMapping: Sendable {
     public let grid: RemovedFrameSpan
     public let map: CommonEpisodeEditMap
+    public let manifestRevision: String
     public let lanes: [ProvisionalLaneCutMapping]
     public let excludedBackups: [ExcludedBackupLane]
 }
@@ -215,7 +219,9 @@ public enum KeyedCutMapping {
                 else { throw .incompleteCoverage }
                 gridSurveys.append(proof.survey)
                 mapped.append(.init(identity: proof.identity, sourceRemoval: nil,
-                                    finalMergedFades: [], finalMergedGridFades: []))
+                                    finalMergedFades: [], finalMergedGridFades: [],
+                                    survey: proof.survey, requestedFadeOutGrid: nil,
+                                    requestedFadeInGrid: nil))
             case let .audio(key):
                 guard let occurrence = occurrences[key.occurrence], let epoch = proof.identity.epoch,
                       valid(proof.sourceCoverage, limit: occurrence.frameCount),
@@ -272,21 +278,25 @@ public enum KeyedCutMapping {
                        proof.survey.requestedFades == fades.requested),
                       (proof.survey.finalMergedFades.isEmpty ||
                        proof.survey.finalMergedFades == fades.final) else { throw .invalidFade }
-                gridSurveys.append(.init(
+                let gridSurvey = CommonEditLaneSurvey(
                     lane: proof.identity.lane, coverage: proof.survey.coverage,
                     intentionalSilence: proof.survey.intentionalSilence,
                     protected: proof.survey.protected, requestedFades: fades.requested,
                     finalMergedFades: fades.final
-                ))
+                )
+                gridSurveys.append(gridSurvey)
                 mapped.append(.init(identity: proof.identity, sourceRemoval: removal,
                                     finalMergedFades: proof.finalMergedFades,
-                                    finalMergedGridFades: fades.final))
+                                    finalMergedGridFades: fades.final, survey: gridSurvey,
+                                    requestedFadeOutGrid: fades.out,
+                                    requestedFadeInGrid: fades.inside))
             }
         }
         let checked: ProvisionalCommonEditCheck
         do { checked = try CommonEditPreflight.check(map: map, manifest: manifest, surveys: gridSurveys) }
         catch { throw .structuralPreflight(error) }
-        return .init(grid: grid, map: map, lanes: mapped, excludedBackups: checked.excludedBackups)
+        return .init(grid: grid, map: map, manifestRevision: manifestRevision,
+                     lanes: mapped, excludedBackups: checked.excludedBackups)
     }
 
     private static func alignedBoundary(
@@ -331,7 +341,10 @@ public enum KeyedCutMapping {
     private static func validateFades(
         _ proof: KeyedLaneFootprintInput, removal: SourceFrameSpan, limit: Int64,
         map: CommonEpisodeEditMap, fadeOutLength: Int64, fadeInLength: Int64
-    ) throws(ProvisionalCutMappingError) -> (requested: [RemovedFrameSpan], final: [RemovedFrameSpan]) {
+    ) throws(ProvisionalCutMappingError) -> (
+        requested: [RemovedFrameSpan], final: [RemovedFrameSpan],
+        out: RemovedFrameSpan?, inside: RemovedFrameSpan?
+    ) {
         let out = proof.requestedFadeOut, inside = proof.requestedFadeIn
         guard (out != nil) == (fadeOutLength > 0),
               (inside != nil) == (fadeInLength > 0),
@@ -360,7 +373,9 @@ public enum KeyedCutMapping {
         for fade in proof.finalMergedFades {
             finalGrid.append(try gridFade(fade, key: key, epoch: epoch, map: map, limit: limit))
         }
-        return (requestedGrid, finalGrid)
+        return (requestedGrid, finalGrid,
+                out == nil ? nil : requestedGrid[0],
+                inside == nil ? nil : requestedGrid[requestedGrid.count - 1])
     }
 
     private static func sourceScanAllowance(
