@@ -536,12 +536,163 @@ struct DeviceAccessStoreTests {
         let record = DeviceAccessRecord(showID: testShow, sourceID: SourceID(), bookmark: Data([1]), lastKnownPath: "/x", createdAt: Date(timeIntervalSince1970: 0))
         try await store.save(record)
         #expect(try await FileDeviceAccessStore(fileURL: url).record(for: record.key) == record)
+        let snapshot = try #require(try await FileDeviceAccessStore(fileURL: url).snapshot(for: record.key))
+        #expect(snapshot.record == record)
+        #expect(snapshot.mutationGeneration != nil)
 
         let newer = Data(#"{"schemaVersion":99,"records":[],"future":true}"#.utf8)
         try newer.write(to: url)
         let refusing = FileDeviceAccessStore(fileURL: url)
+        await #expect(throws: DeviceAccessStoreError.unsupportedNewerSchema(99)) { try await refusing.snapshot(for: record.key) }
         await #expect(throws: DeviceAccessStoreError.unsupportedNewerSchema(99)) { try await refusing.save(record) }
         #expect(try Data(contentsOf: url) == newer)
+    }
+
+    @Test(arguments: ["memory", "file"])
+    func eachMutationMintsNewGenerationWithoutBorrowingCallerAuthority(kind: String) async throws {
+        let tree = try SyntheticTree(label: "store-generation-\(kind)")
+        let store: any DeviceAccessSnapshotStore = kind == "memory"
+            ? InMemoryDeviceAccessStore()
+            : FileDeviceAccessStore(fileURL: tree.root.appendingPathComponent("records.json"))
+        let source = SourceID()
+        let key = DeviceAccessKey(showID: testShow, sourceID: source)
+        let anotherShow = DeviceAccessKey(showID: ShowID(), sourceID: source)
+        let record = DeviceAccessRecord(showID: key.showID, sourceID: source, bookmark: Data([1]), createdAt: Date(timeIntervalSince1970: 0))
+        let independent = DeviceAccessRecord(showID: anotherShow.showID, sourceID: source, createdAt: record.createdAt)
+
+        #expect(try await store.snapshot(for: key) == nil)
+        try await store.save([record, independent])
+        let first = try #require(try await store.snapshot(for: key))
+        let other = try #require(try await store.snapshot(for: anotherShow))
+        #expect(first.record == record)
+        #expect(first.mutationGeneration != nil)
+        #expect(other.mutationGeneration != nil)
+        #expect(first.mutationGeneration != other.mutationGeneration)
+
+        try await store.save(record) // Byte-identical overwrite still invalidates the earlier snapshot.
+        let overwritten = try #require(try await store.snapshot(for: key))
+        #expect(overwritten.record == first.record)
+        #expect(overwritten.mutationGeneration != first.mutationGeneration)
+        #expect(try await store.snapshot(for: anotherShow) == other)
+
+        var refreshed = first.record // A stale caller cannot restore the old generation.
+        refreshed.bookmark = Data([2])
+        refreshed.lastBookmarkRefreshAt = Date(timeIntervalSince1970: 10)
+        try await store.save(refreshed)
+        let refresh = try #require(try await store.snapshot(for: key))
+        #expect(refresh.mutationGeneration != overwritten.mutationGeneration)
+        #expect(refresh.record.bookmark == Data([2]))
+
+        refreshed.relinkHistory = [.init(at: Date(timeIntervalSince1970: 11), comparison: .matches, userConfirmed: true)]
+        try await store.save(refreshed)
+        let relink = try #require(try await store.snapshot(for: key))
+        #expect(relink.mutationGeneration != refresh.mutationGeneration)
+
+        try await store.removeRecord(for: key)
+        #expect(try await store.snapshot(for: key) == nil)
+        try await store.save(record)
+        let restored = try #require(try await store.snapshot(for: key))
+        #expect(restored.record == first.record)
+        #expect(restored.mutationGeneration != first.mutationGeneration)
+        #expect(restored.mutationGeneration != relink.mutationGeneration)
+        #expect(try await store.snapshot(for: anotherShow) == other)
+        try await store.removeRecords(in: anotherShow.showID)
+        #expect(try await store.snapshot(for: anotherShow) == nil)
+        #expect(try await store.snapshot(for: key) == restored)
+    }
+
+    @Test func fileStorePreservesGenerationAcrossRestartAndRefusesCorruption() async throws {
+        let tree = try SyntheticTree(label: "store-restart")
+        let url = tree.root.appendingPathComponent("records.json")
+        let record = DeviceAccessRecord(showID: testShow, sourceID: SourceID(), createdAt: Date(timeIntervalSince1970: 0))
+        try await FileDeviceAccessStore(fileURL: url).save(record)
+        let before = try #require(try await FileDeviceAccessStore(fileURL: url).snapshot(for: record.key))
+        #expect(before.mutationGeneration != nil)
+        let reopened = FileDeviceAccessStore(fileURL: url)
+        #expect(try await reopened.snapshot(for: record.key) == before)
+        try await reopened.save(record)
+        let after = try #require(try await FileDeviceAccessStore(fileURL: url).snapshot(for: record.key))
+        #expect(after.mutationGeneration != before.mutationGeneration)
+
+        let third = DeviceAccessRecord(showID: ShowID(), sourceID: record.sourceID, createdAt: record.createdAt)
+        try await reopened.save(third)
+        let thirdVersion = try #require(try await FileDeviceAccessStore(fileURL: url).snapshot(for: third.key))
+        try await FileDeviceAccessStore(fileURL: url).save(record)
+        let latest = try #require(try await reopened.snapshot(for: record.key))
+        #expect(latest.mutationGeneration != after.mutationGeneration)
+        try await reopened.save(third)
+        #expect(try await FileDeviceAccessStore(fileURL: url).snapshot(for: record.key) == latest)
+        #expect(try await FileDeviceAccessStore(fileURL: url).snapshot(for: third.key)?.mutationGeneration != thirdVersion.mutationGeneration)
+
+        let valid = try Data(contentsOf: url)
+        var duplicate = try #require(JSONSerialization.jsonObject(with: valid) as? [String: Any])
+        var entries = try #require(duplicate["records"] as? [[String: Any]])
+        entries.append(try #require(entries.first))
+        duplicate["records"] = entries
+        let duplicateData = try JSONSerialization.data(withJSONObject: duplicate)
+        try duplicateData.write(to: url, options: [.atomic])
+        await #expect(throws: DeviceAccessStoreError.self) {
+            try await FileDeviceAccessStore(fileURL: url).snapshot(for: record.key)
+        }
+        #expect(try Data(contentsOf: url) == duplicateData)
+
+        for damaged in [
+            Data(#"{"schemaVersion":2,"records":[{"record":{}}]}"#.utf8),
+            Data(#"{"schemaVersion":2,"records":[{"record":{},"generation":"invalid"}]}"#.utf8),
+            Data(#"{"schemaVersion":2,"records":"broken"}"#.utf8),
+            Data(#"{"schemaVersion":0,"records":[]}"#.utf8),
+        ] {
+            try damaged.write(to: url, options: [.atomic])
+            let refusing = FileDeviceAccessStore(fileURL: url)
+            await #expect(throws: DeviceAccessStoreError.self) { try await refusing.snapshot(for: record.key) }
+            await #expect(throws: DeviceAccessStoreError.self) { try await refusing.save(record) }
+            #expect(try Data(contentsOf: url) == damaged)
+        }
+    }
+
+    @Test func legacyRecordsRemainReadableButHaveNoGenerationUntilSaved() async throws {
+        let tree = try SyntheticTree(label: "store-legacy")
+        let url = tree.root.appendingPathComponent("records.json")
+        let record = DeviceAccessRecord(showID: testShow, sourceID: SourceID(), createdAt: Date(timeIntervalSince1970: 0))
+        let legacy = try JSONSerialization.data(withJSONObject: [
+            "schemaVersion": 1,
+            "records": [try JSONSerialization.jsonObject(with: JSONEncoder().encode(record))],
+        ])
+        try legacy.write(to: url)
+        let store = FileDeviceAccessStore(fileURL: url)
+        let before = try #require(try await store.snapshot(for: record.key))
+        #expect(before.record == record)
+        #expect(before.mutationGeneration == nil)
+        #expect(try await store.record(for: record.key) == record)
+
+        let second = DeviceAccessRecord(showID: testShow, sourceID: SourceID(), createdAt: record.createdAt)
+        try await store.save(second)
+        #expect(try await FileDeviceAccessStore(fileURL: url).snapshot(for: record.key) == before)
+        try await store.save(record)
+        let after = try #require(try await FileDeviceAccessStore(fileURL: url).snapshot(for: record.key))
+        #expect(after.mutationGeneration != nil)
+        #expect(after.record == record)
+    }
+
+    @Test func memorySeedRecordsRemainLegacyUntilSaved() async throws {
+        let record = DeviceAccessRecord(showID: testShow, sourceID: SourceID(), createdAt: Date(timeIntervalSince1970: 0))
+        let store = InMemoryDeviceAccessStore([record])
+        #expect(await store.snapshot(for: record.key)?.mutationGeneration == nil)
+        await store.save(record)
+        #expect(await store.snapshot(for: record.key)?.mutationGeneration != nil)
+    }
+
+    @Test func observedStoreFileCannotBeSilentlyRecreatedAfterDeletion() async throws {
+        let tree = try SyntheticTree(label: "store-missing")
+        let url = tree.root.appendingPathComponent("records.json")
+        let record = DeviceAccessRecord(showID: testShow, sourceID: SourceID(), createdAt: Date(timeIntervalSince1970: 0))
+        let store = FileDeviceAccessStore(fileURL: url)
+        try await store.save(record)
+        #expect(try await store.snapshot(for: record.key)?.mutationGeneration != nil)
+        try FileManager.default.removeItem(at: url)
+        await #expect(throws: DeviceAccessStoreError.self) { try await store.snapshot(for: record.key) }
+        await #expect(throws: DeviceAccessStoreError.self) { try await store.save(record) }
+        #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 }
 
