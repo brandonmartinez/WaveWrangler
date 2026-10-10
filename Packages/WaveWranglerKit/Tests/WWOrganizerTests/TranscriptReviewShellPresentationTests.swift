@@ -18,13 +18,30 @@ struct TranscriptReviewShellPresentationTests {
         #expect(TranscriptReviewShellPresentation.noProposalState.contains("no analysis"))
     }
 
+    @Test func syntheticProposalsExposeOnlyProvisionalPresentationMetadata() {
+        #expect(TranscriptReviewShellPresentation.proposals.count == 2)
+        #expect(TranscriptReviewShellPresentation.proposals.allSatisfy { $0.id.hasPrefix("synthetic-proposal-") })
+        #expect(TranscriptReviewShellPresentation.proposals.allSatisfy { $0.occurrenceID.hasPrefix("synthetic-") })
+        #expect(TranscriptReviewShellPresentation.proposals.allSatisfy { $0.rationale.contains("not model output") })
+        #expect(TranscriptReviewShellPresentation.proposals.allSatisfy { $0.timingState.contains("Timing unavailable") })
+        #expect(TranscriptReviewShellPresentation.proposals.allSatisfy { $0.sourceState.contains("no selected Primary") })
+        #expect(TranscriptReviewShellPresentation.proposals.allSatisfy { $0.protectionState.contains("Protection unsupported") })
+        #expect(TranscriptReviewShellPresentation.proposals.allSatisfy { $0.status.contains("not verified or actionable") })
+    }
+
     @Test func reviewActionsStayBlockedWithoutSafetyEvidence() {
-        #expect(TranscriptReviewShellPresentation.acceptBlockedReason.contains("all-lane backing"))
-        #expect(TranscriptReviewShellPresentation.acceptBlockedReason.contains("protection coverage"))
-        #expect(TranscriptReviewShellPresentation.liftBlockedReason.contains("all-lane backing"))
-        #expect(TranscriptReviewShellPresentation.liftBlockedReason.contains("protection coverage"))
-        #expect(TranscriptReviewShellPresentation.rejectBlockedReason.contains("no proposal"))
-        #expect(TranscriptReviewShellPresentation.fullPreviewBlockedReason.contains("every affected lane"))
+        for reason in [
+            TranscriptReviewShellPresentation.acceptBlockedReason,
+            TranscriptReviewShellPresentation.liftBlockedReason,
+            TranscriptReviewShellPresentation.rejectBlockedReason,
+        ] {
+            #expect(reason.contains("verified source"))
+            #expect(reason.contains("word timing"))
+            #expect(reason.contains("current map"))
+            #expect(reason.contains("protection coverage"))
+            #expect(reason.contains("human"))
+        }
+        #expect(TranscriptReviewShellPresentation.fullPreviewBlockedReason.contains("all-lane backing"))
         #expect(TranscriptReviewShellPresentation.singleLaneAuditionBlockedReason.contains("not a full preview"))
         #expect(TranscriptReviewShellPresentation.noLiveSourceReason.contains("Setup"))
     }

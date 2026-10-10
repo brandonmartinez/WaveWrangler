@@ -26,6 +26,40 @@ public struct TranscriptReviewShellLane: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Synthetic-only proposal metadata for the native Review shell.
+///
+/// This deliberately carries presentation text rather than transcript, timing, source, or edit authority.
+public struct TranscriptReviewShellProposal: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let occurrenceID: String
+    public let title: String
+    public let rationale: String
+    public let timingState: String
+    public let sourceState: String
+    public let protectionState: String
+    public let status: String
+
+    public init(
+        id: String,
+        occurrenceID: String,
+        title: String,
+        rationale: String,
+        timingState: String,
+        sourceState: String,
+        protectionState: String,
+        status: String
+    ) {
+        self.id = id
+        self.occurrenceID = occurrenceID
+        self.title = title
+        self.rationale = rationale
+        self.timingState = timingState
+        self.sourceState = sourceState
+        self.protectionState = protectionState
+        self.status = status
+    }
+}
+
 /// Synthetic-only copy for the native Review shell; this is not a transcript, source, or edit-policy model.
 public enum TranscriptReviewShellPresentation {
     public static let occurrences = [
@@ -40,6 +74,29 @@ public enum TranscriptReviewShellPresentation {
             title: "Synthetic example occurrence 2",
             tokenStubID: "token-stub-002",
             note: "Untimed synthetic span — no timestamp is inferred."
+        ),
+    ]
+
+    public static let proposals = [
+        TranscriptReviewShellProposal(
+            id: "synthetic-proposal-001",
+            occurrenceID: "synthetic-001",
+            title: "Synthetic contextual filler proposal 1",
+            rationale: "Contextual filler label is synthetic fixture text, not model output.",
+            timingState: "Timing unavailable — no word timing or source-frame interval.",
+            sourceState: "Source unavailable — no selected Primary is connected or authorized.",
+            protectionState: "Protection unsupported — coverage is not established.",
+            status: "Provisional synthetic proposal — not verified or actionable."
+        ),
+        TranscriptReviewShellProposal(
+            id: "synthetic-proposal-002",
+            occurrenceID: "synthetic-002",
+            title: "Synthetic contextual filler proposal 2",
+            rationale: "Contextual filler label is synthetic fixture text, not model output.",
+            timingState: "Timing unavailable — no word timing or source-frame interval.",
+            sourceState: "Source unavailable — no selected Primary is connected or authorized.",
+            protectionState: "Protection unsupported — coverage is not established.",
+            status: "Provisional synthetic proposal — not verified or actionable."
         ),
     ]
 
@@ -64,13 +121,13 @@ public enum TranscriptReviewShellPresentation {
     public static let noLiveSourceReason =
         "No live Primary or source is connected to this provisional shell. Choose or confirm the Primary in Setup when Review is integrated."
     public static let acceptBlockedReason =
-        "Accept is blocked: no current proposal or transcript timing is connected; the alignment map, all-lane backing, protection coverage, and edit policy are unverified."
+        "Accept is blocked: this synthetic proposal has no verified source, word timing, current map, protection coverage, or human acceptance intent."
     public static let liftBlockedReason =
-        "Lift is blocked: no current proposal or transcript timing is connected; the alignment map, all-lane backing, protection coverage, and edit policy are unverified."
+        "Lift is blocked: this synthetic proposal has no verified source, word timing, current map, protection coverage, or human acceptance intent."
     public static let rejectBlockedReason =
-        "Reject is blocked: no proposal is connected to this synthetic-only shell."
+        "Reject is blocked: this synthetic proposal has no verified source, word timing, current map, protection coverage, or human review intent."
     public static let fullPreviewBlockedReason =
-        "Complete preview is blocked: every affected lane, the common map, source backing, and protection coverage are unverified."
+        "Complete preview is blocked: every affected lane has no verified source, word timing, current map, all-lane backing, or protection coverage."
     public static let singleLaneAuditionBlockedReason =
         "Single-lane audition — not a full preview. Disabled because no authorized Primary source is bound."
     public static let timeNotEstablished = "Not established — no analysis or current map"
