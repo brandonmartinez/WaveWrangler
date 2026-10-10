@@ -273,6 +273,15 @@ final class AlignmentInspectionUITests: XCTestCase {
                 "\(identifier) must stay exposed inside the Alignment workspace group"
             )
         }
+        let alignmentActions = workspaceRoot.descendants(matching: .any)["ww.alignment.actions"]
+        XCTAssertTrue(alignmentActions.exists)
+        XCTAssertEqual(alignmentActions.label, "Alignment actions")
+        for identifier in Self.actionButtonIdentifiers {
+            XCTAssertTrue(
+                alignmentActions.descendants(matching: .any)[identifier].exists,
+                "\(identifier) must stay exposed inside the described Alignment actions group"
+            )
+        }
         let inspector = app.descendants(matching: .any)["ww.inspector"]
         XCTAssertEqual(inspector.label, "Inspector")
         // Resolve every container the audit may waive *before* the audit runs, so each waiver is pinned to
@@ -280,11 +289,6 @@ final class AlignmentInspectionUITests: XCTestCase {
         // roughly the right shape (#219 review).
         let inspectorColumn = resolveInspectorColumn(
             around: inspector, excluding: [contentInspector.frame, sidebar.frame]
-        )
-        let actionRows = resolveActionRows(in: workspaceRoot)
-        XCTAssertLessThanOrEqual(
-            actionRows.count, 2,
-            "Only the alignment action grid's own rows may be waived"
         )
         // Cell containers are matched by their place in an outline's subtree rather than by geometry: a
         // row scrolled under the table's edge reaches outside the outline's own frame. The identified
@@ -304,7 +308,6 @@ final class AlignmentInspectionUITests: XCTestCase {
         }
         var layoutContainerFindings = 0
         var inspectorColumnFindings = 0
-        var actionRowFindings = 0
         var showSectionFindings = 0
         var outlineCellFindings = 0
         try app.performAccessibilityAudit(
@@ -330,30 +333,14 @@ final class AlignmentInspectionUITests: XCTestCase {
             // SwiftUI description reaches it: labelling the cell content, combining its children and
             // the value-keypath shorthand all leave this one container undescribed (#219). It is waived
             // only while its own labelled text child is still exposed to assistive technology.
-            // The action buttons' own grid rows are undescribed layout containers: declaring one a
-            // containing element drops its buttons from the tree in a narrow window (#219). Each is waived
-            // only as a row resolved above: the same exact frame, exposing exactly the same alignment
-            // action buttons by identifier.
-            let exposedActionButtons = element.descendants(matching: .button)
-                .allElementsBoundByIndex.map(\.identifier)
-            let isActionRow = actionRows.contains {
-                $0.matches(element, exposing: exposedActionButtons)
-            }
             let isOutlineCell = outlineCellFrames.contains(element.frame)
                 && element.descendants(matching: .any).allElementsBoundByIndex
                     .contains { !$0.label.isEmpty || !(($0.value as? String) ?? "").isEmpty }
             guard isContent || isSidebar || isShowSection || isOutlineCell || isInspectorColumn
-                    || isActionRow
             else {
                 return self.reportUnwaived(issue)
             }
-            if isActionRow {
-                actionRowFindings += 1
-                print(
-                    "AUDIT WAIVED [alignment-action-row] \(issue.compactDescription) \(element.frame) — " +
-                    "layout row holding only labelled alignment buttons"
-                )
-            } else if isOutlineCell {
+            if isOutlineCell {
                 outlineCellFindings += 1
                 print(
                     "AUDIT WAIVED [alignment-outline-cell] \(issue.compactDescription) — " +
@@ -384,7 +371,6 @@ final class AlignmentInspectionUITests: XCTestCase {
         // sidebar adds a third; each is waived only by matching one of those labelled frames exactly.
         XCTAssertLessThanOrEqual(layoutContainerFindings, 3)
         XCTAssertLessThanOrEqual(inspectorColumnFindings, 1)
-        XCTAssertLessThanOrEqual(actionRowFindings, 2)
         XCTAssertLessThanOrEqual(showSectionFindings, 1)
         // At most one finding per cell: each is the container AppKit builds around that cell.
         XCTAssertGreaterThan(outlineCellFrames.count, 0, "The alignment outlines must expose their cells")
@@ -674,28 +660,12 @@ final class AlignmentInspectionUITests: XCTestCase {
         }
     }
 
-    /// The alignment action grid's buttons. A grid row is waivable only while every button it exposes is
-    /// one of these, by identifier.
+    /// The alignment action grid's buttons, kept exposed under its labelled accessibility group.
     private static let actionButtonIdentifiers: Set<String> = [
         "alignment.acceptProposal", "alignment.rejectProposal", "alignment.editNumeric",
         "alignment.placeAnchors", "alignment.placeAnchorAtPlayhead", "alignment.deleteAnchor",
         "alignment.editAnchor", "alignment.startNewEpoch",
     ]
-
-    /// The undescribed layout rows the action grid builds, pinned by frame and by the buttons they expose.
-    private func resolveActionRows(in root: XCUIElement) -> [WaivableContainer] {
-        var rows: [WaivableContainer] = []
-        for element in root.descendants(matching: .any).allElementsBoundByIndex {
-            let type: XCUIElement.ElementType = element.elementType
-            guard type == .group || type == .other, element.frame.height <= 40 else { continue }
-            let identifiers = element.descendants(matching: .button).allElementsBoundByIndex.map(\.identifier)
-            guard identifiers.count >= 4,
-                  identifiers.allSatisfy({ Self.actionButtonIdentifiers.contains($0) })
-            else { continue }
-            rows.append(WaivableContainer(frame: element.frame, exposedIdentifiers: identifiers))
-        }
-        return rows
-    }
 
     /// SwiftUI's own inspector column: the smallest container that wraps the labelled `ww.inspector` scroll
     /// area without being the content or sidebar region. Resolved to exactly one element, or none.
