@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import Testing
 import WWCore
+import WWDecode
 @testable import WWSources
 
 struct InjectedError: Error {}
@@ -203,6 +204,274 @@ struct OrganizationSuggesterTests {
 
 @Suite("Relink")
 struct RelinkTests {
+    private struct LocalityIO: SourceIO {
+        let base = SystemSourceIO()
+        let locality: Knowledge<Bool>
+        var staleBookmark = false
+        var provenance: ObservationProvenance { base.provenance }
+        func metadata(at url: URL) -> MetadataResult {
+            let result = base.metadata(at: url)
+            guard case var .success(metadata) = result else { return result }
+            metadata.volumeIsLocal = locality
+            return .success(metadata)
+        }
+        func listItems(under directory: URL) -> DirectoryListing { base.listItems(under: directory) }
+        func makeReadOnlyBookmark(for url: URL) throws -> Data { try base.makeReadOnlyBookmark(for: url) }
+        func resolveBookmark(_ data: Data) -> BookmarkResolution {
+            switch base.resolveBookmark(data) {
+            case let .resolved(url, _): return .resolved(url, isStale: staleBookmark)
+            case let .failed(error): return .failed(error)
+            }
+        }
+        func startAccessingSecurityScope(_ url: URL) -> Bool { base.startAccessingSecurityScope(url) }
+        func stopAccessingSecurityScope(_ url: URL) { base.stopAccessingSecurityScope(url) }
+        func requestDownload(of url: URL) throws { try base.requestDownload(of: url) }
+        func downloadFraction(of url: URL) async -> Knowledge<Double> { await base.downloadFraction(of: url) }
+    }
+
+    @Test func confirmedUnchangedLocalRelinkCapturesRawWitness() async throws {
+        let tree = try SyntheticTree(label: "confirmed-local-relink")
+        var rng = SplitMix64(seed: 436)
+        let file = try tree.file("take.wav", bytes: 128, rng: &rng)
+        let io = SystemSourceIO()
+        guard case let .success(metadata) = io.metadata(at: file) else {
+            Issue.record("synthetic file metadata unavailable")
+            return
+        }
+        let record = DeviceAccessRecord(
+            showID: testShow, sourceID: SourceID(),
+            recordedIdentity: RecordedIdentity(
+                fingerprint: metadata.fingerprint, confirmation: .provisional, recordedAt: .now
+            ), createdAt: .now
+        )
+        let context = SourceAccessContext(io: io)
+        let relink = RelinkEvaluator(context: context)
+        let proposal = relink.evaluate(candidate: file, for: record.key, record: record)
+        #expect(proposal.comparison == .matches)
+        #expect(proposal.candidateRaw == nil)
+        let before = TreeSnapshot.take(tree.sources)
+        let confirmed = try await relink.applyConfirmed(proposal, to: record) { url, fingerprint in
+            try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+        }
+        #expect(confirmed.recordedIdentity?.confirmation == .userConfirmed)
+        #expect(confirmed.recordedIdentity?.rawWitness?.isUsable == true)
+        #expect(confirmed.relinkHistory.last?.userConfirmed == true)
+        #expect(TreeSnapshot.take(tree.sources) == before)
+    }
+
+    @Test func confirmedCaptureRefusesDuplicateStaleChangedAndInaccessibleCandidate() async throws {
+        let tree = try SyntheticTree(label: "confirmed-relink-refusals")
+        var rng = SplitMix64(seed: 437)
+        let file = try tree.file("take.wav", bytes: 128, rng: &rng)
+        let io = SystemSourceIO()
+        guard case let .success(metadata) = io.metadata(at: file) else {
+            Issue.record("synthetic file metadata unavailable")
+            return
+        }
+        let record = DeviceAccessRecord(
+            showID: testShow, sourceID: SourceID(),
+            recordedIdentity: RecordedIdentity(fingerprint: metadata.fingerprint, confirmation: .provisional, recordedAt: .now),
+            createdAt: .now
+        )
+        let relink = RelinkEvaluator(context: SourceAccessContext(io: io))
+        let proposal = relink.evaluate(candidate: file, for: record.key, record: record)
+        #expect(proposal.comparison == .matches)
+        let neverCapture: @Sendable (URL, FileSystemFingerprint) async throws -> RawSourceIdentity = { _, _ in
+            Issue.record("refused candidate must not open the source")
+            throw InjectedError()
+        }
+
+        var duplicate = proposal
+        duplicate.alreadyLinkedTo = SourceID()
+        await #expect(throws: RelinkError.sourceMismatch) {
+            try await relink.applyConfirmed(duplicate, to: record, captureRawIdentity: neverCapture)
+        }
+        var differing = proposal
+        differing.comparison = .differs([.contentModificationDate], unknown: [])
+        await #expect(throws: RelinkError.sourceMismatch) {
+            try await relink.applyConfirmed(differing, to: record, captureRawIdentity: neverCapture)
+        }
+        var stale = proposal
+        stale.availability = .ready(bookmark: Data("invalid bookmark".utf8), resolvedPath: file.path)
+        await #expect(throws: RelinkError.sourceMismatch) {
+            try await relink.applyConfirmed(stale, to: record, captureRawIdentity: neverCapture)
+        }
+        var unknown = proposal
+        unknown.candidateFingerprint?.fileIdentifier = .unknown
+        await #expect(throws: RelinkError.sourceMismatch) {
+            try await relink.applyConfirmed(unknown, to: record, captureRawIdentity: neverCapture)
+        }
+        try appendBytes(file, count: 1)
+        await #expect(throws: RelinkError.sourceMismatch) {
+            try await relink.applyConfirmed(proposal, to: record, captureRawIdentity: neverCapture)
+        }
+
+        let harness = HarnessIO()
+        let harnessRelink = RelinkEvaluator(context: SourceAccessContext(io: harness))
+        let accessible = harnessRelink.evaluate(candidate: file, for: record.key, record: record)
+        #expect(accessible.canApply)
+        var faults = harness.faults
+        faults.metadataFailures[HarnessIO.key(file)] = .permissionDenied
+        harness.faults = faults
+        await #expect(throws: RelinkError.sourceMismatch) {
+            try await harnessRelink.applyConfirmed(accessible, to: record, captureRawIdentity: neverCapture)
+        }
+    }
+
+    @Test func nonlocalOrUnknownLocalityCannotOpenForConfirmedRelink() async throws {
+        let tree = try SyntheticTree(label: "relink-locality")
+        var rng = SplitMix64(seed: 438)
+        let file = try tree.file("take.wav", bytes: 128, rng: &rng)
+        for locality in [Knowledge<Bool>.known(false), .unknown] {
+            let io = LocalityIO(locality: locality)
+            guard case let .success(metadata) = io.metadata(at: file) else {
+                Issue.record("synthetic file metadata unavailable")
+                return
+            }
+            let record = DeviceAccessRecord(
+                showID: testShow, sourceID: SourceID(),
+                recordedIdentity: RecordedIdentity(fingerprint: metadata.fingerprint, confirmation: .provisional, recordedAt: .now),
+                createdAt: .now
+            )
+            let relink = RelinkEvaluator(context: SourceAccessContext(io: io))
+            let proposal = relink.evaluate(candidate: file, for: record.key, record: record)
+            #expect(proposal.comparison == .matches)
+            await #expect(throws: RelinkError.sourceMismatch) {
+                try await relink.applyConfirmed(proposal, to: record) { _, _ in
+                    Issue.record("nonlocal or unknown source must not open")
+                    throw InjectedError()
+                }
+            }
+        }
+    }
+
+    @Test func changingAfterGatewayCaptureRefusesWitnessPublication() async throws {
+        let tree = try SyntheticTree(label: "relink-capture-race")
+        var rng = SplitMix64(seed: 439)
+        let file = try tree.file("take.wav", bytes: 128, rng: &rng)
+        let io = SystemSourceIO()
+        guard case let .success(metadata) = io.metadata(at: file) else {
+            Issue.record("synthetic file metadata unavailable")
+            return
+        }
+        let context = SourceAccessContext(io: io)
+        let record = DeviceAccessRecord(
+            showID: testShow, sourceID: SourceID(),
+            recordedIdentity: RecordedIdentity(fingerprint: metadata.fingerprint, confirmation: .provisional, recordedAt: .now),
+            createdAt: .now
+        )
+        let relink = RelinkEvaluator(context: context)
+        let proposal = relink.evaluate(candidate: file, for: record.key, record: record)
+        await #expect(throws: RelinkError.sourceMismatch) {
+            try await relink.applyConfirmed(proposal, to: record) { url, fingerprint in
+                let witness = try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+                try appendBytes(url, count: 1)
+                return witness
+            }
+        }
+        #expect(record.recordedIdentity?.rawWitness == nil)
+    }
+
+    @Test func subMillisecondTimestampMatchDoesNotAuthorizeRawCapture() async throws {
+        let tree = try SyntheticTree(label: "relink-submillisecond")
+        var rng = SplitMix64(seed: 440)
+        let file = try tree.file("take.wav", bytes: 128, rng: &rng)
+        let io = SystemSourceIO()
+        guard case let .success(metadata) = io.metadata(at: file),
+              let modified = metadata.fingerprint.contentModificationDate.value else {
+            Issue.record("synthetic file metadata unavailable")
+            return
+        }
+        let record = DeviceAccessRecord(
+            showID: testShow, sourceID: SourceID(),
+            recordedIdentity: RecordedIdentity(fingerprint: metadata.fingerprint, confirmation: .provisional, recordedAt: .now),
+            createdAt: .now
+        )
+        try setDates(file, modification: modified.addingTimeInterval(0.0005), creation: nil)
+        let relink = RelinkEvaluator(context: SourceAccessContext(io: io))
+        let proposal = relink.evaluate(candidate: file, for: record.key, record: record)
+        #expect(proposal.comparison == .matches)
+        #expect(proposal.candidateFingerprint != metadata.fingerprint)
+        var original = proposal
+        original.candidateFingerprint = metadata.fingerprint
+        await #expect(throws: RelinkError.sourceMismatch) {
+            try await relink.applyConfirmed(original, to: record) { _, _ in
+                Issue.record("timestamp-changed source must not open")
+                throw InjectedError()
+            }
+        }
+    }
+
+    @Test func staleBookmarkCannotOpenForConfirmedRelink() async throws {
+        let tree = try SyntheticTree(label: "relink-stale-bookmark")
+        var rng = SplitMix64(seed: 441)
+        let file = try tree.file("take.wav", bytes: 128, rng: &rng)
+        let io = LocalityIO(locality: .known(true), staleBookmark: true)
+        guard case let .success(metadata) = io.metadata(at: file) else {
+            Issue.record("synthetic file metadata unavailable")
+            return
+        }
+        let record = DeviceAccessRecord(
+            showID: testShow, sourceID: SourceID(),
+            recordedIdentity: RecordedIdentity(fingerprint: metadata.fingerprint, confirmation: .provisional, recordedAt: .now),
+            createdAt: .now
+        )
+        let relink = RelinkEvaluator(context: SourceAccessContext(io: io))
+        let proposal = relink.evaluate(candidate: file, for: record.key, record: record)
+        await #expect(throws: RelinkError.sourceMismatch) {
+            try await relink.applyConfirmed(proposal, to: record) { _, _ in
+                Issue.record("stale bookmark must not open source")
+                throw InjectedError()
+            }
+        }
+    }
+
+    @Test func systemExactRelinkDoesNotMintWitnessWithoutConfirmation() throws {
+        let tree = try SyntheticTree(label: "relink-raw-consent")
+        var rng = SplitMix64(seed: 413)
+        let file = try tree.file("take.wav", bytes: 128, rng: &rng)
+        let io = SystemSourceIO()
+        guard case let .success(metadata) = io.metadata(at: file) else {
+            Issue.record("synthetic file metadata unavailable")
+            return
+        }
+        let recorded = RecordedIdentity(
+            fingerprint: metadata.fingerprint, confirmation: .provisional, recordedAt: Date(timeIntervalSince1970: 1)
+        )
+        let record = DeviceAccessRecord(
+            showID: testShow, sourceID: SourceID(), recordedIdentity: recorded, createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let relink = RelinkEvaluator(context: SourceAccessContext(io: io))
+        let proposal = relink.evaluate(candidate: file, for: record.key, record: record)
+        #expect(proposal.comparison == .matches)
+        #expect(proposal.candidateRaw == nil)
+        let unconfirmed = try relink.apply(proposal, to: record, userConfirmed: false)
+        #expect(unconfirmed.recordedIdentity == recorded)
+        #expect(unconfirmed.recordedIdentity?.rawWitness == nil)
+        #expect(unconfirmed.relinkHistory.last?.userConfirmed == false)
+
+        var legacy = record
+        legacy.recordedIdentity?.confirmation = .userConfirmed
+        let legacyProposal = relink.evaluate(candidate: file, for: legacy.key, record: legacy)
+        #expect(legacyProposal.comparison == .matches)
+        let legacyRelinked = try relink.apply(legacyProposal, to: legacy, userConfirmed: false)
+        #expect(legacyRelinked.recordedIdentity == legacy.recordedIdentity)
+        #expect(legacyRelinked.recordedIdentity?.rawWitness == nil)
+
+        #expect(throws: RelinkError.sourceMismatch) {
+            _ = try relink.apply(proposal, to: record, userConfirmed: true)
+        }
+        #expect(relink.confirmIdentity(of: record).recordedIdentity?.confirmation == .provisional)
+
+        var wrongVolume = proposal
+        var fingerprint = try #require(wrongVolume.candidateFingerprint)
+        fingerprint.volumeUUID = .known("00000000-0000-0000-0000-000000000000")
+        wrongVolume.candidateFingerprint = fingerprint
+        #expect(throws: RelinkError.sourceMismatch) {
+            try relink.apply(wrongVolume, to: record, userConfirmed: true)
+        }
+    }
+
     @Test func onlyExactMatchesApplyWithoutConfirmation() async throws {
         let tree = try SyntheticTree(label: "relink")
         var rng = SplitMix64(seed: 7)
@@ -323,17 +592,27 @@ struct ForbiddenAPITests {
     ]
 
     static let exceptions: [String: Set<String>] = [
-        "SystemSourceIO.swift": ["startDownloadingUbiquitousItem", "bookmarkData(", "startAccessingSecurityScopedResource", "FileManager", ".resourceValues("],
+        "SystemSourceIO.swift": ["open(", "startDownloadingUbiquitousItem", "bookmarkData(", "startAccessingSecurityScopedResource", "FileManager", ".resourceValues("],
         "DeviceAccessRecord.swift": ["Data(contentsOf", "contentsOf", ".write(to", "write(", "createDirectory", "FileManager"],
+    ]
+
+    static let metadataDescriptorOpens = [
+        "let rootFD = Darwin.open(mountPoint, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_DIRECTORY)",
     ]
 
     static func violations(in source: String, fileName: String, forbiddenTokens: [String] = forbidden) -> [String] {
         let allowed = exceptions[fileName] ?? []
-        let code = source
+        let lines = source
             .split(separator: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
-            .joined(separator: "\n")
-        return forbiddenTokens.filter { !allowed.contains($0) && code.contains($0) }.map { "\(fileName): \($0)" }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        let code = lines.joined(separator: "\n")
+        var violations = forbiddenTokens.filter { !allowed.contains($0) && code.contains($0) }.map { "\(fileName): \($0)" }
+        if fileName == "SystemSourceIO.swift", forbiddenTokens.contains("open("),
+           lines.contains(where: { $0.contains("open(") && !metadataDescriptorOpens.contains($0) }) {
+            violations.append("\(fileName): open(")
+        }
+        return violations
     }
 
     @Test func scannerDetectsForbiddenCalls() {
@@ -343,6 +622,8 @@ struct ForbiddenAPITests {
         #expect(Self.violations(in: "try FileManager.default.moveItem(at: a, to: b)", fileName: "RelinkEvaluator.swift").contains("RelinkEvaluator.swift: moveItem"))
         #expect(Self.violations(in: "// FileHandle in a comment", fileName: "X.swift").isEmpty)
         #expect(Self.violations(in: "try FileManager.default.evictUbiquitousItem(at: u)", fileName: "SystemSourceIO.swift") == ["SystemSourceIO.swift: evictUbiquitousItem"])
+        #expect(Self.violations(in: "let fd = Darwin.open(url.path, O_RDONLY)", fileName: "SystemSourceIO.swift") == ["SystemSourceIO.swift: open("])
+        #expect(Self.violations(in: "let fd = Darwin.open(url.path, O_EVTONLY | O_RDWR)", fileName: "SystemSourceIO.swift") == ["SystemSourceIO.swift: open("])
 
         let requestedCases = [
             ("contentsOf", "let text = try String(contentsOf: url)"),
@@ -369,7 +650,14 @@ struct ForbiddenAPITests {
         #expect(files.count >= 10)
         var violations: [String] = []
         for file in files {
-            violations += Self.violations(in: try String(contentsOf: file, encoding: .utf8), fileName: file.lastPathComponent)
+            let source = try String(contentsOf: file, encoding: .utf8)
+            violations += Self.violations(in: source, fileName: file.lastPathComponent)
+            if file.lastPathComponent == "SystemSourceIO.swift" {
+                let opens = source.split(separator: "\n")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { $0.contains("open(") && !$0.hasPrefix("//") }
+                #expect(opens == Self.metadataDescriptorOpens)
+            }
         }
         #expect(violations.isEmpty, "\(violations)")
     }

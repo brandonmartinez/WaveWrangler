@@ -14,6 +14,8 @@ public struct RelinkProposal: Sendable, Equatable {
 
     public var key: DeviceAccessKey
     public var candidateFingerprint: FileSystemFingerprint?
+    /// No raw witness is captured during evaluation; only explicit confirmation may mint one.
+    public var candidateRaw: RawSourceIdentity?
     /// `.unknown` (all fields) when this device has no recorded evidence, e.g. a cross-machine open.
     public var comparison: IdentityComparison
     public var availability: Availability
@@ -67,7 +69,7 @@ public struct RelinkEvaluator: Sendable {
             case let .failure(.other(error)): return unavailable(key, .metadataUnavailable(error))
             }
             guard metadata.isRegularFile.value == true else {
-                return RelinkProposal(key: key, candidateFingerprint: metadata.fingerprint, comparison: .unknown(FingerprintField.allCases), availability: .notAFile, alreadyLinkedTo: nil, provenance: context.io.provenance)
+                return RelinkProposal(key: key, candidateFingerprint: metadata.fingerprint, candidateRaw: nil, comparison: .unknown(FingerprintField.allCases), availability: .notAFile, alreadyLinkedTo: nil, provenance: context.io.provenance)
             }
             let comparison = record?.recordedIdentity?.fingerprint.compare(to: metadata.fingerprint) ?? .unknown(FingerprintField.allCases)
             let objectKey = SourceImporter.objectKey(metadata.fingerprint)
@@ -91,6 +93,7 @@ public struct RelinkEvaluator: Sendable {
             return RelinkProposal(
                 key: key,
                 candidateFingerprint: metadata.fingerprint,
+                candidateRaw: nil,
                 comparison: comparison,
                 availability: availability,
                 alreadyLinkedTo: linkedElsewhere,
@@ -107,6 +110,52 @@ public struct RelinkEvaluator: Sendable {
         to record: DeviceAccessRecord?,
         userConfirmed: Bool
     ) throws(RelinkError) -> DeviceAccessRecord {
+        try apply(proposal, to: record, userConfirmed: userConfirmed, rawWitness: nil)
+    }
+
+    /// Only the explicit confirmation path may call the decoder-owned, read-only descriptor gateway.
+    /// An exact device-local candidate is checked again before and after capture; metadata-only
+    /// evaluation and unconfirmed relinks never invoke the gateway.
+    public func applyConfirmed(
+        _ proposal: RelinkProposal,
+        to record: DeviceAccessRecord?,
+        captureRawIdentity: @Sendable (URL, FileSystemFingerprint) async throws -> RawSourceIdentity
+    ) async throws(RelinkError) -> DeviceAccessRecord {
+        guard case let .ready(bookmark, resolvedPath) = proposal.availability,
+              record?.key == proposal.key,
+              proposal.comparison.isExactMatch, proposal.alreadyLinkedTo == nil,
+              let fingerprint = proposal.candidateFingerprint,
+              case let .resolved(scoped, isStale) = context.io.resolveBookmark(bookmark), !isStale,
+              scoped.standardizedFileURL.path == resolvedPath,
+              case let .success(before) = context.withScopedAccess(to: scoped, { context.io.metadata(at: $0) }),
+              before.isRegularFile.value == true, before.isSymbolicLink.value == false,
+              before.isDataless.value == false, before.volumeIsLocal.value == true,
+              before.fingerprint == fingerprint
+        else { throw .sourceMismatch }
+        let raw: RawSourceIdentity
+        do {
+            raw = try await captureRawIdentity(scoped, fingerprint)
+        } catch {
+            throw .sourceMismatch
+        }
+        guard raw.isUsable,
+              fingerprint.fileIdentifier.value == raw.inode,
+              fingerprint.fileSize.value == raw.sizeBytes,
+              fingerprint.volumeUUID.value?.lowercased() == raw.volumeUUID,
+              case let .success(after) = context.withScopedAccess(to: scoped, { context.io.metadata(at: $0) }),
+              after.isRegularFile.value == true, after.isSymbolicLink.value == false,
+              after.isDataless.value == false, after.volumeIsLocal.value == true,
+              after.fingerprint == fingerprint
+        else { throw .sourceMismatch }
+        return try apply(proposal, to: record, userConfirmed: true, rawWitness: raw)
+    }
+
+    private func apply(
+        _ proposal: RelinkProposal,
+        to record: DeviceAccessRecord?,
+        userConfirmed: Bool,
+        rawWitness: RawSourceIdentity?
+    ) throws(RelinkError) -> DeviceAccessRecord {
         guard case let .ready(bookmark, resolvedPath) = proposal.availability else {
             throw .candidateUnavailable(proposal.availability)
         }
@@ -120,11 +169,21 @@ public struct RelinkEvaluator: Sendable {
         updated.lastKnownPath = resolvedPath
         updated.lastKnownVolumeUUID = proposal.candidateFingerprint?.volumeUUID.value
         updated.lastBookmarkRefreshAt = now
-        if !(proposal.comparison.isExactMatch && updated.recordedIdentity != nil), let fingerprint = proposal.candidateFingerprint {
+        if userConfirmed, context.io is SystemSourceIO {
+            guard let fingerprint = proposal.candidateFingerprint,
+                  let raw = rawWitness, raw.isUsable,
+                  fingerprint.fileIdentifier.value == raw.inode,
+                  fingerprint.fileSize.value == raw.sizeBytes,
+                  fingerprint.volumeUUID.value?.lowercased() == raw.volumeUUID
+            else { throw .sourceMismatch }
+            updated.recordedIdentity = RecordedIdentity(
+                fingerprint: fingerprint, confirmation: .userConfirmed, recordedAt: now, rawWitness: raw
+            )
+        } else if !(proposal.comparison.isExactMatch && updated.recordedIdentity != nil),
+                  let fingerprint = proposal.candidateFingerprint {
             updated.recordedIdentity = RecordedIdentity(fingerprint: fingerprint, confirmation: .userConfirmed, recordedAt: now)
-        } else if userConfirmed, var identity = updated.recordedIdentity {
-            identity.confirmation = .userConfirmed
-            updated.recordedIdentity = identity
+        } else if userConfirmed {
+            updated.recordedIdentity?.confirmation = .userConfirmed
         }
         updated.latestObservation = nil
         updated.relinkHistory.append(RelinkEvent(at: now, comparison: proposal.comparison, userConfirmed: userConfirmed))
@@ -134,11 +193,15 @@ public struct RelinkEvaluator: Sendable {
     /// Marks the recorded baseline as user-confirmed (the user verified the source is the right one).
     public func confirmIdentity(of record: DeviceAccessRecord) -> DeviceAccessRecord {
         var updated = record
+        if context.io is SystemSourceIO {
+            updated.recordedIdentity?.rawWitness = nil
+            return updated
+        }
         updated.recordedIdentity?.confirmation = .userConfirmed
         return updated
     }
 
     private func unavailable(_ key: DeviceAccessKey, _ availability: RelinkProposal.Availability) -> RelinkProposal {
-        RelinkProposal(key: key, candidateFingerprint: nil, comparison: .unknown(FingerprintField.allCases), availability: availability, alreadyLinkedTo: nil, provenance: context.io.provenance)
+        RelinkProposal(key: key, candidateFingerprint: nil, candidateRaw: nil, comparison: .unknown(FingerprintField.allCases), availability: availability, alreadyLinkedTo: nil, provenance: context.io.provenance)
     }
 }
