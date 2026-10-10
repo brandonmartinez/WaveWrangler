@@ -1218,3 +1218,11 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **Operational disposition:** This was a terminal **LOCAL refusal** only: no SSH, Mini quiet preflight, staging, native process, test, or xcresult occurred. The JIT is frozen and may not be reused. #440 remains source-approved; its full gate is **NOT RUN**, with no merge or [#27](https://github.com/brandonmartinez/WaveWrangler/issues/27) closure. Do not infer a cause beyond the recorded local failure before evidence.
 
 **Next boundary:** The author may diagnose only with a fake local fixture and the frozen script. Any repair requires a new whole-pair review and a new JIT before another attempt.
+
+### 2026-10-10: Stop #443 host path after second private operator rejection
+
+**By:** Independent whole source-and-operator review, separate from #443's source-only approval at `f7fc7d6b`.
+
+**What:** The second private #443 operator at SHA `df2010d9b1994c0c063c7f13a0c078bcbba0f78e480e3b3e54a1948851c9693b`, with fixture `473f03ef…`, was independently **REJECTED** before any host activity. It does not exclude extra SSH configuration identities or host-key sources; discards probe stdout and per-cell identity while leaving the sandbox stream unbound to the receipt needed for independent cell review; and permits a `/bin/ps` exception during timeout/interrupt cleanup that can leave an owned process group.
+
+**Operational disposition:** The prior `f7fc7d6b` source-only approval is unchanged. No JIT, SSH, physical-Mini, build, socket, model, or media activity occurred, and neither [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23) nor [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32) is closed. Operator authors `8d556563` and `f97a563b` are locked out of their respective rejected artifacts. Do not automatically assign another operator author: the #443 host path is **STOPPED** until separately authorized.
