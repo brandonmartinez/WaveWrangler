@@ -1,6 +1,7 @@
 import AudioToolbox
 import Darwin
 import Foundation
+import WWSources
 
 /// The production `SourceContentIO`. This is the only file in the codebase allowed to open source
 /// content, and it opens it read-only:
@@ -29,10 +30,105 @@ package struct SystemSourceContentIO: SourceContentIO {
     package var readPolicyObserver: (@Sendable (Int32) -> Void)?
     /// Test only: replaces the descriptor open so the read-only access-mode check can be exercised.
     package var descriptorOpener: (@Sendable (UnsafePointer<CChar>) -> Int32)?
+    /// Negative-only challenge after real fstat; never substitutes a matching observation.
+    package var rawIdentityChallenge: (@Sendable (RawSourceIdentity) -> RawSourceIdentity)?
+    /// Test-only root descriptor for rejecting an invalid mount before any content read.
+    package var volumeRootDescriptor: Int32?
     #endif
 
     package func openForDecoding(_ url: URL) throws(DecodeFailure) -> any DecodingContentReader {
         try SystemDecodingReader.make(url, gateway: self)
+    }
+
+    fileprivate func openReadOnlySourceDescriptor(_ url: URL, gateway: SystemSourceContentIO) throws(DecodeFailure) -> Int32 {
+        guard url.isFileURL else { throw .notFound }
+        let (descriptor, openErrno): (Int32, Int32) = withoutMaterializingDataless {
+            url.withUnsafeFileSystemRepresentation { path -> (Int32, Int32) in
+                guard let path else { return (-1, ENOENT) }
+                var result: Int32
+                repeat {
+                    #if DEBUG
+                    if let opener = gateway.descriptorOpener {
+                        result = opener(path)
+                        continue
+                    }
+                    #endif
+                    result = Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+                } while result < 0 && errno == EINTR
+                return (result, result < 0 ? errno : 0)
+            }
+        }
+        guard descriptor >= 0 else { throw failure(forErrno: openErrno) }
+        let statusFlags = fcntl(descriptor, F_GETFL)
+        guard statusFlags >= 0, statusFlags & O_ACCMODE == O_RDONLY else {
+            Darwin.close(descriptor)
+            throw .notOpenedReadOnly
+        }
+        return descriptor
+    }
+
+    fileprivate func observedRawIdentity(_ fd: Int32, gateway: SystemSourceContentIO) -> RawSourceIdentity? {
+        #if DEBUG
+        if let rootFD = gateway.volumeRootDescriptor {
+            return RawSourceIdentity.onDescriptor(fd, volumeRootDescriptor: rootFD)
+        }
+        #endif
+        return RawSourceIdentity.onDescriptor(fd)
+    }
+
+    /// The caller must already have obtained a confirmed witness under a separate authority gate.
+    package func openForDecoding(_ url: URL, matching witness: RawSourceIdentity) throws(DecodeFailure) -> any DecodingContentReader {
+        try SystemDecodingReader.make(url, gateway: self, expected: witness)
+    }
+
+    /// Descriptor metadata only: no AudioFile or ExtAudioFile call is reached.
+    package func captureRawIdentity(
+        _ url: URL, matching before: SourceMetadata, io: any SourceIO
+    ) throws(DecodeFailure) -> RawSourceIdentity {
+        switch before.volumeIsLocal.value {
+        case true?: break
+        case false?: throw .notMaterialized
+        case nil: throw .residencyUnknown
+        }
+        let fingerprint = before.fingerprint
+        guard let fileID = fingerprint.fileIdentifier.value,
+              let size = fingerprint.fileSize.value,
+              let volume = fingerprint.volumeUUID.value,
+              fingerprint.creationDate.isKnown,
+              fingerprint.contentModificationDate.isKnown
+        else { throw .metadataUnavailable(nil) }
+        var pathBefore = stat()
+        guard lstat(url.path, &pathBefore) == 0 else { throw .sourceIdentityMismatch }
+        let descriptor = try openReadOnlySourceDescriptor(url, gateway: self)
+        defer { Darwin.close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0 else { throw .readFailed(errno: errno) }
+        guard info.st_mode & S_IFMT == S_IFREG else { throw .notARegularFile }
+        guard info.st_flags & UInt32(SF_DATALESS) == 0 else { throw .notMaterialized }
+        guard info.st_size > 0 else { throw .emptyFile }
+        guard let raw = observedRawIdentity(descriptor, gateway: self),
+              raw.isUsable, raw.matches(info), raw.matches(pathBefore),
+              raw.inode == fileID, raw.sizeBytes == size, raw.volumeUUID == volume.lowercased()
+        else { throw .sourceIdentityMismatch }
+        var pathAfter = stat()
+        guard lstat(url.path, &pathAfter) == 0, raw.matches(pathAfter) else {
+            throw .sourceIdentityMismatch
+        }
+        guard case let .success(after) = io.metadata(at: url),
+              after.isRegularFile.value == true,
+              after.isSymbolicLink.value == false,
+              after.isDataless.value == false,
+              after.volumeIsLocal.value == true,
+              fingerprint == after.fingerprint
+        else { throw .sourceIdentityMismatch }
+        var descriptorAfter = stat()
+        var pathFinal = stat()
+        guard fstat(descriptor, &descriptorAfter) == 0,
+              lstat(url.path, &pathFinal) == 0,
+              let rawAfter = observedRawIdentity(descriptor, gateway: self),
+              rawAfter == raw, raw.matches(descriptorAfter), raw.matches(pathFinal)
+        else { throw .sourceIdentityMismatch }
+        return raw
     }
 }
 
@@ -152,6 +248,10 @@ private final class SystemDecodingReader: DecodingContentReader {
     private let audioFile: AudioFileID
     private let extFile: ExtAudioFileRef
     private let bufferList: UnsafeMutableAudioBufferListPointer
+    private let expectedRaw: RawSourceIdentity?
+    #if DEBUG
+    private let rawIdentityChallenge: (@Sendable (RawSourceIdentity) -> RawSourceIdentity)?
+    #endif
     private var streamFramesRead: Int64 = 0
     private var isClosed = false
 
@@ -160,44 +260,26 @@ private final class SystemDecodingReader: DecodingContentReader {
         file: ReadOnlyDescriptor,
         retainedFile: Unmanaged<ReadOnlyDescriptor>,
         audioFile: AudioFileID,
-        extFile: ExtAudioFileRef
+        extFile: ExtAudioFileRef,
+        expectedRaw: RawSourceIdentity?,
+        gateway: SystemSourceContentIO
     ) {
         self.facts = facts
         self.file = file
         self.retainedFile = retainedFile
         self.audioFile = audioFile
         self.extFile = extFile
+        self.expectedRaw = expectedRaw
+        #if DEBUG
+        rawIdentityChallenge = gateway.rawIdentityChallenge
+        #endif
         bufferList = AudioBufferList.allocate(maximumBuffers: Int(facts.channelsPerFrame))
     }
 
     deinit { close() }
 
-    static func make(_ url: URL, gateway: SystemSourceContentIO) throws(DecodeFailure) -> SystemDecodingReader {
-        guard url.isFileURL else { throw .notFound }
-        let (descriptor, openErrno): (Int32, Int32) = withoutMaterializingDataless {
-            url.withUnsafeFileSystemRepresentation { path -> (Int32, Int32) in
-                guard let path else { return (-1, ENOENT) }
-                var result: Int32
-                repeat {
-                    #if DEBUG
-                    if let opener = gateway.descriptorOpener {
-                        result = opener(path)
-                        continue
-                    }
-                    #endif
-                    result = Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
-                } while result < 0 && errno == EINTR
-                return (result, result < 0 ? errno : 0)
-            }
-        }
-        guard descriptor >= 0 else { throw failure(forErrno: openErrno) }
-
-        // O_RDONLY is 0, so the open flags alone can't prove read-only access; the descriptor can.
-        let statusFlags = fcntl(descriptor, F_GETFL)
-        guard statusFlags >= 0, statusFlags & O_ACCMODE == O_RDONLY else {
-            Darwin.close(descriptor)
-            throw .notOpenedReadOnly
-        }
+    static func make(_ url: URL, gateway: SystemSourceContentIO, expected: RawSourceIdentity? = nil) throws(DecodeFailure) -> SystemDecodingReader {
+        let descriptor = try gateway.openReadOnlySourceDescriptor(url, gateway: gateway)
 
         var info = stat()
         guard fstat(descriptor, &info) == 0 else {
@@ -216,6 +298,23 @@ private final class SystemDecodingReader: DecodingContentReader {
         guard info.st_size > 0 else {
             Darwin.close(descriptor)
             throw .emptyFile
+        }
+        if let expected {
+            let observed = gateway.observedRawIdentity(descriptor, gateway: gateway)
+            guard expected.isUsable, let observed else {
+                Darwin.close(descriptor)
+                throw .sourceIdentityMismatch
+            }
+            #if DEBUG
+            let challenged = gateway.rawIdentityChallenge?(observed) ?? observed
+            #else
+            let challenged = observed
+            #endif
+            guard challenged == expected, observed == expected,
+                  observed.matches(info) else {
+                Darwin.close(descriptor)
+                throw .sourceIdentityMismatch
+            }
         }
 
         let file = ReadOnlyDescriptor(descriptor: descriptor, sizeBytes: Int64(info.st_size), gateway: gateway)
@@ -350,7 +449,10 @@ private final class SystemDecodingReader: DecodingContentReader {
             containerLength: length,
             openedFile: openedState(info)
         )
-        return SystemDecodingReader(facts: facts, file: file, retainedFile: retained, audioFile: audioFile, extFile: extFile)
+        return SystemDecodingReader(
+            facts: facts, file: file, retainedFile: retained, audioFile: audioFile, extFile: extFile,
+            expectedRaw: expected, gateway: gateway
+        )
     }
 
     func readRawFrames(into buffer: RawDecodeBuffer) throws(DecodeFailure) -> Int {
@@ -379,6 +481,17 @@ private final class SystemDecodingReader: DecodingContentReader {
         precondition(!isClosed, "state after close")
         var info = stat()
         guard fstat(file.descriptor, &info) == 0 else { throw .readFailed(errno: errno) }
+        if let expectedRaw {
+            guard let observed = RawSourceIdentity.onDescriptor(file.descriptor),
+                  observed == expectedRaw, observed.matches(info) else {
+                throw .sourceChangedDuringDecode
+            }
+            #if DEBUG
+            if let rawIdentityChallenge, rawIdentityChallenge(observed) != expectedRaw {
+                throw .sourceChangedDuringDecode
+            }
+            #endif
+        }
         return openedState(info)
     }
 

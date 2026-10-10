@@ -7,6 +7,7 @@ import WWOrganizer
 @Observable
 final class TranscriptReviewState {
     var selectedOccurrenceID: String? = TranscriptReviewShellPresentation.occurrences.first?.id
+    var selectedProposalID: String? = TranscriptReviewShellPresentation.proposals.first?.id
     var filterText = ""
 
     var visibleOccurrences: [TranscriptReviewShellOccurrence] {
@@ -18,6 +19,10 @@ final class TranscriptReviewState {
 
     var selectedOccurrence: TranscriptReviewShellOccurrence? {
         TranscriptReviewShellPresentation.occurrences.first { $0.id == selectedOccurrenceID }
+    }
+
+    var selectedProposal: TranscriptReviewShellProposal? {
+        TranscriptReviewShellPresentation.proposals.first { $0.id == selectedProposalID }
     }
 }
 
@@ -53,11 +58,12 @@ struct TranscriptReviewView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 12) {
                             transcriptPane
-                                .frame(minHeight: 210, idealHeight: 250)
+                                .fixedSize(horizontal: false, vertical: true)
                             timelinePane
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .accessibilityIdentifier("ww.review.contentScroll")
                 } else {
                     ScrollView(.vertical) {
                         HStack(alignment: .top, spacing: 12) {
@@ -68,7 +74,7 @@ struct TranscriptReviewView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
-                    .accessibilityIdentifier("ww.review.wideContentScroll")
+                    .accessibilityIdentifier("ww.review.contentScroll")
                 }
             }
         }
@@ -91,11 +97,24 @@ struct TranscriptReviewView: View {
                     state: state,
                     pointSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize))
                 )
-                .frame(minHeight: 160)
+                .frame(minHeight: 120)
+
+                Text("Synthetic-only contextual filler proposals")
+                    .wwFont(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("ww.review.proposals.heading")
+
+                ProposalTable(
+                    state: state,
+                    pointSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize))
+                )
+                .frame(height: ProposalTable.contentHeight(
+                    pointSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize))
+                ))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
-            Text("Transcript occurrences")
+            Text("Transcript and proposals")
                 .wwFont(.headline)
                 .accessibilityAddTraits(.isHeader)
         }
@@ -304,5 +323,154 @@ private final class OccurrenceCellView: NSTableCellView {
         let top = max(0, (bounds.height - titleHeight - noteHeight - 3) / 2)
         title.frame = NSRect(x: 6, y: top, width: width, height: titleHeight)
         note.frame = NSRect(x: 6, y: top + titleHeight + 3, width: width, height: noteHeight)
+    }
+}
+
+private struct ProposalTable: NSViewRepresentable {
+    let state: TranscriptReviewState
+    let pointSize: CGFloat
+
+    static func rowHeight(pointSize: CGFloat) -> CGFloat {
+        max(70, (pointSize * 3.5).rounded(.up) + 16)
+    }
+
+    static func contentHeight(pointSize: CGFloat) -> CGFloat {
+        CGFloat(TranscriptReviewShellPresentation.proposals.count) * rowHeight(pointSize: pointSize)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(state: state) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let table = ProposalTableView()
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("proposal"))
+        column.resizingMask = .autoresizingMask
+        table.addTableColumn(column)
+        table.headerView = nil
+        table.dataSource = context.coordinator
+        table.delegate = context.coordinator
+        table.allowsEmptySelection = true
+        table.selectionHighlightStyle = .none
+        table.backgroundColor = .controlBackgroundColor
+        table.setAccessibilityIdentifier("ww.review.proposals")
+        table.setAccessibilityLabel("Synthetic-only contextual filler proposals")
+        context.coordinator.table = table
+
+        let scroll = NSScrollView()
+        scroll.documentView = table
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = true
+        scroll.backgroundColor = .controlBackgroundColor
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        context.coordinator.state = state
+        context.coordinator.update(selectedID: state.selectedProposalID, pointSize: pointSize)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+        var state: TranscriptReviewState
+        weak var table: NSTableView?
+        private var rows = TranscriptReviewShellPresentation.proposals
+        private var syncingSelection = false
+        private var pointSize: CGFloat = 0
+
+        init(state: TranscriptReviewState) { self.state = state }
+
+        func update(selectedID: String?, pointSize: CGFloat) {
+            guard let table else { return }
+            let changed = self.pointSize != pointSize
+            self.pointSize = pointSize
+            table.setAccessibilityValue("\(rows.count) provisional synthetic proposals; none verified or actionable")
+            syncingSelection = true
+            defer { syncingSelection = false }
+            if changed {
+                table.rowHeight = ProposalTable.rowHeight(pointSize: pointSize)
+                table.reloadData()
+            }
+            let selectedRow = rows.firstIndex { $0.id == selectedID } ?? -1
+            guard table.selectedRow != selectedRow else { return }
+            table.selectRowIndexes(selectedRow < 0 ? [] : IndexSet(integer: selectedRow), byExtendingSelection: false)
+            if selectedRow >= 0 { table.scrollRowToVisible(selectedRow) }
+        }
+
+        func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+        func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+            OccurrenceRowView()
+        }
+
+        func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+            let identifier = NSUserInterfaceItemIdentifier("proposal")
+            let cell = tableView.makeView(withIdentifier: identifier, owner: nil) as? ProposalCellView
+                ?? ProposalCellView()
+            cell.configure(rows[row], pointSize: pointSize)
+            return cell
+        }
+
+        func tableViewSelectionDidChange(_ notification: Notification) {
+            guard !syncingSelection, let table else { return }
+            let row = table.selectedRow
+            state.selectedProposalID = rows.indices.contains(row) ? rows[row].id : nil
+        }
+    }
+}
+
+private final class ProposalTableView: NSTableView {
+    override func mouseDown(with event: NSEvent) {
+        _ = window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
+    }
+}
+
+private final class ProposalCellView: NSTableCellView {
+    private let title = EntryLabel(labelWithString: "")
+    private let note = NSTextField(labelWithString: "")
+
+    override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        identifier = NSUserInterfaceItemIdentifier("proposal")
+        setAccessibilityElement(true)
+        setAccessibilityRole(.cell)
+        title.lineBreakMode = .byTruncatingTail
+        note.lineBreakMode = .byTruncatingTail
+        title.backgroundColor = .controlBackgroundColor
+        title.drawsBackground = true
+        title.setAccessibilityElement(false)
+        note.backgroundColor = .controlBackgroundColor
+        note.drawsBackground = true
+        note.setAccessibilityElement(false)
+        addSubview(title)
+        addSubview(note)
+        textField = title
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func configure(_ proposal: TranscriptReviewShellProposal, pointSize: CGFloat) {
+        let details = "\(proposal.rationale) \(proposal.timingState) \(proposal.sourceState) \(proposal.protectionState) \(proposal.status)"
+        title.stringValue = "\(proposal.title) — Provisional"
+        title.font = NSFont.systemFont(ofSize: pointSize)
+        title.textColor = .labelColor
+        setAccessibilityIdentifier("ww.review.proposal.\(proposal.id)")
+        setAccessibilityLabel("Candidate \(proposal.id): \(proposal.title) — Provisional")
+        setAccessibilityValue(details)
+        note.isHidden = true
+        toolTip = details
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        let width = max(0, bounds.width - 12)
+        let titleHeight = title.intrinsicContentSize.height
+        let top = max(0, (bounds.height - titleHeight) / 2)
+        title.frame = NSRect(x: 6, y: top, width: width, height: titleHeight)
+        note.frame = .zero
     }
 }

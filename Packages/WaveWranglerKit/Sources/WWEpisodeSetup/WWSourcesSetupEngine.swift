@@ -187,8 +187,9 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     /// Import plans keyed by scan token, so concurrent scans in different windows never mix.
     private var plans: [UUID: ImportPlan] = [:]
     private var isShutDown = false
-    private var proposals: [SourceID: (url: URL, proposal: RelinkProposal)] = [:]
+    private var proposals: [SourceID: (url: URL, proposal: RelinkProposal, previous: DeviceAccessRecord?)] = [:]
     private var previousRecords: [UUID: DeviceAccessRecord?] = [:]
+    private let captureRawIdentity: (@Sendable (URL, FileSystemFingerprint) async throws -> RawSourceIdentity)?
     private var defaultsObserver: NSObjectProtocol?
     /// Engine-owned work that touches the monitor; shutdown cancels and awaits it before stopping.
     private var tasks: [UUID: Task<Void, Never>] = [:]
@@ -199,11 +200,12 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
 
     /// `connectivity`: when given, each network reconnect retries "No connection" downloads while
     /// downloads are on (T30); nil never retries automatically.
-    public init(showID: ShowID, store: any DeviceAccessStore, context: SourceAccessContext = SourceAccessContext(), preference: (any SourceDownloadPreference)? = nil, transferPolicy: TransferPolicy = TransferPolicy(), connectivity: (any ConnectivitySignal)? = nil) {
+    public init(showID: ShowID, store: any DeviceAccessStore, context: SourceAccessContext = SourceAccessContext(), preference: (any SourceDownloadPreference)? = nil, transferPolicy: TransferPolicy = TransferPolicy(), connectivity: (any ConnectivitySignal)? = nil, captureRawIdentity: (@Sendable (URL, FileSystemFingerprint) async throws -> RawSourceIdentity)? = nil) {
         self.showID = showID
         self.store = store
         self.context = context
         self.preference = preference
+        self.captureRawIdentity = captureRawIdentity
         let setting = SourceAvailabilitySetting(downloadSourcesAutomatically: preference?.downloadsAutomatically)
         monitor = SourceAvailabilityMonitor(showID: showID, store: store, context: context, setting: setting, transferPolicy: transferPolicy)
         monitor.start()
@@ -392,20 +394,66 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         let others = (try? await store.records(in: showID)) ?? []
         let evaluator = RelinkEvaluator(context: context)
         let proposal = await Task.detached { evaluator.evaluate(candidate: url, for: key, record: record, otherRecords: others) }.value
-        proposals[sourceID] = (url, proposal)
+        proposals[sourceID] = (url, proposal, record)
         return WWSourcesStatusMapping.comparison(recorded: record, proposal: proposal, chosenName: url.lastPathComponent, otherSourceName: sourceNames)
     }
 
     public func commitRelink(_ sourceID: SourceID, to url: URL, identity: IdentityStatus) async throws(SourceEngineError) -> RelinkReceipt {
         guard let stored = proposals[sourceID], stored.url == url else { throw .failed(reason: "choose the file again") }
         let key = key(sourceID)
-        let previous = try? await store.record(for: key)
+        let previous: DeviceAccessRecord?
+        do {
+            previous = try await store.record(for: key)
+        } catch {
+            throw .failed(reason: error.localizedDescription)
+        }
+        guard previous?.recordedIdentity == stored.previous?.recordedIdentity,
+              previous?.bookmark == stored.previous?.bookmark,
+              previous?.lastKnownPath == stored.previous?.lastKnownPath,
+              previous?.relinkHistory == stored.previous?.relinkHistory
+        else { throw .failed(reason: "the source record changed; choose the file again") }
+        let evaluator = RelinkEvaluator(context: context)
+        let otherRecords: [DeviceAccessRecord]
+        do {
+            otherRecords = try await store.records(in: showID)
+        } catch {
+            throw .failed(reason: error.localizedDescription)
+        }
+        let current = evaluator.evaluate(candidate: url, for: key, record: previous, otherRecords: otherRecords)
+        guard current.canApply,
+              current.candidateFingerprint == stored.proposal.candidateFingerprint,
+              current.candidateRaw == stored.proposal.candidateRaw,
+              current.comparison == stored.proposal.comparison,
+              current.alreadyLinkedTo == nil, stored.proposal.alreadyLinkedTo == nil
+        else { throw .failed(reason: "the chosen file changed; choose it again") }
         let updated: DeviceAccessRecord
         do {
-            updated = try RelinkEvaluator(context: context).apply(stored.proposal, to: previous, userConfirmed: true)
+            if context.io is SystemSourceIO, let captureRawIdentity {
+                updated = try await evaluator.applyConfirmed(current, to: previous, captureRawIdentity: captureRawIdentity)
+            } else {
+                updated = try evaluator.apply(current, to: previous, userConfirmed: true)
+            }
         } catch {
             throw .failed(reason: "the chosen file can't be used")
         }
+        let latest: DeviceAccessRecord?
+        let latestRecords: [DeviceAccessRecord]
+        do {
+            latest = try await store.record(for: key)
+            latestRecords = try await store.records(in: showID)
+        } catch {
+            throw .failed(reason: error.localizedDescription)
+        }
+        guard latest?.recordedIdentity == previous?.recordedIdentity,
+              latest?.bookmark == previous?.bookmark,
+              latest?.lastKnownPath == previous?.lastKnownPath,
+              latest?.relinkHistory == previous?.relinkHistory
+        else { throw .failed(reason: "the source record changed; choose the file again") }
+        let final = evaluator.evaluate(candidate: url, for: key, record: latest, otherRecords: latestRecords)
+        guard final.canApply, final.alreadyLinkedTo == nil,
+              final.candidateFingerprint == current.candidateFingerprint,
+              final.comparison == current.comparison
+        else { throw .failed(reason: "the chosen file changed; choose it again") }
         do {
             try await store.save(updated)
         } catch {

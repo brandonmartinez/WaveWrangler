@@ -67,6 +67,16 @@ public struct SystemSourceIO: SourceIO {
         ))
     }
 
+    /// Called only with a source descriptor already held open by the content gateway.
+    /// Opens metadata for its mount, not source bytes.
+    package static func rawIdentity(onDescriptor fd: Int32) -> RawSourceIdentity? {
+        guard let mountPoint = RawSourceIdentity.mountPoint(onDescriptor: fd) else { return nil }
+        let rootFD = Darwin.open(mountPoint, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_DIRECTORY)
+        guard rootFD >= 0 else { return nil }
+        defer { _ = Darwin.close(rootFD) }
+        return RawSourceIdentity.onDescriptor(fd, volumeRootDescriptor: rootFD)
+    }
+
     public func listItems(under directory: URL) -> DirectoryListing {
         final class ErrorCounter: @unchecked Sendable { var count = 0 }
         let counter = ErrorCounter()

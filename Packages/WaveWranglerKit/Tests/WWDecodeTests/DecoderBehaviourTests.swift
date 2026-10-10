@@ -486,6 +486,8 @@ struct DecoderBehaviourTests {
     static let preflightCases: [PreflightCase] = [
         PreflightCase(testDescription: "dataless", adjust: { $0.modify { $0.isDataless = .known(true) } }, expected: .notMaterialized),
         PreflightCase(testDescription: "residency unknown", adjust: { $0.modify { $0.isDataless = .unknown } }, expected: .residencyUnknown),
+        PreflightCase(testDescription: "known nonlocal volume", adjust: { $0.modify { $0.volumeIsLocal = .known(false) } }, expected: .notMaterialized),
+        PreflightCase(testDescription: "volume locality unknown", adjust: { $0.modify { $0.volumeIsLocal = .unknown } }, expected: .residencyUnknown),
         PreflightCase(testDescription: "iCloud not downloaded", adjust: { $0.modify { $0.ubiquitous.downloadingStatus = .known(.notDownloaded) } }, expected: .notMaterialized),
         PreflightCase(testDescription: "iCloud downloading", adjust: { $0.modify { $0.ubiquitous.isDownloading = .known(true) } }, expected: .notMaterialized),
         PreflightCase(testDescription: "unreadable", adjust: { $0.modify { $0.isReadable = .known(false) } }, expected: .permissionDenied),
