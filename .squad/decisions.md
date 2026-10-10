@@ -1136,3 +1136,111 @@ The first physical-Mini [#433](https://github.com/brandonmartinez/WaveWrangler/p
 Subsequent different-author repairs passed fresh one-pass independent **SOURCE** review: Lead approved [#432](https://github.com/brandonmartinez/WaveWrangler/pull/432) revision `27e3df2d503e56810dcea676adb67981e283e3d3`, which refuses a retained Primary snapshot after canonical Backup promotion before model open; Tester approved [#436](https://github.com/brandonmartinez/WaveWrangler/pull/436) revision `9efbc16f91ce28e6823a6d85e363cd3dde9b095e`, restoring unchanged confirmed local relink through the guarded WWDecode witness and refusing duplicate candidates. Each distinct revision author non-force fast-forwarded the **existing** draft branch from its verified frozen rejected head. Both PRs remain main-target drafts, have no closing-issue references, and disclose the unrun exact-head full gate and still-unaccepted product paths. The #432 callback is caller-controlled outside its app binding; the #436 changed/unknown-baseline relink remains refused. No original rejected author revised either artifact.
 
 Lead independently **APPROVED the private #438 full-gate harness only** after checking its three script hashes, mode, syntax and fail-closed JIT, seven-sample quiet-before-staging, exit and xcresult boundaries. No Mini JIT/staging/full run is granted until #433's terminal result and a fresh global/host preflight. Separately, Tester **APPROVED SOURCE** at `22a7a293c89e31d9036a2389b0dabbba6ba57b42` for a different Mac author's recovery-only Return-default stopgap, with unchanged-product RED, unhosted 18/18 and previously authorized Mini/VM T17 rounds; this is not a fresh full gate, VoiceOver acceptance, new draft or merge. A distinct Lead session is preparing a replacement *private* [#435](https://github.com/brandonmartinez/WaveWrangler/pull/435) runner after the first runner's concrete preflight/JIT review rejection; no #435 host execution is authorized.
+
+### 2026-10-10: Record decoder holdout pass and preserve outstanding M3 gates
+
+**By:** M3 coordinator, from independently reviewed one-shot receipt and current main dispositions.
+
+**What:** [#436](https://github.com/brandonmartinez/WaveWrangler/pull/436) merged to main at `03c34982c1af6230bd49889c7b753c938470f29c`. Its separately reviewed M3-DECODE-003 one-shot holdout ran once on a clean physical Mini checkout at exact source head `9efbc16f91ce28e6823a6d85e363cd3dde9b095e`, with the pinned WWDecode/test trees, and passed `DecodeCalibrationTests/holdoutSplitMeetsEveryFrozenGate` (1/1; Swift, timeout and driver exits 0). The 520 deterministic synthetic cases plus output-settings record produced 521 ordered JSONL rows with the recorded digest; there were zero planted mutations or publications, the checkout remained clean, and no post-run native root or GUI holder remained. This post-merge result supersedes only the current status of the revision-3 holdout; historical M2 holdouts were not rerun. The public scoped record is on [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23#issuecomment-6093569045); [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23) and [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32) remain open.
+
+**Operational disposition:** [#438](https://github.com/brandonmartinez/WaveWrangler/pull/438) merged to main at `584f875d` after its 102/102 full and 16/16 VM results; [#22](https://github.com/brandonmartinez/WaveWrangler/issues/22) remains open. [#435](https://github.com/brandonmartinez/WaveWrangler/pull/435) remains unrun after the rejected third-author private runner pair; no fourth runner or JIT is authorized without coordinator decision. [#439](https://github.com/brandonmartinez/WaveWrangler/pull/439)'s replacement runner is statically approved and its consumed-JIT Mini full is running, not passed. [#440](https://github.com/brandonmartinez/WaveWrangler/pull/440) remains dirty/conflicted with main and has no JIT or full run. The working-Mac full gates for [#432](https://github.com/brandonmartinez/WaveWrangler/pull/432) and [#441](https://github.com/brandonmartinez/WaveWrangler/pull/441) remain incomplete; the old [#387](https://github.com/brandonmartinez/WaveWrangler/issues/387) campaign remains stopped.
+
+**Unchanged:** This synthetic evidence does not authorize recordings, model or network inference, Backup access, source opens or writes, speech-rights claims, product acceptance, or closure of any remaining M3 gate.
+
+### 2026-10-10: Merge bounded #439 synthetic source proof; retain held M3 gates
+
+**By:** M3 coordinator, from independent source review and terminal physical-Mini receipt adjudication.
+
+**What:** [#439](https://github.com/brandonmartinez/WaveWrangler/pull/439) received independent **SOURCE** approval at exact `40dad8e4`. Its corrected private runner pair was independently reviewed at launcher `4a314ad9` and remote `71b021b6`; fresh one-use JIT `244412e081cf169809c84b139ce79632` was consumed for a physical-Mini exact-head `scripts/test.sh` run. Script, timeout, tee, SSH, and driver exits were all 0. The run recorded 14 ordered stages, thirteen positive Swift completions and one native `TEST SUCCEEDED`; a direct read of the sole xcresult reported Passed 102/102, failed 0, skipped 0, expected failures 0. The tested checkout was clean at the exact head and post-run checks found no native roots and no GUI holder. The terminal log and remote receipt SHA-256 values are `3959f7577e40ff99f1bb78c27cc20ab276479997721816cf8eb184a14a5bab76` and `f9fea5b037f630b63fdc00e6246708605194e060fbbb870e498a869df24aa8b7`, respectively. #439 merged to main at `1d3794c6b00090513e391c1a03722a5aa5c229c8`; no issue was closed.
+
+**Operational disposition:** This is bounded synthetic source evidence only, not [#41](https://github.com/brandonmartinez/WaveWrangler/issues/41) or M3 acceptance. [#435](https://github.com/brandonmartinez/WaveWrangler/pull/435) full remains **NOT RUN** after its third-author bundle runner was rejected. [#441](https://github.com/brandonmartinez/WaveWrangler/pull/441) full remains incomplete; replacement-runner review was **REJECTED** and the new AX unit is **STOPPED** per user direction. [#440](https://github.com/brandonmartinez/WaveWrangler/pull/440) is in progress but unedited: its old-main merge is paused for reconciliation with current main.
+
+**Unchanged:** No user original source-content open or write, recording, model or network inference, Backup access, speech-rights claim, protected product path, or issue acceptance follows from this synthetic source and test evidence.
+
+### 2026-10-10: Retain blocked Mini paths and bound one #432 transport validation
+
+**By:** M3 relay under Brandon's until-08:00 EDT delegation; this is a relay-selected operational disposition, not direct user approval or a waiver.
+
+**What:** Keep [#435](https://github.com/brandonmartinez/WaveWrangler/pull/435) **BLOCKED**: no fourth per-PR transport author or JIT is permitted tonight. Keep [#441](https://github.com/brandonmartinez/WaveWrangler/pull/441) **BLOCKED**: do not start a runner, product, or GUI attempt, and preserve its essential accessibility failure. Authorize exactly one fresh independent Infra validation transport/lifecycle unit for [#432](https://github.com/brandonmartinez/WaveWrangler/pull/432) at exact `27e3df2d`, using gpt-5.6-terra at medium effort. It may run at most one complete, unmodified `scripts/test.sh` only after independent whole-runner approval, static lifecycle dry-run, and an eligible serial quiet physical-Mini slot. It must use a verified local Git bundle and local SSH, not a GitHub signer; durable regular logging rather than an externally monitored tee pipe; and independently recorded original script, timeout, transport, and xcresult statuses. If runner diagnosis cannot establish reliability, or review rejects it, stop without running the test.
+
+**Why:** The two rejected or incomplete paths retain unresolved safety and essential-accessibility evidence. The single #432 transport unit can retire only its runner/lifecycle uncertainty without creating a parallel Mini lane or repeating uncontrolled retries.
+
+**Reporting obligation:** By 08:00 EDT, report all unresolved M3 gates and the disposition of this one #432 unit. Do not report a run, pass, acceptance, source authority, model/media/OS permission, or product outcome before an authorized execution and independent terminal adjudication.
+
+### 2026-10-10: Stop the one-shot #432 transport validation before execution
+
+**By:** Independent medium-tier whole-pair reviewer under the relay's one-shot, no-cascade authority.
+
+**What:** The reviewer **REJECTED** the frozen private #432 validation helper pair at SHA `2760207f…` and `afa03fd1…`, with launcher `84212dd6…`, before JIT issuance, SSH, physical-Mini activity, or native testing. The remote preflight uses `mkdir -p` to create `REMOTE_ROOT`, then the launcher uses `mkdir` requiring that same path not exist, producing `EEXIST`. The remotely copied/executed Python helper has no fixed independently reviewed hash binding, and pre-driver SSH/SCP failures have no atomic terminal **FAIL** receipt. The fake-script failure fixture passed, but cannot establish reliable production lifecycle handling. Under the relay's one-shot/no-cascade limit, this fresh unit is stopped without a test run.
+
+**Operational disposition:** Source #432 remains **SOURCE-only approved** at exact `27e3df2d`, with two prior incomplete 141/143 full runs, no xcresult, no merge, and no [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23) or [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32) closure. The signal sender remains **UNKNOWN**. No JIT, SSH, Mini, native, model/media, source-authority, or acceptance claim follows.
+
+**Reporting obligation:** Include this stopped unit and every unresolved M3 gate in the required by-08:00 EDT report; do not cascade to another runner, transport author, or test attempt under this relay decision.
+
+### 2026-10-10: Reconcile #440 to current main without promoting its full gate
+
+**By:** #440 author and independent Lead source review.
+
+**What:** [#440](https://github.com/brandonmartinez/WaveWrangler/pull/440) was normally reconciled to post-#439 main as clean pushed merge head `b8cb9c2ad7e592151978b6f211a05af04b69764c`, with parents source-approved `736082b3` and main `1d3794c6`. The only conflict was `Package.swift`; its union retains WWCutPolicy for WWPersistenceTests and WWDecode for WWSources/WWEpisodeSetup. The remaining 31 first-parent integration files byte-match main. The author’s focused 424/424 run exited 0, and independent Lead **APPROVED SOURCE ONLY** on this new head.
+
+**Operational disposition:** No full gate, JIT, host execution, merge, or issue acceptance follows. The existing third-author static-approved runner is bound to old `736082b3`; it must be rebound and independently re-reviewed before any one-use JIT or physical-Mini slot.
+
+### 2026-10-10: Record bounded #443 offline-diagnostic draft status
+
+**By:** #443 author and independent whole-seven-file Lead source review.
+
+**What:** New [#443](https://github.com/brandonmartinez/WaveWrangler/pull/443) is a DEBUG synthetic in-app offline-diagnostic draft at clean pushed `f7fc7d6b`; independent Lead **APPROVED SOURCE ONLY** across its seven-file change. The author’s AppConfiguration tests passed 9/9 and the Release build exited 0. No app, SSH, physical-Mini, network, or endpoint execution occurred. Numeric loopback probe candidates remain **UNKNOWN** even if denials occur, and TCP listen after a denied bind is **UNTESTED**.
+
+**Unchanged:** Effective signed-product entitlements, cold PID-matched FD ingress, sandbox-correlated per-cell denials, linked model/selected-Primary proof, rights/RTF, and all applicable product gates remain open. A distinct operator runner is being drafted; no JIT, Mini slot, or probe may run before independent review. [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23), [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32), and [#27](https://github.com/brandonmartinez/WaveWrangler/issues/27) remain open.
+
+### 2026-10-10: Reject #443 private operator candidate before execution
+
+**By:** Independent private operator review, distinct from the existing #443 source-only approval at `f7fc7d6b`.
+
+**What:** The frozen candidate `offline443.py` at SHA `3ada0fd56…` was **REJECTED** before build, SSH, physical-Mini, or probe activity. It uses wrong-product provenance (`WW_DERIVED_DATA` build override rather than the fixed audited app); treats only nonempty slot/JIT strings as sufficient, allowing reusable concurrent execution; and relies on alias-only host identity. Its preflight takes one launch quiet sample, has no GUI lock or compiler-root check, and can leave detached app/compiler children without owned cleanup after interruption. Raw sandbox lines lack per-cell PID/time/family/operation correlation, so the resulting cell outcomes remain **UNKNOWN**.
+
+**Operational disposition:** Operator-author session `8d556563` is locked out of revising this artifact. Any retry requires a fresh independent author and review. This rejection establishes no [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23) or [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32) proof, and no build, SSH, Mini, probe, entitlement, ingress, or product acceptance occurred.
+
+### 2026-10-10: Approve #440 runner v4 preparation without releasing a run
+
+**By:** Independent private runner review.
+
+**What:** The #440 runner v4 was independently **APPROVED** at driver `9f81ffbd…` and remote `bf5a9656…`, bound to reconciled source head `b8cb9c2`. No JIT or full run has been issued. The coordinator is planning the first serial physical-Mini gate; this review is preparation only.
+
+**Unchanged:** The #440 full gate, host execution, merge, and issue acceptance remain outstanding.
+
+### 2026-10-10: Freeze first #440 runner-v4 JIT after local refusal
+
+**By:** M3 coordinator, recording the first reviewed-v4 one-use JIT attempt.
+
+**What:** The #440 source head `b8cb9c2` and live PR were clean; approved unchanged driver `9f81ffbd…` and remote `bf5a9656…` had local and Mini native-root counts of 0, Mini load 4.96, and GUI `HOLDER none` before issuance. A private mode-0600 coordinator JIT at SHA `b0a3749c…`, nonce `03123e435c5718a4083eb1517bfc0476`, was issued at 05:51Z. Its one `/bin/bash` driver launch exited 1 locally at line 96, `NONCE: unbound variable`. The JIT `.used` marker, local receipt, and local log are absent.
+
+**Operational disposition:** This was a terminal **LOCAL refusal** only: no SSH, Mini quiet preflight, staging, native process, test, or xcresult occurred. The JIT is frozen and may not be reused. #440 remains source-approved; its full gate is **NOT RUN**, with no merge or [#27](https://github.com/brandonmartinez/WaveWrangler/issues/27) closure. Do not infer a cause beyond the recorded local failure before evidence.
+
+**Next boundary:** The author may diagnose only with a fake local fixture and the frozen script. Any repair requires a new whole-pair review and a new JIT before another attempt.
+
+### 2026-10-10: Stop #443 host path after second private operator rejection
+
+**By:** Independent whole source-and-operator review, separate from #443's source-only approval at `f7fc7d6b`.
+
+**What:** The second private #443 operator at SHA `df2010d9b1994c0c063c7f13a0c078bcbba0f78e480e3b3e54a1948851c9693b`, with fixture `473f03ef…`, was independently **REJECTED** before any host activity. It does not exclude extra SSH configuration identities or host-key sources; discards probe stdout and per-cell identity while leaving the sandbox stream unbound to the receipt needed for independent cell review; and permits a `/bin/ps` exception during timeout/interrupt cleanup that can leave an owned process group.
+
+**Operational disposition:** The prior `f7fc7d6b` source-only approval is unchanged. No JIT, SSH, physical-Mini, build, socket, model, or media activity occurred, and neither [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23) nor [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32) is closed. Operator authors `8d556563` and `f97a563b` are locked out of their respective rejected artifacts. Do not automatically assign another operator author: the #443 host path is **STOPPED** until separately authorized.
+
+### 2026-10-10: Hold remaining transport paths through the morning
+
+**By:** M3 relay under Brandon's until-08:00 EDT delegation; this is a time-bounded operational hold, not a waiver.
+
+**What:** Keep the #443 host path **BLOCKED** through the morning: no third operator author, JIT, SSH, physical-Mini, socket, model, or waiver. Preserve both rejected operator artifacts, the `f7fc7d6b` source-only approval, and the unproven offline matrix. Keep [#432](https://github.com/brandonmartinez/WaveWrangler/pull/432) **BLOCKED** through the morning after its fresh replacement-runner rejection. [#435](https://github.com/brandonmartinez/WaveWrangler/pull/435) and [#441](https://github.com/brandonmartinez/WaveWrangler/pull/441) remain **STOPPED**: no new attempts absent a later disposition.
+
+**#440 boundary:** A fake-only diagnosis is permitted solely if the current runner author is not reviewer-locked. Any changed bytes invalidate the earlier runner approval and require independent review plus a new one-use JIT; there is no automatic retry. If the applicable review or attempt cap is exhausted, hold the path.
+
+**Morning report:** Distinguish merged code, source approvals, complete gates, pre-host refusals, incomplete tests, and remaining M3 blockers. Do not collapse any of those categories into acceptance.
+
+### 2026-10-10: Hold #440 after terminal static diagnosis remains inconclusive
+
+**By:** Eligible third runner author session `31185e81`, under the relay's fake-only diagnostic boundary.
+
+**What:** The author left runner v4 unchanged at driver SHA `9f81ffbda5ea544348ddfe7afdcb4801e8bcb3ef49a260d4e7bb6b85ba7bb4ca` and remote SHA `bf5a96568e830bb86989e4bc3f21c651f74a46601bd57635b9b6f520255c77e7`. A fake-only `/bin/bash` diagnosis after both exports confirmed `errexit` and `nounset`: simulated Python failure exits on `NONCE` assignment; with `errexit` disabled, `NONCE` is empty rather than producing the recorded line-96 unbound-variable error. The exact executed bytes and trace are absent, so the first JIT's local failure root cause remains **UNKNOWN** and does not justify a v5 change.
+
+**Operational disposition:** Preserve frozen JIT nonce `03123e…`, with `.used` absent. No SSH, Mini, preflight, native process, or test occurred. #440 remains source-only approved at `b8cb9c2`, its full gate is **NOT RUN**, and no merge or [#27](https://github.com/brandonmartinez/WaveWrangler/issues/27) closure follows. Under the relay's no-auto-retry rule and prior cap, hold #440 through the morning.
