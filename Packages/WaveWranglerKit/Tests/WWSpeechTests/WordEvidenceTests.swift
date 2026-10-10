@@ -110,6 +110,52 @@ struct WordEvidenceTests {
         }
     }
 
+    @Test func timedMultiwordSegmentCannotSupplyLexicalBoundaries() throws {
+        let f = try fixture()
+        let segmentText = "first second"
+        let segmentStartSeconds = 0.0
+        let segmentEndSeconds = 1.0
+        #expect(segmentEndSeconds > segmentStartSeconds)
+        let words = segmentText.split(separator: " ").enumerated().map { index, text in
+            f.word(id: "segment-word-\(index)", text: String(text))
+        }
+        let result = try f.validate(f.batch(words))
+        #expect(result.words.count == 2)
+        #expect(result.words.allSatisfy { $0.boundaries == nil && $0.confidence == nil })
+        #expect(result.boundaryProvenance == [.unavailable, .unavailable])
+
+        let withConfidence = try f.validate(f.batch([
+            f.word(confidence: WordRecognitionConfidence(value: 0.9, units: "raw-engine-value"))
+        ]))
+        #expect(withConfidence.words[0].confidence?.value == 0.9)
+        #expect(withConfidence.words[0].boundaries == nil)
+        #expect(withConfidence.boundaryProvenance == [.unavailable])
+    }
+
+    @Test func punctuationSubwordsAndOverlapCannotMintTimingSupport() throws {
+        let f = try fixture()
+        let tokens = [
+            f.word(id: "prefix", text: "inter"),
+            f.word(id: "punctuation", text: "!"),
+            f.word(id: "suffix", text: "national"),
+        ]
+        let untimed = try f.validate(f.batch(tokens))
+        #expect(untimed.boundaryProvenance == [.unavailable, .unavailable, .unavailable])
+
+        let overlapping = [
+            f.word(id: "first", bounds: SourceWordBoundaries(startFrame: 0, endFrame: 30_000)),
+            f.word(id: "second", bounds: SourceWordBoundaries(startFrame: 10_000, endFrame: 48_000)),
+        ]
+        #expect(throws: SpeechWordEvidenceError.invalidOrder) {
+            try f.validate(f.batch(overlapping))
+        }
+        let nonoverlapping = try f.validate(f.batch([
+            f.word(id: "first", bounds: SourceWordBoundaries(startFrame: 0, endFrame: 10_000)),
+            f.word(id: "second", bounds: SourceWordBoundaries(startFrame: 10_000, endFrame: 48_000)),
+        ]))
+        #expect(nonoverlapping.boundaryProvenance == [.unsupported, .unsupported])
+    }
+
     @Test func generationAndRevisionMismatchRefusePublication() throws {
         let f = try fixture()
         let newOccurrence = try SourceOccurrence(source: f.origin.channel.sourceID,
