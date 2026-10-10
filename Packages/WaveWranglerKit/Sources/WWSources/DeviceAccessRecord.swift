@@ -90,6 +90,32 @@ public protocol DeviceAccessStore: Sendable {
     func removeRecords(in showID: ShowID) async throws
 }
 
+/// Opaque store-issued mutation identity. It is not source identity, permission, or content consent.
+/// In particular, callers cannot create one from a bookmark or from a decoded DeviceAccessRecord.
+public struct DeviceAccessGeneration: Sendable, Hashable {
+    fileprivate let value: UUID
+
+    fileprivate init(_ value: UUID) { self.value = value }
+}
+
+/// A single actor read of one device-local record and its store-issued mutation identity.
+/// Legacy records have no generation. A future content opener must re-fetch the current snapshot
+/// after every await and compare it with its earlier snapshot; neither snapshot grants an open.
+public struct DeviceAccessSnapshot: Sendable, Equatable {
+    public let record: DeviceAccessRecord
+    public let mutationGeneration: DeviceAccessGeneration?
+
+    fileprivate init(record: DeviceAccessRecord, mutationGeneration: DeviceAccessGeneration?) {
+        self.record = record
+        self.mutationGeneration = mutationGeneration
+    }
+}
+
+/// Additive snapshot seam; legacy DeviceAccessStore conformers do not silently gain authority.
+public protocol DeviceAccessSnapshotStore: DeviceAccessStore {
+    func snapshot(for key: DeviceAccessKey) async throws -> DeviceAccessSnapshot?
+}
+
 extension Array where Element == DeviceAccessRecord {
     func sortedByKey() -> [DeviceAccessRecord] {
         sorted { $0.key.description < $1.key.description }
@@ -102,28 +128,70 @@ public enum DeviceAccessStoreError: Error, Equatable, Sendable {
     case unreadable(SourceErrorDescriptor)
 }
 
-public actor InMemoryDeviceAccessStore: DeviceAccessStore {
-    private var records: [DeviceAccessKey: DeviceAccessRecord] = [:]
+public actor InMemoryDeviceAccessStore: DeviceAccessSnapshotStore {
+    private var records: [DeviceAccessKey: DeviceAccessSnapshot] = [:]
 
     public init(_ records: [DeviceAccessRecord] = []) {
-        for record in records { self.records[record.key] = record }
+        for record in records { self.records[record.key] = DeviceAccessSnapshot(record: record, mutationGeneration: nil) }
     }
 
-    public func record(for key: DeviceAccessKey) -> DeviceAccessRecord? { records[key] }
-    public func records(in showID: ShowID) -> [DeviceAccessRecord] { records.values.filter { $0.showID == showID }.sortedByKey() }
-    public func allRecords() -> [DeviceAccessRecord] { Array(records.values).sortedByKey() }
-    public func save(_ record: DeviceAccessRecord) { records[record.key] = record }
-    public func save(_ records: [DeviceAccessRecord]) { for record in records { self.records[record.key] = record } }
+    public func snapshot(for key: DeviceAccessKey) -> DeviceAccessSnapshot? { records[key] }
+    public func record(for key: DeviceAccessKey) -> DeviceAccessRecord? { records[key]?.record }
+    public func records(in showID: ShowID) -> [DeviceAccessRecord] {
+        records.values.map(\.record).filter { $0.showID == showID }.sortedByKey()
+    }
+    public func allRecords() -> [DeviceAccessRecord] { records.values.map(\.record).sortedByKey() }
+    public func save(_ record: DeviceAccessRecord) {
+        records[record.key] = DeviceAccessSnapshot(record: record, mutationGeneration: DeviceAccessGeneration(UUID()))
+    }
+    public func save(_ records: [DeviceAccessRecord]) { for record in records { save(record) } }
     public func removeRecord(for key: DeviceAccessKey) { records[key] = nil }
     public func removeRecords(in showID: ShowID) { records = records.filter { $0.key.showID != showID } }
 }
 
 /// JSON-file store in the app container (Application Support). The store file is the only thing it
 /// ever writes; it never touches sources.
-public actor FileDeviceAccessStore: DeviceAccessStore {
-    private struct Envelope: Codable {
+public actor FileDeviceAccessStore: DeviceAccessSnapshotStore {
+    private static let storeSchemaVersion = 2
+
+    private struct LegacyEnvelope: Decodable {
         var schemaVersion: Int
         var records: [DeviceAccessRecord]
+    }
+
+    private struct Envelope: Codable {
+        var schemaVersion: Int
+        var records: [StoredEntry]
+    }
+
+    private struct StoredEntry: Codable {
+        var record: DeviceAccessRecord
+        var generation: UUID?
+
+        private enum CodingKeys: String, CodingKey { case record, generation }
+
+        init(record: DeviceAccessRecord, generation: UUID?) {
+            self.record = record
+            self.generation = generation
+        }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            record = try container.decode(DeviceAccessRecord.self, forKey: .record)
+            guard container.contains(.generation) else {
+                throw DecodingError.keyNotFound(
+                    CodingKeys.generation,
+                    .init(codingPath: container.codingPath, debugDescription: "Missing access-record generation")
+                )
+            }
+            generation = try container.decodeIfPresent(UUID.self, forKey: .generation)
+        }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(record, forKey: .record)
+            try container.encode(generation, forKey: .generation)
+        }
     }
 
     private struct Header: Codable {
@@ -131,7 +199,7 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
     }
 
     public let fileURL: URL
-    private var cache: [DeviceAccessKey: DeviceAccessRecord]?
+    private var hasObservedFile = false
 
     public init(fileURL: URL) {
         self.fileURL = fileURL
@@ -144,16 +212,15 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
         return base.appendingPathComponent("WaveWrangler/DeviceAccess/source-access-records.json", isDirectory: false)
     }
 
-    public func record(for key: DeviceAccessKey) throws -> DeviceAccessRecord? {
-        try load()[key]
-    }
+    public func snapshot(for key: DeviceAccessKey) throws -> DeviceAccessSnapshot? { try load()[key] }
+    public func record(for key: DeviceAccessKey) throws -> DeviceAccessRecord? { try load()[key]?.record }
 
     public func records(in showID: ShowID) throws -> [DeviceAccessRecord] {
-        try load().values.filter { $0.showID == showID }.sortedByKey()
+        try load().values.map(\.record).filter { $0.showID == showID }.sortedByKey()
     }
 
     public func allRecords() throws -> [DeviceAccessRecord] {
-        try Array(load().values).sortedByKey()
+        try load().values.map(\.record).sortedByKey()
     }
 
     public func save(_ record: DeviceAccessRecord) throws {
@@ -162,7 +229,9 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
 
     public func save(_ records: [DeviceAccessRecord]) throws {
         var all = try load()
-        for record in records { all[record.key] = record }
+        for record in records {
+            all[record.key] = DeviceAccessSnapshot(record: record, mutationGeneration: DeviceAccessGeneration(UUID()))
+        }
         try persist(all)
     }
 
@@ -179,13 +248,12 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
         try persist(kept)
     }
 
-    private func load() throws -> [DeviceAccessKey: DeviceAccessRecord] {
-        if let cache { return cache }
+    private func load() throws -> [DeviceAccessKey: DeviceAccessSnapshot] {
         let data: Data
         do {
             data = try Data(contentsOf: fileURL)
         } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError {
-            cache = [:]
+            if hasObservedFile { throw DeviceAccessStoreError.unreadable(SourceErrorDescriptor(error)) }
             return [:]
         } catch {
             throw DeviceAccessStoreError.unreadable(SourceErrorDescriptor(error))
@@ -197,31 +265,57 @@ public actor FileDeviceAccessStore: DeviceAccessStore {
         } catch {
             throw DeviceAccessStoreError.unreadable(SourceErrorDescriptor(error))
         }
-        guard header.schemaVersion <= DeviceAccessRecord.schemaVersion else {
+        guard header.schemaVersion <= Self.storeSchemaVersion else {
             throw DeviceAccessStoreError.unsupportedNewerSchema(header.schemaVersion)
         }
         do {
-            let envelope = try decoder.decode(Envelope.self, from: data)
-            let records = Dictionary(envelope.records.map { ($0.key, $0) }, uniquingKeysWith: { _, newer in newer })
-            cache = records
+            let entries: [DeviceAccessSnapshot]
+            switch header.schemaVersion {
+            case 1:
+                entries = try decoder.decode(LegacyEnvelope.self, from: data).records.map {
+                    DeviceAccessSnapshot(record: $0, mutationGeneration: nil)
+                }
+            case Self.storeSchemaVersion:
+                entries = try decoder.decode(Envelope.self, from: data).records.map {
+                    DeviceAccessSnapshot(
+                        record: $0.record,
+                        mutationGeneration: $0.generation.map(DeviceAccessGeneration.init)
+                    )
+                }
+            default:
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: [], debugDescription: "Unsupported access-record schema")
+                )
+            }
+            var records: [DeviceAccessKey: DeviceAccessSnapshot] = [:]
+            for entry in entries {
+                guard records.updateValue(entry, forKey: entry.record.key) == nil else {
+                    throw DecodingError.dataCorrupted(
+                        .init(codingPath: [], debugDescription: "Duplicate device access key")
+                    )
+                }
+            }
+            hasObservedFile = true
             return records
         } catch {
             throw DeviceAccessStoreError.unreadable(SourceErrorDescriptor(error))
         }
     }
 
-    private func persist(_ records: [DeviceAccessKey: DeviceAccessRecord]) throws {
+    private func persist(_ records: [DeviceAccessKey: DeviceAccessSnapshot]) throws {
         // Keep the default (full-precision) date encoding: identity baselines compare dates within 1 ms, so a
         // lossy strategy such as `.iso8601` (whole seconds) would turn every source "changed" (#121).
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let envelope = Envelope(
-            schemaVersion: DeviceAccessRecord.schemaVersion,
-            records: Array(records.values).sortedByKey()
+            schemaVersion: Self.storeSchemaVersion,
+            records: records.values.sorted { $0.record.key.description < $1.record.key.description }.map {
+                StoredEntry(record: $0.record, generation: $0.mutationGeneration?.value)
+            }
         )
         let data = try encoder.encode(envelope)
         try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: fileURL, options: [.atomic])
-        cache = records
+        hasObservedFile = true
     }
 }
