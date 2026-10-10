@@ -47,7 +47,13 @@ or a signed sandboxed app inference/offline proof. No media was opened.
 
 `SpeechInference.syntheticModelProbe` checks the current canonical show's
 confirmed, unique Primary selection **before** opening the explicitly supplied
-local model path. It then verifies the pinned model bytes, generates exactly
+local model path. The app's Debug-only caller binds a fresh read to its live,
+registered `ShowDocumentStore`/`ShowDocument`; the package also requires that
+value to match the expected snapshot, refusing when the store is unavailable,
+another window changes the show, or Backup becomes Primary. A retained
+confirmed model alone is not authority. The package callback is caller-controlled;
+it does not attest an open show for clients that bypass the app binding. The diagnostic
+then verifies the pinned model bytes, generates exactly
 32,000 mono 16 kHz sine-wave samples inside the package and calls the bounded
 in-process PCM adapter. It accepts no caller-provided audio, never opens a
 source or Backup and publishes no transcript or edit. An invalid or stale
@@ -70,6 +76,19 @@ with a 440 Hz generated tone. Its successful segment envelope does not
 establish recognizable speech, lexical accuracy, word timing, a signed-app
 runtime, offline denial or physical-Mini resource bounds. No model path,
 model body or source audio is recorded here.
+
+The subsequent authority correction reproduced the retained-snapshot failure
+RED: after the live selection promoted Backup, passing the old confirmed
+snapshot opened the model path and threw `missingModel` rather than
+`unselectedPrimary`. The Debug-only live-store binding now refuses that stale
+snapshot and any changed canonical show before model open; it does not create
+a production source issuer or change the disabled production inference path.
+Focused correction runs passed 15 WWSpeech tests (two opt-in model tests
+skipped), 26 WWCore Primary/Backup selection tests (zero skips), and six
+app-configuration tests including the live-store caller assertion (zero skips).
+The Debug app and Release WWSpeech package built; the Debug app's generated-only
+probe still reported zero words and Backup refusal. This is not an exact-head
+full-suite, approved-media, signed-app model-inference, or M3 acceptance claim.
 
 **Integration remains disabled:** `SpeechInference.infer` and `AppSpeech.infer`
 still refuse `engineUnavailable`. `RecordedIdentity.rawWitness`, ordinary

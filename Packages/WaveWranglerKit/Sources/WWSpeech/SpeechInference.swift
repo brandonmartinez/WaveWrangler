@@ -52,13 +52,15 @@ public struct SpeechInference: Sendable {
     }
 
     #if DEBUG
-    /// Diagnostic only: generates its own PCM after checking the current confirmed Primary.
-    /// A model path cannot supply source audio or authorize an unsealed production decode.
+    /// Diagnostic only. The app must bind currentModel to its live show store; an expected
+    /// snapshot alone cannot authorize opening even a synthetic-only model.
+    @MainActor
     public func syntheticModelProbe(
-        model: ShowDocumentModel, episodeID: EpisodeID, speakerID: SpeakerID,
-        channel: ChannelReference, modelPath: String
+        expecting expected: ShowDocumentModel, episodeID: EpisodeID, speakerID: SpeakerID,
+        channel: ChannelReference, currentModel: () -> ShowDocumentModel?, modelPath: String
     ) throws -> PCMTranscript {
-        try requireSelectedPrimary(model: model, episodeID: episodeID, speakerID: speakerID, channel: channel)
+        guard let current = currentModel(), current == expected else { throw SpeechRefusal.unselectedPrimary }
+        try requireSelectedPrimary(model: current, episodeID: episodeID, speakerID: speakerID, channel: channel)
         let verifiedModel = try VerifiedTinyModel.load(path: modelPath)
         let generated = (0..<32_000).map { index in
             0.1 * sinf(Float(index) * (2 * .pi * 440 / 16_000))

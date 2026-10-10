@@ -135,45 +135,74 @@ struct SpeechBoundaryTests {
     }
 
     #if DEBUG
-    @Test func syntheticModelProbeRequiresCurrentConfirmedPrimaryBeforeOpeningModel() throws {
+    @Test @MainActor func syntheticModelProbeRequiresCurrentConfirmedPrimaryBeforeOpeningModel() throws {
         let f = fixture()
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
         #expect(throws: SpeechRefusal.unselectedPrimary) {
             try SpeechInference().syntheticModelProbe(
-                model: f.model, episodeID: f.episodeID, speakerID: f.speakerID,
-                channel: f.backup, modelPath: missing
+                expecting: f.model, episodeID: f.episodeID, speakerID: f.speakerID,
+                channel: f.backup, currentModel: { f.model }, modelPath: missing
             )
         }
         let provisional = fixture(confirmed: false)
         #expect(throws: SpeechRefusal.unselectedPrimary) {
             try SpeechInference().syntheticModelProbe(
-                model: provisional.model, episodeID: provisional.episodeID,
-                speakerID: provisional.speakerID, channel: provisional.primary, modelPath: missing
+                expecting: provisional.model, episodeID: provisional.episodeID,
+                speakerID: provisional.speakerID, channel: provisional.primary,
+                currentModel: { provisional.model }, modelPath: missing
             )
         }
         var changed = f.model
         changed.episodes[0].speakerAssignments[0].primary = f.backup
         #expect(throws: SpeechRefusal.unselectedPrimary) {
             try SpeechInference().syntheticModelProbe(
-                model: changed, episodeID: f.episodeID, speakerID: f.speakerID,
-                channel: f.primary, modelPath: missing
+                expecting: changed, episodeID: f.episodeID, speakerID: f.speakerID,
+                channel: f.primary, currentModel: { changed }, modelPath: missing
+            )
+        }
+        #expect(throws: SpeechRefusal.unselectedPrimary) {
+            try SpeechInference().syntheticModelProbe(
+                expecting: f.model, episodeID: f.episodeID, speakerID: f.speakerID,
+                channel: f.primary, currentModel: { nil }, modelPath: missing
             )
         }
         #expect(throws: SpeechModelError.missingModel) {
             try SpeechInference().syntheticModelProbe(
-                model: f.model, episodeID: f.episodeID, speakerID: f.speakerID,
-                channel: f.primary, modelPath: missing
+                expecting: f.model, episodeID: f.episodeID, speakerID: f.speakerID,
+                channel: f.primary, currentModel: { f.model }, modelPath: missing
+            )
+        }
+    }
+
+    @Test @MainActor func retainedConfirmedSnapshotRefusesAfterCanonicalBackupActivation() throws {
+        let f = fixture()
+        var current = f.model
+        let retained = current
+        current = try current.usingAsPrimary(f.backup, for: f.speakerID, in: f.episodeID)
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        #expect(throws: SpeechRefusal.unselectedPrimary) {
+            try SpeechInference().syntheticModelProbe(
+                expecting: retained, episodeID: f.episodeID, speakerID: f.speakerID,
+                channel: f.primary, currentModel: { current }, modelPath: missing
+            )
+        }
+        current = retained
+        current.show.title = "Changed after the confirmed selection"
+        #expect(throws: SpeechRefusal.unselectedPrimary) {
+            try SpeechInference().syntheticModelProbe(
+                expecting: retained, episodeID: f.episodeID, speakerID: f.speakerID,
+                channel: f.primary, currentModel: { current }, modelPath: missing
             )
         }
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_TINY_MODEL_PATH"] != nil))
-    func syntheticSelectedPrimaryUsesVerifiedModelForBoundedInference() throws {
+    @MainActor func syntheticSelectedPrimaryUsesVerifiedModelForBoundedInference() throws {
         let path = try #require(ProcessInfo.processInfo.environment["WW_TINY_MODEL_PATH"])
         let f = fixture()
         let result = try SpeechInference().syntheticModelProbe(
-            model: f.model, episodeID: f.episodeID, speakerID: f.speakerID,
-            channel: f.primary, modelPath: path
+            expecting: f.model, episodeID: f.episodeID, speakerID: f.speakerID,
+            channel: f.primary, currentModel: { f.model }, modelPath: path
         )
         #expect(result.segments.count <= 16)
         for segment in result.segments {
