@@ -44,6 +44,15 @@ struct AppConfigurationTests {
         ] as NSDictionary)
     }
 
+    @Test func syntheticModelDiagnosticReadsTheRegisteredLiveShow() throws {
+        let source = try String(
+            contentsOf: Self.appFolder.appending(path: "Support/SpeechProbe.swift"), encoding: .utf8
+        )
+        #expect(source.contains("NSDocumentController.shared.documents.contains(where: { $0 === document })"))
+        #expect(source.contains("currentModel: { [weak store, weak document] in"))
+        #expect(source.contains("return store.model"))
+    }
+
     @Test func showDocumentRoundTripsThroughAFileInATemporaryDirectory() throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "ww-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

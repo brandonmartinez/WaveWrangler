@@ -2,6 +2,9 @@
 #include "whisper.h"
 #include <ctype.h>
 #include <math.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 WWWhisperCPUProbeResult ww_whisper_cpu_probe(void) {
@@ -98,5 +101,139 @@ WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe(void *model_bytes, size_t model_s
         }
     }
     whisper_free(context);
+    return result;
+}
+
+static pthread_mutex_t inference_lock = PTHREAD_MUTEX_INITIALIZER;
+
+struct cancel_state {
+    int32_t (*check)(void *);
+    void *user_data;
+};
+
+static bool abort_inference(void *context) {
+    struct cancel_state *state = context;
+    return state->check && state->check(state->user_data) != 0;
+}
+
+void ww_whisper_free_transcript(WWNativeTranscript *transcript) {
+    if (!transcript) return;
+    for (int32_t i = 0; transcript->segments && i < transcript->segment_count; ++i) {
+        if (transcript->segments[i].text) {
+            const size_t length = strlen(transcript->segments[i].text);
+            memset(transcript->segments[i].text, 0, length);
+            free(transcript->segments[i].text);
+        }
+    }
+    free(transcript->segments);
+    transcript->segments = NULL;
+    transcript->segment_count = 0;
+}
+
+WWNativeTranscript ww_whisper_infer_pcm(
+    void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
+    int32_t (*cancelled)(void *), void *cancel_context
+) {
+    WWNativeTranscript result = { .status = WW_INFERENCE_INVALID_INPUT };
+    if (!cancelled) return result;
+    if (cancelled(cancel_context)) {
+        result.status = WW_INFERENCE_CANCELLED;
+        return result;
+    }
+    if (!model_bytes || model_size != 77704715 || !pcm || sample_count != 32000) return result;
+    for (int32_t i = 0; i < sample_count; ++i) {
+        if (!isfinite(pcm[i]) || fabsf(pcm[i]) > 1.0f) return result;
+    }
+    if (pthread_mutex_lock(&inference_lock) != 0) {
+        result.status = WW_INFERENCE_FAILED;
+        return result;
+    }
+    if (cancelled(cancel_context)) {
+        result.status = WW_INFERENCE_CANCELLED;
+        goto unlock;
+    }
+
+    whisper_log_set(discard_probe_log, NULL);
+    struct whisper_context_params context_params = whisper_context_default_params();
+    context_params.use_gpu = false;
+    context_params.flash_attn = false;
+    context_params.dtw_token_timestamps = false;
+    struct whisper_context *context = whisper_init_from_buffer_with_params(model_bytes, model_size, context_params);
+    if (!context) {
+        result.status = cancelled(cancel_context) ? WW_INFERENCE_CANCELLED : WW_INFERENCE_LOAD_FAILED;
+        goto unlock;
+    }
+    if (cancelled(cancel_context)) {
+        result.status = WW_INFERENCE_CANCELLED;
+        goto release_context;
+    }
+
+    struct cancel_state cancel_state = { cancelled, cancel_context };
+    struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    params.n_threads = 2;
+    params.language = "en";
+    params.duration_ms = 2000;
+    params.no_context = true;
+    params.no_timestamps = false;
+    params.token_timestamps = false;
+    params.single_segment = true;
+    params.max_tokens = 16;
+    params.greedy.best_of = 1;
+    params.temperature_inc = 0.0f;
+    params.print_progress = false;
+    params.print_realtime = false;
+    params.print_timestamps = false;
+    params.print_special = false;
+    params.abort_callback = abort_inference;
+    params.abort_callback_user_data = &cancel_state;
+    const int status = whisper_full(context, params, pcm, sample_count);
+    if (cancelled(cancel_context)) {
+        result.status = WW_INFERENCE_CANCELLED;
+        goto release_context;
+    }
+    if (status != 0) {
+        result.status = WW_INFERENCE_FAILED;
+        goto release_context;
+    }
+    const int count = whisper_full_n_segments(context);
+    if (count < 0 || count > 16) {
+        result.status = WW_INFERENCE_FAILED;
+        goto release_context;
+    }
+    if (count) {
+        result.segments = calloc((size_t) count, sizeof(WWNativeSegment));
+        if (!result.segments) {
+            result.status = WW_INFERENCE_FAILED;
+            goto release_context;
+        }
+    }
+    result.segment_count = count;
+    for (int i = 0; i < count; ++i) {
+        const char *text = whisper_full_get_segment_text(context, i);
+        if (!text) {
+            result.status = WW_INFERENCE_FAILED;
+            goto release_context;
+        }
+        const size_t length = strnlen(text, 4097);
+        if (length > 4096) {
+            result.status = WW_INFERENCE_FAILED;
+            goto release_context;
+        }
+        result.segments[i].text = malloc(length + 1);
+        if (!result.segments[i].text) {
+            result.status = WW_INFERENCE_FAILED;
+            goto release_context;
+        }
+        memcpy(result.segments[i].text, text, length + 1);
+        result.segments[i].t0 = whisper_full_get_segment_t0(context, i);
+        result.segments[i].t1 = whisper_full_get_segment_t1(context, i);
+    }
+    result.status = cancelled(cancel_context) ? WW_INFERENCE_CANCELLED : WW_INFERENCE_OK;
+
+release_context:
+    whisper_free(context);
+    if (result.status != WW_INFERENCE_OK) ww_whisper_free_transcript(&result);
+unlock:
+    pthread_mutex_unlock(&inference_lock);
     return result;
 }
