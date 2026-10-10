@@ -112,6 +112,7 @@ final class TranscriptReviewUITests: XCTestCase {
         app.activate()
         XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 5))
         selectFirstEpisode()
+        XCTAssertTrue(app.descendants(matching: .any)["ww.setup.speakers"].waitForExistence(timeout: 5))
         app.buttons["ww.show.destination.review"].click()
 
         let occurrence = app.descendants(matching: .any)["ww.review.occurrence.synthetic-bound-segment"]

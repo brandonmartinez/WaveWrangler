@@ -73,16 +73,19 @@ struct TranscriptReviewBindingTests {
     @Test func episodeSwitchRefusesPresentedAndLateTranscripts() throws {
         let f = fixture()
         let binding = try #require(f.setup.captureSelectedPrimaryTranscriptReviewBinding())
+        #expect(f.state.isCurrentSelectedPrimaryTranscript(binding))
         f.state.presentSelectedPrimaryTranscript(f.input("Only episode A"), boundTo: binding)
         #expect(f.state.reviewState.presentation.occurrences.map(\.text) == ["Only episode A"])
         #expect(f.state.reviewState.presentation.occurrences[0].wordTiming == "Word timing unavailable")
 
         f.state.sidebarSelection = .episode(f.second.id)
+        #expect(!f.state.isCurrentSelectedPrimaryTranscript(binding))
         #expect(f.state.reviewState.presentation.occurrences.isEmpty)
         #expect(f.state.reviewState.presentation.notice.contains("unavailable"))
         f.state.presentSelectedPrimaryTranscript(f.input("Late episode A"), boundTo: binding)
         #expect(f.state.reviewState.presentation.occurrences.isEmpty)
         f.state.sidebarSelection = .episode(f.first.id)
+        #expect(!f.state.isCurrentSelectedPrimaryTranscript(binding))
         f.state.presentSelectedPrimaryTranscript(f.input("Returned to A"), boundTo: binding)
         #expect(f.state.reviewState.presentation.occurrences.isEmpty)
     }
@@ -92,6 +95,7 @@ struct TranscriptReviewBindingTests {
         let binding = try #require(f.setup.captureSelectedPrimaryTranscriptReviewBinding())
         f.state.presentSelectedPrimaryTranscript(f.input("Original"), boundTo: binding)
         f.setup.speakerSelection = []
+        #expect(!f.state.isCurrentSelectedPrimaryTranscript(binding))
         #expect(f.state.reviewState.presentation.occurrences.isEmpty)
         f.setup.speakerSelection = [f.speaker.id]
         f.state.presentSelectedPrimaryTranscript(f.input("Old speaker capture"), boundTo: binding)
@@ -116,6 +120,7 @@ struct TranscriptReviewBindingTests {
         edited.episodes[0].speakerAssignments[0].primary = nil
         f.store.replaceLoadedModel(edited)
         f.store.replaceLoadedModel(original)
+        #expect(!f.state.isCurrentSelectedPrimaryTranscript(binding))
         f.state.presentSelectedPrimaryTranscript(f.input("Late after undo"), boundTo: binding)
         #expect(f.state.reviewState.presentation.occurrences.isEmpty)
 
@@ -123,6 +128,7 @@ struct TranscriptReviewBindingTests {
         f.state.presentSelectedPrimaryTranscript(f.input("Wrong source", from: f.secondSource), boundTo: fresh)
         #expect(f.state.reviewState.presentation.occurrences.isEmpty)
         f.state.reviewWindowDidClose()
+        #expect(!f.state.isCurrentSelectedPrimaryTranscript(fresh))
         f.state.presentSelectedPrimaryTranscript(f.input("Late after close"), boundTo: fresh)
         #expect(f.state.reviewState.presentation.occurrences.isEmpty)
     }
@@ -143,6 +149,14 @@ struct TranscriptReviewBindingTests {
             ChannelReference(sourceID: f.firstSource.id, statedChannel: nil)
         f.store.replaceLoadedModel(unknownChannel)
         #expect(f.setup.captureSelectedPrimaryTranscriptReviewBinding() == nil)
+    }
+
+    @Test func unboundSyntheticFixtureNeverBecomesSuppliedEvidence() {
+        let f = fixture()
+        #expect(f.state.reviewState.presentation == .syntheticFixture)
+        f.state.sidebarSelection = .episode(f.second.id)
+        f.store.replaceLoadedModel(f.store.model)
+        #expect(f.state.reviewState.presentation == .syntheticFixture)
     }
 
     @Test func everyPublishedModelHasANewGenerationIncludingEqualLoadsAndCoalescing() {
