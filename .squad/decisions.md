@@ -1236,3 +1236,11 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **#440 boundary:** A fake-only diagnosis is permitted solely if the current runner author is not reviewer-locked. Any changed bytes invalidate the earlier runner approval and require independent review plus a new one-use JIT; there is no automatic retry. If the applicable review or attempt cap is exhausted, hold the path.
 
 **Morning report:** Distinguish merged code, source approvals, complete gates, pre-host refusals, incomplete tests, and remaining M3 blockers. Do not collapse any of those categories into acceptance.
+
+### 2026-10-10: Hold #440 after terminal static diagnosis remains inconclusive
+
+**By:** Eligible third runner author session `31185e81`, under the relay's fake-only diagnostic boundary.
+
+**What:** The author left runner v4 unchanged at driver SHA `9f81ffbda5ea544348ddfe7afdcb4801e8bcb3ef49a260d4e7bb6b85ba7bb4ca` and remote SHA `bf5a96568e830bb86989e4bc3f21c651f74a46601bd57635b9b6f520255c77e7`. A fake-only `/bin/bash` diagnosis after both exports confirmed `errexit` and `nounset`: simulated Python failure exits on `NONCE` assignment; with `errexit` disabled, `NONCE` is empty rather than producing the recorded line-96 unbound-variable error. The exact executed bytes and trace are absent, so the first JIT's local failure root cause remains **UNKNOWN** and does not justify a v5 change.
+
+**Operational disposition:** Preserve frozen JIT nonce `03123e…`, with `.used` absent. No SSH, Mini, preflight, native process, or test occurred. #440 remains source-only approved at `b8cb9c2`, its full gate is **NOT RUN**, and no merge or [#27](https://github.com/brandonmartinez/WaveWrangler/issues/27) closure follows. Under the relay's no-auto-retry rule and prior cap, hold #440 through the morning.
