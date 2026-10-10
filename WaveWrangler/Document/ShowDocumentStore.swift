@@ -7,7 +7,15 @@ import WWCore
 @MainActor
 @Observable
 final class ShowDocumentStore {
-    private(set) var model: ShowDocumentModel
+    private(set) var model: ShowDocumentModel {
+        didSet {
+            modelGeneration += 1
+            for state in ShowWindowRegistry.states(for: self) { state.reviewModelDidChange() }
+        }
+    }
+    /// Ephemeral publication identity, including load, coalesced edits and undo/redo.
+    /// Unlike model equality, this detects an edit followed by an undo to identical bytes.
+    private(set) var modelGeneration: UInt64 = 0
     /// The most recent refused operation, shown to the user until the next successful change.
     private(set) var lastError: DomainError?
 

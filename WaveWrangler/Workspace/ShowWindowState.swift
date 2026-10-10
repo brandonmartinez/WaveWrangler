@@ -16,7 +16,12 @@ final class ShowWindowState {
     }
 
     var sidebarSelection: SidebarSelection? {
-        didSet { if oldValue != sidebarSelection, reportsInteractions { Responsiveness.interaction("show.sidebarSelection") } }
+        didSet {
+            guard oldValue != sidebarSelection else { return }
+            reviewSelectionGeneration += 1
+            invalidateBoundReview()
+            if reportsInteractions { Responsiveness.interaction("show.sidebarSelection") }
+        }
     }
     var destination: ShowDestination = .setup
     var inspectorPresented = true
@@ -38,7 +43,14 @@ final class ShowWindowState {
     /// The Alignment workspace currently displayed in this window, for inspector and menu routing.
     var alignmentModel: EpisodeAlignmentModel?
     /// Presentation-only Review selection shared by the linked transcript and inspector panes.
-    let reviewState = TranscriptReviewState()
+    private let reviewPresentationState = TranscriptReviewState()
+    var reviewState: TranscriptReviewState {
+        if let reviewBinding, !isCurrentSelectedPrimaryTranscript(reviewBinding) { invalidateBoundReview() }
+        return reviewPresentationState
+    }
+    @ObservationIgnored private var reviewBinding: SelectedPrimaryTranscriptBinding?
+    @ObservationIgnored private var reviewSelectionGeneration: UInt64 = 0
+    @ObservationIgnored private var reviewWindowClosed = false
     /// Selection changes count as user interactions (WW-007 timing) only after the window's first passes.
     @ObservationIgnored private var reportsInteractions = false
 
@@ -49,6 +61,27 @@ final class ShowWindowState {
     init(store: ShowDocumentStore) {
         self.store = store
         sidebarSelection = store.model.episodes.first.map { .episode($0.id) }
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "WWUITestHooks"),
+           UserDefaults.standard.bool(forKey: "WWUITestReviewBindingFixture"),
+           store.model.show.title == "Synthetic Review Binding Fixture",
+           let first = store.model.episodes.first, first.sources.isEmpty {
+            let speaker = Speaker(name: "Synthetic review speaker")
+            let source = SourceRecord(
+                displayNameHint: "Synthetic review fixture Primary",
+                role: .primary, roleConfirmation: .userConfirmed
+            )
+            var model = store.model
+            model.speakers.append(speaker)
+            model.episodes[0].sources.append(source)
+            model.episodes[0].speakerAssignments.append(SpeakerAssignment(
+                speakerID: speaker.id,
+                primary: ChannelReference(sourceID: source.id, statedChannel: 0),
+                primaryConfirmation: .userConfirmed
+            ))
+            store.replaceLoadedModel(model)
+        }
+        #endif
     }
 
     // MARK: - Status
@@ -166,7 +199,28 @@ final class ShowWindowState {
 
     func select(_ destination: ShowDestination) {
         let changed = self.destination != destination
+        #if DEBUG
+        if changed, destination == .review,
+           UserDefaults.standard.bool(forKey: "WWUITestHooks"),
+           UserDefaults.standard.bool(forKey: "WWUITestReviewBindingFixture"),
+           store.model.show.title == "Synthetic Review Binding Fixture",
+           let setup = EpisodeSetupViewController.controller(for: window)?.model,
+           let binding = setup.captureSelectedPrimaryTranscriptReviewBinding() {
+            presentSelectedPrimaryTranscript(
+                SelectedPrimaryTranscriptReviewInput(
+                    primarySourceID: binding.primary.sourceID.description,
+                    primarySourceName: binding.sourceName,
+                    segments: [.init(
+                        id: "synthetic-bound-segment",
+                        text: "Synthetic fixture A sentence",
+                        words: [.init(id: "synthetic-word", text: "Synthetic", sourceFrameRange: nil)]
+                    )]
+                ), boundTo: binding
+            )
+        }
+        #endif
         self.destination = destination
+        if changed, destination != .review { invalidateBoundReview() }
         if changed, let panel = destination.blockedPanel {
             announce(panel.heading)
         }
@@ -179,15 +233,92 @@ final class ShowWindowState {
         select(.setup)
     }
 
+    /// Captured only from the single speaker selected in this window's on-screen Setup.
+    /// The token is not a source handle and grants no media access or edit authority.
+    struct SelectedPrimaryTranscriptBinding {
+        let showID: ShowID
+        let episodeID: EpisodeID
+        let speakerID: SpeakerID
+        let primary: ChannelReference
+        let sourceName: String
+        let modelGeneration: UInt64
+        let selectionGeneration: UInt64
+        let speakerSelectionGeneration: UInt64
+        fileprivate let setup: EpisodeSetupModel
+    }
+
+    func captureSelectedPrimaryTranscript(from setup: EpisodeSetupModel) -> SelectedPrimaryTranscriptBinding? {
+        guard !reviewWindowClosed, let window, setup.window() === window, setup.isOnScreen,
+              setup.store === store, setup.episodeID == selectedEpisodeID,
+              setup.speakerSelection.count == 1, let speakerID = setup.speakerSelection.first,
+              store.model.speaker(speakerID) != nil,
+              let episode = selectedEpisode, let assignment = episode.assignment(for: speakerID),
+              let primary = assignment.primary, assignment.primaryConfirmation == .userConfirmed,
+              let channel = primary.channel.value, channel >= 0,
+              let source = episode.source(primary.sourceID), source.role == .primary,
+              source.roleConfirmation == .userConfirmed else { return nil }
+        return SelectedPrimaryTranscriptBinding(
+            showID: store.model.show.id, episodeID: episode.id, speakerID: speakerID,
+            primary: primary, sourceName: source.displayNameHint,
+            modelGeneration: store.modelGeneration, selectionGeneration: reviewSelectionGeneration,
+            speakerSelectionGeneration: setup.speakerSelectionGeneration, setup: setup
+        )
+    }
+
+    /// Recheck after every await; a source with the same model bytes after undo is still stale.
+    func isCurrentSelectedPrimaryTranscript(_ binding: SelectedPrimaryTranscriptBinding) -> Bool {
+        guard !reviewWindowClosed, binding.setup.store === store,
+              binding.setup.window() === window, binding.setup.episodeID == binding.episodeID,
+              binding.setup.speakerSelectionGeneration == binding.speakerSelectionGeneration,
+              binding.setup.speakerSelection == [binding.speakerID],
+              store.modelGeneration == binding.modelGeneration,
+              reviewSelectionGeneration == binding.selectionGeneration,
+              store.model.show.id == binding.showID,
+              selectedEpisodeID == binding.episodeID,
+              store.model.speaker(binding.speakerID) != nil,
+              let episode = selectedEpisode, let assignment = episode.assignment(for: binding.speakerID),
+              assignment.primary == binding.primary, assignment.primaryConfirmation == .userConfirmed,
+              let channel = binding.primary.channel.value, channel >= 0,
+              let source = episode.source(binding.primary.sourceID), source.role == .primary,
+              source.roleConfirmation == .userConfirmed,
+              source.displayNameHint == binding.sourceName else { return false }
+        return true
+    }
+
+    private func invalidateBoundReview() {
+        guard reviewBinding != nil else { return }
+        reviewBinding = nil
+        reviewPresentationState.present(.refusal(TranscriptReviewPresentation.ValidationError.missingPrimarySource.refusal))
+    }
+
+    func reviewModelDidChange() { invalidateBoundReview() }
+
+    func reviewSpeakerSelectionDidChange() { invalidateBoundReview() }
+
+    func reviewWindowDidClose() {
+        reviewWindowClosed = true
+        invalidateBoundReview()
+    }
+
     /// The only handoff point for a future source-bound, in-process transcript producer.
-    ///
-    /// Calling this neither opens a source nor invokes inference; malformed evidence becomes a Review refusal.
-    func presentSelectedPrimaryTranscript(_ input: SelectedPrimaryTranscriptReviewInput) {
+    /// A late or unbound result is refused; calling this never opens a source or invokes inference.
+    func presentSelectedPrimaryTranscript(
+        _ input: SelectedPrimaryTranscriptReviewInput, boundTo binding: SelectedPrimaryTranscriptBinding
+    ) {
+        guard isCurrentSelectedPrimaryTranscript(binding),
+              SourceID(uuidString: input.primarySourceID) == binding.primary.sourceID,
+              input.primarySourceName == binding.sourceName else {
+            invalidateBoundReview()
+            reviewPresentationState.present(.refusal(TranscriptReviewPresentation.ValidationError.missingPrimarySource.refusal))
+            return
+        }
         switch TranscriptReviewPresentation.validate(input) {
         case .success(let transcript):
-            reviewState.present(.supplied(transcript))
+            reviewBinding = binding
+            reviewPresentationState.present(.supplied(transcript))
         case .failure(let error):
-            reviewState.present(.refusal(error.refusal))
+            invalidateBoundReview()
+            reviewPresentationState.present(.refusal(error.refusal))
         }
     }
 
@@ -285,6 +416,7 @@ final class ShowWindowState {
         self.window = window
         ShowWindowRegistry.register(self, for: window)
         observeBecomingKey(window)
+        observeClosing(window)
         observeFixturePlacement(window)
         // Window chrome and bridging must not change while AppKit/SwiftUI are attaching and laying out the
         // view (re-entrant constraint updates); apply them on the next main-queue turn.
@@ -323,7 +455,16 @@ final class ShowWindowState {
     }
 
     @ObservationIgnored private var becameKeyObserver: NotificationObservation?
+    @ObservationIgnored private var closingObserver: NotificationObservation?
     @ObservationIgnored private var fixturePlacementObservers: [NotificationObservation] = []
+
+    private func observeClosing(_ window: NSWindow) {
+        closingObserver = NotificationObservation(NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reviewWindowDidClose() }
+        })
+    }
 
     private func observeFixturePlacement(_ window: NSWindow) {
         #if DEBUG
@@ -399,6 +540,11 @@ enum ShowWindowRegistry {
 
     static func states(for document: NSDocument) -> [ShowWindowState] {
         document.windowControllers.compactMap { state(for: $0.window) }
+    }
+
+    static func states(for store: ShowDocumentStore) -> [ShowWindowState] {
+        states = states.filter { $0.value.state != nil }
+        return states.values.compactMap(\.state).filter { $0.store === store }
     }
 }
 
