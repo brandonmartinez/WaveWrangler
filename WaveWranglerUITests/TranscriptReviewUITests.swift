@@ -134,15 +134,23 @@ final class TranscriptReviewUITests: XCTestCase {
                        "Synthetic fixture A sentence")
         XCTAssertFalse(app.descendants(matching: .any)["ww.review.proposals"].exists)
 
+        let showWindow = app.windows["ww.show.window"]
         let secondEpisode = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND value CONTAINS %@",
                                   "ww.show.sidebar.episode.", "Synthetic Episode 2"))
             .firstMatch
-        XCTAssertTrue(secondEpisode.waitForExistence(timeout: 5))
+        func selectionEvidence() -> String {
+            let exists = secondEpisode.exists
+            return "window title: \(showWindow.title), B row exists: \(exists), role: \(exists ? secondEpisode.elementType : .any), label: \(exists ? secondEpisode.label : ""), value: \(String(describing: exists ? secondEpisode.value : nil)), selected: \(exists && secondEpisode.isSelected)"
+        }
+        XCTAssertTrue(secondEpisode.waitForExistence(timeout: 5), "B row not found; \(selectionEvidence())")
         secondEpisode.click()
+        XCTAssertTrue(showWindow.title.contains("Synthetic Episode 2"),
+                      "B episode not selected; \(selectionEvidence())")
         XCTAssertTrue(Acceptance.waitFor(timeout: 3) {
-            notice.label.contains("unavailable")
-        }, "Expected the unavailable Review notice after switching episodes; AX label: \(notice.label)")
+            notice.exists && (notice.label.contains("unavailable")
+                || (notice.value as? String)?.contains("unavailable") == true)
+        }, "Expected the unavailable Review notice after switching episodes; \(selectionEvidence()), notice exists: \(notice.exists), role: \(notice.elementType), label: \(notice.label), value: \(String(describing: notice.value))")
         XCTAssertFalse(occurrence.exists, "A's text must not remain in B's accessible transcript")
         XCTAssertEqual(app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
                        "No occurrence selected")
