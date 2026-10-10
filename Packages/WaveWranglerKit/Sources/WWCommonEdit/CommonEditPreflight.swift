@@ -132,7 +132,9 @@ public enum CommonEditPreflight {
     public static let maximumInspectedFrames: Int64 = 8_192
     public static let maximumInspectedLanes = 16
     public static let maximumInspectedWork: Int64 = 65_536
+    public static let maximumInverseEvaluations: Int64 = 131_072
     public static let maximumInspectedIntervals = 32
+    public static let maximumAggregateIntervals = 256
 
     public static func check(
         map: CommonEpisodeEditMap, manifest: CommonEditLaneManifest,
@@ -144,7 +146,7 @@ public enum CommonEditPreflight {
               withinInspectionBudget(map: map,
                                      laneCount: manifest.lanes.count + manifest.excludedBackups.count,
                                      surveyCount: surveys.count),
-              surveys.allSatisfy({ withinIntervalBudget($0) })
+              withinSurveyIntervalBudget(surveys)
         else { throw CommonEditAttestationRefusal.inspectionLimit }
         guard manifest.hasCompleteSelectedPrimaryClassification() else {
             throw CommonEditAttestationRefusal.invalidManifest
@@ -268,6 +270,10 @@ public enum CommonEditPreflight {
         else { return false }
         let (work, overflow) = map.alignedFrameCount.multipliedReportingOverflow(by: lanes)
         guard !overflow, work <= maximumInspectedWork else { return false }
+        let (surveyWork, surveyOverflow) = map.alignedFrameCount.multipliedReportingOverflow(by: Int64(surveyCount))
+        guard !surveyOverflow else { return false }
+        let (inverseEvaluations, inverseOverflow) = surveyWork.multipliedReportingOverflow(by: 2)
+        guard !inverseOverflow, inverseEvaluations <= maximumInverseEvaluations else { return false }
         var occurrences = 0
         for group in map.alignment.groups {
             guard group.placements.count <= maximumInspectedLanes - occurrences,
@@ -290,6 +296,19 @@ public enum CommonEditPreflight {
          survey.requestedFades, survey.finalMergedFades].allSatisfy {
             $0.count <= maximumInspectedIntervals
         }
+    }
+
+    private static func withinSurveyIntervalBudget(_ surveys: [CommonEditLaneSurvey]) -> Bool {
+        var remaining = maximumAggregateIntervals
+        for survey in surveys {
+            for count in [survey.coverage.count, survey.intentionalSilence.count,
+                          survey.protected.count, survey.requestedFades.count,
+                          survey.finalMergedFades.count] {
+                guard count <= maximumInspectedIntervals, count <= remaining else { return false }
+                remaining -= count
+            }
+        }
+        return true
     }
 
     private static func intersects(_ a: RemovedFrameSpan, _ b: RemovedFrameSpan) -> Bool {
