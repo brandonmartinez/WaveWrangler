@@ -50,3 +50,30 @@ after the freeze merges, a distinct, clean, tree-matched one-shot 520-case run
 must record its result as-is. Neither M2 holdout may be rerun or relabelled.
 This synthetic gate does not authorize original media, models, network access,
 selected-Primary issuance, or source/Backup mutations.
+
+## Post-merge synthetic holdout addendum (2026-10-10)
+
+The preceding **Holdout NOT RUN** statement is the pre-merge status record. After
+[#436](https://github.com/brandonmartinez/WaveWrangler/pull/436) merged to main
+at `03c34982c1af6230bd49889c7b753c938470f29c`, the distinct M3-DECODE-003
+one-shot ran on a physical Mini Mac14,12 from a clean exact source head
+`9efbc16f91ce28e6823a6d85e363cd3dde9b095e`, with pinned WWDecode tree
+`4a1b0d919928facc61a1dc18e092c5f8519a417c` and test tree
+`3c3f339ad4b271af2287f1b23ebbb3a68843ce6c`. The independently
+static-approved private runner and one-time JIT were hash-verified before use.
+
+The selected `DecodeCalibrationTests/holdoutSplitMeetsEveryFrozenGate` test
+passed **1/1**; Swift, timeout, and driver exits were each 0. It produced 520
+deterministic synthetic cases (13 strata x 40: 360 supported and 160 planted)
+and one output-settings record: 521 ordered JSONL rows with SHA-256
+`12bb3baa2081be7b97bff327811fa8be47c9a7ed35c9acd9a02a619440f5f761`.
+There were zero planted mutations or publications. The checkout was unchanged
+and clean after the run, with no post-run native roots or GUI holder.
+
+**Current status: PASS — M3-DECODE-003 synthetic holdout only.** Historical M2
+holdouts were not rerun. This result does not authorize recordings, model or
+network inference, Backup access, source-content opens or writes, speech-rights
+claims, selected-Primary issuance, or product acceptance. The scoped public
+record is on [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23#issuecomment-6093569045);
+[#23](https://github.com/brandonmartinez/WaveWrangler/issues/23) and
+[#32](https://github.com/brandonmartinez/WaveWrangler/issues/32) remain open.
