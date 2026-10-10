@@ -36,7 +36,7 @@ public struct WitnessBoundPCMWindowReader: Sendable {
         decoder = SourceDecoder(access: access)
     }
 
-    public func read(
+    public func readWindow(
         _ url: URL, source: SourceID, matching witness: RawSourceIdentity,
         channel: Int, startFrame: Int64
     ) async throws -> WitnessBoundPCMWindow {

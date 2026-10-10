@@ -62,7 +62,7 @@ struct WitnessBoundPCMWindowTests {
         let fixture = try Fixture(frames: 36_000)
         defer { try? fixture.remove() }
         let witness = try await fixture.witness()
-        let window = try await WitnessBoundPCMWindowReader(access: fixture.access).read(
+        let window = try await WitnessBoundPCMWindowReader(access: fixture.access).readWindow(
             fixture.primary, source: fixture.source, matching: witness, channel: 1, startFrame: 4_000
         )
         #expect(window.source == fixture.source)
@@ -82,7 +82,7 @@ struct WitnessBoundPCMWindowTests {
         try FileManager.default.moveItem(at: fixture.primary, to: saved)
         try FileManager.default.moveItem(at: fixture.other, to: fixture.primary)
         await #expect(throws: DecodeFailure.sourceIdentityMismatch) {
-            _ = try await WitnessBoundPCMWindowReader(access: fixture.access).read(
+            _ = try await WitnessBoundPCMWindowReader(access: fixture.access).readWindow(
                 fixture.primary, source: fixture.source, matching: witness, channel: 0, startFrame: 0
             )
         }
@@ -94,18 +94,18 @@ struct WitnessBoundPCMWindowTests {
         let witness = try await fixture.witness()
         let reader = WitnessBoundPCMWindowReader(access: fixture.access)
         await #expect(throws: WitnessBoundPCMWindowFailure.invalidChannel) {
-            _ = try await reader.read(fixture.primary, source: fixture.source, matching: witness, channel: 1, startFrame: 0)
+            _ = try await reader.readWindow(fixture.primary, source: fixture.source, matching: witness, channel: 1, startFrame: 0)
         }
         await #expect(throws: WitnessBoundPCMWindowFailure.invalidRange) {
-            _ = try await reader.read(fixture.primary, source: fixture.source, matching: witness, channel: 0, startFrame: -1)
+            _ = try await reader.readWindow(fixture.primary, source: fixture.source, matching: witness, channel: 0, startFrame: -1)
         }
         await #expect(throws: WitnessBoundPCMWindowFailure.invalidRange) {
-            _ = try await reader.read(
+            _ = try await reader.readWindow(
                 fixture.primary, source: fixture.source, matching: witness, channel: 0, startFrame: Int64.max
             )
         }
         await #expect(throws: WitnessBoundPCMWindowFailure.unsupportedSampleRate(48_000)) {
-            _ = try await reader.read(fixture.primary, source: fixture.source, matching: witness, channel: 0, startFrame: 0)
+            _ = try await reader.readWindow(fixture.primary, source: fixture.source, matching: witness, channel: 0, startFrame: 0)
         }
     }
 
@@ -114,7 +114,7 @@ struct WitnessBoundPCMWindowTests {
         defer { try? fixture.remove() }
         let witness = try await fixture.witness()
         await #expect(throws: WitnessBoundPCMWindowFailure.invalidRange) {
-            _ = try await WitnessBoundPCMWindowReader(access: fixture.access).read(
+            _ = try await WitnessBoundPCMWindowReader(access: fixture.access).readWindow(
                 fixture.primary, source: fixture.source, matching: witness, channel: 0, startFrame: 0
             )
         }
@@ -126,7 +126,7 @@ struct WitnessBoundPCMWindowTests {
         let witness = try await fixture.witness()
         let cancelled = Task {
             withUnsafeCurrentTask { $0?.cancel() }
-            return try await WitnessBoundPCMWindowReader(access: fixture.access).read(
+            return try await WitnessBoundPCMWindowReader(access: fixture.access).readWindow(
                 fixture.primary, source: fixture.source, matching: witness, channel: 0, startFrame: 0
             )
         }

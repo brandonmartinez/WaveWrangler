@@ -151,7 +151,7 @@ enum OpenSelectedPrimaryPCMSource {
         guard checked == original else { throw PrimaryPCMRefusal.accessChanged }
         try requireAvailableSource(url, fingerprint: confirmed.fingerprint, access: access)
 
-        let window = try await WitnessBoundPCMWindowReader(access: access).read(
+        let window = try await WitnessBoundPCMWindowReader(access: access).readWindow(
             url, source: key.sourceID, matching: witness,
             channel: mapped.channel, startFrame: mapped.firstFrame
         )
