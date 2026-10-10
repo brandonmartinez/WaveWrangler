@@ -3,6 +3,7 @@ import WWAlignPipeline
 import WWCore
 import WWDecode
 import WWDerived
+import WWOrganizer
 import WWSources
 import WWTimeMap
 
@@ -28,6 +29,85 @@ enum OpenSelectedPrimaryPCMSource {
         for setup: EpisodeSetupModel, accessStore: any DeviceAccessSnapshotStore,
         access: SourceAccessContext = SourceAccessContext()
     ) async throws -> WitnessBoundPCMWindow {
+        try await issueBoundSynthetic(for: setup, accessStore: accessStore, access: access).window
+    }
+
+    /// Synthetic-only seam for an injected, in-process recognizer. No model is loaded and segment
+    /// timings are intentionally discarded; this cannot provide word or editing authority.
+    static func presentSynthetic(
+        for setup: EpisodeSetupModel, accessStore: any DeviceAccessSnapshotStore,
+        access: SourceAccessContext = SourceAccessContext(),
+        infer: @escaping @Sendable ([Float], Int, Int) async throws -> [String]
+    ) async throws {
+        let issued = try await issueBoundSynthetic(for: setup, accessStore: accessStore, access: access)
+        let texts = try await infer(
+            issued.window.samples, issued.window.sampleRate, 1
+        )
+        try issued.checkSelection()
+        let document = try await issued.documentBinding.current()
+        try issued.checkSelection()
+        guard try mappedWindow(model: document.model, selection: issued.selection) == issued.mapped else {
+            throw PrimaryPCMRefusal.unmappedPrimary
+        }
+        let snapshot = try await accessStore.snapshot(for: issued.key)
+        try issued.checkSelection()
+        guard snapshot == issued.original else { throw PrimaryPCMRefusal.accessChanged }
+        let raw = try await SourceDecoder(access: access).captureRawIdentity(
+            issued.url, matching: issued.fingerprint
+        )
+        try issued.checkSelection()
+        guard raw == issued.witness else { throw PrimaryPCMRefusal.sourceChanged }
+        let latest = try await issued.documentBinding.current()
+        try issued.checkSelection()
+        guard try mappedWindow(model: latest.model, selection: issued.selection) == issued.mapped else {
+            throw PrimaryPCMRefusal.unmappedPrimary
+        }
+        let final = try await accessStore.snapshot(for: issued.key)
+        try issued.checkSelection()
+        guard final == issued.original else { throw PrimaryPCMRefusal.accessChanged }
+        try requireAvailableSource(issued.url, fingerprint: issued.fingerprint, access: access)
+        try issued.checkSelection()
+        try Task.checkCancellation()
+        guard !texts.isEmpty, texts.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            throw PrimaryPCMRefusal.decodedSourceMismatch
+        }
+        let input = SelectedPrimaryTranscriptReviewInput(
+            primarySourceID: issued.key.sourceID.description, primarySourceName: issued.selection.sourceName,
+            segments: texts.enumerated().map { index, text in
+                .init(id: "synthetic-segment-\(index)", text: text, words: [])
+            }
+        )
+        issued.state.select(.review)
+        try issued.checkSelection()
+        issued.state.presentSelectedPrimaryTranscript(input, boundTo: issued.selection)
+    }
+
+    @MainActor
+    private struct Issued {
+        let window: WitnessBoundPCMWindow
+        let documentBinding: OpenShowSourceBinding
+        let state: ShowWindowState
+        let selection: ShowWindowState.SelectedPrimaryTranscriptBinding
+        let mapped: MappedWindow
+        let original: DeviceAccessSnapshot
+        let key: DeviceAccessKey
+        let url: URL
+        let fingerprint: FileSystemFingerprint
+        let witness: RawSourceIdentity
+
+        func checkSelection() throws {
+            try Task.checkCancellation()
+            try documentBinding.requireOpenAndUnchanged()
+            guard state.isCurrentSelectedPrimaryTranscript(selection) else {
+                throw PrimaryPCMRefusal.selectionChanged
+            }
+        }
+    }
+
+    private static func issueBoundSynthetic(
+        for setup: EpisodeSetupModel, accessStore: any DeviceAccessSnapshotStore,
+        access: SourceAccessContext
+    ) async throws -> Issued {
         try Task.checkCancellation()
         guard let document = setup.store.document,
               let state = ShowWindowRegistry.state(for: setup.window()),
@@ -90,7 +170,11 @@ enum OpenSelectedPrimaryPCMSource {
         // was later replaced; never return that window as the current selected source.
         try requireAvailableSource(url, fingerprint: confirmed.fingerprint, access: access)
         try checkSelection()
-        return window
+        return Issued(
+            window: window, documentBinding: documentBinding, state: state, selection: selection,
+            mapped: mapped, original: original, key: key, url: url,
+            fingerprint: confirmed.fingerprint, witness: witness
+        )
     }
 
     private static func requireAvailableSource(

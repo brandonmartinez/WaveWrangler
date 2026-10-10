@@ -24,6 +24,7 @@ struct PrimarySpeechIssuerHostedTests {
         let accessStore: FileDeviceAccessStore
         let source: SourceRecord
         let speaker: Speaker
+        let otherSpeaker: Speaker
         let episode: Episode
         let window: NSWindow
 
@@ -56,13 +57,21 @@ struct PrimarySpeechIssuerHostedTests {
         source.observations.channelCount = .known(1)
         source.observations.sampleRate = .known(16_000)
         let speaker = Speaker(name: "Synthetic speaker")
+        let otherSpeaker = Speaker(name: "Synthetic speaker B")
+        let otherPrimary = SourceRecord(
+            displayNameHint: "Synthetic Primary B", role: .primary, roleConfirmation: .userConfirmed
+        )
         let other = SourceRecord(displayNameHint: "Synthetic Backup", role: .backup, roleConfirmation: .userConfirmed)
         let channel = ChannelReference(sourceID: source.id, statedChannel: 0)
         let episode = Episode(
-            title: "Synthetic episode", recorderGroups: [group], sources: [source, other],
+            title: "Synthetic episode", recorderGroups: [group], sources: [source, other, otherPrimary],
             speakerAssignments: [.init(
                 speakerID: speaker.id, primary: channel, primaryConfirmation: .userConfirmed,
                 backups: [ChannelReference(sourceID: other.id, statedChannel: 0)]
+            ), .init(
+                speakerID: otherSpeaker.id,
+                primary: ChannelReference(sourceID: otherPrimary.id, statedChannel: 0),
+                primaryConfirmation: .userConfirmed
             )]
         )
         let occurrence = try SourceOccurrence(source: source.id, nominalRate: NominalRate(16_000), frameCount: 32_000)
@@ -80,7 +89,7 @@ struct PrimarySpeechIssuerHostedTests {
             )]
         )
         let initial = ShowDocumentModel(
-            show: Show(title: "Synthetic issuer"), speakers: [speaker], episodes: [episode]
+            show: Show(title: "Synthetic issuer"), speakers: [speaker, otherSpeaker], episodes: [episode]
         )
         let recorded = try initial.recordingMap(
             map, in: episode.id, inputs: [.init(sourceID: source.id, formatInterpretationVersion: 1)]
@@ -122,7 +131,8 @@ struct PrimarySpeechIssuerHostedTests {
         return Fixture(
             folder: folder, media: media, backup: backup, document: document, state: state,
             setup: setup, setupController: setupController,
-            accessStore: accessStore, source: source, speaker: speaker, episode: episode, window: window
+            accessStore: accessStore, source: source, speaker: speaker, otherSpeaker: otherSpeaker,
+            episode: episode, window: window
         )
     }
 
@@ -262,6 +272,110 @@ struct PrimarySpeechIssuerHostedTests {
         await #expect(throws: WitnessBoundPCMWindowFailure.unsupportedSampleRate(48_000)) {
             _ = try await OpenSelectedPrimaryPCMSource.issueSynthetic(for: f.setup, accessStore: f.accessStore)
         }
+    }
+
+    @Test func injectedSyntheticSegmentsReachReviewWithoutWordOrCutAuthority() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        try await OpenSelectedPrimaryPCMSource.presentSynthetic(
+            for: f.setup, accessStore: f.accessStore
+        ) { samples, sampleRate, channels in
+            #expect(samples.count == 32_000)
+            #expect(sampleRate == 16_000)
+            #expect(channels == 1)
+            return ["Synthetic sentence"]
+        }
+        let review = f.state.reviewState.presentation
+        #expect(review.occurrences.map(\.text) == ["Synthetic sentence"])
+        #expect(review.occurrences.first?.wordTiming == "Word timing unavailable")
+        #expect(!review.permitsProposals)
+        #expect(review.blockedReason.contains("No filler, cut"))
+    }
+
+    @Test func speakerChangeDuringSyntheticInferenceCannotPublish() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        let setup = f.setup
+        let speakerB = f.otherSpeaker.id
+        await #expect(throws: PrimaryPCMRefusal.selectionChanged) {
+            try await OpenSelectedPrimaryPCMSource.presentSynthetic(
+                for: setup, accessStore: f.accessStore
+            ) { _, _, _ in
+                await MainActor.run { setup.speakerSelection = [speakerB] }
+                return ["Late A"]
+            }
+        }
+        #expect(f.state.reviewState.presentation == .syntheticFixture)
+        #expect(f.setup.captureSelectedPrimaryTranscriptReviewBinding()?.speakerID == f.otherSpeaker.id)
+    }
+
+    @Test func relinkABAAfterSyntheticInferenceCannotPublish() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        let key = DeviceAccessKey(showID: f.document.store.model.show.id, sourceID: f.source.id)
+        let record = try #require(try await f.accessStore.record(for: key))
+        let store = f.accessStore
+        await #expect(throws: PrimaryPCMRefusal.accessChanged) {
+            try await OpenSelectedPrimaryPCMSource.presentSynthetic(
+                for: f.setup, accessStore: store
+            ) { _, _, _ in
+                try await store.save(record)
+                return ["Stale relink"]
+            }
+        }
+        #expect(f.state.reviewState.presentation == .syntheticFixture)
+    }
+
+    @Test func replacedOpenedSourceAfterSyntheticInferenceCannotPublish() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        let media = f.media
+        let replacement = Self.wave()
+        await #expect(throws: DecodeFailure.sourceIdentityMismatch) {
+            try await OpenSelectedPrimaryPCMSource.presentSynthetic(
+                for: f.setup, accessStore: f.accessStore
+            ) { _, _, _ in
+                try replacement.write(to: media, options: [.atomic])
+                return ["Stale opened descriptor"]
+            }
+        }
+        #expect(f.state.reviewState.presentation == .syntheticFixture)
+    }
+
+    @Test func cancellationAfterSyntheticInferenceCannotPublish() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        let cancelled = Task {
+            try await OpenSelectedPrimaryPCMSource.presentSynthetic(
+                for: f.setup, accessStore: f.accessStore
+            ) { _, _, _ in
+                withUnsafeCurrentTask { $0?.cancel() }
+                return ["Cancelled"]
+            }
+        }
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        #expect(f.state.reviewState.presentation == .syntheticFixture)
+    }
+
+    @Test func changedMapEpochDuringSyntheticInferenceCannotPublish() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        let store = f.document.store
+        await #expect(throws: EpisodeSourceAccessRefusal.changedDuringVerification) {
+            try await OpenSelectedPrimaryPCMSource.presentSynthetic(
+                for: f.setup, accessStore: f.accessStore
+            ) { _, _, _ in
+                await MainActor.run {
+                    var changed = store.model
+                    let epoch = RecordingEpoch(label: "Moved after inference")
+                    changed.episodes[0].recorderGroups[0].epochs.append(epoch)
+                    changed.episodes[0].sources[0].placement.epochID = epoch.id
+                    store.replaceLoadedModel(changed)
+                }
+                return ["Stale epoch"]
+            }
+        }
+        #expect(f.state.reviewState.presentation == .syntheticFixture)
     }
 }
 
