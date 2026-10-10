@@ -5,8 +5,8 @@ import WWCore
 @testable import WWPersistence
 
 /// Show schema 1 → current (WW-009 C5, issue #63): explicit stated-channel references, migrated from golden
-/// schema 1 files through the unchanged C3 publication order, straight to the current schema (3 since WW-020; the
-/// 2 → 3 step is covered by `ShowSchema2MigrationTests`). Synthetic fixtures only; deterministic (no wall clock).
+/// schema 1 files through the unchanged C3 publication order, straight to the current schema;
+/// later schema steps have separate migration tests. Synthetic fixtures only; deterministic (no wall clock).
 @Suite("Show schema 1 → current migration (C5, #63)")
 struct ShowSchemaMigrationTests {
     // MARK: - Fixture identifiers (see ShowSchema1Fixtures)

@@ -14,6 +14,7 @@ public struct ValidationIssue: Sendable, Equatable, CustomStringConvertible {
         case emptyTitle
         /// A structurally inconsistent `EpisodeAlignment` (revision order, accepted/derived references, map bytes).
         case invalidAlignment
+        case invalidCutAudit
     }
 
     public var code: Code
@@ -42,6 +43,12 @@ extension ShowDocumentModel {
         issues += duplicates(in: episodes.flatMap { $0.sources.map(\.id) }, kind: "source")
         issues += duplicates(in: episodes.flatMap { $0.recorderGroups.map(\.id) }, kind: "recorder group")
         issues += duplicates(in: episodes.flatMap { $0.recorderGroups.flatMap { $0.epochs.map(\.id) } }, kind: "epoch")
+        if let cutAudits {
+            if cutAudits.isEmpty {
+                issues.append(.init(.invalidCutAudit, "empty cut audit collection must be omitted"))
+            }
+            issues += duplicates(in: cutAudits.map(\.id), kind: "cut audit")
+        }
 
         let speakerIDs = Set(speakers.map(\.id))
         for episode in episodes {

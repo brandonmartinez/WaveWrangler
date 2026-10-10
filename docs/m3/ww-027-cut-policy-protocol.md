@@ -216,12 +216,17 @@ current complete all-lane footprint including final merged fades. Key changes (i
 Backup activation, correction, source/model/asset/format, map and other-cut revisions) keep the
 history readable but mark it stale; neither a stale nor a matching audit may be exported by itself.
 
-This standalone value round-trips independently; it is **not** embedded in `ShowDocumentModel.history`,
-does not bump the canonical show schema, and is not wired to native save/reopen, app preview, common-map
-publication or rendering. The M1 `WWCore.EditHistory` persisted shape remains unchanged. A future
-integration must define canonical schema migration, atomic map/history publication, independent
-verified re-admission on reopen/undo, and post-edit Output-coordinate derivation before #27/#41
-acceptance. Synthetic tests do not establish real-media, native UI/GUI or full-suite qualification.
+Schema 4 stores optional show-scoped, versioned `StoredCutAudit` snapshots, including the complete
+redo tail and cursor, outside `ShowDocumentModel.history`. `WWPersistence.CutAuditPersistence`
+checks the embedded history's structure, identity and unknown fields on canonical open/save.
+Its replace operation requires the previously read snapshot and preserves the active prefix;
+only an action after Undo discards the redo tail. A deleted episode does not erase its audit.
+Schema 3 and earlier documents remain consent-migrated through C5; schema 3 files cannot smuggle
+an audit field. Reopening reports unavailable/stale evidence or **fresh admission required** even
+when the recorded key matches. No result is a cut permit. This is a headless canonical save/reopen
+path, **not** native review UI, common-map/preview/render publication or automatic reactivation.
+Atomic map/history publication, independently verified re-admission, post-edit Output-coordinate
+derivation, real-media/GUI evidence and the full suite remain open before #27/#41 acceptance.
 
 **Synthetic RED -> GREEN, 2026-10-09, working Mac:** With two SwiftPM build jobs and tests serialized,
 the new ledger suite first ran 7 tests: 6 passed, and the duplicate-token identity test failed as

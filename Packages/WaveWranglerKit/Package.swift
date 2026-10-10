@@ -47,7 +47,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "WWCore"),
-        .target(name: "WWPersistence", dependencies: ["WWCore", "WWTimeMap"]),
+        .target(name: "WWPersistence", dependencies: ["WWCore", "WWTimeMap", "WWCutPolicy"]),
         .target(name: "WWSources", dependencies: ["WWCore"]),
         .target(name: "WWEpisodeSetup", dependencies: ["WWCore", "WWSources"]),
         .target(name: "WWOrganizer", dependencies: ["WWCore"]),
@@ -77,7 +77,7 @@ let package = Package(
         .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),
         .executableTarget(name: "WWTinyPCMProbe", dependencies: ["WWWhisperNative"]),
         .testTarget(name: "WWCoreTests", dependencies: ["WWCore"]),
-        .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore", "WWPersistenceProbe", "WWOrganizer", "WWTimeMap"]),
+        .testTarget(name: "WWPersistenceTests", dependencies: ["WWPersistence", "WWCore", "WWCutPolicy", "WWPersistenceProbe", "WWOrganizer", "WWTimeMap"]),
         .testTarget(name: "WWSourcesTests", dependencies: ["WWSources", "WWCore"]),
         .testTarget(name: "WWEpisodeSetupTests", dependencies: ["WWEpisodeSetup", "WWCore", "WWSources"]),
         .testTarget(name: "WWOrganizerTests", dependencies: ["WWOrganizer", "WWCore", "WWPersistence"]),

@@ -86,12 +86,10 @@ struct AlignmentPersistenceTests {
         if case let .invalidPayload(issues)? = error as? PersistenceError { issues.map(\.code) } else { nil }
     }
 
-    /// Schema bump discipline: WW-020 is show schema 3 (`Episode.alignment`, migrated from 1 and 2 by C5); the
-    /// embedded map format is WWTimeMap schema 1, which is part of show schema 3. A time-map schema bump requires a
-    /// show schema bump (so an older build refuses the show as unknown-newer at the envelope), a C5 migration step
-    /// and frozen golden fixtures of the previous show schema — update both pins together, never one alone.
+    /// Show schema 4 adds cut audits to schema 3's alignment; the embedded map stays at version 1.
+    /// Further bumps require C5 migrations and frozen fixtures of the previous schema.
     @Test func schemaVersionsArePinned() {
-        #expect(SchemaVersion.show == 3, "a show schema bump needs a C5 step and frozen goldens of the previous schema")
+        #expect(SchemaVersion.show == 4, "a show schema bump needs a C5 step and frozen goldens of the previous schema")
         #expect(TimeMapSchema.currentVersion == 1, "a time-map schema bump requires a show schema bump (see this test's doc comment)")
     }
 
@@ -120,7 +118,7 @@ struct AlignmentPersistenceTests {
         let model = fixture.show
         let data = try coder.encode(model, revision: 1)
         #expect(!String(decoding: data, as: UTF8.self).contains("alignment"))
-        #expect(RevisionFingerprint(of: data).schemaVersion == 3)
+        #expect(RevisionFingerprint(of: data).schemaVersion == SchemaVersion.show)
         #expect(try coder.decode(data).payload == model)
     }
 

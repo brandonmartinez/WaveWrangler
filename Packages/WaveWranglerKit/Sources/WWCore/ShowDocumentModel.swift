@@ -13,7 +13,9 @@ public enum SchemaVersion {
     /// as strict `WWTimeMap` JSON). Schema 1 and 2 shows are upgraded only through the same consented migration.
     /// An embedded map's `timeMapSchemaVersion` is part of this schema: a time-map schema bump requires a show
     /// schema bump (pinned by `AlignmentPersistenceTests.schemaVersionsArePinned`).
-    public static let show = 3
+    /// 4: optional, versioned per-proposal cut audits. Schema 3 shows need the consented C5 migration;
+    /// audit bytes are historical evidence only, never a cut permit.
+    public static let show = 4
     /// Canonical library document payload (`LibraryModel`).
     /// 2: adds `libraryID`. Schema 1 libraries are upgraded with a derived, stable ID (see WWPersistence
     /// `LibraryCoder`); the original bytes are kept as a backup before the first schema 2 publication.
@@ -32,19 +34,24 @@ public struct ShowDocumentModel: Sendable, Equatable, Codable {
     public var speakers: [Speaker]
     public var episodes: [Episode]
     public var history: EditHistory
+    /// Historical per-proposal snapshots, independent of the M1 edit cursor and any live cut authority.
+    /// Stored at show scope so removing an episode does not erase its decision audit.
+    public var cutAudits: [StoredCutAudit]?
 
     public init(
         schemaVersion: Int = SchemaVersion.show,
         show: Show,
         speakers: [Speaker] = [],
         episodes: [Episode] = [],
-        history: EditHistory = EditHistory()
+        history: EditHistory = EditHistory(),
+        cutAudits: [StoredCutAudit]? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.show = show
         self.speakers = speakers
         self.episodes = episodes
         self.history = history
+        self.cutAudits = cutAudits
     }
 
     /// A new, empty untitled show.
@@ -58,6 +65,24 @@ public struct ShowDocumentModel: Sendable, Equatable, Codable {
 
     public func speaker(_ id: SpeakerID) -> Speaker? {
         speakers.first { $0.id == id }
+    }
+}
+
+/// WWCore cannot depend on WWCutPolicy. WWPersistence validates these opaque audit bytes against
+/// CutDecisionHistory on every canonical open/save; consumers must never interpret them as approval.
+public struct StoredCutAudit: Sendable, Equatable, Codable, Identifiable {
+    public let id: EditID
+    public let episodeID: EpisodeID
+    public let proposalID: String
+    public let version: Int
+    public let historyJSON: Data
+
+    public init(id: EditID, episodeID: EpisodeID, proposalID: String, version: Int, historyJSON: Data) {
+        self.id = id
+        self.episodeID = episodeID
+        self.proposalID = proposalID
+        self.version = version
+        self.historyJSON = historyJSON
     }
 }
 

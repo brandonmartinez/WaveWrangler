@@ -23,8 +23,8 @@ public struct DocumentFormat: Sendable, Equatable {
         identifier: "com.brandonmartinez.wavewrangler.show",
         filenameExtension: "wwshow",
         currentSchemaVersion: SchemaVersion.show,
-        // Schema 1 (bare channel index, 0 as placeholder) opens as `.needsMigration` and changes only through
-        // the consented C5 migration (`ShowSchemaMigration`, `DocumentMigrator.show`).
+        // Schemas 1–3 open as `.needsMigration` and change only through the consented C5 migration
+        // (`ShowSchemaMigration`, `DocumentMigrator.show`).
         minimumReadableSchemaVersion: SchemaVersion.show
     )
 

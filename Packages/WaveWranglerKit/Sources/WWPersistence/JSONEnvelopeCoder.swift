@@ -12,7 +12,7 @@ import WWCore
 /// Read order: strict JSON structure (well-formed, no duplicate keys anywhere) → version header `{format, schemaVersion}` only → format → schema range (unknown-newer
 /// refusal happens before any version-specific field or the payload is decoded) → version-specific header
 /// `{checksum, publicationID, revision}` → revision → payload decode → newer embedded content (refused as
-/// unknown-newer, e.g. a show's embedded time map) → checksum → no unrecognized content
+/// unknown-newer, e.g. a show's embedded time map or cut audit) → checksum → no unrecognized content
 /// → semantic validation. `{format, schemaVersion}` is the only envelope shape frozen across versions.
 ///
 /// `revision` is an ordering hint; `publicationID` (fresh per write) and `checksum` identify a publication. The checksum is SHA-256 over
@@ -258,8 +258,10 @@ enum CanonicalDate {
 
 extension JSONEnvelopeCoder where Payload == ShowDocumentModel {
     public static var show: JSONEnvelopeCoder<ShowDocumentModel> {
-        JSONEnvelopeCoder(format: .show, newerContent: { $0.newerEmbeddedTimeMapSchema() }) {
-            $0.validationIssues(expectedSchemaVersion: $1) + $0.embeddedMapIssues()
+        JSONEnvelopeCoder(format: .show, newerContent: {
+            $0.newerEmbeddedTimeMapSchema() ?? $0.newerEmbeddedCutAuditSchema()
+        }) {
+            $0.validationIssues(expectedSchemaVersion: $1) + $0.embeddedMapIssues() + $0.embeddedCutAuditIssues()
         }
     }
 }
