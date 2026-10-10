@@ -1176,3 +1176,19 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **Operational disposition:** Source #432 remains **SOURCE-only approved** at exact `27e3df2d`, with two prior incomplete 141/143 full runs, no xcresult, no merge, and no [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23) or [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32) closure. The signal sender remains **UNKNOWN**. No JIT, SSH, Mini, native, model/media, source-authority, or acceptance claim follows.
 
 **Reporting obligation:** Include this stopped unit and every unresolved M3 gate in the required by-08:00 EDT report; do not cascade to another runner, transport author, or test attempt under this relay decision.
+
+### 2026-10-10: Reconcile #440 to current main without promoting its full gate
+
+**By:** #440 author and independent Lead source review.
+
+**What:** [#440](https://github.com/brandonmartinez/WaveWrangler/pull/440) was normally reconciled to post-#439 main as clean pushed merge head `b8cb9c2ad7e592151978b6f211a05af04b69764c`, with parents source-approved `736082b3` and main `1d3794c6`. The only conflict was `Package.swift`; its union retains WWCutPolicy for WWPersistenceTests and WWDecode for WWSources/WWEpisodeSetup. The remaining 31 first-parent integration files byte-match main. The author’s focused 424/424 run exited 0, and independent Lead **APPROVED SOURCE ONLY** on this new head.
+
+**Operational disposition:** No full gate, JIT, host execution, merge, or issue acceptance follows. The existing third-author static-approved runner is bound to old `736082b3`; it must be rebound and independently re-reviewed before any one-use JIT or physical-Mini slot.
+
+### 2026-10-10: Record bounded #443 offline-diagnostic draft status
+
+**By:** #443 author and independent whole-seven-file Lead source review.
+
+**What:** New [#443](https://github.com/brandonmartinez/WaveWrangler/pull/443) is a DEBUG synthetic in-app offline-diagnostic draft at clean pushed `f7fc7d6b`; independent Lead **APPROVED SOURCE ONLY** across its seven-file change. The author’s AppConfiguration tests passed 9/9 and the Release build exited 0. No app, SSH, physical-Mini, network, or endpoint execution occurred. Numeric loopback probe candidates remain **UNKNOWN** even if denials occur, and TCP listen after a denied bind is **UNTESTED**.
+
+**Unchanged:** Effective signed-product entitlements, cold PID-matched FD ingress, sandbox-correlated per-cell denials, linked model/selected-Primary proof, rights/RTF, and all applicable product gates remain open. A distinct operator runner is being drafted; no JIT, Mini slot, or probe may run before independent review. [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23), [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32), and [#27](https://github.com/brandonmartinez/WaveWrangler/issues/27) remain open.
