@@ -125,7 +125,8 @@ fileprivate final class CursorWorker: @unchecked Sendable {
     static func make(
         decoder: SourceDecoder,
         url: URL,
-        source: SourceID
+        source: SourceID,
+        matching witness: RawSourceIdentity? = nil
     ) async throws(DecodeFailure) -> CursorWorker {
         let queue = DispatchQueue(label: "com.brandonmartinez.wavewrangler.decode-cursor", qos: .userInitiated)
         let cancellation = CursorCancellation()
@@ -139,7 +140,15 @@ fileprivate final class CursorWorker: @unchecked Sendable {
                     do throws(DecodeFailure) {
                         let before = try decoder.preflight(url)
                         guard !cancellation.isCancelled else { throw .cancelled }
-                        let reader = try decoder.content.openForDecoding(url)
+                        let reader: any DecodingContentReader
+                        if let witness {
+                            guard let gateway = decoder.content as? SystemSourceContentIO else {
+                                throw .sourceIdentityMismatch
+                            }
+                            reader = try gateway.openForDecoding(url, matching: witness)
+                        } else {
+                            reader = try decoder.content.openForDecoding(url)
+                        }
                         do throws(DecodeFailure) {
                             try SourceDecoder.verifyOpened(reader.facts.openedFile, matches: before)
                             let interpretation = try DecodeEnvelope.interpret(
@@ -349,13 +358,31 @@ extension SourceDecoder {
         }
     }
 
+    /// Package-only mechanical decode for an independently confirmed raw identity. This is not an
+    /// authority issuer: the caller must separately verify consent and the selected source before
+    /// providing the witness. Unlike the ordinary cursor, a mismatched opened descriptor is refused
+    /// by the system gateway before the audio parser can read any bytes.
+    @concurrent
+    package func withWitnessBoundDecodingCursor<T: Sendable>(
+        _ url: URL,
+        source: SourceID,
+        matching witness: RawSourceIdentity,
+        _ body: @Sendable (DecodingCursor) async throws -> T
+    ) async throws -> T {
+        try Self.checkCancellation()
+        return try await access.withScopedAccess(to: url) { scopedURL in
+            try await openCursor(scopedURL, source: source, matching: witness, body)
+        }
+    }
+
     @concurrent
     private func openCursor<T: Sendable>(
         _ url: URL,
         source: SourceID,
+        matching witness: RawSourceIdentity? = nil,
         _ body: @Sendable (DecodingCursor) async throws -> T
     ) async throws -> T {
-        let worker = try await CursorWorker.make(decoder: self, url: url, source: source)
+        let worker = try await CursorWorker.make(decoder: self, url: url, source: source, matching: witness)
         do {
             try Self.checkCancellation()
         } catch {
