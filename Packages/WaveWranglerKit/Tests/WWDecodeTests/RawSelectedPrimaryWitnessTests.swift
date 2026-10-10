@@ -425,4 +425,144 @@ struct RawSelectedPrimaryWitnessTests {
         #expect(attempt.failure == .sourceChangedDuringDecode)
         expectNothingPublished(attempt)
     }
+
+    @Test("Witness-bound cursor refuses a path replacement before any parser read")
+    func cursorRefusesReplacementBeforeParser() async throws {
+        let directory = try FixtureDirectory("raw-cursor-swap")
+        let spec = FixtureSpec(
+            container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
+            sampleRate: 48_000, channelCount: 2
+        )
+        let primary = try directory.write(spec, signal: LandmarkSignal(frames: 32_000, channelCount: 2, seed: 420))
+        let replacement = try directory.copy(primary, as: "replacement.wav")
+        let witness = try await capturedWitness(at: primary)
+        let reads = Counter()
+        let opens = Counter()
+        let bodyCalls = Counter()
+        var gateway = SystemSourceContentIO()
+        gateway.descriptorOpener = { path in
+            opens.increment()
+            if Darwin.rename(replacement.path, primary.path) != 0 {
+                Issue.record("synthetic replacement failed: \(errno)")
+                return -1
+            }
+            return Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        }
+        gateway.readPolicyObserver = { _ in reads.increment() }
+        let failure = await DecodingCursorTests.failure {
+            _ = try await makeDecoder(content: gateway).withWitnessBoundDecodingCursor(
+                primary, source: SourceID(), matching: witness
+            ) { _ in bodyCalls.increment() }
+        }
+        #expect(failure == .sourceIdentityMismatch)
+        #expect(opens.count == 1)
+        #expect(reads.count == 0, "AudioFileOpenWithCallbacks must not get parser bytes")
+        #expect(bodyCalls.count == 0)
+    }
+
+    @Test("Witness-bound cursor cannot fall back to a gateway without descriptor binding")
+    func cursorRefusesUnboundGateway() async throws {
+        let directory = try FixtureDirectory("raw-cursor-gateway")
+        let spec = FixtureSpec(
+            container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
+            sampleRate: 48_000, channelCount: 1
+        )
+        let primary = try directory.write(spec, signal: LandmarkSignal(frames: 32_000, channelCount: 1, seed: 424))
+        let witness = try await capturedWitness(at: primary)
+        let script = try ScriptedSource()
+        let unbound = ScriptedContentIO(script.script())
+        let bodyCalls = Counter()
+        let failure = await DecodingCursorTests.failure {
+            _ = try await makeDecoder(content: unbound).withWitnessBoundDecodingCursor(
+                primary, source: SourceID(), matching: witness
+            ) { _ in bodyCalls.increment() }
+        }
+        #expect(failure == .sourceIdentityMismatch)
+        #expect(unbound.record.opens == 0 && unbound.record.reads == 0)
+        #expect(bodyCalls.count == 0)
+    }
+
+    @Test("Unchanged witness-bound PCM cursor preserves source, channel order and frame bounds")
+    func cursorPreservesStereoWindow() async throws {
+        let directory = try FixtureDirectory("raw-cursor-stereo")
+        let signal = LandmarkSignal(frames: 32_000, channelCount: 2, seed: 421)
+        let spec = FixtureSpec(
+            container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
+            sampleRate: 48_000, channelCount: 2
+        )
+        let primary = try directory.write(spec, signal: signal)
+        let witness = try await capturedWitness(at: primary)
+        let ledger = SecurityScopeLedger()
+        let decoder = makeDecoder(chunkFrames: 4096, ledger: ledger)
+        let sourceID = SourceID()
+        let (source, channels, audio, position) = try await decoder.withWitnessBoundDecodingCursor(
+            primary, source: sourceID, matching: witness
+        ) { cursor in
+            let audio = try await DecodingCursorTests.collect(cursor)
+            return (cursor.interpretation.source, cursor.interpretation.channelCount, audio, await cursor.position)
+        }
+        #expect(source == sourceID)
+        #expect(channels == 2)
+        #expect(position == 32_000)
+        #expect(audio.channels == signal.channels)
+        for channel in 0..<channels {
+            #expect(Array(audio.channels[channel][1000..<3000]) == Array(signal.channels[channel][1000..<3000]))
+        }
+        #expect(ledger.snapshot.openScopes == 0)
+    }
+
+    @Test("A same-descriptor mutation after a witness-bound read cannot publish the body result")
+    func cursorRejectsPostReadMutation() async throws {
+        let directory = try FixtureDirectory("raw-cursor-mutation")
+        let spec = FixtureSpec(
+            container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
+            sampleRate: 48_000, channelCount: 1
+        )
+        let primary = try directory.write(spec, signal: LandmarkSignal(frames: 32_000, channelCount: 1, seed: 422))
+        chmod(primary.path, 0o644)
+        let witness = try await capturedWitness(at: primary)
+        let bodyReturned = Counter()
+        let failure = await DecodingCursorTests.failure {
+            _ = try await makeDecoder().withWitnessBoundDecodingCursor(
+                primary, source: SourceID(), matching: witness
+            ) { cursor in
+                _ = try await cursor.next()
+                let fd = Darwin.open(primary.path, O_WRONLY | O_APPEND | O_CLOEXEC | O_NOFOLLOW)
+                guard fd >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+                defer { Darwin.close(fd) }
+                var byte: UInt8 = 0
+                guard Darwin.write(fd, &byte, 1) == 1 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+                bodyReturned.increment()
+                return 0
+            }
+        }
+        #expect(failure == .sourceChangedDuringDecode)
+        #expect(bodyReturned.count == 1)
+    }
+
+    @Test("Cancellation after a witness-bound read cannot publish the body result")
+    func cursorRejectsCancellation() async throws {
+        let directory = try FixtureDirectory("raw-cursor-cancel")
+        let spec = FixtureSpec(
+            container: .wave, codec: .linearPCM, sampleFormat: .int(16, bigEndian: false),
+            sampleRate: 48_000, channelCount: 1
+        )
+        let primary = try directory.write(spec, signal: LandmarkSignal(frames: 32_000, channelCount: 1, seed: 423))
+        let witness = try await capturedWitness(at: primary)
+        let returned = Counter()
+        let task = Task {
+            await DecodingCursorTests.failure {
+                _ = try await makeDecoder().withWitnessBoundDecodingCursor(
+                    primary, source: SourceID(), matching: witness
+                ) { cursor in
+                    _ = try await cursor.next()
+                    withUnsafeCurrentTask { $0?.cancel() }
+                    returned.increment()
+                    return 0
+                }
+            }
+        }
+        #expect(await task.value == .cancelled)
+        #expect(returned.count == 1)
+    }
 }
