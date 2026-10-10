@@ -328,6 +328,18 @@ public struct ApprovedCut: Sendable, Equatable {
     public let review: HumanReviewAction
 }
 
+struct ExcludedBackup: Sendable, Equatable {
+    let id: String
+    let message: String
+}
+
+/// A pure participation check, not a source witness or permission to admit a cut.
+struct PrimaryParticipation: Sendable, Equatable {
+    let anchorID: String
+    let selectedPrimaryIDs: [String]
+    let excludedBackups: [ExcludedBackup]
+}
+
 /// Minted only by a future native person-action adapter, not by proposal generation.
 public struct HumanReviewAction: Sendable, Equatable {
     public let actionID: String
@@ -347,6 +359,77 @@ public struct HumanReviewAction: Sendable, Equatable {
 }
 
 public enum CutPolicy {
+    /// Checks only supplied metadata and footprints. No external caller can mint the manifest
+    /// or use this result to authorize preview, render, export, or publication.
+    static func primaryParticipation(
+        key: EvidenceKey, manifest: EpisodeLaneManifest, footprint: CutFootprint
+    ) throws -> PrimaryParticipation {
+        guard key.hasCompleteIdentity, manifest.revision == key.laneManifestRevision,
+              footprint.key == key, footprint.manifestRevision == manifest.revision else {
+            throw CutRefusal.staleEvidence
+        }
+        let lanes = manifest.lanes
+        guard !lanes.isEmpty, Set(lanes.map(\.id)).count == lanes.count,
+              lanes.allSatisfy({ !$0.id.isEmpty }),
+              Set(footprint.lanes.map(\.id)).count == footprint.lanes.count else {
+            throw CutRefusal.incompleteLanes
+        }
+        var anchorID: String?
+        var selected: [String] = []
+        var backups: [ExcludedBackup] = []
+        var origins: Set<SourceOccurrence> = []
+        let supplied = Dictionary(uniqueKeysWithValues: footprint.lanes.map { ($0.id, $0) })
+        for lane in lanes {
+            switch lane.kind {
+            case .backup:
+                guard lane.origin != nil, supplied[lane.id] == nil else {
+                    throw CutRefusal.incompleteLanes
+                }
+                backups.append(ExcludedBackup(
+                    id: lane.id, message: "backup not verified; excluded from cut proof"))
+            case .otherSpeaker, .intentionalSilence:
+                throw CutRefusal.uninspectableLane(lane.id)
+            case .selectedPrimary:
+                guard let origin = lane.origin, !origin.source.isEmpty,
+                      !origin.occurrence.isEmpty, !origin.epoch.isEmpty,
+                      origin.channel >= 0, origins.insert(origin).inserted,
+                      !lane.backingRevision.isEmpty, !lane.protectionRevision.isEmpty,
+                      lane.mapRevision == key.alignmentRevision else {
+                    throw CutRefusal.incompleteLanes
+                }
+                guard case let .audio(_, actual, coverage, removal, fades, protection,
+                                      backed, boundary, _, _, endpointError)? = supplied[lane.id],
+                      actual == origin, backed, boundary == .supported,
+                      coverage.contains(removal), endpointError >= 0, endpointError <= 1,
+                      protection.status == .verifiedPrimary, protection.origin == origin,
+                      protection.revision == lane.protectionRevision,
+                      protection.protected.allSatisfy({ coverage.contains($0) }) else {
+                    throw CutRefusal.uninspectableLane(lane.id)
+                }
+                let affected = [removal] + [fades.fadeOut, fades.fadeIn].compactMap { $0 } +
+                    fades.mergedFinal
+                guard affected.allSatisfy({ coverage.contains($0) }) else {
+                    throw CutRefusal.uninspectableLane(lane.id)
+                }
+                guard !protection.protected.contains(where: { protected in
+                    affected.contains(where: { protected.intersects($0) })
+                }) else {
+                    throw CutRefusal.protectedFrame(lane.id)
+                }
+                if origin == key.primary {
+                    guard anchorID == nil else { throw CutRefusal.incompleteLanes }
+                    anchorID = lane.id
+                }
+                selected.append(lane.id)
+            }
+        }
+        guard let anchorID, supplied.count == selected.count else {
+            throw CutRefusal.incompleteLanes
+        }
+        return PrimaryParticipation(anchorID: anchorID, selectedPrimaryIDs: selected,
+                                    excludedBackups: backups)
+    }
+
     public static func admit(
         _ proposal: CutProposal, request: CutRequest, current: VerifiedEpisodeState?,
         review: HumanReviewAction?, mapping: any CutFootprintMapping

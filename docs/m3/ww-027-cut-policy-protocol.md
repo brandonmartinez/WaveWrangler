@@ -154,6 +154,33 @@ until independent lane protection, final merged fade and atomic map/history/prev
 are certified. Reverify after awaits and before any future admission; it does not mint the
 policy's sealed verified types or enable a cut.
 
+## M3 selected-Primary participation boundary
+
+The internal, pure `CutPolicy.primaryParticipation` checks a supplied sealed episode manifest
+against a supplied footprint. Exactly one selected Primary matching the candidate key anchors the
+selection; additional selected Primaries must each have a distinct, complete source/channel/
+occurrence/epoch identity, current declared map/protection revisions, backing, supported boundary,
+bounded endpoint error and matching selected-Primary protection footprint. Removal, both requested
+fades and every merged-final fade must fit that lane's verified coverage and avoid protected speech
+in either mode. Uncovered footprints refuse as uninspectable; protected intersections refuse with
+the lane ID. Every unverified Backup is excluded from the footprint and reported as
+`backup not verified; excluded from cut proof`; supplying a Backup footprint refuses. Unknown
+audio, an unsupported other-speaker lane, or a purported silence lane without a separately
+authoritative classification refuses rather than becoming silence. Synthetic cases cover both
+Shorten and Lift, identity aliasing, stale declarations, missing/mismatched proof, protected
+fades and uncovered requested/merged fades. This helper never opens a source or issues a trusted proof, and its result is **not**
+admission, preview, render, export or publication authority.
+
+The WWCore canonical episode roles and confirmed speaker assignments are not yet bridged to
+`WWCutPolicy`; no production issuer exists for the sealed manifest, proof or human review action.
+Consequently neither this helper nor the older synthetic `admit` fixtures establish a current
+source, completeness, independent protection, final common rounded map, stale-safe atomic
+publication or M3 acceptance. The older `admit` fixture still models hypothetical all-lane
+proof (including Backup) for refusal regression coverage; it is not the M3 participation rule
+and its constructors remain inaccessible to external clients. Binding canonical roles and a
+source-verified selected-Primary witness, with no Backup opens, is a separate prerequisite.
+Positive Backup source/protection qualification requires separate M4 consent under #420.
+
 `ReviewJournal` records named pending/adjusted/accepted/rejected/restored/abstained/blocked states;
 Restore keeps the accepted cut's evidence and removes activity. Undo Restore and redo Accept require
 fresh identical proof for all admitted selected Primaries and explicit Backup exclusions or

@@ -116,6 +116,202 @@ struct CutPolicyTests {
                                    mapping: FixtureMapper(proof: proof))
     }
 
+    static func primaryParticipationProof(
+        secondOrigin: SourceOccurrence = other, secondProtection: ProtectionProof? = nil,
+        secondBacked: Bool = true, secondBoundary: BoundarySupport = .supported,
+        secondEndpointError: Int64 = 0, secondRemoval: FrameSpan = span(140, 150),
+        secondCoverage: FrameSpan = span(1, 6_000), secondFades: FadeFootprint = FadeFootprint(),
+        mode: CutMode = .shorten, includeBackup: Bool = false
+    ) -> CutFootprint {
+        let original = proof(mode: mode)
+        let second = LaneFootprint.audio(
+            id: "second-primary", origin: secondOrigin, coverage: secondCoverage,
+            removal: secondRemoval, fades: secondFades,
+            protection: secondProtection ?? .verifiedPrimary(other, revision: "p3", protected: []),
+            backed: secondBacked, boundary: secondBoundary, fadeOutOutputFrames: 0,
+            fadeInOutputFrames: 0, endpointErrorOutputFrames: secondEndpointError)
+        return CutFootprint(
+            key: key(), manifestRevision: "episode-lanes-1", grid: original.grid,
+            outputRate: original.outputRate, effect: original.effect,
+            lanes: [original.lanes[0], second] + (includeBackup ? [original.lanes[1]] : []))
+    }
+
+    @Test("Selected Primaries share an anchor; Backup is visibly excluded in both modes")
+    func selectedPrimaryParticipation() throws {
+        let second = LaneRevision(id: "second-primary", kind: .selectedPrimary, origin: Self.other,
+                                  backingRevision: "a3", mapRevision: "m1", protectionRevision: "p3")
+        let lanes = [Self.lanes[0], second, Self.lanes[1]]
+        let single = try CutPolicy.primaryParticipation(
+            key: Self.key(), manifest: EpisodeLaneManifest(revision: "episode-lanes-1",
+                                                           lanes: [Self.lanes[0], Self.lanes[1]]),
+            footprint: Self.proof(laneIDs: ["primary"]))
+        #expect(single.selectedPrimaryIDs == ["primary"])
+        #expect(single.excludedBackups.count == 1)
+        for mode in [CutMode.shorten, .lift] {
+            let result = try CutPolicy.primaryParticipation(
+                key: Self.key(), manifest: EpisodeLaneManifest(revision: "episode-lanes-1",
+                                                               lanes: lanes),
+                footprint: Self.primaryParticipationProof(mode: mode))
+            #expect(result.anchorID == "primary")
+            #expect(result.selectedPrimaryIDs == ["primary", "second-primary"])
+            #expect(result.excludedBackups == [
+                ExcludedBackup(id: "backup",
+                               message: "backup not verified; excluded from cut proof"),
+            ])
+            #expect(!result.selectedPrimaryIDs.contains("backup"))
+        }
+    }
+
+    @Test("Unknown, overlapping and incomplete Primary proofs refuse instead of reclassifying lanes")
+    func primaryParticipationRefusals() {
+        let second = LaneRevision(id: "second-primary", kind: .selectedPrimary, origin: Self.other,
+                                  backingRevision: "a3", mapRevision: "m1", protectionRevision: "p3")
+        let base = Self.proof()
+        let manifest = EpisodeLaneManifest(revision: "episode-lanes-1",
+                                           lanes: [Self.lanes[0], second, Self.lanes[1]])
+        func check(_ lanes: [LaneRevision], _ proof: CutFootprint = Self.proof(
+            laneIDs: ["primary", "other"])) throws -> PrimaryParticipation {
+            try CutPolicy.primaryParticipation(
+                key: Self.key(), manifest: EpisodeLaneManifest(revision: "episode-lanes-1",
+                                                               lanes: lanes), footprint: proof)
+        }
+        #expect(throws: CutRefusal.incompleteLanes) {
+            try check([Self.lanes[0], Self.lanes[1]], base)
+        }
+        #expect(throws: CutRefusal.incompleteLanes) {
+            try check([Self.lanes[0], second, second], base)
+        }
+        let aliased = LaneRevision(id: "second-primary", kind: .selectedPrimary, origin: Self.primary,
+                                   backingRevision: "a3", mapRevision: "m1", protectionRevision: "p3")
+        #expect(throws: CutRefusal.incompleteLanes) {
+            try check([Self.lanes[0], aliased, Self.lanes[1]])
+        }
+        let unknown = LaneRevision(id: "unknown", kind: .otherSpeaker, origin: Self.other,
+                                   backingRevision: "a3", mapRevision: "m1", protectionRevision: "p3")
+        #expect(throws: CutRefusal.uninspectableLane("unknown")) {
+            try check([Self.lanes[0], unknown])
+        }
+        #expect(throws: CutRefusal.uninspectableLane("silence")) {
+            try check([Self.lanes[0], Self.lanes[3]])
+        }
+        let incomplete = LaneRevision(id: "second-primary", kind: .selectedPrimary, origin: nil,
+                                      backingRevision: "a3", mapRevision: "m1", protectionRevision: "p3")
+        #expect(throws: CutRefusal.incompleteLanes) {
+            try check([Self.lanes[0], incomplete])
+        }
+        let unmapped = LaneRevision(id: "second-primary", kind: .selectedPrimary, origin: Self.other,
+                                    backingRevision: "a3", mapRevision: "stale", protectionRevision: "p3")
+        #expect(throws: CutRefusal.incompleteLanes) {
+            try check([Self.lanes[0], unmapped])
+        }
+        #expect(throws: CutRefusal.incompleteLanes) {
+            try check([second, Self.lanes[1]], Self.primaryParticipationProof())
+        }
+        let unspecifiedBackup = LaneRevision(
+            id: "backup", kind: .backup, origin: nil, backingRevision: "a2",
+            mapRevision: "m1", protectionRevision: "p2")
+        #expect(throws: CutRefusal.incompleteLanes) {
+            try check([Self.lanes[0], unspecifiedBackup], Self.proof(laneIDs: ["primary"]))
+        }
+        #expect(throws: CutRefusal.uninspectableLane("second-primary")) {
+            try CutPolicy.primaryParticipation(key: Self.key(), manifest: manifest,
+                footprint: Self.proof(laneIDs: ["primary"]))
+        }
+        #expect(throws: CutRefusal.uninspectableLane("second-primary")) {
+            try CutPolicy.primaryParticipation(key: Self.key(), manifest: manifest,
+                footprint: Self.proof(laneIDs: ["primary", "other"]))
+        }
+        #expect(throws: CutRefusal.incompleteLanes) {
+            try CutPolicy.primaryParticipation(key: Self.key(), manifest: manifest,
+                footprint: Self.primaryParticipationProof(includeBackup: true))
+        }
+        for footprint in [
+            Self.primaryParticipationProof(secondOrigin: Self.backup),
+            Self.primaryParticipationProof(secondProtection: .unknown),
+            Self.primaryParticipationProof(secondProtection:
+                .verifiedIndependentLane(Self.other, revision: "p3", protected: [])),
+            Self.primaryParticipationProof(secondProtection:
+                .verifiedPrimary(Self.other, revision: "stale", protected: [])),
+            Self.primaryParticipationProof(secondBacked: false),
+            Self.primaryParticipationProof(secondBoundary: .ambiguousInverse),
+            Self.primaryParticipationProof(secondEndpointError: 2),
+        ] {
+            #expect(throws: CutRefusal.uninspectableLane("second-primary")) {
+                try CutPolicy.primaryParticipation(key: Self.key(), manifest: manifest,
+                    footprint: footprint)
+            }
+        }
+        #expect(throws: CutRefusal.protectedFrame("second-primary")) {
+            try CutPolicy.primaryParticipation(key: Self.key(), manifest: manifest,
+                footprint: Self.primaryParticipationProof(secondProtection:
+                    .verifiedPrimary(Self.other, revision: "p3",
+                                     protected: [Self.span(149, 150)])))
+        }
+        #expect(throws: CutRefusal.staleEvidence) {
+            try CutPolicy.primaryParticipation(key: Self.key(manifest: "changed"),
+                manifest: manifest, footprint: Self.primaryParticipationProof())
+        }
+    }
+
+    @Test("Selected Primary fade footprints cannot touch protected speech in either mode")
+    func primaryParticipationProtectedFades() throws {
+        let second = LaneRevision(id: "second-primary", kind: .selectedPrimary, origin: Self.other,
+                                  backingRevision: "a3", mapRevision: "m1", protectionRevision: "p3")
+        let manifest = EpisodeLaneManifest(revision: "episode-lanes-1",
+                                           lanes: [Self.lanes[0], second, Self.lanes[1]])
+        let protected = Self.span(138, 140)
+        let protection = ProtectionProof.verifiedPrimary(Self.other, revision: "p3",
+                                                          protected: [protected])
+        for mode in [CutMode.shorten, .lift] {
+            let safe = Self.primaryParticipationProof(
+                secondProtection: protection, secondFades: FadeFootprint(
+                    fadeOut: Self.span(136, 138), fadeIn: Self.span(150, 152),
+                    mergedFinal: [Self.span(136, 138), Self.span(150, 152)]), mode: mode)
+            _ = try CutPolicy.primaryParticipation(key: Self.key(), manifest: manifest,
+                                                    footprint: safe)
+            for fades in [
+                FadeFootprint(fadeOut: protected, mergedFinal: [protected]),
+                FadeFootprint(fadeIn: protected, mergedFinal: [protected]),
+                FadeFootprint(mergedFinal: [protected]),
+            ] {
+                #expect(throws: CutRefusal.protectedFrame("second-primary")) {
+                    try CutPolicy.primaryParticipation(key: Self.key(), manifest: manifest,
+                        footprint: Self.primaryParticipationProof(
+                            secondProtection: protection, secondFades: fades, mode: mode))
+                }
+            }
+        }
+    }
+
+    @Test("Selected Primary requested and merged fades must stay inside verified coverage")
+    func primaryParticipationUncoveredFades() throws {
+        let second = LaneRevision(id: "second-primary", kind: .selectedPrimary, origin: Self.other,
+                                  backingRevision: "a3", mapRevision: "m1", protectionRevision: "p3")
+        let manifest = EpisodeLaneManifest(revision: "episode-lanes-1",
+                                           lanes: [Self.lanes[0], second, Self.lanes[1]])
+        let coverage = Self.span(137, 160)
+        let protection = ProtectionProof.verifiedPrimary(Self.other, revision: "p3",
+                                                          protected: [Self.span(138, 140)])
+        for mode in [CutMode.shorten, .lift] {
+            for fades in [
+                FadeFootprint(fadeOut: Self.span(136, 138),
+                              mergedFinal: [Self.span(137, 138)]),
+                FadeFootprint(fadeIn: Self.span(159, 161),
+                              mergedFinal: [Self.span(158, 159)]),
+                FadeFootprint(mergedFinal: [Self.span(136, 138)]),
+                FadeFootprint(fadeOut: Self.span(136, 138),
+                              mergedFinal: [Self.span(136, 138)]),
+            ] {
+                #expect(throws: CutRefusal.uninspectableLane("second-primary")) {
+                    try CutPolicy.primaryParticipation(key: Self.key(), manifest: manifest,
+                        footprint: Self.primaryParticipationProof(
+                            secondProtection: protection, secondCoverage: coverage,
+                            secondFades: fades, mode: mode))
+                }
+            }
+        }
+    }
+
     @Test("Proposals are inert; transcript classes and unsupported words do not prove safety")
     func pendingIsInert() {
         #expect(ReviewJournal(proposal: Self.proposal()).current.decision == .pending)
