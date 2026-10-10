@@ -1192,3 +1192,19 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **What:** New [#443](https://github.com/brandonmartinez/WaveWrangler/pull/443) is a DEBUG synthetic in-app offline-diagnostic draft at clean pushed `f7fc7d6b`; independent Lead **APPROVED SOURCE ONLY** across its seven-file change. The author’s AppConfiguration tests passed 9/9 and the Release build exited 0. No app, SSH, physical-Mini, network, or endpoint execution occurred. Numeric loopback probe candidates remain **UNKNOWN** even if denials occur, and TCP listen after a denied bind is **UNTESTED**.
 
 **Unchanged:** Effective signed-product entitlements, cold PID-matched FD ingress, sandbox-correlated per-cell denials, linked model/selected-Primary proof, rights/RTF, and all applicable product gates remain open. A distinct operator runner is being drafted; no JIT, Mini slot, or probe may run before independent review. [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23), [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32), and [#27](https://github.com/brandonmartinez/WaveWrangler/issues/27) remain open.
+
+### 2026-10-10: Reject #443 private operator candidate before execution
+
+**By:** Independent private operator review, distinct from the existing #443 source-only approval at `f7fc7d6b`.
+
+**What:** The frozen candidate `offline443.py` at SHA `3ada0fd56…` was **REJECTED** before build, SSH, physical-Mini, or probe activity. It uses wrong-product provenance (`WW_DERIVED_DATA` build override rather than the fixed audited app); treats only nonempty slot/JIT strings as sufficient, allowing reusable concurrent execution; and relies on alias-only host identity. Its preflight takes one launch quiet sample, has no GUI lock or compiler-root check, and can leave detached app/compiler children without owned cleanup after interruption. Raw sandbox lines lack per-cell PID/time/family/operation correlation, so the resulting cell outcomes remain **UNKNOWN**.
+
+**Operational disposition:** Operator-author session `8d556563` is locked out of revising this artifact. Any retry requires a fresh independent author and review. This rejection establishes no [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23) or [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32) proof, and no build, SSH, Mini, probe, entitlement, ingress, or product acceptance occurred.
+
+### 2026-10-10: Approve #440 runner v4 preparation without releasing a run
+
+**By:** Independent private runner review.
+
+**What:** The #440 runner v4 was independently **APPROVED** at driver `9f81ffbd…` and remote `bf5a9656…`, bound to reconciled source head `b8cb9c2`. No JIT or full run has been issued. The coordinator is planning the first serial physical-Mini gate; this review is preparation only.
+
+**Unchanged:** The #440 full gate, host execution, merge, and issue acceptance remain outstanding.
