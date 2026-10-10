@@ -77,7 +77,21 @@ final class EpisodeSetupModel {
         didSet { if selection != oldValue { pendingInspectorFocus = false } }
     }
     var speakerSelection: Set<SpeakerID> = [] {
-        didSet { if speakerSelection != oldValue { pendingInspectorFocus = false } }
+        didSet {
+            if speakerSelection != oldValue {
+                pendingInspectorFocus = false
+                speakerSelectionGeneration += 1
+                ShowWindowRegistry.state(for: window())?.reviewSpeakerSelectionDidChange()
+            }
+        }
+    }
+    private(set) var speakerSelectionGeneration: UInt64 = 0
+
+    /// A producer may capture only the single speaker actually selected in this window's Setup.
+    func captureSelectedPrimaryTranscriptReviewBinding() -> ShowWindowState.SelectedPrimaryTranscriptBinding? {
+        guard let window = window(), isOnScreen,
+              let state = ShowWindowRegistry.state(for: window) else { return nil }
+        return state.captureSelectedPrimaryTranscript(from: self)
     }
     var onlyNeedingAttention = false
     enum FocusedTable: Hashable { case sources, speakers }
@@ -132,6 +146,15 @@ final class EpisodeSetupModel {
         self.episodeID = episodeID
         self.engine = engine
         self.preference = preference
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "WWUITestHooks"),
+           UserDefaults.standard.bool(forKey: "WWUITestReviewBindingFixture"),
+           store.model.show.title == "Synthetic Review Binding Fixture",
+           store.model.episodes.first?.id == episodeID,
+           let speaker = store.model.speakers.first(where: { $0.name == "Synthetic review speaker" }) {
+            speakerSelection = [speaker.id]
+        }
+        #endif
     }
 
     // MARK: Derived state
