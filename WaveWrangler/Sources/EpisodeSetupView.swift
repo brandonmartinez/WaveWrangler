@@ -13,6 +13,7 @@ struct EpisodeSetupContent: View {
     var textScale: CGFloat = 1
     @State private var controller: EpisodeSetupViewController?
     @State private var connecting = false
+    @State private var visible = true
 
     var body: some View {
         Group {
@@ -29,10 +30,12 @@ struct EpisodeSetupContent: View {
             Task { @MainActor in connect(to: window) }
         })
         .onAppear {
+            visible = true
             controller?.model.isOnScreen = true
             controller?.model.startObserving()
         }
         .onDisappear {
+            visible = false
             // The show's engine stays leased to the window (downloads keep running); only this view's
             // observation stops. The lease ends when the window closes.
             controller?.model.isOnScreen = false
@@ -41,15 +44,21 @@ struct EpisodeSetupContent: View {
     }
 
     private func connect(to window: NSWindow?) {
-        guard let window else { return }
+        guard let window, visible else { return }
         if let controller {
             controller.attach(to: window)
+            ShowWindowRegistry.state(for: window)?.setupModelDidAttach(controller.model)
             return
         }
         guard !connecting else { return }
         connecting = true
         Task { @MainActor in
             let engine = await SetupEngineProvider.engine(for: window, show: store.model.show.id)
+            let state = ShowWindowRegistry.state(for: window)
+            guard visible, state == nil || (state?.destination == .setup && state?.selectedEpisodeID == episodeID) else {
+                connecting = false
+                return
+            }
             let model = EpisodeSetupModel(store: store, episodeID: episodeID, engine: engine, preference: AppSettingsDownloadPreference.shared)
             if let real = engine as? WWSourcesSetupEngine {
                 real.sourceNames = { [weak store] id in
@@ -59,6 +68,7 @@ struct EpisodeSetupContent: View {
             let controller = EpisodeSetupViewController(model: model)
             controller.attach(to: window)
             model.isOnScreen = true
+            state?.setupModelDidAttach(model)
             self.controller = controller
             connecting = false
             model.startObserving()
