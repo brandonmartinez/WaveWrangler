@@ -23,7 +23,14 @@ final class ShowWindowState {
             if reportsInteractions { Responsiveness.interaction("show.sidebarSelection") }
         }
     }
-    var destination: ShowDestination = .setup
+    var destination: ShowDestination = .setup {
+        didSet {
+            // Leaving Review revokes pending handoffs even if a new Setup selects the same speaker.
+            guard oldValue != destination, destination != .review else { return }
+            reviewSelectionGeneration += 1
+            invalidateBoundReview()
+        }
+    }
     var inspectorPresented = true
     var sidebarVisibility: NavigationSplitViewVisibility = .all
     var renamingEpisodeID: EpisodeID?
@@ -49,6 +56,8 @@ final class ShowWindowState {
         return reviewPresentationState
     }
     @ObservationIgnored private var reviewBinding: SelectedPrimaryTranscriptBinding?
+    /// Keep the originating Setup identity while Review replaces its view in the hierarchy.
+    @ObservationIgnored private weak var activeReviewSetup: EpisodeSetupModel?
     @ObservationIgnored private var reviewSelectionGeneration: UInt64 = 0
     @ObservationIgnored private var reviewWindowClosed = false
     /// Selection changes count as user interactions (WW-007 timing) only after the window's first passes.
@@ -220,7 +229,6 @@ final class ShowWindowState {
         }
         #endif
         self.destination = destination
-        if changed, destination != .review { invalidateBoundReview() }
         if changed, let panel = destination.blockedPanel {
             announce(panel.heading)
         }
@@ -248,7 +256,9 @@ final class ShowWindowState {
     }
 
     func captureSelectedPrimaryTranscript(from setup: EpisodeSetupModel) -> SelectedPrimaryTranscriptBinding? {
-        guard !reviewWindowClosed, let window, setup.window() === window, setup.isOnScreen,
+        guard !reviewWindowClosed, destination == .setup, let window, setup.window() === window, setup.isOnScreen,
+              EpisodeSetupViewController.controller(for: window)?.model === setup,
+              activeReviewSetup == nil || activeReviewSetup === setup,
               setup.store === store, setup.episodeID == selectedEpisodeID,
               setup.speakerSelection.count == 1, let speakerID = setup.speakerSelection.first,
               store.model.speaker(speakerID) != nil,
@@ -257,6 +267,7 @@ final class ShowWindowState {
               let channel = primary.channel.value, channel >= 0,
               let source = episode.source(primary.sourceID), source.role == .primary,
               source.roleConfirmation == .userConfirmed else { return nil }
+        activeReviewSetup = setup
         return SelectedPrimaryTranscriptBinding(
             showID: store.model.show.id, episodeID: episode.id, speakerID: speakerID,
             primary: primary, sourceName: source.displayNameHint,
@@ -268,6 +279,9 @@ final class ShowWindowState {
     /// Recheck after every await; a source with the same model bytes after undo is still stale.
     func isCurrentSelectedPrimaryTranscript(_ binding: SelectedPrimaryTranscriptBinding) -> Bool {
         guard !reviewWindowClosed, binding.setup.store === store,
+              activeReviewSetup === binding.setup,
+              destination == .review || (destination == .setup && binding.setup.isOnScreen
+                  && EpisodeSetupViewController.controller(for: window)?.model === binding.setup),
               binding.setup.window() === window, binding.setup.episodeID == binding.episodeID,
               binding.setup.speakerSelectionGeneration == binding.speakerSelectionGeneration,
               binding.setup.speakerSelection == [binding.speakerID],
@@ -283,6 +297,11 @@ final class ShowWindowState {
               source.roleConfirmation == .userConfirmed,
               source.displayNameHint == binding.sourceName else { return false }
         return true
+    }
+
+    func setupModelDidAttach(_ setup: EpisodeSetupModel) {
+        if let activeReviewSetup, activeReviewSetup !== setup { invalidateBoundReview() }
+        activeReviewSetup = setup
     }
 
     private func invalidateBoundReview() {

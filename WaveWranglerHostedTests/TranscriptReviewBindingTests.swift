@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 import WWCore
 import WWEpisodeSetup
@@ -12,9 +13,11 @@ struct TranscriptReviewBindingTests {
     private struct Fixture {
         let state: ShowWindowState
         let setup: EpisodeSetupModel
+        let setupController: EpisodeSetupViewController
         let store: ShowDocumentStore
         let window: NSWindow
         let speaker: Speaker
+        let otherSpeaker: Speaker
         let first: Episode
         let second: Episode
         let firstSource: SourceRecord
@@ -34,6 +37,7 @@ struct TranscriptReviewBindingTests {
 
     private func fixture() -> Fixture {
         let speaker = Speaker(name: "Host")
+        let otherSpeaker = Speaker(name: "Guest")
         let firstSource = SourceRecord(
             displayNameHint: "synthetic-A", role: .primary, roleConfirmation: .userConfirmed
         )
@@ -49,10 +53,21 @@ struct TranscriptReviewBindingTests {
                 ),
             ])
         }
-        let first = episode("A", source: firstSource)
+        let first = Episode(title: "A", sources: [firstSource, secondSource], speakerAssignments: [
+            SpeakerAssignment(
+                speakerID: speaker.id,
+                primary: ChannelReference(sourceID: firstSource.id, statedChannel: 0),
+                primaryConfirmation: .userConfirmed
+            ),
+            SpeakerAssignment(
+                speakerID: otherSpeaker.id,
+                primary: ChannelReference(sourceID: secondSource.id, statedChannel: 0),
+                primaryConfirmation: .userConfirmed
+            ),
+        ])
         let second = episode("B", source: secondSource)
         let store = ShowDocumentStore(model: ShowDocumentModel(
-            show: Show(title: "Synthetic"), speakers: [speaker], episodes: [first, second]
+            show: Show(title: "Synthetic"), speakers: [speaker, otherSpeaker], episodes: [first, second]
         ))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 492),
                               styleMask: .titled, backing: .buffered, defer: false)
@@ -66,8 +81,48 @@ struct TranscriptReviewBindingTests {
         setup.window = { [weak window] in window }
         setup.isOnScreen = true
         setup.speakerSelection = [speaker.id]
-        return Fixture(state: state, setup: setup, store: store, window: window, speaker: speaker,
+        let setupController = EpisodeSetupViewController(model: setup)
+        setupController.attach(to: window)
+        return Fixture(state: state, setup: setup, setupController: setupController,
+                       store: store, window: window, speaker: speaker, otherSpeaker: otherSpeaker,
                        first: first, second: second, firstSource: firstSource, secondSource: secondSource)
+    }
+
+    @Test func replacedSetupViewCannotPublishOldSpeakerAfterReviewRoundTrip() throws {
+        let f = fixture()
+        let host = NSHostingView(rootView: EpisodeSetupView(model: f.setup, showsInspector: false))
+        f.window.contentView = host
+        let oldBinding = try #require(f.setup.captureSelectedPrimaryTranscriptReviewBinding())
+        let generation = f.store.modelGeneration
+
+        f.state.select(.review)
+        f.state.presentSelectedPrimaryTranscript(f.input("Speaker A"), boundTo: oldBinding)
+        #expect(f.state.reviewState.presentation.occurrences.map(\.text) == ["Speaker A"])
+        f.state.select(.setup)
+        f.setup.isOnScreen = false
+        let replacement = EpisodeSetupModel(
+            store: f.store, episodeID: f.first.id,
+            engine: InMemorySourceSetupEngine(),
+            preference: UserDefaultsSourceDownloadPreference(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        )
+        replacement.window = { [weak window = f.window] in window }
+        replacement.isOnScreen = true
+        replacement.speakerSelection = [f.otherSpeaker.id]
+        host.rootView = EpisodeSetupView(model: replacement, showsInspector: false)
+        let replacementController = EpisodeSetupViewController(model: replacement)
+        replacementController.attach(to: f.window)
+        f.state.setupModelDidAttach(replacement)
+        let newBinding = try #require(replacement.captureSelectedPrimaryTranscriptReviewBinding())
+        #expect(f.store.modelGeneration == generation)
+        #expect(f.setup.captureSelectedPrimaryTranscriptReviewBinding() == nil)
+        #expect(!f.state.isCurrentSelectedPrimaryTranscript(oldBinding))
+
+        f.state.select(.review)
+        #expect(!f.state.isCurrentSelectedPrimaryTranscript(oldBinding))
+        f.state.presentSelectedPrimaryTranscript(f.input("Late A"), boundTo: oldBinding)
+        #expect(f.state.reviewState.presentation.occurrences.isEmpty)
+        f.state.presentSelectedPrimaryTranscript(f.input("Current B", from: f.secondSource), boundTo: newBinding)
+        #expect(f.state.reviewState.presentation.occurrences.map(\.text) == ["Current B"])
     }
 
     @Test func episodeSwitchRefusesPresentedAndLateTranscripts() throws {
