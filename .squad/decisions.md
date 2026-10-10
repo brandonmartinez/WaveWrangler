@@ -1208,3 +1208,13 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **What:** The #440 runner v4 was independently **APPROVED** at driver `9f81ffbd…` and remote `bf5a9656…`, bound to reconciled source head `b8cb9c2`. No JIT or full run has been issued. The coordinator is planning the first serial physical-Mini gate; this review is preparation only.
 
 **Unchanged:** The #440 full gate, host execution, merge, and issue acceptance remain outstanding.
+
+### 2026-10-10: Freeze first #440 runner-v4 JIT after local refusal
+
+**By:** M3 coordinator, recording the first reviewed-v4 one-use JIT attempt.
+
+**What:** The #440 source head `b8cb9c2` and live PR were clean; approved unchanged driver `9f81ffbd…` and remote `bf5a9656…` had local and Mini native-root counts of 0, Mini load 4.96, and GUI `HOLDER none` before issuance. A private mode-0600 coordinator JIT at SHA `b0a3749c…`, nonce `03123e435c5718a4083eb1517bfc0476`, was issued at 05:51Z. Its one `/bin/bash` driver launch exited 1 locally at line 96, `NONCE: unbound variable`. The JIT `.used` marker, local receipt, and local log are absent.
+
+**Operational disposition:** This was a terminal **LOCAL refusal** only: no SSH, Mini quiet preflight, staging, native process, test, or xcresult occurred. The JIT is frozen and may not be reused. #440 remains source-approved; its full gate is **NOT RUN**, with no merge or [#27](https://github.com/brandonmartinez/WaveWrangler/issues/27) closure. Do not infer a cause beyond the recorded local failure before evidence.
+
+**Next boundary:** The author may diagnose only with a fake local fixture and the frozen script. Any repair requires a new whole-pair review and a new JIT before another attempt.
