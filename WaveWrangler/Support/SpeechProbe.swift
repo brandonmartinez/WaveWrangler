@@ -13,7 +13,31 @@ enum AppSpeech {
 }
 
 #if DEBUG
+import AppKit
 import Darwin
+
+extension AppSpeech {
+    @MainActor
+    static func syntheticModelProbe(
+        store: ShowDocumentStore, expecting expected: ShowDocumentModel,
+        episodeID: EpisodeID, speakerID: SpeakerID, channel: ChannelReference,
+        modelPath: String
+    ) throws -> PCMTranscript {
+        guard let document = store.document, document.store === store,
+              NSDocumentController.shared.documents.contains(where: { $0 === document })
+        else { throw SpeechRefusal.unselectedPrimary }
+        return try SpeechInference().syntheticModelProbe(
+            expecting: expected, episodeID: episodeID, speakerID: speakerID,
+            channel: channel, currentModel: { [weak store, weak document] in
+                guard let store, let document, store.document === document,
+                      NSDocumentController.shared.documents.contains(where: { $0 === document })
+                else { return nil }
+                return store.model
+            },
+            modelPath: modelPath
+        )
+    }
+}
 
 enum SpeechProbe {
     static func run() -> Int32 {

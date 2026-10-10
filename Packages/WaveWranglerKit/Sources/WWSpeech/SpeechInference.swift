@@ -11,11 +11,11 @@ public enum SpeechRefusal: Error, Sendable, Equatable {
 }
 
 /// Media-free admission boundary. The caller must supply the current canonical show model, not a
-/// cached selection. The linked CPU engine has no model, source reader, or transcript publisher.
+/// cached selection. Production has no sealed source issuer or transcript publisher.
 public struct SpeechInference: Sendable {
     public init() {}
 
-    /// Verifies only that the built-in CPU C ABI responds to generated data; no model is available.
+    /// Verifies only that the built-in CPU C ABI responds to generated data; no app model is installed.
     public static var nativeCPULinked: Bool {
         let probe = ww_whisper_cpu_probe()
         return probe.linked == 1 && probe.inference_available == 0
@@ -52,6 +52,24 @@ public struct SpeechInference: Sendable {
     }
 
     #if DEBUG
+    /// Diagnostic only. The app must bind currentModel to its live show store; an expected
+    /// snapshot alone cannot authorize opening even a synthetic-only model.
+    @MainActor
+    public func syntheticModelProbe(
+        expecting expected: ShowDocumentModel, episodeID: EpisodeID, speakerID: SpeakerID,
+        channel: ChannelReference, currentModel: () -> ShowDocumentModel?, modelPath: String
+    ) throws -> PCMTranscript {
+        guard let current = currentModel(), current == expected else { throw SpeechRefusal.unselectedPrimary }
+        try requireSelectedPrimary(model: current, episodeID: episodeID, speakerID: speakerID, channel: channel)
+        let verifiedModel = try VerifiedTinyModel.load(path: modelPath)
+        let generated = (0..<32_000).map { index in
+            0.1 * sinf(Float(index) * (2 * .pi * 440 / 16_000))
+        }
+        return try BoundedPCMInference().transcribe(
+            model: verifiedModel, pcm: generated, sampleRate: 16_000, channelCount: 1
+        )
+    }
+
     /// Exercises the linked C ABI with its own generated numbers only; no recognition is possible.
     public func syntheticProbe(
         model: ShowDocumentModel, episodeID: EpisodeID, speakerID: SpeakerID,
