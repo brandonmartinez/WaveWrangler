@@ -1,4 +1,5 @@
 import Darwin
+import Foundation
 import Testing
 import WWCore
 import WWSpeech
@@ -134,6 +135,56 @@ struct SpeechBoundaryTests {
     }
 
     #if DEBUG
+    @Test func syntheticModelProbeRequiresCurrentConfirmedPrimaryBeforeOpeningModel() throws {
+        let f = fixture()
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        #expect(throws: SpeechRefusal.unselectedPrimary) {
+            try SpeechInference().syntheticModelProbe(
+                model: f.model, episodeID: f.episodeID, speakerID: f.speakerID,
+                channel: f.backup, modelPath: missing
+            )
+        }
+        let provisional = fixture(confirmed: false)
+        #expect(throws: SpeechRefusal.unselectedPrimary) {
+            try SpeechInference().syntheticModelProbe(
+                model: provisional.model, episodeID: provisional.episodeID,
+                speakerID: provisional.speakerID, channel: provisional.primary, modelPath: missing
+            )
+        }
+        var changed = f.model
+        changed.episodes[0].speakerAssignments[0].primary = f.backup
+        #expect(throws: SpeechRefusal.unselectedPrimary) {
+            try SpeechInference().syntheticModelProbe(
+                model: changed, episodeID: f.episodeID, speakerID: f.speakerID,
+                channel: f.primary, modelPath: missing
+            )
+        }
+        #expect(throws: SpeechModelError.missingModel) {
+            try SpeechInference().syntheticModelProbe(
+                model: f.model, episodeID: f.episodeID, speakerID: f.speakerID,
+                channel: f.primary, modelPath: missing
+            )
+        }
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_TINY_MODEL_PATH"] != nil))
+    func syntheticSelectedPrimaryUsesVerifiedModelForBoundedInference() throws {
+        let path = try #require(ProcessInfo.processInfo.environment["WW_TINY_MODEL_PATH"])
+        let f = fixture()
+        let result = try SpeechInference().syntheticModelProbe(
+            model: f.model, episodeID: f.episodeID, speakerID: f.speakerID,
+            channel: f.primary, modelPath: path
+        )
+        #expect(result.segments.count <= 16)
+        for segment in result.segments {
+            #expect(segment.text.utf8.count <= 4096)
+            #expect((segment.startSeconds == nil) == (segment.endSeconds == nil))
+            if let start = segment.startSeconds, let end = segment.endSeconds {
+                #expect(start >= 0 && end > start && end <= 2)
+            }
+        }
+    }
+
     @Test func syntheticProbeRunsOnlyHereWithNoRecognizedWords() throws {
         let f = fixture()
         let result = try SpeechInference().syntheticProbe(

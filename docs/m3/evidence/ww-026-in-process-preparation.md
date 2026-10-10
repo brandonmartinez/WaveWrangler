@@ -43,6 +43,34 @@ existing tiny-probe tests, with **zero skips** (`--jobs 2`, one test worker).
 This is a local synthetic run, not a physical-Mini RTF/peak-memory measurement
 or a signed sandboxed app inference/offline proof. No media was opened.
 
+## Selected-Primary-gated generated model diagnostic (Debug only)
+
+`SpeechInference.syntheticModelProbe` checks the current canonical show's
+confirmed, unique Primary selection **before** opening the explicitly supplied
+local model path. It then verifies the pinned model bytes, generates exactly
+32,000 mono 16 kHz sine-wave samples inside the package and calls the bounded
+in-process PCM adapter. It accepts no caller-provided audio, never opens a
+source or Backup and publishes no transcript or edit. An invalid or stale
+selection refuses even if the model path is missing; a valid selection with a
+missing or wrong model fails explicitly. The opt-in `WW_TINY_MODEL_PATH` test
+exercises the full model-backed generated-PCM call when the already authorized
+private model is available. This diagnostic is compiled only in Debug; the
+selection check is not a sealed selected-Primary *media* capability and does
+not authorize production decoding or inference.
+
+On the working Mac, the focused RED build failed because the new diagnostic
+did not exist. With the implementation, the source-only `WWSpeechTests` run
+passed 14 tests (including two opt-in model skips) and `WWTinyPCMProbeTests`
+passed six tests (including one opt-in skip). A Release `WWSpeech` build
+succeeded without the Debug diagnostic. After locally rechecking the existing
+private model's regular-file ownership, mode 0600, 77,704,715-byte length and
+full pinned SHA-256, the selected-Primary generated-PCM opt-in test passed
+**1/1, zero skips**, invoking the real bounded in-process native inference
+with a 440 Hz generated tone. Its successful segment envelope does not
+establish recognizable speech, lexical accuracy, word timing, a signed-app
+runtime, offline denial or physical-Mini resource bounds. No model path,
+model body or source audio is recorded here.
+
 **Integration remains disabled:** `SpeechInference.infer` and `AppSpeech.infer`
 still refuse `engineUnavailable`. `RecordedIdentity.rawWitness`, ordinary
 decoding and package-internal witness opens are not selected-Primary authority.
