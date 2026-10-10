@@ -1166,3 +1166,13 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **Why:** The two rejected or incomplete paths retain unresolved safety and essential-accessibility evidence. The single #432 transport unit can retire only its runner/lifecycle uncertainty without creating a parallel Mini lane or repeating uncontrolled retries.
 
 **Reporting obligation:** By 08:00 EDT, report all unresolved M3 gates and the disposition of this one #432 unit. Do not report a run, pass, acceptance, source authority, model/media/OS permission, or product outcome before an authorized execution and independent terminal adjudication.
+
+### 2026-10-10: Stop the one-shot #432 transport validation before execution
+
+**By:** Independent medium-tier whole-pair reviewer under the relay's one-shot, no-cascade authority.
+
+**What:** The reviewer **REJECTED** the frozen private #432 validation helper pair at SHA `2760207f…` and `afa03fd1…`, with launcher `84212dd6…`, before JIT issuance, SSH, physical-Mini activity, or native testing. The remote preflight uses `mkdir -p` to create `REMOTE_ROOT`, then the launcher uses `mkdir` requiring that same path not exist, producing `EEXIST`. The remotely copied/executed Python helper has no fixed independently reviewed hash binding, and pre-driver SSH/SCP failures have no atomic terminal **FAIL** receipt. The fake-script failure fixture passed, but cannot establish reliable production lifecycle handling. Under the relay's one-shot/no-cascade limit, this fresh unit is stopped without a test run.
+
+**Operational disposition:** Source #432 remains **SOURCE-only approved** at exact `27e3df2d`, with two prior incomplete 141/143 full runs, no xcresult, no merge, and no [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23) or [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32) closure. The signal sender remains **UNKNOWN**. No JIT, SSH, Mini, native, model/media, source-authority, or acceptance claim follows.
+
+**Reporting obligation:** Include this stopped unit and every unresolved M3 gate in the required by-08:00 EDT report; do not cascade to another runner, transport author, or test attempt under this relay decision.
