@@ -81,3 +81,34 @@ speech-rights claims, selected-Primary issuance, or product acceptance. The
 scoped public record is on [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23#issuecomment-6093569045);
 [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23) and
 [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32) remain open.
+
+## Subsequent M3 synthetic source-gate disposition (2026-10-10)
+
+[#439](https://github.com/brandonmartinez/WaveWrangler/pull/439) received
+independent **SOURCE** approval at exact `40dad8e4`. Its corrected private
+runner pair was reviewed at launcher `4a314ad9` and remote `71b021b6`; a fresh,
+one-use JIT `244412e081cf169809c84b139ce79632` was consumed for the physical
+Mini exact-head `scripts/test.sh` run. Script, timeout, tee, SSH, and driver
+exits were all 0. The 14 ordered stages recorded thirteen positive Swift
+completions and one native `TEST SUCCEEDED`; direct inspection of the sole
+xcresult reported Passed 102/102, failed 0, skipped 0, and expected failures
+0. The checkout was clean at the exact head, with no post-run native roots or
+GUI holder. The terminal log SHA-256 was
+`3959f7577e40ff99f1bb78c27cc20ab276479997721816cf8eb184a14a5bab76`; the
+remote receipt SHA-256 was
+`f9fea5b037f630b63fdc00e6246708605194e060fbbb870e498a869df24aa8b7`.
+
+#439 merged to main at `1d3794c6b00090513e391c1a03722a5aa5c229c8`; no issue
+was closed. **Current status: PASS — bounded synthetic source gate only.**
+It is not [#41](https://github.com/brandonmartinez/WaveWrangler/issues/41) or
+M3 acceptance. It does not authorize user original source-content opens or
+writes, recordings, model or network inference, Backup access, speech-rights
+claims, protected product paths, or issue acceptance.
+
+Other current held dispositions: [#435](https://github.com/brandonmartinez/WaveWrangler/pull/435)
+full is **NOT RUN** after its third-author bundle runner was rejected;
+[#441](https://github.com/brandonmartinez/WaveWrangler/pull/441) full remains
+incomplete, its replacement-runner review is **REJECTED**, and the new AX unit
+is **STOPPED** per user direction; [#440](https://github.com/brandonmartinez/WaveWrangler/pull/440)
+is in progress but unedited, with its old-main merge paused for reconciliation
+with current main.
