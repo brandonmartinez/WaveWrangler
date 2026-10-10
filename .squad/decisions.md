@@ -1226,3 +1226,13 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **What:** The second private #443 operator at SHA `df2010d9b1994c0c063c7f13a0c078bcbba0f78e480e3b3e54a1948851c9693b`, with fixture `473f03ef…`, was independently **REJECTED** before any host activity. It does not exclude extra SSH configuration identities or host-key sources; discards probe stdout and per-cell identity while leaving the sandbox stream unbound to the receipt needed for independent cell review; and permits a `/bin/ps` exception during timeout/interrupt cleanup that can leave an owned process group.
 
 **Operational disposition:** The prior `f7fc7d6b` source-only approval is unchanged. No JIT, SSH, physical-Mini, build, socket, model, or media activity occurred, and neither [#23](https://github.com/brandonmartinez/WaveWrangler/issues/23) nor [#32](https://github.com/brandonmartinez/WaveWrangler/issues/32) is closed. Operator authors `8d556563` and `f97a563b` are locked out of their respective rejected artifacts. Do not automatically assign another operator author: the #443 host path is **STOPPED** until separately authorized.
+
+### 2026-10-10: Hold remaining transport paths through the morning
+
+**By:** M3 relay under Brandon's until-08:00 EDT delegation; this is a time-bounded operational hold, not a waiver.
+
+**What:** Keep the #443 host path **BLOCKED** through the morning: no third operator author, JIT, SSH, physical-Mini, socket, model, or waiver. Preserve both rejected operator artifacts, the `f7fc7d6b` source-only approval, and the unproven offline matrix. Keep [#432](https://github.com/brandonmartinez/WaveWrangler/pull/432) **BLOCKED** through the morning after its fresh replacement-runner rejection. [#435](https://github.com/brandonmartinez/WaveWrangler/pull/435) and [#441](https://github.com/brandonmartinez/WaveWrangler/pull/441) remain **STOPPED**: no new attempts absent a later disposition.
+
+**#440 boundary:** A fake-only diagnosis is permitted solely if the current runner author is not reviewer-locked. Any changed bytes invalidate the earlier runner approval and require independent review plus a new one-use JIT; there is no automatic retry. If the applicable review or attempt cap is exhausted, hold the path.
+
+**Morning report:** Distinguish merged code, source approvals, complete gates, pre-host refusals, incomplete tests, and remaining M3 blockers. Do not collapse any of those categories into acceptance.
