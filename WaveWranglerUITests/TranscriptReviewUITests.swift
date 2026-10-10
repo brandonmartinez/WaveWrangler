@@ -119,7 +119,10 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertTrue(occurrence.waitForExistence(timeout: 5))
         XCTAssertEqual(occurrence.label, "Synthetic fixture A sentence")
         XCTAssertTrue((occurrence.value as? String ?? "").contains("Word timing unavailable"))
-        XCTAssertTrue(app.staticTexts["ww.review.provisionalNotice"].label.contains("Synthetic review fixture Primary"))
+        let notice = app.descendants(matching: .any)["ww.review.provisionalNotice"]
+        let boundLabel = notice.label
+        XCTAssertTrue(boundLabel.contains("Synthetic review fixture Primary"),
+                      "Expected the selected Primary in the Review notice; AX label: \(boundLabel)")
         XCTAssertEqual(app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
                        "Synthetic fixture A sentence")
         XCTAssertFalse(app.descendants(matching: .any)["ww.review.proposals"].exists)
@@ -131,8 +134,8 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertTrue(secondEpisode.waitForExistence(timeout: 5))
         secondEpisode.click()
         XCTAssertTrue(Acceptance.waitFor(timeout: 3) {
-            app.staticTexts["ww.review.provisionalNotice"].label.contains("unavailable")
-        })
+            notice.label.contains("unavailable")
+        }, "Expected the unavailable Review notice after switching episodes; AX label: \(notice.label)")
         XCTAssertFalse(occurrence.exists, "A's text must not remain in B's accessible transcript")
         XCTAssertEqual(app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
                        "No occurrence selected")
