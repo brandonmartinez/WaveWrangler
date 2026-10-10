@@ -11,7 +11,7 @@ struct InspectorContainer: View {
         if state.sidebarSelection != .showInfo && state.destination == .review {
             ReviewInspectorViewport(
                 state: state,
-                selectedOccurrence: state.reviewState.selectedOccurrence,
+                selectedOccurrence: state.reviewState.selectedSyntheticOccurrence,
                 selectedProposal: state.reviewState.selectedProposal
             )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

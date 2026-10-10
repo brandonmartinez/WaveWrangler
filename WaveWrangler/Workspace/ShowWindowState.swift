@@ -37,7 +37,7 @@ final class ShowWindowState {
     @ObservationIgnored var explicitSavePending = false
     /// The Alignment workspace currently displayed in this window, for inspector and menu routing.
     var alignmentModel: EpisodeAlignmentModel?
-    /// Provisional Review-shell selection shared by the linked transcript and inspector panes.
+    /// Presentation-only Review selection shared by the linked transcript and inspector panes.
     let reviewState = TranscriptReviewState()
     /// Selection changes count as user interactions (WW-007 timing) only after the window's first passes.
     @ObservationIgnored private var reportsInteractions = false
@@ -177,6 +177,18 @@ final class ShowWindowState {
             sidebarSelection = store.model.episodes.first.map { .episode($0.id) }
         }
         select(.setup)
+    }
+
+    /// The only handoff point for a future source-bound, in-process transcript producer.
+    ///
+    /// Calling this neither opens a source nor invokes inference; malformed evidence becomes a Review refusal.
+    func presentSelectedPrimaryTranscript(_ input: SelectedPrimaryTranscriptReviewInput) {
+        switch TranscriptReviewPresentation.validate(input) {
+        case .success(let transcript):
+            reviewState.present(.supplied(transcript))
+        case .failure(let error):
+            reviewState.present(.refusal(error.refusal))
+        }
     }
 
     func toggleSidebar() {
