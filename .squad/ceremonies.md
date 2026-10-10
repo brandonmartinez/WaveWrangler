@@ -176,11 +176,10 @@ Ralph tracks resulting issues; Lead retains milestone priority and decision auth
 |-------|-------|
 | **Trigger** | auto |
 | **When** | after |
-| **Condition** | a child goes idle with its unit finished; at least every ~2 h of active work; before every handoff |
+| **Condition** | a substantive completed-unit handoff; about every 2 h of active work; at the final handoff |
 | **Facilitator** | coordinator |
 | **Participants** | none |
 | **Time budget** | ≤10 min |
 | **Enabled** | ✅ yes |
 
-**Agenda (user-directed 2026-10-07 10:01/12:50):** list children and verify each one before archiving: PR merged or closed (or the lane was superseded by a later reviser); no open PR, active Agent merge or session automation; clean worktree with nothing unpushed; `files/` notes copied to the coordinator's `files/archived-children/`. Archive those that pass. Skip anything with open or in-flight work, and report "archived N, skipped M (reasons)" in one line.
-
+**Agenda (user-directed 2026-10-07 10:01/12:50; cadence updated 2026-10-09 20:34):** check relevant completed children at handoff and do a full sweep about every 2 h of active work or at final handoff, not on every idle notification. Before archiving verify PR merged or closed (or a superseded lane), no open PR, active Agent merge or session automation, clean fully pushed worktree, and `files/` notes copied to coordinator `files/archived-children/`. Archive only those that pass; skip open or in-flight work and report one concise count with reasons. Existing app `notify_on_idle` flags are not retroactively changed by this policy.
