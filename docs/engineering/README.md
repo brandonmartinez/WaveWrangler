@@ -215,6 +215,16 @@ Never put model bytes in the repo. `SpeechInference.infer` still refuses even fo
 selected primary; no production source binding, sandbox offline proof or media use is
 established by this command.
 
+Debug app builds also include the headless, synthetic-only
+`--ww-offline-containment-probe` diagnostic. It checks effective self-entitlements
+and startup/synthetic-path FDs before bounded numeric IPv4/IPv6 loopback TCP/UDP
+attempts. It always exits nonzero and labels uncorrelated errno as a denial
+**candidate**, never an offline pass. Do not run it on the working Mac or claim
+signed-app proof without the separate physical-Mini approval and independent
+runner/source review. The exact safety scope, unreachable listen limitation and
+pending sandbox-log correlation are in
+[WW-026 in-process preparation](../m3/evidence/ww-026-in-process-preparation.md).
+
 For headless functional XCUITests, build on the development Mac and run the
 signed Products inside the [macOS VM GUI hosts](ui-test-vm-hosts.md) through
 their own lease helpers. `scripts/test.sh --ui` launches on the **current

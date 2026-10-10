@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.count == 2, CommandLine.arguments[1] == "--ww-speech-synthetic-probe" {
             exit(SpeechProbe.run())
         }
+        if CommandLine.arguments.count == 2, CommandLine.arguments[1] == "--ww-offline-containment-probe" {
+            exit(OfflineContainmentProbe.run())
+        }
         #endif
         if !SpeechInference.nativeCPULinked {
             NSLog("Built-in CPU speech bridge link check failed; inference remains unavailable.")

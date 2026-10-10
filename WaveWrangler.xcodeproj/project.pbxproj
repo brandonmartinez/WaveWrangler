@@ -71,6 +71,7 @@
 				Library/CanonicalLibraryAdoption.swift,
 				Library/LibraryFailureMessage.swift,
 				Library/MoveStepRelay.swift,
+				Support/OfflineContainmentPolicy.swift,
 				Sources/SetupConfirmationKind.swift,
 				Workspace/ShowDocumentStatusMapping.swift,
 			);

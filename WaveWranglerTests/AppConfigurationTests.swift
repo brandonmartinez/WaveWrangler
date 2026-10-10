@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Testing
 import WWCore
 import WWPersistence
@@ -42,6 +43,67 @@ struct AppConfigurationTests {
             "com.apple.security.files.bookmarks.app-scope": true,
             "com.apple.security.files.bookmarks.document-scope": true,
         ] as NSDictionary)
+    }
+
+    @Test func offlineContainmentIsDebugOnlyAndRunsBeforeAppKit() throws {
+        let probe = try String(contentsOf: Self.appFolder.appending(path: "Support/OfflineContainmentProbe.swift"), encoding: .utf8)
+        let lines = probe.split(separator: "\n").map(String.init)
+        #expect(lines.first == "#if DEBUG")
+        #expect(lines.last == "#endif")
+        let main = try String(contentsOf: Self.appFolder.appending(path: "App/AppDelegate.swift"), encoding: .utf8)
+        let entry = try #require(main.range(of: "static func main() {"))
+        let appKit = try #require(main[entry.upperBound...].range(of: "WaveWranglerApplication.shared"))
+        let diagnostic = try #require(main[entry.upperBound..<appKit.lowerBound].range(of: "OfflineContainmentProbe.run()"))
+        #expect(diagnostic.lowerBound < appKit.lowerBound)
+    }
+
+    @Test func offlineProbeDoesNotUseAnExternalAddressOrMedia() throws {
+        let source = try String(contentsOf: Self.appFolder.appending(path: "Support/OfflineContainmentProbe.swift"), encoding: .utf8)
+        #expect(source.contains("127.0.0.1"))
+        #expect(source.contains("::1"))
+        #expect(!source.contains("getaddrinfo"))
+        #expect(!source.contains("URLSession"))
+        #expect(!source.contains("Process("))
+        #expect(!source.contains("posix_spawn"))
+    }
+
+    @Test func offlineProbeRejectsSuccessAndNonSandboxErrors() {
+        #expect(OfflineContainmentPolicy.classify(0, error: 0) == .stop(nil))
+        #expect(OfflineContainmentPolicy.classify(1, error: 0) == .stop(nil))
+        #expect(OfflineContainmentPolicy.classify(-1, error: ECONNREFUSED) == .stop(ECONNREFUSED))
+        #expect(OfflineContainmentPolicy.classify(-1, error: EAGAIN) == .stop(EAGAIN))
+        #expect(OfflineContainmentPolicy.classify(-1, error: EPERM) == .denialCandidate(EPERM))
+        #expect(OfflineContainmentPolicy.classify(-1, error: EACCES) == .denialCandidate(EACCES))
+    }
+
+    @Test func linkedSpeechPathHasNoLauncherOrDescriptorTransfer() throws {
+        let repository = Self.appFolder.deletingLastPathComponent()
+        let speech = repository.appending(path: "Packages/WaveWranglerKit/Sources")
+        var files = [
+            Self.appFolder.appending(path: "App/AppDelegate.swift"),
+            Self.appFolder.appending(path: "Support/SpeechProbe.swift"),
+        ]
+        for module in ["WWSpeech", "WWWhisperNative"] {
+            let root = speech.appending(path: module)
+            let descendants = try #require(FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]))
+            for case let url as URL in descendants {
+                if ["swift", "c", "cpp", "h", "hpp"].contains(url.pathExtension),
+                   try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
+                    files.append(url)
+                }
+            }
+        }
+        #expect(files.count >= 4)
+        let forbidden = [
+            "Process(", "NSTask", "posix_spawn", "NSXPC", "xpc_", "SCM_RIGHTS",
+            "sendmsg(", "recvmsg(", "launchd", "NSFileHandle", "socket(", "connect(",
+        ]
+        for file in files {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            for token in forbidden {
+                #expect(!source.contains(token), "\(file.lastPathComponent) contains \(token)")
+            }
+        }
     }
 
     @Test func showDocumentRoundTripsThroughAFileInATemporaryDirectory() throws {
