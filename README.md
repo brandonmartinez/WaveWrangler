@@ -3,6 +3,32 @@ Local-first macOS multitrack podcast alignment and editing
 
 Native macOS multitrack podcast preparation: local audio processing, referenced media, cloud canonical projects.
 
+## Visual alignment
+
+In **Alignment**, choose **Load Audio Window** to display measured waveforms for grouped, locally
+available recordings. The shared ruler is in aligned seconds. Blue strokes use a verified accepted
+map; orange strokes are explicitly unplaced source-origin previews, not a synchronization result.
+Unavailable sources have individual reasons; source files are never modified.
+
+Select a recording, drag an event or type **Offset (ms)** and **Rate (ppm)** to preview a correction,
+then choose **Apply Timing**. A positive offset moves audio later; a delayed target usually needs a
+negative offset. Applying uses the existing versioned map and named Undo. If no map exists, first
+choose **Analyse Available Sources** to prepare source facts; an abstention does not prevent a
+manual correction. Alternatively match at least two distinct **Reference point / Target point**
+pairs and choose **Apply Anchors**. All gesture operations have typed-field alternatives.
+
+**Visible span**, **Window start**, **Previous** and **Next** navigate bounded windows; changing zoom
+reloads actual audio detail. **Compare Aligned Audio** plays up to five seconds from the aligned
+playhead: reference channel 1 on the left, the selected recording's chosen channel on the right,
+resampled through the same accepted map. Unsupported or uncovered regions remain silent.
+Comparison is an internal listening check, not an export, clock qualification or cut authorization.
+
+This is a bounded alignment workspace, not yet a whole-episode DAW overview. Seeking currently
+decodes and discards earlier chunks, with a hard first-10-source-minutes limit (including inverse
+map offsets); later windows are explicitly refused rather than decoding hours. No persistent
+waveform cache is created. Real local
+transcription and protected filler-word editing remain separate, incomplete MVP work.
+
 ## Planning
 
 - [Start M1: copyable Squad kickoff](docs/planning/kickoffs/m1.md) · [milestone execution runbook](docs/planning/milestone-runbook.md)
@@ -32,7 +58,13 @@ Native macOS multitrack podcast preparation: local audio processing, referenced 
 
 ## Current delivery policy - user-directed 2026-10-04
 
-GitHub issues and six milestones are the operational backlog **now**. Use the actual Squad and orchestrate one milestone per session: internally usable M1 organizer, M2 validated import/alignment, M3 local selected-primary speech/protected review, M4 cleaned-track full MVP on this Mac. **First audio handoff is cleaned-track M4; no uncut M2 handoff.** Public signed/notarized distribution, actual macOS26/16GB and broader device/participant qualification are separate Release work, not pre-app gates.
+GitHub issues and six milestones are the operational backlog. The 2026-10-10 user decision supersedes
+the earlier Squad/orchestrate delivery process: direct implementation now prioritizes visible
+multitrack alignment, then actual local transcription and protected filler-word cuts. File management
+and numeric tables alone do not satisfy the MVP. Existing M1/M2 evidence is retained; M3 and the full
+MVP are not complete. **First audio handoff is cleaned-track M4; no uncut M2 handoff.** Public
+signed/notarized distribution, actual macOS26/16GB and broader device/participant qualification are
+separate Release work, not pre-app gates.
 
 This publication changes documents/context only. Pasting [the M1 kickoff](docs/planning/kickoffs/m1.md) grants M1 engineering, scoped dependency restores, isolated worktrees/branches, commits/push, independently reviewed merges and issue updates. WW-009 records contracts/evidence/risks, not another generic approval. Dependencies gate accepted outcomes, not safe preparatory coding. Immutable sources, cloud canonical durability, protected speech, offline/privacy and essential native keyboard/accessibility are never deferred. Recording/model/provider/native/GUI/signing/external publishing consent remains exact-scope; source-download ON is not agent sample permission.
 

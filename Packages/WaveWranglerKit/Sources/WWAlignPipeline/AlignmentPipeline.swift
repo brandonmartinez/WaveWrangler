@@ -976,15 +976,19 @@ public final class AlignmentPipeline: Sendable {
 
     // MARK: Aligned assets
 
-    /// Streams the accepted map's aligned audio for every same-group channel into the derived store (app
-    /// cache). Refuses unless the document's accepted revision is the coordinator's active one and still
-    /// applies to the episode. Internal derived assets only; export stays blocked (M4).
-    public func renderAlignedAssets(
+    /// Read-only admission for a bounded waveform or internal audition. Never opens source content.
+    public func verifiedAcceptedMap(
+        model: ShowDocumentModel, episode episodeID: EpisodeID
+    ) async throws(AlignedAssetRefusal) -> AlignedTimelineMap {
+        try await admittedMap(model: model, episode: episodeID).map
+    }
+
+    private func admittedMap(
         model: ShowDocumentModel,
-        episode episodeID: EpisodeID,
-        sources: [AlignmentSource],
-        authorizations: [ContentWorkAuthorization]
-    ) async throws(AlignedAssetRefusal) -> AlignedAssetReport {
+        episode episodeID: EpisodeID
+    ) async throws(AlignedAssetRefusal) -> (
+        map: AlignedTimelineMap, revision: MapRevisionReference, identity: AcceptedMapIdentity
+    ) {
         guard let episode = model.episode(episodeID) else { throw .episodeNotFound(episodeID) }
         guard let revisionNumber = episode.alignment?.acceptedRevision else { throw .noAcceptedMap }
         if await coordinator.isShutdown { throw .coordinatorShutDown }
@@ -1012,6 +1016,22 @@ public final class AlignmentPipeline: Sendable {
         guard let identity = try? mapIdentity(revision: revision, version: version, map: map, registered: currentInputs.sources),
               await coordinator.state(of: identity.slot) == .ready(identity.key)
         else { throw .acceptedMapContentNotActive }
+        return (map, revision, identity)
+    }
+
+    /// Streams the accepted map's aligned audio for every same-group channel into the derived store (app
+    /// cache). Refuses unless the document's accepted revision is the coordinator's active one and still
+    /// applies to the episode. Internal derived assets only; export stays blocked (M4).
+    public func renderAlignedAssets(
+        model: ShowDocumentModel,
+        episode episodeID: EpisodeID,
+        sources: [AlignmentSource],
+        authorizations: [ContentWorkAuthorization]
+    ) async throws(AlignedAssetRefusal) -> AlignedAssetReport {
+        let admitted = try await admittedMap(model: model, episode: episodeID)
+        let map = admitted.map
+        let revision = admitted.revision
+        let identity = admitted.identity
         for spec in AlignmentAssetKinds.all { await coordinator.setAssetRevision(spec) }
         let registered = await coordinator.inputs.sources
         let eligibility = ContentEligibility(sources: sources, authorizations: authorizations, registered: registered)

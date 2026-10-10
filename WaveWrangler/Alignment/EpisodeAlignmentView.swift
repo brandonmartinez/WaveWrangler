@@ -28,22 +28,30 @@ struct EpisodeAlignmentContent: View {
             }
         }
         .task(id: episodeID) {
+            model?.suspend()
+            if let model, state.alignmentModel === model { state.alignmentModel = nil }
+            model = nil
+            startupError = nil
             do {
                 guard let document = state.store.document else { return }
                 let runtime = try await AlignmentRuntimeProvider.runtime(
                     for: document,
                     episode: episodeID
                 )
+                try Task.checkCancellation()
                 let value = EpisodeAlignmentModel(document: document, episodeID: episodeID, runtime: runtime)
                 model = value
                 state.alignmentModel = value
                 value.load()
+            } catch is CancellationError {
+                return
             } catch {
                 startupError = String(describing: error)
             }
         }
+        .onChange(of: state.store.model) { _, _ in model?.load() }
         .onDisappear {
-            model?.stopAudition()
+            model?.suspend()
             if let model, state.alignmentModel === model { state.alignmentModel = nil }
         }
     }
@@ -107,6 +115,8 @@ private struct AlignmentWorkspace: View {
                 }
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("alignment.analyse")
+
+                AlignmentWaveformView(model: model)
 
                 AlignmentOutlineTable(model: model)
                     .id("ww.alignment.groupSection")

@@ -29,6 +29,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertEqual(window.frame.height, 492, accuracy: 2)
         let group = app.staticTexts["Studio recorder"]
         XCTAssertTrue(group.waitForExistence(timeout: 5))
+        scrollIntoWindow(group)
         group.click()
         app.typeKey(.leftArrow, modifierFlags: [])
         app.typeKey(.rightArrow, modifierFlags: [])
@@ -268,6 +269,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             "ww.alignment.workspace", "ww.alignment.groups", "ww.alignment.anchors", "alignment.analyse",
             "alignment.editAnchor", "alignment.startNewEpoch"
         ] {
+            scrollIntoWindow(workspaceRoot.descendants(matching: .any)[identifier])
             XCTAssertTrue(
                 workspaceRoot.descendants(matching: .any)[identifier].exists,
                 "\(identifier) must stay exposed inside the Alignment workspace group"
@@ -282,6 +284,9 @@ final class AlignmentInspectionUITests: XCTestCase {
             around: inspector, excluding: [contentInspector.frame, sidebar.frame]
         )
         let actionRows = resolveActionRows(in: workspaceRoot)
+        let touchBar = app.descendants(matching: .touchBar).firstMatch
+        let inactiveTouchBarFrame: CGRect? = touchBar.exists && !touchBar.isEnabled
+            && touchBar.descendants(matching: .any).count == 0 ? touchBar.frame : nil
         XCTAssertLessThanOrEqual(
             actionRows.count, 2,
             "Only the alignment action grid's own rows may be waived"
@@ -310,6 +315,13 @@ final class AlignmentInspectionUITests: XCTestCase {
         try app.performAccessibilityAudit(
             for: [.elementDetection, .sufficientElementDescription, .hitRegion, .action]
         ) { issue in
+            if issue.auditType == .sufficientElementDescription,
+               let element = issue.element, element.elementType == .touchBar,
+               !element.isEnabled, element.descendants(matching: .any).count == 0,
+               element.frame == inactiveTouchBarFrame {
+                print("AUDIT WAIVED [inactive-native-touch-bar] \(issue.compactDescription)")
+                return true
+            }
             guard issue.auditType == .sufficientElementDescription,
                   let element = issue.element,
                   element.elementType == .group || element.elementType == .other
@@ -485,10 +497,20 @@ final class AlignmentInspectionUITests: XCTestCase {
     ) {
         let scroll = app.descendants(matching: .any)["ww.alignment.workspace"]
         let window = app.windows["ww.show.window"]
-        XCTAssertTrue(element.waitForExistence(timeout: 5), file: file, line: line)
         for _ in 0..<40 {
+            guard element.exists else {
+                scroll.scroll(byDeltaX: 0, deltaY: -80)
+                continue
+            }
             let centre = CGPoint(x: element.frame.midX, y: element.frame.midY)
             if window.frame.insetBy(dx: 0, dy: 24).contains(centre) { return }
+            if scroll.frame.minY <= centre.y, centre.y <= scroll.frame.maxY,
+               let outline = app.outlines.allElementsBoundByIndex.first(where: {
+                   $0.descendants(matching: .any).matching(identifier: element.identifier).count > 0
+               }) {
+                outline.scroll(byDeltaX: centre.x > scroll.frame.midX ? -80 : 80, deltaY: 0)
+                continue
+            }
             scroll.scroll(byDeltaX: 0, deltaY: centre.y > window.frame.midY ? -40 : 40)
         }
         XCTAssertTrue(
@@ -530,7 +552,10 @@ final class AlignmentInspectionUITests: XCTestCase {
     private func selectTargetEpoch() {
         let state = stateHeading("Proposed — not confirmed")
         XCTAssertTrue(state.waitForExistence(timeout: 5))
-        state.click()
+        let epochName = app.staticTexts["Guest take"]
+        scrollIntoWindow(epochName)
+        epochName.click()
+        XCTAssertTrue(app.staticTexts["ww.inspector.alignment.evidence"].waitForExistence(timeout: 2))
     }
 
     private func stateHeading(_ heading: String) -> XCUIElement {
@@ -706,9 +731,11 @@ final class AlignmentInspectionUITests: XCTestCase {
         guard inspector.exists else { return nil }
         let target = inspector.frame
         var best: CGRect?
-        for element in app.descendants(matching: .any).allElementsBoundByIndex {
-            let type: XCUIElement.ElementType = element.elementType
-            guard type == .group || type == .other else { continue }
+        let window = app.windows["ww.show.window"]
+        let containers = window.groups.allElementsBoundByAccessibilityElement
+            + window.otherElements.allElementsBoundByAccessibilityElement
+        for element in containers {
+            guard element.exists else { continue }
             let frame: CGRect = element.frame
             guard frame.contains(target), frame.width - target.width <= 16 else { continue }
             guard !excluded.contains(where: { self.approximatelyEqual(frame, $0) }) else { continue }

@@ -11,7 +11,15 @@ import WWTimeMap
 @Observable
 final class EpisodeAlignmentModel {
     private(set) var rows: [AlignmentRow] = []
-    var selection: RecordingEpochID?
+    var selection: RecordingEpochID? {
+        didSet {
+            if selection != oldValue {
+                selectedWaveformSource = nil
+                resetWaveformTiming()
+                stopAudition()
+            }
+        }
+    }
     private(set) var isWorking = false
     private(set) var hasAnalysis = false
     private(set) var message = "Alignment has not read or analysed any audio."
@@ -27,6 +35,32 @@ final class EpisodeAlignmentModel {
     var anchorSelection: Int?
     var requestedAnchorFocus: Int?
     var requestedEpochFocus: RecordingEpochID?
+    private(set) var waveformTracks: [AlignmentWaveformTrack] = []
+    private(set) var waveformRefusals: [AlignmentWaveformRefusal] = []
+    private(set) var selectedWaveformSource: SourceID?
+    private(set) var isLoadingWaveforms = false
+    private(set) var waveformMessage = "Load a bounded audio window to see the recordings. Original files are never changed."
+    var waveformStartSeconds = 0.0
+    var waveformDurationSeconds = 5.0
+    var waveformPlayheadSeconds = 0.0
+    var waveformOffsetMilliseconds = 0.0 {
+        didSet { if !resettingWaveformTiming, waveformOffsetMilliseconds != oldValue { waveformTimingIsDraft = true } }
+    }
+    var waveformRatePPM = 0.0 {
+        didSet { if !resettingWaveformTiming, waveformRatePPM != oldValue { waveformTimingIsDraft = true } }
+    }
+    private(set) var waveformTimingIsDraft = false
+    @ObservationIgnored private var resettingWaveformTiming = false
+    var waveformReferencePoint = 0.0
+    var waveformTargetPoint = 0.0
+    var waveformAuditionChannel = 0
+    private(set) var waveformDraftAnchors: [AlignmentAnchor] = []
+    @ObservationIgnored private var waveformTask: Task<Void, Never>?
+    @ObservationIgnored private var waveformGeneration: UInt64 = 0
+    @ObservationIgnored private var inspectionTask: Task<Void, Never>?
+    @ObservationIgnored private var inspectionGeneration: UInt64 = 0
+    private var loadedWaveformMap: AlignedTimelineMap?
+    private var loadedWaveformEpisode: Episode?
     private var anchorsByEpoch: [RecordingEpochID: [AlignmentAnchorRow]] = [:]
     private var acceptedMap: AlignedTimelineMap?
 
@@ -36,6 +70,7 @@ final class EpisodeAlignmentModel {
     @ObservationIgnored private let auditionEngine = AVAudioEngine()
     @ObservationIgnored private var auditionSource: AVAudioSourceNode?
     @ObservationIgnored private var auditionTask: Task<Void, Never>?
+    @ObservationIgnored private var auditionGeneration: UInt64 = 0
     @ObservationIgnored private var auditionStopTask: Task<Void, Never>?
     @ObservationIgnored private var auditionStartedAt: Date?
     @ObservationIgnored private var auditionPlaybackStartSeconds = 0.0
@@ -49,6 +84,185 @@ final class EpisodeAlignmentModel {
 
     var selectedRow: AlignmentRow? {
         rows.first { $0.epochID == selection }
+    }
+
+    var waveformMap: AlignedTimelineMap? { loadedWaveformMap }
+    var waveformMapRevision: Int? {
+        guard loadedWaveformMap != nil else { return nil }
+        return document?.store.model.episode(episodeID)?.alignment?.acceptedRevision
+    }
+
+    var selectedWaveform: AlignmentWaveformTrack? {
+        guard let row = selectedRow else { return nil }
+        return waveformTracks.first { track in
+            guard track.id == selectedWaveformSource, track.group == row.groupID else { return false }
+            return AlignmentWaveformProjection.containsSelectedEpoch(
+                source: track.id, group: track.group, initialEpoch: track.epoch,
+                selectedEpoch: row.epochID, map: loadedWaveformMap
+            )
+        }
+    }
+
+    var canCompareAligned: Bool {
+        guard !isWorking, !isLoadingWaveforms,
+              let row = selectedRow, let track = selectedWaveform,
+              let map = loadedWaveformMap, track.group != map.reference.group,
+              let epoch = map.groups.first(where: { $0.group == track.group })?.epochs.first(where: { $0.epoch == row.epochID }),
+              case .mapped = epoch.mapping
+        else { return false }
+        return true
+    }
+
+    func resetWaveformTiming() {
+        resettingWaveformTiming = true
+        defer { resettingWaveformTiming = false }
+        let defaults = numericEditorDefaults
+        waveformOffsetMilliseconds = defaults.offsetMilliseconds
+        waveformRatePPM = defaults.ratePPM
+        waveformDraftAnchors = []
+        waveformAuditionChannel = 0
+        waveformTimingIsDraft = false
+    }
+
+    func selectWaveform(_ track: AlignmentWaveformTrack, epoch: RecordingEpochID? = nil) {
+        let chosenEpoch = epoch ?? track.epoch
+        if selection != chosenEpoch || selectedWaveformSource != track.id {
+            selection = chosenEpoch
+            selectedWaveformSource = track.id
+            resetWaveformTiming()
+            stopAudition()
+        }
+    }
+
+    func loadWaveforms() {
+        guard let document else { return }
+        cancelWaveforms()
+        let generation = waveformGeneration
+        let snapshot = document.store.model
+        let start = waveformStartSeconds
+        let duration = waveformDurationSeconds
+        lastError = nil
+        isLoadingWaveforms = true
+        waveformMessage = "Reading a bounded window through the read-only source gateway…"
+        waveformTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if generation == waveformGeneration {
+                    isLoadingWaveforms = false
+                    waveformTask = nil
+                }
+            }
+            do {
+                let loaded = try await runtime.waveformTracks(
+                    model: snapshot, episode: episodeID,
+                    startSeconds: start, durationSeconds: duration
+                )
+                #if DEBUG
+                if UserDefaults.standard.bool(forKey: "WWUITestHooks"),
+                   UserDefaults.standard.bool(forKey: "WWUITestVisualAlignmentFixture"),
+                   UserDefaults.standard.bool(forKey: "WWUITestDelayWaveformPublication") {
+                    try await Task.sleep(for: .seconds(3))
+                }
+                #endif
+                try Task.checkCancellation()
+                guard generation == waveformGeneration else { return }
+                guard document.store.model == snapshot else {
+                    waveformMessage = "The episode changed while loading. Load the current audio window again."
+                    return
+                }
+                waveformTracks = loaded.tracks
+                waveformRefusals = loaded.refusals
+                loadedWaveformMap = loaded.map
+                loadedWaveformEpisode = snapshot.episode(episodeID)
+                waveformMessage = loaded.mapWarning
+                    ?? "\(loaded.tracks.count) recordings loaded; \(loaded.refusals.count) unavailable. This is a measured snapshot, not an alignment proposal."
+            } catch is CancellationError {
+                if generation == waveformGeneration { waveformMessage = "Waveform loading cancelled." }
+            } catch {
+                guard generation == waveformGeneration else { return }
+                waveformMessage = "Waveforms unavailable: \(error.localizedDescription)"
+                lastError = String(describing: error)
+            }
+        }
+    }
+
+    func cancelWaveforms() {
+        waveformGeneration += 1
+        waveformTask?.cancel()
+        waveformTask = nil
+        isLoadingWaveforms = false
+        waveformTracks = []
+        waveformRefusals = []
+        loadedWaveformMap = nil
+    }
+
+    func suspend() {
+        cancelWaveforms()
+        inspectionGeneration += 1
+        inspectionTask?.cancel()
+        inspectionTask = nil
+        stopAudition()
+    }
+
+    func compareAlignedAtPlayhead() {
+        guard let document, let track = selectedWaveform, canCompareAligned,
+              !canStopAudition, waveformPlayheadSeconds.isFinite, waveformPlayheadSeconds >= 0
+        else { return }
+        let snapshot = document.store.model
+        let start = waveformPlayheadSeconds
+        let duration = min(waveformDurationSeconds, AlignedAuditionWindowReader.maximumDurationSeconds)
+        let channel = waveformAuditionChannel
+        auditionGeneration += 1
+        let generation = auditionGeneration
+        isPreparingAudition = true
+        auditionLabel = "Preparing an aligned reference/target comparison. Nothing is exported."
+        auditionTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if generation == auditionGeneration {
+                    isPreparingAudition = false
+                    auditionTask = nil
+                }
+            }
+            do {
+                let clip = try await runtime.alignedAudition(
+                    model: snapshot, episode: episodeID, target: track.id,
+                    targetChannel: channel, startSeconds: start, durationSeconds: duration
+                )
+                try Task.checkCancellation()
+                guard generation == auditionGeneration else { return }
+                guard document.store.model == snapshot else {
+                    throw CocoaError(.userCancelled)
+                }
+                try play(clip, startSeconds: start)
+                isAuditioning = true
+                auditionLabel = "Aligned comparison: reference channel 1 left, selected channel \(channel + 1) right. Uncovered map regions are silent. Nothing is exported."
+            } catch {
+                guard generation == auditionGeneration else { return }
+                stopPlayback(updatePlayhead: false)
+                if Task.isCancelled { return }
+                lastError = String(describing: error)
+                auditionLabel = "Aligned comparison unavailable: \(error). No partial audio was played."
+            }
+        }
+    }
+
+    func addWaveformAnchor() {
+        guard waveformReferencePoint.isFinite, waveformTargetPoint.isFinite,
+              waveformTargetPoint >= 0 else {
+            lastError = "Anchor times must be finite, with a non-negative target source time."
+            return
+        }
+        waveformDraftAnchors.removeAll { $0.sourceSeconds == waveformTargetPoint }
+        waveformDraftAnchors.append(AlignmentAnchor(
+            sourceSeconds: waveformTargetPoint, alignedSeconds: waveformReferencePoint
+        ))
+        waveformDraftAnchors.sort { $0.sourceSeconds < $1.sourceSeconds }
+    }
+
+    func applyWaveformAnchors() {
+        guard waveformDraftAnchors.count >= 2 else { return }
+        placeAnchors(waveformDraftAnchors)
     }
 
     var canCorrect: Bool {
@@ -297,14 +511,17 @@ final class EpisodeAlignmentModel {
               auditionStartSeconds.isFinite, auditionStartSeconds >= 0,
               auditionDurationSeconds.isFinite, auditionDurationSeconds > 0
         else { return }
-        auditionTask?.cancel()
+        stopAudition()
+        let generation = auditionGeneration
         isPreparingAudition = true
         auditionLabel = "Preparing the selected internal audition range. Nothing is exported."
         auditionTask = Task { [weak self] in
             guard let self else { return }
             defer {
-                isPreparingAudition = false
-                auditionTask = nil
+                if generation == auditionGeneration {
+                    isPreparingAudition = false
+                    auditionTask = nil
+                }
             }
             do {
                 let clip = try await runtime.audition(
@@ -313,18 +530,21 @@ final class EpisodeAlignmentModel {
                     durationSeconds: auditionDurationSeconds
                 ) { [weak self] progress in
                     Task { @MainActor [weak self] in
-                        guard let self, self.isPreparingAudition else { return }
+                        guard let self, self.isPreparingAudition,
+                              self.auditionGeneration == generation else { return }
                         self.auditionLabel = "Seeking through the source… \(Int(progress * 100))%. Nothing is exported."
                     }
                 }
                 try Task.checkCancellation()
+                guard generation == auditionGeneration else { return }
                 try play(clip)
                 try Task.checkCancellation()
                 isAuditioning = true
                 auditionLabel = "Auditioning the selected source region as an internal check. Nothing is exported."
             } catch is CancellationError {
-                stopPlayback(updatePlayhead: true)
+                if generation == auditionGeneration { stopPlayback(updatePlayhead: true) }
             } catch {
+                guard generation == auditionGeneration else { return }
                 lastError = String(describing: error)
                 auditionLabel = (error as? LocalizedError)?.errorDescription
                     ?? "Audition unavailable for this source."
@@ -334,10 +554,22 @@ final class EpisodeAlignmentModel {
 
     func load() {
         guard let document else { return }
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        inspectionTask?.cancel()
         let model = document.store.model
+        let episode = model.episode(episodeID)
+        if let loaded = loadedWaveformEpisode,
+           loaded.sources != episode?.sources || loaded.recorderGroups != episode?.recorderGroups {
+            cancelWaveforms()
+            stopAudition()
+            waveformMessage = "Source assignments changed. Load the current audio window again."
+        }
         let interval = Responsiveness.begin("alignment.episodeSwitch")
-        Task {
+        inspectionTask = Task {
             let prepared = await runtime.inspect(model: model, episode: episodeID)
+            guard !Task.isCancelled, generation == inspectionGeneration,
+                  document.store.model == model else { return }
             let snapshot = prepared.snapshot
             acceptedMap = snapshot?.acceptedMap
             hasAnalysis = snapshot?.acceptedMap != nil
@@ -349,6 +581,11 @@ final class EpisodeAlignmentModel {
             )
             if selection == nil { selection = rows.first?.epochID }
             anchorsByEpoch = Self.makeAnchors(map: snapshot?.acceptedMap)
+            resetWaveformTiming()
+            if !waveformTracks.isEmpty, loadedWaveformEpisode?.alignment != episode?.alignment {
+                stopAudition()
+                loadWaveforms()
+            }
             if !selectedAnchors.contains(where: { $0.id == anchorSelection }) {
                 anchorSelection = selectedAnchors.first?.id
             }
@@ -422,6 +659,7 @@ final class EpisodeAlignmentModel {
     }
 
     func stopAudition() {
+        auditionGeneration += 1
         auditionTask?.cancel()
         auditionTask = nil
         isPreparingAudition = false
@@ -466,20 +704,21 @@ final class EpisodeAlignmentModel {
         return position.instant.approximateDouble
     }
 
-    private func play(_ clip: AlignmentRuntime.AuditionClip) throws {
+    private func play(_ clip: AlignmentRuntime.AuditionClip, startSeconds: Double? = nil) throws {
         stopPlayback(updatePlayhead: false)
         guard !clip.samples.isEmpty,
-              let format = AVAudioFormat(standardFormatWithSampleRate: clip.sampleRate, channels: 1)
+              clip.channelCount > 0, clip.samples.count.isMultiple(of: clip.channelCount),
+              let format = AVAudioFormat(standardFormatWithSampleRate: clip.sampleRate, channels: AVAudioChannelCount(clip.channelCount))
         else { throw CocoaError(.fileReadCorruptFile) }
-        let cursor = AuditionSampleCursor(samples: clip.samples)
+        let cursor = AuditionSampleCursor(samples: clip.samples, channelCount: clip.channelCount)
         let source = cursor.makeSourceNode(format: format)
         auditionSource = source
         auditionEngine.attach(source)
         auditionEngine.connect(source, to: auditionEngine.mainMixerNode, format: format)
         try auditionEngine.start()
-        auditionPlaybackStartSeconds = auditionStartSeconds
-        auditionPlayheadSeconds = auditionStartSeconds
-        auditionPlaybackDurationSeconds = Double(clip.samples.count) / clip.sampleRate
+        auditionPlaybackStartSeconds = startSeconds ?? auditionStartSeconds
+        auditionPlayheadSeconds = auditionPlaybackStartSeconds
+        auditionPlaybackDurationSeconds = Double(clip.samples.count / clip.channelCount) / clip.sampleRate
         auditionStartedAt = Date()
         auditionStopTask = Task { [weak self] in
             guard let self else { return }
@@ -590,6 +829,7 @@ final class EpisodeAlignmentModel {
                     )
                     message = "Map revision \(accepted.revision.revision) will activate after the show is verified on disk."
                     anchorsByEpoch = Self.makeAnchors(map: accepted.map)
+                    resetWaveformTiming()
                     onAccepted()
                     if actionName == UndoActionName.acceptProposal {
                         announce("Accepted proposal for \(selectedRow?.epochLabel ?? "selected epoch")")
@@ -724,10 +964,13 @@ final class EpisodeAlignmentModel {
 /// Audio render callbacks run off the main actor; AVAudioSourceNode invokes this cursor serially.
 private final class AuditionSampleCursor: @unchecked Sendable {
     private let samples: [Float]
+    private let channelCount: Int
+    private var frameCount: Int { samples.count / channelCount }
     private var index = 0
 
-    init(samples: [Float]) {
+    init(samples: [Float], channelCount: Int) {
         self.samples = samples
+        self.channelCount = channelCount
     }
 
     func makeSourceNode(format: AVAudioFormat) -> AVAudioSourceNode {
@@ -739,13 +982,14 @@ private final class AuditionSampleCursor: @unchecked Sendable {
     func render(frameCount: AVAudioFrameCount, output: UnsafeMutablePointer<AudioBufferList>) -> OSStatus {
         let buffers = UnsafeMutableAudioBufferListPointer(output)
         let count = Int(frameCount)
-        for buffer in buffers {
+        for (channel, buffer) in buffers.enumerated() {
             guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
             for frame in 0..<count {
-                data[frame] = index + frame < samples.count ? samples[index + frame] : 0
+                data[frame] = channel < channelCount && index + frame < self.frameCount
+                    ? samples[channel * self.frameCount + index + frame] : 0
             }
         }
-        index = min(samples.count, index + count)
+        index = min(self.frameCount, index + count)
         return noErr
     }
 }

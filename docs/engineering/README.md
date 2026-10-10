@@ -14,6 +14,7 @@ WaveWrangler/                     App target sources (folder is synchronized: ne
   Document/                       NSDocument subclasses, store, persistence/lifecycle integration
   Library/                        Library window, shallow sidebar, collections/recent/unavailable entries
   Workspace/                      Episode workspace views
+  Alignment/                      Native waveform lanes, exact-map projection, typed/manual correction and internal audition
   Sources/                        Source organization UI (groups/channels/epochs, primaries/backups, relink)
   Commands/                       Main menu and commands
   Settings/                       Settings window
@@ -38,7 +39,8 @@ Packages/WaveWranglerKit/         Local Swift package linked by the app
   Sources/WWRender/               Pure group renderer (WW-018 candidate SRC): one GroupTimeMap transform for every
                                   same-group channel, exact plan + Kaiser-windowed sinc, bounded chunks; never opens files
   Sources/WWAlignPipeline/        Headless alignment pipeline (WW-021/WW-023): consent-gated bounded analysis, proposals and
-                                  abstentions as derived results, accept/manual map revisions, aligned-asset render job
+                                  abstentions as derived results, accept/manual map revisions, aligned-asset render job,
+                                  witnessed bounded waveform envelopes and map-backed internal listening windows
   Sources/WWOrganizer/            Library/workspace presentation: wording catalogs, preference keys,
                                   collection/combine operations, library session, sidebar models, menu shortcut register
   Tests/WW*Tests/                 Swift Testing suites per module
@@ -83,6 +85,34 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
 `WWAlignSegment` depends on `WWCore`, `WWTimeMap` and `WWAlignEstimate`;
 `WWDerived` depends on `WWCore`, `WWTimeMap`, `WWSources`, `WWDecode` and `WWPersistence`;
 `WWAlignPipeline` depends on those plus `WWAlignEstimate` and `WWRender`; nothing depends on the app.
+
+### Bounded visual alignment
+
+`WaveformWindowReader` produces at most 2,048 extrema bins per recording for a viewport of at most
+30 aligned seconds. `WaveformViewport` inverts each supported affine segment into the correct source
+frame windows, clips to occurrence spans, and never reads gap frames into an envelope. Unsupported
+spans are visibly unplaced source-origin previews. Opposite-polarity channels retain their peaks;
+the envelope is not mono PCM, an alignment estimate or edit authority.
+
+`AlignmentRuntime` resolves the existing identity/availability records, captures an opened-file
+witness and lends only witness-bound WWDecode cursors. Access records and witnesses are rechecked
+after each read and again after all lanes complete. A failed source is explicitly listed rather than
+silently omitted. Accepted placement requires `AlignmentPipeline.verifiedAcceptedMap`, which shares
+the aligned-asset renderer's applicability, dependency and exact active-content checks.
+
+`AlignedAuditionWindowReader` reuses `WWRender` and its cursor sample provider for at most five
+seconds of 48 kHz listening PCM. The app plays the reference's first decoded channel on the left
+and the explicitly selected target channel on the right. Nothing is written to a source, export or
+canonical document. Waveform results are discarded on cancelled/superseded loads; switching episode,
+changing source assignments or undoing/changing the accepted map invalidates or reloads the view.
+Sequential seeking is limited to a 600-second source prefix, plus the decoder's single chunk and
+listening filter halo. Both readers check the exact inverse source-window end before iterating;
+late windows, including large negative offsets, are explicitly refused. Random-access whole-episode
+navigation remains incomplete.
+
+`VisualAlignmentUITests` uses real generated WAVs and the actual Alignment view, not seeded waveform
+pixels or transcript fixtures. Package tests cover extrema, actual witnessed reads, replacement
+refusal, exact viewport selection and mixed-rate aligned audio.
 
 ## Selected M1 contracts (implemented behind swappable seams)
 
