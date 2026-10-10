@@ -119,20 +119,38 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertTrue(occurrence.waitForExistence(timeout: 5))
         XCTAssertEqual(occurrence.label, "Synthetic fixture A sentence")
         XCTAssertTrue((occurrence.value as? String ?? "").contains("Word timing unavailable"))
-        XCTAssertTrue(app.staticTexts["ww.review.provisionalNotice"].label.contains("Synthetic review fixture Primary"))
+        let notice = app.descendants(matching: .any)["ww.review.provisionalNotice"]
+        let boundNoticeExists = notice.exists
+        let boundNoticeRole = boundNoticeExists ? notice.elementType : .any
+        let boundNoticeLabel = boundNoticeExists ? notice.label : ""
+        let boundNoticeValue = boundNoticeExists ? notice.value : nil
+        let expectedPrimary = "Synthetic review fixture Primary"
+        XCTAssertTrue(
+            boundNoticeExists && (boundNoticeLabel.contains(expectedPrimary)
+                || (boundNoticeValue as? String)?.contains(expectedPrimary) == true),
+            "Expected the selected Primary in the Review notice; AX exists: \(boundNoticeExists), role: \(boundNoticeRole), label: \(boundNoticeLabel), value: \(String(describing: boundNoticeValue))"
+        )
         XCTAssertEqual(app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
                        "Synthetic fixture A sentence")
         XCTAssertFalse(app.descendants(matching: .any)["ww.review.proposals"].exists)
 
+        let showWindow = app.windows["ww.show.window"]
         let secondEpisode = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND value CONTAINS %@",
                                   "ww.show.sidebar.episode.", "Synthetic Episode 2"))
             .firstMatch
-        XCTAssertTrue(secondEpisode.waitForExistence(timeout: 5))
+        func selectionEvidence() -> String {
+            let exists = secondEpisode.exists
+            return "window title: \(showWindow.title), B row exists: \(exists), role: \(exists ? secondEpisode.elementType : .any), label: \(exists ? secondEpisode.label : ""), value: \(String(describing: exists ? secondEpisode.value : nil)), selected: \(exists && secondEpisode.isSelected)"
+        }
+        XCTAssertTrue(secondEpisode.waitForExistence(timeout: 5), "B row not found; \(selectionEvidence())")
         secondEpisode.click()
+        XCTAssertTrue(showWindow.title.contains("Synthetic Episode 2"),
+                      "B episode not selected; \(selectionEvidence())")
         XCTAssertTrue(Acceptance.waitFor(timeout: 3) {
-            app.staticTexts["ww.review.provisionalNotice"].label.contains("unavailable")
-        })
+            notice.exists && (notice.label.contains("unavailable")
+                || (notice.value as? String)?.contains("unavailable") == true)
+        }, "Expected the unavailable Review notice after switching episodes; \(selectionEvidence()), notice exists: \(notice.exists), role: \(notice.elementType), label: \(notice.label), value: \(String(describing: notice.value))")
         XCTAssertFalse(occurrence.exists, "A's text must not remain in B's accessible transcript")
         XCTAssertEqual(app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
                        "No occurrence selected")
