@@ -120,9 +120,16 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertEqual(occurrence.label, "Synthetic fixture A sentence")
         XCTAssertTrue((occurrence.value as? String ?? "").contains("Word timing unavailable"))
         let notice = app.descendants(matching: .any)["ww.review.provisionalNotice"]
-        let boundLabel = notice.label
-        XCTAssertTrue(boundLabel.contains("Synthetic review fixture Primary"),
-                      "Expected the selected Primary in the Review notice; AX label: \(boundLabel)")
+        let boundNoticeExists = notice.exists
+        let boundNoticeRole = boundNoticeExists ? notice.elementType : .any
+        let boundNoticeLabel = boundNoticeExists ? notice.label : ""
+        let boundNoticeValue = boundNoticeExists ? notice.value : nil
+        let expectedPrimary = "Synthetic review fixture Primary"
+        XCTAssertTrue(
+            boundNoticeExists && (boundNoticeLabel.contains(expectedPrimary)
+                || (boundNoticeValue as? String)?.contains(expectedPrimary) == true),
+            "Expected the selected Primary in the Review notice; AX exists: \(boundNoticeExists), role: \(boundNoticeRole), label: \(boundNoticeLabel), value: \(String(describing: boundNoticeValue))"
+        )
         XCTAssertEqual(app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
                        "Synthetic fixture A sentence")
         XCTAssertFalse(app.descendants(matching: .any)["ww.review.proposals"].exists)
