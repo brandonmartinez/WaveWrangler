@@ -6,23 +6,38 @@ import WWOrganizer
 @MainActor
 @Observable
 final class TranscriptReviewState {
-    var selectedOccurrenceID: String? = TranscriptReviewShellPresentation.occurrences.first?.id
+    var presentation: TranscriptReviewPresentation = .syntheticFixture
+    var selectedOccurrenceID: String? = TranscriptReviewPresentation.syntheticFixture.occurrences.first?.id
     var selectedProposalID: String? = TranscriptReviewShellPresentation.proposals.first?.id
     var filterText = ""
 
-    var visibleOccurrences: [TranscriptReviewShellOccurrence] {
-        guard !filterText.isEmpty else { return TranscriptReviewShellPresentation.occurrences }
-        return TranscriptReviewShellPresentation.occurrences.filter {
-            $0.title.localizedCaseInsensitiveContains(filterText)
+    var visibleOccurrences: [TranscriptReviewPresentation.Occurrence] {
+        guard !filterText.isEmpty else { return presentation.occurrences }
+        return presentation.occurrences.filter {
+            $0.text.localizedCaseInsensitiveContains(filterText)
         }
     }
 
-    var selectedOccurrence: TranscriptReviewShellOccurrence? {
-        TranscriptReviewShellPresentation.occurrences.first { $0.id == selectedOccurrenceID }
+    var selectedOccurrence: TranscriptReviewPresentation.Occurrence? {
+        presentation.occurrences.first { $0.id == selectedOccurrenceID }
+    }
+
+    /// The existing inspector is a synthetic-shell safety surface. It must not receive supplied transcript text
+    /// until it has its own evidence-only presentation contract.
+    var selectedSyntheticOccurrence: TranscriptReviewShellOccurrence? {
+        guard presentation.isSynthetic else { return nil }
+        return TranscriptReviewShellPresentation.occurrences.first { $0.id == selectedOccurrenceID }
     }
 
     var selectedProposal: TranscriptReviewShellProposal? {
         TranscriptReviewShellPresentation.proposals.first { $0.id == selectedProposalID }
+    }
+
+    func present(_ presentation: TranscriptReviewPresentation) {
+        self.presentation = presentation
+        selectedOccurrenceID = presentation.occurrences.first?.id
+        selectedProposalID = presentation.permitsProposals ? TranscriptReviewShellPresentation.proposals.first?.id : nil
+        filterText = ""
     }
 }
 
@@ -37,20 +52,20 @@ struct TranscriptReviewView: View {
                     .wwFont(.title2)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("ww.review.heading")
-                Text("Provisional UI shell · synthetic fixture only · no media read or speech analysis.")
+                Text(state.presentation.notice)
                     .wwFont(.body)
                     .foregroundStyle(.primary)
                     .accessibilityIdentifier("ww.review.provisionalNotice")
             }
             .accessibilityElement(children: .contain)
 
-            Text(TranscriptReviewShellPresentation.noLiveSourceReason)
+            Text(state.presentation.blockedReason)
                 .wwFont(.body)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(nsColor: .controlBackgroundColor))
                 .accessibilityLabel("Review blocked")
-                .accessibilityValue(TranscriptReviewShellPresentation.noLiveSourceReason)
+                .accessibilityValue(state.presentation.blockedReason)
                 .accessibilityIdentifier("ww.review.blockedReason")
 
             GeometryReader { geometry in
@@ -87,10 +102,10 @@ struct TranscriptReviewView: View {
     private var transcriptPane: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
-                TextField("Filter synthetic occurrences", text: $state.filterText)
+                TextField(state.presentation.isSynthetic ? "Filter synthetic occurrences" : "Filter transcript segments", text: $state.filterText)
                     .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Filter synthetic transcript")
-                    .accessibilityHint("Filtering is local to this synthetic fixture.")
+                    .accessibilityLabel(state.presentation.isSynthetic ? "Filter synthetic transcript" : "Filter supplied transcript")
+                    .accessibilityHint("Filtering is local to the Review presentation.")
                     .accessibilityIdentifier("ww.review.filter")
 
                 TranscriptOccurrenceTable(
@@ -99,18 +114,24 @@ struct TranscriptReviewView: View {
                 )
                 .frame(minHeight: 120)
 
-                Text("Synthetic-only contextual filler proposals")
-                    .wwFont(.headline)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("ww.review.proposals.heading")
+                if state.presentation.permitsProposals {
+                    Text("Synthetic-only contextual filler proposals")
+                        .wwFont(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityIdentifier("ww.review.proposals.heading")
 
-                ProposalTable(
-                    state: state,
-                    pointSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize))
-                )
-                .frame(height: ProposalTable.contentHeight(
-                    pointSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize))
-                ))
+                    ProposalTable(
+                        state: state,
+                        pointSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize))
+                    )
+                    .frame(height: ProposalTable.contentHeight(
+                        pointSize: CGFloat(textSize.pointSize(forBase: WWTextStyle.body.baseSize))
+                    ))
+                } else {
+                    Text("No filler or cut proposals are available for this transcript evidence.")
+                        .wwFont(.body)
+                        .accessibilityIdentifier("ww.review.noEditAuthority")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
@@ -128,13 +149,13 @@ struct TranscriptReviewView: View {
                     .wwFont(.body)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text(state.selectedOccurrence?.title ?? "No occurrence selected")
+                Text(state.selectedOccurrence?.text ?? "No occurrence selected")
                     .wwFont(.body)
                     .accessibilityLabel("Timeline selection")
-                    .accessibilityValue(state.selectedOccurrence?.title ?? "No occurrence selected")
+                    .accessibilityValue(state.selectedOccurrence?.text ?? "No occurrence selected")
                     .accessibilityIdentifier("ww.review.timeline.selectedOccurrence")
 
-                ForEach(TranscriptReviewShellPresentation.lanes) { lane in
+                ForEach(state.presentation.lanes) { lane in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(lane.label)
                             .wwFont(.body)
@@ -211,18 +232,18 @@ private struct TranscriptOccurrenceTable: NSViewRepresentable {
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         var state: TranscriptReviewState
         weak var table: NSTableView?
-        private var rows: [TranscriptReviewShellOccurrence] = []
+        private var rows: [TranscriptReviewPresentation.Occurrence] = []
         private var syncingSelection = false
         private var pointSize: CGFloat = 0
 
         init(state: TranscriptReviewState) { self.state = state }
 
-        func update(rows: [TranscriptReviewShellOccurrence], selectedID: String?, pointSize: CGFloat) {
+        func update(rows: [TranscriptReviewPresentation.Occurrence], selectedID: String?, pointSize: CGFloat) {
             guard let table else { return }
             let changed = self.rows != rows || self.pointSize != pointSize
             self.rows = rows
             self.pointSize = pointSize
-            table.setAccessibilityValue("\(rows.count) synthetic occurrences; none analyzed")
+            table.setAccessibilityValue("\(rows.count) review transcript segments; no edit authority")
             syncingSelection = true
             defer { syncingSelection = false }
             if changed {
@@ -301,17 +322,17 @@ private final class OccurrenceCellView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func configure(_ occurrence: TranscriptReviewShellOccurrence, pointSize: CGFloat) {
-        title.stringValue = occurrence.title
+    func configure(_ occurrence: TranscriptReviewPresentation.Occurrence, pointSize: CGFloat) {
+        title.stringValue = occurrence.text
         title.font = NSFont.systemFont(ofSize: pointSize)
         title.textColor = .labelColor
         title.setAccessibilityIdentifier("ww.review.occurrence.\(occurrence.id)")
-        title.setAccessibilityLabel(occurrence.title)
-        title.accessibilityValueOverride = occurrence.note
-        note.stringValue = occurrence.note
+        title.setAccessibilityLabel(occurrence.text)
+        title.accessibilityValueOverride = "\(occurrence.detail). \(occurrence.wordTiming)"
+        note.stringValue = "\(occurrence.detail) · \(occurrence.wordTiming)"
         note.font = NSFont.systemFont(ofSize: max(10, pointSize * 0.85))
         note.textColor = .labelColor
-        toolTip = occurrence.note
+        toolTip = "\(occurrence.detail). \(occurrence.wordTiming)"
         needsLayout = true
     }
 

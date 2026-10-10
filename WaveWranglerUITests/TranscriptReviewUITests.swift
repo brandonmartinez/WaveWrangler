@@ -97,6 +97,48 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["ww.review.timelinePane"].exists)
     }
 
+    func testBoundSyntheticTranscriptDisappearsFromAccessibilityAfterEpisodeSwitch() {
+        app.terminate()
+        var arguments = app.launchArguments
+        if let index = arguments.firstIndex(of: "-WWUITestOpenShow") {
+            arguments[index + 1] = "Synthetic Review Binding Fixture"
+        }
+        if let index = arguments.firstIndex(of: "-WWUITestShowEpisodes") {
+            arguments[index + 1] = "2"
+        }
+        arguments += ["-WWUITestReviewBindingFixture", "YES"]
+        app.launchArguments = arguments
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 5))
+        selectFirstEpisode()
+        app.buttons["ww.show.destination.review"].click()
+
+        let occurrence = app.descendants(matching: .any)["ww.review.occurrence.synthetic-bound-segment"]
+        XCTAssertTrue(occurrence.waitForExistence(timeout: 5))
+        XCTAssertEqual(occurrence.label, "Synthetic fixture A sentence")
+        XCTAssertTrue((occurrence.value as? String ?? "").contains("Word timing unavailable"))
+        XCTAssertTrue(app.staticTexts["ww.review.provisionalNotice"].label.contains("Synthetic review fixture Primary"))
+        XCTAssertEqual(app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
+                       "Synthetic fixture A sentence")
+        XCTAssertFalse(app.descendants(matching: .any)["ww.review.proposals"].exists)
+
+        let secondEpisode = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+                                  "ww.show.sidebar.episode.", "Synthetic Episode 2"))
+            .firstMatch
+        XCTAssertTrue(secondEpisode.waitForExistence(timeout: 5))
+        secondEpisode.click()
+        XCTAssertTrue(Acceptance.waitFor(timeout: 3) {
+            app.staticTexts["ww.review.provisionalNotice"].label.contains("unavailable")
+        })
+        XCTAssertFalse(occurrence.exists, "A's text must not remain in B's accessible transcript")
+        XCTAssertEqual(app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
+                       "No occurrence selected")
+        XCTAssertFalse(app.descendants(matching: .any)["ww.review.lane.selected-primary"].exists)
+        XCTAssertFalse(app.buttons["ww.review.action.acceptShorten"].isEnabled)
+    }
+
     func testKeyboardOccurrenceSelectionUpdatesTheInspector() {
         let inspectorHeading = app.staticTexts["ww.review.inspector.heading"]
         XCTAssertTrue(inspectorHeading.waitForExistence(timeout: 3))
