@@ -1,5 +1,19 @@
 import Foundation
+import Synchronization
 import WWCore
+
+private final class EditCheckpointLocks: Sendable {
+    private let locks = Mutex<[DocumentKey: NSLock]>([:])
+
+    func lock(for key: DocumentKey) -> NSLock {
+        locks.withLock {
+            if let existing = $0[key] { return existing }
+            let lock = NSLock()
+            $0[key] = lock
+            return lock
+        }
+    }
+}
 
 /// Stable key for a document's device-local recovery records. Derived from logical identity, never from a
 /// path, so checkpoints survive moving or renaming the document on this Mac.
@@ -37,6 +51,8 @@ public struct RecoveryStore: Sendable {
     public let root: URL
     public let retainCount: Int
     private let ops: any FileOperations
+    /// Copies of this store share edit-record serialization when native checkpoint I/O runs off the main actor.
+    private let editCheckpointLocks = EditCheckpointLocks()
 
     public init(root: URL, retainCount: Int = 3, ops: any FileOperations = LocalFileOperations()) {
         precondition(retainCount >= 2, "Keep at least the last two validated revisions.")
@@ -188,6 +204,9 @@ public struct RecoveryStore: Sendable {
         for key: DocumentKey,
         at date: Date = Date()
     ) throws -> EditCheckpointRecord {
+        let editCheckpointLock = editCheckpointLocks.lock(for: key)
+        editCheckpointLock.lock()
+        defer { editCheckpointLock.unlock() }
         let existing = editCheckpointFiles(for: key)
         let sequence = (existing.compactMap { Self.sequence(of: $0) }.max() ?? 0) + 1
         // Whole milliseconds, so the record round-trips exactly through its canonical timestamp.
@@ -215,7 +234,10 @@ public struct RecoveryStore: Sendable {
 
     /// Edit-checkpoint records for `key`, newest first. Unreadable records are reported, not deleted.
     public func editCheckpoints(for key: DocumentKey) -> [Result<EditCheckpointRecord, EditCheckpointRecord.ReadError>] {
-        editCheckpointFiles(for: key).map { url in
+        let editCheckpointLock = editCheckpointLocks.lock(for: key)
+        editCheckpointLock.lock()
+        defer { editCheckpointLock.unlock() }
+        return editCheckpointFiles(for: key).map { url in
             guard let data = try? ops.read(url) else { return .failure(.unreadable(url)) }
             do { return .success(try EditCheckpointRecord.decode(data)) } catch { return .failure(.damaged(url)) }
         }
@@ -229,6 +251,9 @@ public struct RecoveryStore: Sendable {
     /// Deletes edit checkpoints once a verified publication contains all their edits, or after an explicit
     /// Don't Save/Discard.
     public func discardEditCheckpoints(for key: DocumentKey) throws {
+        let editCheckpointLock = editCheckpointLocks.lock(for: key)
+        editCheckpointLock.lock()
+        defer { editCheckpointLock.unlock() }
         for url in editCheckpointFiles(for: key) { try ops.remove(url) }
     }
 
@@ -242,6 +267,9 @@ public struct RecoveryStore: Sendable {
     /// an unresolved "Restore unsaved changes" offer survives later saves, new checkpoints and Don't Save.
     /// Each move is a same-volume rename; an existing name is never overwritten.
     public func setAsideEditCheckpoints(for key: DocumentKey) throws {
+        let editCheckpointLock = editCheckpointLocks.lock(for: key)
+        editCheckpointLock.lock()
+        defer { editCheckpointLock.unlock() }
         let files = editCheckpointFiles(for: key)
         guard !files.isEmpty else { return }
         let held = folder("edit-checkpoints-offered", key)

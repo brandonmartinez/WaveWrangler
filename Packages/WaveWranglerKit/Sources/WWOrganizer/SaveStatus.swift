@@ -11,6 +11,8 @@ public enum DocumentSaveState: Sendable, Equatable {
     case saved(at: Date?, folderDisplayName: String?)
     /// D2 (autosave On) / D3 (autosave Off). Edits exist and no save is in progress.
     case edited
+    /// Unsaved edits have an independently verified device-local recovery copy, not a canonical save.
+    case recoveryCheckpoint(at: Date)
     /// D4.
     case saving(cancellable: Bool)
     /// D5. Write finished but coherence/acknowledgement is uncertain.
@@ -55,6 +57,7 @@ public struct DocumentSaveStatus: Sendable, Equatable {
     /// Unresolved conflict versions the sync provider kept for this file (e.g. iCloud, after two Macs saved at
     /// the same time). Evidence only (WW-009 C4): shown, never resolved or removed by WaveWrangler.
     public var providerConflictVersions: Int
+    public var recoveryCheckpointProblem: String?
 
     public init(state: DocumentSaveState, autosaveEnabled: Bool, retryingAutomatically: Bool = false, hasUnsavedChanges: Bool? = nil,
                 providerConflictVersions: Int = 0) {
@@ -85,7 +88,7 @@ extension DocumentSaveState {
     /// by the presentation but carry no dirty claim on their own.
     public var impliesUnsavedChanges: Bool {
         switch self {
-        case .edited, .saving, .notConfirmed, .conflict, .locationUnavailable, .diskFull, .failed, .cancelled: true
+        case .edited, .recoveryCheckpoint, .saving, .notConfirmed, .conflict, .locationUnavailable, .diskFull, .failed, .cancelled: true
         case .checking, .unknown, .saved, .recovered, .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updatingFormat,
              .updateFailed, .readOnlyLocation, .readOnly: false
         }
@@ -207,6 +210,11 @@ public struct SaveStatusPresentation: Sendable, Equatable {
             symbol = nil
             popover = "Saving your changes…"
             actions = cancellable ? [.cancelSave] : []
+        case let .recoveryCheckpoint(at):
+            text = "Recovery copy"
+            symbol = "clock.arrow.circlepath"
+            popover = "Unsaved changes have a verified recovery copy on this Mac from \(formatTime(at)); the show is not saved yet. The recovery copy does not mean cloud sync."
+            actions = [.saveNow]
         case .notConfirmed:
             text = "Not confirmed"
             symbol = "questionmark.circle"
@@ -307,6 +315,13 @@ public struct SaveStatusPresentation: Sendable, Equatable {
         // the save state. WaveWrangler doesn't resolve or remove them.
         let providerNote = Self.providerConflictNote(status.providerConflictVersions)
         if let providerNote { popover += " " + providerNote }
+        if let problem = status.recoveryCheckpointProblem {
+            popover += " " + problem
+            if tint == .none { tint = .attention }
+            if message == nil {
+                message = MessageBarContent(heading: "Recovery copy not verified", body: problem, actions: [.saveNow])
+            }
+        }
 
         itemText = text
         symbolName = symbol
@@ -318,6 +333,7 @@ public struct SaveStatusPresentation: Sendable, Equatable {
         isReadOnly = status.state.isReadOnly
         messageBar = message
         accessibilityValue = "\(text). \(Self.firstSentence(of: popover))" + (providerNote.map { " " + $0 } ?? "")
+            + (status.recoveryCheckpointProblem.map { " " + $0 } ?? "")
     }
 
     /// "Your cloud service also kept 2 other versions of this show from another Mac or app. …"

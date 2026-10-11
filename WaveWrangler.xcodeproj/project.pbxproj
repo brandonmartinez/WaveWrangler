@@ -69,6 +69,7 @@
 				Alignment/AlignmentWaveform.swift,
 				Alignment/AnchorTimeEditing.swift,
 				Document/CopyElsewhereRetryGate.swift,
+				Document/DocumentCheckpointWriter.swift,
 				Document/FormatUpdate.swift,
 				Document/SharedModelPublication.swift,
 				Library/CanonicalLibraryAdoption.swift,

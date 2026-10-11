@@ -228,8 +228,16 @@ refusal, exact viewport selection and mixed-rate aligned audio.
 - **Autosave** (`WWAutosaveEnabled`, `WWAutosaveDelaySeconds` ∈ {1, 2, 5, 10, 30}): the gate is checked
   at `autosavesInPlace`, `scheduleAutosaving()` and every `autosave(withImplicitCancellability:)`.
   OFF schedules nothing, cancels queued automatic work (never a success-shaped `nil`), stays dirty and
-  uses AppKit's Save / Don't Save / Cancel review. ON publishes after the quiet delay; if that cannot be
-  verified within 1.5 s of the last edit, a C2b edit checkpoint is written at quiescence (0.5 s).
+  uses AppKit's Save / Don't Save / Cancel review. Every ON cadence schedules a C2b edit checkpoint at
+  quiescence (0.5 s), independently of the canonical-save request at the selected delay. Native recovery
+  file I/O runs on a private serial queue; immutable snapshots and completion checks remain main-actor
+  owned. Superseded/disabled/closing callbacks never certify current edits. Save and close drain admitted
+  writes asynchronously before retirement; a synchronous reload while a write is active refuses explicitly
+  rather than racing it. Canonical publication retains its existing synchronous AppKit verification path.
+  The toolbar and accessibility value distinguish **Recovery copy — not saved** from **Saved**; recovery
+  errors are surfaced separately without replacing canonical failure/conflict remedies. Recovery deadlines
+  measure the first independently decoded full expected canonical or unpublished snapshot, not merely a
+  successful callback; full publication cost remains a separate gate.
 - **Evidence harness** (`Tests/WWPersistenceTests`): ≥100 injected interruptions per boundary
   (P1–P7, L1–L6, M1–M3) plus real `_exit` process kills and two-process conflicts via `wwpersist-probe`.
   Results are appended to `Packages/WaveWranglerKit/.build/persistence-evidence.log`.

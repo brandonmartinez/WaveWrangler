@@ -56,7 +56,7 @@ struct SaveStatusTests {
 
     static let allStates: [DocumentSaveState] = [
         .checking, .unknown(reason: "save confirmation isn't available"), .saved(at: date, folderDisplayName: "Podcasts"),
-        .edited, .saving(cancellable: false), .notConfirmed, .conflict(changedAt: nil), .locationUnavailable,
+        .edited, .recoveryCheckpoint(at: date), .saving(cancellable: false), .notConfirmed, .conflict(changedAt: nil), .locationUnavailable,
         .diskFull(volumeName: "Data"), .failed(reason: "WaveWrangler doesn't have permission to save in this folder"),
         .cancelled, .recovered(incompleteSaveAt: date, openedVersionAt: date), .readOnlyNewerFormat, .readOnlyDamaged,
         .updateNeeded, .updatingFormat, .updateFailed, .readOnlyLocation, .readOnly(reason: "it's a recovered copy"),
@@ -81,7 +81,7 @@ struct SaveStatusTests {
     }
 
     @Test func onlyD1ClearsDirtyAndEditedSuffix() {
-        for state in [DocumentSaveState.edited, .saving(cancellable: true), .notConfirmed, .conflict(changedAt: nil),
+        for state in [DocumentSaveState.edited, .recoveryCheckpoint(at: Self.date), .saving(cancellable: true), .notConfirmed, .conflict(changedAt: nil),
                       .locationUnavailable, .diskFull(volumeName: "Data"), .failed(reason: "x"), .cancelled] {
             let presentation = present(state)
             #expect(presentation.showsEditedSuffix, "\(state)")
@@ -173,6 +173,9 @@ struct SaveStatusTests {
     @Test func closeDecisionsFollowStateTable() {
         #expect(CloseDecision(state: .saved(at: Self.date, folderDisplayName: nil), autosaveEnabled: true, showName: "S") == .closeImmediately)
         #expect(CloseDecision(state: .edited, autosaveEnabled: true, showName: "S") == .saveFirst)
+        #expect(CloseDecision(state: .recoveryCheckpoint(at: Self.date), autosaveEnabled: true, showName: "S") == .saveFirst)
+        #expect(CloseDecision(state: .recoveryCheckpoint(at: Self.date), autosaveEnabled: false, showName: "S")
+            == CloseDecision(state: .edited, autosaveEnabled: false, showName: "S"))
         #expect(CloseDecision(state: .saving(cancellable: true), autosaveEnabled: false, showName: "S") == .waitForSave)
         guard case .sheet(let plain) = CloseDecision(state: .edited, autosaveEnabled: false, showName: "S") else { Issue.record("expected sheet"); return }
         #expect(plain.message == "Do you want to save the changes you made to “S”?")

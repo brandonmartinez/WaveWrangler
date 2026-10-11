@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 import WWOrganizer
 import WWPersistence
@@ -7,6 +8,38 @@ import WWPersistence
 @MainActor
 @Suite("Show document status mapping: automatic retry")
 struct ShowDocumentStatusMappingTests {
+    @Test func recoveryCheckpointIsProtectedButNotSaved() {
+        let at = Date(timeIntervalSince1970: 1_000)
+        let mapped = ShowDocumentStatusMapping.map(
+            .recoveryCheckpoint(at: at), readOnlyReason: nil, autosaveEnabled: true, folderDisplayName: "Shows"
+        )
+        let presentation = SaveStatusPresentation(mapped, showName: "Synthetic", formatTime: { _ in "12:00" })
+        #expect(mapped.state == .recoveryCheckpoint(at: at))
+        #expect(mapped.hasUnsavedChanges)
+        #expect(!mapped.state.isCoherentlySaved)
+        #expect(presentation.showsEditedSuffix)
+        #expect(presentation.actions == [.saveNow])
+        #expect(presentation.accessibilityValue.contains("verified recovery copy"))
+        #expect(presentation.accessibilityValue.contains("not saved"))
+        #expect(presentation.popoverText.contains("not saved"))
+        #expect(presentation.popoverText.contains("does not mean cloud sync"))
+    }
+
+    @Test func recoveryFailureIsAccessibleWithoutOverwritingCanonicalFailure() {
+        let problem = "Recovery copy could not be verified: the recovery disk is full."
+        let mapped = ShowDocumentStatusMapping.map(
+            .acknowledgementUncertain(message: "uncertain"), readOnlyReason: nil, autosaveEnabled: true,
+            folderDisplayName: "Shows", recoveryCheckpointProblem: problem
+        )
+        let presentation = SaveStatusPresentation(mapped, showName: "Synthetic")
+        #expect(mapped.state == .notConfirmed)
+        #expect(mapped.hasUnsavedChanges)
+        #expect(presentation.itemText == "Not confirmed")
+        #expect(presentation.accessibilityValue.contains(problem))
+        #expect(presentation.popoverText.contains(problem))
+        #expect(!presentation.popoverText.contains("last saved version hasn't been changed"))
+    }
+
     private func popover(_ state: WWPersistence.DocumentSaveState, autosave: Bool, retrying: Bool) -> (status: WWOrganizer.DocumentSaveStatus, text: String) {
         let status = ShowDocumentStatusMapping.map(state, readOnlyReason: nil, autosaveEnabled: autosave, folderDisplayName: "Shows",
                                                    retryingAutomatically: retrying)
