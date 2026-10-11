@@ -77,13 +77,26 @@ public struct DocumentOpener<Coder: CanonicalDocumentCoding>: Sendable {
     /// Opens `url`. `key` (when known, e.g. from the library) locates recovery checkpoints; otherwise the
     /// last-known location hint is used.
     public func open(_ url: URL, key: DocumentKey? = nil) -> OpenOutcome<Coder.Payload> {
+        openWithValidatedBytes(url, key: key).outcome
+    }
+
+    /// Keeps only the bytes that produced an editable outcome, for device-local recovery of that snapshot.
+    func openWithValidatedBytes(
+        _ url: URL, key: DocumentKey? = nil
+    ) -> (outcome: OpenOutcome<Coder.Payload>, validatedBytes: Data?) {
         let data: Data
         do {
             data = try coordination.coordinateReading(at: url) { try ops.read($0) }
         } catch {
-            return .unreadable(kind: WriteFailureKind(classifying: error), detail: "\(error)", recoveryCandidates: candidates(url: url, key: key))
+            return (
+                .unreadable(kind: WriteFailureKind(classifying: error), detail: "\(error)",
+                            recoveryCandidates: candidates(url: url, key: key)),
+                nil
+            )
         }
-        return outcome(for: data, url: url, key: key)
+        let outcome = outcome(for: data, url: url, key: key)
+        if case .editable = outcome { return (outcome, data) }
+        return (outcome, nil)
     }
 
     /// Classifies bytes already read by the caller (e.g. inside NSDocument's coordinated read).

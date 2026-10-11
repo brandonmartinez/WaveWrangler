@@ -219,7 +219,10 @@ refusal, exact viewport selection and mixed-rate aligned audio.
   older records unchanged. This adds no read or directory-enumeration pass. It gives no cross-device recovery.
 - **Open:** unknown-newer refuses (never written); damaged files offer a whole validated checkpoint as
   a new untitled copy; migrations preserve the original plus a non-overwriting backup and publish only
-  after independent expectations pass.
+  after independent expectations pass. Library open retains the exact coordinated, validated bytes
+  that produced the adopted model, rather than opening the canonical file again for its recovery copy.
+  A later replacement cannot change that snapshot or bypass the next save's expected-base check.
+  Save publication still independently reads back its final canonical bytes.
 - **Autosave** (`WWAutosaveEnabled`, `WWAutosaveDelaySeconds` ∈ {1, 2, 5, 10, 30}): the gate is checked
   at `autosavesInPlace`, `scheduleAutosaving()` and every `autosave(withImplicitCancellability:)`.
   OFF schedules nothing, cancels queued automatic work (never a success-shaped `nil`), stays dirty and
