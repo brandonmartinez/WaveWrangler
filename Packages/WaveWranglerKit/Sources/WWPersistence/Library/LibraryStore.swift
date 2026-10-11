@@ -1119,7 +1119,8 @@ public actor LibraryStore {
 
     private func refreshIndex(digest: String) {
         guard let library else { return }
-        index = indexCache.index(for: library, libraryDigest: digest).index
+        // Disposable cache I/O must not delay opening the validated canonical library.
+        index = LibraryIndex.build(from: library, libraryDigest: digest)
     }
 
     private func resolveFolder() -> URL? {

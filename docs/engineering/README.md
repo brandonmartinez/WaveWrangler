@@ -182,7 +182,9 @@ refusal, exact viewport selection and mixed-rate aligned audio.
   anything but an exact match), `SourceTransferController` (download/progress/cancel/retry/offline) and
   the `@MainActor @Observable` `SourceAvailabilityMonitor` for the Sources UI. The availability setting
   is injected as `SourceAvailabilitySetting(downloadSourcesAutomatically:)` from the app preference.
-- **Derived index/cache:** `LibraryIndex` in Caches, rebuilt whenever missing/stale/damaged; never authoritative.
+- **Derived index/cache:** library opening derives `LibraryIndex` in memory from the validated canonical
+  library, without reading or rewriting the disposable disk cache. Publication still updates the cache
+  in Caches; direct cache consumers rebuild when missing/stale/damaged. The cache is never authoritative.
 - **Envelope** (`WWPersistence.JSONEnvelopeCoder`, behind `CanonicalDocumentCoding`):
   `{checksum, format, payload, publicationID, revision, schemaVersion}` with sorted keys. Only
   `{format, schemaVersion}` is frozen across versions and is decoded first. Reads refuse, in order:

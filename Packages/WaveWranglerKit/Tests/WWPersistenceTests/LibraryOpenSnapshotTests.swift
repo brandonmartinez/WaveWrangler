@@ -6,6 +6,40 @@ import WWCore
 
 @Suite("Library open snapshot and recovery")
 struct LibraryOpenSnapshotTests {
+    @Test(arguments: LibraryDiskCacheState.allCases)
+    func buildsIndexFromValidatedLibraryWithoutDiskCacheIO(_ cacheState: LibraryDiskCacheState) async throws {
+        let rig = LibraryRig("open-without-cache-io")
+        let setup = rig.store()
+        #expect(await setup.load() == .created)
+        let library = Fixtures.library(shows: (0..<3).map { Fixtures.show(seed: 31_000 + UInt64($0)) }, seed: 42)
+        guard case .published = try await setup.update({ _ in library }) else {
+            Issue.record("Synthetic library setup failed")
+            return
+        }
+        let original = try Data(contentsOf: rig.containerFile)
+        let decoded = try LibraryCoder.library.decode(original)
+        switch cacheState {
+        case .valid: break
+        case .missing: try LocalFileOperations().remove(rig.cacheURL)
+        case .damaged: try Data("{damaged-index".utf8).write(to: rig.cacheURL)
+        }
+        let cacheBytes = cacheState == .missing ? nil : try Data(contentsOf: rig.cacheURL)
+        let ops = LibraryOpenOperations(canonical: rig.containerFile, cache: rig.cacheURL)
+        let store = makeStore(rig, recovery: rig.recovery, ops: ops)
+
+        #expect(await store.load() == .ready(revision: 2))
+        #expect(ops.canonicalReadCount == 1)
+        #expect(ops.cacheAccessCount == 0, "Disposable index I/O must not block canonical library opening")
+        #expect(await store.index == LibraryIndex.build(from: decoded.payload, libraryDigest: RevisionFingerprint.digest(original)))
+        #expect(await store.library == decoded.payload)
+        #expect(try Data(contentsOf: rig.containerFile) == original)
+        if let cacheBytes {
+            #expect(try Data(contentsOf: rig.cacheURL) == cacheBytes, "Opening must not rewrite the disposable cache")
+        } else {
+            #expect(!LocalFileOperations().exists(rig.cacheURL))
+        }
+    }
+
     @Test func retainsTheValidatedLibraryWithOneCanonicalRead() async throws {
         let rig = LibraryRig("open-snapshot")
         #expect(await rig.store().load() == .created)
@@ -90,10 +124,16 @@ struct LibraryOpenSnapshotTests {
     ) -> LibraryStore {
         LibraryStore(
             containerFolder: rig.container, settings: rig.settings, bookmarks: PlainFolderBookmarks(),
-            recovery: recovery, indexCache: LibraryIndexCache(url: rig.cacheURL), ops: ops,
+            recovery: recovery, indexCache: LibraryIndexCache(url: rig.cacheURL, ops: ops), ops: ops,
             providerVersions: NoProviderVersions()
         )
     }
+}
+
+enum LibraryDiskCacheState: Sendable, CaseIterable {
+    case valid
+    case missing
+    case damaged
 }
 
 enum RefusedLibrarySnapshot: Sendable, CaseIterable {
@@ -105,21 +145,32 @@ enum RefusedLibrarySnapshot: Sendable, CaseIterable {
 private final class LibraryOpenOperations: FileOperations {
     private struct State {
         var reads = 0
+        var cacheAccesses = 0
         var replacement: Data?
     }
 
     private let canonical: URL
+    private let cache: URL?
     private let state: Mutex<State>
     private let base = LocalFileOperations()
 
-    init(canonical: URL, replacement: Data? = nil) {
+    init(canonical: URL, replacement: Data? = nil, cache: URL? = nil) {
         self.canonical = canonical.standardizedFileURL
+        self.cache = cache?.standardizedFileURL
         self.state = Mutex(State(replacement: replacement))
     }
 
     var canonicalReadCount: Int { state.withLock { $0.reads } }
+    var cacheAccessCount: Int { state.withLock { $0.cacheAccesses } }
+
+    private func noteCacheAccess(_ url: URL) {
+        if let cache, url.standardizedFileURL == cache {
+            state.withLock { $0.cacheAccesses += 1 }
+        }
+    }
 
     func read(_ url: URL) throws -> Data {
+        noteCacheAccess(url)
         let bytes = try base.read(url)
         if url.standardizedFileURL == canonical {
             let replacement = state.withLock { state in
@@ -136,14 +187,22 @@ private final class LibraryOpenOperations: FileOperations {
         return bytes
     }
 
-    func exists(_ url: URL) -> Bool { base.exists(url) }
-    func createDirectory(_ url: URL) throws { try base.createDirectory(url) }
-    func writeNew(_ data: Data, to url: URL) throws { try base.writeNew(data, to: url) }
-    func replace(_ destination: URL, withStaged staged: URL) throws { try base.replace(destination, withStaged: staged) }
-    func moveNew(_ source: URL, to destination: URL) throws { try base.moveNew(source, to: destination) }
-    func remove(_ url: URL) throws { try base.remove(url) }
-    func contentsOfDirectory(_ url: URL) throws -> [URL] { try base.contentsOfDirectory(url) }
+    func exists(_ url: URL) -> Bool { noteCacheAccess(url); return base.exists(url) }
+    func createDirectory(_ url: URL) throws { noteCacheAccess(url); try base.createDirectory(url) }
+    func writeNew(_ data: Data, to url: URL) throws { noteCacheAccess(url); try base.writeNew(data, to: url) }
+    func replace(_ destination: URL, withStaged staged: URL) throws {
+        noteCacheAccess(destination)
+        try base.replace(destination, withStaged: staged)
+    }
+    func moveNew(_ source: URL, to destination: URL) throws {
+        noteCacheAccess(source)
+        noteCacheAccess(destination)
+        try base.moveNew(source, to: destination)
+    }
+    func remove(_ url: URL) throws { noteCacheAccess(url); try base.remove(url) }
+    func contentsOfDirectory(_ url: URL) throws -> [URL] { noteCacheAccess(url); return try base.contentsOfDirectory(url) }
     func makeStagingDirectory(appropriateFor destination: URL) throws -> URL {
-        try base.makeStagingDirectory(appropriateFor: destination)
+        noteCacheAccess(destination)
+        return try base.makeStagingDirectory(appropriateFor: destination)
     }
 }
