@@ -120,7 +120,10 @@ positive gaps are not scanned or bridged. The runtime rechecks the access record
 then witnesses and map currency before publication. Progress also checks the native document
 snapshot; cancellation/change returns no partial overview. The native overview is a coarse,
 stored-map navigator, never an anchor picker; clicking covered audio reloads the exact window.
-Typed start/playhead controls remain the keyboard alternative. No persistent cache is created.
+Typed start, or playhead plus a real **Open Window at Playhead** button per navigable lane,
+remain the keyboard/accessibility alternatives. The overview's descriptive accessibility
+representation is separate from its mouse-position gesture and the native button action.
+No persistent cache is created.
 Source-duration admission does not bound the map's aligned extent. The overview shades and
 labels portions outside the existing exact-window navigator's `0...86_400` aligned seconds as
 unavailable. The native/AX action admits only covered points inside that range; a wholly

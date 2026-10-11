@@ -162,15 +162,21 @@ struct AlignmentWaveformView: View {
                 .clipped()
                 .accessibilityRepresentation {
                     if hasNavigableAudio {
-                        Button("\(track.groupName), \(track.name), complete measured PCM overview; \(strokes.filter { !$0.mapped }.count) unplaced bins. Open an exact window at the typed aligned playhead within covered audio from 0 to 86,400 seconds. Audio outside that range is unavailable; coarse bins do not set anchors.") {
-                            openOverviewWindow(at: model.waveformPlayheadSeconds, strokes: strokes)
-                        }
-                        .disabled(!canOpen)
-                        .accessibilityIdentifier("alignment.waveforms.overview.track.\(track.id)")
+                        Text("\(track.groupName), \(track.name), complete measured PCM overview; \(strokes.filter { !$0.mapped }.count) unplaced bins. Use Open Window at Playhead to navigate within covered audio from 0 to 86,400 seconds. Audio outside that range is unavailable; coarse bins do not set anchors.")
+                            .accessibilityIdentifier("alignment.waveforms.overview.track.\(track.id)")
                     } else {
                         Text("\(track.groupName), \(track.name), complete measured PCM overview. All covered audio is unavailable for exact-window navigation: stored timing places it outside 0 to 86,400 aligned seconds.")
                             .accessibilityIdentifier("alignment.waveforms.overview.track.\(track.id)")
                     }
+                }
+                if hasNavigableAudio {
+                    Button("Open Window at Playhead") {
+                        openOverviewWindow(at: model.waveformPlayheadSeconds, strokes: strokes)
+                    }
+                    .disabled(!canOpen)
+                    .accessibilityLabel("\(track.groupName), \(track.name), open exact window at aligned playhead")
+                    .accessibilityIdentifier("alignment.waveforms.overview.open.\(track.id)")
+                    .help("Type an aligned playhead within this recording's covered audio, from 0 to 86,400 seconds.")
                 }
             }
         case let .failure(error):

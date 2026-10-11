@@ -25,7 +25,8 @@ Comparison is an internal listening check, not an export, clock qualification or
 
 **Build Episode Overview** explicitly scans every covered PCM sample into at most 2,048 amplitude
 bins per recording, with cancellable progress. Click covered overview audio to open an exact
-window; **Window start** and the typed playhead are keyboard alternatives. Overview bins never
+window; **Window start**, or the typed playhead with **Open Window at Playhead**, are keyboard
+and accessibility alternatives. Overview bins never
 create anchors. Gaps stay absent, unplaced audio stays marked, and source/timing changes invalidate
 the result. A scan supports up to 24 source hours per recording and keeps no persistent PCM/cache.
 Stored offsets/rates can place audio outside the exact navigator's 0-to-86,400 aligned-second

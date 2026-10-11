@@ -191,15 +191,23 @@ final class VisualAlignmentUITests: XCTestCase {
         )
         XCTAssertTrue(waitUntil { overviews.count == 2 && build.label == "Build Episode Overview" })
         for overview in overviews.allElementsBoundByIndex {
-            XCTAssertTrue(overview.label.contains("complete measured PCM overview"))
+            XCTAssertTrue(
+                overview.label.contains("complete measured PCM overview")
+                    || (overview.value as? String ?? "").contains("complete measured PCM overview")
+            )
         }
         let oldOverviewIDs = Set(overviews.allElementsBoundByIndex.map(\.identifier))
         let oldTrackIDs = Set(tracks.allElementsBoundByIndex.map(\.identifier))
         let status = app.staticTexts["alignment.waveforms.overview.status"]
         XCTAssertTrue((status.value as? String ?? status.label).contains("2 complete PCM overviews"))
+        let overviewActions = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.overview.open.")
+        )
+        XCTAssertEqual(overviewActions.count, 2)
+        let oldActionIDs = Set(overviewActions.allElementsBoundByIndex.map(\.identifier))
         let target = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
-            "alignment.waveforms.overview.track.", "synthetic-remote.wav"
+            "alignment.waveforms.overview.open.", "synthetic-remote.wav"
         )).firstMatch
         XCTAssertTrue(target.exists)
         let start = app.textFields["alignment.waveforms.start"]
@@ -225,7 +233,7 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(waitUntil {
             tracks.count == 2 && load.label == "Load Audio Window"
                 && Double(start.value as? String ?? "") == 3
-        })
+        }, app.debugDescription)
         let ruler = app.staticTexts["alignment.waveforms.ruler"]
         XCTAssertTrue((ruler.value as? String ?? ruler.label).contains("3.000 to 4.000"))
         XCTAssertEqual(revision.value as? String ?? revision.label, storedRevision)
@@ -246,11 +254,16 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(second.exists)
         second.click()
         XCTAssertTrue(waitUntil { app.windows["ww.show.window"].title.contains("Synthetic Episode 2") })
-        XCTAssertTrue(waitUntil { overviews.count == 0 && tracks.count == 0 && build.label == "Build Episode Overview" })
+        XCTAssertTrue(waitUntil {
+            overviews.count == 0 && overviewActions.count == 0 && tracks.count == 0
+                && build.label == "Build Episode Overview"
+        })
         scrollTo(build, in: app)
         build.click()
         XCTAssertTrue(waitUntil { overviews.count == 2 && build.label == "Build Episode Overview" })
         XCTAssertTrue(oldOverviewIDs.isDisjoint(with: Set(overviews.allElementsBoundByIndex.map(\.identifier))))
+        XCTAssertEqual(overviewActions.count, 2)
+        XCTAssertTrue(oldActionIDs.isDisjoint(with: Set(overviewActions.allElementsBoundByIndex.map(\.identifier))))
         XCTAssertTrue(oldTrackIDs.isDisjoint(with: Set(tracks.allElementsBoundByIndex.map(\.identifier))))
         attachHierarchy(app, name: "Second episode overview replaces all first-episode waveform identities")
     }
