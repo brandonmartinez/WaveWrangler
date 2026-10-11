@@ -4,6 +4,73 @@ import WWTimeMap
 
 @Suite("Waveform selection")
 struct AlignmentWaveformTests {
+    @Test func overviewSeparatesSourceDurationFromAcceptedAlignedExtent() throws {
+        func stroke(offset: Int64, ratio: Int64 = 1) throws -> AlignmentWaveformStroke {
+            let group = RecorderGroupID()
+            let epoch = RecordingEpochID()
+            let occurrence = try SourceOccurrence(
+                source: SourceID(), nominalRate: NominalRate(1_000), frameCount: 360_000
+            )
+            let reference = TimelineReference(
+                group: RecorderGroupID(), epoch: RecordingEpochID(), occurrence: SourceOccurrenceID()
+            )
+            let segment = try AffineClockSegment(
+                groupClockStart: .zero, groupClockEnd: ExactRational(360),
+                rateRatio: ExactRational(ratio), alignedOffset: ExactRational(offset)
+            )
+            let map = try GroupTimeMap(
+                group: group, reference: reference,
+                epochs: [EpochClockMap(
+                    epoch: epoch,
+                    mapping: .mapped(segments: [segment], provenance: .manual(.init(basis: .numericEntry)))
+                )],
+                placements: [OccurrencePlacement(occurrence: occurrence, spans: [
+                    EpochSpan(startFrame: 0, endFrame: 360_000, epoch: epoch, groupClockOffset: .zero)
+                ])]
+            )
+            guard case let .aligned(first) = try map.alignedTime(ofFrame: 0, in: occurrence.id),
+                  case let .aligned(last) = try map.alignedTime(ofFrame: 359_999, in: occurrence.id)
+            else { throw TimeMapError.invalidFrameCount(360_000) }
+            let range = first.instant.approximateDouble...last.instant.approximateDouble
+            return AlignmentWaveformStroke(
+                sourceSeconds: 180, groupSeconds: 180,
+                displaySeconds: (range.lowerBound + range.upperBound) / 2,
+                low: -0.5, high: 0.5, mapped: true, epoch: epoch,
+                displayRange: range, groupRange: 0...359.999
+            )
+        }
+        func start(_ time: Double, _ stroke: AlignmentWaveformStroke) -> Double? {
+            AlignmentWaveformProjection.overviewWindowStart(at: time, duration: 5, strokes: [stroke])
+        }
+        let negativeOffset = try stroke(offset: -180)
+        #expect(AlignmentWaveformProjection.unavailableOverviewRanges(in: negativeOffset.displayRange) == [-180...0])
+        #expect(start(-100, negativeOffset) == nil)
+        #expect(start(0, negativeOffset) == 0)
+        #expect(start(100, negativeOffset) == 97.5)
+        #expect(start(200, negativeOffset) == nil)
+
+        let positiveOffset = try stroke(offset: 86_410)
+        #expect(AlignmentWaveformProjection.unavailableOverviewRanges(in: positiveOffset.displayRange) == [positiveOffset.displayRange])
+        #expect(start(86_500, positiveOffset) == nil)
+        #expect(start(86_400, positiveOffset) == nil)
+
+        let fasterClock = try stroke(offset: 86_200, ratio: 2)
+        #expect(AlignmentWaveformProjection.unavailableOverviewRanges(in: fasterClock.displayRange) == [86_400...fasterClock.displayRange.upperBound])
+        #expect(start(86_400, fasterClock) == 86_397.5)
+        #expect(start(86_400.001, fasterClock) == nil)
+        #expect(AlignmentWaveformProjection.unavailableOverviewRanges(in: 0...86_400).isEmpty)
+    }
+
+    @Test func overviewNavigationBoundsExactWindowWithoutMakingAnAnchor() {
+        #expect(AlignmentWaveformProjection.windowStart(centeredAt: 7_200, duration: 5) == 7_197.5)
+        #expect(AlignmentWaveformProjection.windowStart(centeredAt: 0, duration: 30) == 0)
+        for time in [-1.0, .nan, .infinity, 86_401] {
+            #expect(AlignmentWaveformProjection.windowStart(centeredAt: time, duration: 5) == nil)
+        }
+        #expect(AlignmentWaveformProjection.windowStart(centeredAt: 1, duration: 31) == nil)
+        #expect(AlignmentWaveformProjection.overviewExtent([]) == nil)
+    }
+
     @Test func coveredBinSelectionNeverSnapsAcrossRestartGaps() {
         let first = RecordingEpochID()
         let restart = RecordingEpochID()

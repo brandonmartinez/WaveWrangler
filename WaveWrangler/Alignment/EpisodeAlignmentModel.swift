@@ -39,6 +39,12 @@ final class EpisodeAlignmentModel {
     private(set) var waveformRefusals: [AlignmentWaveformRefusal] = []
     private(set) var selectedWaveformSource: SourceID?
     private(set) var isLoadingWaveforms = false
+    private(set) var waveformOverviewTracks: [AlignmentWaveformTrack] = []
+    private(set) var waveformOverviewRefusals: [AlignmentWaveformRefusal] = []
+    private(set) var waveformOverviewMap: AlignedTimelineMap?
+    private(set) var isLoadingOverview = false
+    private(set) var waveformOverviewProgress = 0.0
+    private(set) var waveformOverviewMessage = "Build Overview scans all covered PCM samples. It does not change or cache recordings."
     private(set) var waveformMessage = "Load a bounded audio window to see the recordings. Original files are never changed."
     var waveformStartSeconds = 0.0
     var waveformDurationSeconds = 5.0
@@ -57,6 +63,9 @@ final class EpisodeAlignmentModel {
     private(set) var waveformDraftAnchors: [AlignmentAnchor] = []
     @ObservationIgnored private var waveformTask: Task<Void, Never>?
     @ObservationIgnored private var waveformGeneration: UInt64 = 0
+    @ObservationIgnored private var overviewTask: Task<Void, Never>?
+    @ObservationIgnored private var overviewGeneration: UInt64 = 0
+    private var loadedOverviewEpisode: Episode?
     @ObservationIgnored private var inspectionTask: Task<Void, Never>?
     @ObservationIgnored private var inspectionGeneration: UInt64 = 0
     private var loadedWaveformMap: AlignedTimelineMap?
@@ -104,7 +113,7 @@ final class EpisodeAlignmentModel {
     }
 
     var canCompareAligned: Bool {
-        guard !isWorking, !isLoadingWaveforms,
+        guard !isWorking, !isLoadingWaveforms, !isLoadingOverview,
               let row = selectedRow, let track = selectedWaveform,
               let map = loadedWaveformMap, track.group != map.reference.group,
               let epoch = map.groups.first(where: { $0.group == track.group })?.epochs.first(where: { $0.epoch == row.epochID }),
@@ -196,8 +205,92 @@ final class EpisodeAlignmentModel {
         loadedWaveformMap = nil
     }
 
+    func loadWaveformOverview() {
+        guard let document else { return }
+        cancelWaveformOverview()
+        stopAudition()
+        let generation = overviewGeneration
+        let snapshot = document.store.model
+        isLoadingOverview = true
+        waveformOverviewMessage = "Scanning every covered PCM sample; no partial overview is published."
+        overviewTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if generation == overviewGeneration {
+                    isLoadingOverview = false
+                    overviewTask = nil
+                }
+            }
+            do {
+                let loaded = try await runtime.waveformTracks(
+                    model: snapshot, episode: episodeID, startSeconds: 0, durationSeconds: 1, overview: true
+                ) { fraction in
+                    try await self.updateOverviewProgress(fraction, generation: generation, snapshot: snapshot)
+                }
+                try Task.checkCancellation()
+                guard generation == overviewGeneration else { return }
+                guard document.store.model == snapshot else {
+                    waveformOverviewMessage = "The episode changed. Build its current overview again."
+                    return
+                }
+                waveformOverviewTracks = loaded.tracks
+                waveformOverviewRefusals = loaded.refusals
+                waveformOverviewMap = loaded.map
+                loadedOverviewEpisode = snapshot.episode(episodeID)
+                waveformOverviewProgress = 1
+                waveformOverviewMessage = loaded.mapWarning
+                    ?? "\(loaded.tracks.count) complete PCM overviews; \(loaded.refusals.count) unavailable. Click covered audio to load an exact window; coarse bins are not anchors."
+            } catch is CancellationError {
+                if generation == overviewGeneration {
+                    waveformOverviewMessage = "Overview cancelled or episode changed. No partial result was kept."
+                }
+            } catch {
+                guard generation == overviewGeneration else { return }
+                waveformOverviewMessage = "Overview unavailable: \(error.localizedDescription)"
+                lastError = String(describing: error)
+            }
+        }
+    }
+
+    private func updateOverviewProgress(
+        _ fraction: Double, generation: UInt64, snapshot: ShowDocumentModel
+    ) throws {
+        guard generation == overviewGeneration, document?.store.model == snapshot else {
+            throw CancellationError()
+        }
+        if fraction >= waveformOverviewProgress + 0.01 || fraction == 1 {
+            waveformOverviewProgress = fraction
+        }
+    }
+
+    func cancelWaveformOverview() {
+        overviewGeneration += 1
+        overviewTask?.cancel()
+        overviewTask = nil
+        isLoadingOverview = false
+        waveformOverviewTracks = []
+        waveformOverviewRefusals = []
+        waveformOverviewMap = nil
+        loadedOverviewEpisode = nil
+        waveformOverviewProgress = 0
+        waveformOverviewMessage = "Overview cleared. Original recordings stay unchanged."
+    }
+
+    func navigateWaveformOverview(to time: Double) {
+        guard let start = AlignmentWaveformProjection.windowStart(
+            centeredAt: time, duration: waveformDurationSeconds
+        ) else {
+            waveformOverviewMessage = "Choose covered audio between zero and 24 aligned hours."
+            return
+        }
+        waveformPlayheadSeconds = time
+        waveformStartSeconds = start
+        loadWaveforms()
+    }
+
     func suspend() {
         cancelWaveforms()
+        cancelWaveformOverview()
         inspectionGeneration += 1
         inspectionTask?.cancel()
         inspectionTask = nil
@@ -559,6 +652,10 @@ final class EpisodeAlignmentModel {
         inspectionTask?.cancel()
         let model = document.store.model
         let episode = model.episode(episodeID)
+        if let loaded = loadedOverviewEpisode, loaded != episode {
+            cancelWaveformOverview()
+            waveformOverviewMessage = "Episode timing or sources changed. Build the current overview again."
+        }
         if let loaded = loadedWaveformEpisode,
            loaded.sources != episode?.sources || loaded.recorderGroups != episode?.recorderGroups {
             cancelWaveforms()

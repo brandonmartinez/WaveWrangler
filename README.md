@@ -23,12 +23,21 @@ playhead: reference channel 1 on the left, the selected recording's chosen chann
 resampled through the same accepted map. Unsupported or uncovered regions remain silent.
 Comparison is an internal listening check, not an export, clock qualification or cut authorization.
 
-This is a bounded alignment workspace, not yet a whole-episode DAW overview. PCM recordings support
+**Build Episode Overview** explicitly scans every covered PCM sample into at most 2,048 amplitude
+bins per recording, with cancellable progress. Click covered overview audio to open an exact
+window; **Window start** and the typed playhead are keyboard alternatives. Overview bins never
+create anchors. Gaps stay absent, unplaced audio stays marked, and source/timing changes invalidate
+the result. A scan supports up to 24 source hours per recording and keeps no persistent PCM/cache.
+Stored offsets/rates can place audio outside the exact navigator's 0-to-86,400 aligned-second
+range. Those overview regions are shaded and explicitly unavailable, not offered as clickable
+exact windows; the source-time scan cap does not change stored timing.
+
+This is an alignment workspace, not a DAW or complete editing workflow. PCM recordings support
 exact random-access waveform windows and aligned listening throughout an episode, without decoding
 the preceding hours. Other codecs retain the first-10-source-minutes limit (including inverse map
 offsets); later windows are explicitly refused until exact seeking is established. No persistent
-waveform cache is created. Real local
-transcription and protected filler-word editing remain separate, incomplete MVP work.
+waveform cache is created. Real local transcription and protected filler-word editing remain
+separate, incomplete MVP work.
 
 ## Planning
 

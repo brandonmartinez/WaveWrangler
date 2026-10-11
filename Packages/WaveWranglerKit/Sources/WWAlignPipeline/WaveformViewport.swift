@@ -2,6 +2,47 @@ import WWCore
 import WWTimeMap
 
 enum WaveformViewport {
+    static func overviewRanges(
+        source: SourceID, rate: Int, totalFrames: Int64, groupMap: GroupTimeMap?
+    ) throws -> [Range<Int64>] {
+        guard rate > 0, totalFrames >= 0,
+              Int128(totalFrames) <= Int128(rate) * Int128(WaveformWindowReader.maximumOverviewSourceSeconds)
+        else { throw WaveformWindowError.overviewBudgetExceeded }
+        guard let groupMap else { return totalFrames > 0 ? [0..<totalFrames] : [] }
+        guard let placement = groupMap.placements.first(where: { $0.occurrence.source == source }),
+              placement.occurrence.nominalRate.framesPerSecond == Int64(rate),
+              placement.occurrence.frameCount == totalFrames
+        else { throw WaveformWindowError.mapDoesNotMatchSource }
+        let frequency = ExactRational(Int64(rate))
+        var ranges: [Range<Int64>] = []
+        for span in placement.spans {
+            guard let epoch = groupMap.epochs.first(where: { $0.epoch == span.epoch }) else {
+                throw WaveformWindowError.mapDoesNotMatchSource
+            }
+            switch epoch.mapping {
+            case .unsupported:
+                ranges.append(span.startFrame..<span.endFrame)
+            case let .mapped(segments, _):
+                for segment in segments {
+                    // Whole-frame boundaries keep a coarse bin inside one affine segment.
+                    append(
+                        lower: try segment.groupClockStart.subtracting(span.groupClockOffset).multiplied(by: frequency).ceil(),
+                        upper: try segment.groupClockEnd.subtracting(span.groupClockOffset).multiplied(by: frequency).ceil(),
+                        span: span, to: &ranges
+                    )
+                }
+            }
+        }
+        ranges.sort { $0.lowerBound < $1.lowerBound }
+        guard ranges.count <= WaveformWindowReader.maximumBins else {
+            throw WaveformWindowError.overviewBudgetExceeded
+        }
+        for index in ranges.indices.dropFirst() where ranges[index].lowerBound < ranges[index - 1].upperBound {
+            throw WaveformWindowError.mapDoesNotMatchSource
+        }
+        return ranges
+    }
+
     static func verifyDecodeBudget(ranges: [Range<Int64>], rate: Int, randomAccess: Bool = false) throws {
         guard rate > 0,
               randomAccess || Int128(ranges.last?.upperBound ?? 0)

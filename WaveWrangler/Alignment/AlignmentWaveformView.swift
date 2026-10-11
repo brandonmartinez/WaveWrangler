@@ -16,6 +16,7 @@ struct AlignmentWaveformView: View {
                         model.isLoadingWaveforms ? model.cancelWaveforms() : model.loadWaveforms()
                     }
                     .accessibilityIdentifier("alignment.waveforms.load")
+                    .disabled(model.isLoadingOverview)
                 }
                 HStack(alignment: .bottom, spacing: 12) {
                     numberField("Window start (s)", value: $model.waveformStartSeconds, identifier: "start")
@@ -40,6 +41,7 @@ struct AlignmentWaveformView: View {
                     Button("Next") { moveWindow(1) }
                 }
                 .disabled(model.isLoadingWaveforms)
+                overview
                 Text("Aligned seconds · orange strokes are unplaced source-origin previews, not aligned audio.")
                     .font(.caption).foregroundStyle(.secondary)
                 ruler
@@ -68,6 +70,131 @@ struct AlignmentWaveformView: View {
             .padding(4)
         }
         .accessibilityIdentifier("alignment.waveforms")
+    }
+
+    private var overview: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Button(model.isLoadingOverview ? "Cancel Overview" : "Build Episode Overview") {
+                model.isLoadingOverview ? model.cancelWaveformOverview() : model.loadWaveformOverview()
+            }
+            .disabled(model.isLoadingWaveforms || model.isWorking)
+            .accessibilityIdentifier("alignment.waveforms.overview.load")
+            if model.isLoadingOverview {
+                ProgressView(value: model.waveformOverviewProgress)
+                    .accessibilityLabel("Episode overview progress")
+            }
+            Text(model.waveformOverviewMessage).font(.caption)
+                .accessibilityIdentifier("alignment.waveforms.overview.status")
+            let projected = Result {
+                try model.waveformOverviewTracks.flatMap {
+                    try AlignmentWaveformProjection.strokes(track: $0, map: model.waveformOverviewMap)
+                }
+            }
+            switch projected {
+            case let .success(allStrokes):
+                if let extent = AlignmentWaveformProjection.overviewExtent(allStrokes) {
+                    Text("Episode overview: \(extent.lowerBound, specifier: "%.1f") to \(extent.upperBound, specifier: "%.1f") seconds. Blue uses stored timing; dashed orange is unplaced source time.")
+                        .font(.caption)
+                    if !AlignmentWaveformProjection.unavailableOverviewRanges(in: extent).isEmpty {
+                        Text("Shaded audio outside 0 to 86,400 aligned seconds is unavailable for exact-window navigation. The 24-hour scan limit is in source time; stored timing is unchanged.")
+                            .font(.caption)
+                            .accessibilityIdentifier("alignment.waveforms.overview.navigationLimit")
+                    }
+                    ForEach(model.waveformOverviewTracks) { track in
+                        overviewLane(track, extent: extent)
+                    }
+                }
+            case let .failure(error):
+                Text("Cannot place episode overview: \(error.localizedDescription)")
+            }
+            ForEach(model.waveformOverviewRefusals) { refusal in
+                Label("\(refusal.name): \(refusal.reason)", systemImage: "exclamationmark.triangle")
+                    .accessibilityIdentifier("alignment.waveforms.overview.refusal.\(refusal.id)")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func overviewLane(_ track: AlignmentWaveformTrack, extent: ClosedRange<Double>) -> some View {
+        let result = Result { try AlignmentWaveformProjection.strokes(track: track, map: model.waveformOverviewMap) }
+        switch result {
+        case let .success(strokes):
+            let canOpen = AlignmentWaveformProjection.overviewWindowStart(
+                at: model.waveformPlayheadSeconds, duration: model.waveformDurationSeconds, strokes: strokes
+            ) != nil
+            let hasNavigableAudio = strokes.contains {
+                $0.displayRange.overlaps(AlignmentWaveformProjection.overviewNavigationRange)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(track.groupName) · \(track.name)").font(.caption)
+                GeometryReader { geometry in
+                    let scale = geometry.size.width / (extent.upperBound - extent.lowerBound)
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(Color.primary.opacity(0.04))
+                        overviewPath(strokes.filter(\.mapped), extent: extent, scale: scale)
+                            .stroke(Color.accentColor, lineWidth: 1)
+                        overviewPath(strokes.filter { !$0.mapped }, extent: extent, scale: scale)
+                            .stroke(Color.orange, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                        Rectangle().fill(Color.accentColor.opacity(0.2))
+                            .frame(width: max(1, model.waveformDurationSeconds * scale))
+                            .offset(x: (model.waveformStartSeconds - extent.lowerBound) * scale)
+                        ForEach(
+                            AlignmentWaveformProjection.unavailableOverviewRanges(in: extent),
+                            id: \.lowerBound
+                        ) { range in
+                            Rectangle().fill(Color.secondary.opacity(0.45))
+                                .frame(width: (range.upperBound - range.lowerBound) * scale)
+                                .offset(x: (range.lowerBound - extent.lowerBound) * scale)
+                                .overlay(alignment: .topLeading) {
+                                    if (range.upperBound - range.lowerBound) * scale >= 80 {
+                                        Text("Unavailable").font(.caption2)
+                                            .offset(x: (range.lowerBound - extent.lowerBound) * scale)
+                                    }
+                                }
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { point in
+                        openOverviewWindow(at: extent.lowerBound + point.x / scale, strokes: strokes)
+                    }
+                }
+                .frame(height: 48)
+                .clipped()
+                .accessibilityRepresentation {
+                    if hasNavigableAudio {
+                        Button("\(track.groupName), \(track.name), complete measured PCM overview; \(strokes.filter { !$0.mapped }.count) unplaced bins. Open an exact window at the typed aligned playhead within covered audio from 0 to 86,400 seconds. Audio outside that range is unavailable; coarse bins do not set anchors.") {
+                            openOverviewWindow(at: model.waveformPlayheadSeconds, strokes: strokes)
+                        }
+                        .disabled(!canOpen)
+                        .accessibilityIdentifier("alignment.waveforms.overview.track.\(track.id)")
+                    } else {
+                        Text("\(track.groupName), \(track.name), complete measured PCM overview. All covered audio is unavailable for exact-window navigation: stored timing places it outside 0 to 86,400 aligned seconds.")
+                            .accessibilityIdentifier("alignment.waveforms.overview.track.\(track.id)")
+                    }
+                }
+            }
+        case let .failure(error):
+            Text("\(track.name): \(error.localizedDescription)")
+        }
+    }
+
+    private func overviewPath(
+        _ strokes: [AlignmentWaveformStroke], extent: ClosedRange<Double>, scale: Double
+    ) -> Path {
+        Path { path in
+            for stroke in strokes {
+                let x = (stroke.displaySeconds - extent.lowerBound) * scale
+                path.move(to: CGPoint(x: x, y: 24 - Double(min(1, max(-1, stroke.high))) * 20))
+                path.addLine(to: CGPoint(x: x, y: 24 - Double(min(1, max(-1, stroke.low))) * 20))
+            }
+        }
+    }
+
+    private func openOverviewWindow(at time: Double, strokes: [AlignmentWaveformStroke]) {
+        guard AlignmentWaveformProjection.overviewWindowStart(
+            at: time, duration: model.waveformDurationSeconds, strokes: strokes
+        ) != nil else { return }
+        model.navigateWaveformOverview(to: time)
     }
 
     private var ruler: some View {
@@ -211,7 +338,7 @@ struct AlignmentWaveformView: View {
             Text("Click the reference and the corresponding target event; match at least two distinct target times. Analyse sources first if no timing map has been prepared.")
                 .font(.caption).foregroundStyle(.secondary)
         }
-        .disabled(model.isWorking)
+        .disabled(model.isWorking || model.isLoadingOverview)
     }
 
     private func numberField(_ title: String, value: Binding<Double>, identifier: String) -> some View {

@@ -1,8 +1,24 @@
 import Foundation
+import AudioToolbox
+import AVFAudio
 import WWCore
 import WWTimeMap
 
 enum WaveformTestAudio {
+    static func compressedAAC(at url: URL) throws {
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false
+        ), let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000),
+           let samples = buffer.floatChannelData?.pointee
+        else { throw CocoaError(.coderValueNotFound) }
+        buffer.frameLength = 16_000
+        samples.update(repeating: 0, count: 16_000)
+        let file = try AVAudioFile(forWriting: url, settings: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 16_000, AVNumberOfChannelsKey: 1
+        ], commonFormat: .pcmFormatFloat32, interleaved: false)
+        try file.write(from: buffer)
+    }
+
     /// Generated sparse PCM fixture: late landmarks require no episode-sized test allocation.
     static func sparseWave(at url: URL, rate: Int, frames: Int64, landmarks: [Int64: Int16]) throws {
         var header = wave(rate: rate, samples: [])

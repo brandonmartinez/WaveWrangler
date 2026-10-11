@@ -8,6 +8,100 @@ import WWTimeMap
 
 @Suite("Bounded measured waveform envelopes")
 struct WaveformEnvelopeTests {
+    @Test func overviewRefusesAReaderWithoutVerifiedSeekCapability() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("generated.m4a")
+        try WaveformTestAudio.compressedAAC(at: url)
+        let access = SourceAccessContext()
+        guard case let .success(metadata) = access.io.metadata(at: url) else { throw DecodeFailure.notFound }
+        let decoder = SourceDecoder(access: access)
+        let witness = try await decoder.captureRawIdentity(url, matching: metadata.fingerprint)
+        await #expect(throws: WaveformWindowError.overviewRequiresPCM) {
+            _ = try await WaveformWindowReader.readOverview(
+                sourceURL: url, source: SourceID(), matching: witness, decoder: decoder
+            )
+        }
+    }
+
+    @Test func completeOverviewRetainsSingleSamplePeaksAndRefusesInterruptedAdmission() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("overview.wav")
+        let frames = 16_000 * 65
+        var samples = Array(repeating: Int16(0), count: frames)
+        samples[17] = 24_576
+        samples[frames / 2 + 13] = -16_384
+        samples[frames - 1] = 8_192
+        try WaveformTestAudio.wave(rate: 16_000, samples: samples).write(to: url)
+        let access = SourceAccessContext()
+        guard case let .success(metadata) = access.io.metadata(at: url) else { throw DecodeFailure.notFound }
+        let decoder = SourceDecoder(access: access)
+        let witness = try await decoder.captureRawIdentity(url, matching: metadata.fingerprint)
+        let source = SourceID()
+        let envelope = try await WaveformWindowReader.readOverview(
+            sourceURL: url, source: source, matching: witness, decoder: decoder
+        )
+        #expect(envelope.bins.count <= WaveformWindowReader.maximumBins)
+        #expect(envelope.bins.first?.firstFrame == 0)
+        #expect(envelope.bins.last?.endFrame == Int64(frames))
+        #expect(envelope.bins.first?.maximum == 0.75)
+        #expect(envelope.bins.contains { $0.minimum == -0.5 })
+        #expect(envelope.bins.last?.maximum == 0.25)
+        for pair in zip(envelope.bins, envelope.bins.dropFirst()) {
+            #expect(pair.0.endFrame == pair.1.firstFrame)
+        }
+        await #expect(throws: DecodeFailure.permissionDenied) {
+            _ = try await WaveformWindowReader.readOverview(
+                sourceURL: url, source: source, matching: witness, decoder: decoder
+            ) { fraction in
+                if fraction > 0 { throw DecodeFailure.permissionDenied }
+            }
+        }
+        do {
+            _ = try await WaveformWindowReader.readOverview(
+                sourceURL: url, source: source, matching: witness, decoder: decoder
+            ) { fraction in
+                if fraction > 0 { throw CancellationError() }
+            }
+            Issue.record("Cancellation must not publish a partial overview")
+        } catch {
+            #expect(error is CancellationError || error as? DecodeFailure == .cancelled)
+        }
+        let first = RecordingEpochID()
+        let restarted = RecordingEpochID()
+        let gapMap = try WaveformTestAudio.map(
+            source: source, rate: 16_000, frames: Int64(frames), offset: .zero,
+            spans: [
+                EpochSpan(startFrame: 0, endFrame: 32_000, epoch: first, groupClockOffset: .zero),
+                EpochSpan(startFrame: Int64(frames - 32_000), endFrame: Int64(frames),
+                          epoch: restarted, groupClockOffset: .zero),
+            ]
+        )
+        let covered = try await WaveformWindowReader.readOverview(
+            sourceURL: url, source: source, matching: witness, decoder: decoder, groupMap: gapMap
+        )
+        #expect(covered.bins.count <= WaveformWindowReader.maximumBins)
+        #expect(covered.bins.allSatisfy { $0.endFrame <= 32_000 || $0.firstFrame >= Int64(frames - 32_000) })
+        #expect(!covered.bins.contains { $0.minimum == -0.5 })
+        #expect(covered.bins.first?.maximum == 0.75 && covered.bins.last?.maximum == 0.25)
+        do {
+            _ = try await WaveformWindowReader.readOverview(
+                sourceURL: url, source: source, matching: witness, decoder: decoder
+            ) { fraction in
+                if fraction == 1 {
+                    try FileManager.default.moveItem(at: url, to: folder.appendingPathComponent("retired.wav"))
+                    try Data(repeating: 0, count: 32).write(to: url)
+                }
+            }
+            Issue.record("A changed source must not publish the completed overview")
+        } catch {
+            #expect(error as? DecodeFailure == .sourceChangedDuringDecode)
+        }
+    }
+
     @Test func readsActualWitnessedAudioWindowAndRefusesReplacedSource() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

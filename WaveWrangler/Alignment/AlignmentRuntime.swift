@@ -283,7 +283,8 @@ actor AlignmentRuntime {
 
     func waveformTracks(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
-        startSeconds: Double, durationSeconds: Double
+        startSeconds: Double, durationSeconds: Double, overview: Bool = false,
+        progress: @Sendable (Double) async throws -> Void = { _ in }
     ) async throws -> AlignmentWaveformLoad {
         guard let episode = model.episode(episodeID) else {
             throw AlignmentAcceptanceError.episodeNotFound(episodeID)
@@ -303,7 +304,7 @@ actor AlignmentRuntime {
         var tracks: [AlignmentWaveformTrack] = []
         var refusals: [AlignmentWaveformRefusal] = []
         var admissions: [SourceID: WaveformSourceAdmission] = [:]
-        for record in episode.sources {
+        for (index, record) in episode.sources.enumerated() {
             try Task.checkCancellation()
             guard let groupID = record.placement.recorderGroupID,
                   let epochID = record.placement.epochID,
@@ -311,18 +312,34 @@ actor AlignmentRuntime {
             else { continue }
             do {
                 let admission = try await waveformSource(record.id, sources: sources)
-                let envelope = try await WaveformWindowReader.readWindow(
-                    sourceURL: admission.url, source: record.id,
-                    matching: admission.witness, decoder: pipeline.decoder,
-                    startSeconds: startSeconds, durationSeconds: durationSeconds,
-                    groupMap: map?.groups.first(where: { $0.group == groupID })
-                )
+                let envelope: WaveformEnvelope
+                if overview {
+                    envelope = try await WaveformWindowReader.readOverview(
+                        sourceURL: admission.url, source: record.id,
+                        matching: admission.witness, decoder: pipeline.decoder,
+                        groupMap: map?.groups.first(where: { $0.group == groupID })
+                    ) { [self] fraction in
+                        guard try await accessStore.record(for: admission.key) == admission.record else {
+                            throw DecodeFailure.sourceIdentityMismatch
+                        }
+                        try await progress((Double(index) + fraction) / Double(max(1, episode.sources.count)))
+                    }
+                } else {
+                    envelope = try await WaveformWindowReader.readWindow(
+                        sourceURL: admission.url, source: record.id,
+                        matching: admission.witness, decoder: pipeline.decoder,
+                        startSeconds: startSeconds, durationSeconds: durationSeconds,
+                        groupMap: map?.groups.first(where: { $0.group == groupID })
+                    )
+                }
                 try await reverify(admission)
                 admissions[record.id] = admission
                 tracks.append(AlignmentWaveformTrack(
                     group: groupID, epoch: epochID, name: record.displayNameHint,
                     groupName: group.name, envelope: envelope
                 ))
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 try Task.checkCancellation()
                 refusals.append(AlignmentWaveformRefusal(

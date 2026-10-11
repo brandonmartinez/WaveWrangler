@@ -46,6 +46,45 @@ struct AlignmentWaveformStroke: Equatable {
 }
 
 enum AlignmentWaveformProjection {
+    static let overviewNavigationRange = 0.0...86_400.0
+
+    static func overviewExtent(_ strokes: [AlignmentWaveformStroke]) -> ClosedRange<Double>? {
+        guard let first = strokes.map(\.displayRange.lowerBound).min(),
+              let last = strokes.map(\.displayRange.upperBound).max(),
+              first.isFinite, last.isFinite, first < last
+        else { return nil }
+        return first...last
+    }
+
+    static func windowStart(centeredAt time: Double, duration: Double) -> Double? {
+        guard time.isFinite, overviewNavigationRange.contains(time),
+              duration.isFinite, duration > 0, duration <= 30
+        else { return nil }
+        return max(0, time - duration / 2)
+    }
+
+    static func unavailableOverviewRanges(in extent: ClosedRange<Double>) -> [ClosedRange<Double>] {
+        var ranges: [ClosedRange<Double>] = []
+        if extent.lowerBound < overviewNavigationRange.lowerBound {
+            ranges.append(extent.lowerBound...min(extent.upperBound, overviewNavigationRange.lowerBound))
+        }
+        if extent.upperBound > overviewNavigationRange.upperBound {
+            ranges.append(max(extent.lowerBound, overviewNavigationRange.upperBound)...extent.upperBound)
+        }
+        return ranges
+    }
+
+    static func overviewWindowStart(
+        at time: Double, duration: Double, strokes: [AlignmentWaveformStroke]
+    ) -> Double? {
+        guard let start = windowStart(centeredAt: time, duration: duration),
+              selectedStroke(
+                at: time, strokes: strokes, draftEpoch: nil, ratePPM: 0, offsetMilliseconds: 0
+              ) != nil
+        else { return nil }
+        return start
+    }
+
     static func containsSelectedEpoch(
         source: SourceID, group: RecorderGroupID, initialEpoch: RecordingEpochID,
         selectedEpoch: RecordingEpochID, map: AlignedTimelineMap?

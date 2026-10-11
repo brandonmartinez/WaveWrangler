@@ -8,6 +8,33 @@ import WWTimeMap
 
 @Suite("Measured alignment viewport and listening comparison")
 struct WaveformViewportTests {
+    @Test func overviewBoundsWorkAndKeepsEpochBoundaries() throws {
+        let source = SourceID()
+        #expect(try WaveformViewport.overviewRanges(
+            source: source, rate: 1_000, totalFrames: 86_400_000, groupMap: nil
+        ) == [0..<86_400_000])
+        for frames in [Int64(-1), 86_400_001, Int64.max] {
+            #expect(throws: WaveformWindowError.overviewBudgetExceeded) {
+                try WaveformViewport.overviewRanges(source: source, rate: 1_000, totalFrames: frames, groupMap: nil)
+            }
+        }
+        #expect(throws: WaveformWindowError.overviewBudgetExceeded) {
+            try WaveformViewport.overviewRanges(source: source, rate: 0, totalFrames: 1, groupMap: nil)
+        }
+        let first = RecordingEpochID()
+        let second = RecordingEpochID()
+        let map = try WaveformTestAudio.map(source: source, rate: 1_000, frames: 10_000, offset: .zero, spans: [
+            EpochSpan(startFrame: 0, endFrame: 5_000, epoch: first, groupClockOffset: .zero),
+            EpochSpan(startFrame: 5_000, endFrame: 10_000, epoch: second, groupClockOffset: .zero),
+        ])
+        #expect(try WaveformViewport.overviewRanges(
+            source: source, rate: 1_000, totalFrames: 10_000, groupMap: map
+        ) == [0..<5_000, 5_000..<10_000])
+        #expect(throws: WaveformWindowError.mapDoesNotMatchSource) {
+            try WaveformViewport.overviewRanges(source: source, rate: 1_000, totalFrames: 9_000, groupMap: map)
+        }
+    }
+
     @Test func inverseViewportUsesOffsetAndClockRateRatherThanSourceOrigin() throws {
         let source = SourceID()
         let map = try WaveformTestAudio.map(source: source, rate: 1_000, frames: 10_000, offset: ExactRational(-1), ratio: ExactRational(2))
