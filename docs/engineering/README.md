@@ -214,7 +214,9 @@ refusal, exact viewport selection and mixed-rate aligned audio.
   AppKit). Only Save, Save As and autosave-in-place adopt the new publication.
 - **Recovery store** (Application Support, device-local, keyed by logical ID so it survives moves): last
   three validated priors, C2b unpublished edit checkpoints, conflict candidates, migration backups.
-  It gives no cross-device recovery.
+  A newly retained prior must match its full expected fingerprint in the existing independent read-back
+  pass before pruning or canonical publication; unreadable or changed bytes refuse the save and leave
+  older records unchanged. This adds no read or directory-enumeration pass. It gives no cross-device recovery.
 - **Open:** unknown-newer refuses (never written); damaged files offer a whole validated checkpoint as
   a new untitled copy; migrations preserve the original plus a non-overwriting backup and publish only
   after independent expectations pass.
