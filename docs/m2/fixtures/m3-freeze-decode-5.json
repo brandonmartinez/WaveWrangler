@@ -1,0 +1,172 @@
+{
+  "freezeID": "m3-freeze-decode-5",
+  "date": "2026-10-11",
+  "recordedBy": "Direct visual alignment owner",
+  "status": "CANDIDATE; fresh revision-5 synthetic calibration PASS; holdout NOT RUN. Effective only after independent review and merge.",
+  "issues": [
+    "https://github.com/brandonmartinez/WaveWrangler/issues/23",
+    "https://github.com/brandonmartinez/WaveWrangler/issues/32"
+  ],
+  "registry": "docs/m2/fixtures/m2-fixture-registry.json",
+  "calibrationEvidence": "https://github.com/brandonmartinez/WaveWrangler/pull/450",
+  "fixtureID": "M3-DECODE-005",
+  "baseCommit": "1db0e5784d8c88776f3230d89762884a1c4bfdea",
+  "baseCommitNote": "Reviewed visual baseline before PCM cursor seeking. pinnedTrees identify complete candidate bytes.",
+  "scope": "Exact source-frame seeking for LPCM with no priming/remainder on the existing witnessed read-only descriptor; bounded covered-range waveform reads and mapped listening. Same recipe, truth, measurements, counts and gates as revision 4, with fresh revision-5 seeds. No recordings, model, provider trial, protected edit or M3 acceptance.",
+  "pinnedTrees": {
+    "Sources/WWDecode": "6e5dfb23753f2ee0983b487e3adad330ab9702ea",
+    "Tests/WWDecodeTests": "35d2f10f43faac317f4bd19962fae034eb9df7ab"
+  },
+  "pinnedTreesRule": "Paths relative to Packages/WaveWranglerKit. DecodeFreezeTests recomputes both from working files on every run; changed trees require a new dated freeze with fresh seeds before a new holdout.",
+  "versions": {
+    "DecodeEnvelope.version": 1,
+    "FormatInterpretation.currentVersion": 1,
+    "OutputSettingsPolicy.version": 1
+  },
+  "generator": {
+    "kind": "synthetic-deterministic, in test code only: files written by AudioToolbox (ExtAudioFile / AudioFile) into a per-run directory under $TMPDIR, removed afterwards. No recordings, user files, network or models.",
+    "files": [
+      "Packages/WaveWranglerKit/Tests/WWDecodeTests/DecodeFreezePlan.swift",
+      "Packages/WaveWranglerKit/Tests/WWDecodeTests/DecodeFreezeTests.swift",
+      "Packages/WaveWranglerKit/Tests/WWDecodeTests/TestSupport.swift (FixtureSpec, LandmarkSignal, FixtureDirectory, FileSnapshot)",
+      "Packages/WaveWranglerKit/Tests/WWDecodeTests/PlantedFailureTests.swift (coded/lpcm format overrides)"
+    ],
+    "seedDerivation": "first 8 bytes, big-endian, of SHA-256(\"ww-m2-fixture|v1|M3-DECODE-005|<split>|<index>\"); SplitMix64. All 130 calibration and 520 holdout seeds are disjoint from every previous namespace and each other."
+  },
+  "recipe": {
+    "case": "stratum = index mod 13. Draws in order: frames U{9000..40000}; chunkFrames log-uniform {1..65536}; then the stratum's spec (uniform over DecodeEnvelope.entries matching the stratum, then uniform sample format, rate and channel count from that entry).",
+    "strata": [
+      "priming-aac-m4a",
+      "priming-aac-caf",
+      "priming-opus-caf",
+      "lossless-alac",
+      "lossless-flac",
+      "pcm-integer",
+      "pcm-float",
+      "origin-packet-boundary",
+      "variable-rate",
+      "planted-truncated",
+      "planted-corrupt",
+      "planted-unsupported",
+      "planted-stale"
+    ],
+    "strataDetail": {
+      "priming-aac-m4a / priming-aac-caf / priming-opus-caf": "lossy priming and padding per codec and container (AAC in M4A, AAC in CAF, Opus in CAF).",
+      "lossless-alac / lossless-flac": "lossless codecs at every envelope bit depth and channel count; bit-exact.",
+      "pcm-integer / pcm-float": "linear PCM bit depth, endianness and channel metadata (WAVE, AIFF, CAF); bit-exact.",
+      "origin-packet-boundary": "decoded-frame origin at packet boundaries: AAC, ALAC or Opus; frames = k*P + delta with P = 1024 (AAC), 4096 (ALAC), rate/50 (Opus), k uniform over lengths in [9000, 40000], delta from {-1, 0, +1, 0, U{2..P-2}}; framesPerPacket must equal the assumed P.",
+      "variable-rate": "any non-PCM envelope entry (variable bit rate packets) at the seeded chunk size.",
+      "planted-truncated": "any envelope spec, file cut to fraction 0.02 + 0.95*U[0,1) of its bytes; expects DecodeFailure.isContentDamage.",
+      "planted-corrupt": "variant = (index / 13) mod 5: damaged header (first 4 bytes XXXX), seeded random bytes (log-uniform 64..131072) or repeated text with a seeded extension, empty file, streaming-WAVE data size 0xFFFFFFFF; expects unreadableContainer, emptyFile or unsupported(unverifiableContainerLength), refused before any sink.",
+      "planted-unsupported": "variant = (index / 13) mod 8: off-grid rate, 9-16 channel PCM, 3/4/5/7-channel ALAC, mu-law/A-law WAVE, IMA4 CAF, unsigned 8-bit WAVE, signed 8-bit AIFF, AAC in ADTS; expects the exact unsupported(reason), refused before any sink.",
+      "planted-stale": "any envelope spec; the second metadata read reports a change (variant = (index / 13) mod 5: size grew, identifier changed, modification date changed, size unknown, vanished); expects sourceChangedDuringDecode with exactly 2 metadata reads."
+    },
+    "minimumFrames": 9000,
+    "maximumFrames": 40000,
+    "maximumChunkFrames": 65536
+  },
+  "truth": "The generator, never the decoder's report: the written LandmarkSignal samples, the frame count, container, codec, sample format, rate, channel count and the three landmark positions per channel. Lossless and PCM cases must be bit-exact. For planted cases, the plant's expected typed error.",
+  "measurement": "Each case is decoded once through the production SystemSourceContentIO gateway (counting wrapper), an adjustable metadata gateway, a security-scope ledger and a journaling sink at the seeded chunk size. Supported: every FormatInterpretation field against truth (versions, container/extension, codec, sample format, rate, channels, output format, layout), validFrames, priming/remainder (PCM 0/0; lossy priming declared; priming+valid+remainder = packets x framesPerPacket), DecodedFrameOrigin (rate, count, first frame 0, discards, duration, sourceFrame/decodedFrame/codecStreamFrame at 0, end, middle and every landmark; nil outside), DecodeReport stream-frame accounting, isVariableBitRate and packet facts, chunk sizes, decoded shape, bit-exactness, and landmark lag: the normalised cross-correlation peak of each channel's burst within +-min(3000, half the gap to that channel's nearest other landmark) of truth. A landmark below correlation 0.999 (exact) or 0.5 (lossy) counts as a landmark failure; exact formats also need lag 0. Resources released and sink finished, not abandoned. Planted: the typed error matches, nothing appended when refused before a sink, no finish, appended output abandoned, readers closed, security scopes balanced, and FileSnapshot (bytes, size, identifier, dates) equal before and after. Split level: every supported FormatInterpretation as one group through OutputSettingsPolicy (48 kHz / pcmInt24 default, current, invalidated by dropping an input, mixed rates named; .matchSources picks the most common rate, ties to the higher).",
+  "countJustification": "Zero failures in n independent cases bounds the per-case failure rate below 3/n at 95% confidence (rule of three). Calibration 130 cases (10 per stratum): about 2.3% overall, 30% per stratum; enough to exercise every stratum and planted variant once before the freeze. Holdout 520 cases (40 per stratum): about 0.58% overall and 7.5% per stratum, every corrupt and stale variant 8 times and every unsupported variant 5 times; each supported case also contributes 3 x channels landmark observations (about 4900 expected). 520 cases run in a few seconds, so the holdout is cheap to run once in full.",
+  "splits": {
+    "calibration": {
+      "cases": 130,
+      "run": true,
+      "enable": "WW_DECODE_CALIBRATION=1 swift test --filter DecodeCalibrationTests/calibrationSplitMeetsEveryGate (serialized pass in scripts/test.sh)"
+    },
+    "holdout": {
+      "cases": 520,
+      "run": false,
+      "enable": "WW_M3_DECODE_5_HOLDOUT=1 swift test --filter DecodeCalibrationTests/holdoutSplitMeetsEveryFrozenGate (once, after independent review and freeze merge only)"
+    }
+  },
+  "gate": {
+    "verbatim": "100% of supported truth cases mapped correctly; landmarks \u22641 output frame; every planted bad case is an explicit error with no mutation (FileSnapshot equality) and no stale publication"
+  },
+  "gateValues": {
+    "maximumSupportedMappingFailures": 0,
+    "landmarkOutputFrames": 1,
+    "maximumPlantedWithoutExpectedError": 0,
+    "maximumPlantedMutations": 0,
+    "maximumPlantedPublications": 0,
+    "lossyMinimumCorrelation": 0.5,
+    "exactMinimumCorrelation": 0.999
+  },
+  "gates": [
+    {
+      "gate": "supported-mapping",
+      "limit": "0 supported cases with any mapping failure, changed source or unpublished result",
+      "kind": "frozen-holdout"
+    },
+    {
+      "gate": "landmarks",
+      "limit": "<= 1 output frame |lag| for every landmark; 0 landmarks below the detection correlation",
+      "kind": "frozen-holdout"
+    },
+    {
+      "gate": "planted-explicit-error",
+      "limit": "0 planted cases without their expected typed error",
+      "kind": "frozen-holdout"
+    },
+    {
+      "gate": "planted-no-mutation",
+      "limit": "0 planted cases whose FileSnapshot changed",
+      "kind": "frozen-holdout"
+    },
+    {
+      "gate": "planted-no-stale-publication",
+      "limit": "0 planted cases that published, finished a sink, left appended output unabandoned, left a reader open or unbalanced a security scope",
+      "kind": "frozen-holdout"
+    },
+    {
+      "gate": "output-settings",
+      "limit": "the split's mixed-input OutputSettingsPolicy check has 0 failures",
+      "kind": "frozen-holdout (WW-050 mixed-input criterion)"
+    },
+    {
+      "gate": "strata-coverage",
+      "limit": "every one of the 13 strata present",
+      "kind": "frozen-holdout"
+    }
+  ],
+  "gateRule": "A gate with no evidence fails; it never passes vacuously (DecodeGateEvaluation).",
+  "holdoutProcedure": {
+    "when": "One separately approved run after this reviewed freeze merges, on an exact clean matching tree.",
+    "command": "WW_M3_DECODE_5_HOLDOUT=1 WW_M2_FREEZE_MAX_CONCURRENCY=2 swift test --filter DecodeCalibrationTests/holdoutSplitMeetsEveryFrozenGate",
+    "report": "Exact clean head, source/test tree IDs, original exit, all 521 ordered records and digest, every unchanged gate.",
+    "rules": "No prior holdout rerun; no model, media, Backup, network or provider trial."
+  },
+  "gateChanges": "None. All definition and gate values are inherited without modification from revision 4.",
+  "deviation": "New M3-DECODE-005 seeds and source/test pins for exact PCM window navigation. No revision-5 holdout has run.",
+  "risks": "Synthetic calibration and seek tests do not qualify compressed-codec seeking, real media, offline inference, protected edits, other OS versions or the complete MVP.",
+  "postFreezeRule": "One separately approved revision-5 holdout only after independent review and merge on an exact clean matching source/test tree. No prior holdout is rerun or counted for this revision.",
+  "supersedes": "m3-freeze-decode-4",
+  "supersessionReason": "PCM cursor seeking and new synthetic tests change the decoder and test trees. Prior records and evidence remain historical.",
+  "revisionFourSHA256": "98c5c8e0266d7360dc9e59a5a3aa9285a9d666474981e4edd903b3e731bd1923",
+  "calibrationSummary": {
+    "command": "WW_DECODE_CALIBRATION=1 WW_M2_FREEZE_MAX_CONCURRENCY=2 WW_DECODE_RECORDS_DIR=\"$PWD/docs/m3/evidence/ww-050\" SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=2 swift test --package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm --jobs 2 --filter DecodeCalibrationTests/calibrationSplitMeetsEveryGate",
+    "records": 131,
+    "recordsFile": "docs/m3/evidence/ww-050/calibration-5.jsonl",
+    "recordsSHA256": "861ca8e195a2d3ce91d71a13c8939e86245fddfce56ab7953e02f87ccb3e8684",
+    "recordsOrder": "130 generated calibration cases in index order, then one output-settings record. Holdout not materialized.",
+    "metrics": {
+      "supportedCases": 90,
+      "supportedFrames": 2275412,
+      "mappingFailures": 0,
+      "landmarkObservations": 1038,
+      "landmarkLagCounts": {
+        "0": 1033,
+        "1": 3,
+        "-1": 2
+      },
+      "landmarksBelowCorrelation": 0,
+      "exactCases": 47,
+      "plantedCases": 40,
+      "plantedMutations": 0,
+      "plantedPublications": 0,
+      "outputSettingsFailures": 0
+    },
+    "allGatesPassed": true,
+    "result": "All unchanged inherited gates PASS on fresh calibration; no holdout, full-suite or MVP acceptance."
+  }
+}

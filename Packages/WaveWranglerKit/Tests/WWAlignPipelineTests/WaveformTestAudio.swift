@@ -3,6 +3,26 @@ import WWCore
 import WWTimeMap
 
 enum WaveformTestAudio {
+    /// Generated sparse PCM fixture: late landmarks require no episode-sized test allocation.
+    static func sparseWave(at url: URL, rate: Int, frames: Int64, landmarks: [Int64: Int16]) throws {
+        var header = wave(rate: rate, samples: [])
+        func replace(_ value: UInt32, at offset: Int) {
+            var little = value.littleEndian
+            withUnsafeBytes(of: &little) { header.replaceSubrange(offset..<(offset + 4), with: $0) }
+        }
+        replace(UInt32(36 + frames * 2), at: 4)
+        replace(UInt32(frames * 2), at: 40)
+        try header.write(to: url)
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.truncate(atOffset: UInt64(44 + frames * 2))
+        for (frame, sample) in landmarks {
+            try handle.seek(toOffset: UInt64(44 + frame * 2))
+            var little = sample.littleEndian
+            try withUnsafeBytes(of: &little) { try handle.write(contentsOf: Data($0)) }
+        }
+    }
+
     static func wave(rate: Int, samples: [Int16]) -> Data {
         var data = Data()
         func number<T: FixedWidthInteger>(_ value: T) {

@@ -80,6 +80,51 @@ struct WaveformViewportTests {
         #expect(throws: WaveformWindowError.decodeBudgetExceeded) {
             try WaveformViewport.verifyDecodeBudget(ranges: ranges, rate: rate)
         }
+        try WaveformViewport.verifyDecodeBudget(ranges: ranges, rate: rate, randomAccess: true)
+        #expect(throws: WaveformWindowError.decodeBudgetExceeded) {
+            try WaveformViewport.verifyDecodeBudget(ranges: ranges, rate: 0, randomAccess: true)
+        }
+    }
+
+    @Test func twoHourPCMWindowAndAlignedListeningReadTheLateEvent() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let rate = 16_000
+        let frame: Int64 = Int64(rate) * 7_200
+        let url = folder.appendingPathComponent("generated-long.wav")
+        try WaveformTestAudio.sparseWave(
+            at: url, rate: rate, frames: frame + Int64(rate),
+            landmarks: [frame: 16_384, frame + 1: -16_384]
+        )
+        let decoder = SourceDecoder(access: SourceAccessContext())
+        let access = SourceAccessContext()
+        guard case let .success(metadata) = access.io.metadata(at: url) else { throw DecodeFailure.notFound }
+        let witness = try await decoder.captureRawIdentity(url, matching: metadata.fingerprint)
+        let source = SourceID()
+        let map = try WaveformTestAudio.map(
+            source: source, rate: rate, frames: frame + Int64(rate),
+            offset: ExactRational(-7_200)
+        )
+        let envelope = try await WaveformWindowReader.readWindow(
+            sourceURL: url, source: source, matching: witness, decoder: decoder,
+            startSeconds: 0, durationSeconds: 0.5, groupMap: map
+        )
+        #expect(envelope.bins.first?.firstFrame == frame)
+        #expect(envelope.bins.last?.endFrame == frame + 8_000)
+        #expect(envelope.bins.first?.minimum == -0.5 && envelope.bins.first?.maximum == 0.5)
+        let clip = try await AlignedAuditionWindowReader.readWindow(
+            sourceURL: url, source: source, matching: witness, decoder: decoder, groupMap: map,
+            decodedChannel: 0, startSeconds: 0, durationSeconds: 0.25
+        )
+        #expect(clip.count == 12_000)
+        #expect(clip.contains { abs($0) > 0.1 })
+        #expect(clip.suffix(1_000).allSatisfy { abs($0) < 0.001 })
+        let direct = try await WaveformWindowReader.readWindow(
+            sourceURL: url, source: source, matching: witness, decoder: decoder,
+            startSeconds: 7_200, durationSeconds: 0.5
+        )
+        #expect(direct.bins == envelope.bins)
     }
 
     @Test func actualMixedRateAudioRendersCoincidentEventsWithCorrectSign() async throws {

@@ -23,9 +23,10 @@ playhead: reference channel 1 on the left, the selected recording's chosen chann
 resampled through the same accepted map. Unsupported or uncovered regions remain silent.
 Comparison is an internal listening check, not an export, clock qualification or cut authorization.
 
-This is a bounded alignment workspace, not yet a whole-episode DAW overview. Seeking currently
-decodes and discards earlier chunks, with a hard first-10-source-minutes limit (including inverse
-map offsets); later windows are explicitly refused rather than decoding hours. No persistent
+This is a bounded alignment workspace, not yet a whole-episode DAW overview. PCM recordings support
+exact random-access waveform windows and aligned listening throughout an episode, without decoding
+the preceding hours. Other codecs retain the first-10-source-minutes limit (including inverse map
+offsets); later windows are explicitly refused until exact seeking is established. No persistent
 waveform cache is created. Real local
 transcription and protected filler-word editing remain separate, incomplete MVP work.
 

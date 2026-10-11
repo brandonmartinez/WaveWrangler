@@ -32,7 +32,7 @@ public enum WaveformWindowError: Error, LocalizedError, Sendable, Equatable {
         case .outsideSource: "This window is outside the recording."
         case .invalidSamples: "The recording contains invalid audio samples."
         case .mapDoesNotMatchSource: "The timing map does not match this recording."
-        case .decodeBudgetExceeded: "This preview is limited to the first 10 source minutes. A later window requires random-access decoding, which is not available yet."
+        case .decodeBudgetExceeded: "Random access is not established for this codec. Its preview is limited to the first 10 source minutes; use a PCM recording for later windows."
         }
     }
 }
@@ -66,14 +66,25 @@ public enum WaveformWindowReader {
                 source: source, rate: rate, totalFrames: total, groupMap: groupMap,
                 startSeconds: startSeconds, durationSeconds: durationSeconds
             )
-            try WaveformViewport.verifyDecodeBudget(ranges: ranges, rate: rate)
+            try WaveformViewport.verifyDecodeBudget(ranges: ranges, rate: rate, randomAccess: cursor.supportsRandomAccess)
             let budget = maximumBins / max(1, ranges.count)
             var builders = ranges.map {
                 WaveformEnvelopeBuilder(firstFrame: $0.lowerBound, endFrame: $0.upperBound, maximumBins: budget)
             }
-            while await cursor.position < (ranges.last?.upperBound ?? 0), let chunk = try await cursor.next() {
-                try Task.checkCancellation()
-                for index in builders.indices { try builders[index].append(chunk) }
+            if cursor.supportsRandomAccess {
+                for index in ranges.indices {
+                    try await cursor.seek(toSourceFrame: ranges[index].lowerBound)
+                    while await cursor.position < ranges[index].upperBound,
+                          let chunk = try await cursor.next(upToSourceFrame: ranges[index].upperBound) {
+                        try Task.checkCancellation()
+                        try builders[index].append(chunk)
+                    }
+                }
+            } else {
+                while await cursor.position < (ranges.last?.upperBound ?? 0), let chunk = try await cursor.next() {
+                    try Task.checkCancellation()
+                    for index in builders.indices { try builders[index].append(chunk) }
+                }
             }
             return WaveformEnvelope(
                 source: source, sampleRate: rate,

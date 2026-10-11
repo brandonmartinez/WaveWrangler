@@ -25,6 +25,10 @@ struct ChunkPump {
     private(set) var streamPosition: Int64 = 0
     private(set) var published: Int64 = 0
     private(set) var reads = 0
+    private var firstSourceFrame: Int64 = 0
+    private var firstStreamFrame: Int64 = 0
+
+    var position: Int64 { firstSourceFrame + published }
 
     init(reader: any DecodingContentReader, interpretation: FormatInterpretation, chunkFrames: Int) {
         self.reader = reader
@@ -40,10 +44,12 @@ struct ChunkPump {
     }
 
     /// Exactly one reader call.
-    mutating func step() throws(DecodeFailure) -> Step {
-        let got = try reader.readRawFrames(into: buffer)
+    mutating func step(maximumFrames: Int? = nil) throws(DecodeFailure) -> Step {
+        let request = min(capacity, maximumFrames ?? capacity)
+        let readBuffer = request == capacity ? buffer : RawDecodeBuffer(channelCount: channels, capacityFrames: request)
+        let got = try reader.readRawFrames(into: readBuffer)
         reads += 1
-        guard got >= 0, got <= capacity else { throw .inconsistentStream(.readerOverran(requested: capacity, returned: got)) }
+        guard got >= 0, got <= request else { throw .inconsistentStream(.readerOverran(requested: request, returned: got)) }
         if got == 0 { return .end }
         let start = streamPosition
         streamPosition += Int64(got)
@@ -56,7 +62,7 @@ struct ChunkPump {
         let count = Int(high - low)
         let offset = Int(low - start)
         let channels = channels
-        let buffer = buffer
+        let buffer = readBuffer
         let samples = [Float](unsafeUninitializedCapacity: count * channels) { destination, initialized in
             for channel in 0..<channels {
                 let source = buffer.channel(channel)
@@ -68,12 +74,23 @@ struct ChunkPump {
         return .frames(DecodedChunk(firstSourceFrame: low - priming, frameCount: count, channelCount: channels, samples: samples))
     }
 
+    mutating func seek(toSourceFrame frame: Int64) throws(DecodeFailure) {
+        guard frame >= 0, frame <= valid else { throw .invalidSourceFrame(frame) }
+        guard reader.supportsRandomAccess else { throw .seekUnavailable }
+        try reader.seekRawFrame(to: priming + frame)
+        streamPosition = priming + frame
+        firstStreamFrame = streamPosition
+        firstSourceFrame = frame
+        published = 0
+    }
+
     /// After `.end`: every declared valid frame must have been produced.
     func completedReport() throws(DecodeFailure) -> DecodeReport {
-        guard published == valid else { throw .incompleteContent(expectedFrames: valid, decodedFrames: published) }
+        let expected = valid - firstSourceFrame
+        guard published == expected else { throw .incompleteContent(expectedFrames: expected, decodedFrames: published) }
         return DecodeReport(
-            codecStreamFramesRead: streamPosition,
-            leadingStreamFramesDiscarded: priming,
+            codecStreamFramesRead: streamPosition - firstStreamFrame,
+            leadingStreamFramesDiscarded: max(0, priming - firstStreamFrame),
             trailingStreamFramesDiscarded: streamPosition - validEnd,
             readCalls: reads,
             chunkCapacityFrames: capacity
@@ -99,6 +116,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
     }
 
     let interpretation: FormatInterpretation
+    let supportsRandomAccess: Bool
     private let queue: DispatchQueue
     private let url: URL
     private let io: any SourceIO
@@ -119,6 +137,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
         self.io = io
         self.before = before
         self.interpretation = interpretation
+        supportsRandomAccess = pump.reader.supportsRandomAccess
         self.pump = pump
     }
 
@@ -186,7 +205,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
         return try result.get()
     }
 
-    func step() async throws(DecodeFailure) -> StepResult {
+    func step(maximumFrames: Int? = nil) async throws(DecodeFailure) -> StepResult {
         let cancellation = CursorCancellation()
         let result: Result<StepResult, DecodeFailure> = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
@@ -196,13 +215,38 @@ fileprivate final class CursorWorker: @unchecked Sendable {
                         return
                     }
                     do throws(DecodeFailure) {
-                        let step = try pump.step()
+                        let step = try pump.step(maximumFrames: maximumFrames)
                         if case .end = step { _ = try pump.completedReport() }
                         continuation.resume(returning: .success(StepResult(
                             step: step,
-                            position: pump.published,
+                            position: pump.position,
                             readCalls: pump.reads
                         )))
+                    } catch {
+                        continuation.resume(returning: .failure(error))
+                    }
+                }
+            }
+        } onCancel: {
+            cancellation.cancel()
+        }
+        return try result.get()
+    }
+
+    func seek(toSourceFrame frame: Int64) async throws(DecodeFailure) {
+        let cancellation = CursorCancellation()
+        let result: Result<Void, DecodeFailure> = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                queue.async { [self] in
+                    guard !closed, !cancellation.isCancelled else {
+                        continuation.resume(returning: .failure(.cancelled))
+                        return
+                    }
+                    do throws(DecodeFailure) {
+                        try SourceDecoder.verifyUnchanged(url, io: io, reader: pump.reader, before: before)
+                        try pump.seek(toSourceFrame: frame)
+                        try SourceDecoder.verifyUnchanged(url, io: io, reader: pump.reader, before: before)
+                        continuation.resume(returning: .success(()))
                     } catch {
                         continuation.resume(returning: .failure(error))
                     }
@@ -258,22 +302,25 @@ fileprivate final class CursorWorker: @unchecked Sendable {
 /// Chunks come back in source order, priming and remainder already removed, exactly as `decode` would
 /// publish them. Cancellation of the calling task is checked before and after every read. The body may
 /// stage derived work, but must publish it only after `withDecodingCursor` returns successfully; the
-/// enclosing call verifies any reads made since the last explicit `verifyUnchanged()`.
+/// enclosing call verifies every result derived from reads or seeks, even after an explicit check.
 public actor DecodingCursor {
     public nonisolated let interpretation: FormatInterpretation
+    public nonisolated let supportsRandomAccess: Bool
     private let worker: CursorWorker
     private var currentPosition: Int64 = 0
     private var currentReadCalls = 0
     private var ended = false
     private var closed = false
     private var failure: DecodeFailure?
+    private var hasSought = false
 
     fileprivate init(worker: CursorWorker) {
         self.worker = worker
         interpretation = worker.interpretation
+        supportsRandomAccess = worker.supportsRandomAccess
     }
 
-    /// Valid frames returned so far: the source frame of the next chunk's first frame.
+    /// Source frame of the next chunk's first frame; seeking changes this without decoding a prefix.
     public var position: Int64 { currentPosition }
 
     /// Reader calls made so far.
@@ -282,12 +329,32 @@ public actor DecodingCursor {
     /// The next decoded chunk, or `nil` at the end of the valid frames (after the frame-count check).
     /// A failure is terminal: every later call rethrows it.
     public func next() async throws(DecodeFailure) -> DecodedChunk? {
+        try await nextChunk(upToSourceFrame: nil)
+    }
+
+    /// Package-only bounded read for a waveform viewport. Does not decode beyond this source boundary.
+    package func next(upToSourceFrame limit: Int64) async throws(DecodeFailure) -> DecodedChunk? {
+        try await nextChunk(upToSourceFrame: limit)
+    }
+
+    private func nextChunk(upToSourceFrame limit: Int64?) async throws(DecodeFailure) -> DecodedChunk? {
         try checkUsable()
         if ended { return nil }
         do throws(DecodeFailure) {
             while true {
                 try SourceDecoder.checkCancellation()
-                let result = try await worker.step()
+                let maximum: Int?
+                if let limit {
+                    guard limit > currentPosition, limit <= interpretation.frames.validFrames else {
+                        throw .invalidSourceFrame(limit)
+                    }
+                    // Before the first read, the pump may still have codec priming to discard.
+                    let remaining = limit - currentPosition
+                    maximum = Int(min(remaining, Int64(Int.max)))
+                } else {
+                    maximum = nil
+                }
+                let result = try await worker.step(maximumFrames: maximum)
                 currentPosition = result.position
                 currentReadCalls = result.readCalls
                 try SourceDecoder.checkCancellation()
@@ -301,6 +368,24 @@ public actor DecodingCursor {
                     return nil
                 }
             }
+        } catch {
+            failure = error
+            throw error
+        }
+    }
+
+    /// Seeks within the same opened source. Unsupported codecs fail rather than guessing a time origin.
+    /// Cancellation and source identity are checked around the seek; failures remain terminal.
+    package func seek(toSourceFrame frame: Int64) async throws(DecodeFailure) {
+        try checkUsable()
+        do throws(DecodeFailure) {
+            try SourceDecoder.checkCancellation()
+            guard frame >= 0, frame <= interpretation.frames.validFrames else { throw .invalidSourceFrame(frame) }
+            try await worker.seek(toSourceFrame: frame)
+            try SourceDecoder.checkCancellation()
+            currentPosition = frame
+            ended = false
+            hasSought = true
         } catch {
             failure = error
             throw error
@@ -322,7 +407,7 @@ public actor DecodingCursor {
 
     func verifyForReturn() async throws(DecodeFailure) {
         try checkUsable()
-        if currentReadCalls > 0 { try await verifyUnchanged() }
+        if currentReadCalls > 0 || hasSought { try await verifyUnchanged() }
     }
 
     func close() async {

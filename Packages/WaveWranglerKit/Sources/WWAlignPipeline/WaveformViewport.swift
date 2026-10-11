@@ -2,9 +2,9 @@ import WWCore
 import WWTimeMap
 
 enum WaveformViewport {
-    static func verifyDecodeBudget(ranges: [Range<Int64>], rate: Int) throws {
+    static func verifyDecodeBudget(ranges: [Range<Int64>], rate: Int, randomAccess: Bool = false) throws {
         guard rate > 0,
-              Int128(ranges.last?.upperBound ?? 0)
+              randomAccess || Int128(ranges.last?.upperBound ?? 0)
                 <= Int128(rate) * Int128(WaveformWindowReader.maximumDecodedPrefixSeconds)
         else { throw WaveformWindowError.decodeBudgetExceeded }
     }

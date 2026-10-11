@@ -37,11 +37,11 @@ public enum AlignedAuditionWindowReader {
                 startSeconds: startSeconds, durationSeconds: durationSeconds
             )
             try WaveformViewport.verifyDecodeBudget(
-                ranges: ranges, rate: cursor.interpretation.sourceSampleRate
+                ranges: ranges, rate: cursor.interpretation.sourceSampleRate, randomAccess: cursor.supportsRandomAccess
             )
             let stream = SourceSampleStream(
                 cursor: cursor, channelCount: cursor.interpretation.channelCount,
-                history: CursorSampleProvider.history(for: .m2Candidate)
+                history: CursorSampleProvider.history(for: .m2Candidate), seekForSkippedFrames: true
             )
             let request = RenderRequest(
                 groupMap: groupMap, outputRate: try NominalRate(Int64(outputRate)),

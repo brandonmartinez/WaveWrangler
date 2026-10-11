@@ -105,10 +105,12 @@ seconds of 48 kHz listening PCM. The app plays the reference's first decoded cha
 and the explicitly selected target channel on the right. Nothing is written to a source, export or
 canonical document. Waveform results are discarded on cancelled/superseded loads; switching episode,
 changing source assignments or undoing/changing the accepted map invalidates or reloads the view.
-Sequential seeking is limited to a 600-second source prefix, plus the decoder's single chunk and
-listening filter halo. Both readers check the exact inverse source-window end before iterating;
-late windows, including large negative offsets, are explicitly refused. Random-access whole-episode
-navigation remains incomplete.
+PCM cursors seek through the existing opened-descriptor gateway with `ExtAudioFileSeek`/`Tell`,
+preserving exact source frames and checking identity/cancellation around each seek and on return.
+Waveform reads stop at each covered range's exact boundary; aligned listening retains its filter
+halo while seeking over skipped prefixes. PCM windows can therefore reach late episode events
+without decoding earlier hours. Other codecs retain the 600-second decoded-prefix budget until
+their priming and exact seek behavior are established. A whole-episode overview/cache remains absent.
 
 `VisualAlignmentUITests` uses real generated WAVs and the actual Alignment view, not seeded waveform
 pixels or transcript fixtures. Package tests cover extrema, actual witnessed reads, replacement
