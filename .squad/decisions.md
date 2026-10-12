@@ -1244,3 +1244,11 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **What:** The author left runner v4 unchanged at driver SHA `9f81ffbda5ea544348ddfe7afdcb4801e8bcb3ef49a260d4e7bb6b85ba7bb4ca` and remote SHA `bf5a96568e830bb86989e4bc3f21c651f74a46601bd57635b9b6f520255c77e7`. A fake-only `/bin/bash` diagnosis after both exports confirmed `errexit` and `nounset`: simulated Python failure exits on `NONCE` assignment; with `errexit` disabled, `NONCE` is empty rather than producing the recorded line-96 unbound-variable error. The exact executed bytes and trace are absent, so the first JIT's local failure root cause remains **UNKNOWN** and does not justify a v5 change.
 
 **Operational disposition:** Preserve frozen JIT nonce `03123e…`, with `.used` absent. No SSH, Mini, preflight, native process, or test occurred. #440 remains source-only approved at `b8cb9c2`, its full gate is **NOT RUN**, and no merge or [#27](https://github.com/brandonmartinez/WaveWrangler/issues/27) closure follows. Under the relay's no-auto-retry rule and prior cap, hold #440 through the morning.
+
+### 2026-10-12: Authorize one additional focused #455 VM GUI round
+
+**By:** Brandon, in this session, after reviewing the three failed counted rounds and the GUI timebox.
+
+**What:** Brandon selected "Authorize one more focused VM round (Recommended)" for the saved manual-alignment editor. Permit exactly one new leased synthetic XCUITest run on the existing VM after the focused test corrections are built and staged from an exact pushed commit. This is a single-run exception to the three-round stop, not permission for an open-ended retry cycle, the paused #450 GUI campaign, real-media access, or testing on the working Mac.
+
+**Boundary:** Record the SHA, host, result, and pass/fail counts on #455. If this round fails, stop GUI testing again and return the remaining issue for a new decision; no automatic further retry or merge follows.

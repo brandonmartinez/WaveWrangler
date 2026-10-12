@@ -33,7 +33,9 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(place, in: app)
         place.click()
         let revision = app.descendants(matching: .any).matching(identifier: "alignment.waveforms.revision").firstMatch
-        XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 1") })
+        XCTAssertTrue(waitUntil {
+            revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 1")
+        })
         let target = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "alignment.waveforms.select.", "synthetic-remote.wav"
@@ -44,11 +46,17 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(nudge, in: app)
         XCTAssertTrue(nudge.isEnabled)
         nudge.click()
-        XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 2") })
+        XCTAssertTrue(waitUntil {
+            revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 2")
+        })
         app.typeKey("z", modifierFlags: .command)
-        XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 1") })
+        XCTAssertTrue(waitUntil {
+            revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 1")
+        })
         app.typeKey("z", modifierFlags: [.command, .shift])
-        XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 2") })
+        XCTAssertTrue(waitUntil {
+            revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 2")
+        })
         let trackToggle = app.checkBoxes.matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "alignment.waveforms.enabled."
         )).allElementsBoundByIndex.first { $0.label.contains("synthetic-remote.wav") }
@@ -99,7 +107,9 @@ final class VisualAlignmentUITests: XCTestCase {
         app.launch()
         openAlignment(in: app)
         let reopened = app.descendants(matching: .any).matching(identifier: "alignment.waveforms.revision").firstMatch
-        XCTAssertTrue(waitUntil { (reopened.value as? String ?? reopened.label).contains("Map revision 2") })
+        XCTAssertTrue(waitUntil {
+            reopened.exists && (reopened.value as? String ?? reopened.label).contains("Map revision 2")
+        })
     }
 
     func testActualWaveformsManualCorrectionAndUndo() throws {
@@ -314,6 +324,9 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(revision, in: app)
         XCTAssertTrue(revision.exists)
         let storedRevision = revision.value as? String ?? revision.label
+        let advanced = app.disclosureTriangles["Advanced epoch timing"]
+        scrollTo(advanced, in: app)
+        if advanced.value as? String == "0" { advanced.click() }
         let targetPoint = app.textFields["alignment.waveforms.targetPoint"]
         scrollTo(targetPoint, in: app)
         let storedTargetPoint = try XCTUnwrap(targetPoint.value as? String)
