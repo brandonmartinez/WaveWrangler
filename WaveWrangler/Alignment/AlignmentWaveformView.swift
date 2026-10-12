@@ -96,7 +96,7 @@ struct AlignmentWaveformView: View {
                         .accessibilityIdentifier("alignment.waveforms.revision")
                 }
                 if !model.waveformTracks.isEmpty { timingControls }
-                DisclosureGroup("Episode overview") { overview }
+                GroupBox("Episode overview") { overview }
             }
             .padding(4)
         }

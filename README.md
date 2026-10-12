@@ -32,7 +32,7 @@ buffer between windows; a source or map mismatch stops playback rather than subs
 advanced **Compare Aligned Audio** control still plays up to five seconds of reference/selected
 audio in separate channels for an internal listening check, not an export or cut authorization.
 
-The collapsed **Episode overview** can explicitly scan every covered PCM sample into at most 2,048 amplitude
+**Episode overview**, below the timeline, can explicitly scan every covered PCM sample into at most 2,048 amplitude
 bins per recording, with cancellable progress. Click covered overview audio to open an exact
 window; **Window start**, or the typed playhead with **Open Window at Playhead**, are keyboard
 and accessibility alternatives. Overview bins never

@@ -32,7 +32,7 @@ final class VisualAlignmentUITests: XCTestCase {
         let place = app.buttons["alignment.waveforms.placeInitial"]
         scrollTo(place, in: app)
         place.click()
-        let revision = app.staticTexts["alignment.waveforms.revision"]
+        let revision = app.descendants(matching: .any).matching(identifier: "alignment.waveforms.revision").firstMatch
         XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 1") })
         let target = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
@@ -55,9 +55,12 @@ final class VisualAlignmentUITests: XCTestCase {
         let toggle = try XCTUnwrap(trackToggle)
         scrollTo(toggle, in: app)
         toggle.click()
-        XCTAssertTrue(waitUntil { app.staticTexts["Hidden and muted"].exists })
+        let muted = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@ OR value == %@", "Hidden and muted", "Hidden and muted")
+        ).firstMatch
+        XCTAssertTrue(waitUntil { muted.exists })
         toggle.click()
-        XCTAssertTrue(waitUntil { !app.staticTexts["Hidden and muted"].exists })
+        XCTAssertTrue(waitUntil { !muted.exists })
         let group = app.checkBoxes.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "alignment.waveforms.group.", "Remote recorder"
@@ -69,7 +72,7 @@ final class VisualAlignmentUITests: XCTestCase {
         let play = app.buttons["alignment.waveforms.transport.play"]
         scrollTo(play, in: app)
         play.click()
-        let status = app.staticTexts["alignment.waveforms.transport.status"]
+        let status = app.descendants(matching: .any).matching(identifier: "alignment.waveforms.transport.status").firstMatch
         XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 1 enabled track") }, app.debugDescription)
         app.buttons["alignment.waveforms.transport.stop"].click()
         scrollTo(group, in: app)
@@ -95,7 +98,7 @@ final class VisualAlignmentUITests: XCTestCase {
         ]
         app.launch()
         openAlignment(in: app)
-        let reopened = app.staticTexts["alignment.waveforms.revision"]
+        let reopened = app.descendants(matching: .any).matching(identifier: "alignment.waveforms.revision").firstMatch
         XCTAssertTrue(waitUntil { (reopened.value as? String ?? reopened.label).contains("Map revision 2") })
     }
 
@@ -277,9 +280,6 @@ final class VisualAlignmentUITests: XCTestCase {
         span.click()
         XCTAssertTrue(waitUntil { tracks.count == 2 && load.label == "Refresh audio" })
 
-        let overviewDisclosure = app.disclosureTriangles["Episode overview"]
-        scrollTo(overviewDisclosure, in: app)
-        overviewDisclosure.click()
         let build = app.buttons["alignment.waveforms.overview.load"]
         scrollTo(build, in: app)
         XCTAssertTrue(build.isEnabled)
