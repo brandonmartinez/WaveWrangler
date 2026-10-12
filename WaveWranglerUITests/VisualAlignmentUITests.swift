@@ -52,7 +52,7 @@ final class VisualAlignmentUITests: XCTestCase {
         app.typeKey("z", modifierFlags: .command)
         XCTAssertTrue(waitUntil {
             revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 1")
-        })
+        }, "Undo must restore the prior verified map. \(app.debugDescription)")
         app.typeKey("z", modifierFlags: [.command, .shift])
         XCTAssertTrue(waitUntil {
             revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 2")
@@ -153,7 +153,7 @@ final class VisualAlignmentUITests: XCTestCase {
         target.click()
         let advanced = app.disclosureTriangles["Advanced epoch timing"]
         scrollTo(advanced, in: app)
-        if advanced.value as? String == "0" { advanced.click() }
+        if String(describing: advanced.value ?? "") == "0" { advanced.click() }
         let offset = app.textFields["alignment.waveforms.offset"]
         scrollTo(offset, in: app)
         XCTAssertTrue(offset.isHittable)
@@ -326,9 +326,10 @@ final class VisualAlignmentUITests: XCTestCase {
         let storedRevision = revision.value as? String ?? revision.label
         let advanced = app.disclosureTriangles["Advanced epoch timing"]
         scrollTo(advanced, in: app)
-        if advanced.value as? String == "0" { advanced.click() }
+        if String(describing: advanced.value ?? "") == "0" { advanced.click() }
         let targetPoint = app.textFields["alignment.waveforms.targetPoint"]
         scrollTo(targetPoint, in: app)
+        XCTAssertTrue(targetPoint.exists)
         let storedTargetPoint = try XCTUnwrap(targetPoint.value as? String)
 
         replace(playhead, with: "-1", in: app)
