@@ -1244,3 +1244,13 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **What:** The author left runner v4 unchanged at driver SHA `9f81ffbda5ea544348ddfe7afdcb4801e8bcb3ef49a260d4e7bb6b85ba7bb4ca` and remote SHA `bf5a96568e830bb86989e4bc3f21c651f74a46601bd57635b9b6f520255c77e7`. A fake-only `/bin/bash` diagnosis after both exports confirmed `errexit` and `nounset`: simulated Python failure exits on `NONCE` assignment; with `errexit` disabled, `NONCE` is empty rather than producing the recorded line-96 unbound-variable error. The exact executed bytes and trace are absent, so the first JIT's local failure root cause remains **UNKNOWN** and does not justify a v5 change.
 
 **Operational disposition:** Preserve frozen JIT nonce `03123e…`, with `.used` absent. No SSH, Mini, preflight, native process, or test occurred. #440 remains source-only approved at `b8cb9c2`, its full gate is **NOT RUN**, and no merge or [#27](https://github.com/brandonmartinez/WaveWrangler/issues/27) closure follows. Under the relay's no-auto-retry rule and prior cap, hold #440 through the morning.
+
+### 2026-10-11: One bounded native save-status focus revision after the GUI cap
+
+**By:** Brandon Martinez; recorded by the sole visual-integration writer.
+
+**Provenance:** The user selected "Option A" after being asked to authorize one AppKit-native focus revision, independent review and one additional synthetic GUI qualification for #453/PR #450.
+
+**Scope:** The original three failed functional rounds remain recorded. One revised native responder approach and one subsequent reviewed, exact-product synthetic GUI qualification are permitted, not repeated queue-delay candidates or an open-ended runner campaign. If that qualification fails, stop again. If it passes, complete the final exact-head full and physical-host delivery gates before merge. The existing three-second focus check and accessibility audit are not waived.
+
+**Boundaries:** No OS-setting, new host, recording, model, provider or offline-trial permission. Existing keyboard-enabled functional VMs remain synthetic-only; physical timing stays on the Mini. The user also requested a current local preview for manual testing; an unmerged preview is not a milestone exit or permission for agents to process private media. Preserve the user-owned main checkout and its existing changes.

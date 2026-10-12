@@ -56,44 +56,38 @@ struct DestinationControl: View {
 /// Never says "Saved" unless the status model reports coherent publication (D1).
 struct SaveStatusItem: View {
     @Bindable var state: ShowWindowState
-    @FocusState private var focused: Bool
+    @Environment(\.wwTextSize) private var textSize
 
     var body: some View {
         let presentation = state.presentation
-        Button {
+        NativeSaveStatusButton(
+            presentation: presentation, pointSize: NSFont.systemFontSize * CGFloat(textSize.scale),
+            focusRequest: state.saveStatusFocusRequest
+        ) {
             state.saveStatusPopoverShown.toggle()
-        } label: {
-            HStack(spacing: 4) {
-                if let symbol = presentation.symbolName {
-                    Image(systemName: symbol)
-                        .foregroundStyle(tint(presentation.tint))
-                        .accessibilityHidden(true)
-                } else {
-                    ProgressView().controlSize(.small).accessibilityHidden(true)
-                }
-                Text(presentation.itemText)
-                    .lineLimit(1)
-            }
         }
-        .help(presentation.popoverText)
-        .accessibilityLabel(presentation.accessibilityLabel)
-        .accessibilityValue(presentation.accessibilityValue)
-        .accessibilityHint(presentation.accessibilityHint)
-        .accessibilityIdentifier("ww.show.saveStatus")
-        .focused($focused)
-        .onChange(of: state.saveStatusFocusRequest) { _, _ in focused = true }
+        .fixedSize()
         .popover(isPresented: $state.saveStatusPopoverShown, arrowEdge: .bottom) {
             SaveStatusPopover(state: state, presentation: presentation)
                 .wwAppEnvironment()
         }
     }
+}
 
-    private func tint(_ tint: StatusTint) -> Color {
-        switch tint {
-        case .none: .secondary
-        case .attention: .orange
-        case .failed: .red
-        }
+private struct NativeSaveStatusButton: NSViewRepresentable {
+    let presentation: SaveStatusPresentation
+    let pointSize: CGFloat
+    let focusRequest: Int
+    let activate: () -> Void
+
+    func makeNSView(context: Context) -> NativeSaveStatusControl { NativeSaveStatusControl() }
+
+    func updateNSView(_ control: NativeSaveStatusControl, context: Context) {
+        control.update(presentation: presentation, pointSize: pointSize, focusRequest: focusRequest, activate: activate)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NativeSaveStatusControl, context: Context) -> CGSize? {
+        nsView.fittingSize
     }
 }
 

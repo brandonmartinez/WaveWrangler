@@ -238,6 +238,10 @@ refusal, exact viewport selection and mixed-rate aligned audio.
   errors are surfaced separately without replacing canonical failure/conflict remedies. Recovery deadlines
   measure the first independently decoded full expected canonical or unpublished snapshot, not merely a
   successful callback; full publication cost remains a separate gate.
+- **Save-status focus:** the toolbar uses an AppKit button with the same status text, symbol/spinner,
+  accessibility value and popover actions. Copy completion requests its concrete native responder only
+  in the originating key window with no attached sheet. T28 asserts focus before the whole-app audit;
+  audit findings and the before/after focus observations are retained independently.
 - **Evidence harness** (`Tests/WWPersistenceTests`): ≥100 injected interruptions per boundary
   (P1–P7, L1–L6, M1–M3) plus real `_exit` process kills and two-process conflicts via `wwpersist-probe`.
   Results are appended to `Packages/WaveWranglerKit/.build/persistence-evidence.log`.
