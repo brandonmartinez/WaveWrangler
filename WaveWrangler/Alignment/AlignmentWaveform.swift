@@ -45,6 +45,25 @@ struct AlignmentWaveformStroke: Equatable {
     let groupRange: ClosedRange<Double>
 }
 
+struct AlignmentWaveformDrag {
+    let startX: Double
+    let width: Double
+    let durationSeconds: Double
+    let initialMilliseconds: Double
+    let group: RecorderGroupID
+    let snapshot: UUID
+
+    func previewMilliseconds(at x: Double) -> Double? {
+        guard startX.isFinite, x.isFinite, width.isFinite, width > 0,
+              durationSeconds.isFinite, durationSeconds > 0,
+              initialMilliseconds.isFinite
+        else { return nil }
+        let displacement = min(width, max(-width, x - startX))
+        let preview = initialMilliseconds + displacement / width * durationSeconds * 1_000
+        return preview.isFinite ? preview : nil
+    }
+}
+
 enum AlignmentWaveformProjection {
     static let overviewNavigationRange = 0.0...86_400.0
 

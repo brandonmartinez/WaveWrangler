@@ -2,6 +2,70 @@ import XCTest
 
 @MainActor
 final class VisualAlignmentUITests: XCTestCase {
+    func testShortDragsCommitOnlyTheirPointerSizedMapDelta() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "-WWUITestHooks", "YES",
+            "-WWUITestResetPreferences", "YES",
+            "-WWUITestOpenShow", "Small Drag Fixture",
+            "-WWUITestShowEpisodes", "1",
+            "-WWUITestAlignmentFixture", "YES",
+            "-WWUITestVisualAlignmentFixture", "YES",
+        ]
+        app.launch()
+        defer { app.terminate() }
+        openAlignment(in: app)
+        let tracks = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.track.")
+        )
+        XCTAssertTrue(waitUntil { tracks.count == 2 })
+        let place = app.buttons["alignment.waveforms.placeInitial"]
+        scrollTo(place, in: app)
+        place.click()
+        let revision = app.staticTexts["alignment.waveforms.revision"]
+        XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 1") })
+        let span = app.buttons["alignment.waveforms.span.2.0"]
+        scrollTo(span, in: app)
+        span.click()
+        XCTAssertTrue(waitUntil { tracks.count == 2 && app.buttons["alignment.waveforms.load"].label == "Refresh audio" })
+        let target = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "alignment.waveforms.track.", "synthetic-remote.wav"
+        )).firstMatch
+        let separateMode = app.buttons["alignment.waveforms.layout.separate"]
+
+        func dragAndAssert(_ surface: XCUIElement, expectedRevision: Int, previous: Double) -> Double {
+            scrollTo(surface, in: app)
+            let width = surface.frame.width
+            XCTAssertGreaterThan(width, 100)
+            let start = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
+            start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 12, dy: 0)))
+            XCTAssertTrue(waitUntil {
+                (revision.value as? String ?? revision.label).contains("Map revision \(expectedRevision)")
+            }, app.debugDescription)
+            scrollTo(separateMode, in: app)
+            separateMode.click()
+            XCTAssertTrue(waitUntil { target.exists && target.label.contains("Stored offset ") })
+            let storedText = target.label.components(separatedBy: "Stored offset ").last?
+                .components(separatedBy: " milliseconds").first ?? ""
+            let stored = Double(storedText)
+            XCTAssertNotNil(stored)
+            let expected = 12 / width * 2_000
+            XCTAssertEqual((stored ?? 0) - previous, expected, accuracy: 30,
+                           "A short pointer movement must not become a multi-second saved offset")
+            return stored ?? 0
+        }
+        let first = dragAndAssert(target, expectedRevision: 2, previous: 0)
+        let overlayMode = app.buttons["alignment.waveforms.layout.overlay"]
+        scrollTo(overlayMode, in: app)
+        overlayMode.click()
+        let overlay = app.staticTexts["alignment.waveforms.overlay"]
+        XCTAssertTrue(waitUntil { overlay.exists })
+        _ = dragAndAssert(overlay, expectedRevision: 3, previous: first)
+    }
+
     func testEnabledManualGroupMoveAndPlaybackOnSyntheticRecorders() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

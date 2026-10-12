@@ -1284,3 +1284,11 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **Boundary:** Report SHA, host, counts and result on #455. Stop again if this fails; a passing focused GUI run alone does not waive normal import-to-reopen proof, independent save gates or the reproducible autosave timing failure.
 
 **Result:** The one authorized round ran at `0d5876397c59` on `ww-ui-1`: two focused synthetic methods ran, one passed, one failed, zero skipped. The editor again passed its move, Undo/Redo, enabled playback, and reopen assertions. The overview again built two complete PCM results, but clicking Advanced epoch timing left its AX disclosure value at `0` for 20 seconds even with an explicit expansion binding; the target-point field did not open. Result: `/Users/admin/ww-uitest-runs/manual-advanced-0d5876397c59-20261012T115022/result.xcresult`, retained locally at `/tmp/ww-manual-editor-vm-evidence/manual-advanced-0d5876397c59-r7.xcresult/`. The lease released normally. The ineffective expansion binding was removed afterward; the user-facing restarted-epoch clarification remains. The exception is consumed and GUI testing is stopped.
+
+### 2026-10-12: Authorize one focused #455 synthetic drag verification
+
+**By:** Brandon, in this session, after reporting that even the smallest drag at a few-second span jumps wildly.
+
+**What:** Brandon selected "Yes, run the scoped synthetic GUI test (Recommended)." Permit exactly one leased functional XCUITest method on an existing mini or GUI VM, from a clean signed and checksum-staged exact pushed head, to compare a small waveform pointer movement against the saved recorder offset. The test uses generated recordings only; it does not run on the working Mac, inspect private recordings, revisit the capped overview/focus campaign, or authorize further retries.
+
+**Boundary:** Report the SHA, host, pass/fail/skip counts, and retained result on #455. If it fails, stop GUI testing and return the evidence for a new decision. A pass does not prove the user's real-media drag path or complete the PR's remaining gates.

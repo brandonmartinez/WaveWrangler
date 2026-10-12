@@ -4,7 +4,7 @@ import WWCore
 
 struct AlignmentWaveformView: View {
     @Bindable var model: EpisodeAlignmentModel
-    @State private var dragOrigin: Double?
+    @State private var dragSession: AlignmentWaveformDrag?
     @State private var layout: Layout = .separate
     @State private var normalizeView = false
 
@@ -435,17 +435,18 @@ struct AlignmentWaveformView: View {
                        pick(track, strokes: strokes, time: time) { return }
                     model.seekEnabledTracks(to: time)
                 }
-                .gesture(DragGesture(minimumDistance: 4)
+                .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global)
                     .onChanged { drag in
                         guard let track = model.selectedWaveform,
                               let strokes = model.waveformStrokes[track.id]
                         else { return }
-                        dragGroup(track, strokes: strokes, drag: drag, width: geometry.size.width)
+                        dragGroup(track, strokes: strokes, drag: drag, geometry: geometry)
                     }
-                    .onEnded { _ in finishGroupDrag() })
+                    .onEnded { drag in finishGroupDrag(drag) })
             }
             .frame(height: 270)
             .clipped()
+            .overlay(alignment: .topLeading) { dragPreview }
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3)))
             .accessibilityRepresentation {
                 Text("Overlaid measured waveforms for \(visibleTracks.count) enabled \(visibleTracks.count == 1 ? "track" : "tracks"). Select a track below to move its recorder group; use the numeric group move for keyboard editing.")
@@ -493,14 +494,17 @@ struct AlignmentWaveformView: View {
                         pick(track, strokes: strokes, time: model.waveformStartSeconds
                              + Double(point.x / geometry.size.width) * model.waveformDurationSeconds)
                     }
-                    .gesture(DragGesture(minimumDistance: 4)
+                    .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global)
                         .onChanged { drag in
-                            dragGroup(track, strokes: strokes, drag: drag, width: geometry.size.width)
+                            dragGroup(track, strokes: strokes, drag: drag, geometry: geometry)
                         }
-                        .onEnded { _ in finishGroupDrag() })
+                        .onEnded { drag in finishGroupDrag(drag) })
                 }
                 .frame(height: 110)
                 .clipped()
+                .overlay(alignment: .topLeading) {
+                    if dragSession?.group == track.group { dragPreview }
+                }
                 .overlay(RoundedRectangle(cornerRadius: 4)
                     .stroke(model.selectedWaveformSource == track.id ? Color.accentColor : Color.secondary.opacity(0.3)))
                 .accessibilityRepresentation {
@@ -517,24 +521,68 @@ struct AlignmentWaveformView: View {
 
     private func dragGroup(
         _ track: AlignmentWaveformTrack, strokes: [AlignmentWaveformStroke],
-        drag: DragGesture.Value, width: Double
+        drag: DragGesture.Value, geometry: GeometryProxy
     ) {
-        guard width > 0, model.canMoveGroup, model.selectedRow?.groupID == track.group else { return }
-        if dragOrigin == nil {
+        if dragSession == nil {
+            let width = geometry.size.width
+            guard width > 0, !model.isWorking, !model.isLoadingWaveforms,
+                  model.waveformMap?.reference.group != track.group else { return }
             guard pick(track, strokes: strokes, time: model.waveformStartSeconds
-                + Double(drag.startLocation.x / width) * model.waveformDurationSeconds) else { return }
-            dragOrigin = model.groupDraftMilliseconds
+                + Double((drag.startLocation.x - geometry.frame(in: .global).minX) / width)
+                    * model.waveformDurationSeconds, seek: false),
+                model.canMoveGroup, model.selectedRow?.groupID == track.group
+            else { return }
+            dragSession = AlignmentWaveformDrag(
+                startX: drag.startLocation.x, width: width,
+                durationSeconds: model.waveformDurationSeconds,
+                initialMilliseconds: model.groupDraftMilliseconds,
+                group: track.group, snapshot: model.waveformSnapshotID
+            )
         }
-        if let origin = dragOrigin {
-            model.groupDraftMilliseconds = origin
-                + Double(drag.translation.width / width) * model.waveformDurationSeconds * 1_000
+        guard let session = dragSession else { return }
+        guard session.group == track.group, session.snapshot == model.waveformSnapshotID,
+              model.canMoveGroup, model.selectedRow?.groupID == session.group,
+              let preview = session.previewMilliseconds(at: drag.location.x)
+        else {
+            cancelGroupDrag()
+            return
         }
+        model.groupDraftMilliseconds = preview
     }
 
-    private func finishGroupDrag() {
-        guard dragOrigin != nil else { return }
-        dragOrigin = nil
+    private func finishGroupDrag(_ drag: DragGesture.Value) {
+        guard let session = dragSession else { return }
+        guard session.snapshot == model.waveformSnapshotID, model.canMoveGroup,
+              model.selectedRow?.groupID == session.group,
+              let preview = session.previewMilliseconds(at: drag.location.x)
+        else {
+            cancelGroupDrag()
+            return
+        }
+        model.groupDraftMilliseconds = preview
+        dragSession = nil
         model.commitGroupMove()
+    }
+
+    private func cancelGroupDrag() {
+        if let session = dragSession {
+            model.groupDraftMilliseconds = session.snapshot == model.waveformSnapshotID
+                && model.selectedRow?.groupID == session.group ? session.initialMilliseconds : 0
+        }
+        dragSession = nil
+    }
+
+    @ViewBuilder
+    private var dragPreview: some View {
+        if let dragSession {
+            Text("Move \(model.groupDraftMilliseconds / 1_000, specifier: "%+.3f") s · release to save")
+                .font(.caption.monospacedDigit())
+                .padding(5)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 4))
+                .padding(5)
+                .allowsHitTesting(false)
+                .accessibilityIdentifier("alignment.waveforms.dragPreview")
+        }
     }
 
     private var timingControls: some View {
@@ -636,7 +684,10 @@ struct AlignmentWaveformView: View {
     }
 
     @discardableResult
-    private func pick(_ track: AlignmentWaveformTrack, strokes: [AlignmentWaveformStroke], time: Double) -> Bool {
+    private func pick(
+        _ track: AlignmentWaveformTrack, strokes: [AlignmentWaveformStroke],
+        time: Double, seek: Bool = true
+    ) -> Bool {
         guard let selected = AlignmentWaveformProjection.selectedStroke(
             at: time, strokes: strokes,
             draftEpoch: model.waveformTimingIsDraft ? model.selection : nil,
@@ -648,7 +699,7 @@ struct AlignmentWaveformView: View {
             model.selectWaveform(track, epoch: selected.epoch)
             model.waveformTargetPoint = selected.sourceSeconds
         }
-        model.seekEnabledTracks(to: time)
+        if seek { model.seekEnabledTracks(to: time) }
         return true
     }
 

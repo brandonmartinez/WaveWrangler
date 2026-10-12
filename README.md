@@ -23,7 +23,9 @@ a changed window, episode, or verified alignment loads a new snapshot.
 For a recorder with restarted/overlapping source-time epochs, only its first
 placeable epoch is mapped initially; place later epochs explicitly using **Advanced epoch timing**.
 Select a track and drag its waveform, use the 10 ms nudge buttons, or type **Group move (ms)** to move all
-mapped epochs of its recorder together in one undoable revision. Positive moves place that recorder
+mapped epochs of its recorder together in one undoable revision. A drag shows its shift in seconds and commits on
+release; the movement is proportional to the visible span and limited to one span per gesture. Zoom to
+a shorter span for fine adjustment, or use the nudges. Positive moves place that recorder
 later. Unplaced audio is dashed, not implicitly synchronized. Enable/disable a recorder or track
 to show/hide and hear/mute it; speaker lanes have stable colors, with gray for unknown speakers.
 Changes to accepted timing save in the show document and can be undone or redone.

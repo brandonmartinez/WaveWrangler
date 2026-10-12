@@ -1,9 +1,27 @@
+import Foundation
 import Testing
 import WWCore
 import WWTimeMap
 
 @Suite("Waveform selection")
 struct AlignmentWaveformTests {
+    @Test func smallPointerDragStaysSmallWhenTheCanvasRelayouts() {
+        let group = RecorderGroupID()
+        let drag = AlignmentWaveformDrag(
+            startX: 420, width: 400, durationSeconds: 2,
+            initialMilliseconds: 10, group: group, snapshot: UUID()
+        )
+        #expect(drag.previewMilliseconds(at: 422) == 20)
+        #expect(drag.previewMilliseconds(at: 424) == 30)
+        #expect(drag.previewMilliseconds(at: 420) == 10)
+        #expect(drag.previewMilliseconds(at: -1_000) == -1_990)
+        #expect(drag.previewMilliseconds(at: .nan) == nil)
+        #expect(AlignmentWaveformDrag(
+            startX: 0, width: 0, durationSeconds: 2,
+            initialMilliseconds: 0, group: group, snapshot: UUID()
+        ).previewMilliseconds(at: 2) == nil)
+    }
+
     @Test func visualNormalizationUsesEachWindowPeakWithoutChangingSamples() {
         let epoch = RecordingEpochID()
         let strokes = [
