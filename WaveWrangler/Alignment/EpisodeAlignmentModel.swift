@@ -46,6 +46,7 @@ final class EpisodeAlignmentModel {
     private(set) var disabledGroups: Set<RecorderGroupID> = []
     private(set) var disabledTracks: Set<SourceID> = []
     var groupDraftMilliseconds = 0.0
+    private(set) var pendingWaveformMove: PendingWaveformMove?
     private(set) var selectedWaveformSource: SourceID?
     private(set) var isLoadingWaveforms = false
     private(set) var waveformOverviewTracks: [AlignmentWaveformTrack] = []
@@ -120,8 +121,13 @@ final class EpisodeAlignmentModel {
         _ = waveformTilesVersion
         let slices = AlignmentWaveformProjection.visibleTileSlices(
             start: waveformStartSeconds, duration: waveformDurationSeconds,
-            tiles: waveformTiles.filter {
-                $0.modelGeneration == document?.store.modelGeneration
+            tiles: waveformTiles.filter { tile in
+                tile.modelGeneration == document?.store.modelGeneration
+                    || (document?.store.modelGeneration).map { liveGeneration in
+                        pendingWaveformMove?.retainsTile(
+                            generation: tile.modelGeneration, liveGeneration: liveGeneration
+                        ) == true
+                    } == true
             }.map { (id: $0.id, start: $0.start, duration: $0.duration) }
         )
         var segmentCounts: [UUID: Int] = [:]
@@ -159,8 +165,11 @@ final class EpisodeAlignmentModel {
     private var currentWaveformTile: CachedWaveformTile? {
         let center = waveformStartSeconds + waveformDurationSeconds / 2
         return waveformTiles.reversed().first {
-            $0.start <= center && center < $0.start + $0.duration
-        } ?? waveformTiles.first(where: { $0.id == waveformSnapshotID }) ?? waveformTiles.last
+            $0.modelGeneration == document?.store.modelGeneration
+                && $0.start <= center && center < $0.start + $0.duration
+        } ?? waveformTiles.first(where: {
+            $0.modelGeneration == document?.store.modelGeneration && $0.id == waveformSnapshotID
+        }) ?? waveformTiles.last(where: { $0.modelGeneration == document?.store.modelGeneration })
     }
 
     let episodeID: EpisodeID
@@ -232,7 +241,8 @@ final class EpisodeAlignmentModel {
         if enabled { disabledTracks.remove(source) } else { disabledTracks.insert(source) }
     }
     var canMoveGroup: Bool {
-        guard let row = selectedRow, !isWorking, !isLoadingWaveforms else { return false }
+        guard let row = selectedRow, !isWorking, !isLoadingWaveforms,
+              pendingWaveformMove == nil else { return false }
         let reference = loadedWaveformMap?.reference.group
             ?? document?.store.model.episode(episodeID)?.recorderGroups.first?.id
         return row.groupID != reference
@@ -273,10 +283,16 @@ final class EpisodeAlignmentModel {
                     )
                 }
 
+                let priorGeneration = document.store.modelGeneration
+                pendingWaveformMove = PendingWaveformMove(
+                    group: group, milliseconds: Double(delta) / 1_000,
+                    priorGeneration: priorGeneration, expectedGeneration: priorGeneration + 1
+                )
                 guard document.store.applyReplacement(
                     UndoActionName.editEpochTiming, expecting: prior, model: accepted.model,
                     afterChange: persistenceCallback(document: document, accepted: accepted)
                 ) else {
+                    pendingWaveformMove = nil
                     message = SharedModelPublication.supersededCorrectionMessage
                     isWorking = false
                     return
@@ -285,7 +301,9 @@ final class EpisodeAlignmentModel {
                 acceptedMap = accepted.map
                 rows = Self.makeRows(model: accepted.model, episodeID: episodeID, states: [], map: accepted.map)
                 message = "Recorder group moved as one undoable map revision; saving and verifying the show."
-                cancelWaveforms()
+                cancelWaveforms(keepingSnapshot: true)
+                loadedWaveformMap = nil
+                waveformMessage = "Saving timing; the moved waveform is a visual preview until the verified audio refresh completes."
             } catch {
                 lastError = String(describing: error)
                 message = "The recorder group was not moved: \(error)."
@@ -360,7 +378,7 @@ final class EpisodeAlignmentModel {
     }
 
     var canCompareAligned: Bool {
-        guard !isWorking, !isLoadingWaveforms, !isLoadingOverview,
+        guard !isWorking, !isLoadingWaveforms, !isLoadingOverview, pendingWaveformMove == nil,
               let document, timingIsVerified(document.store.model),
               let row = selectedRow, let track = selectedWaveform,
               let map = loadedWaveformMap, track.group != map.reference.group,
@@ -403,8 +421,12 @@ final class EpisodeAlignmentModel {
         let snapshot = document.store.model
         let modelGeneration = document.store.modelGeneration
         guard timingIsVerified(snapshot) else {
-            cancelWaveforms()
-            waveformMessage = "Timing is not verified on disk yet. Save the show before loading aligned audio."
+            if pendingWaveformMove != nil {
+                waveformMessage = "Saving timing; the moved waveform is only a visual preview until the verified audio refresh completes."
+            } else {
+                cancelWaveforms()
+                waveformMessage = "Timing is not verified on disk yet. Save the show before loading aligned audio."
+            }
             return
         }
         let visibleStart = waveformStartSeconds
@@ -448,7 +470,9 @@ final class EpisodeAlignmentModel {
         lastError = nil
         isLoadingWaveforms = true
         pendingWaveformTile = request
-        waveformMessage = "Loading the next measured timeline tile through the read-only source gateway…"
+        waveformMessage = pendingWaveformMove == nil
+            ? "Loading the next measured timeline tile through the read-only source gateway…"
+            : "Loading verified audio; the moved waveform is only a visual preview until this read completes."
         waveformTask = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -524,6 +548,8 @@ final class EpisodeAlignmentModel {
             } catch {
                 guard generation == waveformGeneration else { return }
                 waveformMessage = "Waveforms unavailable: \(error.localizedDescription)"
+                    + (pendingWaveformMove == nil
+                        ? "" : " The moved waveform remains an unverified visual preview; refresh audio to retry.")
                 lastError = String(describing: error)
             }
         }
@@ -556,6 +582,9 @@ final class EpisodeAlignmentModel {
         waveformRefusals = tile.load.refusals
         loadedWaveformMap = tile.load.map
         loadedWaveformEpisode = tile.episode
+        if pendingWaveformMove?.expectedGeneration == tile.modelGeneration {
+            pendingWaveformMove = nil
+        }
         waveformMessage = tile.load.mapWarning
             ?? "\(tile.load.tracks.count) recordings loaded; \(tile.load.refusals.count) unavailable. Measured tiles are cached in memory; originals stay unchanged."
     }
@@ -580,6 +609,7 @@ final class EpisodeAlignmentModel {
         pendingWaveformTile = nil
         isLoadingWaveforms = false
         if keepingSnapshot { return }
+        pendingWaveformMove = nil
         waveformTiles = []
         waveformTilesVersion = UUID()
         loadedWaveformGeneration = nil
@@ -703,8 +733,9 @@ final class EpisodeAlignmentModel {
 
     @discardableResult
     func previewWaveformTimeline(to time: Double) -> Bool {
-        guard !isWorking, !isLoadingOverview, groupDraftMilliseconds == 0 else {
-            waveformMessage = "Finish the group preview or current operation before moving the shared timeline."
+        guard !isWorking, !isLoadingOverview, groupDraftMilliseconds == 0,
+              pendingWaveformMove == nil else {
+            waveformMessage = "Finish the group preview or verified audio refresh before moving the shared timeline."
             return false
         }
         guard let document, loadedWaveformGeneration == document.store.modelGeneration,
@@ -755,7 +786,7 @@ final class EpisodeAlignmentModel {
 
     func playEnabledTracks() {
         guard let document, !isWorking, !isLoadingWaveforms, !enabledSources.isEmpty,
-              loadedWaveformMap != nil, groupDraftMilliseconds == 0,
+              loadedWaveformMap != nil, groupDraftMilliseconds == 0, pendingWaveformMove == nil,
               !waveformTimingIsDraft, waveformPlayheadSeconds.isFinite,
               waveformPlayheadSeconds >= 0, waveformPlayheadSeconds < enabledTimelineEnd
         else {
@@ -1212,6 +1243,10 @@ final class EpisodeAlignmentModel {
         inspectionTask?.cancel()
         let model = document.store.model
         let episode = model.episode(episodeID)
+        if let pendingWaveformMove,
+           pendingWaveformMove.expectedGeneration != document.store.modelGeneration {
+            cancelWaveforms()
+        }
         if let loaded = loadedOverviewEpisode, loaded != episode {
             cancelWaveformOverview()
             waveformOverviewMessage = "Episode timing or sources changed. Build the current overview again."
@@ -1242,7 +1277,7 @@ final class EpisodeAlignmentModel {
             resetWaveformTiming()
             if !waveformTracks.isEmpty, loadedWaveformEpisode?.alignment != episode?.alignment {
                 stopAudition()
-                loadWaveforms()
+                if pendingWaveformMove == nil { loadWaveforms() }
             }
             if !selectedAnchors.contains(where: { $0.id == anchorSelection }) {
                 anchorSelection = selectedAnchors.first?.id
@@ -1567,6 +1602,10 @@ final class EpisodeAlignmentModel {
                 case .success:
                     Task {
                         do {
+                            guard document.store.model == model else {
+                                self?.cancelWaveforms()
+                                return
+                            }
                             if model == accepted.model {
                                 try await runtime.activate(accepted)
                             } else {
@@ -1574,11 +1613,17 @@ final class EpisodeAlignmentModel {
                             }
                             await self?.updateDependents(announce: true)
                             self?.load()
-                            self?.loadWaveforms()
+                            self?.loadWaveforms(keepingSnapshot: self?.pendingWaveformMove != nil)
                         }
-                        catch { NSApp.presentError(error) }
+                        catch {
+                            self?.cancelWaveforms()
+                            self?.waveformMessage = "Timing could not be activated; the unverified visual preview was removed."
+                            NSApp.presentError(error)
+                        }
                     }
                 case let .failure(error):
+                    self?.cancelWaveforms()
+                    self?.waveformMessage = "Timing could not be saved; the unverified visual preview was removed."
                     NSApp.presentError(error)
                 }
             }

@@ -13,6 +13,7 @@ final class VisualAlignmentUITests: XCTestCase {
             "-WWUITestShowEpisodes", "1",
             "-WWUITestAlignmentFixture", "YES",
             "-WWUITestVisualAlignmentFixture", "YES",
+            "-WWUITestDelayWaveformPublication", "YES",
         ]
         app.launch()
         defer { app.terminate() }
@@ -39,8 +40,16 @@ final class VisualAlignmentUITests: XCTestCase {
             XCTAssertGreaterThan(width, 100)
             let start = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
             start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 12, dy: 0)))
+            let status = app.staticTexts["alignment.waveforms.status"]
+            XCTAssertTrue(waitUntil { status.label.contains("visual preview") },
+                          "The accepted drag should retain its visible position while the revised tile loads")
+            XCTAssertEqual(tracks.count, 2, "Saving must not remove the measured waveform lanes")
+            XCTAssertFalse(app.staticTexts["No waveforms showing"].exists)
+            XCTAssertFalse(app.buttons["alignment.waveforms.transport.play"].isEnabled)
             XCTAssertTrue(waitUntil {
                 (revision.value as? String ?? revision.label).contains("Map revision \(expectedRevision)")
+                    && !status.label.contains("visual preview")
+                    && app.buttons["alignment.waveforms.load"].label == "Refresh audio"
             }, app.debugDescription)
             scrollTo(separateMode, in: app)
             separateMode.click()

@@ -117,7 +117,9 @@ struct AlignmentWaveformView: View {
                     Text("Shared timeline").font(.headline)
                     Spacer()
                     Button(model.isLoadingWaveforms ? "Cancel" : "Refresh audio") {
-                        model.isLoadingWaveforms ? model.cancelWaveforms() : model.loadWaveforms()
+                        model.isLoadingWaveforms
+                            ? model.cancelWaveforms()
+                            : model.loadWaveforms(keepingSnapshot: model.pendingWaveformMove != nil)
                     }
                     .accessibilityIdentifier("alignment.waveforms.load")
                     .disabled(model.isLoadingOverview)
@@ -133,10 +135,11 @@ struct AlignmentWaveformView: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .disabled(model.isLoadingWaveforms)
+                .disabled(model.isLoadingWaveforms || model.pendingWaveformMove != nil)
                 transport
                 timelineScrubber
-                if model.waveformMap == nil, !model.waveformTracks.isEmpty {
+                if model.waveformMap == nil, model.pendingWaveformMove == nil,
+                   !model.waveformTracks.isEmpty {
                     Button("Place groups at source time") { model.placeGroupsAtSourceTime() }
                         .disabled(model.isWorking)
                         .accessibilityIdentifier("alignment.waveforms.placeInitial")
@@ -258,6 +261,7 @@ struct AlignmentWaveformView: View {
                 model.canStopAudition ? model.pauseEnabledTracks() : model.playEnabledTracks()
             }
             .accessibilityIdentifier("alignment.waveforms.transport.play")
+            .disabled(model.pendingWaveformMove != nil)
             Button("Stop") { model.stopEnabledTracks() }
                 .accessibilityIdentifier("alignment.waveforms.transport.stop")
             TextField("Playhead (aligned seconds)", value: $model.waveformPlayheadSeconds, format: .number)
@@ -301,7 +305,7 @@ struct AlignmentWaveformView: View {
                 }
                 .accessibilityIdentifier("alignment.waveforms.scrubber")
                 .disabled(end <= 0 || model.isWorking || model.isLoadingOverview
-                          || model.groupDraftMilliseconds != 0)
+                          || model.groupDraftMilliseconds != 0 || model.pendingWaveformMove != nil)
                 Text("\(model.waveformPlayheadSeconds, specifier: "%.1f") s")
                     .font(.caption.monospacedDigit())
                     .frame(width: 90, alignment: .trailing)
@@ -321,13 +325,13 @@ struct AlignmentWaveformView: View {
                 }
                 .accessibilityIdentifier("alignment.waveforms.jump")
                 .disabled(end <= 0 || model.isWorking || model.isLoadingOverview
-                          || model.groupDraftMilliseconds != 0)
+                          || model.groupDraftMilliseconds != 0 || model.pendingWaveformMove != nil)
                 Text("\(jumpPreviewSeconds ?? model.waveformPlayheadSeconds, specifier: "%.1f") / \(end, specifier: "%.1f") s")
                     .font(.caption.monospacedDigit())
                     .accessibilityIdentifier("alignment.waveforms.jumpPosition")
                 Button("Go") { commitJump() }
                     .disabled(end <= 0 || model.isWorking || model.isLoadingOverview
-                              || model.groupDraftMilliseconds != 0)
+                              || model.groupDraftMilliseconds != 0 || model.pendingWaveformMove != nil)
                     .accessibilityIdentifier("alignment.waveforms.scrubGo")
             }
         }
@@ -790,8 +794,9 @@ struct AlignmentWaveformView: View {
     ) -> some View {
         let activeGroup = model.selectedRow?.groupID == track.group
         let tileWidth = size.width * slice.duration / model.waveformDurationSeconds
-        let groupShift = activeGroup
-            ? model.groupDraftMilliseconds / 1_000 / model.waveformDurationSeconds * size.width : 0
+        let previewShift = model.pendingWaveformMove?.displayShift(for: track.group) ?? 0
+        let groupShift = ((activeGroup ? model.groupDraftMilliseconds : 0) + previewShift)
+            / 1_000 / model.waveformDurationSeconds * size.width
         return WaveformTrackDrawing(
             snapshot: slice.snapshot, strokes: strokes,
             size: CGSize(width: tileWidth, height: size.height),

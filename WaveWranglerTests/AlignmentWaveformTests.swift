@@ -5,6 +5,21 @@ import WWTimeMap
 
 @Suite("Waveform selection")
 struct AlignmentWaveformTests {
+    @Test func pendingMoveRetainsOnlyThePriorTileAtItsDroppedPosition() {
+        let moved = RecorderGroupID()
+        let reference = RecorderGroupID()
+        let pending = PendingWaveformMove(
+            group: moved, milliseconds: 25.75,
+            priorGeneration: 12, expectedGeneration: 13
+        )
+        #expect(pending.retainsTile(generation: 12, liveGeneration: 13))
+        #expect(!pending.retainsTile(generation: 12, liveGeneration: 12))
+        #expect(!pending.retainsTile(generation: 12, liveGeneration: 14))
+        #expect(!pending.retainsTile(generation: 11, liveGeneration: 13))
+        #expect(pending.displayShift(for: moved) == 25.75)
+        #expect(pending.displayShift(for: reference) == 0)
+    }
+
     @Test func smallPointerDragStaysSmallWhenTheCanvasRelayouts() {
         let group = RecorderGroupID()
         let drag = AlignmentWaveformDrag(

@@ -63,6 +63,21 @@ struct AlignmentWaveformDrag {
     }
 }
 
+struct PendingWaveformMove {
+    let group: RecorderGroupID
+    let milliseconds: Double
+    let priorGeneration: UInt64
+    let expectedGeneration: UInt64
+
+    func retainsTile(generation: UInt64, liveGeneration: UInt64) -> Bool {
+        generation == priorGeneration && liveGeneration == expectedGeneration
+    }
+
+    func displayShift(for group: RecorderGroupID) -> Double {
+        self.group == group ? milliseconds : 0
+    }
+}
+
 enum AlignmentWaveformProjection {
     static let overviewNavigationRange = 0.0...86_400.0
 
