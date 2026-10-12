@@ -6,7 +6,6 @@ struct AlignmentWaveformView: View {
     @Bindable var model: EpisodeAlignmentModel
     @State private var dragOrigin: Double?
     @State private var layout: Layout = .separate
-    @State private var advancedTimingExpanded = false
 
     private enum Layout: String, CaseIterable {
         case separate = "Separate lanes"
@@ -502,7 +501,7 @@ struct AlignmentWaveformView: View {
                 Text("Drag any lane in this recorder to move every mapped epoch and source together. Each committed move is one Undo step. Unsaved preview is not audible until applied.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            DisclosureGroup("Advanced epoch timing", isExpanded: $advancedTimingExpanded) {
+            DisclosureGroup("Advanced epoch timing") {
                 HStack(alignment: .bottom, spacing: 12) {
                     numberField("Offset (ms)", value: $model.waveformOffsetMilliseconds, identifier: "offset")
                     numberField("Rate (ppm)", value: $model.waveformRatePPM, identifier: "rate")
