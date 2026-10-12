@@ -103,6 +103,9 @@ final class EpisodeAlignmentModel {
     }
 
     var waveformMap: AlignedTimelineMap? { loadedWaveformMap }
+    var waveformNeedsRefreshAfterSave: Bool {
+        loadedWaveformEpisode != document?.store.model.episode(episodeID)
+    }
     func trackIdentity(_ source: SourceID) -> (label: String, color: Color) {
         let references = document?.store.model.episode(episodeID)?.references(to: source) ?? []
         guard let reference = references.first,

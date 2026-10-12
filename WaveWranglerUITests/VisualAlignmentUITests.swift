@@ -53,10 +53,12 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(waitUntil {
             revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 1")
         }, "Undo must restore the prior verified map. \(app.debugDescription)")
+        XCTAssertTrue(waitUntil { tracks.count == 2 }, "Undo must restore both measured tracks.")
         app.typeKey("z", modifierFlags: [.command, .shift])
         XCTAssertTrue(waitUntil {
             revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 2")
         })
+        XCTAssertTrue(waitUntil { tracks.count == 2 }, "Redo must restore both measured tracks.")
         let trackToggle = app.checkBoxes.matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "alignment.waveforms.enabled."
         )).allElementsBoundByIndex.first { $0.label.contains("synthetic-remote.wav") }

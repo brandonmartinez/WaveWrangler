@@ -3,6 +3,7 @@ import Foundation
 import SwiftUI
 import WWAlignPipeline
 import WWCore
+import WWPersistence
 
 struct EpisodeAlignmentContent: View {
     @Bindable var state: ShowWindowState
@@ -55,6 +56,15 @@ struct EpisodeAlignmentContent: View {
             model?.suspend()
             model?.load()
             model?.loadWaveforms()
+        }
+        .onChange(of: state.saveStatus.state, initial: false) { _, _ in
+            guard let document = state.store.document,
+                  document.status.saveStatus.state.isVerifiedOnDisk,
+                  document.verifiedModel == state.store.model,
+                  let model, model.waveformNeedsRefreshAfterSave,
+                  model.waveformTracks.isEmpty, !model.isLoadingWaveforms
+            else { return }
+            model.loadWaveforms()
         }
         .onDisappear {
             model?.suspend()
