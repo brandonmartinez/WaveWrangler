@@ -66,22 +66,59 @@ struct AlignmentWaveformDrag {
 enum AlignmentWaveformProjection {
     static let overviewNavigationRange = 0.0...86_400.0
 
+    struct TileSlice: Equatable {
+        let id: UUID
+        let range: ClosedRange<Double>
+    }
+
+    static func visibleTileSlices(
+        start: Double, duration: Double, tiles: [(id: UUID, start: Double, duration: Double)]
+    ) -> [TileSlice] {
+        guard start.isFinite, duration.isFinite, duration > 0 else { return [] }
+        let end = start + duration
+        guard end.isFinite else { return [] }
+        let valid = tiles.filter { $0.start.isFinite && $0.duration.isFinite && $0.duration > 0 }
+        let boundaries = ([start, end] + valid.flatMap { tile in
+            [max(start, min(end, tile.start)), max(start, min(end, tile.start + tile.duration))]
+        }).sorted()
+        var result: [TileSlice] = []
+        for (lower, upper) in zip(boundaries, boundaries.dropFirst()) {
+            guard upper > lower + 0.000_001 else { continue }
+            let midpoint = (lower + upper) / 2
+            guard let tile = valid.last(where: {
+                $0.start <= midpoint && midpoint < $0.start + $0.duration
+            }) else { continue }
+            if let last = result.last, last.id == tile.id, last.range.upperBound == lower {
+                result[result.count - 1] = TileSlice(id: tile.id, range: last.range.lowerBound...upper)
+            } else {
+                result.append(TileSlice(id: tile.id, range: lower...upper))
+            }
+        }
+        return result
+    }
+
+    static func firstUncoveredTime(
+        start: Double, duration: Double, margin: Double = 0,
+        tiles: [(id: UUID, start: Double, duration: Double)]
+    ) -> Double? {
+        guard margin.isFinite, margin >= 0 else { return nil }
+        let lower = max(0, start - margin)
+        let upper = start + duration + margin
+        guard lower.isFinite, upper.isFinite, upper > lower else { return nil }
+        let slices = visibleTileSlices(start: lower, duration: upper - lower, tiles: tiles)
+        var coveredUntil = lower
+        for slice in slices {
+            if slice.range.lowerBound > coveredUntil + 0.000_001 { break }
+            coveredUntil = max(coveredUntil, slice.range.upperBound)
+        }
+        return coveredUntil < upper - 0.000_001 ? coveredUntil : nil
+    }
+
     static func tileWindow(start: Double, visible: Double) -> (start: Double, duration: Double)? {
         guard start.isFinite, overviewNavigationRange.contains(start),
               visible.isFinite, visible > 0, visible <= 30 else { return nil }
         let duration = min(30, visible * 3)
         return (max(0, start - (duration - visible) / 2), duration)
-    }
-
-    static func tileCovers(
-        tileStart: Double, tileDuration: Double, windowStart: Double, visible: Double,
-        margin: Double = 0
-    ) -> Bool {
-        tileStart.isFinite && tileDuration.isFinite && windowStart.isFinite
-            && visible.isFinite && margin.isFinite && margin >= 0
-            && tileStart >= 0 && tileDuration > 0 && windowStart >= 0 && visible > 0
-            && tileStart <= max(0, windowStart - margin) + 0.000_001
-            && tileStart + tileDuration >= windowStart + visible + margin - 0.000_001
     }
 
     static func tileTranslation(tileStart: Double, windowStart: Double, visible: Double, width: Double) -> Double? {

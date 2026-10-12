@@ -47,23 +47,8 @@ struct AlignmentWaveformTests {
         let tile = AlignmentWaveformProjection.tileWindow(start: 239, visible: 2)
         #expect(tile?.start == 237)
         #expect(tile?.duration == 6)
-        #expect(AlignmentWaveformProjection.tileCovers(
-            tileStart: 237, tileDuration: 6, windowStart: 239, visible: 2
-        ))
-        #expect(!AlignmentWaveformProjection.tileCovers(
-            tileStart: 237, tileDuration: 6, windowStart: 242, visible: 2
-        ))
         #expect(AlignmentWaveformProjection.tileWindow(start: 20, visible: 30)?.start == 20)
         #expect(AlignmentWaveformProjection.tileWindow(start: 0, visible: 5)?.start == 0)
-        #expect(AlignmentWaveformProjection.tileCovers(
-            tileStart: 0, tileDuration: 15, windowStart: 4, visible: 5, margin: 2.5
-        ))
-        #expect(!AlignmentWaveformProjection.tileCovers(
-            tileStart: 0, tileDuration: 15, windowStart: 8, visible: 5, margin: 2.5
-        ))
-        #expect(!AlignmentWaveformProjection.tileCovers(
-            tileStart: 0, tileDuration: 0, windowStart: 0, visible: 5
-        ))
         #expect(AlignmentWaveformProjection.tileTranslation(
             tileStart: 237, windowStart: 239, visible: 2, width: 400
         ) == -400)
@@ -73,6 +58,48 @@ struct AlignmentWaveformTests {
         #expect(AlignmentWaveformProjection.tileTranslation(
             tileStart: 237, windowStart: 239, visible: 0, width: 400
         ) == nil)
+    }
+
+    @Test func adjacentTilesCoverContinuousPanningWithoutRebuildingStrokes() {
+        let first = UUID()
+        let second = UUID()
+        let tiles = [(id: first, start: 0.0, duration: 30.0),
+                     (id: second, start: 30.0, duration: 30.0)]
+        #expect(AlignmentWaveformProjection.visibleTileSlices(
+            start: 1, duration: 30, tiles: tiles
+        ) == [
+            .init(id: first, range: 1...30),
+            .init(id: second, range: 30...31),
+        ])
+        #expect(AlignmentWaveformProjection.visibleTileSlices(
+            start: 29.5, duration: 30, tiles: tiles
+        ) == [
+            .init(id: first, range: 29.5...30),
+            .init(id: second, range: 30...59.5),
+        ])
+        #expect(AlignmentWaveformProjection.visibleTileSlices(
+            start: 60, duration: 30, tiles: tiles
+        ).isEmpty)
+        #expect(AlignmentWaveformProjection.firstUncoveredTime(
+            start: 1, duration: 30, tiles: Array(tiles.prefix(1))
+        ) == 30)
+        #expect(AlignmentWaveformProjection.firstUncoveredTime(
+            start: 1, duration: 30, tiles: tiles
+        ) == nil)
+        #expect(AlignmentWaveformProjection.firstUncoveredTime(
+            start: 0, duration: 30, margin: 15, tiles: Array(tiles.prefix(1))
+        ) == 30)
+        #expect(AlignmentWaveformProjection.firstUncoveredTime(
+            start: 0, duration: 30, margin: 15, tiles: tiles
+        ) == nil)
+        let overlap = [(id: first, start: 0.0, duration: 30.0),
+                       (id: second, start: 15.0, duration: 30.0)]
+        #expect(AlignmentWaveformProjection.visibleTileSlices(
+            start: 10, duration: 30, tiles: overlap
+        ) == [
+            .init(id: first, range: 10...15),
+            .init(id: second, range: 15...40),
+        ])
     }
 
     @Test func visualNormalizationUsesEachWindowPeakWithoutChangingSamples() {

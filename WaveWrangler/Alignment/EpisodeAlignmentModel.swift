@@ -41,8 +41,7 @@ final class EpisodeAlignmentModel {
     private(set) var waveformDisplayGains: [SourceID: Double] = [:]
     private(set) var waveformProjectionErrors: [SourceID: String] = [:]
     private(set) var waveformSnapshotID = UUID()
-    private(set) var loadedWaveformStartSeconds = 0.0
-    private(set) var loadedWaveformDurationSeconds = 5.0
+    private(set) var waveformTilesVersion = UUID()
     private(set) var waveformRefusals: [AlignmentWaveformRefusal] = []
     private(set) var disabledGroups: Set<RecorderGroupID> = []
     private(set) var disabledTracks: Set<SourceID> = []
@@ -103,13 +102,65 @@ final class EpisodeAlignmentModel {
         let gains: [SourceID: Double]
         let errors: [SourceID: String]
         let id = UUID()
+    }
 
-        func covers(start windowStart: Double, duration visible: Double, margin: Double = 0) -> Bool {
-            AlignmentWaveformProjection.tileCovers(
-                tileStart: start, tileDuration: duration,
-                windowStart: windowStart, visible: visible, margin: margin
+    struct WaveformTileSlice: Identifiable {
+        let snapshot: UUID
+        let segment: Int
+        let start: Double
+        let duration: Double
+        let range: ClosedRange<Double>
+        let strokes: [SourceID: [AlignmentWaveformStroke]]
+        let gains: [SourceID: Double]
+
+        var id: String { "\(snapshot.uuidString):\(segment)" }
+    }
+
+    var waveformTileSlices: [WaveformTileSlice] {
+        _ = waveformTilesVersion
+        let slices = AlignmentWaveformProjection.visibleTileSlices(
+            start: waveformStartSeconds, duration: waveformDurationSeconds,
+            tiles: waveformTiles.filter {
+                $0.modelGeneration == document?.store.modelGeneration
+            }.map { (id: $0.id, start: $0.start, duration: $0.duration) }
+        )
+        var segmentCounts: [UUID: Int] = [:]
+        return slices.compactMap { slice in
+            guard let tile = waveformTiles.first(where: { $0.id == slice.id }) else { return nil }
+            let segment = segmentCounts[slice.id, default: 0]
+            segmentCounts[slice.id] = segment + 1
+            return WaveformTileSlice(
+                snapshot: tile.id, segment: segment, start: tile.start, duration: tile.duration,
+                range: slice.range, strokes: tile.strokes, gains: tile.gains
             )
         }
+    }
+
+    func waveformVisibleStrokes(for source: SourceID) -> [AlignmentWaveformStroke] {
+        waveformTileSlices.flatMap { slice in
+            (slice.strokes[source] ?? []).filter { $0.displayRange.overlaps(slice.range) }
+        }
+    }
+
+    private func firstUncoveredWaveformTime(
+        start: Double, duration: Double, margin: Double = 0, includePending: Bool = false
+    ) -> Double? {
+        var ranges = waveformTiles.filter {
+            $0.modelGeneration == document?.store.modelGeneration
+        }.map { (id: $0.id, start: $0.start, duration: $0.duration) }
+        if includePending, let pendingWaveformTile {
+            ranges.append((id: UUID(), start: pendingWaveformTile.start, duration: pendingWaveformTile.duration))
+        }
+        return AlignmentWaveformProjection.firstUncoveredTime(
+            start: start, duration: duration, margin: margin, tiles: ranges
+        )
+    }
+
+    private var currentWaveformTile: CachedWaveformTile? {
+        let center = waveformStartSeconds + waveformDurationSeconds / 2
+        return waveformTiles.reversed().first {
+            $0.start <= center && center < $0.start + $0.duration
+        } ?? waveformTiles.first(where: { $0.id == waveformSnapshotID }) ?? waveformTiles.last
     }
 
     let episodeID: EpisodeID
@@ -358,30 +409,39 @@ final class EpisodeAlignmentModel {
         }
         let visibleStart = waveformStartSeconds
         let visibleDuration = waveformDurationSeconds
-        guard let request = AlignmentWaveformProjection.tileWindow(
+        guard let initialRequest = AlignmentWaveformProjection.tileWindow(
             start: visibleStart, visible: visibleDuration
         ) else {
             waveformMessage = "Choose a finite window within zero to 24 aligned hours, at most 30 seconds wide."
             return
         }
-        let margin = preload && request.duration > waveformDurationSeconds ? waveformDurationSeconds / 2 : 0
+        let uncovered = keepingSnapshot
+            ? firstUncoveredWaveformTime(start: visibleStart, duration: visibleDuration,
+                                         margin: preload ? visibleDuration / 2 : 0)
+            : nil
+        if keepingSnapshot, uncovered == nil {
+            if isLoadingWaveforms {
+                cancelWaveforms(keepingSnapshot: true)
+                if let cached = currentWaveformTile { publishWaveformTile(cached) }
+            }
+            return
+        }
+        if keepingSnapshot, isLoadingWaveforms,
+           firstUncoveredWaveformTime(
+               start: visibleStart, duration: visibleDuration,
+               margin: preload ? visibleDuration / 2 : 0, includePending: true
+           ) == nil { return }
+        let request: (start: Double, duration: Double)
         if keepingSnapshot {
-            if let cached = waveformTiles.reversed().first(where: {
-                $0.modelGeneration == modelGeneration && $0.covers(
-                    start: waveformStartSeconds, duration: waveformDurationSeconds, margin: margin
-                )
-            }) {
-                if cached.id != waveformSnapshotID || isLoadingWaveforms {
-                    cancelWaveforms(keepingSnapshot: true)
-                    publishWaveformTile(cached)
-                }
+            guard let next = AlignmentWaveformProjection.tileWindow(
+                start: min(uncovered ?? visibleStart, 86_400), visible: visibleDuration
+            ) else {
+                waveformMessage = "The next aligned tile is outside the supported navigation range."
                 return
             }
-            if isLoadingWaveforms, let pendingWaveformTile,
-               AlignmentWaveformProjection.tileCovers(
-                   tileStart: pendingWaveformTile.start, tileDuration: pendingWaveformTile.duration,
-                   windowStart: waveformStartSeconds, visible: waveformDurationSeconds, margin: margin
-               ) { return }
+            request = next
+        } else {
+            request = initialRequest
         }
         cancelWaveforms(keepingSnapshot: keepingSnapshot)
         let generation = waveformGeneration
@@ -451,9 +511,12 @@ final class EpisodeAlignmentModel {
                         || ($0.start == tile.start && $0.duration == tile.duration)
                 }
                 waveformTiles.append(tile)
-                if waveformTiles.count > 3 { waveformTiles.removeFirst() }
-                publishWaveformTile(tile)
-                if !tile.covers(start: waveformStartSeconds, duration: waveformDurationSeconds) {
+                if waveformTiles.count > 8 { waveformTiles.removeFirst() }
+                waveformTilesVersion = UUID()
+                publishWaveformTile(currentWaveformTile ?? tile)
+                if firstUncoveredWaveformTime(
+                    start: waveformStartSeconds, duration: waveformDurationSeconds
+                ) != nil {
                     scheduleScrubTile()
                 }
             } catch is CancellationError {
@@ -488,8 +551,6 @@ final class EpisodeAlignmentModel {
         waveformSnapshotID = tile.id
         loadedWaveformGeneration = tile.modelGeneration
         loadedWaveformRequiresVerification = tile.episode?.alignment?.acceptedRevision != nil
-        loadedWaveformStartSeconds = tile.start
-        loadedWaveformDurationSeconds = tile.duration
         disabledTracks.formIntersection(Set(tile.episode?.sources.map(\.id) ?? []))
         disabledGroups.formIntersection(Set(tile.episode?.recorderGroups.map(\.id) ?? []))
         waveformRefusals = tile.load.refusals
@@ -520,6 +581,7 @@ final class EpisodeAlignmentModel {
         isLoadingWaveforms = false
         if keepingSnapshot { return }
         waveformTiles = []
+        waveformTilesVersion = UUID()
         loadedWaveformGeneration = nil
         loadedWaveformRequiresVerification = false
         waveformTracks = []
@@ -662,19 +724,13 @@ final class EpisodeAlignmentModel {
         waveformPlayheadSeconds = time
         auditionPlayheadSeconds = time
         waveformStartSeconds = start
-        let margin = waveformDurationSeconds / 2
-        if let cached = waveformTiles.reversed().first(where: {
-            $0.modelGeneration == document.store.modelGeneration && $0.covers(
-                start: start, duration: waveformDurationSeconds, margin: margin
-            )
-        }), cached.id != waveformSnapshotID || isLoadingWaveforms {
-            cancelWaveforms(keepingSnapshot: true)
-            publishWaveformTile(cached)
+        if let current = currentWaveformTile, current.id != waveformSnapshotID {
+            publishWaveformTile(current)
         }
-        if !AlignmentWaveformProjection.tileCovers(
-            tileStart: loadedWaveformStartSeconds, tileDuration: loadedWaveformDurationSeconds,
-            windowStart: start, visible: waveformDurationSeconds, margin: margin
-        ) {
+        let margin = waveformDurationSeconds / 2
+        if firstUncoveredWaveformTime(
+            start: start, duration: waveformDurationSeconds, margin: margin
+        ) != nil {
             scheduleScrubTile()
         }
         return true

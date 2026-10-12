@@ -18,8 +18,9 @@ there to make its recorder active for overlay dragging. Choose **Place groups at
 to accept a first manual placement without running
 acoustic analysis. **Normalize view** scales each recording's displayed peaks within its measured
 tile (and the optional episode overview); it does not change audio, playback, or saved
-timing. Up to three bounded measured tiles and their projected strokes are cached in memory
-for smooth visual navigation; a changed episode, source, or verified alignment clears them.
+timing. Up to eight bounded measured tiles and their projected strokes are cached in memory;
+adjacent tiles share the same viewport without rebuilding their paths on each pan. A changed
+episode, source, or verified alignment clears them.
 For a recorder with restarted/overlapping source-time epochs, only its first
 placeable epoch is mapped initially; place later epochs explicitly using **Advanced epoch timing**.
 Select a track and drag its waveform, use the 10 ms nudge buttons, or type **Group move (ms)** to move all
@@ -35,12 +36,14 @@ Changes to accepted timing save in the show document and can be undone or redone
 playhead; **Pause**, **Stop**, click-to-seek, and typed aligned playhead are available. Unsupported
 or uncovered regions are silent. Playback reads witnessed five-second windows and may briefly
 buffer between windows; a source or map mismatch stops playback rather than substituting audio.
-**Visible span**, **Window start**, **Previous**, and **Next** navigate measured windows. The
-**Timeline** scrubber pans the shared ruler and every waveform live without playing audio.
-It translates cached tiles while dragging, loads new bounded tiles when needed, and leaves the
-playhead ready for **Play** on release (or after typing exact playhead seconds and pressing **Go**).
-An uncached section may take a moment to display; unavailable reads are reported rather than
-silently replaced. Scrubbing does not change saved timing. Windows outside a recording show its explicit unavailability;
+**Visible span**, **Window start**, **Previous**, and **Next** navigate measured windows. Drag
+the ruler or use **Pan at zoom** to scroll the shared viewport at its visible scale, with all
+recorder lanes moving together. **Jump in episode** is a separate coarse whole-episode control;
+it loads a distant window on release rather than decoding each intermediate position. The
+playhead is ready for **Play** afterward; panning and jumping do not play audio or change saved
+timing. Cached adjacent tiles translate without rebuilding their paths. An uncached section may
+take a moment to display; unavailable reads are reported rather than silently replaced.
+Windows outside a recording show its explicit unavailability;
 navigation remains within the supported 0-to-24-hour aligned range. The advanced
 **Compare Aligned Audio** control still plays up to five seconds of reference/selected
 audio in separate channels for an internal listening check, not an export or cut authorization.

@@ -86,7 +86,8 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(span, in: app)
         span.click()
         XCTAssertTrue(waitUntil { tracks.count == 2 && app.buttons["alignment.waveforms.load"].label == "Refresh audio" })
-        let slider = app.sliders["alignment.waveforms.scrubber"]
+        let slider = app.sliders["alignment.waveforms.jump"]
+        let pan = app.sliders["alignment.waveforms.scrubber"]
         let go = app.buttons["alignment.waveforms.scrubGo"]
         let start = app.textFields["alignment.waveforms.start"]
         let playhead = app.textFields["alignment.waveforms.playhead"]
@@ -112,6 +113,13 @@ final class VisualAlignmentUITests: XCTestCase {
             tracks.count == 2 && app.buttons["alignment.waveforms.load"].label == "Refresh audio"
                 && Double(start.value as? String ?? "") == 0
         }, app.debugDescription)
+        scrollTo(pan, in: app)
+        XCTAssertTrue(pan.isEnabled)
+        pan.adjust(toNormalizedSliderPosition: 0.75)
+        XCTAssertTrue(waitUntil {
+            (Double(playhead.value as? String ?? "") ?? -1) > 0.8
+                && (Double(start.value as? String ?? "") ?? -1) > 0.3
+        }, "Panning at zoom must move the common viewport without a distant jump")
         replace(playhead, with: "4.5", in: app)
         scrollTo(go, in: app)
         go.click()
