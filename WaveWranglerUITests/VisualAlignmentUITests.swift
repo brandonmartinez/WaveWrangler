@@ -63,6 +63,64 @@ final class VisualAlignmentUITests: XCTestCase {
         _ = dragAndAssert(overlay, expectedRevision: 3, previous: first)
     }
 
+    func testSharedScrubberNavigatesAllSyntheticRecorderWindows() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "-WWUITestHooks", "YES",
+            "-WWUITestResetPreferences", "YES",
+            "-WWUITestOpenShow", "Shared Scrubber Fixture",
+            "-WWUITestShowEpisodes", "1",
+            "-WWUITestAlignmentFixture", "YES",
+            "-WWUITestVisualAlignmentFixture", "YES",
+        ]
+        app.launch()
+        defer { app.terminate() }
+        openAlignment(in: app)
+        let tracks = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.track.")
+        )
+        XCTAssertTrue(waitUntil { tracks.count == 2 })
+        let span = app.buttons["alignment.waveforms.span.1.0"]
+        scrollTo(span, in: app)
+        span.click()
+        XCTAssertTrue(waitUntil { tracks.count == 2 && app.buttons["alignment.waveforms.load"].label == "Refresh audio" })
+        let slider = app.sliders["alignment.waveforms.scrubber"]
+        let go = app.buttons["alignment.waveforms.scrubGo"]
+        let start = app.textFields["alignment.waveforms.start"]
+        let playhead = app.textFields["alignment.waveforms.playhead"]
+        let revision = app.staticTexts["alignment.waveforms.revision"]
+        scrollTo(slider, in: app)
+        XCTAssertTrue(slider.isEnabled)
+        slider.adjust(toNormalizedSliderPosition: 0.7)
+        if go.isEnabled { go.click() }
+        XCTAssertTrue(waitUntil {
+            tracks.count == 2 && !app.buttons["alignment.waveforms.load"].label.contains("Cancel")
+                && (Double(start.value as? String ?? "") ?? -1) > 2.5
+        }, app.debugDescription)
+        let time = Double(playhead.value as? String ?? "") ?? -1
+        XCTAssertEqual(time, 3.5, accuracy: 0.2)
+        XCTAssertEqual(Double(start.value as? String ?? "") ?? -1, time - 0.5, accuracy: 0.1)
+        XCTAssertTrue((revision.value as? String ?? revision.label).contains("Map revision 1"))
+
+        scrollTo(slider, in: app)
+        slider.adjust(toNormalizedSliderPosition: 0.04)
+        if go.isEnabled { go.click() }
+        XCTAssertTrue(waitUntil {
+            tracks.count == 2 && app.buttons["alignment.waveforms.load"].label == "Refresh audio"
+                && Double(start.value as? String ?? "") == 0
+        }, app.debugDescription)
+        replace(playhead, with: "4.5", in: app)
+        scrollTo(go, in: app)
+        go.click()
+        XCTAssertTrue(waitUntil {
+            tracks.count == 2 && app.buttons["alignment.waveforms.load"].label == "Refresh audio"
+                && Double(start.value as? String ?? "") == 4
+        }, app.debugDescription)
+        XCTAssertTrue((revision.value as? String ?? revision.label).contains("Map revision 1"))
+    }
+
     func testEnabledManualGroupMoveAndPlaybackOnSyntheticRecorders() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

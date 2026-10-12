@@ -56,6 +56,21 @@ struct InspectionTests {
                 == original.map.groups.first { $0.group == fixture.groups[0] })
         try await fixture.pipeline.activate(moved)
         #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == moved.revision.revision)
+        let movedAgain = try await fixture.pipeline.shiftAcceptedGroup(
+            model: moved.model, episode: fixture.episodeID,
+            group: fixture.groups[1], milliseconds: -500
+        )
+        let shiftedAgain = try #require(movedAgain.map.groups.first { $0.group == fixture.groups[1] })
+        for (old, new) in zip(before.epochs, shiftedAgain.epochs) {
+            guard case let .mapped(oldSegments, _) = old.mapping,
+                  case let .mapped(newSegments, _) = new.mapping else { continue }
+            for (a, b) in zip(oldSegments, newSegments) {
+                #expect(abs(b.alignedOffset.approximateDouble - a.alignedOffset.approximateDouble - 0.75) < 0.000_001)
+            }
+        }
+        #expect(movedAgain.revision.revision == moved.revision.revision + 1)
+        #expect(movedAgain.map.groups.first { $0.group == fixture.groups[0] }
+                == original.map.groups.first { $0.group == fixture.groups[0] })
         try await fixture.pipeline.activate(model: original.model, episode: fixture.episodeID)
         #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == original.revision.revision)
     }

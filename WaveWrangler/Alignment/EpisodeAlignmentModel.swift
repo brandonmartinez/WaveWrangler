@@ -61,6 +61,7 @@ final class EpisodeAlignmentModel {
     var waveformStartSeconds = 0.0
     var waveformDurationSeconds = 5.0
     var waveformPlayheadSeconds = 0.0
+    private(set) var waveformNavigationEndSeconds = 0.0
     var waveformOffsetMilliseconds = 0.0 {
         didSet { if !resettingWaveformTiming, waveformOffsetMilliseconds != oldValue { waveformTimingIsDraft = true } }
     }
@@ -373,16 +374,31 @@ final class EpisodeAlignmentModel {
                         projectionErrors[track.id] = error.localizedDescription
                     }
                 }
+                let episodeSnapshot = snapshot.episode(episodeID)
+                let previousEnd = loadedWaveformEpisode == episodeSnapshot ? waveformNavigationEndSeconds : 0
+                if let map = loaded.map {
+                    waveformNavigationEndSeconds = AlignmentWaveformProjection.timelineEnd(map: map)
+                } else if loaded.mapWarning == nil {
+                    waveformNavigationEndSeconds = max(
+                        previousEnd, AlignmentWaveformProjection.sourceTimelineEnd(
+                            durations: loaded.tracks.map {
+                                (frames: $0.envelope.totalFrames, rate: $0.envelope.sampleRate)
+                            }
+                        )
+                    )
+                } else {
+                    waveformNavigationEndSeconds = 0
+                }
                 waveformTracks = loaded.tracks
                 waveformStrokes = strokes
                 waveformDisplayGains = gains
                 waveformProjectionErrors = projectionErrors
                 waveformSnapshotID = UUID()
-                disabledTracks.formIntersection(Set(loaded.tracks.map(\.id)))
-                disabledGroups.formIntersection(Set(loaded.tracks.map(\.group)))
+                disabledTracks.formIntersection(Set(episodeSnapshot?.sources.map(\.id) ?? []))
+                disabledGroups.formIntersection(Set(episodeSnapshot?.recorderGroups.map(\.id) ?? []))
                 waveformRefusals = loaded.refusals
                 loadedWaveformMap = loaded.map
-                loadedWaveformEpisode = snapshot.episode(episodeID)
+                loadedWaveformEpisode = episodeSnapshot
                 waveformMessage = loaded.mapWarning
                     ?? "\(loaded.tracks.count) recordings loaded; \(loaded.refusals.count) unavailable. This is a measured snapshot, not an alignment proposal."
             } catch is CancellationError {
@@ -514,9 +530,34 @@ final class EpisodeAlignmentModel {
         loadWaveforms()
     }
 
+    func navigateWaveformTimeline(to time: Double) {
+        guard !isWorking, !isLoadingOverview, groupDraftMilliseconds == 0 else {
+            waveformMessage = "Finish the group preview or current operation before moving the shared timeline."
+            return
+        }
+        guard let document, timingIsVerified(document.store.model) else {
+            waveformMessage = "Save and verify the current timing before moving the shared timeline."
+            return
+        }
+        guard waveformNavigationEndSeconds > 0, time.isFinite,
+              time >= 0, time <= min(waveformNavigationEndSeconds, 86_400),
+              let start = AlignmentWaveformProjection.windowStart(
+                  centeredAt: time, duration: waveformDurationSeconds
+              ) else {
+            waveformMessage = "Choose a time within the available zero-to-24-hour aligned timeline."
+            return
+        }
+        stopAudition()
+        waveformPlayheadSeconds = time
+        auditionPlayheadSeconds = time
+        waveformStartSeconds = start
+        loadWaveforms()
+    }
+
     func suspend() {
         cancelWaveforms()
         cancelWaveformOverview()
+        waveformNavigationEndSeconds = 0
         inspectionGeneration += 1
         inspectionTask?.cancel()
         inspectionTask = nil

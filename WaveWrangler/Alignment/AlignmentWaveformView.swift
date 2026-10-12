@@ -5,6 +5,7 @@ import WWCore
 struct AlignmentWaveformView: View {
     @Bindable var model: EpisodeAlignmentModel
     @State private var dragSession: AlignmentWaveformDrag?
+    @State private var scrubPreviewSeconds: Double?
     @State private var layout: Layout = .separate
     @State private var normalizeView = false
 
@@ -131,6 +132,7 @@ struct AlignmentWaveformView: View {
                 }
                 .disabled(model.isLoadingWaveforms)
                 transport
+                timelineScrubber
                 if model.waveformMap == nil, !model.waveformTracks.isEmpty {
                     Button("Place groups at source time") { model.placeGroupsAtSourceTime() }
                         .disabled(model.isWorking)
@@ -159,7 +161,14 @@ struct AlignmentWaveformView: View {
                         .accessibilityIdentifier("alignment.waveforms.normalizeNote")
                 }
                 ruler
-                if visibleTracks.isEmpty {
+                if model.waveformTracks.isEmpty, model.waveformNavigationEndSeconds > 0 {
+                    ContentUnavailableView(
+                        "No audio in this window",
+                        systemImage: "waveform",
+                        description: Text("Scrub to another section of the shared timeline. Unavailable recordings are listed below.")
+                    )
+                    .frame(minHeight: 200)
+                } else if visibleTracks.isEmpty {
                     ContentUnavailableView(
                         "No waveforms showing",
                         systemImage: "waveform",
@@ -255,6 +264,41 @@ struct AlignmentWaveformView: View {
             Text(model.auditionLabel).font(.caption).lineLimit(2)
                 .accessibilityIdentifier("alignment.waveforms.transport.status")
         }
+    }
+
+    private var timelineScrubber: some View {
+        let end = min(86_400, max(0, model.waveformNavigationEndSeconds))
+        let position = scrubPreviewSeconds ?? model.waveformPlayheadSeconds
+        return HStack {
+            Text("Timeline").font(.caption)
+            Slider(
+                value: Binding(
+                    get: { min(max(position, 0), max(end, 1)) },
+                    set: { scrubPreviewSeconds = $0 }
+                ),
+                in: 0...max(end, 1),
+                onEditingChanged: { editing in if !editing { commitScrub() } }
+            ) {
+                Text("Scrub shared timeline")
+            }
+            .accessibilityIdentifier("alignment.waveforms.scrubber")
+            .disabled(end <= 0 || model.isWorking || model.isLoadingOverview
+                      || model.isLoadingWaveforms || model.groupDraftMilliseconds != 0)
+            Text("\(position, specifier: "%.1f") / \(end, specifier: "%.1f") s")
+                .font(.caption.monospacedDigit())
+                .accessibilityIdentifier("alignment.waveforms.scrubPosition")
+            Button("Go") { commitScrub() }
+                .disabled(end <= 0 || model.isWorking || model.isLoadingOverview || model.isLoadingWaveforms
+                          || model.groupDraftMilliseconds != 0)
+                .accessibilityIdentifier("alignment.waveforms.scrubGo")
+        }
+        .help("Release the scrubber, or enter an exact playhead time and press Go, to load this shared aligned window. No timing map is edited.")
+    }
+
+    private func commitScrub() {
+        let time = scrubPreviewSeconds ?? model.waveformPlayheadSeconds
+        scrubPreviewSeconds = nil
+        model.navigateWaveformTimeline(to: time)
     }
 
     private var overview: some View {

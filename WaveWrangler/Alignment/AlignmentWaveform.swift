@@ -58,14 +58,33 @@ struct AlignmentWaveformDrag {
               durationSeconds.isFinite, durationSeconds > 0,
               initialMilliseconds.isFinite
         else { return nil }
-        let displacement = min(width, max(-width, x - startX))
-        let preview = initialMilliseconds + displacement / width * durationSeconds * 1_000
+        let preview = initialMilliseconds + (x - startX) / width * durationSeconds * 1_000
         return preview.isFinite ? preview : nil
     }
 }
 
 enum AlignmentWaveformProjection {
     static let overviewNavigationRange = 0.0...86_400.0
+
+    static func timelineEnd(map: AlignedTimelineMap) -> Double {
+        map.groups.flatMap { group in
+            let placed = Set(group.placements.flatMap { $0.spans.map(\.epoch) })
+            return group.epochs.filter { placed.contains($0.epoch) }.flatMap { epoch -> [Double] in
+                guard case let .mapped(segments, _) = epoch.mapping else { return [] }
+                return segments.compactMap {
+                    try? $0.rateRatio.multiplied(by: $0.groupClockEnd)
+                        .adding($0.alignedOffset).approximateDouble
+                }
+            }
+        }.filter(\.isFinite).max() ?? 0
+    }
+
+    static func sourceTimelineEnd(durations: [(frames: Int64, rate: Int)]) -> Double {
+        durations.compactMap { source in
+            guard source.frames >= 0, source.rate > 0 else { return nil }
+            return Double(source.frames) / Double(source.rate)
+        }.filter(\.isFinite).max() ?? 0
+    }
 
     static func displayGain(for strokes: [AlignmentWaveformStroke], normalized: Bool) -> Double {
         guard normalized else { return 1 }

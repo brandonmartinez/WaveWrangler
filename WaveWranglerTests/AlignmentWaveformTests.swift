@@ -14,12 +14,26 @@ struct AlignmentWaveformTests {
         #expect(drag.previewMilliseconds(at: 422) == 20)
         #expect(drag.previewMilliseconds(at: 424) == 30)
         #expect(drag.previewMilliseconds(at: 420) == 10)
-        #expect(drag.previewMilliseconds(at: -1_000) == -1_990)
+        #expect(drag.previewMilliseconds(at: 20) == -1_990)
+        #expect(drag.previewMilliseconds(at: -1_000) == -7_090)
+        let next = AlignmentWaveformDrag(
+            startX: 600, width: 400, durationSeconds: 2,
+            initialMilliseconds: 0, group: group, snapshot: UUID()
+        )
+        #expect(next.previewMilliseconds(at: 594) == -30)
         #expect(drag.previewMilliseconds(at: .nan) == nil)
         #expect(AlignmentWaveformDrag(
             startX: 0, width: 0, durationSeconds: 2,
             initialMilliseconds: 0, group: group, snapshot: UUID()
         ).previewMilliseconds(at: 2) == nil)
+    }
+
+    @Test func sharedNavigationUsesFullSourceLengthNotOnlyTheLoadedWindow() {
+        #expect(AlignmentWaveformProjection.sourceTimelineEnd(
+            durations: [(frames: 48_000 * 360, rate: 48_000)]
+        ) == 360)
+        #expect(AlignmentWaveformProjection.sourceTimelineEnd(durations: []) == 0)
+        #expect(AlignmentWaveformProjection.windowStart(centeredAt: 240, duration: 2) == 239)
     }
 
     @Test func visualNormalizationUsesEachWindowPeakWithoutChangingSamples() {
@@ -184,6 +198,7 @@ struct AlignmentWaveformTests {
             ]
         )
         let map = try AlignedTimelineMap(reference: reference, groups: [clock])
+        #expect(AlignmentWaveformProjection.timelineEnd(map: map) == 1)
         #expect(AlignmentWaveformProjection.containsSelectedEpoch(
             source: source, group: group, initialEpoch: first, selectedEpoch: first, map: map
         ))

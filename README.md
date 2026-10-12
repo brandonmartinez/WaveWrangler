@@ -24,8 +24,9 @@ For a recorder with restarted/overlapping source-time epochs, only its first
 placeable epoch is mapped initially; place later epochs explicitly using **Advanced epoch timing**.
 Select a track and drag its waveform, use the 10 ms nudge buttons, or type **Group move (ms)** to move all
 mapped epochs of its recorder together in one undoable revision. A drag shows its shift in seconds and commits on
-release; the movement is proportional to the visible span and limited to one span per gesture. Zoom to
-a shorter span for fine adjustment, or use the nudges. Positive moves place that recorder
+release; the offset change is the pointer distance divided by the visible waveform width, multiplied by
+the visible span. Further drags add or subtract from the saved offset. Zoom to a shorter span for fine
+adjustment, or use the nudges. Positive moves place that recorder
 later. Unplaced audio is dashed, not implicitly synchronized. Enable/disable a recorder or track
 to show/hide and hear/mute it; speaker lanes have stable colors, with gray for unknown speakers.
 Changes to accepted timing save in the show document and can be undone or redone.
@@ -35,7 +36,11 @@ playhead; **Pause**, **Stop**, click-to-seek, and typed aligned playhead are ava
 or uncovered regions are silent. Playback reads witnessed five-second windows and may briefly
 buffer between windows; a source or map mismatch stops playback rather than substituting audio.
 **Visible span**, **Window start**, **Previous**, and **Next** navigate measured windows. The
-advanced **Compare Aligned Audio** control still plays up to five seconds of reference/selected
+**Timeline** scrubber navigates the same aligned time for every recorder across the available episode;
+release it (or type exact playhead seconds and press **Go**) to pause playback, move the shared
+playhead, and load one exact bounded window. It does not change saved timing. Windows outside a recording show its explicit unavailability;
+navigation remains within the supported 0-to-24-hour aligned range. The advanced
+**Compare Aligned Audio** control still plays up to five seconds of reference/selected
 audio in separate channels for an internal listening check, not an export or cut authorization.
 
 **Episode overview**, below the timeline, can explicitly scan every covered PCM sample into at most 2,048 amplitude
