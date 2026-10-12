@@ -21,9 +21,6 @@ final class VisualAlignmentUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.track.")
         )
         XCTAssertTrue(waitUntil { tracks.count == 2 })
-        let place = app.buttons["alignment.waveforms.placeInitial"]
-        scrollTo(place, in: app)
-        place.click()
         let revision = app.staticTexts["alignment.waveforms.revision"]
         XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 1") })
         let span = app.buttons["alignment.waveforms.span.2.0"]
