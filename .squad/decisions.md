@@ -1254,3 +1254,11 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **Boundary:** Record the SHA, host, result, and pass/fail counts on #455. If this round fails, stop GUI testing again and return the remaining issue for a new decision; no automatic further retry or merge follows.
 
 **Result:** The one authorized round ran at `c38768625f8d` on `ww-ui-1`: two focused synthetic methods ran, zero passed, two failed, zero skipped. The recorder editor never regained its map revision during 20 seconds after Undo. The overview built two measured results but its test did not open Advanced epoch timing because AX reports the collapsed disclosure value as numeric `0`, not the string `"0"`. The exception is consumed; further GUI runs are stopped. Neither full end-to-end proof nor merge acceptance follows.
+
+### 2026-10-12: Authorize one focused #455 VM verification after Undo refresh
+
+**By:** Brandon, in this session, after reviewing the exhausted prior GUI exception and the proposed verified-save waveform reload.
+
+**What:** Brandon selected "Authorize one focused VM round (Recommended)" for the pushed Undo-refresh correction at `5429c938`. Permit one exact-head leased synthetic VM run of the affected editor and overview methods. No real recordings, working-Mac GUI test, or legacy #450 retry is authorized.
+
+**Boundary:** Report the result on #455 and stop if it fails; this does not waive the import-to-reopen proof, independent review, or merge gates.
