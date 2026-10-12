@@ -1274,3 +1274,11 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **Boundary:** Report SHA, host, result and pass/fail/skip counts on #455. If it fails, stop GUI testing for another decision. This round does not waive the reproducible headless autosave timing failure or the normal import-to-reopen proof.
 
 **Result:** The sole authorized round ran at `24c8c00fcefb` on `ww-ui-1`: two focused synthetic methods ran, one passed, one failed, zero skipped. The editor method passed its Overlay, placement, move, Undo/Redo, enabled-track playback, and reopen assertions. The overview built two complete PCM results, but clicking Advanced epoch timing left its accessibility disclosure value at `0` for 20 seconds; its target-point field never opened, so the overview method failed before navigation. The VM result is `/Users/admin/ww-uitest-runs/manual-editor-24c8c00fcefb-20261012T114413/result.xcresult`, retained locally at `/tmp/ww-manual-editor-vm-evidence/manual-editor-24c8c00fcefb-r6.xcresult/`. The lease released normally. This exception is consumed; GUI tests stop again. It does not clear the normal import proof, autosave timing gate or merge.
+
+### 2026-10-12: Authorize one focused #455 VM verification of explicit disclosure state
+
+**By:** Brandon, in this session, after the `24c8c00fcefb` VM result and the new explicit-state Advanced epoch timing change at `c8eb8a48`.
+
+**What:** Brandon selected "Authorize one focused VM verification (Recommended)." Permit exactly one leased synthetic VM run of the two affected VisualAlignmentUITests methods from the clean, signed and staged exact pushed head. This is not permission for private media, working-Mac UI tests, an unrelated GUI campaign or further retries.
+
+**Boundary:** Report SHA, host, counts and result on #455. Stop again if this fails; a passing focused GUI run alone does not waive normal import-to-reopen proof, independent save gates or the reproducible autosave timing failure.
