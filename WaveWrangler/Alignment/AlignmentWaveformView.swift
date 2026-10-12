@@ -6,6 +6,7 @@ struct AlignmentWaveformView: View {
     @Bindable var model: EpisodeAlignmentModel
     @State private var dragOrigin: Double?
     @State private var layout: Layout = .separate
+    @State private var advancedTimingExpanded = false
 
     private enum Layout: String, CaseIterable {
         case separate = "Separate lanes"
@@ -50,7 +51,7 @@ struct AlignmentWaveformView: View {
                     Button("Place groups at source time") { model.placeGroupsAtSourceTime() }
                         .disabled(model.isWorking)
                         .accessibilityIdentifier("alignment.waveforms.placeInitial")
-                    Text("This accepts a zero-offset starting point without estimating clock drift. Then move recorder groups while listening; the reference stays fixed.")
+                    Text("This places the first eligible epoch of each recorder at zero offset, without estimating clock drift. Time restarted epochs separately; then move recorder groups while listening. The reference stays fixed.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 HStack {
@@ -501,7 +502,7 @@ struct AlignmentWaveformView: View {
                 Text("Drag any lane in this recorder to move every mapped epoch and source together. Each committed move is one Undo step. Unsaved preview is not audible until applied.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            DisclosureGroup("Advanced epoch timing") {
+            DisclosureGroup("Advanced epoch timing", isExpanded: $advancedTimingExpanded) {
                 HStack(alignment: .bottom, spacing: 12) {
                     numberField("Offset (ms)", value: $model.waveformOffsetMilliseconds, identifier: "offset")
                     numberField("Rate (ppm)", value: $model.waveformRatePPM, identifier: "rate")
