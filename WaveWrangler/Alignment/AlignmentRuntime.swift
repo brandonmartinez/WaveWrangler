@@ -123,11 +123,11 @@ actor AlignmentRuntime {
 
     func shiftGroup(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
-        group: RecorderGroupID, milliseconds: Int64
+        group: RecorderGroupID, microseconds: Int64
     ) async throws -> AcceptedAlignment {
         _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
         return try await pipeline.shiftAcceptedGroup(
-            model: model, episode: episodeID, group: group, milliseconds: milliseconds
+            model: model, episode: episodeID, group: group, microseconds: microseconds
         )
     }
 

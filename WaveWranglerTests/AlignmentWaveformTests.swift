@@ -26,6 +26,16 @@ struct AlignmentWaveformTests {
             startX: 0, width: 0, durationSeconds: 2,
             initialMilliseconds: 0, group: group, snapshot: UUID()
         ).previewMilliseconds(at: 2) == nil)
+        let fineDrag = AlignmentWaveformDrag(
+            startX: 800, width: 2_000, durationSeconds: 30,
+            initialMilliseconds: 0, group: group, snapshot: UUID()
+        )
+        #expect(fineDrag.previewMilliseconds(at: 802) == 30)
+        #expect(AlignmentWaveformProjection.moveMicroseconds(
+            fromMilliseconds: fineDrag.previewMilliseconds(at: 802) ?? .nan
+        ) == 30_000)
+        #expect(AlignmentWaveformProjection.moveMicroseconds(fromMilliseconds: 25.75) == 25_750)
+        #expect(AlignmentWaveformProjection.moveMicroseconds(fromMilliseconds: .nan) == nil)
     }
 
     @Test func sharedNavigationUsesFullSourceLengthNotOnlyTheLoadedWindow() {

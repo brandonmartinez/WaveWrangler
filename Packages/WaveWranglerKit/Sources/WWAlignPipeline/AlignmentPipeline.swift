@@ -553,7 +553,7 @@ public final class AlignmentPipeline: Sendable {
     /// Unsupported epochs and occurrence spans (including gaps) remain unchanged.
     public func shiftAcceptedGroup(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
-        group groupID: RecorderGroupID, milliseconds: Int64
+        group groupID: RecorderGroupID, microseconds: Int64
     ) async throws(AlignmentAcceptanceError) -> AcceptedAlignment {
         guard let episode = model.episode(episodeID),
               let revision = episode.alignment?.acceptedRevision,
@@ -566,7 +566,7 @@ public final class AlignmentPipeline: Sendable {
         try await verifyPriorRevision(version: version, map: prior, episode: episode)
         guard groupID != prior.reference.group,
               prior.groups.contains(where: { $0.group == groupID }),
-              milliseconds != 0
+              microseconds != 0
         else { throw .invalidMap("Choose a non-reference recorder group and a non-zero move.") }
         guard prior.groups.first(where: { $0.group == groupID })?.epochs.contains(where: {
             if case .mapped = $0.mapping { return true }
@@ -575,7 +575,7 @@ public final class AlignmentPipeline: Sendable {
             throw .invalidMap("Place at least one epoch in this recorder group before moving it.")
         }
         let delta: ExactRational
-        do { delta = try ExactRational(numerator: Int128(milliseconds), denominator: 1_000) }
+        do { delta = try ExactRational(numerator: Int128(microseconds), denominator: 1_000_000) }
         catch { throw .invalidMap(String(describing: error)) }
         do {
             let groups = try prior.groups.map { group in
@@ -599,7 +599,7 @@ public final class AlignmentPipeline: Sendable {
                             note: AlignmentAnchorNote.encode(anchors.map {
                                 AlignmentAnchor(
                                     sourceSeconds: $0.sourceSeconds,
-                                    alignedSeconds: $0.alignedSeconds + Double(milliseconds) / 1_000
+                                    alignedSeconds: $0.alignedSeconds + Double(microseconds) / 1_000_000
                                 )
                             })
                         )

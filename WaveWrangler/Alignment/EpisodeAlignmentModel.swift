@@ -194,11 +194,10 @@ final class EpisodeAlignmentModel {
     }
     func commitGroupMove() {
         guard let document, let row = selectedRow, canMoveGroup,
-              groupDraftMilliseconds.isFinite,
-              abs(groupDraftMilliseconds) >= 0.001,
-              abs(groupDraftMilliseconds) < Double(Int64.max) / 1_000
+              let delta = AlignmentWaveformProjection.moveMicroseconds(
+                  fromMilliseconds: groupDraftMilliseconds
+              ), delta != 0
         else { return }
-        let delta = Int64((groupDraftMilliseconds * 1_000).rounded())
         let prior = document.store.model
         let group = row.groupID
         isWorking = true
@@ -208,7 +207,7 @@ final class EpisodeAlignmentModel {
                 let accepted: AcceptedAlignment
                 if prior.episode(episodeID)?.alignment?.acceptedRevision != nil {
                     accepted = try await runtime.shiftGroup(
-                        model: prior, episode: episodeID, group: group, milliseconds: delta
+                        model: prior, episode: episodeID, group: group, microseconds: delta
                     )
                 } else {
                     let report = try await runtime.prepareManual(model: prior, episode: episodeID)

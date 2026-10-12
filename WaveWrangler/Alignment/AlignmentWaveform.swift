@@ -91,6 +91,11 @@ enum AlignmentWaveformProjection {
         return translation.isFinite ? translation : nil
     }
 
+    static func moveMicroseconds(fromMilliseconds value: Double) -> Int64? {
+        guard value.isFinite, abs(value) < Double(Int64.max) / 1_000 else { return nil }
+        return Int64((value * 1_000).rounded())
+    }
+
     static func timelineEnd(map: AlignedTimelineMap) -> Double {
         map.groups.flatMap { group in
             let placed = Set(group.placements.flatMap { $0.spans.map(\.epoch) })
