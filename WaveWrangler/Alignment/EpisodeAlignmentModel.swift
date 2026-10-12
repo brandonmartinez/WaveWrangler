@@ -516,7 +516,8 @@ final class EpisodeAlignmentModel {
                     guard generation == auditionGeneration else { return }
                     lastError = String(describing: error)
                     stopPlayback(updatePlayhead: true)
-                    auditionLabel = "Playback stopped: \(error). No substitute audio was played."
+                    let reason = error is LocalizedError ? error.localizedDescription : String(describing: error)
+                    auditionLabel = "Playback stopped: \(reason). No substitute audio was played."
                     return
                 }
             }
@@ -594,7 +595,8 @@ final class EpisodeAlignmentModel {
                 stopPlayback(updatePlayhead: false)
                 if Task.isCancelled { return }
                 lastError = String(describing: error)
-                auditionLabel = "Aligned comparison unavailable: \(error). No partial audio was played."
+                let reason = error is LocalizedError ? error.localizedDescription : String(describing: error)
+                auditionLabel = "Aligned comparison unavailable: \(reason). No partial audio was played."
             }
         }
     }

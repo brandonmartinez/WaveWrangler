@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Testing
 import WWCore
+import WWSources
 @testable import WWEpisodeSetup
 
 @Suite("Source status presentation (states §3)")
@@ -46,6 +47,84 @@ struct SourceStatusTests {
         #expect(denied.summary.text == "Access denied")
         #expect(!denied.summary.accessibilityValue.localizedCaseInsensitiveContains("not found"))
         #expect(AccessStatus.denied.presentation.symbolName != AccessStatus.needsPermission.presentation.symbolName)
+    }
+
+    @Test func audioAdmissionPreservesIndependentRefusalReasonsAndSetupRemedies() {
+        let ready = SourceStatusSnapshot(
+            location: .known, access: .granted, residency: .local, identity: .detailsMatch
+        )
+        #expect(ready.audioAdmissionIssue == nil)
+
+        var state = ready
+        state.access = .denied
+        #expect(state.audioAdmissionIssue?.contains("Access was denied") == true)
+        state = ready
+        state.location = .missing(sameNamedFileAtOriginalLocation: true)
+        state.access = .needsPermission
+        #expect(state.audioAdmissionIssue?.contains("Relink") == true)
+        #expect(state.audioAdmissionIssue?.contains("same-name") == true)
+        state = ready
+        state.access = .needsPermission
+        #expect(state.audioAdmissionIssue?.contains("Regrant") == true)
+        state = ready
+        state.location = .moved(newFolder: nil)
+        #expect(state.audioAdmissionIssue?.contains("Confirm its new location") == true)
+        state = ready
+        state.identity = .confirmationNeeded
+        #expect(state.audioAdmissionIssue?.contains("Confirm original") == true)
+        state = ready
+        state.identity = .mismatch(differences: "file ID differs")
+        #expect(state.audioAdmissionIssue?.contains("different file") == true)
+        state = ready
+        state.identity = .changed(differences: "size differs", acceptedByUser: false)
+        #expect(state.audioAdmissionIssue?.contains("details changed") == true)
+        state = ready
+        state.residency = .cloudOnly
+        #expect(state.audioAdmissionIssue?.contains("Make it available") == true)
+        state.transfer = .failed(reason: "provider")
+        #expect(state.audioAdmissionIssue?.contains("Retry") == true)
+        state.transfer = .unsupportedLocation
+        #expect(state.audioAdmissionIssue?.contains("using its provider") == true)
+        state = ready
+        state.residency = .unknown
+        #expect(state.audioAdmissionIssue?.contains("could not be verified") == true)
+        #expect(SourceStatusSnapshot.checking.audioAdmissionIssue != nil)
+    }
+
+    @Test func observedStaleBookmarkRequestsRelinkWithoutClaimingTheFileIsMissing() {
+        let observation = AvailabilityObservation(
+            observedAt: Date(timeIntervalSince1970: 0), provenance: .simulated,
+            location: .present, access: .staleBookmark, residency: .local,
+            identity: .matchesRecorded
+        )
+        #expect(WWSourcesStatusMapping.audioAdmissionIssue(observation)?.contains("Relink") == true)
+        #expect(WWSourcesStatusMapping.audioAdmissionIssue(observation)?.contains("missing") == false)
+        var denied = observation
+        denied.access = .denied
+        #expect(WWSourcesStatusMapping.audioAdmissionIssue(denied)?.contains("Access was denied") == true)
+        var noRecord = observation
+        noRecord.access = .needsRegrant
+        noRecord.location = .unknown
+        noRecord.locationEvidence = .noAccessRecord
+        noRecord.identity = .unverified(.noRecordedEvidence)
+        #expect(WWSourcesStatusMapping.audioAdmissionIssue(noRecord)?.contains("Regrant") == true)
+        var missing = noRecord
+        missing.location = .missing(lastKnownPathOccupied: .known(true))
+        #expect(WWSourcesStatusMapping.audioAdmissionIssue(missing)?.contains("Relink") == true)
+        var moved = observation
+        moved.access = .granted
+        moved.location = .moved(currentPathHint: "/synthetic/other")
+        #expect(WWSourcesStatusMapping.audioAdmissionIssue(moved)?.contains("Confirm") == true)
+        var mismatch = observation
+        mismatch.access = .granted
+        mismatch.identity = .mismatch([.fileIdentifier])
+        #expect(WWSourcesStatusMapping.audioAdmissionIssue(mismatch)?.contains("different file") == true)
+        var nonLocal = observation
+        nonLocal.access = .granted
+        nonLocal.residency = .cloudPlaceholder
+        #expect(WWSourcesStatusMapping.audioAdmissionIssue(nonLocal)?.contains("Make it available") == true)
+        nonLocal.residency = .unknown
+        #expect(WWSourcesStatusMapping.audioAdmissionIssue(nonLocal)?.contains("could not be verified") == true)
     }
 
     @Test func priorityOrderAndVoiceOverValueFollowSection3_6() {

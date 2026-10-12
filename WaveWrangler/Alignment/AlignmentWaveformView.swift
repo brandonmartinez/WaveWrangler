@@ -69,6 +69,7 @@ struct AlignmentWaveformView: View {
                 }
                 ForEach(model.waveformRefusals) { refusal in
                     Label("\(refusal.name): \(refusal.reason)", systemImage: "exclamationmark.triangle")
+                        .accessibilityLabel("\(refusal.name), \(refusal.reason)")
                         .accessibilityIdentifier("alignment.waveforms.refusal.\(refusal.id)")
                 }
                 if model.waveformTracks.isEmpty {

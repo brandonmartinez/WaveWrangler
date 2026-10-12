@@ -295,6 +295,48 @@ public struct SourceStatusSummary: Hashable, Sendable {
 }
 
 extension SourceStatusSnapshot {
+    /// Why audio cannot be admitted from this device's observed source state. A "Ready" Setup
+    /// summary alone does not admit audio; the caller must still capture and recheck its witness.
+    public var audioAdmissionIssue: String? {
+        if case .denied = access {
+            return "Access was denied. Check this source's permissions in Setup."
+        }
+        if case .missing = location {
+            return "The original was not found. Relink it in Setup; a same-name file is not substituted."
+        }
+        switch access {
+        case .needsPermission: return "Permission is needed again. Regrant access in Setup."
+        case .unknown, .checking, .refreshing, .notChecked:
+            return "Permission could not be verified. Check this source in Setup."
+        case .granted, .denied: break
+        }
+        switch location {
+        case .moved: return "The original moved. Confirm its new location in Setup."
+        case .unknown, .checking: return "The original's location could not be verified. Check it in Setup."
+        case .known, .missing: break
+        }
+        switch identity {
+        case .mismatch: return "This is a different file. Relink the original in Setup."
+        case .changed: return "The original's details changed. Review or relink it in Setup."
+        case .confirmationNeeded: return "Confirm original in Setup before loading its audio."
+        case .notChecked, .checking:
+            return "The original's identity could not be verified. Check or relink it in Setup."
+        case .detailsMatch: break
+        }
+        switch residency {
+        case .cloudOnly:
+            if case .failed = transfer { return "The download failed. Retry it in Setup." }
+            if case .noConnection = transfer { return "The cloud service reported a connection problem. Retry in Setup." }
+            if case .unsupportedLocation = transfer {
+                return "WaveWrangler cannot request this download. Make the original available using its provider."
+            }
+            return "The original is not on this Mac. Make it available in Setup before loading audio."
+        case .unknown, .checking:
+            return "Local availability could not be verified. Check this source in Setup."
+        case .local: return nil
+        }
+    }
+
     /// Dimension presentations in the inspector's fixed order (all five rows, always).
     public var dimensions: [DimensionPresentation] {
         [location.presentation, access.presentation, residency.presentation, transfer.presentation, identity.presentation]

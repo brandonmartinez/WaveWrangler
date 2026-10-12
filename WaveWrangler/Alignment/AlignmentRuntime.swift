@@ -3,6 +3,7 @@ import WWAlignPipeline
 import WWCore
 import WWDecode
 import WWDerived
+import WWEpisodeSetup
 import WWSources
 import WWTimeMap
 
@@ -365,7 +366,7 @@ actor AlignmentRuntime {
                 try Task.checkCancellation()
                 refusals.append(AlignmentWaveformRefusal(
                     id: record.id, name: record.displayNameHint,
-                    reason: "\(error). Check this source in Setup before loading it again."
+                    reason: error is LocalizedError ? error.localizedDescription : String(describing: error)
                 ))
             }
         }
@@ -386,11 +387,22 @@ actor AlignmentRuntime {
         let witness: RawSourceIdentity
     }
 
+    private struct SourceAdmissionError: LocalizedError {
+        let reason: String
+        var errorDescription: String? { reason }
+    }
+
     private func waveformSource(
         _ source: SourceID, sources: [AlignmentSource]
     ) async throws -> WaveformSourceAdmission {
         guard let resolved = sources.first(where: { $0.id == source }), resolved.availability == .on else {
-            throw DecodeFailure.sourceIdentityMismatch
+            let key = DeviceAccessKey(showID: showID, sourceID: source)
+            let record = try await accessStore.record(for: key)
+            let observation = SourceAvailabilityEvaluator(context: access).evaluate(
+                key: key, record: record, setting: .on
+            ).observation
+            throw SourceAdmissionError(reason: WWSourcesStatusMapping.audioAdmissionIssue(observation)
+                ?? "Source details changed during admission. Check this source in Setup and reload its audio.")
         }
         let key = DeviceAccessKey(showID: showID, sourceID: source)
         guard let record = try await accessStore.record(for: key),

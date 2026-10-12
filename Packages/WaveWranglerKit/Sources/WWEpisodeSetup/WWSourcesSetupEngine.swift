@@ -7,6 +7,13 @@ import WWSources
 /// Maps WWSources' device-local observations onto Design's five-dimension presentation (states §3).
 /// WWSources' diagnostic text is never shown; wording comes from `SourceStatus.swift`.
 public enum WWSourcesStatusMapping {
+    public static func audioAdmissionIssue(_ observation: AvailabilityObservation) -> String? {
+        if observation.access == .staleBookmark {
+            return "The saved permission is stale and could not be refreshed safely. Relink the original in Setup."
+        }
+        return snapshot(observation).audioAdmissionIssue
+    }
+
     public static func snapshot(_ observation: AvailabilityObservation?) -> SourceStatusSnapshot {
         guard let observation else { return .checking }
         let checked = Dictionary(uniqueKeysWithValues: SourceDimension.allCases.map { ($0, observation.observedAt) })
