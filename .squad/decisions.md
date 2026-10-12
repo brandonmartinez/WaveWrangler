@@ -1264,3 +1264,11 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **Boundary:** Report the result on #455 and stop if it fails; this does not waive the import-to-reopen proof, independent review, or merge gates.
 
 **Result:** The one authorized round ran at `c94b23df0e19` on `ww-ui-1`: two focused synthetic methods ran, zero passed, two failed, zero skipped. Undo regained the verified Map revision 1, but the added track assertion incorrectly queried separate-lane accessibility nodes while the editor remained in Overlay mode. The overview built two measured results and clicked Advanced epoch timing, yet its target-point field was not found. Result: `manual-undo-c94b23df0e19-20261012T150449/result.xcresult` on the VM, with a retained local copy at `/tmp/ww-manual-editor-vm-evidence/manual-undo-c94b23df-r5.xcresult/`. The exception is consumed; no further GUI run or merge is authorized by this result.
+
+### 2026-10-12: Authorize one focused #455 VM round after mode-correct assertions
+
+**By:** Brandon, in this session, after reviewing the failed `c94b23df0e19` round, the corrected Overlay assertion, and the unresolved overview accessibility query.
+
+**What:** Brandon selected "Authorize one focused VM round (Recommended)." Permit exactly one leased, synthetic-only run on an existing VM of the affected recorder editor and overview UI methods, from a clean, signed, staged exact pushed head. This does not authorize a legacy #450 retry, private-media access, working-Mac GUI tests, or any further round.
+
+**Boundary:** Report SHA, host, result and pass/fail/skip counts on #455. If it fails, stop GUI testing for another decision. This round does not waive the reproducible headless autosave timing failure or the normal import-to-reopen proof.
