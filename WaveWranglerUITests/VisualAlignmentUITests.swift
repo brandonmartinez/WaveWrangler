@@ -50,9 +50,9 @@ final class VisualAlignmentUITests: XCTestCase {
         let toggle = try XCTUnwrap(trackToggle)
         scrollTo(toggle, in: app)
         toggle.click()
-        XCTAssertTrue(toggle.value as? String == "0")
+        XCTAssertTrue(waitUntil { app.staticTexts["Hidden and muted"].exists })
         toggle.click()
-        XCTAssertTrue(toggle.value as? String == "1")
+        XCTAssertTrue(waitUntil { !app.staticTexts["Hidden and muted"].exists })
         let play = app.buttons["alignment.waveforms.transport.play"]
         scrollTo(play, in: app)
         play.click()
