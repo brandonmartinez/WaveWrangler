@@ -23,6 +23,7 @@ struct SourceStatusTests {
         #expect(TransferStatus.noConnection.presentation.inspectorText == "Can't download — no network connection")
         #expect(TransferStatus.downloadsOff.presentation.inspectorText == "Downloads are off")
         #expect(IdentityStatus.notChecked.presentation.inspectorText == "Not checked")
+        #expect(IdentityStatus.confirmationNeeded.presentation.summaryText == "Confirm original")
         #expect(IdentityStatus.detailsMatch.presentation.inspectorText == "File details match what WaveWrangler recorded (audio not compared)")
     }
 
@@ -73,13 +74,16 @@ struct SourceStatusTests {
         s = base; s.residency = .cloudOnly; #expect(!attention(s))
         s = base; s.location = .moved(newFolder: nil); #expect(attention(s))
         s = base; s.identity = .changed(differences: "x", acceptedByUser: true); #expect(!attention(s))
+        s = base; s.identity = .confirmationNeeded
+        #expect(s.summary.text == "Confirm original")
+        #expect(attention(s))
     }
 
     /// A-03 / mapping completeness: every combination of the five dimensions yields a non-generic summary
     /// (never "Offline"), a VoiceOver value, five inspector rows, and distinct inspector text per state.
     @Test func everyCombinationMapsToDistinctNonGenericText() {
         let all = SourceStatusCatalog.allSnapshots
-        #expect(all.count == 7 * 7 * 4 * 11 * 6)
+        #expect(all.count == 7 * 7 * 4 * 11 * 7)
         let forbidden = ["offline", "unavailable", "error"]
         var inspectorTuples = Set<[String]>()
         for snapshot in all {

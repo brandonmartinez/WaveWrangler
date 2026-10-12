@@ -81,7 +81,8 @@ public enum WWSourcesStatusMapping {
         switch state {
         case .unknown, .unverified(.noRecordedEvidence), .unverified(.insufficientEvidence): .notChecked
         // Details equal the recorded baseline: exactly Design's "Details match" (audio not compared).
-        case .matchesRecorded, .unverified(.baselineNotUserConfirmed): .detailsMatch
+        case .matchesRecorded: .detailsMatch
+        case .unverified(.baselineNotUserConfirmed): .confirmationNeeded
         case let .changed(fields): .changed(differences: differ(fields), acceptedByUser: false)
         case let .mismatch(fields): .mismatch(differences: differ(fields))
         }
@@ -463,6 +464,41 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         previousRecords[receipt.id] = previous
         _ = await tracked { [monitor] in await monitor.refresh([sourceID]) }
         return receipt
+    }
+
+    /// Explicitly confirms the original already referenced by this device-local bookmark.
+    /// Metadata and the read-only raw witness are checked again before saving the confirmed baseline.
+    public func confirmCurrentOriginal(_ sourceID: SourceID) async throws(SourceEngineError) {
+        guard let captureRawIdentity else { throw .failed(reason: "source confirmation is unavailable") }
+        let key = key(sourceID)
+        let previous: DeviceAccessRecord
+        do {
+            guard let record = try await store.record(for: key),
+                  let bookmark = record.bookmark,
+                  record.recordedIdentity?.confirmation == .provisional,
+                  case let .resolved(url, stale) = context.io.resolveBookmark(bookmark),
+                  !stale
+            else { throw SourceEngineError.failed(reason: "choose the original again using Relink Source") }
+            previous = record
+            let evaluator = RelinkEvaluator(context: context)
+            let others = try await store.records(in: showID)
+            let proposal = evaluator.evaluate(candidate: url, for: key, record: record, otherRecords: others)
+            guard proposal.comparison.isExactMatch, proposal.alreadyLinkedTo == nil else {
+                throw SourceEngineError.failed(reason: "file details changed; review the original with Relink Source")
+            }
+            let confirmed = try await evaluator.applyConfirmed(
+                proposal, to: record, captureRawIdentity: captureRawIdentity
+            )
+            guard try await store.record(for: key) == previous else {
+                throw SourceEngineError.failed(reason: "the source record changed; try again")
+            }
+            try await store.save(confirmed)
+            _ = await tracked { [monitor] in await monitor.refresh([sourceID]) }
+        } catch let error as SourceEngineError {
+            throw error
+        } catch {
+            throw .failed(reason: error.localizedDescription)
+        }
     }
 
     public func revertRelink(_ receipt: RelinkReceipt) async throws(SourceEngineError) {

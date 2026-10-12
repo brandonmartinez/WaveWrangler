@@ -17,12 +17,14 @@ enum SampleStreamFailure: Error, Sendable, Equatable {
 
 /// Serves ascending frame requests for one source from a `DecodingCursor`, keeping only a short history so
 /// consecutive renders (which overlap by the kernel's reach) can be served without seeking. Frames the
-/// renderer skips are decoded and dropped, never retained. Memory: history + one request + one chunk.
+/// renderer skips are decoded and dropped, or explicitly sought over for PCM listening windows.
+/// Memory: history + one request + one chunk.
 actor SourceSampleStream {
     let cursor: DecodingCursor
     let channelCount: Int
     /// Frames kept below each request's first frame.
     let history: Int64
+    let seekForSkippedFrames: Bool
     /// First retained frame. Invariant: the retained frames are exactly `start ..< next`.
     private var start: Int64 = 0
     /// The cursor's position: the first frame not yet taken from it.
@@ -30,10 +32,11 @@ actor SourceSampleStream {
     private var channels: [[Float]]
     private(set) var peakHeldFrames = 0
 
-    init(cursor: DecodingCursor, channelCount: Int, history: Int64) {
+    init(cursor: DecodingCursor, channelCount: Int, history: Int64, seekForSkippedFrames: Bool = false) {
         self.cursor = cursor
         self.channelCount = channelCount
         self.history = history
+        self.seekForSkippedFrames = seekForSkippedFrames
         channels = Array(repeating: [], count: channelCount)
     }
 
@@ -44,8 +47,20 @@ actor SourceSampleStream {
         }
         let keepFrom = frames.lowerBound - history
         drop(below: keepFrom)
+        if seekForSkippedFrames, cursor.supportsRandomAccess, keepFrom > next {
+            try await cursor.seek(toSourceFrame: keepFrom)
+            for channel in channels.indices { channels[channel].removeAll(keepingCapacity: true) }
+            start = keepFrom
+            next = keepFrom
+        }
         while next < frames.upperBound {
-            guard let chunk = try await cursor.next() else {
+            let chunk: DecodedChunk?
+            if seekForSkippedFrames, cursor.supportsRandomAccess, next < cursor.interpretation.frames.validFrames {
+                chunk = try await cursor.next(upToSourceFrame: min(frames.upperBound, cursor.interpretation.frames.validFrames))
+            } else {
+                chunk = try await cursor.next()
+            }
+            guard let chunk else {
                 throw SampleStreamFailure.endOfSource(requested: frames.upperBound, available: next)
             }
             guard chunk.firstSourceFrame == next else {

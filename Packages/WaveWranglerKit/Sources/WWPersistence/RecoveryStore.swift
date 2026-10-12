@@ -54,7 +54,7 @@ public struct RecoveryStore: Sendable {
     // MARK: - Prior checkpoints
 
     /// Retains `bytes` (a revision the caller has already validated) as a checkpoint, then prunes older ones.
-    /// Idempotent for identical bytes. Pruning only happens after the new checkpoint is in place.
+    /// Idempotent for identical bytes. Pruning only happens after the new checkpoint is independently verified.
     @discardableResult
     public func retainCheckpoint(_ bytes: Data, for key: DocumentKey) throws -> RecoveryCheckpoint {
         let fingerprint = RevisionFingerprint(of: bytes)
@@ -63,10 +63,14 @@ public struct RecoveryStore: Sendable {
         let url = directory.appending(path: name)
         try writeRecord(bytes, to: url)
         let all = try checkpoints(for: key)
+        guard let retained = all.first(where: { $0.url.standardizedFileURL == url.standardizedFileURL }),
+              retained.fingerprint == fingerprint else {
+            throw CocoaError(.fileWriteUnknown)
+        }
         for stale in all.dropFirst(retainCount) where stale.url.lastPathComponent != url.lastPathComponent {
             try ops.remove(stale.url)
         }
-        return RecoveryCheckpoint(key: key, url: url, fingerprint: fingerprint)
+        return RecoveryCheckpoint(key: key, url: url, fingerprint: retained.fingerprint)
     }
 
     /// Retained checkpoints, newest revision first. Bytes are fingerprinted but not decoded here.

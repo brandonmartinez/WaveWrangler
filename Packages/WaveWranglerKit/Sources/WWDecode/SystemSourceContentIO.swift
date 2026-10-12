@@ -477,6 +477,27 @@ private final class SystemDecodingReader: DecodingContentReader {
         return Int(frames)
     }
 
+    var supportsRandomAccess: Bool {
+        facts.formatID == kAudioFormatLinearPCM
+            && (facts.packetTable?.primingFrames ?? 0) == 0
+            && (facts.packetTable?.remainderFrames ?? 0) == 0
+    }
+
+    func seekRawFrame(to frame: Int64) throws(DecodeFailure) {
+        guard !isClosed else { throw .cancelled }
+        guard supportsRandomAccess else { throw .seekUnavailable }
+        guard frame >= 0, frame <= facts.readerLengthFrames else { throw .invalidSourceFrame(frame) }
+        let status = withoutMaterializingDataless { ExtAudioFileSeek(extFile, frame) }
+        if file.lastErrno != 0 { throw failure(forErrno: file.lastErrno) }
+        guard status == noErr else { throw .seekFailed(status: status, atStreamFrame: frame) }
+        var actual: Int64 = -1
+        let tellStatus = withoutMaterializingDataless { ExtAudioFileTell(extFile, &actual) }
+        if file.lastErrno != 0 { throw failure(forErrno: file.lastErrno) }
+        guard tellStatus == noErr else { throw .seekFailed(status: tellStatus, atStreamFrame: frame) }
+        guard actual == frame else { throw .seekFailed(status: kAudioFilePositionError, atStreamFrame: frame) }
+        streamFramesRead = frame
+    }
+
     func currentOpenedFileState() throws(DecodeFailure) -> OpenedFileState {
         precondition(!isClosed, "state after close")
         var info = stat()

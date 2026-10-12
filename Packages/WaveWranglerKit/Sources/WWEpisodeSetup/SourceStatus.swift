@@ -56,6 +56,7 @@ public enum TransferStatus: Hashable, Sendable {
 public enum IdentityStatus: Hashable, Sendable {
     case checking
     case notChecked
+    case confirmationNeeded
     case detailsMatch
     /// File details changed after the source was added. `acceptedByUser` after an explicit relink/review.
     case changed(differences: String, acceptedByUser: Bool)
@@ -261,6 +262,8 @@ extension IdentityStatus {
             .init(.identity, "Checking…", .spinner, summary: "Checking…", spoken: "checking file details", priority: 6, tint: .secondary)
         case .notChecked:
             .init(.identity, "Not checked", .symbol("questionmark.circle"), summary: nil, spoken: "file details not checked", priority: nil, tint: .secondary)
+        case .confirmationNeeded:
+            .init(.identity, "File details match, but this original hasn't been confirmed for audio", .symbol("questionmark.circle"), summary: "Confirm original", spoken: "confirm original before playing audio", priority: 3, attention: true, tint: .attention)
         case .detailsMatch:
             .init(.identity, "File details match what WaveWrangler recorded (audio not compared)", .symbol("checkmark.seal"), summary: nil, spoken: nil, priority: nil, tint: .none)
         case let .changed(differences, true):
@@ -349,7 +352,7 @@ public enum SourceStatusCatalog {
     public static let allAccess: [AccessStatus] = [.checking, .granted, .refreshing, .needsPermission, .denied, .unknown(reason: "macOS didn't say"), .notChecked(reason: "the file wasn't found")]
     public static let allResidency: [ResidencyStatus] = [.checking, .local, .cloudOnly, .unknown]
     public static let allTransfers: [TransferStatus] = [.idle, .queued, .downloading(fraction: 0.42), .downloading(fraction: nil), .paused, .cancelled, .failed(reason: "the cloud service stopped responding"), .noConnection, .downloadsOff, .unsupportedLocation, .providerMayFinish]
-    public static let allIdentity: [IdentityStatus] = [.checking, .notChecked, .detailsMatch, .changed(differences: "size differs", acceptedByUser: false), .changed(differences: "size differs", acceptedByUser: true), .mismatch(differences: "size and created date differ")]
+    public static let allIdentity: [IdentityStatus] = [.checking, .notChecked, .confirmationNeeded, .detailsMatch, .changed(differences: "size differs", acceptedByUser: false), .changed(differences: "size differs", acceptedByUser: true), .mismatch(differences: "size and created date differ")]
 
     public static var allSnapshots: [SourceStatusSnapshot] {
         var result: [SourceStatusSnapshot] = []

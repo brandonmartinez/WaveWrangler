@@ -37,6 +37,11 @@ public enum DecodeFailure: Error, Sendable, Equatable, Hashable {
     case decodeFailed(status: Int32, atStreamFrame: Int64)
     /// A read-only read failed with this `errno`.
     case readFailed(errno: Int32)
+    /// Exact random access has not been established for this reader or codec.
+    case seekUnavailable
+    /// A requested source-frame boundary was outside this interpretation.
+    case invalidSourceFrame(Int64)
+    case seekFailed(status: Int32, atStreamFrame: Int64)
     /// The file that was opened isn't the one whose metadata was checked (it was replaced or swapped).
     case sourceIdentityMismatch
     /// Size, modification date or identity changed while decoding; the result would be stale.

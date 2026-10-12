@@ -4,6 +4,7 @@ import WWCore
 import WWDecode
 import WWDerived
 import WWSources
+import WWTimeMap
 
 actor AlignmentRuntime {
     struct Prepared: Sendable {
@@ -15,6 +16,7 @@ actor AlignmentRuntime {
     struct AuditionClip: Sendable {
         var sampleRate: Double
         var samples: [Float]
+        var channelCount: Int = 1
     }
 
     struct DependentCounts: Sendable, Equatable {
@@ -105,6 +107,27 @@ actor AlignmentRuntime {
         ) else { throw AlignmentAcceptanceError.episodeNotFound(episodeID) }
         reports[episodeID] = report
         return report
+    }
+
+    func prepareManual(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws -> AlignmentAnalysisReport {
+        let sources = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        let authorizations = sources.filter { $0.availability == .on }
+            .map { ContentWorkAuthorization.explicitUserRequest(for: $0.id) }
+        let report = try await pipeline.prepareManual(
+            model: model, episode: episodeID, sources: sources, authorizations: authorizations
+        )
+        reports[episodeID] = report
+        return report
+    }
+
+    func shiftGroup(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        group: RecorderGroupID, milliseconds: Int64
+    ) async throws -> AcceptedAlignment {
+        _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        return try await pipeline.shiftAcceptedGroup(
+            model: model, episode: episodeID, group: group, milliseconds: milliseconds
+        )
     }
 
     func accept(
@@ -277,6 +300,192 @@ actor AlignmentRuntime {
             try await cursor.verifyUnchanged()
             return AuditionClip(sampleRate: sampleRate, samples: samples)
         }
+    }
+
+    func waveformTracks(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        startSeconds: Double, durationSeconds: Double, overview: Bool = false,
+        progress: @Sendable (Double) async throws -> Void = { _ in }
+    ) async throws -> AlignmentWaveformLoad {
+        guard let episode = model.episode(episodeID) else {
+            throw AlignmentAcceptanceError.episodeNotFound(episodeID)
+        }
+        let sources = await resolveSources(episode.sources)
+        var map: AlignedTimelineMap?
+        var mapWarning: String?
+        if episode.alignment?.acceptedRevision != nil {
+            do {
+                try await pipeline.activate(model: model, episode: episodeID)
+                map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+            } catch {
+                try Task.checkCancellation()
+                mapWarning = "Stored timing is unavailable: \(error). These are unplaced source-origin previews."
+            }
+        }
+        var tracks: [AlignmentWaveformTrack] = []
+        var refusals: [AlignmentWaveformRefusal] = []
+        var admissions: [SourceID: WaveformSourceAdmission] = [:]
+        for (index, record) in episode.sources.enumerated() {
+            try Task.checkCancellation()
+            guard let groupID = record.placement.recorderGroupID,
+                  let epochID = record.placement.epochID,
+                  let group = episode.recorderGroup(groupID)
+            else { continue }
+            do {
+                let admission = try await waveformSource(record.id, sources: sources)
+                let envelope: WaveformEnvelope
+                if overview {
+                    envelope = try await WaveformWindowReader.readOverview(
+                        sourceURL: admission.url, source: record.id,
+                        matching: admission.witness, decoder: pipeline.decoder,
+                        groupMap: map?.groups.first(where: { $0.group == groupID })
+                    ) { [self] fraction in
+                        guard try await accessStore.record(for: admission.key) == admission.record else {
+                            throw DecodeFailure.sourceIdentityMismatch
+                        }
+                        try await progress((Double(index) + fraction) / Double(max(1, episode.sources.count)))
+                    }
+                } else {
+                    envelope = try await WaveformWindowReader.readWindow(
+                        sourceURL: admission.url, source: record.id,
+                        matching: admission.witness, decoder: pipeline.decoder,
+                        startSeconds: startSeconds, durationSeconds: durationSeconds,
+                        groupMap: map?.groups.first(where: { $0.group == groupID })
+                    )
+                }
+                try await reverify(admission)
+                admissions[record.id] = admission
+                tracks.append(AlignmentWaveformTrack(
+                    group: groupID, epoch: epochID, name: record.displayNameHint,
+                    groupName: group.name, envelope: envelope
+                ))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                try Task.checkCancellation()
+                refusals.append(AlignmentWaveformRefusal(
+                    id: record.id, name: record.displayNameHint,
+                    reason: "\(error). Check this source in Setup before loading it again."
+                ))
+            }
+        }
+        for track in tracks {
+            guard let admission = admissions[track.id] else { throw DecodeFailure.sourceIdentityMismatch }
+            try await reverify(admission)
+        }
+        if map != nil {
+            _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        }
+        return AlignmentWaveformLoad(tracks: tracks, refusals: refusals, map: map, mapWarning: mapWarning)
+    }
+
+    private struct WaveformSourceAdmission {
+        let key: DeviceAccessKey
+        let record: DeviceAccessRecord
+        let url: URL
+        let witness: RawSourceIdentity
+    }
+
+    private func waveformSource(
+        _ source: SourceID, sources: [AlignmentSource]
+    ) async throws -> WaveformSourceAdmission {
+        guard let resolved = sources.first(where: { $0.id == source }), resolved.availability == .on else {
+            throw DecodeFailure.sourceIdentityMismatch
+        }
+        let key = DeviceAccessKey(showID: showID, sourceID: source)
+        guard let record = try await accessStore.record(for: key),
+              let fingerprint = record.recordedIdentity?.fingerprint
+        else { throw DecodeFailure.sourceIdentityMismatch }
+        let witness = try await pipeline.decoder.captureRawIdentity(resolved.url, matching: fingerprint)
+        let admission = WaveformSourceAdmission(key: key, record: record, url: resolved.url, witness: witness)
+        try await reverify(admission)
+        return admission
+    }
+
+    private func reverify(_ admission: WaveformSourceAdmission) async throws {
+        guard try await accessStore.record(for: admission.key) == admission.record,
+              let fingerprint = admission.record.recordedIdentity?.fingerprint
+        else { throw DecodeFailure.sourceIdentityMismatch }
+        let present = try await pipeline.decoder.captureRawIdentity(admission.url, matching: fingerprint)
+        guard present == admission.witness,
+              try await accessStore.record(for: admission.key) == admission.record
+        else { throw DecodeFailure.sourceIdentityMismatch }
+        try Task.checkCancellation()
+    }
+
+    func alignedAudition(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, target: SourceID,
+        targetChannel: Int, startSeconds: Double, durationSeconds: Double
+    ) async throws -> AuditionClip {
+        guard let episode = model.episode(episodeID) else {
+            throw AlignmentAcceptanceError.episodeNotFound(episodeID)
+        }
+        let sources = await resolveSources(episode.sources)
+        try await pipeline.activate(model: model, episode: episodeID)
+        let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        guard let referenceGroup = map.groups.first(where: { $0.group == map.reference.group }),
+              let reference = referenceGroup.placements.first(where: { $0.occurrence.id == map.reference.occurrence }),
+              let targetGroup = map.groups.first(where: { $0.placements.contains(where: { $0.occurrence.source == target }) }),
+              reference.occurrence.source != target
+        else { throw AlignmentAcceptanceError.noReference }
+        let referenceAdmission = try await waveformSource(reference.occurrence.source, sources: sources)
+        let targetAdmission = try await waveformSource(target, sources: sources)
+        let left = try await AlignedAuditionWindowReader.readWindow(
+            sourceURL: referenceAdmission.url, source: reference.occurrence.source,
+            matching: referenceAdmission.witness, decoder: pipeline.decoder, groupMap: referenceGroup,
+            decodedChannel: 0, startSeconds: startSeconds, durationSeconds: durationSeconds
+        )
+        let right = try await AlignedAuditionWindowReader.readWindow(
+            sourceURL: targetAdmission.url, source: target, matching: targetAdmission.witness,
+            decoder: pipeline.decoder, groupMap: targetGroup, decodedChannel: targetChannel,
+            startSeconds: startSeconds, durationSeconds: durationSeconds
+        )
+        try await reverify(referenceAdmission)
+        try await reverify(targetAdmission)
+        _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        guard left.count == right.count else { throw WaveformWindowError.invalidSamples }
+        return AuditionClip(
+            sampleRate: Double(AlignedAuditionWindowReader.outputRate), samples: left + right, channelCount: 2
+        )
+    }
+
+    func mixedAudition(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        enabled: [SourceID], startSeconds: Double, durationSeconds: Double
+    ) async throws -> AuditionClip {
+        guard let episode = model.episode(episodeID), !enabled.isEmpty else {
+            throw AlignmentAcceptanceError.noReference
+        }
+        let sources = await resolveSources(episode.sources)
+        try await pipeline.activate(model: model, episode: episodeID)
+        let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        var mixed: [Float]?
+        var admissions: [WaveformSourceAdmission] = []
+        for sourceID in enabled {
+            try Task.checkCancellation()
+            guard let record = episode.source(sourceID),
+                  let groupID = record.placement.recorderGroupID,
+                  let group = map.groups.first(where: { $0.group == groupID }),
+                  group.placements.contains(where: { $0.occurrence.source == sourceID })
+            else { throw WaveformWindowError.mapDoesNotMatchSource }
+            let admission = try await waveformSource(sourceID, sources: sources)
+            let channel = episode.statedChannel(of: sourceID) ?? 0
+            let samples = try await AlignedAuditionWindowReader.readWindow(
+                sourceURL: admission.url, source: sourceID,
+                matching: admission.witness, decoder: pipeline.decoder, groupMap: group,
+                decodedChannel: channel, startSeconds: startSeconds, durationSeconds: durationSeconds
+            )
+            var buffer = mixed ?? [Float](repeating: 0, count: samples.count)
+            guard buffer.count == samples.count else { throw WaveformWindowError.invalidSamples }
+            for index in samples.indices { buffer[index] += samples[index] / Float(enabled.count) }
+            mixed = buffer
+            admissions.append(admission)
+        }
+        for admission in admissions { try await reverify(admission) }
+        _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        return AuditionClip(
+            sampleRate: Double(AlignedAuditionWindowReader.outputRate), samples: mixed ?? []
+        )
     }
 
     func dependentCounts(episode episodeID: EpisodeID) async -> DependentCounts {

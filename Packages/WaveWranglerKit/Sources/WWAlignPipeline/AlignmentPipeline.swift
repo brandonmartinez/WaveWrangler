@@ -188,6 +188,58 @@ public final class AlignmentPipeline: Sendable {
 
     // MARK: Analysis (consent-gated decode → estimator → proposals/abstentions)
 
+    /// Prepares a manual map using header facts only. No samples are decoded and no estimator runs.
+    public func prepareManual(
+        model: ShowDocumentModel,
+        episode episodeID: EpisodeID,
+        sources: [AlignmentSource],
+        authorizations: [ContentWorkAuthorization]
+    ) async throws -> AlignmentAnalysisReport {
+        guard let plan = await plan(
+            model: model, episode: episodeID, sources: sources, authorizations: authorizations
+        ) else { throw AlignmentAcceptanceError.episodeNotFound(episodeID) }
+        guard plan.reference != nil else { throw AlignmentAcceptanceError.noReference }
+        await coordinator.setAssetRevision(AlignmentAssetKinds.sourceFacts)
+        let registered = await coordinator.inputs.sources
+        let eligibility = ContentEligibility(sources: sources, authorizations: authorizations, registered: registered)
+        let admitted = plan.eligiblePlacedSources.compactMap { id in
+            eligibility.admitted(id).map { (id, $0.source, $0.token) }
+        }
+        let coordinator = coordinator
+        let environment = environment
+        let results = await boundedMap(admitted, limit: configuration.concurrency) { entry in
+            let (id, source, token) = entry
+            return await coordinator.run(PipelineSlots.sourceFacts(id), key: SourceProbe.key(source: id, token: token)) { () throws(AlignmentWorkFailure) -> Data in
+                let facts = try await SourceProbe.run(source, token: token, environment: environment)
+                do { return try SourceFacts.encode(facts) }
+                catch { throw .encoding(String(describing: error)) }
+            }
+        }
+        try Task.checkCancellation()
+        var facts: [SourceID: SourceFacts] = [:]
+        var probes: [SourceID: PipelineJobResult] = [:]
+        var failures: [SourceID: AlignmentWorkFailure] = [:]
+        for (entry, result) in zip(admitted, results) {
+            probes[entry.0] = result
+            if let failure = result.typedFailure {
+                failures[entry.0] = failure
+            } else if let payload = coordinator.store.payload(for: result.key) {
+                do { facts[entry.0] = try SourceFacts.decode(payload) }
+                catch { failures[entry.0] = .encoding(String(describing: error)) }
+            } else {
+                failures[entry.0] = .encoding("the source facts are missing")
+            }
+        }
+        guard let reference = plan.reference else { throw AlignmentAcceptanceError.noReference }
+        guard facts[reference.source] != nil else {
+            throw AlignmentAcceptanceError.referenceFactsUnavailable(reference.source)
+        }
+        return AlignmentAnalysisReport(
+            plan: plan, facts: facts, probes: probes, analyses: [:], records: [:],
+            sourceFailures: failures, epochFailures: [:]
+        )
+    }
+
     /// Probes every eligible placed source (header only), then analyses each planned epoch against the
     /// reference. Results are derived assets keyed by every M2-C5 component; nothing becomes a map until a
     /// person accepts it. Returns `nil` when the episode does not exist.
@@ -495,6 +547,80 @@ public final class AlignmentPipeline: Sendable {
         return try await record(
             map: revised, model: model, episode: episodeID, derivedFrom: priorRevision
         )
+    }
+
+    /// Translates every supported segment in one recorder group by the same exact offset.
+    /// Unsupported epochs and occurrence spans (including gaps) remain unchanged.
+    public func shiftAcceptedGroup(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        group groupID: RecorderGroupID, milliseconds: Int64
+    ) async throws(AlignmentAcceptanceError) -> AcceptedAlignment {
+        guard let episode = model.episode(episodeID),
+              let revision = episode.alignment?.acceptedRevision,
+              let version = episode.alignment?.map(revision: revision)
+        else { throw .noReference }
+        let prior: AlignedTimelineMap
+        do throws(MapHistoryError) {
+            prior = try model.timeMap(revision: revision, in: episodeID)
+        } catch { throw .priorMapUnreadable(error) }
+        try await verifyPriorRevision(version: version, map: prior, episode: episode)
+        guard groupID != prior.reference.group,
+              prior.groups.contains(where: { $0.group == groupID }),
+              milliseconds != 0
+        else { throw .invalidMap("Choose a non-reference recorder group and a non-zero move.") }
+        guard prior.groups.first(where: { $0.group == groupID })?.epochs.contains(where: {
+            if case .mapped = $0.mapping { return true }
+            return false
+        }) == true else {
+            throw .invalidMap("Place at least one epoch in this recorder group before moving it.")
+        }
+        let delta: ExactRational
+        do { delta = try ExactRational(numerator: Int128(milliseconds), denominator: 1_000) }
+        catch { throw .invalidMap(String(describing: error)) }
+        do {
+            let groups = try prior.groups.map { group in
+                guard group.group == groupID else { return group }
+                let epochs = try group.epochs.map { epoch in
+                    guard case let .mapped(segments, provenance) = epoch.mapping else { return epoch }
+                    let shifted = try segments.map {
+                        try AffineClockSegment(
+                            groupClockStart: $0.groupClockStart,
+                            groupClockEnd: $0.groupClockEnd,
+                            rateRatio: $0.rateRatio,
+                            alignedOffset: $0.alignedOffset.adding(delta)
+                        )
+                    }
+                    let correction: ManualCorrection
+                    if case let .manual(existing) = provenance,
+                       existing.basis == .anchors,
+                       let anchors = AlignmentAnchorNote.decode(existing.note) {
+                        correction = ManualCorrection(
+                            basis: .anchors,
+                            note: AlignmentAnchorNote.encode(anchors.map {
+                                AlignmentAnchor(
+                                    sourceSeconds: $0.sourceSeconds,
+                                    alignedSeconds: $0.alignedSeconds + Double(milliseconds) / 1_000
+                                )
+                            })
+                        )
+                    } else {
+                        correction = ManualCorrection(basis: .numericEntry, note: "Recorder group moved by the user.")
+                    }
+                    return EpochClockMap(
+                        epoch: epoch.epoch,
+                        mapping: .mapped(segments: shifted, provenance: .manual(correction))
+                    )
+                }
+                return try GroupTimeMap(
+                    group: group.group, reference: group.reference, epochs: epochs, placements: group.placements
+                )
+            }
+            return try await record(
+                map: AlignedTimelineMap(reference: prior.reference, groups: groups),
+                model: model, episode: episodeID, derivedFrom: revision
+            )
+        } catch let error as AlignmentAcceptanceError { throw error }
+        catch { throw .invalidMap(String(describing: error)) }
     }
 
     /// Splits one persisted occurrence placement at `frame`, starts `newEpoch`, and records the result as a
@@ -976,15 +1102,19 @@ public final class AlignmentPipeline: Sendable {
 
     // MARK: Aligned assets
 
-    /// Streams the accepted map's aligned audio for every same-group channel into the derived store (app
-    /// cache). Refuses unless the document's accepted revision is the coordinator's active one and still
-    /// applies to the episode. Internal derived assets only; export stays blocked (M4).
-    public func renderAlignedAssets(
+    /// Read-only admission for a bounded waveform or internal audition. Never opens source content.
+    public func verifiedAcceptedMap(
+        model: ShowDocumentModel, episode episodeID: EpisodeID
+    ) async throws(AlignedAssetRefusal) -> AlignedTimelineMap {
+        try await admittedMap(model: model, episode: episodeID).map
+    }
+
+    private func admittedMap(
         model: ShowDocumentModel,
-        episode episodeID: EpisodeID,
-        sources: [AlignmentSource],
-        authorizations: [ContentWorkAuthorization]
-    ) async throws(AlignedAssetRefusal) -> AlignedAssetReport {
+        episode episodeID: EpisodeID
+    ) async throws(AlignedAssetRefusal) -> (
+        map: AlignedTimelineMap, revision: MapRevisionReference, identity: AcceptedMapIdentity
+    ) {
         guard let episode = model.episode(episodeID) else { throw .episodeNotFound(episodeID) }
         guard let revisionNumber = episode.alignment?.acceptedRevision else { throw .noAcceptedMap }
         if await coordinator.isShutdown { throw .coordinatorShutDown }
@@ -1012,6 +1142,22 @@ public final class AlignmentPipeline: Sendable {
         guard let identity = try? mapIdentity(revision: revision, version: version, map: map, registered: currentInputs.sources),
               await coordinator.state(of: identity.slot) == .ready(identity.key)
         else { throw .acceptedMapContentNotActive }
+        return (map, revision, identity)
+    }
+
+    /// Streams the accepted map's aligned audio for every same-group channel into the derived store (app
+    /// cache). Refuses unless the document's accepted revision is the coordinator's active one and still
+    /// applies to the episode. Internal derived assets only; export stays blocked (M4).
+    public func renderAlignedAssets(
+        model: ShowDocumentModel,
+        episode episodeID: EpisodeID,
+        sources: [AlignmentSource],
+        authorizations: [ContentWorkAuthorization]
+    ) async throws(AlignedAssetRefusal) -> AlignedAssetReport {
+        let admitted = try await admittedMap(model: model, episode: episodeID)
+        let map = admitted.map
+        let revision = admitted.revision
+        let identity = admitted.identity
         for spec in AlignmentAssetKinds.all { await coordinator.setAssetRevision(spec) }
         let registered = await coordinator.inputs.sources
         let eligibility = ContentEligibility(sources: sources, authorizations: authorizations, registered: registered)

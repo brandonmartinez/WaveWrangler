@@ -109,6 +109,43 @@ struct WWSourcesSetupEngineTests {
         #expect(try Data(contentsOf: candidate) == before)
     }
 
+    @Test func explicitOriginalConfirmationRequiresUnchangedProvisionalIdentity() async throws {
+        let root = try makeTree()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let context = SourceAccessContext(io: SystemSourceIO())
+        let store = InMemoryDeviceAccessStore()
+        let engine = WWSourcesSetupEngine(
+            showID: ShowID(), store: store, context: context, preference: FixedPreference(false),
+            captureRawIdentity: { url, fingerprint in
+                try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+            }
+        )
+        let scan = try await engine.scanForImport([root], episodeSourceIDs: [])
+        let items = ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: []).importItems()
+        try await engine.commitImport(
+            Dictionary(uniqueKeysWithValues: items.map { ($0.candidateID, $0.item.source.id) }),
+            fromScan: scan.token
+        )
+        let first = try #require(items.first { $0.item.source.displayNameHint == "tr1.wav" }?.item.source.id)
+        let second = try #require(items.first { $0.item.source.displayNameHint == "tr2.wav" }?.item.source.id)
+        let firstKey = DeviceAccessKey(showID: engine.showID, sourceID: first)
+        let secondKey = DeviceAccessKey(showID: engine.showID, sourceID: second)
+        let original = try #require(await store.record(for: firstKey))
+        #expect(original.recordedIdentity?.confirmation == .provisional)
+        let bytes = try Data(contentsOf: root.appending(path: "ZOOM0001/tr1.wav"))
+        try await engine.confirmCurrentOriginal(first)
+        let confirmed = try #require(await store.record(for: firstKey))
+        #expect(confirmed.recordedIdentity?.confirmation == .userConfirmed)
+        #expect(confirmed.recordedIdentity?.rawWitness?.isUsable == true)
+        #expect(try Data(contentsOf: root.appending(path: "ZOOM0001/tr1.wav")) == bytes)
+        let unchanged = try #require(await store.record(for: secondKey))
+        try Data(repeating: 2, count: 97).write(to: root.appending(path: "ZOOM0001/tr2.wav"))
+        await #expect(throws: SourceEngineError.self) {
+            try await engine.confirmCurrentOriginal(second)
+        }
+        #expect(await store.record(for: secondKey) == unchanged)
+    }
+
     @Test func productionRelinkRefusesAlreadyLinkedCandidate() async throws {
         let root = try makeTree()
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
@@ -190,8 +227,8 @@ struct WWSourcesSetupEngineTests {
         for snapshot in ready.values {
             #expect(snapshot.access == .granted)
             #expect(snapshot.residency == .local)
-            #expect(snapshot.identity == .detailsMatch)
-            #expect(snapshot.summary.text == "Ready")
+            #expect(snapshot.identity == .confirmationNeeded)
+            #expect(snapshot.summary.text == "Confirm original")
         }
         #expect(io.downloads == 0, "downloads Off: zero download requests or progress queries")
 
@@ -488,6 +525,8 @@ struct WWSourcesSetupEngineTests {
         let denied = AvailabilityObservation(observedAt: Date(), location: .unknown, access: .denied)
         #expect(WWSourcesStatusMapping.snapshot(denied).summary.text == "Access denied")
         #expect(WWSourcesStatusMapping.snapshot(nil) == .checking)
+        #expect(WWSourcesStatusMapping.identity(.unverified(.baselineNotUserConfirmed)) == .confirmationNeeded)
+        #expect(WWSourcesStatusMapping.identity(.matchesRecorded) == .detailsMatch)
         #expect(WWSourcesStatusMapping.identity(.changed([.fileSize])) == .changed(differences: "size differ", acceptedByUser: false))
         #expect(WWSourcesStatusMapping.identity(.mismatch([.fileIdentifier])) == .mismatch(differences: "file id differ"))
         #expect(WWSourcesStatusMapping.residency(.downloading) == .cloudOnly)

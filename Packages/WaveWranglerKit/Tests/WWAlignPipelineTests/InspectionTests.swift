@@ -6,6 +6,95 @@ import WWTimeMap
 
 @Suite("Metadata-only Alignment inspection")
 struct InspectionTests {
+    @Test func manualPlacementNeedsNoAcousticAnalysisAndMovesEveryGroupEpoch() async throws {
+        let fixture = try await PipelineFixture([
+            .init(name: "Reference", sources: [.init(name: "reference", seconds: 12, signal: .sine(hz: 440))]),
+            .init(name: "Device", sources: [
+                .init(name: "first", seconds: 12, signal: .sine(hz: 440)),
+                .init(name: "second", seconds: 12, signal: .sine(hz: 880)),
+            ]),
+        ])
+        let laterEpoch = try fixture.moveToNewEpoch("second")
+        let report = try await fixture.pipeline.prepareManual(
+            model: fixture.model, episode: fixture.episodeID,
+            sources: fixture.sources, authorizations: fixture.authorizations
+        )
+        #expect(report.records.isEmpty)
+        #expect(report.analyses.isEmpty)
+        #expect(fixture.content.total.reads == 0)
+        let initial = try await fixture.acceptAndActivate(report, [
+            fixture.epochs[1]: .numeric(ppm: 0, offsetMilliseconds: 0),
+        ])
+        let original = try await fixture.pipeline.reviseAcceptedMap(
+            model: initial.model, episode: fixture.episodeID,
+            decisions: [laterEpoch: .numeric(ppm: 0, offsetMilliseconds: 15_000)]
+        )
+        try await fixture.pipeline.activate(original)
+        let moved = try await fixture.pipeline.shiftAcceptedGroup(
+            model: original.model, episode: fixture.episodeID,
+            group: fixture.groups[1], milliseconds: 1_250
+        )
+        #expect(moved.revision.revision == original.revision.revision + 1)
+        let before = try #require(original.map.groups.first { $0.group == fixture.groups[1] })
+        let after = try #require(moved.map.groups.first { $0.group == fixture.groups[1] })
+        #expect(after.placements == before.placements)
+        for (old, new) in zip(before.epochs, after.epochs) {
+            guard case let .mapped(oldSegments, _) = old.mapping,
+                  case let .mapped(newSegments, _) = new.mapping else {
+                Issue.record("both epochs should stay mapped")
+                continue
+            }
+            #expect(oldSegments.count == newSegments.count)
+            for (a, b) in zip(oldSegments, newSegments) {
+                #expect(a.groupClockStart == b.groupClockStart)
+                #expect(a.groupClockEnd == b.groupClockEnd)
+                #expect(a.rateRatio == b.rateRatio)
+                #expect(abs(b.alignedOffset.approximateDouble - a.alignedOffset.approximateDouble - 1.25) < 0.000_001)
+            }
+        }
+        #expect(moved.map.groups.first { $0.group == fixture.groups[0] }
+                == original.map.groups.first { $0.group == fixture.groups[0] })
+        try await fixture.pipeline.activate(moved)
+        #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == moved.revision.revision)
+        try await fixture.pipeline.activate(model: original.model, episode: fixture.episodeID)
+        #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == original.revision.revision)
+    }
+
+    @Test func groupMoveRetainsUnsupportedEpochAndRejectsUnplacedGroup() async throws {
+        let fixture = try await PipelineFixture([
+            .init(name: "Reference", sources: [.init(name: "reference", seconds: 12, signal: .sine(hz: 440))]),
+            .init(name: "Device", sources: [
+                .init(name: "first", seconds: 12, signal: .sine(hz: 440)),
+                .init(name: "second", seconds: 12, signal: .sine(hz: 880)),
+            ]),
+        ])
+        let laterEpoch = try fixture.moveToNewEpoch("second")
+        let report = try await fixture.pipeline.prepareManual(
+            model: fixture.model, episode: fixture.episodeID,
+            sources: fixture.sources, authorizations: fixture.authorizations
+        )
+        let unplaced = try await fixture.acceptAndActivate(report, [:])
+        await #expect(throws: AlignmentAcceptanceError.self) {
+            _ = try await fixture.pipeline.shiftAcceptedGroup(
+                model: unplaced.model, episode: fixture.episodeID,
+                group: fixture.groups[1], milliseconds: 10
+            )
+        }
+        let initial = try await fixture.pipeline.reviseAcceptedMap(
+            model: unplaced.model, episode: fixture.episodeID,
+            decisions: [fixture.epochs[1]: .numeric(ppm: 0, offsetMilliseconds: 0)]
+        )
+        try await fixture.pipeline.activate(initial)
+        let moved = try await fixture.pipeline.shiftAcceptedGroup(
+            model: initial.model, episode: fixture.episodeID,
+            group: fixture.groups[1], milliseconds: 10
+        )
+        let group = try #require(moved.map.groups.first { $0.group == fixture.groups[1] })
+        #expect(group.epochs.first(where: { $0.epoch == laterEpoch })?.mapping
+                == initial.map.groups.first(where: { $0.group == fixture.groups[1] })?
+                    .epochs.first(where: { $0.epoch == laterEpoch })?.mapping)
+    }
+
     @Test func openingInspectionReadsNoSourceContentOrMetadata() async throws {
         let fixture = try await PipelineFixture([
             .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 22), registered: false)]),
