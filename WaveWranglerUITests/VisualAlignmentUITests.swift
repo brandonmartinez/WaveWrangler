@@ -44,7 +44,7 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 1") })
         app.typeKey("z", modifierFlags: [.command, .shift])
         XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 2") })
-        let trackToggle = app.switches.matching(NSPredicate(
+        let trackToggle = app.checkBoxes.matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "alignment.waveforms.enabled."
         )).allElementsBoundByIndex.first { $0.label.contains("synthetic-remote.wav") }
         let toggle = try XCTUnwrap(trackToggle)
