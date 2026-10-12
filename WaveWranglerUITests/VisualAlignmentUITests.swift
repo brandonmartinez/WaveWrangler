@@ -28,7 +28,7 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(overlayMode, in: app)
         overlayMode.click()
         let overlay = app.staticTexts["alignment.waveforms.overlay"]
-        XCTAssertTrue(waitUntil { overlay.label.contains("2 enabled tracks") }, app.debugDescription)
+        XCTAssertTrue(waitUntil { (overlay.value as? String ?? overlay.label).contains("2 enabled tracks") }, app.debugDescription)
         let place = app.buttons["alignment.waveforms.placeInitial"]
         scrollTo(place, in: app)
         place.click()
@@ -65,7 +65,7 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(group, in: app)
         group.click()
         XCTAssertTrue(waitUntil { !target.exists })
-        XCTAssertTrue(waitUntil { overlay.label.contains("1 enabled track.") })
+        XCTAssertTrue(waitUntil { (overlay.value as? String ?? overlay.label).contains("1 enabled track.") })
         let play = app.buttons["alignment.waveforms.transport.play"]
         scrollTo(play, in: app)
         play.click()
@@ -75,7 +75,7 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(group, in: app)
         group.click()
         XCTAssertTrue(waitUntil { target.exists })
-        XCTAssertTrue(waitUntil { overlay.label.contains("2 enabled tracks") })
+        XCTAssertTrue(waitUntil { (overlay.value as? String ?? overlay.label).contains("2 enabled tracks") })
         scrollTo(play, in: app)
         play.click()
         XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 2 enabled tracks") }, app.debugDescription)
@@ -279,7 +279,7 @@ final class VisualAlignmentUITests: XCTestCase {
 
         let overviewDisclosure = app.disclosureTriangles["Episode overview"]
         scrollTo(overviewDisclosure, in: app)
-        if overviewDisclosure.value as? String == "0" { overviewDisclosure.click() }
+        overviewDisclosure.click()
         let build = app.buttons["alignment.waveforms.overview.load"]
         scrollTo(build, in: app)
         XCTAssertTrue(build.isEnabled)
