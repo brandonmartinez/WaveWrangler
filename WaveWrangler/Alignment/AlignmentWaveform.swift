@@ -66,6 +66,31 @@ struct AlignmentWaveformDrag {
 enum AlignmentWaveformProjection {
     static let overviewNavigationRange = 0.0...86_400.0
 
+    static func tileWindow(start: Double, visible: Double) -> (start: Double, duration: Double)? {
+        guard start.isFinite, overviewNavigationRange.contains(start),
+              visible.isFinite, visible > 0, visible <= 30 else { return nil }
+        let duration = min(30, visible * 3)
+        return (max(0, start - (duration - visible) / 2), duration)
+    }
+
+    static func tileCovers(
+        tileStart: Double, tileDuration: Double, windowStart: Double, visible: Double,
+        margin: Double = 0
+    ) -> Bool {
+        tileStart.isFinite && tileDuration.isFinite && windowStart.isFinite
+            && visible.isFinite && margin.isFinite && margin >= 0
+            && tileStart >= 0 && tileDuration > 0 && windowStart >= 0 && visible > 0
+            && tileStart <= max(0, windowStart - margin) + 0.000_001
+            && tileStart + tileDuration >= windowStart + visible + margin - 0.000_001
+    }
+
+    static func tileTranslation(tileStart: Double, windowStart: Double, visible: Double, width: Double) -> Double? {
+        guard tileStart.isFinite, windowStart.isFinite, visible.isFinite, visible > 0,
+              width.isFinite, width > 0 else { return nil }
+        let translation = (tileStart - windowStart) / visible * width
+        return translation.isFinite ? translation : nil
+    }
+
     static func timelineEnd(map: AlignedTimelineMap) -> Double {
         map.groups.flatMap { group in
             let placed = Set(group.placements.flatMap { $0.spans.map(\.epoch) })

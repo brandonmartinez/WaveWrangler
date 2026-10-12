@@ -34,6 +34,35 @@ struct AlignmentWaveformTests {
         ) == 360)
         #expect(AlignmentWaveformProjection.sourceTimelineEnd(durations: []) == 0)
         #expect(AlignmentWaveformProjection.windowStart(centeredAt: 240, duration: 2) == 239)
+        let tile = AlignmentWaveformProjection.tileWindow(start: 239, visible: 2)
+        #expect(tile?.start == 237)
+        #expect(tile?.duration == 6)
+        #expect(AlignmentWaveformProjection.tileCovers(
+            tileStart: 237, tileDuration: 6, windowStart: 239, visible: 2
+        ))
+        #expect(!AlignmentWaveformProjection.tileCovers(
+            tileStart: 237, tileDuration: 6, windowStart: 242, visible: 2
+        ))
+        #expect(AlignmentWaveformProjection.tileWindow(start: 20, visible: 30)?.start == 20)
+        #expect(AlignmentWaveformProjection.tileWindow(start: 0, visible: 5)?.start == 0)
+        #expect(AlignmentWaveformProjection.tileCovers(
+            tileStart: 0, tileDuration: 15, windowStart: 4, visible: 5, margin: 2.5
+        ))
+        #expect(!AlignmentWaveformProjection.tileCovers(
+            tileStart: 0, tileDuration: 15, windowStart: 8, visible: 5, margin: 2.5
+        ))
+        #expect(!AlignmentWaveformProjection.tileCovers(
+            tileStart: 0, tileDuration: 0, windowStart: 0, visible: 5
+        ))
+        #expect(AlignmentWaveformProjection.tileTranslation(
+            tileStart: 237, windowStart: 239, visible: 2, width: 400
+        ) == -400)
+        #expect(AlignmentWaveformProjection.tileTranslation(
+            tileStart: 237, windowStart: 239.5, visible: 2, width: 400
+        ) == -500)
+        #expect(AlignmentWaveformProjection.tileTranslation(
+            tileStart: 237, windowStart: 239, visible: 0, width: 400
+        ) == nil)
     }
 
     @Test func visualNormalizationUsesEachWindowPeakWithoutChangingSamples() {

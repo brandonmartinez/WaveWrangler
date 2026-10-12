@@ -94,10 +94,12 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(slider, in: app)
         XCTAssertTrue(slider.isEnabled)
         slider.adjust(toNormalizedSliderPosition: 0.7)
-        if go.isEnabled { go.click() }
+        XCTAssertTrue(waitUntil {
+            (Double(start.value as? String ?? "") ?? -1) > 2.5
+                && (Double(playhead.value as? String ?? "") ?? -1) > 3
+        }, "The shared viewport and playhead must move without pressing Go")
         XCTAssertTrue(waitUntil {
             tracks.count == 2 && !app.buttons["alignment.waveforms.load"].label.contains("Cancel")
-                && (Double(start.value as? String ?? "") ?? -1) > 2.5
         }, app.debugDescription)
         let time = Double(playhead.value as? String ?? "") ?? -1
         XCTAssertEqual(time, 3.5, accuracy: 0.2)
@@ -106,7 +108,6 @@ final class VisualAlignmentUITests: XCTestCase {
 
         scrollTo(slider, in: app)
         slider.adjust(toNormalizedSliderPosition: 0.04)
-        if go.isEnabled { go.click() }
         XCTAssertTrue(waitUntil {
             tracks.count == 2 && app.buttons["alignment.waveforms.load"].label == "Refresh audio"
                 && Double(start.value as? String ?? "") == 0

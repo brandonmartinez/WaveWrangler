@@ -41,6 +41,8 @@ final class EpisodeAlignmentModel {
     private(set) var waveformDisplayGains: [SourceID: Double] = [:]
     private(set) var waveformProjectionErrors: [SourceID: String] = [:]
     private(set) var waveformSnapshotID = UUID()
+    private(set) var loadedWaveformStartSeconds = 0.0
+    private(set) var loadedWaveformDurationSeconds = 5.0
     private(set) var waveformRefusals: [AlignmentWaveformRefusal] = []
     private(set) var disabledGroups: Set<RecorderGroupID> = []
     private(set) var disabledTracks: Set<SourceID> = []
@@ -76,6 +78,11 @@ final class EpisodeAlignmentModel {
     private(set) var waveformDraftAnchors: [AlignmentAnchor] = []
     @ObservationIgnored private var waveformTask: Task<Void, Never>?
     @ObservationIgnored private var waveformGeneration: UInt64 = 0
+    @ObservationIgnored private var scrubLoadTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingWaveformTile: (start: Double, duration: Double)?
+    @ObservationIgnored private var waveformTiles: [CachedWaveformTile] = []
+    @ObservationIgnored private var loadedWaveformGeneration: UInt64?
+    @ObservationIgnored private var loadedWaveformRequiresVerification = false
     @ObservationIgnored private var overviewTask: Task<Void, Never>?
     @ObservationIgnored private var overviewGeneration: UInt64 = 0
     private var loadedOverviewEpisode: Episode?
@@ -85,6 +92,25 @@ final class EpisodeAlignmentModel {
     private var loadedWaveformEpisode: Episode?
     private var anchorsByEpoch: [RecordingEpochID: [AlignmentAnchorRow]] = [:]
     private var acceptedMap: AlignedTimelineMap?
+
+    private struct CachedWaveformTile {
+        let modelGeneration: UInt64
+        let episode: Episode?
+        let start: Double
+        let duration: Double
+        let load: AlignmentWaveformLoad
+        let strokes: [SourceID: [AlignmentWaveformStroke]]
+        let gains: [SourceID: Double]
+        let errors: [SourceID: String]
+        let id = UUID()
+
+        func covers(start windowStart: Double, duration visible: Double, margin: Double = 0) -> Bool {
+            AlignmentWaveformProjection.tileCovers(
+                tileStart: start, tileDuration: duration,
+                windowStart: windowStart, visible: visible, margin: margin
+            )
+        }
+    }
 
     let episodeID: EpisodeID
     private weak var document: ShowDocument?
@@ -322,33 +348,74 @@ final class EpisodeAlignmentModel {
         }
     }
 
-    func loadWaveforms() {
+    func loadWaveforms(keepingSnapshot: Bool = false, preload: Bool = false) {
         guard let document else { return }
-        cancelWaveforms()
-        let generation = waveformGeneration
         let snapshot = document.store.model
+        let modelGeneration = document.store.modelGeneration
         guard timingIsVerified(snapshot) else {
+            cancelWaveforms()
             waveformMessage = "Timing is not verified on disk yet. Save the show before loading aligned audio."
             return
         }
-        let start = waveformStartSeconds
-        let duration = waveformDurationSeconds
+        let visibleStart = waveformStartSeconds
+        let visibleDuration = waveformDurationSeconds
+        guard let request = AlignmentWaveformProjection.tileWindow(
+            start: visibleStart, visible: visibleDuration
+        ) else {
+            waveformMessage = "Choose a finite window within zero to 24 aligned hours, at most 30 seconds wide."
+            return
+        }
+        let margin = preload && request.duration > waveformDurationSeconds ? waveformDurationSeconds / 2 : 0
+        if keepingSnapshot {
+            if let cached = waveformTiles.reversed().first(where: {
+                $0.modelGeneration == modelGeneration && $0.covers(
+                    start: waveformStartSeconds, duration: waveformDurationSeconds, margin: margin
+                )
+            }) {
+                if cached.id != waveformSnapshotID || isLoadingWaveforms {
+                    cancelWaveforms(keepingSnapshot: true)
+                    publishWaveformTile(cached)
+                }
+                return
+            }
+            if isLoadingWaveforms, let pendingWaveformTile,
+               AlignmentWaveformProjection.tileCovers(
+                   tileStart: pendingWaveformTile.start, tileDuration: pendingWaveformTile.duration,
+                   windowStart: waveformStartSeconds, visible: waveformDurationSeconds, margin: margin
+               ) { return }
+        }
+        cancelWaveforms(keepingSnapshot: keepingSnapshot)
+        let generation = waveformGeneration
         lastError = nil
         isLoadingWaveforms = true
-        waveformMessage = "Reading a bounded window through the read-only source gateway…"
+        pendingWaveformTile = request
+        waveformMessage = "Loading the next measured timeline tile through the read-only source gateway…"
         waveformTask = Task { [weak self] in
             guard let self else { return }
             defer {
                 if generation == waveformGeneration {
                     isLoadingWaveforms = false
                     waveformTask = nil
+                    pendingWaveformTile = nil
                 }
             }
             do {
-                let loaded = try await runtime.waveformTracks(
+                var loaded = try await runtime.waveformTracks(
                     model: snapshot, episode: episodeID,
-                    startSeconds: start, durationSeconds: duration
+                    startSeconds: request.start, durationSeconds: request.duration
                 )
+                var publishedWindow = request
+                if request.duration > visibleDuration, !loaded.refusals.isEmpty {
+                    let exact = try await runtime.waveformTracks(
+                        model: snapshot, episode: episodeID,
+                        startSeconds: visibleStart, durationSeconds: visibleDuration
+                    )
+                    if exact.refusals.count < loaded.refusals.count,
+                       Set(exact.tracks.map(\.id)).isSuperset(of: Set(loaded.tracks.map(\.id))) {
+                        loaded = exact
+                        publishedWindow = (visibleStart, visibleDuration)
+                    }
+                }
                 #if DEBUG
                 if UserDefaults.standard.bool(forKey: "WWUITestHooks"),
                    UserDefaults.standard.bool(forKey: "WWUITestVisualAlignmentFixture"),
@@ -358,7 +425,8 @@ final class EpisodeAlignmentModel {
                 #endif
                 try Task.checkCancellation()
                 guard generation == waveformGeneration else { return }
-                guard document.store.model == snapshot, timingIsVerified(snapshot) else {
+                guard document.store.modelGeneration == modelGeneration,
+                      document.store.model == snapshot, timingIsVerified(snapshot) else {
                     waveformMessage = "The episode or verified timing changed. Save and load the current audio window again."
                     return
                 }
@@ -374,33 +442,21 @@ final class EpisodeAlignmentModel {
                         projectionErrors[track.id] = error.localizedDescription
                     }
                 }
-                let episodeSnapshot = snapshot.episode(episodeID)
-                let previousEnd = loadedWaveformEpisode == episodeSnapshot ? waveformNavigationEndSeconds : 0
-                if let map = loaded.map {
-                    waveformNavigationEndSeconds = AlignmentWaveformProjection.timelineEnd(map: map)
-                } else if loaded.mapWarning == nil {
-                    waveformNavigationEndSeconds = max(
-                        previousEnd, AlignmentWaveformProjection.sourceTimelineEnd(
-                            durations: loaded.tracks.map {
-                                (frames: $0.envelope.totalFrames, rate: $0.envelope.sampleRate)
-                            }
-                        )
-                    )
-                } else {
-                    waveformNavigationEndSeconds = 0
+                let tile = CachedWaveformTile(
+                    modelGeneration: modelGeneration, episode: snapshot.episode(episodeID),
+                    start: publishedWindow.start, duration: publishedWindow.duration,
+                    load: loaded, strokes: strokes, gains: gains, errors: projectionErrors
+                )
+                waveformTiles.removeAll {
+                    $0.modelGeneration != modelGeneration
+                        || ($0.start == tile.start && $0.duration == tile.duration)
                 }
-                waveformTracks = loaded.tracks
-                waveformStrokes = strokes
-                waveformDisplayGains = gains
-                waveformProjectionErrors = projectionErrors
-                waveformSnapshotID = UUID()
-                disabledTracks.formIntersection(Set(episodeSnapshot?.sources.map(\.id) ?? []))
-                disabledGroups.formIntersection(Set(episodeSnapshot?.recorderGroups.map(\.id) ?? []))
-                waveformRefusals = loaded.refusals
-                loadedWaveformMap = loaded.map
-                loadedWaveformEpisode = episodeSnapshot
-                waveformMessage = loaded.mapWarning
-                    ?? "\(loaded.tracks.count) recordings loaded; \(loaded.refusals.count) unavailable. This is a measured snapshot, not an alignment proposal."
+                waveformTiles.append(tile)
+                if waveformTiles.count > 3 { waveformTiles.removeFirst() }
+                publishWaveformTile(tile)
+                if !tile.covers(start: waveformStartSeconds, duration: waveformDurationSeconds) {
+                    scheduleScrubTile()
+                }
             } catch is CancellationError {
                 if generation == waveformGeneration { waveformMessage = "Waveform loading cancelled." }
             } catch {
@@ -411,17 +467,71 @@ final class EpisodeAlignmentModel {
         }
     }
 
-    func cancelWaveforms() {
+    private func publishWaveformTile(_ tile: CachedWaveformTile) {
+        let previousEnd = loadedWaveformEpisode == tile.episode ? waveformNavigationEndSeconds : 0
+        if let map = tile.load.map {
+            waveformNavigationEndSeconds = AlignmentWaveformProjection.timelineEnd(map: map)
+        } else if tile.load.mapWarning == nil {
+            waveformNavigationEndSeconds = max(
+                previousEnd, AlignmentWaveformProjection.sourceTimelineEnd(
+                    durations: tile.load.tracks.map {
+                        (frames: $0.envelope.totalFrames, rate: $0.envelope.sampleRate)
+                    }
+                )
+            )
+        } else {
+            waveformNavigationEndSeconds = 0
+        }
+        waveformTracks = tile.load.tracks
+        waveformStrokes = tile.strokes
+        waveformDisplayGains = tile.gains
+        waveformProjectionErrors = tile.errors
+        waveformSnapshotID = tile.id
+        loadedWaveformGeneration = tile.modelGeneration
+        loadedWaveformRequiresVerification = tile.episode?.alignment?.acceptedRevision != nil
+        loadedWaveformStartSeconds = tile.start
+        loadedWaveformDurationSeconds = tile.duration
+        disabledTracks.formIntersection(Set(tile.episode?.sources.map(\.id) ?? []))
+        disabledGroups.formIntersection(Set(tile.episode?.recorderGroups.map(\.id) ?? []))
+        waveformRefusals = tile.load.refusals
+        loadedWaveformMap = tile.load.map
+        loadedWaveformEpisode = tile.episode
+        waveformMessage = tile.load.mapWarning
+            ?? "\(tile.load.tracks.count) recordings loaded; \(tile.load.refusals.count) unavailable. Measured tiles are cached in memory; originals stay unchanged."
+    }
+
+    private func scheduleScrubTile() {
+        scrubLoadTask?.cancel()
+        scrubLoadTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(120)) }
+            catch { return }
+            guard let self, !Task.isCancelled else { return }
+            scrubLoadTask = nil
+            loadWaveforms(keepingSnapshot: true, preload: true)
+        }
+    }
+
+    func cancelWaveforms(keepingSnapshot: Bool = false) {
         waveformGeneration += 1
+        scrubLoadTask?.cancel()
+        scrubLoadTask = nil
         waveformTask?.cancel()
         waveformTask = nil
+        pendingWaveformTile = nil
         isLoadingWaveforms = false
+        if keepingSnapshot { return }
+        waveformTiles = []
+        loadedWaveformGeneration = nil
+        loadedWaveformRequiresVerification = false
         waveformTracks = []
         waveformStrokes = [:]
         waveformDisplayGains = [:]
         waveformProjectionErrors = [:]
         waveformRefusals = []
         loadedWaveformMap = nil
+        loadedWaveformEpisode = nil
+        waveformNavigationEndSeconds = 0
+        waveformSnapshotID = UUID()
     }
 
     func loadWaveformOverview() {
@@ -530,14 +640,16 @@ final class EpisodeAlignmentModel {
         loadWaveforms()
     }
 
-    func navigateWaveformTimeline(to time: Double) {
+    @discardableResult
+    func previewWaveformTimeline(to time: Double) -> Bool {
         guard !isWorking, !isLoadingOverview, groupDraftMilliseconds == 0 else {
             waveformMessage = "Finish the group preview or current operation before moving the shared timeline."
-            return
+            return false
         }
-        guard let document, timingIsVerified(document.store.model) else {
+        guard let document, loadedWaveformGeneration == document.store.modelGeneration,
+              (!loadedWaveformRequiresVerification || document.status.saveStatus.state.isVerifiedOnDisk) else {
             waveformMessage = "Save and verify the current timing before moving the shared timeline."
-            return
+            return false
         }
         guard waveformNavigationEndSeconds > 0, time.isFinite,
               time >= 0, time <= min(waveformNavigationEndSeconds, 86_400),
@@ -545,13 +657,35 @@ final class EpisodeAlignmentModel {
                   centeredAt: time, duration: waveformDurationSeconds
               ) else {
             waveformMessage = "Choose a time within the available zero-to-24-hour aligned timeline."
-            return
+                  return false
         }
-        stopAudition()
+              if canStopAudition { stopAudition() }
         waveformPlayheadSeconds = time
         auditionPlayheadSeconds = time
         waveformStartSeconds = start
-        loadWaveforms()
+        let margin = waveformDurationSeconds / 2
+        if let cached = waveformTiles.reversed().first(where: {
+            $0.modelGeneration == document.store.modelGeneration && $0.covers(
+                start: start, duration: waveformDurationSeconds, margin: margin
+            )
+        }), cached.id != waveformSnapshotID || isLoadingWaveforms {
+            cancelWaveforms(keepingSnapshot: true)
+            publishWaveformTile(cached)
+        }
+        if !AlignmentWaveformProjection.tileCovers(
+            tileStart: loadedWaveformStartSeconds, tileDuration: loadedWaveformDurationSeconds,
+            windowStart: start, visible: waveformDurationSeconds, margin: margin
+        ) {
+            scheduleScrubTile()
+        }
+        return true
+    }
+
+    func navigateWaveformTimeline(to time: Double) {
+        guard previewWaveformTimeline(to: time) else { return }
+        scrubLoadTask?.cancel()
+        scrubLoadTask = nil
+        loadWaveforms(keepingSnapshot: true)
     }
 
     func suspend() {

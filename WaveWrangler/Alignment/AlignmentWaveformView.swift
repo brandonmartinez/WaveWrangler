@@ -5,7 +5,6 @@ import WWCore
 struct AlignmentWaveformView: View {
     @Bindable var model: EpisodeAlignmentModel
     @State private var dragSession: AlignmentWaveformDrag?
-    @State private var scrubPreviewSeconds: Double?
     @State private var layout: Layout = .separate
     @State private var normalizeView = false
 
@@ -149,14 +148,14 @@ struct AlignmentWaveformView: View {
                     }
                     Toggle("Normalize view", isOn: $normalizeView)
                         .toggleStyle(.checkbox)
-                        .help("Scales each recording's displayed peaks in this window; playback and originals are unchanged.")
+                        .help("Scales each recording's displayed peaks in its measured tile; playback and originals are unchanged.")
                         .accessibilityIdentifier("alignment.waveforms.normalizeView")
                     Spacer()
                     Text("Shared seconds · dashed waveforms are unplaced source time")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if normalizeView {
-                    Text("Visual gain is per recording and per window. Audio and saved timing are unchanged.")
+                    Text("Visual gain is per recording and measured tile. Audio and saved timing are unchanged.")
                         .font(.caption).foregroundStyle(.secondary)
                         .accessibilityIdentifier("alignment.waveforms.normalizeNote")
                 }
@@ -268,37 +267,33 @@ struct AlignmentWaveformView: View {
 
     private var timelineScrubber: some View {
         let end = min(86_400, max(0, model.waveformNavigationEndSeconds))
-        let position = scrubPreviewSeconds ?? model.waveformPlayheadSeconds
+        let position = model.waveformPlayheadSeconds
         return HStack {
             Text("Timeline").font(.caption)
             Slider(
                 value: Binding(
                     get: { min(max(position, 0), max(end, 1)) },
-                    set: { scrubPreviewSeconds = $0 }
+                    set: { model.previewWaveformTimeline(to: $0) }
                 ),
                 in: 0...max(end, 1),
-                onEditingChanged: { editing in if !editing { commitScrub() } }
+                onEditingChanged: { editing in
+                    if !editing { model.navigateWaveformTimeline(to: model.waveformPlayheadSeconds) }
+                }
             ) {
                 Text("Scrub shared timeline")
             }
             .accessibilityIdentifier("alignment.waveforms.scrubber")
             .disabled(end <= 0 || model.isWorking || model.isLoadingOverview
-                      || model.isLoadingWaveforms || model.groupDraftMilliseconds != 0)
+                      || model.groupDraftMilliseconds != 0)
             Text("\(position, specifier: "%.1f") / \(end, specifier: "%.1f") s")
                 .font(.caption.monospacedDigit())
                 .accessibilityIdentifier("alignment.waveforms.scrubPosition")
-            Button("Go") { commitScrub() }
-                .disabled(end <= 0 || model.isWorking || model.isLoadingOverview || model.isLoadingWaveforms
+            Button("Go") { model.navigateWaveformTimeline(to: model.waveformPlayheadSeconds) }
+                .disabled(end <= 0 || model.isWorking || model.isLoadingOverview
                           || model.groupDraftMilliseconds != 0)
                 .accessibilityIdentifier("alignment.waveforms.scrubGo")
         }
-        .help("Release the scrubber, or enter an exact playhead time and press Go, to load this shared aligned window. No timing map is edited.")
-    }
-
-    private func commitScrub() {
-        let time = scrubPreviewSeconds ?? model.waveformPlayheadSeconds
-        scrubPreviewSeconds = nil
-        model.navigateWaveformTimeline(to: time)
+        .help("Drag for a live, silent visual pan across cached tiles. Release or press Go to load the exact shared window and prepare Play. No timing map is edited.")
     }
 
     private var overview: some View {
@@ -707,9 +702,11 @@ struct AlignmentWaveformView: View {
         track: AlignmentWaveformTrack, strokes: [AlignmentWaveformStroke], size: CGSize, overlay: Bool
     ) -> some View {
         let activeGroup = model.selectedRow?.groupID == track.group
+        let tileWidth = size.width * model.loadedWaveformDurationSeconds / model.waveformDurationSeconds
         return WaveformTrackDrawing(
-            snapshot: model.waveformSnapshotID, strokes: strokes, size: size,
-            start: model.waveformStartSeconds, duration: model.waveformDurationSeconds,
+            snapshot: model.waveformSnapshotID, strokes: strokes,
+            size: CGSize(width: tileWidth, height: size.height),
+            start: model.loadedWaveformStartSeconds, duration: model.loadedWaveformDurationSeconds,
             color: model.trackIdentity(track.id).color.opacity(overlay ? 0.8 : 1),
             lineWidth: overlay ? (model.selectedWaveformSource == track.id ? 2 : 1.3) : 1.5,
             gain: normalizeView ? model.waveformDisplayGains[track.id] ?? 1 : 1,
@@ -717,8 +714,13 @@ struct AlignmentWaveformView: View {
             draftRatePPM: model.waveformRatePPM, draftOffsetMilliseconds: model.waveformOffsetMilliseconds
         )
         .equatable()
-        .offset(x: activeGroup ? model.groupDraftMilliseconds / 1_000
-                / model.waveformDurationSeconds * size.width : 0)
+        .frame(width: size.width, alignment: .leading)
+        .offset(x: (AlignmentWaveformProjection.tileTranslation(
+            tileStart: model.loadedWaveformStartSeconds, windowStart: model.waveformStartSeconds,
+            visible: model.waveformDurationSeconds, width: size.width
+        ) ?? 0)
+            + (activeGroup ? model.groupDraftMilliseconds / 1_000
+                / model.waveformDurationSeconds * size.width : 0))
     }
 
     private func x(_ time: Double, width: Double) -> Double {

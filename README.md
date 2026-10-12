@@ -16,10 +16,10 @@ recording or **Overlay** to compare peaks from enabled tracks on the same scale.
 list below the timeline controls which groups and tracks are shown and heard; select a track
 there to make its recorder active for overlay dragging. Choose **Place groups at source time**
 to accept a first manual placement without running
-acoustic analysis. **Normalize view** scales each recording's displayed peaks within the current
-measured window (and the optional episode overview); it does not change audio, playback, or saved
-timing. The current measured window and its projected strokes are retained in memory while dragging;
-a changed window, episode, or verified alignment loads a new snapshot.
+acoustic analysis. **Normalize view** scales each recording's displayed peaks within its measured
+tile (and the optional episode overview); it does not change audio, playback, or saved
+timing. Up to three bounded measured tiles and their projected strokes are cached in memory
+for smooth visual navigation; a changed episode, source, or verified alignment clears them.
 For a recorder with restarted/overlapping source-time epochs, only its first
 placeable epoch is mapped initially; place later epochs explicitly using **Advanced epoch timing**.
 Select a track and drag its waveform, use the 10 ms nudge buttons, or type **Group move (ms)** to move all
@@ -36,9 +36,11 @@ playhead; **Pause**, **Stop**, click-to-seek, and typed aligned playhead are ava
 or uncovered regions are silent. Playback reads witnessed five-second windows and may briefly
 buffer between windows; a source or map mismatch stops playback rather than substituting audio.
 **Visible span**, **Window start**, **Previous**, and **Next** navigate measured windows. The
-**Timeline** scrubber navigates the same aligned time for every recorder across the available episode;
-release it (or type exact playhead seconds and press **Go**) to pause playback, move the shared
-playhead, and load one exact bounded window. It does not change saved timing. Windows outside a recording show its explicit unavailability;
+**Timeline** scrubber pans the shared ruler and every waveform live without playing audio.
+It translates cached tiles while dragging, loads new bounded tiles when needed, and leaves the
+playhead ready for **Play** on release (or after typing exact playhead seconds and pressing **Go**).
+An uncached section may take a moment to display; unavailable reads are reported rather than
+silently replaced. Scrubbing does not change saved timing. Windows outside a recording show its explicit unavailability;
 navigation remains within the supported 0-to-24-hour aligned range. The advanced
 **Compare Aligned Audio** control still plays up to five seconds of reference/selected
 audio in separate channels for an internal listening check, not an export or cut authorization.
@@ -57,7 +59,8 @@ This is an alignment workspace, not a DAW or complete editing workflow. PCM reco
 exact random-access waveform windows and aligned listening throughout an episode, without decoding
 the preceding hours. Other codecs retain the first-10-source-minutes limit (including inverse map
 offsets); later windows are explicitly refused until exact seeking is established. No persistent
-waveform cache is created. Real local transcription and protected filler-word editing remain
+waveform cache is created; when a wider tile reaches a codec preview limit, a narrower exact
+window is tried before reporting unavailability. Real local transcription and protected filler-word editing remain
 separate, incomplete MVP work.
 
 ## Planning
