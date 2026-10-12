@@ -6,10 +6,95 @@ struct AlignmentWaveformView: View {
     @Bindable var model: EpisodeAlignmentModel
     @State private var dragOrigin: Double?
     @State private var layout: Layout = .separate
+    @State private var normalizeView = false
 
     private enum Layout: String, CaseIterable {
         case separate = "Separate lanes"
         case overlay = "Overlay"
+    }
+
+    private struct WaveformTrackDrawing: View, Equatable {
+        let snapshot: UUID
+        let strokes: [AlignmentWaveformStroke]
+        let size: CGSize
+        let start: Double
+        let duration: Double
+        let color: Color
+        let lineWidth: Double
+        let gain: Double
+        let draftEpoch: RecordingEpochID?
+        let draftRatePPM: Double
+        let draftOffsetMilliseconds: Double
+
+        nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.snapshot == rhs.snapshot && lhs.size == rhs.size
+                && lhs.start == rhs.start && lhs.duration == rhs.duration
+                && lhs.color == rhs.color && lhs.lineWidth == rhs.lineWidth
+                && lhs.gain == rhs.gain && lhs.draftEpoch == rhs.draftEpoch
+                && (lhs.draftEpoch == nil || (
+                    lhs.draftRatePPM == rhs.draftRatePPM
+                        && lhs.draftOffsetMilliseconds == rhs.draftOffsetMilliseconds
+                ))
+        }
+
+        var body: some View {
+            ZStack {
+                path(mapped: true).stroke(color, lineWidth: lineWidth)
+                path(mapped: false).stroke(color, style: StrokeStyle(lineWidth: lineWidth, dash: [3, 2]))
+            }
+            .frame(width: size.width, height: size.height)
+        }
+
+        private func path(mapped: Bool) -> Path {
+            Path { path in
+                guard duration.isFinite, duration > 0 else { return }
+                for stroke in strokes where stroke.mapped == mapped {
+                    let time: Double
+                    if stroke.epoch == draftEpoch {
+                        time = stroke.groupSeconds * (1 + draftRatePPM / 1_000_000)
+                            + draftOffsetMilliseconds / 1_000
+                    } else {
+                        time = stroke.displaySeconds
+                    }
+                    let position = (time - start) / duration * size.width
+                    guard position.isFinite else { continue }
+                    path.move(to: CGPoint(x: position, y: size.height * (0.5 - Double(stroke.high) * gain * 0.45)))
+                    path.addLine(to: CGPoint(x: position, y: size.height * (0.5 - Double(stroke.low) * gain * 0.45)))
+                }
+            }
+        }
+    }
+
+    private struct OverviewTrackDrawing: View, Equatable {
+        let snapshot: UUID
+        let strokes: [AlignmentWaveformStroke]
+        let extent: ClosedRange<Double>
+        let size: CGSize
+        let gain: Double
+
+        nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.snapshot == rhs.snapshot && lhs.extent == rhs.extent
+                && lhs.size == rhs.size && lhs.gain == rhs.gain
+        }
+
+        var body: some View {
+            ZStack {
+                path(mapped: true).stroke(Color.accentColor, lineWidth: 1)
+                path(mapped: false).stroke(Color.orange, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+            }
+            .frame(width: size.width, height: size.height)
+        }
+
+        private func path(mapped: Bool) -> Path {
+            Path { path in
+                let scale = size.width / (extent.upperBound - extent.lowerBound)
+                for stroke in strokes where stroke.mapped == mapped {
+                    let x = (stroke.displaySeconds - extent.lowerBound) * scale
+                    path.move(to: CGPoint(x: x, y: 24 - Double(stroke.high) * gain * 20))
+                    path.addLine(to: CGPoint(x: x, y: 24 - Double(stroke.low) * gain * 20))
+                }
+            }
+        }
     }
 
     private var groups: [RecorderGroupID] {
@@ -60,9 +145,18 @@ struct AlignmentWaveformView: View {
                             .accessibilityIdentifier("alignment.waveforms.layout.\(mode == .overlay ? "overlay" : "separate")")
                             .accessibilityAddTraits(layout == mode ? .isSelected : [])
                     }
+                    Toggle("Normalize view", isOn: $normalizeView)
+                        .toggleStyle(.checkbox)
+                        .help("Scales each recording's displayed peaks in this window; playback and originals are unchanged.")
+                        .accessibilityIdentifier("alignment.waveforms.normalizeView")
                     Spacer()
                     Text("Shared seconds · dashed waveforms are unplaced source time")
                         .font(.caption).foregroundStyle(.secondary)
+                }
+                if normalizeView {
+                    Text("Visual gain is per recording and per window. Audio and saved timing are unchanged.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("alignment.waveforms.normalizeNote")
                 }
                 ruler
                 if visibleTracks.isEmpty {
@@ -176,29 +270,24 @@ struct AlignmentWaveformView: View {
             }
             Text(model.waveformOverviewMessage).font(.caption)
                 .accessibilityIdentifier("alignment.waveforms.overview.status")
-            let projected = Result {
-                try model.waveformOverviewTracks.filter {
-                    model.groupEnabled($0.group) && model.trackEnabled($0.id)
-                }.flatMap {
-                    try AlignmentWaveformProjection.strokes(track: $0, map: model.waveformOverviewMap)
-                }
+            let visible = model.waveformOverviewTracks.filter {
+                model.groupEnabled($0.group) && model.trackEnabled($0.id)
             }
-            switch projected {
-            case let .success(allStrokes):
-                if let extent = AlignmentWaveformProjection.overviewExtent(allStrokes) {
-                    Text("Episode overview: \(extent.lowerBound, specifier: "%.1f") to \(extent.upperBound, specifier: "%.1f") seconds. Blue uses stored timing; dashed orange is unplaced source time.")
+            let allStrokes = visible.flatMap { model.waveformOverviewStrokes[$0.id] ?? [] }
+            if let failed = visible.first(where: { model.waveformOverviewProjectionErrors[$0.id] != nil }),
+               let error = model.waveformOverviewProjectionErrors[failed.id] {
+                Text("Cannot place episode overview: \(error)")
+            } else if let extent = AlignmentWaveformProjection.overviewExtent(allStrokes) {
+                Text("Episode overview: \(extent.lowerBound, specifier: "%.1f") to \(extent.upperBound, specifier: "%.1f") seconds. Blue uses stored timing; dashed orange is unplaced source time.")
+                    .font(.caption)
+                if !AlignmentWaveformProjection.unavailableOverviewRanges(in: extent).isEmpty {
+                    Text("Shaded audio outside 0 to 86,400 aligned seconds is unavailable for exact-window navigation. The 24-hour scan limit is in source time; stored timing is unchanged.")
                         .font(.caption)
-                    if !AlignmentWaveformProjection.unavailableOverviewRanges(in: extent).isEmpty {
-                        Text("Shaded audio outside 0 to 86,400 aligned seconds is unavailable for exact-window navigation. The 24-hour scan limit is in source time; stored timing is unchanged.")
-                            .font(.caption)
-                            .accessibilityIdentifier("alignment.waveforms.overview.navigationLimit")
-                    }
-                    ForEach(model.waveformOverviewTracks.filter { model.groupEnabled($0.group) }) { track in
-                        overviewLane(track, extent: extent)
-                    }
+                        .accessibilityIdentifier("alignment.waveforms.overview.navigationLimit")
                 }
-            case let .failure(error):
-                Text("Cannot place episode overview: \(error.localizedDescription)")
+                ForEach(model.waveformOverviewTracks.filter { model.groupEnabled($0.group) }) { track in
+                    overviewLane(track, extent: extent)
+                }
             }
             ForEach(model.waveformOverviewRefusals) { refusal in
                 Label("\(refusal.name): \(refusal.reason)", systemImage: "exclamationmark.triangle")
@@ -209,12 +298,9 @@ struct AlignmentWaveformView: View {
 
     @ViewBuilder
     private func overviewLane(_ track: AlignmentWaveformTrack, extent: ClosedRange<Double>) -> some View {
-        let result = Result { try AlignmentWaveformProjection.strokes(track: track, map: model.waveformOverviewMap) }
         if !model.trackEnabled(track.id) {
             Text("Hidden and muted").font(.caption).foregroundStyle(.secondary)
-        } else {
-        switch result {
-        case let .success(strokes):
+        } else if let strokes = model.waveformOverviewStrokes[track.id] {
             let canOpen = AlignmentWaveformProjection.overviewWindowStart(
                 at: model.waveformPlayheadSeconds, duration: model.waveformDurationSeconds, strokes: strokes
             ) != nil
@@ -227,10 +313,12 @@ struct AlignmentWaveformView: View {
                     let scale = geometry.size.width / (extent.upperBound - extent.lowerBound)
                     ZStack(alignment: .leading) {
                         Rectangle().fill(Color.primary.opacity(0.04))
-                        overviewPath(strokes.filter(\.mapped), extent: extent, scale: scale)
-                            .stroke(Color.accentColor, lineWidth: 1)
-                        overviewPath(strokes.filter { !$0.mapped }, extent: extent, scale: scale)
-                            .stroke(Color.orange, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                        OverviewTrackDrawing(
+                            snapshot: model.waveformOverviewSnapshotID, strokes: strokes,
+                            extent: extent, size: geometry.size,
+                            gain: normalizeView ? model.waveformOverviewDisplayGains[track.id] ?? 1 : 1
+                        )
+                        .equatable()
                         Rectangle().fill(Color.accentColor.opacity(0.2))
                             .frame(width: max(1, model.waveformDurationSeconds * scale))
                             .offset(x: (model.waveformStartSeconds - extent.lowerBound) * scale)
@@ -275,21 +363,8 @@ struct AlignmentWaveformView: View {
                     .help("Type an aligned playhead within this recording's covered audio, from 0 to 86,400 seconds.")
                 }
             }
-        case let .failure(error):
-            Text("\(track.name): \(error.localizedDescription)")
-        }
-        }
-    }
-
-    private func overviewPath(
-        _ strokes: [AlignmentWaveformStroke], extent: ClosedRange<Double>, scale: Double
-    ) -> Path {
-        Path { path in
-            for stroke in strokes {
-                let x = (stroke.displaySeconds - extent.lowerBound) * scale
-                path.move(to: CGPoint(x: x, y: 24 - Double(min(1, max(-1, stroke.high))) * 20))
-                path.addLine(to: CGPoint(x: x, y: 24 - Double(min(1, max(-1, stroke.low))) * 20))
-            }
+        } else if let error = model.waveformOverviewProjectionErrors[track.id] {
+            Text("\(track.name): \(error)")
         }
     }
 
@@ -343,15 +418,8 @@ struct AlignmentWaveformView: View {
                     }
                     .stroke(Color.secondary.opacity(0.4), lineWidth: 1)
                     ForEach(visibleTracks) { track in
-                        let projected = Result {
-                            try AlignmentWaveformProjection.strokes(track: track, map: model.waveformMap)
-                        }
-                        if case let .success(strokes) = projected {
-                            let color = model.trackIdentity(track.id).color
-                            waveformPath(strokes.filter(\.mapped), track: track, size: geometry.size)
-                                .stroke(color.opacity(0.8), lineWidth: model.selectedWaveformSource == track.id ? 2 : 1.3)
-                            waveformPath(strokes.filter { !$0.mapped }, track: track, size: geometry.size)
-                                .stroke(color.opacity(0.8), style: StrokeStyle(lineWidth: 1.3, dash: [3, 2]))
+                        if let strokes = model.waveformStrokes[track.id] {
+                            waveformDrawing(track: track, strokes: strokes, size: geometry.size, overlay: true)
                         }
                     }
                     Rectangle().fill(Color.primary.opacity(0.7)).frame(width: 1)
@@ -363,14 +431,14 @@ struct AlignmentWaveformView: View {
                     let time = model.waveformStartSeconds
                         + Double(point.x / geometry.size.width) * model.waveformDurationSeconds
                     if let track = model.selectedWaveform,
-                       let strokes = try? AlignmentWaveformProjection.strokes(track: track, map: model.waveformMap),
+                       let strokes = model.waveformStrokes[track.id],
                        pick(track, strokes: strokes, time: time) { return }
                     model.seekEnabledTracks(to: time)
                 }
                 .gesture(DragGesture(minimumDistance: 4)
                     .onChanged { drag in
                         guard let track = model.selectedWaveform,
-                              let strokes = try? AlignmentWaveformProjection.strokes(track: track, map: model.waveformMap)
+                              let strokes = model.waveformStrokes[track.id]
                         else { return }
                         dragGroup(track, strokes: strokes, drag: drag, width: geometry.size.width)
                     }
@@ -384,11 +452,8 @@ struct AlignmentWaveformView: View {
                     .accessibilityIdentifier("alignment.waveforms.overlay")
             }
             ForEach(visibleTracks) { track in
-                let projected = Result {
-                    try AlignmentWaveformProjection.strokes(track: track, map: model.waveformMap)
-                }
-                if case let .failure(error) = projected {
-                    Label("\(track.name): \(error.localizedDescription)", systemImage: "exclamationmark.triangle")
+                if let error = model.waveformProjectionErrors[track.id] {
+                    Label("\(track.name): \(error)", systemImage: "exclamationmark.triangle")
                 }
             }
             Text("Select a track below to make its recorder active. Drag its waveform to move the entire recorder group; the reference stays fixed.")
@@ -398,7 +463,6 @@ struct AlignmentWaveformView: View {
 
     @ViewBuilder
     private func lane(_ track: AlignmentWaveformTrack) -> some View {
-        let result = Result { try AlignmentWaveformProjection.strokes(track: track, map: model.waveformMap) }
         let identity = model.trackIdentity(track.id)
         VStack(alignment: .leading, spacing: 3) {
             HStack {
@@ -412,8 +476,7 @@ struct AlignmentWaveformView: View {
             Text(model.rows.first(where: { $0.epochID == track.epoch })?.state.heading ?? "Unmapped")
                 .font(.caption)
                 .accessibilityIdentifier("alignment.waveforms.state.\(track.id)")
-            switch result {
-            case let .success(strokes):
+            if let strokes = model.waveformStrokes[track.id] {
                 GeometryReader { geometry in
                     ZStack {
                         Rectangle().fill(Color.primary.opacity(0.04))
@@ -421,10 +484,7 @@ struct AlignmentWaveformView: View {
                             path.move(to: CGPoint(x: 0, y: geometry.size.height / 2))
                             path.addLine(to: CGPoint(x: geometry.size.width, y: geometry.size.height / 2))
                         }.stroke(Color.secondary.opacity(0.4), lineWidth: 1)
-                        waveformPath(strokes.filter(\.mapped), track: track, size: geometry.size)
-                            .stroke(identity.color, lineWidth: 1.5)
-                        waveformPath(strokes.filter { !$0.mapped }, track: track, size: geometry.size)
-                            .stroke(identity.color, style: StrokeStyle(lineWidth: 1.5, dash: [3, 2]))
+                        waveformDrawing(track: track, strokes: strokes, size: geometry.size, overlay: false)
                         Rectangle().fill(Color.primary.opacity(0.7)).frame(width: 1)
                             .position(x: x(model.waveformPlayheadSeconds, width: geometry.size.width), y: geometry.size.height / 2)
                     }
@@ -449,8 +509,8 @@ struct AlignmentWaveformView: View {
                     }
                     .accessibilityIdentifier("alignment.waveforms.track.\(track.id)")
                 }
-            case let .failure(error):
-                Text("Cannot place this waveform: \(error.localizedDescription)")
+            } else if let error = model.waveformProjectionErrors[track.id] {
+                Text("Cannot place this waveform: \(error)")
             }
         }
     }
@@ -551,24 +611,22 @@ struct AlignmentWaveformView: View {
         .accessibilityIdentifier("alignment.waveforms.span.\(duration)")
     }
 
-    private func waveformPath(_ strokes: [AlignmentWaveformStroke], track: AlignmentWaveformTrack, size: CGSize) -> Path {
-        Path { path in
-            for stroke in strokes {
-                let position = x(displayTime(stroke, track: track), width: size.width)
-                guard position >= 0, position <= size.width else { continue }
-                path.move(to: CGPoint(x: position, y: size.height * (0.5 - Double(min(1, max(-1, stroke.high))) * 0.45)))
-                path.addLine(to: CGPoint(x: position, y: size.height * (0.5 - Double(min(1, max(-1, stroke.low))) * 0.45)))
-            }
-        }
-    }
-
-    private func displayTime(_ stroke: AlignmentWaveformStroke, track: AlignmentWaveformTrack) -> Double {
-        if model.selectedRow?.groupID == track.group {
-            return stroke.displaySeconds + model.groupDraftMilliseconds / 1_000
-        }
-        guard model.selection == stroke.epoch, model.waveformTimingIsDraft else { return stroke.displaySeconds }
-        return stroke.groupSeconds * (1 + model.waveformRatePPM / 1_000_000)
-            + model.waveformOffsetMilliseconds / 1_000
+    private func waveformDrawing(
+        track: AlignmentWaveformTrack, strokes: [AlignmentWaveformStroke], size: CGSize, overlay: Bool
+    ) -> some View {
+        let activeGroup = model.selectedRow?.groupID == track.group
+        return WaveformTrackDrawing(
+            snapshot: model.waveformSnapshotID, strokes: strokes, size: size,
+            start: model.waveformStartSeconds, duration: model.waveformDurationSeconds,
+            color: model.trackIdentity(track.id).color.opacity(overlay ? 0.8 : 1),
+            lineWidth: overlay ? (model.selectedWaveformSource == track.id ? 2 : 1.3) : 1.5,
+            gain: normalizeView ? model.waveformDisplayGains[track.id] ?? 1 : 1,
+            draftEpoch: !activeGroup && model.waveformTimingIsDraft ? model.selection : nil,
+            draftRatePPM: model.waveformRatePPM, draftOffsetMilliseconds: model.waveformOffsetMilliseconds
+        )
+        .equatable()
+        .offset(x: activeGroup ? model.groupDraftMilliseconds / 1_000
+                / model.waveformDurationSeconds * size.width : 0)
     }
 
     private func x(_ time: Double, width: Double) -> Double {

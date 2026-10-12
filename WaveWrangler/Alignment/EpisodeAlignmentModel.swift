@@ -37,6 +37,10 @@ final class EpisodeAlignmentModel {
     var requestedAnchorFocus: Int?
     var requestedEpochFocus: RecordingEpochID?
     private(set) var waveformTracks: [AlignmentWaveformTrack] = []
+    private(set) var waveformStrokes: [SourceID: [AlignmentWaveformStroke]] = [:]
+    private(set) var waveformDisplayGains: [SourceID: Double] = [:]
+    private(set) var waveformProjectionErrors: [SourceID: String] = [:]
+    private(set) var waveformSnapshotID = UUID()
     private(set) var waveformRefusals: [AlignmentWaveformRefusal] = []
     private(set) var disabledGroups: Set<RecorderGroupID> = []
     private(set) var disabledTracks: Set<SourceID> = []
@@ -44,6 +48,10 @@ final class EpisodeAlignmentModel {
     private(set) var selectedWaveformSource: SourceID?
     private(set) var isLoadingWaveforms = false
     private(set) var waveformOverviewTracks: [AlignmentWaveformTrack] = []
+    private(set) var waveformOverviewStrokes: [SourceID: [AlignmentWaveformStroke]] = [:]
+    private(set) var waveformOverviewDisplayGains: [SourceID: Double] = [:]
+    private(set) var waveformOverviewProjectionErrors: [SourceID: String] = [:]
+    private(set) var waveformOverviewSnapshotID = UUID()
     private(set) var waveformOverviewRefusals: [AlignmentWaveformRefusal] = []
     private(set) var waveformOverviewMap: AlignedTimelineMap?
     private(set) var isLoadingOverview = false
@@ -353,7 +361,23 @@ final class EpisodeAlignmentModel {
                     waveformMessage = "The episode or verified timing changed. Save and load the current audio window again."
                     return
                 }
+                var strokes: [SourceID: [AlignmentWaveformStroke]] = [:]
+                var gains: [SourceID: Double] = [:]
+                var projectionErrors: [SourceID: String] = [:]
+                for track in loaded.tracks {
+                    do {
+                        let projected = try AlignmentWaveformProjection.strokes(track: track, map: loaded.map)
+                        strokes[track.id] = projected
+                        gains[track.id] = AlignmentWaveformProjection.displayGain(for: projected, normalized: true)
+                    } catch {
+                        projectionErrors[track.id] = error.localizedDescription
+                    }
+                }
                 waveformTracks = loaded.tracks
+                waveformStrokes = strokes
+                waveformDisplayGains = gains
+                waveformProjectionErrors = projectionErrors
+                waveformSnapshotID = UUID()
                 disabledTracks.formIntersection(Set(loaded.tracks.map(\.id)))
                 disabledGroups.formIntersection(Set(loaded.tracks.map(\.group)))
                 waveformRefusals = loaded.refusals
@@ -377,6 +401,9 @@ final class EpisodeAlignmentModel {
         waveformTask = nil
         isLoadingWaveforms = false
         waveformTracks = []
+        waveformStrokes = [:]
+        waveformDisplayGains = [:]
+        waveformProjectionErrors = [:]
         waveformRefusals = []
         loadedWaveformMap = nil
     }
@@ -413,7 +440,23 @@ final class EpisodeAlignmentModel {
                     waveformOverviewMessage = "The episode or verified timing changed. Save and rebuild its overview."
                     return
                 }
+                var strokes: [SourceID: [AlignmentWaveformStroke]] = [:]
+                var gains: [SourceID: Double] = [:]
+                var projectionErrors: [SourceID: String] = [:]
+                for track in loaded.tracks {
+                    do {
+                        let projected = try AlignmentWaveformProjection.strokes(track: track, map: loaded.map)
+                        strokes[track.id] = projected
+                        gains[track.id] = AlignmentWaveformProjection.displayGain(for: projected, normalized: true)
+                    } catch {
+                        projectionErrors[track.id] = error.localizedDescription
+                    }
+                }
                 waveformOverviewTracks = loaded.tracks
+                waveformOverviewStrokes = strokes
+                waveformOverviewDisplayGains = gains
+                waveformOverviewProjectionErrors = projectionErrors
+                waveformOverviewSnapshotID = UUID()
                 waveformOverviewRefusals = loaded.refusals
                 waveformOverviewMap = loaded.map
                 loadedOverviewEpisode = snapshot.episode(episodeID)
@@ -449,6 +492,9 @@ final class EpisodeAlignmentModel {
         overviewTask = nil
         isLoadingOverview = false
         waveformOverviewTracks = []
+        waveformOverviewStrokes = [:]
+        waveformOverviewDisplayGains = [:]
+        waveformOverviewProjectionErrors = [:]
         waveformOverviewRefusals = []
         waveformOverviewMap = nil
         loadedOverviewEpisode = nil

@@ -29,6 +29,13 @@ final class VisualAlignmentUITests: XCTestCase {
         overlayMode.click()
         let overlay = app.staticTexts["alignment.waveforms.overlay"]
         XCTAssertTrue(waitUntil { (overlay.value as? String ?? overlay.label).contains("2 enabled tracks") }, app.debugDescription)
+        let normalize = app.checkBoxes["alignment.waveforms.normalizeView"]
+        scrollTo(normalize, in: app)
+        XCTAssertTrue(normalize.exists)
+        normalize.click()
+        XCTAssertTrue(app.staticTexts["alignment.waveforms.normalizeNote"].exists)
+        normalize.click()
+        XCTAssertFalse(app.staticTexts["alignment.waveforms.normalizeNote"].exists)
         let place = app.buttons["alignment.waveforms.placeInitial"]
         scrollTo(place, in: app)
         place.click()

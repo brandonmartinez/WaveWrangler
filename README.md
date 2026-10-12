@@ -16,7 +16,11 @@ recording or **Overlay** to compare peaks from enabled tracks on the same scale.
 list below the timeline controls which groups and tracks are shown and heard; select a track
 there to make its recorder active for overlay dragging. Choose **Place groups at source time**
 to accept a first manual placement without running
-acoustic analysis. For a recorder with restarted/overlapping source-time epochs, only its first
+acoustic analysis. **Normalize view** scales each recording's displayed peaks within the current
+measured window (and the optional episode overview); it does not change audio, playback, or saved
+timing. The current measured window and its projected strokes are retained in memory while dragging;
+a changed window, episode, or verified alignment loads a new snapshot.
+For a recorder with restarted/overlapping source-time epochs, only its first
 placeable epoch is mapped initially; place later epochs explicitly using **Advanced epoch timing**.
 Select a track and drag its waveform, use the 10 ms nudge buttons, or type **Group move (ms)** to move all
 mapped epochs of its recorder together in one undoable revision. Positive moves place that recorder

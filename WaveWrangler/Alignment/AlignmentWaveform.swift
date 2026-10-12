@@ -48,6 +48,12 @@ struct AlignmentWaveformStroke: Equatable {
 enum AlignmentWaveformProjection {
     static let overviewNavigationRange = 0.0...86_400.0
 
+    static func displayGain(for strokes: [AlignmentWaveformStroke], normalized: Bool) -> Double {
+        guard normalized else { return 1 }
+        let peak = strokes.reduce(0.0) { max($0, abs(Double($1.low)), abs(Double($1.high))) }
+        return peak.isFinite && peak > 0 && peak < 1 ? 1 / peak : 1
+    }
+
     static func overviewExtent(_ strokes: [AlignmentWaveformStroke]) -> ClosedRange<Double>? {
         guard let first = strokes.map(\.displayRange.lowerBound).min(),
               let last = strokes.map(\.displayRange.upperBound).max(),

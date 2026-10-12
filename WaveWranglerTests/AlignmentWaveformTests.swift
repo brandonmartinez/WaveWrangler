@@ -4,6 +4,35 @@ import WWTimeMap
 
 @Suite("Waveform selection")
 struct AlignmentWaveformTests {
+    @Test func visualNormalizationUsesEachWindowPeakWithoutChangingSamples() {
+        let epoch = RecordingEpochID()
+        let strokes = [
+            AlignmentWaveformStroke(
+                sourceSeconds: 0.5, groupSeconds: 0.5, displaySeconds: 0.5,
+                low: -0.1, high: 0.2, mapped: true, epoch: epoch,
+                displayRange: 0...1, groupRange: 0...1
+            ),
+            AlignmentWaveformStroke(
+                sourceSeconds: 1.5, groupSeconds: 1.5, displaySeconds: 1.5,
+                low: -0.5, high: 0.3, mapped: false, epoch: epoch,
+                displayRange: 1...2, groupRange: 1...2
+            ),
+        ]
+        #expect(AlignmentWaveformProjection.displayGain(for: strokes, normalized: false) == 1)
+        #expect(AlignmentWaveformProjection.displayGain(for: strokes, normalized: true) == 2)
+        #expect(strokes[0].high == 0.2)
+        #expect(AlignmentWaveformProjection.displayGain(for: [], normalized: true) == 1)
+        let silent = strokes.map {
+            AlignmentWaveformStroke(
+                sourceSeconds: $0.sourceSeconds, groupSeconds: $0.groupSeconds,
+                displaySeconds: $0.displaySeconds, low: 0, high: 0,
+                mapped: $0.mapped, epoch: $0.epoch,
+                displayRange: $0.displayRange, groupRange: $0.groupRange
+            )
+        }
+        #expect(AlignmentWaveformProjection.displayGain(for: silent, normalized: true) == 1)
+    }
+
     @Test func overviewSeparatesSourceDurationFromAcceptedAlignedExtent() throws {
         func stroke(offset: Int64, ratio: Int64 = 1) throws -> AlignmentWaveformStroke {
             let group = RecorderGroupID()
