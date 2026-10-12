@@ -333,9 +333,14 @@ final class VisualAlignmentUITests: XCTestCase {
         let advanced = app.disclosureTriangles["Advanced epoch timing"]
         scrollTo(advanced, in: app)
         if String(describing: advanced.value ?? "") == "0" { advanced.click() }
+        XCTAssertTrue(waitUntil {
+            String(describing: advanced.value ?? "") == "1"
+        }, "Advanced timing did not expand. \(app.debugDescription)")
         let targetPoint = app.textFields["alignment.waveforms.targetPoint"]
+        XCTAssertTrue(waitUntil { targetPoint.exists },
+                      "Advanced timing target did not appear. \(app.debugDescription)")
         scrollTo(targetPoint, in: app)
-        XCTAssertTrue(targetPoint.exists, "Advanced timing target is not accessible. \(app.debugDescription)")
+        XCTAssertTrue(targetPoint.isHittable, "Advanced timing target is not reachable. \(app.debugDescription)")
         let storedTargetPoint = try XCTUnwrap(targetPoint.value as? String)
 
         replace(playhead, with: "-1", in: app)
