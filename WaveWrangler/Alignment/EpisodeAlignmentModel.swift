@@ -494,7 +494,7 @@ final class EpisodeAlignmentModel {
                     isPreparingAudition = false
                     try enqueueTransport(clip, startSeconds: position, first: !isAuditioning)
                     isAuditioning = true
-                    auditionLabel = "Playing \(sources.count) enabled tracks on the stored timeline."
+                    auditionLabel = "Playing \(sources.count) enabled \(sources.count == 1 ? "track" : "tracks") on the stored timeline."
                     if transportProgressTask == nil {
                         transportProgressTask = Task { [weak self] in
                             while let self, !Task.isCancelled, generation == auditionGeneration,

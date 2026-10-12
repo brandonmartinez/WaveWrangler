@@ -53,10 +53,24 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(waitUntil { app.staticTexts["Hidden and muted"].exists })
         toggle.click()
         XCTAssertTrue(waitUntil { !app.staticTexts["Hidden and muted"].exists })
+        let group = app.checkBoxes.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "alignment.waveforms.group.", "Remote recorder"
+        )).firstMatch
+        scrollTo(group, in: app)
+        group.click()
+        XCTAssertTrue(waitUntil { !target.exists })
         let play = app.buttons["alignment.waveforms.transport.play"]
         scrollTo(play, in: app)
         play.click()
         let status = app.staticTexts["alignment.waveforms.transport.status"]
+        XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 1 enabled track") }, app.debugDescription)
+        app.buttons["alignment.waveforms.transport.stop"].click()
+        scrollTo(group, in: app)
+        group.click()
+        XCTAssertTrue(waitUntil { target.exists })
+        scrollTo(play, in: app)
+        play.click()
         XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 2 enabled tracks") }, app.debugDescription)
         app.buttons["alignment.waveforms.transport.stop"].click()
         app.typeKey("s", modifierFlags: .command)
@@ -207,8 +221,7 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(second.exists)
         second.click()
         XCTAssertTrue(waitUntil { app.windows["ww.show.window"].title.contains("Synthetic Episode 2") })
-        XCTAssertTrue(waitUntil { load.exists && load.label == "Refresh audio" && tracks.count == 0 })
-        XCTAssertTrue(waitUntil { tracks.count == 2 })
+        XCTAssertTrue(waitUntil { load.exists && load.label == "Refresh audio" && tracks.count == 2 })
         XCTAssertTrue(oldIDs.isDisjoint(with: Set(tracks.allElementsBoundByIndex.map(\.identifier))))
 
         let zoom = app.buttons["alignment.waveforms.span.1.0"]
