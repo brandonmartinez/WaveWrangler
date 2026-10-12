@@ -24,6 +24,11 @@ final class VisualAlignmentUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.track.")
         )
         XCTAssertTrue(waitUntil { tracks.count == 2 }, app.debugDescription)
+        let overlayMode = app.buttons["alignment.waveforms.layout.overlay"]
+        scrollTo(overlayMode, in: app)
+        overlayMode.click()
+        let overlay = app.staticTexts["alignment.waveforms.overlay"]
+        XCTAssertTrue(waitUntil { overlay.label.contains("2 enabled tracks") }, app.debugDescription)
         let place = app.buttons["alignment.waveforms.placeInitial"]
         scrollTo(place, in: app)
         place.click()
@@ -60,6 +65,7 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(group, in: app)
         group.click()
         XCTAssertTrue(waitUntil { !target.exists })
+        XCTAssertTrue(waitUntil { overlay.label.contains("1 enabled track.") })
         let play = app.buttons["alignment.waveforms.transport.play"]
         scrollTo(play, in: app)
         play.click()
@@ -69,10 +75,15 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(group, in: app)
         group.click()
         XCTAssertTrue(waitUntil { target.exists })
+        XCTAssertTrue(waitUntil { overlay.label.contains("2 enabled tracks") })
         scrollTo(play, in: app)
         play.click()
         XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 2 enabled tracks") }, app.debugDescription)
         app.buttons["alignment.waveforms.transport.stop"].click()
+        let separateMode = app.buttons["alignment.waveforms.layout.separate"]
+        scrollTo(separateMode, in: app)
+        separateMode.click()
+        XCTAssertTrue(waitUntil { tracks.count == 2 })
         app.typeKey("s", modifierFlags: .command)
         let saveStatus = app.descendants(matching: .any).matching(identifier: "ww.show.saveStatus").firstMatch
         XCTAssertTrue(waitUntil { (saveStatus.value as? String ?? saveStatus.label).hasPrefix("Saved") })
@@ -266,6 +277,9 @@ final class VisualAlignmentUITests: XCTestCase {
         span.click()
         XCTAssertTrue(waitUntil { tracks.count == 2 && load.label == "Refresh audio" })
 
+        let overviewDisclosure = app.disclosureTriangles["Episode overview"]
+        scrollTo(overviewDisclosure, in: app)
+        if overviewDisclosure.value as? String == "0" { overviewDisclosure.click() }
         let build = app.buttons["alignment.waveforms.overview.load"]
         scrollTo(build, in: app)
         XCTAssertTrue(build.isEnabled)

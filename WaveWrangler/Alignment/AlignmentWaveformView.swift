@@ -5,12 +5,27 @@ import WWCore
 struct AlignmentWaveformView: View {
     @Bindable var model: EpisodeAlignmentModel
     @State private var dragOrigin: Double?
+    @State private var layout: Layout = .separate
+
+    private enum Layout: String, CaseIterable {
+        case separate = "Separate lanes"
+        case overlay = "Overlay"
+    }
+
+    private var groups: [RecorderGroupID] {
+        var seen: Set<RecorderGroupID> = []
+        return model.waveformTracks.compactMap { seen.insert($0.group).inserted ? $0.group : nil }
+    }
+
+    private var visibleTracks: [AlignmentWaveformTrack] {
+        model.waveformTracks.filter { model.groupEnabled($0.group) && model.trackEnabled($0.id) }
+    }
 
     var body: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("Audio editor").font(.headline)
+                    Text("Shared timeline").font(.headline)
                     Spacer()
                     Button(model.isLoadingWaveforms ? "Cancel" : "Refresh audio") {
                         model.isLoadingWaveforms ? model.cancelWaveforms() : model.loadWaveforms()
@@ -18,64 +33,59 @@ struct AlignmentWaveformView: View {
                     .accessibilityIdentifier("alignment.waveforms.load")
                     .disabled(model.isLoadingOverview)
                 }
-                Text("Referenced originals stay unchanged. Confirm originals under Recordings before loading audio. Enable a lane to show and hear it; disable a group to hide and mute all its lanes.")
-                    .font(.caption).foregroundStyle(.secondary)
                 HStack(alignment: .bottom, spacing: 12) {
                     numberField("Window start (s)", value: $model.waveformStartSeconds, identifier: "start")
+                        .frame(maxWidth: 160)
                         .onSubmit { model.loadWaveforms() }
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Visible span").font(.caption)
-                        HStack(spacing: 3) {
-                            spanButton(0.5)
-                            spanButton(1)
-                            spanButton(2)
-                        }
-                        HStack(spacing: 3) {
-                            spanButton(5)
-                            spanButton(10)
-                            spanButton(30)
-                        }
-                    }
-                }
-                .disabled(model.isLoadingWaveforms)
-                HStack {
                     Button("Previous") { moveWindow(-1) }
                     Button("Next") { moveWindow(1) }
+                    HStack(spacing: 3) {
+                        ForEach([0.5, 1.0, 2.0, 5.0, 10.0, 30.0], id: \.self) { spanButton($0) }
+                    }
+                    Spacer(minLength: 0)
                 }
                 .disabled(model.isLoadingWaveforms)
-                overview
-                Text("Aligned seconds · orange strokes are unplaced source-origin previews, not aligned audio.")
-                    .font(.caption).foregroundStyle(.secondary)
                 transport
-                ruler
-                ForEach(Array(Set(model.waveformTracks.map(\.group))).sorted(by: { $0.description < $1.description }), id: \.self) { group in
-                    Toggle(
-                        model.waveformTracks.first(where: { $0.group == group })?.groupName ?? "Recorder group",
-                        isOn: Binding(
-                            get: { model.groupEnabled(group) },
-                            set: { model.setGroup(group, enabled: $0) }
-                        )
-                    )
-                    .accessibilityLabel("Show and hear recorder group \(model.waveformTracks.first(where: { $0.group == group })?.groupName ?? "")")
-                    .accessibilityIdentifier("alignment.waveforms.group.\(group)")
-                    if model.groupEnabled(group) {
-                        ForEach(model.waveformTracks.filter { $0.group == group && model.trackEnabled($0.id) }) { track in
-                            lane(track)
-                        }
-                        ForEach(model.waveformTracks.filter { $0.group == group && !model.trackEnabled($0.id) }) { track in
-                            lane(track)
-                        }
-                    }
+                if model.waveformMap == nil, !model.waveformTracks.isEmpty {
+                    Button("Place groups at source time") { model.placeGroupsAtSourceTime() }
+                        .disabled(model.isWorking)
+                        .accessibilityIdentifier("alignment.waveforms.placeInitial")
+                    Text("This accepts a zero-offset starting point without estimating clock drift. Then move recorder groups while listening; the reference stays fixed.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
+                HStack {
+                    Text("View").font(.caption)
+                    ForEach(Layout.allCases, id: \.self) { mode in
+                        Button(mode.rawValue) { layout = mode }
+                            .accessibilityIdentifier("alignment.waveforms.layout.\(mode == .overlay ? "overlay" : "separate")")
+                            .accessibilityAddTraits(layout == mode ? .isSelected : [])
+                    }
+                    Spacer()
+                    Text("Shared seconds · dashed waveforms are unplaced source time")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                ruler
+                if visibleTracks.isEmpty {
+                    ContentUnavailableView(
+                        "No waveforms showing",
+                        systemImage: "waveform",
+                        description: Text("Enable a recorder and track below, or refresh audio to load a measured window.")
+                    )
+                    .frame(minHeight: 200)
+                } else if layout == .overlay {
+                    overlay
+                } else {
+                    ForEach(visibleTracks) { track in lane(track) }
+                }
+                recordings
                 ForEach(model.waveformRefusals) { refusal in
                     Label("\(refusal.name): \(refusal.reason)", systemImage: "exclamationmark.triangle")
                         .accessibilityLabel("\(refusal.name), \(refusal.reason)")
                         .accessibilityIdentifier("alignment.waveforms.refusal.\(refusal.id)")
                 }
                 if model.waveformTracks.isEmpty {
-                    Label("See your recordings", systemImage: "waveform").font(.headline)
-                    Text("Load Audio Window reads a bounded portion of grouped recordings. Select a track, then drag its waveform to preview an offset or match two anchor points.")
-                        .foregroundStyle(.secondary)
+                    Text("Refresh audio reads a bounded portion of grouped recordings. Confirm originals in Setup first.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Text(model.waveformMessage)
                     .font(.caption)
@@ -86,10 +96,54 @@ struct AlignmentWaveformView: View {
                         .accessibilityIdentifier("alignment.waveforms.revision")
                 }
                 if !model.waveformTracks.isEmpty { timingControls }
+                DisclosureGroup("Episode overview") { overview }
             }
             .padding(4)
         }
         .accessibilityIdentifier("alignment.waveforms")
+    }
+
+    private var recordings: some View {
+        GroupBox("Recordings · show and hear") {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(groups, id: \.self) { group in
+                    let tracks = model.waveformTracks.filter { $0.group == group }
+                    Toggle(tracks.first?.groupName ?? "Recorder group", isOn: Binding(
+                        get: { model.groupEnabled(group) },
+                        set: { model.setGroup(group, enabled: $0) }
+                    ))
+                    .accessibilityLabel("Show and hear recorder group \(tracks.first?.groupName ?? "")")
+                    .accessibilityIdentifier("alignment.waveforms.group.\(group)")
+                    if model.groupEnabled(group) {
+                        ForEach(tracks) { track in
+                            let identity = model.trackIdentity(track.id)
+                            HStack {
+                                Toggle("", isOn: Binding(
+                                    get: { model.trackEnabled(track.id) },
+                                    set: { model.setTrack(track.id, enabled: $0) }
+                                ))
+                                .labelsHidden()
+                                .accessibilityLabel("Show and hear \(identity.label), \(track.name)")
+                                .accessibilityIdentifier("alignment.waveforms.enabled.\(track.id)")
+                                Button("\(track.groupName) · \(track.name)") { model.selectWaveform(track) }
+                                    .buttonStyle(.plain)
+                                    .accessibilityIdentifier("alignment.waveforms.select.\(track.id)")
+                                    .accessibilityValue(model.selectedWaveformSource == track.id ? "Active for editing" : "Select to edit")
+                                    .font(.callout.weight(model.selection == track.epoch ? .semibold : .regular))
+                                Circle().fill(identity.color).frame(width: 10, height: 10)
+                                    .accessibilityHidden(true)
+                                Text(identity.label).font(.caption).foregroundStyle(.secondary)
+                                if !model.trackEnabled(track.id) {
+                                    Text("Hidden and muted").font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.leading, 20)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var transport: some View {
@@ -265,22 +319,91 @@ struct AlignmentWaveformView: View {
         }
     }
 
+    private var overlay: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 14) {
+                    ForEach(visibleTracks) { track in
+                        let identity = model.trackIdentity(track.id)
+                        HStack(spacing: 5) {
+                            Circle().fill(identity.color).frame(width: 9, height: 9)
+                            Text("\(track.groupName) · \(identity.label)")
+                                .font(.caption)
+                                .fontWeight(model.selectedWaveformSource == track.id ? .semibold : .regular)
+                        }
+                    }
+                }
+            }
+            GeometryReader { geometry in
+                ZStack {
+                    Rectangle().fill(Color.primary.opacity(0.04))
+                    Path { path in
+                        path.move(to: CGPoint(x: 0, y: geometry.size.height / 2))
+                        path.addLine(to: CGPoint(x: geometry.size.width, y: geometry.size.height / 2))
+                    }
+                    .stroke(Color.secondary.opacity(0.4), lineWidth: 1)
+                    ForEach(visibleTracks) { track in
+                        let projected = Result {
+                            try AlignmentWaveformProjection.strokes(track: track, map: model.waveformMap)
+                        }
+                        if case let .success(strokes) = projected {
+                            let color = model.trackIdentity(track.id).color
+                            waveformPath(strokes.filter(\.mapped), track: track, size: geometry.size)
+                                .stroke(color.opacity(0.8), lineWidth: model.selectedWaveformSource == track.id ? 2 : 1.3)
+                            waveformPath(strokes.filter { !$0.mapped }, track: track, size: geometry.size)
+                                .stroke(color.opacity(0.8), style: StrokeStyle(lineWidth: 1.3, dash: [3, 2]))
+                        }
+                    }
+                    Rectangle().fill(Color.primary.opacity(0.7)).frame(width: 1)
+                        .position(x: x(model.waveformPlayheadSeconds, width: geometry.size.width),
+                                  y: geometry.size.height / 2)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { point in
+                    let time = model.waveformStartSeconds
+                        + Double(point.x / geometry.size.width) * model.waveformDurationSeconds
+                    if let track = model.selectedWaveform,
+                       let strokes = try? AlignmentWaveformProjection.strokes(track: track, map: model.waveformMap),
+                       pick(track, strokes: strokes, time: time) { return }
+                    model.seekEnabledTracks(to: time)
+                }
+                .gesture(DragGesture(minimumDistance: 4)
+                    .onChanged { drag in
+                        guard let track = model.selectedWaveform,
+                              let strokes = try? AlignmentWaveformProjection.strokes(track: track, map: model.waveformMap)
+                        else { return }
+                        dragGroup(track, strokes: strokes, drag: drag, width: geometry.size.width)
+                    }
+                    .onEnded { _ in finishGroupDrag() })
+            }
+            .frame(height: 270)
+            .clipped()
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3)))
+            .accessibilityRepresentation {
+                Text("Overlaid measured waveforms for \(visibleTracks.count) enabled \(visibleTracks.count == 1 ? "track" : "tracks"). Select a track below to move its recorder group; use the numeric group move for keyboard editing.")
+                    .accessibilityIdentifier("alignment.waveforms.overlay")
+            }
+            ForEach(visibleTracks) { track in
+                let projected = Result {
+                    try AlignmentWaveformProjection.strokes(track: track, map: model.waveformMap)
+                }
+                if case let .failure(error) = projected {
+                    Label("\(track.name): \(error.localizedDescription)", systemImage: "exclamationmark.triangle")
+                }
+            }
+            Text("Select a track below to make its recorder active. Drag its waveform to move the entire recorder group; the reference stays fixed.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
     @ViewBuilder
     private func lane(_ track: AlignmentWaveformTrack) -> some View {
         let result = Result { try AlignmentWaveformProjection.strokes(track: track, map: model.waveformMap) }
         let identity = model.trackIdentity(track.id)
         VStack(alignment: .leading, spacing: 3) {
             HStack {
-                Toggle("", isOn: Binding(
-                    get: { model.trackEnabled(track.id) },
-                    set: { model.setTrack(track.id, enabled: $0) }
-                ))
-                .labelsHidden()
-                .accessibilityLabel("Show and hear \(identity.label), \(track.name)")
-                .accessibilityIdentifier("alignment.waveforms.enabled.\(track.id)")
                 Button("\(track.groupName) · \(track.name)") { model.selectWaveform(track) }
                     .buttonStyle(.plain)
-                    .accessibilityIdentifier("alignment.waveforms.select.\(track.id)")
                     .font(.callout.weight(model.selection == track.epoch ? .semibold : .regular))
                 Spacer()
                 Text("\(identity.label) · \(track.envelope.channelCount) measured channels")
@@ -289,9 +412,6 @@ struct AlignmentWaveformView: View {
             Text(model.rows.first(where: { $0.epochID == track.epoch })?.state.heading ?? "Unmapped")
                 .font(.caption)
                 .accessibilityIdentifier("alignment.waveforms.state.\(track.id)")
-            if !model.trackEnabled(track.id) {
-                Text("Hidden and muted").font(.caption).foregroundStyle(.secondary)
-            } else {
             switch result {
             case let .success(strokes):
                 GeometryReader { geometry in
@@ -315,28 +435,14 @@ struct AlignmentWaveformView: View {
                     }
                     .gesture(DragGesture(minimumDistance: 4)
                         .onChanged { drag in
-                            guard model.canMoveGroup, model.selectedRow?.groupID == track.group else { return }
-                            if dragOrigin == nil {
-                                guard pick(
-                                    track, strokes: strokes, time: model.waveformStartSeconds
-                                        + Double(drag.startLocation.x / geometry.size.width) * model.waveformDurationSeconds
-                                ) else { return }
-                                dragOrigin = model.groupDraftMilliseconds
-                            }
-                            if let origin = dragOrigin {
-                                model.groupDraftMilliseconds = origin
-                                    + Double(drag.translation.width / geometry.size.width) * model.waveformDurationSeconds * 1_000
-                            }
+                            dragGroup(track, strokes: strokes, drag: drag, width: geometry.size.width)
                         }
-                        .onEnded { _ in
-                            dragOrigin = nil
-                            model.commitGroupMove()
-                        })
+                        .onEnded { _ in finishGroupDrag() })
                 }
-                .frame(height: 80)
+                .frame(height: 110)
                 .clipped()
                 .overlay(RoundedRectangle(cornerRadius: 4)
-                    .stroke(model.selection == track.epoch ? Color.accentColor : Color.secondary.opacity(0.3)))
+                    .stroke(model.selectedWaveformSource == track.id ? Color.accentColor : Color.secondary.opacity(0.3)))
                 .accessibilityRepresentation {
                     Button("\(track.groupName), \(track.name), audio waveform. \(strokes.count) measured amplitude bins; \(strokes.filter { !$0.mapped }.count) unplaced. Stored offset \(model.rows.first(where: { $0.epochID == track.epoch })?.offsetMilliseconds ?? 0) milliseconds. Select this track, then use numeric timing as a keyboard alternative.") {
                         model.selectWaveform(track)
@@ -346,19 +452,33 @@ struct AlignmentWaveformView: View {
             case let .failure(error):
                 Text("Cannot place this waveform: \(error.localizedDescription)")
             }
-            }
         }
+    }
+
+    private func dragGroup(
+        _ track: AlignmentWaveformTrack, strokes: [AlignmentWaveformStroke],
+        drag: DragGesture.Value, width: Double
+    ) {
+        guard width > 0, model.canMoveGroup, model.selectedRow?.groupID == track.group else { return }
+        if dragOrigin == nil {
+            guard pick(track, strokes: strokes, time: model.waveformStartSeconds
+                + Double(drag.startLocation.x / width) * model.waveformDurationSeconds) else { return }
+            dragOrigin = model.groupDraftMilliseconds
+        }
+        if let origin = dragOrigin {
+            model.groupDraftMilliseconds = origin
+                + Double(drag.translation.width / width) * model.waveformDurationSeconds * 1_000
+        }
+    }
+
+    private func finishGroupDrag() {
+        guard dragOrigin != nil else { return }
+        dragOrigin = nil
+        model.commitGroupMove()
     }
 
     private var timingControls: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if model.waveformMap == nil {
-                Button("Place groups at source time") { model.placeGroupsAtSourceTime() }
-                    .disabled(model.isWorking)
-                    .accessibilityIdentifier("alignment.waveforms.placeInitial")
-                Text("This accepts a zero-offset starting point without acoustic estimation. Then move recorder groups by ear; the reference stays fixed.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
             Text("Selected recorder: \(model.selectedRow?.groupName ?? "select a lane")")
             if model.canMoveGroup {
                 HStack {

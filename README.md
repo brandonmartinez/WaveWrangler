@@ -10,11 +10,15 @@ assignments. A new import has provisional file identity: choose **Confirm origin
 unchanged local source before decoding or playback. A changed original must be reviewed through
 **Relink Source** instead. Sources remain referenced in place and are never modified.
 
-In **Alignment**, **Refresh audio** loads bounded measured waveform windows on a shared aligned
-ruler. Choose **Place groups at source time** to accept a first manual placement without running
+In **Alignment**, the shared timeline is the primary editor. **Refresh audio** loads bounded
+measured waveform windows on one seconds-based ruler. Use **Separate lanes** to inspect each
+recording or **Overlay** to compare peaks from enabled tracks on the same scale. The recordings
+list below the timeline controls which groups and tracks are shown and heard; select a track
+there to make its recorder active for overlay dragging. Choose **Place groups at source time**
+to accept a first manual placement without running
 acoustic analysis. For a recorder with restarted/overlapping source-time epochs, only its first
 placeable epoch is mapped initially; place later epochs explicitly using **Advanced epoch timing**.
-Select a lane and drag it, use the 10 ms nudge buttons, or type **Group move (ms)** to move all
+Select a track and drag its waveform, use the 10 ms nudge buttons, or type **Group move (ms)** to move all
 mapped epochs of its recorder together in one undoable revision. Positive moves place that recorder
 later. Unplaced audio is dashed, not implicitly synchronized. Enable/disable a recorder or track
 to show/hide and hear/mute it; speaker lanes have stable colors, with gray for unknown speakers.
@@ -28,7 +32,7 @@ buffer between windows; a source or map mismatch stops playback rather than subs
 advanced **Compare Aligned Audio** control still plays up to five seconds of reference/selected
 audio in separate channels for an internal listening check, not an export or cut authorization.
 
-**Build Episode Overview** explicitly scans every covered PCM sample into at most 2,048 amplitude
+The collapsed **Episode overview** can explicitly scan every covered PCM sample into at most 2,048 amplitude
 bins per recording, with cancellable progress. Click covered overview audio to open an exact
 window; **Window start**, or the typed playhead with **Open Window at Playhead**, are keyboard
 and accessibility alternatives. Overview bins never
