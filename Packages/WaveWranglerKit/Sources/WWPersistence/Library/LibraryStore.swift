@@ -255,8 +255,12 @@ public actor LibraryStore {
             }
             return await createEmpty(at: url) ? .created : .unavailable(reason: "A new library could not be created.")
         }
-        switch opener.open(url, key: .library) {
+        let opened = opener.openWithValidatedBytes(url, key: .library)
+        switch opened.outcome {
         case let .editable(document, fingerprint):
+            guard let validatedBytes = opened.validatedBytes else {
+                return .unavailable(reason: "The validated library snapshot could not be retained.")
+            }
             // A different (real) library at this location is not this library: refuse it like damage and offer
             // this library's own checkpoints. The file is left untouched.
             if let expected = settings.load().libraryID.flatMap(Self.real), let found = Self.real(document.payload.libraryID), found != expected {
@@ -267,7 +271,7 @@ public actor LibraryStore {
                                            revision: document.revision, publisher: publisher))
             library = document.payload
             refreshIndex(digest: fingerprint.byteDigest)
-            retainVerifiedCurrent(at: url, fingerprint: fingerprint)
+            retainVerifiedCurrent(validatedBytes, fingerprint: fingerprint)
             recordLocationIdentity(document.payload.libraryID)
             detectProviderConflicts(at: url, current: document.payload)
             return .ready(revision: document.revision)
@@ -1104,13 +1108,19 @@ public actor LibraryStore {
     /// Keeps the verified current library as a checkpoint too, so an unreachable location shows the latest
     /// verified library (not one revision older) and queued edits start from it.
     private func retainVerifiedCurrent(at url: URL, fingerprint: RevisionFingerprint) {
-        guard let bytes = try? publisher.ops.read(url), RevisionFingerprint.digest(bytes) == fingerprint.byteDigest else { return }
+        guard let bytes = try? publisher.ops.read(url) else { return }
+        retainVerifiedCurrent(bytes, fingerprint: fingerprint)
+    }
+
+    private func retainVerifiedCurrent(_ bytes: Data, fingerprint: RevisionFingerprint) {
+        guard RevisionFingerprint.digest(bytes) == fingerprint.byteDigest else { return }
         try? recovery.recordVerifiedCurrent(bytes, for: .library)
     }
 
     private func refreshIndex(digest: String) {
         guard let library else { return }
-        index = indexCache.index(for: library, libraryDigest: digest).index
+        // Disposable cache I/O must not delay opening the validated canonical library.
+        index = LibraryIndex.build(from: library, libraryDigest: digest)
     }
 
     private func resolveFolder() -> URL? {

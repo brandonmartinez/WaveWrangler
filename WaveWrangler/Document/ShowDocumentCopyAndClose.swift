@@ -8,8 +8,13 @@ extension ShowDocument: DocumentStatusActionHandling {
     func performSaveStatusAction(_ action: SaveStatusAction, from window: NSWindow?) -> Bool {
         switch action {
         case .saveACopyElsewhere:
-            // T28: whether the copy was saved or the panel cancelled, focus returns to the save-status item.
-            saveACopyElsewhere { _ in ShowWindowRegistry.state(for: window)?.focusSaveStatus() }
+            saveACopyElsewhere { _ in
+                // AppKit restores the sheet's prior responder after its completion callback.
+                DispatchQueue.main.async { [weak window] in
+                    guard let window, window.isKeyWindow, window.attachedSheet == nil else { return }
+                    ShowWindowRegistry.state(for: window)?.focusSaveStatus()
+                }
+            }
             return true
         case .tryAgain where isAwaitingFormatUpdate:
             // D15 Try Again re-runs the update; never a save, which an older show can't do.

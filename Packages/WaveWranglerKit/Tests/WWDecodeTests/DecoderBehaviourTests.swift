@@ -38,12 +38,17 @@ final class ScriptedContentIO: SourceContentIO, @unchecked Sendable {
         /// The open descriptor's state after decoding (default: unchanged).
         var stateAfterDecode: OpenedFileState?
         var onRead: (@Sendable (Int) -> Void)?
+        var supportsRandomAccess = false
+        var seekFailure: DecodeFailure?
+        var onSeek: (@Sendable (Int64) -> Void)?
+        var stateAfterSeek: OpenedFileState?
     }
 
     struct Record {
         var opens = 0
         var closes = 0
         var reads = 0
+        var seeks: [Int64] = []
         var contentCallsInsideTask = 0
         var bufferIdentities = Set<ObjectIdentifier>()
         var bufferCapacities = Set<Int>()
@@ -77,6 +82,19 @@ final class ScriptedContentIO: SourceContentIO, @unchecked Sendable {
         init(owner: ScriptedContentIO) { self.owner = owner }
 
         var facts: EncodedStreamFacts { owner.script.facts }
+        var supportsRandomAccess: Bool { owner.script.supportsRandomAccess }
+
+        func seekRawFrame(to frame: Int64) throws(DecodeFailure) {
+            guard supportsRandomAccess else { throw .seekUnavailable }
+            owner.update { record in
+                record.seeks.append(frame)
+                withUnsafeCurrentTask { if $0 != nil { record.contentCallsInsideTask += 1 } }
+            }
+            owner.script.onSeek?(frame)
+            if let failure = owner.script.seekFailure { throw failure }
+            guard frame >= 0, frame <= owner.script.streamFrames else { throw .invalidSourceFrame(frame) }
+            position = frame
+        }
 
         func readRawFrames(into buffer: RawDecodeBuffer) throws(DecodeFailure) -> Int {
             let index = readIndex
@@ -106,6 +124,7 @@ final class ScriptedContentIO: SourceContentIO, @unchecked Sendable {
                 let insideTask = withUnsafeCurrentTask { $0 != nil }
                 if insideTask { $0.contentCallsInsideTask += 1 }
             }
+            if !owner.record.seeks.isEmpty, let changed = owner.script.stateAfterSeek { return changed }
             return owner.script.stateAfterDecode ?? owner.script.facts.openedFile
         }
 

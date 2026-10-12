@@ -14,7 +14,8 @@ extension ShowDocument: DocumentStatusProviding {
             folderDisplayName: fileURL?.deletingLastPathComponent().lastPathComponent,
             providerConflictVersions: status.saveStatus.providerConflicts.unresolvedVersionCount,
             retryingAutomatically: status.retryingAutomatically,
-            formatUpdate: status.formatUpdate
+            formatUpdate: status.formatUpdate,
+            recoveryCheckpointProblem: status.saveStatus.recoveryCheckpointProblem
         )
     }
 }

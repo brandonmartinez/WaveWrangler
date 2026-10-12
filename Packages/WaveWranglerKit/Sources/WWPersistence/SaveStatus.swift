@@ -100,6 +100,8 @@ public struct DocumentSaveStatus: Sendable, Equatable {
     public var state: DocumentSaveState
     public var providerSync: ProviderSyncState
     public var providerConflicts: ProviderConflictReport
+    /// Recovery verification failed independently of the canonical save. Never changes canonical truth.
+    public var recoveryCheckpointProblem: String?
 
     public init(state: DocumentSaveState, providerSync: ProviderSyncState = .unknown, providerConflicts: ProviderConflictReport = .none) {
         self.state = state
@@ -110,6 +112,7 @@ public struct DocumentSaveStatus: Sendable, Equatable {
     /// Full accessible description, e.g. for VoiceOver.
     public var accessibilityDescription: String {
         var parts = [state.title]
+        if let recoveryCheckpointProblem { parts.append(recoveryCheckpointProblem) }
         if providerSync == .unknown { parts.append("Provider sync: unknown") }
         if providerConflicts.hasUnresolvedConflicts {
             parts.append("\(providerConflicts.unresolvedVersionCount) unresolved provider conflict version(s)")

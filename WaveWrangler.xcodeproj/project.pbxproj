@@ -66,8 +66,10 @@
 				Commands/ConfirmationButtons.swift,
 				Commands/OpaqueErrorPanel.swift,
 				Alignment/AlignmentPresentation.swift,
+				Alignment/AlignmentWaveform.swift,
 				Alignment/AnchorTimeEditing.swift,
 				Document/CopyElsewhereRetryGate.swift,
+				Document/DocumentCheckpointWriter.swift,
 				Document/FormatUpdate.swift,
 				Document/SharedModelPublication.swift,
 				Library/CanonicalLibraryAdoption.swift,
@@ -75,6 +77,7 @@
 				Library/MoveStepRelay.swift,
 				Sources/SetupConfirmationKind.swift,
 				Workspace/ShowDocumentStatusMapping.swift,
+				Workspace/NativeSaveStatusControl.swift,
 			);
 			target = C13E785C401E67854374EF9C /* WaveWranglerTests */;
 		};

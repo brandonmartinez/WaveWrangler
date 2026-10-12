@@ -79,7 +79,7 @@ final class AutosavePolicyController {
     var summary: String {
         guard preference.enabled else { return "Autosave is off. Unsaved changes are not protected until you save." }
         let delay = preference.delaySeconds == 1 ? "1 second" : "\(Int(preference.delaySeconds)) seconds"
-        return "Autosave is on: changes are saved \(delay) after you stop editing."
+        return "Autosave is on: a recovery copy is scheduled after you stop editing; saving the show starts after \(delay) and is confirmed after verification."
     }
 
     private init() {

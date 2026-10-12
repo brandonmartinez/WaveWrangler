@@ -196,13 +196,17 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             let barShown = bar.waitForExistence(timeout: 10)
             check(barShown && (bar.label == expected || texts(in: bar).contains(expected)),
                   "message bar: \(barShown ? "\(bar.label) \(texts(in: bar))" : "not shown")")
-            try audit("T28 copy message bar")
-            // T28: "Focus returns to the save-status item" after the save panel closes (a button takes keyboard focus
-            // only with keyboard navigation on).
+            // Measure the panel's focus restoration before the whole-app audit can change focus.
             if Self.keyboardNavigation {
-                check(Acceptance.waitFor(timeout: 3) { self.isFocused(status) }, "focus returns to the save-status item after the copy")
+                let focusReturned = Acceptance.waitFor(timeout: 3) { self.isFocused(status) }
+                Acceptance.record(self, "T28 before audit: save-status keyboard focus \(focusReturned)")
+                check(focusReturned, "focus returns to the save-status item after the copy")
             } else {
                 needsKeyboardNavigation.append("T28: focus returns to the save-status item")
+            }
+            try audit("T28 copy message bar")
+            if Self.keyboardNavigation {
+                Acceptance.record(self, "T28 after audit: save-status keyboard focus \(isFocused(status))")
             }
             check(try Data(contentsOf: document) == original, "the original is byte-unchanged")
             check(diskShowID(copy) != nil && diskShowID(copy) != diskShowID(document), "the copy is a separate show (new show ID)")

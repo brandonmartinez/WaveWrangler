@@ -19,8 +19,8 @@ import WWPersistence
 ///   completes queued automatic requests with a cancellation (never a success-shaped `nil`), keeps the
 ///   document dirty and makes AppKit use its ordinary Save / Don't Save / Cancel review on Close and Quit
 ///   (`autosavesInPlace == false`). Explicit Save always uses the real file type.
-/// - **C2b edit checkpoints** are written at quiescence when a verified publication is not expected within
-///   1.5 s of the last edit (ON only) and offered for restore when the document is reopened.
+/// - **C2b edit checkpoints** protect every settled edit burst independently of canonical-save latency
+///   (ON only) and are offered for restore when the document is reopened.
 @objc(ShowDocument)
 final class ShowDocument: NSDocument {
     let store: ShowDocumentStore
@@ -35,6 +35,13 @@ final class ShowDocument: NSDocument {
     private var pendingCandidate: EncodedDocument?
     private var lastReceipt: PublicationReceipt?
     private var scheduler: QuiescenceScheduler?
+    private let checkpointWriter = DocumentCheckpointWriter(
+        recovery: PersistenceEnvironment.recovery, gate: PersistenceEnvironment.autosaveGate
+    )
+    private var saveWaitingForCheckpoint = false
+    private var closeWaitingForCheckpoint = false
+    private var isClosing = false
+    private var checkpointDeferredForSave = false
     /// Offered C2b records whose Restore is currently in effect (Undo of the Restore removes the record again).
     /// They stay on disk until a verified publication that contains the restore, or an explicit Don't Save,
     /// resolves them, so a crash right after Restore loses nothing.
@@ -171,6 +178,12 @@ final class ShowDocument: NSDocument {
     }
 
     private func load(_ data: Data, url: URL?) throws {
+        checkpointWriter.invalidatePending()
+        guard !checkpointWriter.isBusy else {
+            throw CocoaError(.fileReadUnknown, userInfo: [
+                NSLocalizedDescriptionKey: "Recovery copy verification is still in progress. Try reopening or reverting after it finishes."
+            ])
+        }
         // A schema 1 show reports `.needsMigration`: it opens upgraded in memory, read-only, and nothing is written
         // until the user chooses Update (#159). Schema 1 recovery checkpoints stay offerable, upgraded in memory.
         let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery,
@@ -239,6 +252,24 @@ final class ShowDocument: NSDocument {
         for saveOperation: NSDocument.SaveOperationType,
         completionHandler: @escaping (Error?) -> Void
     ) {
+        guard !isClosing, !saveWaitingForCheckpoint, pendingCandidate == nil else {
+            completionHandler(CocoaError(.userCancelled))
+            return
+        }
+        if checkpointWriter.isBusy {
+            saveWaitingForCheckpoint = true
+            Task { [self] in
+                await checkpointWriter.waitUntilIdle()
+                saveWaitingForCheckpoint = false
+                if (saveOperation == .autosaveInPlaceOperation || saveOperation == .autosaveElsewhereOperation
+                    || saveOperation == .autosaveAsOperation), !gate.isEnabled {
+                    completionHandler(CocoaError(.userCancelled))
+                    return
+                }
+                save(to: url, ofType: typeName, for: saveOperation, completionHandler: completionHandler)
+            }
+            return
+        }
         // The model is already current (edits apply live); end any coalesced burst so that an edit made
         // after this save registers new undo and marks the document dirty again.
         store.endCoalescing()
@@ -280,6 +311,18 @@ final class ShowDocument: NSDocument {
         _ expected: ShowDocumentModel,
         completion: @escaping @MainActor (Result<Void, Error>) -> Void
     ) {
+        if checkpointWriter.isBusy {
+            Task { [weak self] in
+                guard let self else { completion(.failure(CocoaError(.userCancelled))); return }
+                await self.checkpointWriter.waitUntilIdle()
+                self.persistExpectedModel(expected, completion: completion)
+            }
+            return
+        }
+        guard !isClosing else {
+            completion(.failure(CocoaError(.userCancelled)))
+            return
+        }
         guard store.model == expected else {
             completion(.failure(CocoaError(.userCancelled)))
             return
@@ -319,6 +362,12 @@ final class ShowDocument: NSDocument {
         let receipt = lastReceipt
         lastReceipt = nil
         pendingCandidate = nil
+        defer {
+            if checkpointDeferredForSave {
+                checkpointDeferredForSave = false
+                writeEditCheckpoint()
+            }
+        }
         if error == nil, adopts, let receipt {
             cancelSaveRetry()
             uncertainCandidate = nil
@@ -544,6 +593,15 @@ final class ShowDocument: NSDocument {
         status.setRetryingAutomatically(false)
         guard copyRetryGate.allowsAutomaticSave else { copyRetryGate.suspendRetry(); return }
         guard gate.isEnabled, isDocumentEdited, fileURL != nil else { return }
+        if checkpointWriter.isBusy {
+            Task { [weak self] in
+                guard let self else { return }
+                await self.checkpointWriter.waitUntilIdle()
+                guard !self.isClosing else { return }
+                self.performSaveRetry()
+            }
+            return
+        }
         // D5: if the uncertain publication did land, adopt it rather than republishing against the old base (which
         // would fail the base check and report a false conflict).
         if case .acknowledgementUncertain = status.saveStatus.state, adoptUncertainPublication() { return }
@@ -614,6 +672,7 @@ final class ShowDocument: NSDocument {
     // MARK: - Autosave policy (C6)
 
     override func scheduleAutosaving() {
+        checkpointWriter.invalidatePending()
         // Documented customization point. OFF: nothing is scheduled and the document stays dirty.
         guard gate.isEnabled else {
             if isDocumentEdited { status.set(.edited(autosaveEnabled: false)) }
@@ -654,6 +713,7 @@ final class ShowDocument: NSDocument {
 
     func autosavePolicyDidChange(wasEnabled: Bool) {
         if !gate.isEnabled {
+            checkpointWriter.invalidatePending()
             cancelSaveRetry()
             scheduler?.cancelPending()
             if isDocumentEdited { status.set(.edited(autosaveEnabled: false)) }
@@ -688,15 +748,40 @@ final class ShowDocument: NSDocument {
     // MARK: - C2b edit checkpoints
 
     private func writeEditCheckpoint() {
-        guard gate.isEnabled, isDocumentEdited,
-              let snapshot = try? coder.encode(store.model, revision: revision + 1),
-              let record = try? recovery.writeEditCheckpoint(
-                  snapshot: snapshot, base: onDiskBase, schemaVersion: coder.format.currentSchemaVersion, for: documentKey
-              )
-        else { return }
-        // ST-11: a visible save failure isn't replaced by the checkpoint state (which reads as "Edited").
-        guard !status.saveStatus.state.isAutomaticallyRetryable else { return }
-        status.set(.recoveryCheckpoint(at: record.createdAt))
+        guard !isClosing, copyRetryGate.allowsAutomaticSave, gate.isEnabled, isDocumentEdited,
+              !isAwaitingFormatUpdate, status.readOnlyReason == nil else { return }
+        guard pendingCandidate == nil else {
+            checkpointDeferredForSave = true
+            return
+        }
+        let model = store.model
+        let base = onDiskBase
+        let snapshot: Data
+        do { snapshot = try coder.encode(model, revision: revision + 1) }
+        catch {
+            status.setRecoveryCheckpointProblem("Recovery copy could not be encoded: \(error.localizedDescription)")
+            return
+        }
+        let request = DocumentCheckpointWriter.Request(
+            snapshot: snapshot, base: base, schemaVersion: coder.format.currentSchemaVersion,
+            key: documentKey, capturedAt: Date()
+        )
+        checkpointWriter.enqueue(request) { [weak self] result in
+            guard let self, self.gate.isEnabled, self.isDocumentEdited,
+                  !self.isClosing, self.status.readOnlyReason == nil,
+                  self.store.model == model, self.onDiskBase == base else { return }
+            switch result {
+            case let .success(record):
+                self.status.setRecoveryCheckpointProblem(nil)
+                // Recovery must not replace a canonical-save failure, conflict or in-flight save.
+                switch self.status.saveStatus.state {
+                case .edited, .recoveryCheckpoint: self.status.set(.recoveryCheckpoint(at: record.createdAt))
+                default: break
+                }
+            case let .failure(error):
+                self.status.setRecoveryCheckpointProblem("Recovery copy could not be verified: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - C2b recovery offer (#84)
@@ -813,6 +898,20 @@ final class ShowDocument: NSDocument {
     }
 
     override func close() {
+        isClosing = true
+        scheduler?.cancelPending()
+        cancelSaveRetry()
+        checkpointWriter.invalidatePending()
+        guard !closeWaitingForCheckpoint else { return }
+        if checkpointWriter.isBusy {
+            closeWaitingForCheckpoint = true
+            Task { [self] in
+                await checkpointWriter.waitUntilIdle()
+                closeWaitingForCheckpoint = false
+                close()
+            }
+            return
+        }
         // Closing while still edited means the user chose Don't Save: drop this document's edit checkpoints.
         if isDocumentEdited {
             try? recovery.discardEditCheckpoints(for: documentKey)

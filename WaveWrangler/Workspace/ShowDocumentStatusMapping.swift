@@ -11,15 +11,18 @@ enum ShowDocumentStatusMapping {
         folderDisplayName: String?,
         providerConflictVersions: Int = 0,
         retryingAutomatically: Bool = false,
-        formatUpdate: FormatUpdateState? = nil
+        formatUpdate: FormatUpdateState? = nil,
+        recoveryCheckpointProblem: String? = nil
     ) -> WWOrganizer.DocumentSaveStatus {
         let mapped: WWOrganizer.DocumentSaveState = switch state {
         case .clean(nil):
             .unknown(reason: "it hasn't been saved yet")
         case .clean:
             .saved(at: nil, folderDisplayName: folderDisplayName)
-        case .edited, .recoveryCheckpoint, .autosaveSkipped:
+        case .edited, .autosaveSkipped:
             .edited
+        case let .recoveryCheckpoint(at):
+            .recoveryCheckpoint(at: at)
         case .saving:
             .saving(cancellable: false)
         case .saved(_, let at), .savedFollowUpIncomplete(_, let at):
@@ -60,7 +63,7 @@ enum ShowDocumentStatusMapping {
         } else {
             mapped
         }
-        return DocumentSaveStatus(
+        var result = DocumentSaveStatus(
             state: final,
             autosaveEnabled: autosaveEnabled,
             // ST-11: only while ShowDocument really has a retry pending.
@@ -68,5 +71,7 @@ enum ShowDocumentStatusMapping {
             hasUnsavedChanges: formatUpdate == nil && state.hasUnsavedWork,
             providerConflictVersions: providerConflictVersions
         )
+        result.recoveryCheckpointProblem = recoveryCheckpointProblem
+        return result
     }
 }

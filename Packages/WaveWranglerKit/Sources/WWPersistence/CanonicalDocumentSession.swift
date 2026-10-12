@@ -106,6 +106,7 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
         payload = try transform(payload)
         isDirty = true
         status.state = .edited(autosaveEnabled: gate?.isEnabled ?? true)
+        status.recoveryCheckpointProblem = nil
         return true
     }
 
@@ -135,6 +136,7 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
             base = receipt.fingerprint
             revision = receipt.revision
             isDirty = false
+            status.recoveryCheckpointProblem = nil
             // The verified publication contains every edit: unpublished edit checkpoints are no longer needed.
             try? publisher.recovery?.discardEditCheckpoints(for: key)
             status.state = receipt.followUpIncomplete
@@ -197,16 +199,22 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
     /// Records a C2b unpublished edit checkpoint (not a save). ON only; OFF creates none.
     @discardableResult
     public func writeEditCheckpoint(keepingStatus: Bool = false) -> Bool {
-        guard isDirty, readOnlyReason == nil, gate?.isEnabled ?? true, let recovery = publisher.recovery,
-              let snapshot = try? publisher.coder.encode(payload, revision: max(revision, base?.revision ?? 0) + 1)
-        else { return false }
+        guard isDirty, readOnlyReason == nil, gate?.isEnabled ?? true, let recovery = publisher.recovery else { return false }
         do {
+            let snapshot = try publisher.coder.encode(payload, revision: max(revision, base?.revision ?? 0) + 1)
             let record = try recovery.writeEditCheckpoint(
                 snapshot: snapshot, base: base, schemaVersion: publisher.coder.format.currentSchemaVersion, for: key
             )
-            if !keepingStatus { status.state = .recoveryCheckpoint(at: record.createdAt) }
+            status.recoveryCheckpointProblem = nil
+            if !keepingStatus {
+                switch status.state {
+                case .edited, .recoveryCheckpoint: status.state = .recoveryCheckpoint(at: record.createdAt)
+                default: break
+                }
+            }
             return true
         } catch {
+            status.recoveryCheckpointProblem = "Recovery copy could not be verified: \(error.localizedDescription)"
             return false
         }
     }

@@ -13,11 +13,6 @@ public struct AutosavePreference: Sendable, Equatable, Codable {
     public static let defaultDelay: Double = 1
     /// Quiet period after which an edit burst counts as settled (C2b "at quiescence").
     public static let quiescenceSeconds: Double = 0.5
-    /// A verified publication must be expected by this long after the last edit (≤2 s gate with a ≥0.5 s
-    /// margin); otherwise an unpublished edit checkpoint is written at quiescence.
-    public static let publicationExpectedWithin: Double = 1.5
-    /// Measured headroom for stage + flush + verify + read-back on this host (p95 well under this; see tests).
-    public static let publicationAllowance: Double = 0.25
 
     public var enabled: Bool
     public var delaySeconds: Double
@@ -38,10 +33,10 @@ public struct AutosavePreference: Sendable, Equatable, Codable {
         defaults.set(delaySeconds, forKey: Self.delayKey)
     }
 
-    /// Whether an unpublished edit checkpoint must be written at quiescence because a verified publication is
-    /// not expected within `publicationExpectedWithin` of the last edit.
+    /// Canonical publication latency is not bounded by its configured delay. Every enabled cadence protects
+    /// settled edits independently, rather than assuming that a save will finish quickly enough.
     public var needsEditCheckpoint: Bool {
-        enabled && delaySeconds + Self.publicationAllowance > Self.publicationExpectedWithin
+        enabled
     }
 }
 

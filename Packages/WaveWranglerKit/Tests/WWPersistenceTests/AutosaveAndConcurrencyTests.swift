@@ -21,6 +21,88 @@ private final class Counter: Sendable {
 
 @Suite("Autosave policy ON / configurable / OFF", .serialized)
 struct AutosavePolicyTests {
+    @Test(arguments: AutosavePreference.allowedDelays)
+    func everyEnabledCadenceSchedulesRecoveryBeforePublication(_ delay: Double) async throws {
+        let gate = AutosaveGate(AutosavePreference(enabled: true, delaySeconds: delay))
+        #expect(gate.preference.needsEditCheckpoint)
+        let (stream, continuation) = AsyncStream<QuiescentWork>.makeStream()
+        let scheduler = QuiescenceScheduler(gate: gate, queue: DispatchQueue(label: "ww.test.early-recovery")) {
+            continuation.yield($0)
+        }
+        defer { scheduler.cancelPending(); continuation.finish() }
+        #expect(scheduler.noteEdit())
+        var iterator = stream.makeAsyncIterator()
+        #expect(try #require(await iterator.next()) == .editCheckpoint)
+    }
+
+    @Test func earlyCheckpointProtectsDefaultEditsWithoutPublishingOrClearingDirtyState() async throws {
+        let rig = Rig()
+        let gate = AutosaveGate(AutosavePreference())
+        let (session, url) = try makeSession(rig, seed: 46, gate: gate)
+        let before = try Data(contentsOf: url)
+        let (stream, continuation) = AsyncStream<QuiescentWork>.makeStream()
+        let scheduler = QuiescenceScheduler(gate: gate, queue: DispatchQueue(label: "ww.test.checkpoint-before-save")) {
+            continuation.yield($0)
+        }
+        defer { scheduler.cancelPending(); continuation.finish() }
+        try await session.edit { try $0.renamingShow(to: "Early protected edit") }
+        scheduler.noteEdit()
+        var iterator = stream.makeAsyncIterator()
+        let first = try #require(await iterator.next())
+        #expect(first == .editCheckpoint)
+        guard first == .editCheckpoint else { return }
+        #expect(await session.writeEditCheckpoint())
+        let record = try #require(rig.recovery.latestEditCheckpoint(for: session.key))
+        #expect(record.unpublished)
+        #expect(try rig.publisher.coder.decode(record.snapshot).payload.show.title == "Early protected edit")
+        #expect(try Data(contentsOf: url) == before)
+        #expect(await session.isDirty)
+        #expect(await !session.status.state.isVerifiedOnDisk)
+        #expect(await session.status.state.hasUnsavedWork)
+    }
+
+    @Test func checkpointFailureIsExplicitAndDoesNotChangeCanonicalTruth() async throws {
+        let faults = FaultState()
+        let rig = Rig(ops: FaultInjectingFileOperations(faults: faults))
+        let (session, url) = try makeSession(rig, seed: 47)
+        let before = try Data(contentsOf: url)
+        try await session.edit { try $0.renamingShow(to: "Unsaved recovery failure") }
+        faults.state.withLock { $0.fault = .failAllWrites(errno: ENOSPC) }
+        #expect(await !session.writeEditCheckpoint())
+        #expect(await session.isDirty)
+        #expect(await !session.status.state.isVerifiedOnDisk)
+        #expect(await session.status.state == .edited(autosaveEnabled: true))
+        #expect(await session.status.recoveryCheckpointProblem?.contains("could not be verified") == true)
+        #expect(await session.status.accessibilityDescription.contains("could not be verified"))
+        #expect(try Data(contentsOf: url) == before)
+        faults.state.withLock { $0.fault = nil }
+        #expect(await session.writeEditCheckpoint())
+        #expect(await session.status.recoveryCheckpointProblem == nil)
+    }
+
+    @Test func checkpointFailureAndLaterSuccessPreserveCanonicalSaveFailure() async throws {
+        let faults = FaultState()
+        let rig = Rig(ops: FaultInjectingFileOperations(faults: faults))
+        let (session, url) = try makeSession(rig, seed: 48)
+        let before = try Data(contentsOf: url)
+        try await session.edit { try $0.renamingShow(to: "Keep failure remedy") }
+        faults.state.withLock { $0.fault = .failAllWrites(errno: ENOSPC) }
+        guard case .failure = await session.save(automatic: true) else {
+            Issue.record("Expected injected save failure")
+            return
+        }
+        let failed = await session.status.state
+        #expect(failed.isAutomaticallyRetryable)
+        #expect(await session.status.recoveryCheckpointProblem != nil)
+        #expect(await !session.writeEditCheckpoint())
+        #expect(await session.status.state == failed)
+        faults.state.withLock { $0.fault = nil }
+        #expect(await session.writeEditCheckpoint())
+        #expect(await session.status.state == failed)
+        #expect(await session.status.recoveryCheckpointProblem == nil)
+        #expect(try Data(contentsOf: url) == before)
+    }
+
     @Test func preferenceDefaultsAndBounds() throws {
         let suite = "WWPersistenceTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -122,18 +204,24 @@ struct AutosavePolicyTests {
     @Test(.enabled(if: TimingGate.enabled, "timing pass (WW_TIMING_TESTS=1)"))
     func editToQuiescentCheckpointLatency() async throws {
         let rig = Rig()
-        // Default policy: publication after 1 s quiescence.
+        // Default policy: independent recovery at 0.5 s, canonical save requested at 1 s.
         let gate = AutosaveGate(AutosavePreference(enabled: true, delaySeconds: 1))
         let (session, url) = try makeSession(rig, seed: 43, gate: gate)
-        let (stream, continuation) = AsyncStream<ContinuousClock.Instant>.makeStream()
+        let (stream, continuation) = AsyncStream<(ContinuousClock.Instant, QuiescentWork)>.makeStream()
         let scheduler = QuiescenceScheduler(gate: gate, queue: DispatchQueue(label: "ww.test.scheduler")) { kind in
-            guard kind == .publish else { return }
             Task {
-                if case .success = await session.save(automatic: true) { continuation.yield(.now) }
+                switch kind {
+                case .publish:
+                    if case .success = await session.save(automatic: true) { continuation.yield((.now, kind)) }
+                case .editCheckpoint:
+                    if await session.writeEditCheckpoint() { continuation.yield((.now, kind)) }
+                }
             }
         }
+        defer { scheduler.cancelPending(); continuation.finish() }
         var iterator = stream.makeAsyncIterator()
         var latencies: [Double] = []
+        var checkpointKinds: [QuiescentWork] = []
         for sample in 0..<12 {
             for burst in 0..<4 {
                 try await session.edit { try $0.renamingShow(to: "Sample \(sample) edit \(burst)") }
@@ -141,15 +229,32 @@ struct AutosavePolicyTests {
                 try await Task.sleep(for: .milliseconds(40))
             }
             try await session.edit { try $0.renamingShow(to: "Sample \(sample) final") }
+            let expected = await session.payload
             scheduler.noteEdit()
             let lastEdit = ContinuousClock.now
-            let verified = try #require(await iterator.next())
-            // Independent read-back of coherent disk truth.
-            let decoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: url))
-            #expect(decoded.payload.show.title == "Sample \(sample) final")
-            latencies.append(Stats.seconds(verified - lastEdit))
+            var firstVerified: ContinuousClock.Instant?
+            while firstVerified == nil {
+                let (verified, kind) = try #require(await iterator.next())
+                guard verified >= lastEdit else { continue }
+                // Check the first coherent value, not canonical-save completion alone.
+                switch kind {
+                case .publish:
+                    let decoded = try rig.publisher.coder.decode(Data(contentsOf: url))
+                    guard decoded.payload == expected else { continue }
+                case .editCheckpoint:
+                    guard let record = rig.recovery.latestEditCheckpoint(for: session.key), record.unpublished,
+                          (try? rig.publisher.coder.decode(record.snapshot))?.payload == expected
+                    else { continue }
+                }
+                firstVerified = .now
+                checkpointKinds.append(kind)
+            }
+            latencies.append(Stats.seconds(try #require(firstVerified) - lastEdit))
+            // Finish this sample's publication before starting another, avoiding stale callbacks/dirty edits.
+            #expect(await eventually { await !session.isDirty })
+            scheduler.cancelPending()
         }
-        Evidence.record("autosave edit-to-quiescent verified checkpoint (delay 1 s, publication) \(Stats.summary(latencies)) [headless WWPersistence, this host]")
+        Evidence.record("autosave edit-to-quiescent first verified checkpoint (delay 1 s; recovery=\(checkpointKinds.filter { $0 == .editCheckpoint }.count), canonical=\(checkpointKinds.filter { $0 == .publish }.count)) \(Stats.summary(latencies)) [headless WWPersistence, this host]")
         #expect(Stats.percentile(latencies, 95) <= 2.0)
         #expect(latencies.max() ?? 99 <= 2.0)
 
@@ -160,16 +265,19 @@ struct AutosavePolicyTests {
             guard kind == .editCheckpoint else { return }
             Task { if await session.writeEditCheckpoint() { draftContinuation.yield(.now) } }
         }
+        defer { draftScheduler.cancelPending(); draftContinuation.finish() }
         var draftIterator = draftStream.makeAsyncIterator()
         var draftLatencies: [Double] = []
         for sample in 0..<5 {
             try await session.edit { try $0.renamingShow(to: "Draft sample \(sample)") }
+            let expected = await session.payload
             draftScheduler.noteEdit()
             let lastEdit = ContinuousClock.now
-            let written = try #require(await draftIterator.next())
+            _ = try #require(await draftIterator.next())
             let record = try #require(rig.recovery.latestEditCheckpoint(for: session.key))
-            #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(record.snapshot).payload.show.title == "Draft sample \(sample)")
-            draftLatencies.append(Stats.seconds(written - lastEdit))
+            #expect(record.unpublished)
+            #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(record.snapshot).payload == expected)
+            draftLatencies.append(Stats.seconds(.now - lastEdit))
             draftScheduler.cancelPending()
         }
         Evidence.record("autosave edit-to-quiescent C2b edit checkpoint (delay 5 s configured, quiescence 0.5 s) \(Stats.summary(draftLatencies)) [headless WWPersistence, this host]")

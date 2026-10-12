@@ -3,6 +3,43 @@ Local-first macOS multitrack podcast alignment and editing
 
 Native macOS multitrack podcast preparation: local audio processing, referenced media, cloud canonical projects.
 
+## Visual alignment
+
+In **Alignment**, choose **Load Audio Window** to display measured waveforms for grouped, locally
+available recordings. The shared ruler is in aligned seconds. Blue strokes use a verified accepted
+map; orange strokes are explicitly unplaced source-origin previews, not a synchronization result.
+Unavailable sources have individual reasons; source files are never modified.
+
+Select a recording, drag an event or type **Offset (ms)** and **Rate (ppm)** to preview a correction,
+then choose **Apply Timing**. A positive offset moves audio later; a delayed target usually needs a
+negative offset. Applying uses the existing versioned map and named Undo. If no map exists, first
+choose **Analyse Available Sources** to prepare source facts; an abstention does not prevent a
+manual correction. Alternatively match at least two distinct **Reference point / Target point**
+pairs and choose **Apply Anchors**. All gesture operations have typed-field alternatives.
+
+**Visible span**, **Window start**, **Previous** and **Next** navigate bounded windows; changing zoom
+reloads actual audio detail. **Compare Aligned Audio** plays up to five seconds from the aligned
+playhead: reference channel 1 on the left, the selected recording's chosen channel on the right,
+resampled through the same accepted map. Unsupported or uncovered regions remain silent.
+Comparison is an internal listening check, not an export, clock qualification or cut authorization.
+
+**Build Episode Overview** explicitly scans every covered PCM sample into at most 2,048 amplitude
+bins per recording, with cancellable progress. Click covered overview audio to open an exact
+window; **Window start**, or the typed playhead with **Open Window at Playhead**, are keyboard
+and accessibility alternatives. Overview bins never
+create anchors. Gaps stay absent, unplaced audio stays marked, and source/timing changes invalidate
+the result. A scan supports up to 24 source hours per recording and keeps no persistent PCM/cache.
+Stored offsets/rates can place audio outside the exact navigator's 0-to-86,400 aligned-second
+range. Those overview regions are shaded and explicitly unavailable, not offered as clickable
+exact windows; the source-time scan cap does not change stored timing.
+
+This is an alignment workspace, not a DAW or complete editing workflow. PCM recordings support
+exact random-access waveform windows and aligned listening throughout an episode, without decoding
+the preceding hours. Other codecs retain the first-10-source-minutes limit (including inverse map
+offsets); later windows are explicitly refused until exact seeking is established. No persistent
+waveform cache is created. Real local transcription and protected filler-word editing remain
+separate, incomplete MVP work.
+
 ## Planning
 
 - [Start M1: copyable Squad kickoff](docs/planning/kickoffs/m1.md) · [milestone execution runbook](docs/planning/milestone-runbook.md)
@@ -32,7 +69,13 @@ Native macOS multitrack podcast preparation: local audio processing, referenced 
 
 ## Current delivery policy - user-directed 2026-10-04
 
-GitHub issues and six milestones are the operational backlog **now**. Use the actual Squad and orchestrate one milestone per session: internally usable M1 organizer, M2 validated import/alignment, M3 local selected-primary speech/protected review, M4 cleaned-track full MVP on this Mac. **First audio handoff is cleaned-track M4; no uncut M2 handoff.** Public signed/notarized distribution, actual macOS26/16GB and broader device/participant qualification are separate Release work, not pre-app gates.
+GitHub issues and six milestones are the operational backlog. The 2026-10-10 user decision supersedes
+the earlier Squad/orchestrate delivery process: direct implementation now prioritizes visible
+multitrack alignment, then actual local transcription and protected filler-word cuts. File management
+and numeric tables alone do not satisfy the MVP. Existing M1/M2 evidence is retained; M3 and the full
+MVP are not complete. **First audio handoff is cleaned-track M4; no uncut M2 handoff.** Public
+signed/notarized distribution, actual macOS26/16GB and broader device/participant qualification are
+separate Release work, not pre-app gates.
 
 This publication changes documents/context only. Pasting [the M1 kickoff](docs/planning/kickoffs/m1.md) grants M1 engineering, scoped dependency restores, isolated worktrees/branches, commits/push, independently reviewed merges and issue updates. WW-009 records contracts/evidence/risks, not another generic approval. Dependencies gate accepted outcomes, not safe preparatory coding. Immutable sources, cloud canonical durability, protected speech, offline/privacy and essential native keyboard/accessibility are never deferred. Recording/model/provider/native/GUI/signing/external publishing consent remains exact-scope; source-download ON is not agent sample permission.
 

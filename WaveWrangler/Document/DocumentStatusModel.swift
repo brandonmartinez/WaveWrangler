@@ -28,6 +28,15 @@ final class DocumentStatusModel {
 
     func set(_ state: DocumentSaveState) {
         saveStatus.state = state
+        switch state {
+        case .clean, .saved, .savedFollowUpIncomplete, .edited:
+            saveStatus.recoveryCheckpointProblem = nil
+        default: break
+        }
+    }
+
+    func setRecoveryCheckpointProblem(_ value: String?) {
+        saveStatus.recoveryCheckpointProblem = value
     }
 
     func setProviderConflicts(_ report: ProviderConflictReport) {

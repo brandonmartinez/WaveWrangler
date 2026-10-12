@@ -21,6 +21,10 @@ public protocol SourceContentIO: Sendable {
 /// not `Sendable`.
 public protocol DecodingContentReader: AnyObject {
     var facts: EncodedStreamFacts { get }
+    var supportsRandomAccess: Bool { get }
+
+    /// Positions the same read-only decoder at an exact codec-stream frame; never opens another source.
+    func seekRawFrame(to frame: Int64) throws(DecodeFailure)
 
     /// Decodes the next frames of the **codec stream** (priming and remainder frames are *not* removed)
     /// as 32-bit float planar samples at the source rate, into `buffer` starting at frame 0. Returns the
@@ -32,6 +36,11 @@ public protocol DecodingContentReader: AnyObject {
 
     /// Releases the file and decoder. Idempotent.
     func close()
+}
+
+extension DecodingContentReader {
+    public var supportsRandomAccess: Bool { false }
+    public func seekRawFrame(to frame: Int64) throws(DecodeFailure) { throw .seekUnavailable }
 }
 
 /// The decoder's reusable planar sample buffer: `channelCount` channels of `capacityFrames` floats each,

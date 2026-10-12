@@ -33,11 +33,11 @@ extension CloseDecision {
         case .saved, .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updatingFormat, .updateFailed, .readOnlyLocation,
              .readOnly, .recovered, .checking, .unknown:
             self = .closeImmediately
-        case .edited where autosaveEnabled:
+        case .edited where autosaveEnabled, .recoveryCheckpoint where autosaveEnabled:
             self = .saveFirst
         case .saving:
             self = .waitForSave
-        case .edited, .cancelled:
+        case .edited, .recoveryCheckpoint, .cancelled:
             self = .sheet(CloseSheet(
                 message: "Do you want to save the changes you made to “\(showName)”?",
                 informative: "Your changes will be lost if you don't save them.",
