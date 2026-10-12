@@ -53,12 +53,16 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(waitUntil {
             revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 1")
         }, "Undo must restore the prior verified map. \(app.debugDescription)")
-        XCTAssertTrue(waitUntil { tracks.count == 2 }, "Undo must restore both measured tracks.")
+        XCTAssertTrue(waitUntil {
+            overlay.exists && (overlay.value as? String ?? overlay.label).contains("2 enabled tracks")
+        }, "Undo must restore both measured tracks in the overlay.")
         app.typeKey("z", modifierFlags: [.command, .shift])
         XCTAssertTrue(waitUntil {
             revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 2")
         })
-        XCTAssertTrue(waitUntil { tracks.count == 2 }, "Redo must restore both measured tracks.")
+        XCTAssertTrue(waitUntil {
+            overlay.exists && (overlay.value as? String ?? overlay.label).contains("2 enabled tracks")
+        }, "Redo must restore both measured tracks in the overlay.")
         let trackToggle = app.checkBoxes.matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "alignment.waveforms.enabled."
         )).allElementsBoundByIndex.first { $0.label.contains("synthetic-remote.wav") }
@@ -331,7 +335,7 @@ final class VisualAlignmentUITests: XCTestCase {
         if String(describing: advanced.value ?? "") == "0" { advanced.click() }
         let targetPoint = app.textFields["alignment.waveforms.targetPoint"]
         scrollTo(targetPoint, in: app)
-        XCTAssertTrue(targetPoint.exists)
+        XCTAssertTrue(targetPoint.exists, "Advanced timing target is not accessible. \(app.debugDescription)")
         let storedTargetPoint = try XCTUnwrap(targetPoint.value as? String)
 
         replace(playhead, with: "-1", in: app)
