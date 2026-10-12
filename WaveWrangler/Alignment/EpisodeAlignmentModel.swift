@@ -273,12 +273,19 @@ final class EpisodeAlignmentModel {
 
     var canCompareAligned: Bool {
         guard !isWorking, !isLoadingWaveforms, !isLoadingOverview,
+              let document, timingIsVerified(document.store.model),
               let row = selectedRow, let track = selectedWaveform,
               let map = loadedWaveformMap, track.group != map.reference.group,
               let epoch = map.groups.first(where: { $0.group == track.group })?.epochs.first(where: { $0.epoch == row.epochID }),
               case .mapped = epoch.mapping
         else { return false }
         return true
+    }
+
+    private func timingIsVerified(_ model: ShowDocumentModel) -> Bool {
+        guard model.episode(episodeID)?.alignment?.acceptedRevision != nil else { return true }
+        return document?.verifiedModel == model
+            && document?.status.saveStatus.state.isVerifiedOnDisk == true
     }
 
     func resetWaveformTiming() {
@@ -308,6 +315,10 @@ final class EpisodeAlignmentModel {
         cancelWaveforms()
         let generation = waveformGeneration
         let snapshot = document.store.model
+        guard timingIsVerified(snapshot) else {
+            waveformMessage = "Timing is not verified on disk yet. Save the show before loading aligned audio."
+            return
+        }
         let start = waveformStartSeconds
         let duration = waveformDurationSeconds
         lastError = nil
@@ -335,8 +346,8 @@ final class EpisodeAlignmentModel {
                 #endif
                 try Task.checkCancellation()
                 guard generation == waveformGeneration else { return }
-                guard document.store.model == snapshot else {
-                    waveformMessage = "The episode changed while loading. Load the current audio window again."
+                guard document.store.model == snapshot, timingIsVerified(snapshot) else {
+                    waveformMessage = "The episode or verified timing changed. Save and load the current audio window again."
                     return
                 }
                 waveformTracks = loaded.tracks
@@ -373,6 +384,10 @@ final class EpisodeAlignmentModel {
         stopAudition()
         let generation = overviewGeneration
         let snapshot = document.store.model
+        guard timingIsVerified(snapshot) else {
+            waveformOverviewMessage = "Timing is not verified on disk yet. Save the show before loading its aligned overview."
+            return
+        }
         isLoadingOverview = true
         waveformOverviewMessage = "Scanning every covered PCM sample; no partial overview is published."
         overviewTask = Task { [weak self] in
@@ -391,8 +406,8 @@ final class EpisodeAlignmentModel {
                 }
                 try Task.checkCancellation()
                 guard generation == overviewGeneration else { return }
-                guard document.store.model == snapshot else {
-                    waveformOverviewMessage = "The episode changed. Build its current overview again."
+                guard document.store.model == snapshot, timingIsVerified(snapshot) else {
+                    waveformOverviewMessage = "The episode or verified timing changed. Save and rebuild its overview."
                     return
                 }
                 waveformOverviewTracks = loaded.tracks
@@ -468,6 +483,10 @@ final class EpisodeAlignmentModel {
             auditionLabel = "Place and apply timing before playing; only confirmed, enabled tracks can be heard."
             return
         }
+        guard timingIsVerified(document.store.model) else {
+            auditionLabel = "Timing is not verified on disk yet. Save the show before playing aligned audio."
+            return
+        }
         stopAudition()
         let snapshot = document.store.model
         let sources = enabledSources
@@ -490,6 +509,7 @@ final class EpisodeAlignmentModel {
                     )
                     try Task.checkCancellation()
                     guard generation == auditionGeneration, document.store.model == snapshot,
+                          timingIsVerified(snapshot),
                           enabledSources == sources else { throw CancellationError() }
                     isPreparingAudition = false
                     try enqueueTransport(clip, startSeconds: position, first: !isAuditioning)
@@ -584,7 +604,7 @@ final class EpisodeAlignmentModel {
                 )
                 try Task.checkCancellation()
                 guard generation == auditionGeneration else { return }
-                guard document.store.model == snapshot else {
+                guard document.store.model == snapshot, timingIsVerified(snapshot) else {
                     throw CocoaError(.userCancelled)
                 }
                 try play(clip, startSeconds: start)
