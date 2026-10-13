@@ -53,9 +53,10 @@ struct EpisodeAlignmentContent: View {
             }
         }
         .onChange(of: state.store.model.episode(episodeID)) { _, _ in
-            model?.suspend()
-            model?.load()
-            model?.loadWaveforms()
+            guard let model else { return }
+            model.stopAudition()
+            model.load()
+            model.loadWaveforms(keepingSnapshot: model.pendingWaveformMove != nil)
         }
         .onChange(of: state.saveStatus.state, initial: false) { _, _ in
             guard let document = state.store.document,
