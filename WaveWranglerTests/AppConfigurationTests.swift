@@ -104,12 +104,12 @@ struct UITestHooksDebugOnlyTests {
             try String(contentsOf: runtimeURL, encoding: .utf8)
         }
 
-        /// #219 review, finding 1: both whole-model replacements are computed from a snapshot across awaits,
-        /// so neither may publish without the store's `expecting:` check against the live model.
+        /// #219 review, finding 1: whole-model replacements computed across awaits must not publish
+        /// without the store's `expecting:` check against the live model.
         @Test func wholeModelReplacementsAreGuardedAgainstConcurrentEdits() throws {
             let source = try UITestHooksDebugOnlyTests.source("Alignment/EpisodeAlignmentModel.swift")
             let calls = source.components(separatedBy: "store.applyReplacement(").dropFirst()
-            #expect(calls.count == 2, "the split and the accept are the only whole-model replacements")
+            #expect(calls.count == 4, "split, accept, initial placement, and group move are whole-model replacements")
             for call in calls {
                 #expect(call.prefix(200).contains("expecting: prior,"))
             }

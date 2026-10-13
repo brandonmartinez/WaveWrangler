@@ -2,6 +2,152 @@ import XCTest
 
 @MainActor
 final class VisualAlignmentUITests: XCTestCase {
+    func testNormalImportThroughSavedManualPlayback() throws {
+        continueAfterFailure = false
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "WWUITests-NormalAlignment-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sources = root.appending(path: "Recordings", directoryHint: .isDirectory)
+        let studio = sources.appending(path: "Studio", directoryHint: .isDirectory)
+        let remote = sources.appending(path: "Remote", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: studio, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: remote, withIntermediateDirectories: true)
+        let host = studio.appending(path: "host.wav")
+        let guest = remote.appending(path: "guest.wav")
+        try writeAlignmentWAV(to: host, delayFrames: 0)
+        try writeAlignmentWAV(to: guest, delayFrames: 8_640)
+        let original = try [host, guest].map { try Data(contentsOf: $0) }
+
+        let app = XCUIApplication()
+        let folder = "WWUITests-NormalAudio-\(UUID().uuidString)"
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "-WWUITestHooks", "YES",
+            "-WWUITestResetPreferences", "YES",
+            "-WWUITestOpenShow", "Normal Import Fixture",
+            "-WWUITestShowFolder", folder,
+            "-WWUITestShowEpisodes", "1",
+        ]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.outlines["ww.setup.sources"].waitForExistence(timeout: 10))
+        app.typeKey("i", modifierFlags: [.command, .shift])
+        chooseImportFolder(sources, in: app)
+        let review = app.descendants(matching: .any)["ww.import.review"]
+        XCTAssertTrue(review.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertEqual(app.buttons["ww.import.confirm"].label, "Import 2")
+        let accept = app.buttons["Accept All Suggestions"]
+        XCTAssertTrue(accept.isEnabled)
+        accept.click()
+        app.buttons["ww.import.confirm"].click()
+        XCTAssertTrue(waitUntil { !review.exists })
+
+        for name in ["host.wav", "guest.wav"] {
+            let row = app.outlines["ww.setup.sources"].outlineRows.containing(NSPredicate(
+                format: "identifier BEGINSWITH 'ww.setup.source.' AND (label == %@ OR value == %@)",
+                name, name
+            )).firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 10), app.debugDescription)
+            row.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).click()
+            let speaker = app.popUpButtons["ww.inspector.source.speaker"]
+            XCTAssertTrue(waitUntil {
+                (speaker.value as? String ?? "").contains(name == "host.wav" ? "Host" : "Guest")
+            }, "Accepted import suggestions should classify each synthetic speaker")
+            let confirm = app.buttons["ww.inspector.source.confirmOriginal"]
+            XCTAssertTrue(waitUntil { confirm.exists }, app.debugDescription)
+            confirm.click()
+            let dialog = app.sheets.firstMatch
+            XCTAssertTrue(dialog.buttons["Confirm Original"].waitForExistence(timeout: 5))
+            dialog.buttons["Confirm Original"].click()
+            XCTAssertTrue(waitUntil { !confirm.exists }, app.debugDescription)
+        }
+
+        openAlignment(in: app)
+        let tracks = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.track.")
+        )
+        XCTAssertTrue(waitUntil { tracks.count == 2 }, app.debugDescription)
+        XCTAssertTrue(app.checkBoxes.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "alignment.waveforms.group.", "Studio"
+        )).firstMatch.exists)
+        XCTAssertTrue(app.checkBoxes.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "alignment.waveforms.group.", "Remote"
+        )).firstMatch.exists)
+        let place = app.buttons["alignment.waveforms.placeInitial"]
+        scrollTo(place, in: app)
+        XCTAssertTrue(place.isEnabled)
+        place.click()
+        let revision = app.staticTexts["alignment.waveforms.revision"]
+        XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 1") })
+        let target = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "alignment.waveforms.select.", "guest.wav"
+        )).firstMatch
+        scrollTo(target, in: app)
+        target.click()
+        let nudge = app.buttons["Nudge later 10 ms"]
+        scrollTo(nudge, in: app)
+        if !nudge.isEnabled {
+            let other = app.buttons.matching(NSPredicate(
+                format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+                "alignment.waveforms.select.", "host.wav"
+            )).firstMatch
+            scrollTo(other, in: app)
+            other.click()
+        }
+        XCTAssertTrue(nudge.isEnabled)
+        nudge.click()
+        XCTAssertTrue(waitUntil {
+            (revision.value as? String ?? revision.label).contains("Map revision 2")
+                && app.buttons["alignment.waveforms.load"].label == "Refresh audio"
+        }, app.debugDescription)
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 1") })
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 2") })
+        let remoteToggle = app.checkBoxes.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "alignment.waveforms.group.", "Remote"
+        )).firstMatch
+        scrollTo(remoteToggle, in: app)
+        remoteToggle.click()
+        XCTAssertTrue(waitUntil { tracks.count == 1 })
+        let play = app.buttons["alignment.waveforms.transport.play"]
+        scrollTo(play, in: app)
+        play.click()
+        let status = app.staticTexts["alignment.waveforms.transport.status"]
+        XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 1 enabled track") },
+                      app.debugDescription)
+        app.buttons["alignment.waveforms.transport.stop"].click()
+        scrollTo(remoteToggle, in: app)
+        remoteToggle.click()
+        XCTAssertTrue(waitUntil { tracks.count == 2 })
+        scrollTo(play, in: app)
+        play.click()
+        XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 2 enabled tracks") },
+                      app.debugDescription)
+        app.buttons["alignment.waveforms.transport.stop"].click()
+        app.typeKey("s", modifierFlags: .command)
+        let save = app.descendants(matching: .any).matching(identifier: "ww.show.saveStatus").firstMatch
+        XCTAssertTrue(waitUntil { (save.value as? String ?? save.label).hasPrefix("Saved") })
+        app.terminate()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "-WWUITestHooks", "YES",
+            "-WWUITestOpenWithoutShowWindows", "\(folder)/Normal Import Fixture.wwshow",
+        ]
+        app.launch()
+        openAlignment(in: app)
+        XCTAssertTrue(waitUntil {
+            (app.staticTexts["alignment.waveforms.revision"].value as? String
+                ?? app.staticTexts["alignment.waveforms.revision"].label).contains("Map revision 2")
+        })
+        XCTAssertTrue(waitUntil { tracks.count == 2 })
+        XCTAssertEqual(try [host, guest].map { try Data(contentsOf: $0) }, original)
+    }
+
     func testShortDragsCommitOnlyTheirPointerSizedMapDelta() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -515,6 +661,51 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(destination.waitForExistence(timeout: 10))
         destination.click()
         XCTAssertTrue(destination.isSelected)
+    }
+
+    private func chooseImportFolder(_ folder: URL, in app: XCUIApplication) {
+        let service = XCUIApplication(bundleIdentifier: "com.apple.appkit.xpc.openAndSavePanelService")
+        XCTAssertTrue(waitUntil {
+            service.state != .notRunning || app.windows["open-panel"].exists
+                || app.sheets.firstMatch.exists || app.dialogs.firstMatch.exists
+        }, "The sandboxed import panel must appear")
+        Thread.sleep(forTimeInterval: 2)
+        let target = service.state == .notRunning ? app : service
+        target.typeKey("g", modifierFlags: [.command, .shift])
+        Thread.sleep(forTimeInterval: 1)
+        target.typeText(folder.path)
+        target.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 1.5)
+        target.typeKey(.return, modifierFlags: [])
+    }
+
+    private func writeAlignmentWAV(to url: URL, delayFrames: Int) throws {
+        let rate = 48_000
+        let frames = rate * 5
+        var data = Data()
+        func append<T: FixedWidthInteger>(_ value: T) {
+            var little = value.littleEndian
+            withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
+        }
+        data.append(contentsOf: "RIFF".utf8)
+        append(UInt32(36 + frames * 2))
+        data.append(contentsOf: "WAVEfmt ".utf8)
+        append(UInt32(16))
+        append(UInt16(1))
+        append(UInt16(1))
+        append(UInt32(rate))
+        append(UInt32(rate * 2))
+        append(UInt16(2))
+        append(UInt16(16))
+        data.append(contentsOf: "data".utf8)
+        append(UInt32(frames * 2))
+        for frame in 0..<frames {
+            let time = Double(frame - delayFrames) / Double(rate)
+            let active = (0.6..<0.85).contains(time)
+                || (1.6..<1.85).contains(time) || (3.2..<3.45).contains(time)
+            append(active ? Int16(sin(time * 2 * .pi * 330) * 18_000) : 0)
+        }
+        try data.write(to: url, options: .atomic)
     }
 
     private func replace(_ field: XCUIElement, with text: String, in app: XCUIApplication) {
