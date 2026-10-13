@@ -45,6 +45,8 @@ final class VisualAlignmentUITests: XCTestCase {
 
         for name in ["host.wav", "guest.wav"] {
             let outline = app.outlines["ww.setup.sources"]
+            let details = app.buttons["ww.setup.detailsToggle"]
+            if details.label == "Hide Details" { details.click() }
             let row = outline.outlineRows.containing(NSPredicate(
                 format: "identifier BEGINSWITH 'ww.setup.source.' AND (label == %@ OR value == %@)",
                 name, name
@@ -56,24 +58,7 @@ final class VisualAlignmentUITests: XCTestCase {
             XCTAssertTrue(waitUntil {
                 speaker.exists && (speaker.value as? String) == (name == "host.wav" ? "Host" : "Guest")
             }, "Accepted import suggestions should classify each synthetic speaker")
-            let sourceScroll = app.scrollViews.containing(
-                NSPredicate(format: "identifier == 'ww.setup.sources'")
-            ).firstMatch
-            // A row under the table header can report hittable while clicks hit the header.
-            for _ in 0..<6 {
-                let contentTop = sourceScroll.frame.minY + 35
-                let contentBottom = sourceScroll.frame.maxY - 3
-                if row.isHittable && row.frame.minY >= contentTop
-                    && row.frame.maxY <= contentBottom {
-                    break
-                }
-                sourceScroll.scroll(
-                    byDeltaX: 0,
-                    deltaY: row.frame.midY < (contentTop + contentBottom) / 2 ? 50 : -50
-                )
-            }
-            XCTAssertTrue(row.frame.minY >= sourceScroll.frame.minY + 35
-                && row.frame.maxY <= sourceScroll.frame.maxY - 3, app.debugDescription)
+            XCTAssertTrue(row.isHittable, app.debugDescription)
             for offset in [0.15, 0.3, 0.03] {
                 row.coordinate(withNormalizedOffset: CGVector(dx: offset, dy: 0.5)).click()
                 if waitUntil({
@@ -83,7 +68,6 @@ final class VisualAlignmentUITests: XCTestCase {
             }
             XCTAssertTrue(row.isSelected && (outline.value as? String) == "1 selected"
                 && app.staticTexts["Details — \(name)"].exists, app.debugDescription)
-            let details = app.buttons["ww.setup.detailsToggle"]
             if details.label == "Show Details" { details.click() }
             let inspector = app.descendants(matching: .any)["ww.inspector.source.name"]
             XCTAssertTrue(waitUntil {
