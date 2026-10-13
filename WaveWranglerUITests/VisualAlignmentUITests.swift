@@ -59,13 +59,20 @@ final class VisualAlignmentUITests: XCTestCase {
             let sourceScroll = app.scrollViews.containing(
                 NSPredicate(format: "identifier == 'ww.setup.sources'")
             ).firstMatch
-            for _ in 0..<6 where !row.isHittable {
-                sourceScroll.scroll(byDeltaX: 0, deltaY: -100)
+            for _ in 0..<6 {
+                let viewport = sourceScroll.frame.insetBy(dx: 0, dy: 3)
+                if row.isHittable && row.frame.minY >= viewport.minY
+                    && row.frame.maxY <= viewport.maxY {
+                    break
+                }
+                sourceScroll.scroll(
+                    byDeltaX: 0,
+                    deltaY: row.frame.midY < sourceScroll.frame.midY ? 100 : -100
+                )
             }
+            XCTAssertTrue(row.frame.minY >= sourceScroll.frame.minY
+                && row.frame.maxY <= sourceScroll.frame.maxY, app.debugDescription)
             row.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).click()
-            if !waitUntil({ outline.value as? String == "1 selected" }, timeout: 2) {
-                row.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).click()
-            }
             XCTAssertTrue(waitUntil { outline.value as? String == "1 selected" })
             let details = app.buttons["ww.setup.detailsToggle"]
             if details.label == "Show Details" { details.click() }
