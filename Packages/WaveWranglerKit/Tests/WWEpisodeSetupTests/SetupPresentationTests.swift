@@ -218,6 +218,14 @@ struct RelinkComparisonTests {
         #expect(c.acceptedIdentity == .detailsMatch)
     }
 
+    @Test func alreadyLinkedSourceCannotBeConfirmedAnyway() {
+        let c = RelinkComparison(rows: [], outcome: .alreadyLinked(otherSource: "Other source"))
+        #expect(!c.canConfirm)
+        #expect(c.requiresAcknowledgement)
+        #expect(c.headline.contains("Other source"))
+        #expect(c.acceptedIdentity == .notChecked)
+    }
+
     @Test func sameNameDifferentSizeNeedsAcknowledgement() {
         var chosen = recorded
         chosen.size = 101

@@ -62,7 +62,7 @@ public struct RelinkComparison: Hashable, Sendable {
         case match
         case different(fields: [String])
         case unknown(reason: String)
-        /// The chosen file is already linked to another source in this show; using it needs confirmation.
+        /// The chosen file is already linked to another active source in this show.
         case alreadyLinked(otherSource: String)
         /// The chosen file can't be used at all (not a file, not found, permission denied…).
         case unavailable(reason: String)
@@ -81,10 +81,12 @@ public struct RelinkComparison: Hashable, Sendable {
         }
     }
 
-    /// False when the chosen file can't be used at all; only Choose Another… and Cancel remain.
+    /// False when the chosen file can't be used or belongs to an active source in this show.
     public var canConfirm: Bool {
-        if case .unavailable = outcome { return false }
-        return true
+        switch outcome {
+        case .unavailable, .alreadyLinked: false
+        default: true
+        }
     }
 
     /// Anything but an exact match needs the "I've checked this is the same recording" checkbox and has
@@ -101,7 +103,7 @@ public struct RelinkComparison: Hashable, Sendable {
         case .match: .detailsMatch
         case let .different(fields): .changed(differences: fields.map { $0.lowercased() }.joined(separator: ", ") + " differ", acceptedByUser: true)
         case let .unknown(reason): .changed(differences: "not compared because \(reason)", acceptedByUser: true)
-        case .alreadyLinked: .changed(differences: "also used by another source", acceptedByUser: true)
+        case .alreadyLinked: .notChecked
         case .unavailable: .notChecked
         }
     }

@@ -64,6 +64,10 @@ struct EpisodeSetupContent: View {
             }
             let model = EpisodeSetupModel(store: store, episodeID: episodeID, engine: engine, preference: AppSettingsDownloadPreference.shared)
             if let real = engine as? WWSourcesSetupEngine {
+                real.activeSourceIDs = { [weak store] in
+                    guard let store else { return nil }
+                    return Set(store.model.episodes.flatMap { $0.sources.map(\.id) })
+                }
                 real.sourceNames = { [weak store] id in
                     store?.model.episodes.lazy.compactMap { $0.source(id)?.displayNameHint }.first ?? "another source"
                 }

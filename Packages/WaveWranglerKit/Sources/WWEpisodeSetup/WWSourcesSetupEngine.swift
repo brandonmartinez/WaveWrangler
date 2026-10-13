@@ -205,6 +205,8 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     private var observers: [UUID: (continuation: AsyncStream<[SourceID: SourceStatusSnapshot]>.Continuation, signal: WakeSignal?)] = [:]
     /// Display names of sources in this show, for "already used for …" (set by the UI).
     public var sourceNames: (SourceID) -> String = { _ in "another source" }
+    /// Sources still present in the show. Nil keeps the conservative device-record-only behavior.
+    public var activeSourceIDs: (() -> Set<SourceID>?)?
 
     /// `connectivity`: when given, each network reconnect retries "No connection" downloads while
     /// downloads are on (T30); nil never retries automatically.
@@ -297,8 +299,13 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
 
     private func key(_ sourceID: SourceID) -> DeviceAccessKey { DeviceAccessKey(showID: showID, sourceID: sourceID) }
 
+    private func activeRecords(_ records: [DeviceAccessRecord]) -> [DeviceAccessRecord] {
+        guard let active = activeSourceIDs?() else { return records }
+        return records.filter { active.contains($0.sourceID) }
+    }
+
     public func scanForImport(_ urls: [URL], episodeSourceIDs: [SourceID]) async throws(SourceEngineError) -> ImportScan {
-        let existing = (try? await store.records(in: showID)) ?? []
+        let existing = activeRecords((try? await store.records(in: showID)) ?? [])
         let importer = SourceImporter(context: context)
         let showID = showID
         let plan: ImportPlan
@@ -399,7 +406,7 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     public func compare(candidate url: URL, for sourceID: SourceID) async -> RelinkComparison {
         let key = key(sourceID)
         let record = try? await store.record(for: key)
-        let others = (try? await store.records(in: showID)) ?? []
+        let others = activeRecords((try? await store.records(in: showID)) ?? [])
         let evaluator = RelinkEvaluator(context: context)
         let proposal = await Task.detached { evaluator.evaluate(candidate: url, for: key, record: record, otherRecords: others) }.value
         proposals[sourceID] = (url, proposal, record)
@@ -410,6 +417,9 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         guard let stored = proposals[sourceID], stored.url == url else { throw .failed(reason: "choose the file again") }
         let key = key(sourceID)
         let previous: DeviceAccessRecord?
+        guard activeSourceIDs?()?.contains(sourceID) != false else {
+            throw .failed(reason: "the source is no longer in this show")
+        }
         do {
             previous = try await store.record(for: key)
         } catch {
@@ -423,16 +433,18 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         let evaluator = RelinkEvaluator(context: context)
         let otherRecords: [DeviceAccessRecord]
         do {
-            otherRecords = try await store.records(in: showID)
+            otherRecords = activeRecords(try await store.records(in: showID))
         } catch {
             throw .failed(reason: error.localizedDescription)
         }
         let current = evaluator.evaluate(candidate: url, for: key, record: previous, otherRecords: otherRecords)
+        if let other = current.alreadyLinkedTo ?? stored.proposal.alreadyLinkedTo {
+            throw .failed(reason: "this file is already used by “\(sourceNames(other))” in this show")
+        }
         guard current.canApply,
               current.candidateFingerprint == stored.proposal.candidateFingerprint,
               current.candidateRaw == stored.proposal.candidateRaw,
-              current.comparison == stored.proposal.comparison,
-              current.alreadyLinkedTo == nil, stored.proposal.alreadyLinkedTo == nil
+              current.comparison == stored.proposal.comparison
         else { throw .failed(reason: "the chosen file changed; choose it again") }
         let updated: DeviceAccessRecord
         do {
@@ -448,7 +460,7 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         let latestRecords: [DeviceAccessRecord]
         do {
             latest = try await store.record(for: key)
-            latestRecords = try await store.records(in: showID)
+            latestRecords = activeRecords(try await store.records(in: showID))
         } catch {
             throw .failed(reason: error.localizedDescription)
         }
@@ -457,8 +469,14 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
               latest?.lastKnownPath == previous?.lastKnownPath,
               latest?.relinkHistory == previous?.relinkHistory
         else { throw .failed(reason: "the source record changed; choose the file again") }
+        guard activeSourceIDs?()?.contains(sourceID) != false else {
+            throw .failed(reason: "the source is no longer in this show")
+        }
         let final = evaluator.evaluate(candidate: url, for: key, record: latest, otherRecords: latestRecords)
-        guard final.canApply, final.alreadyLinkedTo == nil,
+        if let other = final.alreadyLinkedTo {
+            throw .failed(reason: "this file is already used by “\(sourceNames(other))” in this show")
+        }
+        guard final.canApply,
               final.candidateFingerprint == current.candidateFingerprint,
               final.comparison == current.comparison
         else { throw .failed(reason: "the chosen file changed; choose it again") }
@@ -477,6 +495,9 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     /// Metadata and the read-only raw witness are checked again before saving the confirmed baseline.
     public func confirmCurrentOriginal(_ sourceID: SourceID) async throws(SourceEngineError) {
         guard let captureRawIdentity else { throw .failed(reason: "source confirmation is unavailable") }
+        guard activeSourceIDs?()?.contains(sourceID) != false else {
+            throw .failed(reason: "the source is no longer in this show")
+        }
         let key = key(sourceID)
         let previous: DeviceAccessRecord
         do {
@@ -488,16 +509,28 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
             else { throw SourceEngineError.failed(reason: "choose the original again using Relink Source") }
             previous = record
             let evaluator = RelinkEvaluator(context: context)
-            let others = try await store.records(in: showID)
+            let others = activeRecords(try await store.records(in: showID))
             let proposal = evaluator.evaluate(candidate: url, for: key, record: record, otherRecords: others)
-            guard proposal.comparison.isExactMatch, proposal.alreadyLinkedTo == nil else {
+            if let other = proposal.alreadyLinkedTo {
+                throw SourceEngineError.failed(reason: "this file is already used by “\(sourceNames(other))” in this show")
+            }
+            guard proposal.comparison.isExactMatch else {
                 throw SourceEngineError.failed(reason: "file details changed; review the original with Relink Source")
             }
             let confirmed = try await evaluator.applyConfirmed(
                 proposal, to: record, captureRawIdentity: captureRawIdentity
             )
+            guard activeSourceIDs?()?.contains(sourceID) != false else {
+                throw SourceEngineError.failed(reason: "the source is no longer in this show")
+            }
             guard try await store.record(for: key) == previous else {
                 throw SourceEngineError.failed(reason: "the source record changed; try again")
+            }
+            let latestOthers = activeRecords(try await store.records(in: showID))
+            if let other = evaluator.evaluate(
+                candidate: url, for: key, record: previous, otherRecords: latestOthers
+            ).alreadyLinkedTo {
+                throw SourceEngineError.failed(reason: "this file is already used by “\(sourceNames(other))” in this show")
             }
             try await store.save(confirmed)
             _ = await tracked { [monitor] in await monitor.refresh([sourceID]) }

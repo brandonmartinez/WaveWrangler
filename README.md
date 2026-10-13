@@ -9,6 +9,8 @@ Import recordings under **Recordings** to review device groups, epochs, and spea
 assignments. A new import has provisional file identity: choose **Confirm original** for each
 unchanged local source before decoding or playback. A changed original must be reviewed through
 **Relink Source** instead. Sources remain referenced in place and are never modified.
+Device-local records left by sources removed from the show do not block confirming a newly
+imported source; an original still used by another source in the show remains unavailable.
 
 In **Alignment**, the shared timeline is the primary editor. **Refresh audio** loads bounded
 measured waveform windows on one seconds-based ruler. Use **Separate lanes** to inspect each

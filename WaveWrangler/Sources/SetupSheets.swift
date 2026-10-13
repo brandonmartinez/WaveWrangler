@@ -264,12 +264,12 @@ struct RelinkSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { model.sheet = nil; dismiss() }
                     .keyboardShortcut(.cancelAction)
-                if comparison.requiresAcknowledgement {
+                if comparison.requiresAcknowledgement && comparison.canConfirm {
                     // No default button when details differ or are unknown (states §4 step 3).
                     Button(comparison.confirmTitle) { model.confirmRelink(context) }
-                        .disabled(!acknowledged || !comparison.canConfirm)
+                        .disabled(!acknowledged)
                         .accessibilityIdentifier("ww.relink.confirm")
-                } else {
+                } else if comparison.canConfirm {
                     Button(comparison.confirmTitle) { model.confirmRelink(context) }
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier("ww.relink.confirm")
