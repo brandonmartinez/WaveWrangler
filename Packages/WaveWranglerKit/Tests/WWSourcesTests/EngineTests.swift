@@ -912,7 +912,11 @@ struct ForbiddenAPITests {
         let code = code(source)
         var tokens = decodeTokens
         if !path.hasPrefix("WWDecode/") { tokens += contentGatewayAPITokens }
-        return tokens.filter { code.contains($0) }.map { "\(path): \($0)" }
+        return tokens.filter { token in
+            token == "AVAudioPlayer"
+                ? !matches(#"\bAVAudioPlayer\b"#, in: code).isEmpty
+                : code.contains(token)
+        }.map { "\(path): \($0)" }
     }
 
     @Test func decodeScannerDetectsMutationsAndWritableOpens() {
@@ -966,6 +970,7 @@ struct ForbiddenAPITests {
         #expect(Self.otherModuleViolations(in: "let s = NSSound(contentsOf: url, byReference: true)", path: "WaveWrangler/App/Preview.swift") == ["WaveWrangler/App/Preview.swift: NSSound"])
         #expect(Self.otherModuleViolations(in: "let a = AVURLAsset(url: url)", path: "WWWaveform/Peaks.swift").contains("WWWaveform/Peaks.swift: AVURLAsset"))
         #expect(Self.otherModuleViolations(in: "let p = try AVAudioPlayer(contentsOf: url)", path: "WWDecode/Playback/Preview.swift").contains("WWDecode/Playback/Preview.swift: AVAudioPlayer"))
+        #expect(Self.otherModuleViolations(in: "let p = AVAudioPlayerNode()", path: "WaveWrangler/Alignment/Preview.swift").isEmpty)
         #expect(Self.otherModuleViolations(in: "let r = try SystemSourceContentIO().openForDecoding(url)", path: "WWShow/Probe.swift") == ["WWShow/Probe.swift: SystemSourceContentIO", "WWShow/Probe.swift: openForDecoding"])
         #expect(Self.otherModuleViolations(in: "try reader.readRawFrames(into: list, frames: 4)", path: "WaveWrangler/Probe.swift") == ["WaveWrangler/Probe.swift: readRawFrames"])
         #expect(Self.otherModuleViolations(in: "content.openForDecoding(url)", path: "WWDecode/SourceDecoder.swift").isEmpty, "WWDecode itself may use its gateway")

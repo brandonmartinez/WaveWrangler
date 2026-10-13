@@ -55,12 +55,19 @@ struct EpisodeSetupContent: View {
         Task { @MainActor in
             let engine = await SetupEngineProvider.engine(for: window, show: store.model.show.id)
             let state = ShowWindowRegistry.state(for: window)
-            guard visible, state == nil || (state?.destination == .setup && state?.selectedEpisodeID == episodeID) else {
+            guard visible, state == nil || (
+                (state?.destination == .setup || state?.destination == .alignment)
+                    && state?.selectedEpisodeID == episodeID
+            ) else {
                 connecting = false
                 return
             }
             let model = EpisodeSetupModel(store: store, episodeID: episodeID, engine: engine, preference: AppSettingsDownloadPreference.shared)
             if let real = engine as? WWSourcesSetupEngine {
+                real.activeSourceIDs = { [weak store] in
+                    guard let store else { return nil }
+                    return Set(store.model.episodes.flatMap { $0.sources.map(\.id) })
+                }
                 real.sourceNames = { [weak store] id in
                     store?.model.episodes.lazy.compactMap { $0.source(id)?.displayNameHint }.first ?? "another source"
                 }

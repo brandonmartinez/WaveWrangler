@@ -478,6 +478,29 @@ final class EpisodeSetupModel {
 
     // MARK: Relink / regrant (states §4)
 
+    func confirmCurrentOriginal(_ sourceID: SourceID) {
+        guard let source = episode?.source(sourceID),
+              let engine = engine as? WWSourcesSetupEngine else {
+            message = "Confirmation isn't available for this source. Choose Relink Source instead."
+            return
+        }
+        Task {
+            guard await Dialogs.confirm(
+                in: window(),
+                message: "Confirm this original recording?",
+                informative: "Confirm that “\(source.displayNameHint)” is the original you added. WaveWrangler checks its unchanged file details and a read-only source witness before enabling audio; it never changes the file.",
+                confirmTitle: "Confirm Original",
+                destructiveIsDefault: false
+            ) else { return }
+            do {
+                try await engine.confirmCurrentOriginal(sourceID)
+                message = "Original confirmed. Audio is available in the editor."
+            } catch {
+                message = "Original wasn't confirmed: \(Self.reason(error)). No audio was opened for playback."
+            }
+        }
+    }
+
     func beginRelink(_ sourceID: SourceID, mode: RelinkContext.Mode = .relink) {
         guard let window = window(), let source = episode?.source(sourceID) else { return }
         let name = source.displayNameHint

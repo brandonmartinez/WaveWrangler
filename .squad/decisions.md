@@ -1244,3 +1244,81 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **What:** The author left runner v4 unchanged at driver SHA `9f81ffbda5ea544348ddfe7afdcb4801e8bcb3ef49a260d4e7bb6b85ba7bb4ca` and remote SHA `bf5a96568e830bb86989e4bc3f21c651f74a46601bd57635b9b6f520255c77e7`. A fake-only `/bin/bash` diagnosis after both exports confirmed `errexit` and `nounset`: simulated Python failure exits on `NONCE` assignment; with `errexit` disabled, `NONCE` is empty rather than producing the recorded line-96 unbound-variable error. The exact executed bytes and trace are absent, so the first JIT's local failure root cause remains **UNKNOWN** and does not justify a v5 change.
 
 **Operational disposition:** Preserve frozen JIT nonce `03123e…`, with `.used` absent. No SSH, Mini, preflight, native process, or test occurred. #440 remains source-only approved at `b8cb9c2`, its full gate is **NOT RUN**, and no merge or [#27](https://github.com/brandonmartinez/WaveWrangler/issues/27) closure follows. Under the relay's no-auto-retry rule and prior cap, hold #440 through the morning.
+
+### 2026-10-12: Authorize one additional focused #455 VM GUI round
+
+**By:** Brandon, in this session, after reviewing the three failed counted rounds and the GUI timebox.
+
+**What:** Brandon selected "Authorize one more focused VM round (Recommended)" for the saved manual-alignment editor. Permit exactly one new leased synthetic XCUITest run on the existing VM after the focused test corrections are built and staged from an exact pushed commit. This is a single-run exception to the three-round stop, not permission for an open-ended retry cycle, the paused #450 GUI campaign, real-media access, or testing on the working Mac.
+
+**Boundary:** Record the SHA, host, result, and pass/fail counts on #455. If this round fails, stop GUI testing again and return the remaining issue for a new decision; no automatic further retry or merge follows.
+
+**Result:** The one authorized round ran at `c38768625f8d` on `ww-ui-1`: two focused synthetic methods ran, zero passed, two failed, zero skipped. The recorder editor never regained its map revision during 20 seconds after Undo. The overview built two measured results but its test did not open Advanced epoch timing because AX reports the collapsed disclosure value as numeric `0`, not the string `"0"`. The exception is consumed; further GUI runs are stopped. Neither full end-to-end proof nor merge acceptance follows.
+
+### 2026-10-12: Authorize one focused #455 VM verification after Undo refresh
+
+**By:** Brandon, in this session, after reviewing the exhausted prior GUI exception and the proposed verified-save waveform reload.
+
+**What:** Brandon selected "Authorize one focused VM round (Recommended)" for the pushed Undo-refresh correction at `5429c938`. Permit one exact-head leased synthetic VM run of the affected editor and overview methods. No real recordings, working-Mac GUI test, or legacy #450 retry is authorized.
+
+**Boundary:** Report the result on #455 and stop if it fails; this does not waive the import-to-reopen proof, independent review, or merge gates.
+
+**Result:** The one authorized round ran at `c94b23df0e19` on `ww-ui-1`: two focused synthetic methods ran, zero passed, two failed, zero skipped. Undo regained the verified Map revision 1, but the added track assertion incorrectly queried separate-lane accessibility nodes while the editor remained in Overlay mode. The overview built two measured results and clicked Advanced epoch timing, yet its target-point field was not found. Result: `manual-undo-c94b23df0e19-20261012T150449/result.xcresult` on the VM, with a retained local copy at `/tmp/ww-manual-editor-vm-evidence/manual-undo-c94b23df-r5.xcresult/`. The exception is consumed; no further GUI run or merge is authorized by this result.
+
+### 2026-10-12: Authorize one focused #455 VM round after mode-correct assertions
+
+**By:** Brandon, in this session, after reviewing the failed `c94b23df0e19` round, the corrected Overlay assertion, and the unresolved overview accessibility query.
+
+**What:** Brandon selected "Authorize one focused VM round (Recommended)." Permit exactly one leased, synthetic-only run on an existing VM of the affected recorder editor and overview UI methods, from a clean, signed, staged exact pushed head. This does not authorize a legacy #450 retry, private-media access, working-Mac GUI tests, or any further round.
+
+**Boundary:** Report SHA, host, result and pass/fail/skip counts on #455. If it fails, stop GUI testing for another decision. This round does not waive the reproducible headless autosave timing failure or the normal import-to-reopen proof.
+
+**Result:** The sole authorized round ran at `24c8c00fcefb` on `ww-ui-1`: two focused synthetic methods ran, one passed, one failed, zero skipped. The editor method passed its Overlay, placement, move, Undo/Redo, enabled-track playback, and reopen assertions. The overview built two complete PCM results, but clicking Advanced epoch timing left its accessibility disclosure value at `0` for 20 seconds; its target-point field never opened, so the overview method failed before navigation. The VM result is `/Users/admin/ww-uitest-runs/manual-editor-24c8c00fcefb-20261012T114413/result.xcresult`, retained locally at `/tmp/ww-manual-editor-vm-evidence/manual-editor-24c8c00fcefb-r6.xcresult/`. The lease released normally. This exception is consumed; GUI tests stop again. It does not clear the normal import proof, autosave timing gate or merge.
+
+### 2026-10-12: Authorize one focused #455 VM verification of explicit disclosure state
+
+**By:** Brandon, in this session, after the `24c8c00fcefb` VM result and the new explicit-state Advanced epoch timing change at `c8eb8a48`.
+
+**What:** Brandon selected "Authorize one focused VM verification (Recommended)." Permit exactly one leased synthetic VM run of the two affected VisualAlignmentUITests methods from the clean, signed and staged exact pushed head. This is not permission for private media, working-Mac UI tests, an unrelated GUI campaign or further retries.
+
+**Boundary:** Report SHA, host, counts and result on #455. Stop again if this fails; a passing focused GUI run alone does not waive normal import-to-reopen proof, independent save gates or the reproducible autosave timing failure.
+
+**Result:** The one authorized round ran at `0d5876397c59` on `ww-ui-1`: two focused synthetic methods ran, one passed, one failed, zero skipped. The editor again passed its move, Undo/Redo, enabled playback, and reopen assertions. The overview again built two complete PCM results, but clicking Advanced epoch timing left its AX disclosure value at `0` for 20 seconds even with an explicit expansion binding; the target-point field did not open. Result: `/Users/admin/ww-uitest-runs/manual-advanced-0d5876397c59-20261012T115022/result.xcresult`, retained locally at `/tmp/ww-manual-editor-vm-evidence/manual-advanced-0d5876397c59-r7.xcresult/`. The lease released normally. The ineffective expansion binding was removed afterward; the user-facing restarted-epoch clarification remains. The exception is consumed and GUI testing is stopped.
+
+### 2026-10-12: Authorize one focused #455 synthetic drag verification
+
+**By:** Brandon, in this session, after reporting that even the smallest drag at a few-second span jumps wildly.
+
+**What:** Brandon selected "Yes, run the scoped synthetic GUI test (Recommended)." Permit exactly one leased functional XCUITest method on an existing mini or GUI VM, from a clean signed and checksum-staged exact pushed head, to compare a small waveform pointer movement against the saved recorder offset. The test uses generated recordings only; it does not run on the working Mac, inspect private recordings, revisit the capped overview/focus campaign, or authorize further retries.
+
+**Boundary:** Report the SHA, host, pass/fail/skip counts, and retained result on #455. If it fails, stop GUI testing and return the evidence for a new decision. A pass does not prove the user's real-media drag path or complete the PR's remaining gates.
+
+**Result:** The exact pushed `464e7793dda8` Products were signed and checksum-staged on `ww-ui-1`. One leased synthetic method ran: zero passed, one failed, zero skipped. The test failed before dragging because its seeded alignment fixture already had an accepted map, so the initial-placement button it tried to click was correctly absent. The test setup was corrected afterward, but **the pointer-to-saved-offset behavior was not exercised or verified**; there was no retry. Result: `/Users/admin/ww-uitest-runs/manual-drag-464e7793dda8-20261012T151223/result.xcresult`, retained in this worktree at `.build/drag-fix-vm-result.xcresult/`. The lease released normally. The single-run exception is consumed.
+
+### 2026-10-13: Authorize one behavior-only #455 mini GUI round beyond the timebox
+
+**By:** Brandon, after reviewing the three counted failed GUI rounds in this closeout and the corrected source-inspector test at `04fc24a4`.
+
+**What:** Brandon selected "Authorize one recorded exception and one focused run (Recommended)." Permit exactly one additional leased XCUITest invocation on the physical Mac mini, selecting only the normal generated-audio import, original-confirmation, manual alignment, playback, Undo/Redo, and save/reopen behavior path. Build and checksum-stage signed Products from a clean, pushed exact head. This is a one-use exception to the per-PR GUI timebox, not approval to retry the historical disclosure/focus campaigns, inspect private media, test on the working Mac, or run again automatically.
+
+**Boundary:** Report the exact SHA, mini host, pass/fail/skip counts and retained result on #455. Stop if this run fails. The source-safety and durability requirements remain; the autosave timing gate is separately restricted to an eligible quiet physical mini. A failed or incomplete run does not permit merging #455 or starting the follow-up UI coding session as if this PR had merged.
+
+**Result:** At exact pushed `8bffcce01946`, the leased physical-mini synthetic path ran once: zero passed, one failed, zero skipped. Import, grouping, classification, and read-only confirmation of the first generated source succeeded. The second row sat below the compact table viewport; the test clicked outside that row, leaving the first source selected, and stopped at its inspector-name assertion before further confirmation, alignment, playback or reopen. Original result: `~/ww-uitest-runs/pr455-functional-8bffcce01946-20261013T0931/result.xcresult` on the mini, privately retained at `.build/pr455-mini-functional-8bffcce01946.xcresult/`. The exception is consumed; a later test-navigation correction does not authorize another GUI run or a merge.
+
+### 2026-10-13: Authorize bounded #455 synthetic functional mini retries
+
+**By:** Brandon, in response to the failed `8bffcce01946` mini run and the compiled correction for the off-viewport source row.
+
+**What:** When asked to authorize exactly one more focused synthetic behavior run on the mini, Brandon replied, "you are authorized to have 100 runs." Record this as authorization for up to 100 additional leased, synthetic-only functional GUI invocations for this PR, starting with the corrected test. Each attempt still requires a clean pushed exact-head signed runner, checksum staging, a unique lease/result, and truthful pass/fail reporting. Use only the attempts needed to prove the behavior; do not use the allowance to retry paused legacy focus campaigns, inspect private recordings, or test on the working Mac.
+
+**Boundary:** The quiet physical-mini autosave performance gate remains a separate <6 one-minute load, 60-second idle preflight with the unchanged threshold. The GUI allowance does not waive source safety, durability, applicable review, or merge prerequisites.
+
+**Outcome:** The focused physical-mini synthetic behavior method passed at pushed `121273e529fd`: one passed, zero failed, zero skipped, with its original result at `~/ww-uitest-runs/pr455-functional-121273e529fd-20261013T1048/result.xcresult` and a private local copy at `.build/pr455-mini-functional-121273e529fd.xcresult/`. The allowance was not an instruction to consume all 100 attempts; no further functional GUI attempt is needed.
+
+### 2026-10-13: Defer prototype performance acceptance to M5/M6
+
+**By:** Brandon, after the exact-head synthetic GUI and headless gates passed while the physical mini repeatedly exceeded the quiet-load preflight.
+
+**What:** Brandon directed, "let's not worry about performance gates for now, we still have a lot of experimenting to do and instead should have a performance round that's in M5/6." For #455's experimental saved manual-alignment prototype, the physical-mini autosave latency measurement and performance gate are deferred to a dedicated M5/M6 performance round rather than gating this PR's merge. Preserve the unchanged timing test and ≤2-second objective for that future round; do not relabel local timings or load-ineligible mini preflights as a physical-mini pass.
+
+**Boundary:** This is a performance-scheduling decision, not a waiver of source-witness/access protections, verified save/recovery, stale-episode cancellation, synthetic functional proof, or applicable review. #455 can only merge after the remaining non-performance gates are satisfied, and the follow-up waveform-first UI session starts from merged main.

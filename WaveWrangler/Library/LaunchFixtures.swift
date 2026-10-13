@@ -28,6 +28,8 @@ import WWTimeMap
 ///   (the Library window is then not shown at launch).
 /// - `-WWUITestAlignmentFixture YES`: give the opened synthetic episode two recorder groups and epochs,
 ///   with synthetic logical source records only. No recording exists and no source content can be read.
+/// - `-WWUITestUnplacedAlignmentFixture YES`: with an alignment fixture, omit its seeded accepted map
+///   so the native editor can exercise initial manual placement on generated recordings.
 /// - `-WWUITestMinimumShowWindow YES`: open a synthetic show at the supported 760×440 minimum content size.
 /// - `-WWUITestAppearance aqua|darkAqua|highContrastAqua|highContrastDarkAqua`: app appearance for C04/C07
 ///   checks. The high-contrast names are AppKit's Increase Contrast appearances (labelled "override, not
@@ -204,8 +206,9 @@ enum LaunchFixtures {
         try! FileManager.default.createDirectory(at: sourceFolder, withIntermediateDirectories: true)
         let referenceURL = sourceFolder.appending(path: reference.displayNameHint)
         let targetURL = sourceFolder.appending(path: target.displayNameHint)
-        writeSyntheticWAV(referenceURL, frames: Int(frames), phase: 0)
-        writeSyntheticWAV(targetURL, frames: Int(frames), phase: 31)
+        let visual = UserDefaults.standard.bool(forKey: "WWUITestVisualAlignmentFixture")
+        writeSyntheticWAV(referenceURL, frames: Int(frames), phase: 0, eventDelayFrames: visual ? 0 : nil)
+        writeSyntheticWAV(targetURL, frames: Int(frames), phase: 31, eventDelayFrames: visual ? 8_640 : nil)
         let sourceURLs = [(reference, referenceURL), (target, targetURL)]
         let revisions = sourceURLs.map { source, url -> SourceRevision in
             guard case let .success(metadata) = SetupEngineProvider.context.io.metadata(at: url) else {
@@ -264,7 +267,7 @@ enum LaunchFixtures {
             epochs: [
                 EpochClockMap(
                     epoch: targetEpoch.id,
-                    mapping: .mapped(
+                    mapping: visual ? .unsupported(.notAttempted) : .mapped(
                         segments: [targetSegment],
                         provenance: .acousticConsistentProposal(proposal)
                     )
@@ -300,29 +303,38 @@ enum LaunchFixtures {
             map: map,
             revisions: revisions
         )
-        episode.alignment = EpisodeAlignment(
-            maps: [TimeMapVersion(
-                revision: 1,
-                inputs: TimeMapInputs(sources: [
-                    TimeMapSourceInput(
-                        sourceID: reference.id,
-                        formatInterpretationVersion: FormatRevision.current.interpretationVersion
-                    ),
-                    TimeMapSourceInput(
-                        sourceID: target.id,
-                        formatInterpretationVersion: FormatRevision.current.interpretationVersion
-                    ),
-                ], recipe: recipe),
-                map: encoded
-            )],
-            acceptedRevision: 1
-        )
+        if !UserDefaults.standard.bool(forKey: "WWUITestUnplacedAlignmentFixture") {
+            episode.alignment = EpisodeAlignment(
+                maps: [TimeMapVersion(
+                    revision: 1,
+                    inputs: TimeMapInputs(sources: [
+                        TimeMapSourceInput(
+                            sourceID: reference.id,
+                            formatInterpretationVersion: FormatRevision.current.interpretationVersion
+                        ),
+                        TimeMapSourceInput(
+                            sourceID: target.id,
+                            formatInterpretationVersion: FormatRevision.current.interpretationVersion
+                        ),
+                    ], recipe: recipe),
+                    map: encoded
+                )],
+                acceptedRevision: 1
+            )
+        }
         let records = sourceURLs.map { source, url in
-            DeviceAccessRecord(
+            guard case let .success(metadata) = SetupEngineProvider.context.io.metadata(at: url) else {
+                preconditionFailure("generated alignment fixture identity unavailable")
+            }
+            let identity = RecordedIdentity(
+                fingerprint: metadata.fingerprint, confirmation: .userConfirmed, recordedAt: Date()
+            )
+            return DeviceAccessRecord(
                 showID: showID,
                 sourceID: source.id,
                 bookmark: try! SetupEngineProvider.context.io.makeReadOnlyBookmark(for: url),
                 lastKnownPath: url.path,
+                recordedIdentity: identity,
                 createdAt: Date()
             )
         }
@@ -332,7 +344,8 @@ enum LaunchFixtures {
     private static func writeSyntheticWAV(
         _ url: URL,
         frames: Int,
-        phase: Int
+        phase: Int,
+        eventDelayFrames: Int? = nil
     ) {
         let sampleRate: UInt32 = 48_000
         let dataByteCount = UInt32(frames * MemoryLayout<Int16>.size)
@@ -351,7 +364,15 @@ enum LaunchFixtures {
         data.append(contentsOf: "data".utf8)
         appendLittleEndian(dataByteCount, to: &data)
         for frame in 0..<frames {
-            let value = Int16((((frame + phase) % 200) - 100) * 120)
+            let value: Int16
+            if let delay = eventDelayFrames {
+                let time = Double(frame - delay) / Double(sampleRate)
+                let active = (0.6..<0.85).contains(time)
+                    || (1.6..<1.85).contains(time) || (3.2..<3.45).contains(time)
+                value = active ? Int16(sin(time * 2 * .pi * 330) * 18_000) : 0
+            } else {
+                value = Int16((((frame + phase) % 200) - 100) * 120)
+            }
             appendLittleEndian(value, to: &data)
         }
         try! data.write(to: url, options: .atomic)

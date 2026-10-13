@@ -56,6 +56,7 @@ public enum TransferStatus: Hashable, Sendable {
 public enum IdentityStatus: Hashable, Sendable {
     case checking
     case notChecked
+    case confirmationNeeded
     case detailsMatch
     /// File details changed after the source was added. `acceptedByUser` after an explicit relink/review.
     case changed(differences: String, acceptedByUser: Bool)
@@ -261,6 +262,8 @@ extension IdentityStatus {
             .init(.identity, "Checking…", .spinner, summary: "Checking…", spoken: "checking file details", priority: 6, tint: .secondary)
         case .notChecked:
             .init(.identity, "Not checked", .symbol("questionmark.circle"), summary: nil, spoken: "file details not checked", priority: nil, tint: .secondary)
+        case .confirmationNeeded:
+            .init(.identity, "File details match, but this original hasn't been confirmed for audio", .symbol("questionmark.circle"), summary: "Confirm original", spoken: "confirm original before playing audio", priority: 3, attention: true, tint: .attention)
         case .detailsMatch:
             .init(.identity, "File details match what WaveWrangler recorded (audio not compared)", .symbol("checkmark.seal"), summary: nil, spoken: nil, priority: nil, tint: .none)
         case let .changed(differences, true):
@@ -292,6 +295,48 @@ public struct SourceStatusSummary: Hashable, Sendable {
 }
 
 extension SourceStatusSnapshot {
+    /// Why audio cannot be admitted from this device's observed source state. A "Ready" Setup
+    /// summary alone does not admit audio; the caller must still capture and recheck its witness.
+    public var audioAdmissionIssue: String? {
+        if case .denied = access {
+            return "Access was denied. Check this source's permissions in Setup."
+        }
+        if case .missing = location {
+            return "The original was not found. Relink it in Setup; a same-name file is not substituted."
+        }
+        switch access {
+        case .needsPermission: return "Permission is needed again. Regrant access in Setup."
+        case .unknown, .checking, .refreshing, .notChecked:
+            return "Permission could not be verified. Check this source in Setup."
+        case .granted, .denied: break
+        }
+        switch location {
+        case .moved: return "The original moved. Confirm its new location in Setup."
+        case .unknown, .checking: return "The original's location could not be verified. Check it in Setup."
+        case .known, .missing: break
+        }
+        switch identity {
+        case .mismatch: return "This is a different file. Relink the original in Setup."
+        case .changed: return "The original's details changed. Review or relink it in Setup."
+        case .confirmationNeeded: return "Confirm original in Setup before loading its audio."
+        case .notChecked, .checking:
+            return "The original's identity could not be verified. Check or relink it in Setup."
+        case .detailsMatch: break
+        }
+        switch residency {
+        case .cloudOnly:
+            if case .failed = transfer { return "The download failed. Retry it in Setup." }
+            if case .noConnection = transfer { return "The cloud service reported a connection problem. Retry in Setup." }
+            if case .unsupportedLocation = transfer {
+                return "WaveWrangler cannot request this download. Make the original available using its provider."
+            }
+            return "The original is not on this Mac. Make it available in Setup before loading audio."
+        case .unknown, .checking:
+            return "Local availability could not be verified. Check this source in Setup."
+        case .local: return nil
+        }
+    }
+
     /// Dimension presentations in the inspector's fixed order (all five rows, always).
     public var dimensions: [DimensionPresentation] {
         [location.presentation, access.presentation, residency.presentation, transfer.presentation, identity.presentation]
@@ -349,7 +394,7 @@ public enum SourceStatusCatalog {
     public static let allAccess: [AccessStatus] = [.checking, .granted, .refreshing, .needsPermission, .denied, .unknown(reason: "macOS didn't say"), .notChecked(reason: "the file wasn't found")]
     public static let allResidency: [ResidencyStatus] = [.checking, .local, .cloudOnly, .unknown]
     public static let allTransfers: [TransferStatus] = [.idle, .queued, .downloading(fraction: 0.42), .downloading(fraction: nil), .paused, .cancelled, .failed(reason: "the cloud service stopped responding"), .noConnection, .downloadsOff, .unsupportedLocation, .providerMayFinish]
-    public static let allIdentity: [IdentityStatus] = [.checking, .notChecked, .detailsMatch, .changed(differences: "size differs", acceptedByUser: false), .changed(differences: "size differs", acceptedByUser: true), .mismatch(differences: "size and created date differ")]
+    public static let allIdentity: [IdentityStatus] = [.checking, .notChecked, .confirmationNeeded, .detailsMatch, .changed(differences: "size differs", acceptedByUser: false), .changed(differences: "size differs", acceptedByUser: true), .mismatch(differences: "size and created date differ")]
 
     public static var allSnapshots: [SourceStatusSnapshot] {
         var result: [SourceStatusSnapshot] = []

@@ -109,6 +109,88 @@ struct WWSourcesSetupEngineTests {
         #expect(try Data(contentsOf: candidate) == before)
     }
 
+    @Test func explicitOriginalConfirmationRequiresUnchangedProvisionalIdentity() async throws {
+        let root = try makeTree()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let context = SourceAccessContext(io: SystemSourceIO())
+        let store = InMemoryDeviceAccessStore()
+        let engine = WWSourcesSetupEngine(
+            showID: ShowID(), store: store, context: context, preference: FixedPreference(false),
+            captureRawIdentity: { url, fingerprint in
+                try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+            }
+        )
+        let scan = try await engine.scanForImport([root], episodeSourceIDs: [])
+        let items = ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: []).importItems()
+        try await engine.commitImport(
+            Dictionary(uniqueKeysWithValues: items.map { ($0.candidateID, $0.item.source.id) }),
+            fromScan: scan.token
+        )
+        let first = try #require(items.first { $0.item.source.displayNameHint == "tr1.wav" }?.item.source.id)
+        let second = try #require(items.first { $0.item.source.displayNameHint == "tr2.wav" }?.item.source.id)
+        let firstKey = DeviceAccessKey(showID: engine.showID, sourceID: first)
+        let secondKey = DeviceAccessKey(showID: engine.showID, sourceID: second)
+        let original = try #require(await store.record(for: firstKey))
+        #expect(original.recordedIdentity?.confirmation == .provisional)
+        let bytes = try Data(contentsOf: root.appending(path: "ZOOM0001/tr1.wav"))
+        try await engine.confirmCurrentOriginal(first)
+        let confirmed = try #require(await store.record(for: firstKey))
+        #expect(confirmed.recordedIdentity?.confirmation == .userConfirmed)
+        #expect(confirmed.recordedIdentity?.rawWitness?.isUsable == true)
+        #expect(try Data(contentsOf: root.appending(path: "ZOOM0001/tr1.wav")) == bytes)
+        let unchanged = try #require(await store.record(for: secondKey))
+        try Data(repeating: 2, count: 97).write(to: root.appending(path: "ZOOM0001/tr2.wav"))
+        await #expect(throws: SourceEngineError.self) {
+            try await engine.confirmCurrentOriginal(second)
+        }
+        #expect(await store.record(for: secondKey) == unchanged)
+    }
+
+    @Test func inactiveDeviceRecordDoesNotBlockGuardedConfirmationOrRelink() async throws {
+        let root = try makeTree()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let context = SourceAccessContext(io: SystemSourceIO())
+        let store = InMemoryDeviceAccessStore()
+        let engine = WWSourcesSetupEngine(
+            showID: ShowID(), store: store, context: context, preference: FixedPreference(false),
+            captureRawIdentity: { url, fingerprint in
+                try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+            }
+        )
+        let candidate = root.appending(path: "ZOOM0001/tr1.wav")
+        let scan = try await engine.scanForImport([candidate], episodeSourceIDs: [])
+        let item = try #require(ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: []).importItems().first)
+        try await engine.commitImport([item.candidateID: item.item.source.id], fromScan: scan.token)
+        let key = DeviceAccessKey(showID: engine.showID, sourceID: item.item.source.id)
+        let original = try #require(await store.record(for: key))
+        var inactive = original
+        inactive.sourceID = SourceID()
+        await store.save(inactive)
+        engine.activeSourceIDs = { [item.item.source.id] }
+
+        let review = try await engine.scanForImport(
+            [candidate], episodeSourceIDs: [item.item.source.id]
+        )
+        #expect(review.candidates.first?.alreadyInEpisode == true)
+        engine.activeSourceIDs = { [] }
+        let reimport = try await engine.scanForImport([candidate], episodeSourceIDs: [])
+        #expect(reimport.candidates.first?.alreadyInEpisode == false)
+        engine.activeSourceIDs = { [item.item.source.id] }
+        let comparison = await engine.compare(candidate: candidate, for: item.item.source.id)
+        #expect(comparison.outcome == .match)
+        let originalBytes = try Data(contentsOf: candidate)
+        try await engine.confirmCurrentOriginal(item.item.source.id)
+        let confirmed = try #require(await store.record(for: key))
+        #expect(confirmed.recordedIdentity?.confirmation == .userConfirmed)
+        #expect(confirmed.recordedIdentity?.rawWitness?.isUsable == true)
+        #expect(await store.record(for: DeviceAccessKey(showID: engine.showID, sourceID: inactive.sourceID)) == inactive)
+
+        let relink = await engine.compare(candidate: candidate, for: item.item.source.id)
+        #expect(relink.outcome == .match)
+        _ = try await engine.commitRelink(item.item.source.id, to: candidate, identity: relink.acceptedIdentity)
+        #expect(try Data(contentsOf: candidate) == originalBytes)
+    }
+
     @Test func productionRelinkRefusesAlreadyLinkedCandidate() async throws {
         let root = try makeTree()
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
@@ -132,11 +214,23 @@ struct WWSourcesSetupEngineTests {
         var duplicate = original
         duplicate.sourceID = SourceID()
         await store.save(duplicate)
+        engine.activeSourceIDs = { [sourceID, duplicate.sourceID] }
+        engine.sourceNames = { $0 == duplicate.sourceID ? "Earlier source" : "another source" }
         let candidate = root.appending(path: "ZOOM0001/tr1.wav")
         let comparison = await engine.compare(candidate: candidate, for: sourceID)
-        #expect(comparison.canConfirm)
-        await #expect(throws: SourceEngineError.self) {
+        #expect(comparison.outcome == .alreadyLinked(otherSource: "Earlier source"))
+        #expect(!comparison.canConfirm)
+        do {
+            try await engine.confirmCurrentOriginal(sourceID)
+            Issue.record("A source still in the show must block duplicate confirmation")
+        } catch let error as SourceEngineError {
+            #expect(error.reason.contains("Earlier source"))
+        }
+        do {
             _ = try await engine.commitRelink(sourceID, to: candidate, identity: comparison.acceptedIdentity)
+            Issue.record("Relink must not accept a second active source for the same original")
+        } catch let error as SourceEngineError {
+            #expect(error.reason.contains("Earlier source"))
         }
         #expect(await store.record(for: key) == original)
     }
@@ -190,8 +284,8 @@ struct WWSourcesSetupEngineTests {
         for snapshot in ready.values {
             #expect(snapshot.access == .granted)
             #expect(snapshot.residency == .local)
-            #expect(snapshot.identity == .detailsMatch)
-            #expect(snapshot.summary.text == "Ready")
+            #expect(snapshot.identity == .confirmationNeeded)
+            #expect(snapshot.summary.text == "Confirm original")
         }
         #expect(io.downloads == 0, "downloads Off: zero download requests or progress queries")
 
@@ -488,6 +582,8 @@ struct WWSourcesSetupEngineTests {
         let denied = AvailabilityObservation(observedAt: Date(), location: .unknown, access: .denied)
         #expect(WWSourcesStatusMapping.snapshot(denied).summary.text == "Access denied")
         #expect(WWSourcesStatusMapping.snapshot(nil) == .checking)
+        #expect(WWSourcesStatusMapping.identity(.unverified(.baselineNotUserConfirmed)) == .confirmationNeeded)
+        #expect(WWSourcesStatusMapping.identity(.matchesRecorded) == .detailsMatch)
         #expect(WWSourcesStatusMapping.identity(.changed([.fileSize])) == .changed(differences: "size differ", acceptedByUser: false))
         #expect(WWSourcesStatusMapping.identity(.mismatch([.fileIdentifier])) == .mismatch(differences: "file id differ"))
         #expect(WWSourcesStatusMapping.residency(.downloading) == .cloudOnly)

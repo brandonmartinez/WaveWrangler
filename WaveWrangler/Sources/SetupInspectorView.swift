@@ -398,6 +398,11 @@ private struct DimensionRow: View {
                 }
             case .identity:
                 switch status.identity {
+                case .confirmationNeeded:
+                    Button("Confirm Original…") { model.confirmCurrentOriginal(source.id) }
+                        .accessibilityIdentifier("ww.inspector.source.confirmOriginal")
+                case .notChecked:
+                    Button("Relink…") { model.beginRelink(source.id) }
                 case .changed(_, false):
                     Button("Review…") { model.beginRelink(source.id, mode: .review) }
                 case .mismatch:

@@ -66,6 +66,7 @@
 				Commands/ConfirmationButtons.swift,
 				Commands/OpaqueErrorPanel.swift,
 				Alignment/AlignmentPresentation.swift,
+				Alignment/AlignmentWaveform.swift,
 				Alignment/AnchorTimeEditing.swift,
 				Document/CopyElsewhereRetryGate.swift,
 				Document/FormatUpdate.swift,

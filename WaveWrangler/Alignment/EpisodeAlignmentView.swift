@@ -3,6 +3,7 @@ import Foundation
 import SwiftUI
 import WWAlignPipeline
 import WWCore
+import WWPersistence
 
 struct EpisodeAlignmentContent: View {
     @Bindable var state: ShowWindowState
@@ -28,22 +29,46 @@ struct EpisodeAlignmentContent: View {
             }
         }
         .task(id: episodeID) {
+            model?.suspend()
+            if let model, state.alignmentModel === model { state.alignmentModel = nil }
+            model = nil
+            startupError = nil
             do {
                 guard let document = state.store.document else { return }
                 let runtime = try await AlignmentRuntimeProvider.runtime(
                     for: document,
                     episode: episodeID
                 )
+                try Task.checkCancellation()
+                guard state.selectedEpisodeID == episodeID, state.destination == .alignment else { return }
                 let value = EpisodeAlignmentModel(document: document, episodeID: episodeID, runtime: runtime)
                 model = value
                 state.alignmentModel = value
                 value.load()
+                value.loadWaveforms()
+            } catch is CancellationError {
+                return
             } catch {
                 startupError = String(describing: error)
             }
         }
+        .onChange(of: state.store.model.episode(episodeID)) { _, _ in
+            guard let model else { return }
+            model.stopAudition()
+            model.load()
+            model.loadWaveforms(keepingSnapshot: model.pendingWaveformMove != nil)
+        }
+        .onChange(of: state.saveStatus.state, initial: false) { _, _ in
+            guard let document = state.store.document,
+                  document.status.saveStatus.state.isVerifiedOnDisk,
+                  document.verifiedModel == state.store.model,
+                  let model, model.waveformNeedsRefreshAfterSave,
+                  model.waveformTracks.isEmpty, !model.isLoadingWaveforms
+            else { return }
+            model.loadWaveforms()
+        }
         .onDisappear {
-            model?.stopAudition()
+            model?.suspend()
             if let model, state.alignmentModel === model { state.alignmentModel = nil }
         }
     }
@@ -97,11 +122,13 @@ private struct AlignmentWorkspace: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Alignment")
+                    Text("Manual alignment")
                         .font(.title2.weight(.semibold))
-                    Text("Inspect recorder clocks, place manual corrections and audition source regions. Acoustic consistency is evidence, never probability or clock approval.")
+                    Text("Stacked measured recordings share one playhead. Place groups at source time, then move each recorder as a unit while listening.")
                         .foregroundStyle(.secondary)
                 }
+                AlignmentWaveformView(model: model)
+                DisclosureGroup("Detailed alignment inspection") {
                 Button(model.isWorking ? "Analysing…" : "Analyse Available Sources") {
                     model.analyse()
                 }
@@ -244,6 +271,7 @@ private struct AlignmentWorkspace: View {
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("ww.alignment.region")
+                }
                 }
 
                 Text(model.message)

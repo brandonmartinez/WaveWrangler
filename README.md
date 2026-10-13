@@ -3,6 +3,71 @@ Local-first macOS multitrack podcast alignment and editing
 
 Native macOS multitrack podcast preparation: local audio processing, referenced media, cloud canonical projects.
 
+## Visual alignment
+
+Import recordings under **Recordings** to review device groups, epochs, and speaker/channel
+assignments. A new import has provisional file identity: choose **Confirm original** for each
+unchanged local source before decoding or playback. A changed original must be reviewed through
+**Relink Source** instead. Sources remain referenced in place and are never modified.
+Device-local records left by sources removed from the show do not block confirming a newly
+imported source; an original still used by another source in the show remains unavailable.
+
+In **Alignment**, the shared timeline is the primary editor. **Refresh audio** loads bounded
+measured waveform windows on one seconds-based ruler. Use **Separate lanes** to inspect each
+recording or **Overlay** to compare peaks from enabled tracks on the same scale. The recordings
+list below the timeline controls which groups and tracks are shown and heard; select a track
+there to make its recorder active for overlay dragging. Choose **Place groups at source time**
+to accept a first manual placement without running
+acoustic analysis. **Normalize view** scales each recording's displayed peaks within its measured
+tile (and the optional episode overview); it does not change audio, playback, or saved
+timing. Up to eight bounded measured tiles and their projected strokes are cached in memory;
+adjacent tiles share the same viewport without rebuilding their paths on each pan. A changed
+episode, source, or verified alignment clears them.
+For a recorder with restarted/overlapping source-time epochs, only its first
+placeable epoch is mapped initially; place later epochs explicitly using **Advanced epoch timing**.
+Select a track and drag its waveform, use the 10 ms nudge buttons, or type **Group move (ms)** to move all
+mapped epochs of its recorder together in one undoable revision. A drag shows its shift in seconds and commits on
+release; the offset change is the pointer distance divided by the visible waveform width, multiplied by
+the visible span. Further drags add or subtract from the saved offset. Zoom to a shorter span for fine
+adjustment, or use the nudges. Positive moves place that recorder
+later. Unplaced audio is dashed, not implicitly synchronized. Enable/disable a recorder or track
+to show/hide and hear/mute it; speaker lanes have stable colors, with gray for unknown speakers.
+Changes to accepted timing save in the show document and can be undone or redone.
+
+**Play** mixes only confirmed enabled sources on the stored aligned map, starting at the shared
+playhead; **Pause**, **Stop**, click-to-seek, and typed aligned playhead are available. Unsupported
+or uncovered regions are silent. Playback reads witnessed five-second windows and may briefly
+buffer between windows; a source or map mismatch stops playback rather than substituting audio.
+**Visible span**, **Window start**, **Previous**, and **Next** navigate measured windows. Drag
+the ruler or use **Pan at zoom** to scroll the shared viewport at its visible scale, with all
+recorder lanes moving together. **Jump in episode** is a separate coarse whole-episode control;
+it loads a distant window on release rather than decoding each intermediate position. The
+playhead is ready for **Play** afterward; panning and jumping do not play audio or change saved
+timing. Cached adjacent tiles translate without rebuilding their paths. An uncached section may
+take a moment to display; unavailable reads are reported rather than silently replaced.
+Windows outside a recording show its explicit unavailability;
+navigation remains within the supported 0-to-24-hour aligned range. The advanced
+**Compare Aligned Audio** control still plays up to five seconds of reference/selected
+audio in separate channels for an internal listening check, not an export or cut authorization.
+
+**Episode overview**, below the timeline, can explicitly scan every covered PCM sample into at most 2,048 amplitude
+bins per recording, with cancellable progress. Click covered overview audio to open an exact
+window; **Window start**, or the typed playhead with **Open Window at Playhead**, are keyboard
+and accessibility alternatives. Overview bins never
+create anchors. Gaps stay absent, unplaced audio stays marked, and source/timing changes invalidate
+the result. A scan supports up to 24 source hours per recording and keeps no persistent PCM/cache.
+Stored offsets/rates can place audio outside the exact navigator's 0-to-86,400 aligned-second
+range. Those overview regions are shaded and explicitly unavailable, not offered as clickable
+exact windows; the source-time scan cap does not change stored timing.
+
+This is an alignment workspace, not a DAW or complete editing workflow. PCM recordings support
+exact random-access waveform windows and aligned listening throughout an episode, without decoding
+the preceding hours. Other codecs retain the first-10-source-minutes limit (including inverse map
+offsets); later windows are explicitly refused until exact seeking is established. No persistent
+waveform cache is created; when a wider tile reaches a codec preview limit, a narrower exact
+window is tried before reporting unavailability. Real local transcription and protected filler-word editing remain
+separate, incomplete MVP work.
+
 ## Planning
 
 - [Start M1: copyable Squad kickoff](docs/planning/kickoffs/m1.md) · [milestone execution runbook](docs/planning/milestone-runbook.md)
@@ -32,7 +97,13 @@ Native macOS multitrack podcast preparation: local audio processing, referenced 
 
 ## Current delivery policy - user-directed 2026-10-04
 
-GitHub issues and six milestones are the operational backlog **now**. Use the actual Squad and orchestrate one milestone per session: internally usable M1 organizer, M2 validated import/alignment, M3 local selected-primary speech/protected review, M4 cleaned-track full MVP on this Mac. **First audio handoff is cleaned-track M4; no uncut M2 handoff.** Public signed/notarized distribution, actual macOS26/16GB and broader device/participant qualification are separate Release work, not pre-app gates.
+GitHub issues and six milestones are the operational backlog. The 2026-10-10 user decision supersedes
+the earlier Squad/orchestrate delivery process: direct implementation now prioritizes saved manual
+alignment and playback; export and speech/cut work come later. File management
+and numeric tables alone do not satisfy the MVP. Existing M1/M2 evidence is retained; M3 and the full
+MVP are not complete. **First audio handoff is cleaned-track M4; no uncut M2 handoff.** Public
+signed/notarized distribution, actual macOS26/16GB and broader device/participant qualification are
+separate Release work, not pre-app gates.
 
 This publication changes documents/context only. Pasting [the M1 kickoff](docs/planning/kickoffs/m1.md) grants M1 engineering, scoped dependency restores, isolated worktrees/branches, commits/push, independently reviewed merges and issue updates. WW-009 records contracts/evidence/risks, not another generic approval. Dependencies gate accepted outcomes, not safe preparatory coding. Immutable sources, cloud canonical durability, protected speech, offline/privacy and essential native keyboard/accessibility are never deferred. Recording/model/provider/native/GUI/signing/external publishing consent remains exact-scope; source-download ON is not agent sample permission.
 

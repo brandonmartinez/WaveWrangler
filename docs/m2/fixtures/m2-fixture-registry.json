@@ -228,8 +228,9 @@
    "fixtures": [
     "M3-DECODE-004"
    ],
-   "status": "prospective dated revision for the witness-bound cursor source/test trees; synthetic calibration PASS; holdout NOT RUN (one-shot only after independent review and merge)",
+   "status": "historical witness-bound cursor source/test trees; synthetic calibration PASS; holdout NOT RUN; superseded for future tests by m3-freeze-decode-5",
    "supersedes": "m3-freeze-decode-3",
+   "supersededBy": "m3-freeze-decode-5",
    "counts": {
     "fixtures": 1,
     "calibrationCases": 130,
@@ -265,6 +266,39 @@
      },
      "supportedClaimLimits": "Synthetic decoder envelope and new descriptor-swap fixtures only; no app-selected Primary issuer, user media, Backup, model or M3 acceptance claim.",
      "evidenceStatus": "130 fresh synthetic calibration cases + output-settings PASS; 131 ordered records in calibration-4.jsonl; revision-4 holdout NOT RUN"
+    }
+   ]
+  },
+  {
+   "freezeID": "m3-freeze-decode-5",
+   "record": "docs/m2/fixtures/m3-freeze-decode-5.json",
+   "fixtures": ["M3-DECODE-005"],
+   "status": "prospective exact PCM navigation revision; synthetic calibration PASS; holdout NOT RUN; effective only after independent review and merge",
+   "supersedes": "m3-freeze-decode-4",
+   "counts": {"fixtures": 1, "calibrationCases": 130, "holdoutCases": 520},
+   "fixtureEntries": [
+    {
+     "id": "M3-DECODE-005",
+     "title": "WW-050 decode truth revision 5: unchanged gates with exact PCM cursor navigation",
+     "family": "decode",
+     "role": "objective-gates",
+     "issues": ["WW-050"],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m3-freeze-decode-5.generator.seedDerivation (fresh M3-DECODE-005 namespace)",
+      "recipe": "Identical recipe to m3-freeze-decode-4; unchanged strata, counts, truth and gates"
+     },
+     "expectedTruth": "Written samples, frames, format, channels and landmarks; planted typed errors. Identical to revision 4.",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "Generated temporary fixtures only; no user recordings, models, network or provider trial. Holdout is separately gated after review and merge."
+     },
+     "provenance": "Direct visual owner 2026-10-11. Every earlier freeze and evidence record remains historical.",
+     "split": {"calibration": 130, "holdout": 520, "unit": "cases"},
+     "supportedClaimLimits": "Exact PCM seeking and synthetic decoding only; no compressed seek qualification, real media, offline inference, protected edits or MVP completion.",
+     "evidenceStatus": "130 fresh synthetic calibration cases plus output-settings PASS; 131 ordered calibration-5.jsonl records and SHA-256 in the revision-5 record; holdout NOT RUN"
     }
    ]
   },

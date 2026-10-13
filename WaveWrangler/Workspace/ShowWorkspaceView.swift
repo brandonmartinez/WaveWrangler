@@ -259,16 +259,18 @@ private struct ShowDetailContent: View {
             BlockedDestinationView(destination: state.destination, panel: panel) { state.select(.setup) }
         } else if let episode = state.selectedEpisode {
             if state.destination == .alignment {
-                if episode.recorderGroups.isEmpty {
-                    BlockedDestinationView(
-                        destination: .alignment,
-                        panel: BlockedPanel(
-                            heading: "Alignment isn't available yet",
-                            body: "Set up at least one recorder group in Setup first. WaveWrangler hasn't read or analysed any audio."
+                VStack(spacing: 0) {
+                    EpisodeEditorSetup(store: state.store, episode: episode)
+                    if !episode.recorderGroups.isEmpty {
+                        EpisodeAlignmentContent(state: state, episodeID: episode.id)
+                            .id(episode.id)
+                    } else {
+                        ContentUnavailableView(
+                            "Add a recorder group to begin",
+                            systemImage: "waveform",
+                            description: Text("Add recordings together, assign them to recorder groups, then confirm each original before loading its waveform.")
                         )
-                    ) { state.select(.setup) }
-                } else {
-                    EpisodeAlignmentContent(state: state, episodeID: episode.id)
+                    }
                 }
             } else {
                 SetupContainerView(state: state, episode: episode)
@@ -277,6 +279,27 @@ private struct ShowDetailContent: View {
             ContentUnavailableView("No Episode Selected", systemImage: "music.mic", description: Text("Select an episode in the sidebar."))
                 .wwFont(.body)
         }
+    }
+}
+
+private struct EpisodeEditorSetup: View {
+    let store: ShowDocumentStore
+    let episode: Episode
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            EpisodeSetupContent(store: store, episodeID: episode.id, showsInspector: true)
+                .frame(height: 380)
+                .accessibilityIdentifier("ww.editor.setup")
+        } label: {
+            Label("Recordings, groups and speakers", systemImage: "slider.horizontal.3")
+                .font(.headline)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+        .onAppear { if episode.recorderGroups.isEmpty { expanded = true } }
     }
 }
 
