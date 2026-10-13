@@ -74,9 +74,13 @@ final class VisualAlignmentUITests: XCTestCase {
                 && row.frame.maxY <= sourceScroll.frame.maxY, app.debugDescription)
             for offset in [0.03, 0.15, 0.3] {
                 row.coordinate(withNormalizedOffset: CGVector(dx: offset, dy: 0.5)).click()
-                if waitUntil({ row.isSelected }, timeout: 2) { break }
+                if waitUntil({
+                    row.isSelected && (outline.value as? String) == "1 selected"
+                        && app.staticTexts["Details — \(name)"].exists
+                }, timeout: 2) { break }
             }
-            XCTAssertTrue(row.isSelected, app.debugDescription)
+            XCTAssertTrue(row.isSelected && (outline.value as? String) == "1 selected"
+                && app.staticTexts["Details — \(name)"].exists, app.debugDescription)
             let details = app.buttons["ww.setup.detailsToggle"]
             if details.label == "Show Details" { details.click() }
             let inspector = app.descendants(matching: .any)["ww.inspector.source.name"]
