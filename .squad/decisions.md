@@ -1312,3 +1312,13 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **What:** When asked to authorize exactly one more focused synthetic behavior run on the mini, Brandon replied, "you are authorized to have 100 runs." Record this as authorization for up to 100 additional leased, synthetic-only functional GUI invocations for this PR, starting with the corrected test. Each attempt still requires a clean pushed exact-head signed runner, checksum staging, a unique lease/result, and truthful pass/fail reporting. Use only the attempts needed to prove the behavior; do not use the allowance to retry paused legacy focus campaigns, inspect private recordings, or test on the working Mac.
 
 **Boundary:** The quiet physical-mini autosave performance gate remains a separate <6 one-minute load, 60-second idle preflight with the unchanged threshold. The GUI allowance does not waive source safety, durability, applicable review, or merge prerequisites.
+
+**Outcome:** The focused physical-mini synthetic behavior method passed at pushed `121273e529fd`: one passed, zero failed, zero skipped, with its original result at `~/ww-uitest-runs/pr455-functional-121273e529fd-20261013T1048/result.xcresult` and a private local copy at `.build/pr455-mini-functional-121273e529fd.xcresult/`. The allowance was not an instruction to consume all 100 attempts; no further functional GUI attempt is needed.
+
+### 2026-10-13: Defer prototype performance acceptance to M5/M6
+
+**By:** Brandon, after the exact-head synthetic GUI and headless gates passed while the physical mini repeatedly exceeded the quiet-load preflight.
+
+**What:** Brandon directed, "let's not worry about performance gates for now, we still have a lot of experimenting to do and instead should have a performance round that's in M5/6." For #455's experimental saved manual-alignment prototype, the physical-mini autosave latency measurement and performance gate are deferred to a dedicated M5/M6 performance round rather than gating this PR's merge. Preserve the unchanged timing test and ≤2-second objective for that future round; do not relabel local timings or load-ineligible mini preflights as a physical-mini pass.
+
+**Boundary:** This is a performance-scheduling decision, not a waiver of source-witness/access protections, verified save/recovery, stale-episode cancellation, synthetic functional proof, or applicable review. #455 can only merge after the remaining non-performance gates are satisfied, and the follow-up waveform-first UI session starts from merged main.
