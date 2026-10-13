@@ -750,7 +750,7 @@ final class EpisodeAlignmentModel {
     }
 
     @discardableResult
-    func previewWaveformTimeline(to time: Double) -> Bool {
+    func previewWaveformPlayhead(to time: Double) -> Bool {
         guard !isWorking, groupDraftMilliseconds == 0,
               pendingWaveformMove == nil else {
             waveformMessage = "Finish the group preview or verified audio refresh before moving the shared timeline."
@@ -762,17 +762,51 @@ final class EpisodeAlignmentModel {
             return false
         }
         guard waveformNavigationEndSeconds > 0, time.isFinite,
-              time >= 0, time <= min(waveformNavigationEndSeconds, 86_400),
-              let start = AlignmentWaveformProjection.windowStart(
-                  centeredAt: time, duration: waveformDurationSeconds
-              ) else {
+              time >= 0, time <= min(waveformNavigationEndSeconds, 86_400) else {
             waveformMessage = "Choose a time within the available zero-to-24-hour aligned timeline."
-                  return false
+            return false
         }
-              if canStopAudition { stopAudition() }
+        if canStopAudition { stopAudition() }
         waveformPlayheadSeconds = time
         auditionPlayheadSeconds = time
+        return true
+    }
+
+    @discardableResult
+    func previewWaveformTimeline(to time: Double) -> Bool {
+        guard previewWaveformPlayhead(to: time),
+              let start = AlignmentWaveformProjection.windowStart(
+                  centeredAt: time, duration: waveformDurationSeconds
+              ) else { return false }
         waveformStartSeconds = start
+        scheduleVisibleWaveformTile(start: start)
+        return true
+    }
+
+    @discardableResult
+    func previewWaveformWindow(start: Double) -> Bool {
+        guard !isWorking, groupDraftMilliseconds == 0, pendingWaveformMove == nil,
+              let document, loadedWaveformGeneration == document.store.modelGeneration,
+              (!loadedWaveformRequiresVerification || document.status.saveStatus.state.isVerifiedOnDisk)
+        else {
+            waveformMessage = "Save and verify the current timing before moving the shared timeline."
+            return false
+        }
+        guard start.isFinite, waveformNavigationEndSeconds > 0, start >= 0,
+              start <= min(waveformNavigationEndSeconds, 86_400) else {
+            waveformMessage = "Choose a window within the available zero-to-24-hour aligned timeline."
+            return false
+        }
+        if canStopAudition {
+            stopAudition()
+            waveformPlayheadSeconds = auditionPlayheadSeconds
+        }
+        waveformStartSeconds = start
+        scheduleVisibleWaveformTile(start: start)
+        return true
+    }
+
+    private func scheduleVisibleWaveformTile(start: Double) {
         if let current = currentWaveformTile, current.id != waveformSnapshotID {
             publishWaveformTile(current)
         }
@@ -782,7 +816,6 @@ final class EpisodeAlignmentModel {
         ) != nil {
             scheduleScrubTile()
         }
-        return true
     }
 
     func navigateWaveformTimeline(to time: Double) {
@@ -803,7 +836,11 @@ final class EpisodeAlignmentModel {
     }
 
     func playEnabledTracks() {
-        guard let document, !isWorking, !isLoadingWaveforms, !enabledSources.isEmpty,
+        guard !isLoadingWaveforms else {
+            auditionLabel = "Playback paused while the measured audio window refreshes."
+            return
+        }
+        guard let document, !isWorking, !enabledSources.isEmpty,
               loadedWaveformMap != nil, groupDraftMilliseconds == 0, pendingWaveformMove == nil,
               !waveformTimingIsDraft, waveformPlayheadSeconds.isFinite,
               waveformPlayheadSeconds >= 0, waveformPlayheadSeconds < enabledTimelineEnd

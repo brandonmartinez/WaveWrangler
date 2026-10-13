@@ -108,12 +108,16 @@ frame windows, clips to occurrence spans, and never reads gap frames into an env
 spans are visibly unplaced source-origin previews. Opposite-polarity channels retain their peaks;
 the envelope is not mono PCM, an alignment estimate or edit authority.
 The alignment workspace puts a compact transport with a centered editable live playhead and five-second
-skips above logarithmic zoom and a single shared scrubber beside the ruler. Dragging the ruler pans at
-the current zoom. Recorder-group headers sit beside adjustable-height
+skips above logarithmic zoom and a shared episode scrubber. The adaptive ruler immediately above
+the waveforms offers evenly spaced time ticks: click to seek, drag its visible marker to move the
+playhead, drag empty ruler space to pan without moving the playhead, or pinch to zoom around the
+gesture's time anchor. The marker and all lanes share the same time-to-pixel transform; the ruler
+also exposes its range and adjustable playhead to accessibility clients. Recorder-group headers sit
+beside adjustable-height
 source lanes; a translucent overlay with source selection is available for peak matching. Separate
 lanes and overlay share a ruler and playhead, selected with one segmented control. Zoom changes the
-visible transform around the current
-window center, then requests missing measured tiles on release; cached tiles stay in memory while
+visible transform around the current window center with the slider or around the gesture anchor
+on the ruler, then requests missing measured tiles on release; cached tiles stay in memory while
 panning or zooming. Each slice is clipped in its own tile coordinates before translation to the
 visible window. Peaks falling within one device-pixel column are merged into a min/max display
 envelope (mapped and unplaced audio separately) to avoid overlapping fractional strokes. A released

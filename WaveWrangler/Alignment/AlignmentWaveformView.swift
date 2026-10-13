@@ -6,7 +6,11 @@ struct AlignmentWaveformView: View {
     @Bindable var model: EpisodeAlignmentModel
     @Environment(\.displayScale) private var displayScale
     @State private var dragSession: AlignmentWaveformDrag?
-    @State private var rulerPan: (center: Double, width: Double, duration: Double)?
+    @State private var rulerPan: (start: Double, width: Double, duration: Double)?
+    @State private var rulerPlayheadDrag: (
+        time: Double, start: Double, duration: Double, width: Double, wasPlaying: Bool
+    )?
+    @State private var rulerZoom: (start: Double, duration: Double, anchor: Double)?
     @State private var timeDraft = "0.000"
     @FocusState private var editingTime: Bool
     @State private var layout: Layout = .separate
@@ -129,6 +133,7 @@ struct AlignmentWaveformView: View {
                     .accessibilityIdentifier("alignment.waveforms.load")
                 }
                 navigationControls
+                timelineScrubber
                 if model.waveformMap == nil, model.pendingWaveformMove == nil,
                    !model.waveformTracks.isEmpty {
                     Button("Place groups at source time") { model.placeGroupsAtSourceTime() }
@@ -163,7 +168,6 @@ struct AlignmentWaveformView: View {
                         .accessibilityIdentifier("alignment.waveforms.normalizeNote")
                 }
                 ruler
-                timelineScrubber
                 if model.waveformTracks.isEmpty, model.waveformNavigationEndSeconds > 0 {
                     ContentUnavailableView(
                         "No audio in this window",
@@ -549,52 +553,143 @@ struct AlignmentWaveformView: View {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: headerWidth, alignment: .leading)
+                .accessibilityLabel(String(
+                    format: "Visible aligned time ruler: %.3f to %.3f seconds",
+                    model.waveformStartSeconds, model.waveformStartSeconds + model.waveformDurationSeconds
+                ))
+                .accessibilityIdentifier("alignment.waveforms.ruler")
             GeometryReader { geometry in
+                let width = geometry.size.width
+                let start = model.waveformStartSeconds
+                let duration = model.waveformDurationSeconds
+                let end = min(86_400, model.waveformNavigationEndSeconds)
                 ZStack(alignment: .topLeading) {
-                    ForEach(0..<6) { index in
-                        let time = model.waveformStartSeconds + model.waveformDurationSeconds * Double(index) / 5
-                        let position = geometry.size.width * Double(index) / 5
+                    Rectangle().fill(Color.primary.opacity(0.04))
+                    ForEach(AlignmentWaveformProjection.rulerTicks(
+                        start: start, duration: duration, width: width
+                    )) { tick in
+                        let position = (tick.time - start) / duration * width
                         Path { path in
-                            path.move(to: CGPoint(x: position, y: 20))
-                            path.addLine(to: CGPoint(x: position, y: 30))
+                            path.move(to: CGPoint(x: position, y: tick.major ? 25 : 36))
+                            path.addLine(to: CGPoint(x: position, y: 44))
                         }
-                        .stroke(Color.secondary.opacity(0.55), lineWidth: 1)
-                        Text("\(time, specifier: "%.3f")")
-                            .font(.caption.monospacedDigit())
-                            .position(x: max(26, min(geometry.size.width - 26, position)), y: 10)
+                        .stroke(Color.secondary.opacity(tick.major ? 0.7 : 0.35), lineWidth: 1)
+                        if tick.major, width >= 92 {
+                            Text(AlignmentPresentation.formatTime(tick.time))
+                                .font(.caption2.monospacedDigit())
+                                .position(x: max(46, min(width - 46, position)), y: 12)
+                        }
                     }
                 }
                 .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 2)
-                        .onChanged { drag in
-                            if rulerPan == nil {
-                                rulerPan = (
-                                    center: model.waveformStartSeconds + model.waveformDurationSeconds / 2,
-                                    width: geometry.size.width, duration: model.waveformDurationSeconds
-                                )
-                            }
-                            guard let pan = rulerPan, pan.width > 0 else { return }
-                            let end = min(86_400, model.waveformNavigationEndSeconds)
-                            model.previewWaveformTimeline(to: min(end, max(0,
-                                pan.center - Double(drag.translation.width / pan.width) * pan.duration
-                            )))
+                .accessibilityLabel("Aligned ruler. Click to seek, drag empty space to pan, or pinch to zoom.")
+                .accessibilityIdentifier("alignment.waveforms.ruler.surface")
+                .onTapGesture { point in
+                    guard let time = AlignmentWaveformProjection.rulerTime(
+                        at: point.x, width: width, start: start, duration: duration, end: end
+                    ) else { return }
+                    let wasPlaying = model.canStopAudition
+                    if model.previewWaveformPlayhead(to: time), wasPlaying { model.playEnabledTracks() }
+                }
+                .gesture(DragGesture(minimumDistance: 4)
+                    .onChanged { drag in
+                        guard end > 0, width > 0 else { return }
+                        if rulerPan == nil {
+                            rulerPan = (start: start, width: width, duration: duration)
                         }
-                        .onEnded { _ in
-                            if rulerPan != nil {
-                                model.navigateWaveformTimeline(to: model.waveformPlayheadSeconds)
+                        guard let pan = rulerPan else { return }
+                        guard let window = AlignmentWaveformProjection.rulerPanStart(
+                            from: pan.start, translation: drag.translation.width,
+                            width: pan.width, duration: pan.duration, end: end
+                        ) else { return }
+                        _ = model.previewWaveformWindow(start: window)
+                    }
+                    .onEnded { _ in
+                        if rulerPan != nil { model.loadWaveforms(keepingSnapshot: true) }
+                        rulerPan = nil
+                    })
+                .overlay(alignment: .topLeading) {
+                    if width > 0, end > 0 {
+                        let position = (model.waveformPlayheadSeconds - start) / duration * width
+                        if position.isFinite, (0...width).contains(position) {
+                            Path { path in
+                                path.move(to: CGPoint(x: position, y: 33))
+                                path.addLine(to: CGPoint(x: position, y: 44))
                             }
-                            rulerPan = nil
-                        })
+                            .stroke(Color.accentColor, lineWidth: 1)
+                            .allowsHitTesting(false)
+                            Image(systemName: "arrowtriangle.down.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                                .frame(width: 24, height: 35)
+                                .contentShape(Rectangle())
+                                .position(x: position, y: 31)
+                                .highPriorityGesture(DragGesture(minimumDistance: 1)
+                                    .onChanged { drag in
+                                        if rulerPlayheadDrag == nil {
+                                            rulerPlayheadDrag = (
+                                                time: model.waveformPlayheadSeconds, start: start,
+                                                duration: duration, width: width,
+                                                wasPlaying: model.canStopAudition
+                                            )
+                                        }
+                                        guard let session = rulerPlayheadDrag else { return }
+                                        let time = min(end, max(session.start, min(
+                                            session.start + session.duration,
+                                            session.time + Double(drag.translation.width / session.width)
+                                                * session.duration
+                                        )))
+                                        if !model.previewWaveformPlayhead(to: time) { rulerPlayheadDrag = nil }
+                                    }
+                                    .onEnded { _ in
+                                        if let session = rulerPlayheadDrag, session.wasPlaying {
+                                            model.playEnabledTracks()
+                                        }
+                                        rulerPlayheadDrag = nil
+                                    })
+                                .accessibilityLabel("Aligned playhead marker")
+                                .accessibilityValue(AlignmentPresentation.formatTime(model.waveformPlayheadSeconds))
+                                .accessibilityAdjustableAction { direction in
+                                    let increment = max(0.1, duration / 20)
+                                    let delta = direction == .increment ? increment : -increment
+                                    let time = min(end, max(0, model.waveformPlayheadSeconds + delta))
+                                    let wasPlaying = model.canStopAudition
+                                    if model.previewWaveformPlayhead(to: time), wasPlaying {
+                                        model.playEnabledTracks()
+                                    }
+                                }
+                                .accessibilityIdentifier("alignment.waveforms.ruler.playhead")
+                        }
+                    }
+                }
+                .simultaneousGesture(MagnifyGesture(minimumScaleDelta: 0.02)
+                    .onChanged { value in
+                        guard !model.isWorking, model.pendingWaveformMove == nil else { return }
+                        if rulerZoom == nil {
+                            rulerZoom = (
+                                start: start, duration: duration,
+                                anchor: min(1, max(0, value.startAnchor.x))
+                            )
+                        }
+                        guard let zoom = rulerZoom,
+                              let window = AlignmentWaveformProjection.rulerZoom(
+                                  start: zoom.start, duration: zoom.duration,
+                                  anchor: zoom.anchor, magnification: value.magnification, end: end
+                              ) else { return }
+                        model.waveformStartSeconds = window.start
+                        model.waveformDurationSeconds = window.duration
+                    }
+                    .onEnded { _ in
+                        if rulerZoom != nil {
+                            model.loadWaveforms(keepingSnapshot: true, preload: true)
+                        }
+                        rulerZoom = nil
+                    })
             }
         }
         .padding(.horizontal, 8)
-        .frame(height: 30)
-        .help("Drag horizontally to scroll every lane together at the current zoom; the playhead is centered and playback stays paused.")
-        .accessibilityRepresentation {
-            Text(String(format: "Visible aligned time ruler: %.3f to %.3f seconds",
-                        model.waveformStartSeconds, model.waveformStartSeconds + model.waveformDurationSeconds))
-                .accessibilityIdentifier("alignment.waveforms.ruler")
-        }
+        .frame(height: 44)
+        .help("Click the ruler to seek, drag its marker to move the playhead, drag empty space to pan, or pinch to zoom around the pointer.")
     }
 
     private var overlay: some View {

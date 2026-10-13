@@ -6,6 +6,65 @@ import WWTimeMap
 
 @Suite("Waveform selection")
 struct AlignmentWaveformTests {
+    @Test func scalableRulerKeepsTimeAndCursorInTheSameCoordinates() throws {
+        let start = 90.0
+        let width = 800.0
+        let duration = 20.0
+        let zoom = try #require(AlignmentWaveformProjection.rulerZoom(
+            start: start, duration: duration, anchor: 0.25, magnification: 2, end: 120
+        ))
+        #expect(zoom.duration == 10)
+        #expect(zoom.start == 92.5)
+        #expect(AlignmentWaveformProjection.rulerTime(
+            at: 200, width: width, start: zoom.start, duration: zoom.duration, end: 120
+        ) == 95)
+        #expect(AlignmentWaveformProjection.rulerTime(
+            at: 400, width: width, start: start, duration: duration, end: 95
+        ) == 95)
+        #expect(AlignmentWaveformProjection.rulerTime(
+            at: -100, width: width, start: start, duration: duration, end: 120
+        ) == 90)
+        #expect(AlignmentWaveformProjection.rulerPanStart(
+            from: 10, translation: 50, width: 500, duration: 5, end: 100
+        ) == 9.5)
+        #expect(AlignmentWaveformProjection.rulerPanStart(
+            from: 0, translation: 500, width: 500, duration: 5, end: 100
+        ) == 0)
+        #expect(AlignmentWaveformProjection.rulerPanStart(
+            from: 4, translation: 0, width: 500, duration: 2, end: 5
+        ) == 4)
+        #expect(AlignmentWaveformProjection.rulerPanStart(
+            from: 4.5, translation: -200, width: 500, duration: 2, end: 5
+        ) == 4.5)
+        #expect(AlignmentWaveformProjection.rulerZoom(
+            start: 0, duration: 20, anchor: 0.25, magnification: 0.01, end: 120
+        )?.duration == 30)
+        #expect(AlignmentWaveformProjection.rulerZoom(
+            start: 0, duration: 20, anchor: 0.25, magnification: 1_000, end: 120
+        )?.duration == 0.5)
+        #expect(AlignmentWaveformProjection.rulerZoom(
+            start: 4, duration: 2, anchor: 0, magnification: 2, end: 4
+        )?.start == 3.5)
+        #expect(AlignmentWaveformProjection.rulerZoom(
+            start: 0, duration: 20, anchor: 0.25, magnification: 0, end: 120
+        ) == nil)
+        #expect(AlignmentWaveformProjection.rulerTime(
+            at: .nan, width: width, start: start, duration: duration, end: 120
+        ) == nil)
+    }
+
+    @Test func rulerTickDensityAdaptsToVisibleScale() {
+        let wide = AlignmentWaveformProjection.rulerTicks(start: 60, duration: 30, width: 600)
+        let close = AlignmentWaveformProjection.rulerTicks(start: 60, duration: 0.5, width: 600)
+        let wideMajors = wide.filter(\.major).map(\.time)
+        let closeMajors = close.filter(\.major).map(\.time)
+        #expect(wideMajors == [60, 70, 80, 90])
+        #expect(closeMajors.count >= 3)
+        #expect(closeMajors[1] - closeMajors[0] < 1)
+        #expect(wide.count < 100 && close.count < 100)
+        #expect(AlignmentWaveformProjection.rulerTicks(start: 0, duration: 0, width: 600).isEmpty)
+    }
+
     @Test func distinctSpeakerColorsRemainStableWhenSpeakerOrderChanges() throws {
         let first = try #require(SpeakerID(uuidString: "00000000-0000-0000-0000-000000000001"))
         let second = try #require(SpeakerID(uuidString: "00000000-0000-0000-0000-000000000009"))

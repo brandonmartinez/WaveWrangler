@@ -81,6 +81,60 @@ struct PendingWaveformMove {
 enum AlignmentWaveformProjection {
     static let overviewNavigationRange = 0.0...86_400.0
 
+    struct RulerTick: Identifiable {
+        let id: Int
+        let time: Double
+        let major: Bool
+    }
+
+    static func rulerTicks(start: Double, duration: Double, width: Double) -> [RulerTick] {
+        guard start.isFinite, (0...86_400).contains(start),
+              duration.isFinite, (0.5...30).contains(duration),
+              width.isFinite, width > 0 else { return [] }
+        let target = duration * 120 / width
+        guard target.isFinite, target > 0 else { return [] }
+        let magnitude = pow(10, floor(log10(target)))
+        let major = ([1.0, 2, 5, 10].first { $0 * magnitude >= target } ?? 10) * magnitude
+        let minor = major / 5
+        guard minor.isFinite, minor > 0, start / minor < Double(Int.max / 2),
+              (start + duration) / minor < Double(Int.max / 2) else { return [] }
+        let first = Int(ceil(start / minor - 0.000_001))
+        let last = Int(floor((start + duration) / minor + 0.000_001))
+        guard last >= first, last - first <= 500 else { return [] }
+        return (first...last).map { RulerTick(id: $0, time: Double($0) * minor, major: $0.isMultiple(of: 5)) }
+    }
+
+    static func rulerTime(
+        at x: Double, width: Double, start: Double, duration: Double, end: Double
+    ) -> Double? {
+        guard x.isFinite, width.isFinite, width > 0, start.isFinite,
+              duration.isFinite, duration > 0, end.isFinite, end > 0 else { return nil }
+        return min(end, max(0, start + min(width, max(0, x)) / width * duration))
+    }
+
+    static func rulerZoom(
+        start: Double, duration: Double, anchor: Double, magnification: Double, end: Double
+    ) -> (start: Double, duration: Double)? {
+        guard start.isFinite, start >= 0, duration.isFinite, duration > 0,
+              anchor.isFinite, (0...1).contains(anchor),
+              magnification.isFinite, magnification > 0,
+              end.isFinite, end > 0 else { return nil }
+        let span = min(30, max(0.5, duration / magnification))
+        let anchoredTime = start + anchor * duration
+        guard anchoredTime.isFinite else { return nil }
+        return (min(max(0, min(end, 86_400) - span / 2),
+                    max(0, anchoredTime - anchor * span)), span)
+    }
+
+    static func rulerPanStart(
+        from start: Double, translation: Double, width: Double, duration: Double, end: Double
+    ) -> Double? {
+        guard start.isFinite, translation.isFinite, width.isFinite, width > 0,
+              duration.isFinite, duration > 0, end.isFinite, end > 0 else { return nil }
+        return min(max(start, max(0, end - duration / 2)),
+                   max(0, start - translation / width * duration))
+    }
+
     struct DisplayColumn: Equatable {
         let x: Double
         let low: Float

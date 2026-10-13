@@ -283,6 +283,20 @@ final class VisualAlignmentUITests: XCTestCase {
                 && abs((Double(playhead.value as? String ?? "") ?? -1) - 4.5) < 0.01
         }, app.debugDescription)
         XCTAssertTrue((revision.value as? String ?? revision.label).contains("Map revision 1"))
+
+        let rulerSurface = app.descendants(matching: .any)["alignment.waveforms.ruler.surface"]
+        scrollTo(rulerSurface, in: app)
+        XCTAssertTrue(rulerSurface.exists)
+        rulerSurface.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.8)).click()
+        XCTAssertTrue(waitUntil { (Double(playhead.value as? String ?? "") ?? -1) < 4.5 })
+        let marker = app.descendants(matching: .any)["alignment.waveforms.ruler.playhead"]
+        XCTAssertTrue(marker.exists)
+        XCTAssertTrue(marker.label.contains("Aligned playhead"))
+        let beforeDrag = Double(playhead.value as? String ?? "") ?? -1
+        let handle = marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        handle.press(forDuration: 0.1, thenDragTo: handle.withOffset(CGVector(dx: 12, dy: 0)))
+        XCTAssertTrue(waitUntil { (Double(playhead.value as? String ?? "") ?? -1) > beforeDrag },
+                      "Dragging the ruler marker should move the shared audible playhead")
     }
 
     func testEnabledManualGroupMoveAndPlaybackOnSyntheticRecorders() throws {
