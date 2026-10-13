@@ -59,20 +59,22 @@ final class VisualAlignmentUITests: XCTestCase {
             let sourceScroll = app.scrollViews.containing(
                 NSPredicate(format: "identifier == 'ww.setup.sources'")
             ).firstMatch
+            // A row under the table header can report hittable while clicks hit the header.
             for _ in 0..<6 {
-                let viewport = sourceScroll.frame.insetBy(dx: 0, dy: 3)
-                if row.isHittable && row.frame.minY >= viewport.minY
-                    && row.frame.maxY <= viewport.maxY {
+                let contentTop = sourceScroll.frame.minY + 35
+                let contentBottom = sourceScroll.frame.maxY - 3
+                if row.isHittable && row.frame.minY >= contentTop
+                    && row.frame.maxY <= contentBottom {
                     break
                 }
                 sourceScroll.scroll(
                     byDeltaX: 0,
-                    deltaY: row.frame.midY < sourceScroll.frame.midY ? 100 : -100
+                    deltaY: row.frame.midY < (contentTop + contentBottom) / 2 ? 50 : -50
                 )
             }
-            XCTAssertTrue(row.frame.minY >= sourceScroll.frame.minY
-                && row.frame.maxY <= sourceScroll.frame.maxY, app.debugDescription)
-            for offset in [0.03, 0.15, 0.3] {
+            XCTAssertTrue(row.frame.minY >= sourceScroll.frame.minY + 35
+                && row.frame.maxY <= sourceScroll.frame.maxY - 3, app.debugDescription)
+            for offset in [0.15, 0.3, 0.03] {
                 row.coordinate(withNormalizedOffset: CGVector(dx: offset, dy: 0.5)).click()
                 if waitUntil({
                     row.isSelected && (outline.value as? String) == "1 selected"
