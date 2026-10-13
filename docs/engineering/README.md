@@ -91,6 +91,9 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
 The native episode editor embeds grouped source Setup beside measured shared-ruler lanes. Import
 identity is provisional until the user explicitly confirms an unchanged original; the Setup engine
 checks current metadata and captures the decoder-owned raw witness before saving confirmation.
+Relink/Grant Access can also restore a missing device-local record or accept different file details
+only after the user acknowledges the comparison; the chosen local file is rechecked around read-only
+raw-witness capture before its new confirmed baseline is saved. It never silently substitutes a file.
 `AlignmentPipeline.prepareManual` gathers header facts without requiring estimator output; initial
 placement maps only one eligible epoch per non-reference group so recorder restarts with overlapping
 source clocks are not invented as synchronized. The user can place later epochs individually.

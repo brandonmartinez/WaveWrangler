@@ -114,16 +114,16 @@ public struct RelinkEvaluator: Sendable {
     }
 
     /// Only the explicit confirmation path may call the decoder-owned, read-only descriptor gateway.
-    /// An exact device-local candidate is checked again before and after capture; metadata-only
-    /// evaluation and unconfirmed relinks never invoke the gateway.
+    /// The explicitly confirmed candidate is checked again before and after capture, including when
+    /// the prior device-local evidence is missing or different. Unconfirmed relinks never invoke the gateway.
     public func applyConfirmed(
         _ proposal: RelinkProposal,
         to record: DeviceAccessRecord?,
         captureRawIdentity: @Sendable (URL, FileSystemFingerprint) async throws -> RawSourceIdentity
     ) async throws(RelinkError) -> DeviceAccessRecord {
         guard case let .ready(bookmark, resolvedPath) = proposal.availability,
-              record?.key == proposal.key,
-              proposal.comparison.isExactMatch, proposal.alreadyLinkedTo == nil,
+              record == nil || record?.key == proposal.key,
+              proposal.alreadyLinkedTo == nil,
               let fingerprint = proposal.candidateFingerprint,
               case let .resolved(scoped, isStale) = context.io.resolveBookmark(bookmark), !isStale,
               scoped.standardizedFileURL.path == resolvedPath,

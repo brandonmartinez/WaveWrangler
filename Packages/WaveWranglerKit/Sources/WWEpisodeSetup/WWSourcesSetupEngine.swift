@@ -444,7 +444,11 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         guard current.canApply,
               current.candidateFingerprint == stored.proposal.candidateFingerprint,
               current.candidateRaw == stored.proposal.candidateRaw,
-              current.comparison == stored.proposal.comparison
+              current.comparison == stored.proposal.comparison,
+              identity == WWSourcesStatusMapping.comparison(
+                  recorded: previous, proposal: current, chosenName: url.lastPathComponent,
+                  otherSourceName: sourceNames
+              ).acceptedIdentity
         else { throw .failed(reason: "the chosen file changed; choose it again") }
         let updated: DeviceAccessRecord
         do {

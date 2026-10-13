@@ -109,6 +109,65 @@ struct WWSourcesSetupEngineTests {
         #expect(try Data(contentsOf: candidate) == before)
     }
 
+    @Test func confirmedRelinkRestoresMissingDeviceRecordAndAcceptsReviewedDifference() async throws {
+        let root = try makeTree()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let context = SourceAccessContext(io: SystemSourceIO())
+        let store = InMemoryDeviceAccessStore()
+        let engine = WWSourcesSetupEngine(
+            showID: ShowID(), store: store, context: context, preference: FixedPreference(false),
+            captureRawIdentity: { url, fingerprint in
+                try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+            }
+        )
+        let original = root.appending(path: "ZOOM0001/tr1.wav")
+        let scan = try await engine.scanForImport([original], episodeSourceIDs: [])
+        let item = try #require(ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: []).importItems().first)
+        let sourceID = item.item.source.id
+        let key = DeviceAccessKey(showID: engine.showID, sourceID: sourceID)
+        try await engine.commitImport([item.candidateID: sourceID], fromScan: scan.token)
+
+        await store.removeRecord(for: key)
+        let missing = await engine.compare(candidate: original, for: sourceID)
+        #expect(missing.requiresAcknowledgement)
+        #expect(missing.canConfirm)
+        await #expect(throws: SourceEngineError.self) {
+            _ = try await engine.commitRelink(sourceID, to: original, identity: .detailsMatch)
+        }
+        #expect(await store.record(for: key) == nil)
+        let originalBytes = try Data(contentsOf: original)
+        let receipt = try await engine.commitRelink(sourceID, to: original, identity: missing.acceptedIdentity)
+        let restored = try #require(await store.record(for: key))
+        #expect(restored.recordedIdentity?.confirmation == .userConfirmed)
+        #expect(restored.recordedIdentity?.rawWitness?.isUsable == true)
+        #expect(try Data(contentsOf: original) == originalBytes)
+        try await engine.revertRelink(receipt)
+        #expect(await store.record(for: key) == nil)
+        let retry = await engine.compare(candidate: original, for: sourceID)
+        _ = try await engine.commitRelink(sourceID, to: original, identity: retry.acceptedIdentity)
+        let restoredAgain = try #require(await store.record(for: key))
+
+        let replacement = root.appending(path: "replacement.wav")
+        let replacementBytes = Data(repeating: 7, count: 80)
+        try replacementBytes.write(to: replacement)
+        let different = await engine.compare(candidate: replacement, for: sourceID)
+        #expect(different.requiresAcknowledgement)
+        #expect(different.canConfirm)
+        try Data(repeating: 7, count: 81).write(to: replacement)
+        await #expect(throws: SourceEngineError.self) {
+            _ = try await engine.commitRelink(sourceID, to: replacement, identity: different.acceptedIdentity)
+        }
+        #expect(await store.record(for: key) == restoredAgain)
+        try replacementBytes.write(to: replacement)
+        let reviewed = await engine.compare(candidate: replacement, for: sourceID)
+        _ = try await engine.commitRelink(sourceID, to: replacement, identity: reviewed.acceptedIdentity)
+        let confirmed = try #require(await store.record(for: key))
+        #expect(confirmed.recordedIdentity?.confirmation == .userConfirmed)
+        #expect(confirmed.recordedIdentity?.rawWitness?.isUsable == true)
+        #expect(confirmed.recordedIdentity?.fingerprint != restoredAgain.recordedIdentity?.fingerprint)
+        #expect(try Data(contentsOf: replacement) == replacementBytes)
+    }
+
     @Test func explicitOriginalConfirmationRequiresUnchangedProvisionalIdentity() async throws {
         let root = try makeTree()
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
