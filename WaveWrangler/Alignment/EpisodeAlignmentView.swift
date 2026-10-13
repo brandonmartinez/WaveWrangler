@@ -122,9 +122,9 @@ private struct AlignmentWorkspace: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Manual alignment")
+                    Text("Alignment workspace")
                         .font(.title2.weight(.semibold))
-                    Text("Stacked measured recordings share one playhead. Place groups at source time, then move each recorder as a unit while listening.")
+                    Text("Place recorder groups at source time, then align their measured waveforms with the shared ruler and playhead. Drag a group or use precise timing below.")
                         .foregroundStyle(.secondary)
                 }
                 AlignmentWaveformView(model: model)

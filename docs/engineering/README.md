@@ -104,6 +104,18 @@ checks. It may buffer between windows; it does not create an export or promise s
 frame windows, clips to occurrence spans, and never reads gap frames into an envelope. Unsupported
 spans are visibly unplaced source-origin previews. Opposite-polarity channels retain their peaks;
 the envelope is not mono PCM, an alignment estimate or edit authority.
+The alignment workspace puts a compact transport with aligned time, seek and five-second skips above
+the shared pan and logarithmic zoom controls. Recorder-group headers sit beside adjustable-height
+source lanes; a translucent overlay with source selection is available for peak matching. Separate
+lanes and overlay share a ruler and playhead. Zoom changes the visible transform around the current
+window center, then requests missing measured tiles on release; cached tiles stay in memory while
+panning or zooming. Each slice is clipped in its own tile coordinates before translation to the
+visible window. A released group drag retains that visual position while the replacement map is saved
+and verified, then loads fresh measured audio. Numeric move and epoch timing remain keyboard-accessible
+alternatives; visual previews never change playback timing. The episode overview is secondary and
+can be expanded for navigation outside the current measured window.
+Speaker colors derive from stable speaker IDs rather than their order in the show; unknown speakers
+remain gray, with names and roles available independently of color.
 
 `AlignmentRuntime` resolves the existing identity/availability records, captures an opened-file
 witness and lends only witness-bound WWDecode cursors. Access records and witnesses are rechecked

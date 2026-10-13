@@ -81,6 +81,16 @@ struct PendingWaveformMove {
 enum AlignmentWaveformProjection {
     static let overviewNavigationRange = 0.0...86_400.0
 
+    static func zoomDuration(for level: Double) -> Double? {
+        guard level.isFinite, (0...1).contains(level) else { return nil }
+        return 30 * pow(1.0 / 60, level)
+    }
+
+    static func zoomLevel(for duration: Double) -> Double? {
+        guard duration.isFinite, (0.5...30).contains(duration) else { return nil }
+        return log(30 / duration) / log(60)
+    }
+
     struct TileSlice: Equatable {
         let id: UUID
         let range: ClosedRange<Double>
@@ -141,6 +151,19 @@ enum AlignmentWaveformProjection {
               width.isFinite, width > 0 else { return nil }
         let translation = (tileStart - windowStart) / visible * width
         return translation.isFinite ? translation : nil
+    }
+
+    static func tileClip(
+        range: ClosedRange<Double>, tileStart: Double, tileDuration: Double, tileWidth: Double
+    ) -> (origin: Double, width: Double)? {
+        guard range.lowerBound.isFinite, range.upperBound.isFinite,
+              tileStart.isFinite, tileDuration.isFinite, tileDuration > 0,
+              tileWidth.isFinite, tileWidth > 0,
+              range.lowerBound >= tileStart, range.upperBound <= tileStart + tileDuration,
+              range.upperBound > range.lowerBound
+        else { return nil }
+        return ((range.lowerBound - tileStart) / tileDuration * tileWidth,
+                (range.upperBound - range.lowerBound) / tileDuration * tileWidth)
     }
 
     static func moveMicroseconds(fromMilliseconds value: Double) -> Int64? {

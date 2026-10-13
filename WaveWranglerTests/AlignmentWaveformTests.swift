@@ -5,6 +5,19 @@ import WWTimeMap
 
 @Suite("Waveform selection")
 struct AlignmentWaveformTests {
+    @Test func logarithmicZoomKeepsTheTimelineCenterAndBounds() throws {
+        #expect(AlignmentWaveformProjection.zoomDuration(for: 0) == 30)
+        #expect(AlignmentWaveformProjection.zoomDuration(for: 1) == 0.5)
+        let level = try #require(AlignmentWaveformProjection.zoomLevel(for: 2))
+        #expect(abs((AlignmentWaveformProjection.zoomDuration(for: level) ?? 0) - 2) < 0.000_001)
+        #expect(AlignmentWaveformProjection.windowStart(centeredAt: 10, duration: 2) == 9)
+        #expect(AlignmentWaveformProjection.windowStart(centeredAt: 10, duration: 0.5) == 9.75)
+        #expect(AlignmentWaveformProjection.windowStart(centeredAt: 0.5, duration: 30) == 0)
+        #expect(AlignmentWaveformProjection.zoomDuration(for: .nan) == nil)
+        #expect(AlignmentWaveformProjection.zoomLevel(for: 0) == nil)
+        #expect(AlignmentWaveformProjection.zoomLevel(for: 31) == nil)
+    }
+
     @Test func pendingMoveRetainsOnlyThePriorTileAtItsDroppedPosition() {
         let moved = RecorderGroupID()
         let reference = RecorderGroupID()
@@ -115,6 +128,30 @@ struct AlignmentWaveformTests {
             .init(id: first, range: 10...15),
             .init(id: second, range: 15...40),
         ])
+    }
+
+    @Test func tileClipStaysAttachedToMeasuredAudioAcrossPanZoomAndGroupMoves() throws {
+        let clip = try #require(AlignmentWaveformProjection.tileClip(
+            range: 15...30, tileStart: 0, tileDuration: 30, tileWidth: 600
+        ))
+        #expect(clip.origin == 300)
+        #expect(clip.width == 300)
+        let firstWindow = try #require(AlignmentWaveformProjection.tileTranslation(
+            tileStart: 0, windowStart: 15, visible: 15, width: 300
+        ))
+        let pannedWindow = try #require(AlignmentWaveformProjection.tileTranslation(
+            tileStart: 0, windowStart: 20, visible: 15, width: 300
+        ))
+        #expect(firstWindow + clip.origin == 0)
+        #expect(pannedWindow + clip.origin == -100)
+        let moved = PendingWaveformMove(
+            group: RecorderGroupID(), milliseconds: 125,
+            priorGeneration: 1, expectedGeneration: 2
+        )
+        #expect(firstWindow + clip.origin + moved.displayShift(for: moved.group) / 1_000 / 15 * 300 == 2.5)
+        #expect(AlignmentWaveformProjection.tileClip(
+            range: 15...31, tileStart: 0, tileDuration: 30, tileWidth: 600
+        ) == nil)
     }
 
     @Test func visualNormalizationUsesEachWindowPeakWithoutChangingSamples() {

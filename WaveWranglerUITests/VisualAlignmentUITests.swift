@@ -607,6 +607,7 @@ final class VisualAlignmentUITests: XCTestCase {
         span.click()
         XCTAssertTrue(waitUntil { tracks.count == 2 && load.label == "Refresh audio" })
 
+        app.disclosureTriangles["Episode overview"].click()
         let build = app.buttons["alignment.waveforms.overview.load"]
         scrollTo(build, in: app)
         XCTAssertTrue(build.isEnabled)

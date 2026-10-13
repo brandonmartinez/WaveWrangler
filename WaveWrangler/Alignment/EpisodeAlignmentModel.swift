@@ -205,11 +205,11 @@ final class EpisodeAlignmentModel {
         let references = document?.store.model.episode(episodeID)?.references(to: source) ?? []
         guard let reference = references.first,
               let speakers = document?.store.model.speakers,
-              let index = speakers.firstIndex(where: { $0.id == reference.speakerID })
+              let speaker = speakers.first(where: { $0.id == reference.speakerID })
         else { return ("Unknown speaker", .gray) }
         let palette: [Color] = [.blue, .purple, .green, .pink, .cyan, .indigo, .mint, .brown]
         let role = reference.isPrimary ? "Primary" : "Backup"
-        return ("\(speakers[index].name) · \(role)", palette[index % palette.count])
+        return ("\(speaker.name) · \(role)", palette[Int(speaker.id.rawValue.uuid.0) % palette.count])
     }
     var enabledSources: [SourceID] {
         waveformTracks.filter { !disabledGroups.contains($0.group) && !disabledTracks.contains($0.id) }
