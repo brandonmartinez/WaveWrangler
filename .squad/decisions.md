@@ -1294,3 +1294,11 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **Boundary:** Report the SHA, host, pass/fail/skip counts, and retained result on #455. If it fails, stop GUI testing and return the evidence for a new decision. A pass does not prove the user's real-media drag path or complete the PR's remaining gates.
 
 **Result:** The exact pushed `464e7793dda8` Products were signed and checksum-staged on `ww-ui-1`. One leased synthetic method ran: zero passed, one failed, zero skipped. The test failed before dragging because its seeded alignment fixture already had an accepted map, so the initial-placement button it tried to click was correctly absent. The test setup was corrected afterward, but **the pointer-to-saved-offset behavior was not exercised or verified**; there was no retry. Result: `/Users/admin/ww-uitest-runs/manual-drag-464e7793dda8-20261012T151223/result.xcresult`, retained in this worktree at `.build/drag-fix-vm-result.xcresult/`. The lease released normally. The single-run exception is consumed.
+
+### 2026-10-13: Authorize one behavior-only #455 mini GUI round beyond the timebox
+
+**By:** Brandon, after reviewing the three counted failed GUI rounds in this closeout and the corrected source-inspector test at `04fc24a4`.
+
+**What:** Brandon selected "Authorize one recorded exception and one focused run (Recommended)." Permit exactly one additional leased XCUITest invocation on the physical Mac mini, selecting only the normal generated-audio import, original-confirmation, manual alignment, playback, Undo/Redo, and save/reopen behavior path. Build and checksum-stage signed Products from a clean, pushed exact head. This is a one-use exception to the per-PR GUI timebox, not approval to retry the historical disclosure/focus campaigns, inspect private media, test on the working Mac, or run again automatically.
+
+**Boundary:** Report the exact SHA, mini host, pass/fail/skip counts and retained result on #455. Stop if this run fails. The source-safety and durability requirements remain; the autosave timing gate is separately restricted to an eligible quiet physical mini. A failed or incomplete run does not permit merging #455 or starting the follow-up UI coding session as if this PR had merged.
