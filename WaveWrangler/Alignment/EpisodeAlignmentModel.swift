@@ -590,7 +590,7 @@ final class EpisodeAlignmentModel {
             pendingWaveformMove = nil
         }
         waveformMessage = tile.load.mapWarning
-            ?? "\(tile.load.tracks.count) recordings loaded; \(tile.load.refusals.count) unavailable. Measured tiles are cached in memory; originals stay unchanged."
+            ?? "\(tile.load.tracks.count) recordings loaded; \(tile.load.refusals.count) failed to load. Measured tiles are cached in memory; originals stay unchanged."
         ensureWaveformOverview()
     }
 
@@ -696,7 +696,7 @@ final class EpisodeAlignmentModel {
                 loadedOverviewEpisode = snapshot.episode(episodeID)
                 waveformOverviewProgress = 1
                 waveformOverviewMessage = loaded.mapWarning
-                    ?? "\(loaded.tracks.count) cached PCM overviews; \(loaded.refusals.count) unavailable. Click covered audio to load an exact window; coarse bins are not anchors."
+                    ?? "\(loaded.tracks.count) cached PCM overviews; \(loaded.refusals.count) failed to load. Click covered audio to load an exact window; coarse bins are not anchors."
             } catch is CancellationError {
                 if generation == overviewGeneration {
                     waveformOverviewMessage = "Overview cancelled or episode changed. No partial result was kept."

@@ -165,10 +165,13 @@ stored-map navigator, never an anchor picker; clicking covered audio reloads the
 The editable live playhead, or a real **Open Window at Playhead** button per navigable lane,
 remain the keyboard/accessibility alternatives. The overview's descriptive accessibility
 representation is separate from its mouse-position gesture and the native button action.
-Source-duration admission does not bound the map's aligned extent. The overview shades and
-labels portions outside the existing exact-window navigator's `0...86_400` aligned seconds as
-unavailable. The native/AX action admits only covered points inside that range; a wholly
-out-of-range lane is descriptive text, not a navigation button. Stored map values are never clamped.
+Source-duration admission does not bound the map's aligned extent. Gray shading marks portions
+outside the exact-window navigator's `0...86_400` aligned seconds; those portions remain in the
+overview but cannot be opened as exact windows. The "failed to load" count instead reports source
+refusals, not out-of-range timing. Enabled lanes with no measured tile in the visible window report
+that absence rather than "Hidden and muted," which is reserved for disabled lanes. The native/AX
+action admits only covered points inside the navigation range; a wholly out-of-range lane is
+descriptive text, not a navigation button. Stored map values are never clamped.
 
 `VisualAlignmentUITests` uses real generated WAVs and the actual Alignment view, not seeded waveform
 pixels or transcript fixtures. Package tests cover extrema, actual witnessed reads, replacement

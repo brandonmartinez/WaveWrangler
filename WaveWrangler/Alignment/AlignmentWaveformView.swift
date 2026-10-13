@@ -172,7 +172,7 @@ struct AlignmentWaveformView: View {
                     ContentUnavailableView(
                         "No audio in this window",
                         systemImage: "waveform",
-                        description: Text("Scrub to another section of the shared timeline. Unavailable recordings are listed below.")
+                        description: Text("Scrub to another section of the shared timeline. Recordings that failed to load are listed below.")
                     )
                     .frame(minHeight: 200)
                 } else if visibleTracks.isEmpty && layout == .overlay {
@@ -438,7 +438,7 @@ struct AlignmentWaveformView: View {
     private var overview: some View {
         VStack(alignment: .leading, spacing: 5) {
             if !model.waveformOverviewRefusals.isEmpty && !model.isLoadingOverview {
-                Button("Retry unavailable overviews") { model.loadWaveformOverview() }
+                Button("Retry failed overview loads") { model.loadWaveformOverview() }
                     .accessibilityIdentifier("alignment.waveforms.overview.retry")
             }
             let visible = model.waveformOverviewTracks.filter {
@@ -452,7 +452,7 @@ struct AlignmentWaveformView: View {
                 Text("Episode overview: \(extent.lowerBound, specifier: "%.1f") to \(extent.upperBound, specifier: "%.1f") seconds. Blue uses stored timing; dashed orange is unplaced source time.")
                     .font(.caption)
                 if !AlignmentWaveformProjection.unavailableOverviewRanges(in: extent).isEmpty {
-                    Text("Shaded audio outside 0 to 86,400 aligned seconds is unavailable for exact-window navigation. The 24-hour scan limit is in source time; stored timing is unchanged.")
+                    Text("Gray shading marks aligned time before 0 or after 24 hours: its overview still exists, but it cannot be opened as an exact window. This is not a failed recording. The scan limit is in source time; stored timing is unchanged.")
                         .font(.caption)
                         .accessibilityIdentifier("alignment.waveforms.overview.navigationLimit")
                 }
@@ -502,8 +502,8 @@ struct AlignmentWaveformView: View {
                                 .frame(width: (range.upperBound - range.lowerBound) * scale)
                                 .offset(x: (range.lowerBound - extent.lowerBound) * scale)
                                 .overlay(alignment: .topLeading) {
-                                    if (range.upperBound - range.lowerBound) * scale >= 80 {
-                                        Text("Unavailable").font(.caption2)
+                                    if (range.upperBound - range.lowerBound) * scale >= 150 {
+                                        Text("Outside navigable time").font(.caption2)
                                             .offset(x: (range.lowerBound - extent.lowerBound) * scale)
                                     }
                                 }
@@ -518,10 +518,10 @@ struct AlignmentWaveformView: View {
                 .clipped()
                 .accessibilityRepresentation {
                     if hasNavigableAudio {
-                        Text("\(track.groupName), \(track.name), complete measured PCM overview; \(strokes.filter { !$0.mapped }.count) unplaced bins. Use Open Window at Playhead to navigate within covered audio from 0 to 86,400 seconds. Audio outside that range is unavailable; coarse bins do not set anchors.")
+                        Text("\(track.groupName), \(track.name), complete measured PCM overview; \(strokes.filter { !$0.mapped }.count) unplaced bins. Use Open Window at Playhead to navigate within covered audio from 0 to 86,400 seconds. Audio outside that range cannot be opened as an exact window; coarse bins do not set anchors.")
                             .accessibilityIdentifier("alignment.waveforms.overview.track.\(track.id)")
                     } else {
-                        Text("\(track.groupName), \(track.name), complete measured PCM overview. All covered audio is unavailable for exact-window navigation: stored timing places it outside 0 to 86,400 aligned seconds.")
+                        Text("\(track.groupName), \(track.name), complete measured PCM overview. Stored timing places all covered audio outside 0 to 86,400 aligned seconds, so it cannot be opened as an exact window.")
                             .accessibilityIdentifier("alignment.waveforms.overview.track.\(track.id)")
                     }
                 }
@@ -860,11 +860,18 @@ struct AlignmentWaveformView: View {
             } else if model.trackEnabled(track.id),
                       let error = model.waveformProjectionErrors[track.id] {
                 Text("Cannot place this waveform: \(error)")
-            } else {
+            } else if !model.trackEnabled(track.id) {
                 Color.primary.opacity(0.02)
                     .frame(height: 34)
                     .overlay(alignment: .leading) {
                         Text("Hidden and muted").font(.caption).foregroundStyle(.secondary)
+                    }
+            } else {
+                Color.primary.opacity(0.02)
+                    .frame(height: 34)
+                    .overlay(alignment: .leading) {
+                        Text(model.isLoadingWaveforms ? "Loading measured waveform…" : "No measured audio in this window")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
             }
         }
