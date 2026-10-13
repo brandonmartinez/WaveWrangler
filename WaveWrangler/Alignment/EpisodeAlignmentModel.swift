@@ -503,7 +503,7 @@ final class EpisodeAlignmentModel {
                 if UserDefaults.standard.bool(forKey: "WWUITestHooks"),
                    UserDefaults.standard.bool(forKey: "WWUITestVisualAlignmentFixture"),
                    UserDefaults.standard.bool(forKey: "WWUITestDelayWaveformPublication") {
-                    try await Task.sleep(for: .seconds(3))
+                    try await Task.sleep(for: .seconds(12))
                 }
                 #endif
                 try Task.checkCancellation()

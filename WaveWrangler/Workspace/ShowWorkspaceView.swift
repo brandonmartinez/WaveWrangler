@@ -263,6 +263,7 @@ private struct ShowDetailContent: View {
                     EpisodeEditorSetup(store: state.store, episode: episode)
                     if !episode.recorderGroups.isEmpty {
                         EpisodeAlignmentContent(state: state, episodeID: episode.id)
+                            .id(episode.id)
                     } else {
                         ContentUnavailableView(
                             "Add a recorder group to begin",
