@@ -1,10 +1,64 @@
 import Foundation
 import Testing
+import WWAlignPipeline
 import WWCore
 import WWTimeMap
 
 @Suite("Waveform selection")
 struct AlignmentWaveformTests {
+    @Test func distinctSpeakerColorsRemainStableWhenSpeakerOrderChanges() throws {
+        let first = try #require(SpeakerID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        let second = try #require(SpeakerID(uuidString: "00000000-0000-0000-0000-000000000009"))
+        let ordered = [first, second]
+        let firstColor = AlignmentWaveformProjection.speakerColorIndex(
+            for: first, speakers: ordered, paletteCount: 8
+        )
+        let secondColor = AlignmentWaveformProjection.speakerColorIndex(
+            for: second, speakers: Array(ordered.reversed()), paletteCount: 8
+        )
+        #expect(firstColor == 0)
+        #expect(secondColor == 1)
+        #expect(firstColor != secondColor)
+    }
+
+    @Test func displayColumnsMergePeaksWithoutMixingUnplacedAudio() throws {
+        let epoch = RecordingEpochID()
+        func stroke(_ time: Double, _ low: Float, _ high: Float, mapped: Bool) -> AlignmentWaveformStroke {
+            AlignmentWaveformStroke(
+                sourceSeconds: time, groupSeconds: time, displaySeconds: time,
+                low: low, high: high, mapped: mapped, epoch: epoch,
+                displayRange: time...time, groupRange: time...time
+            )
+        }
+        let strokes = [
+            stroke(0.100, -0.2, 0.3, mapped: true),
+            stroke(0.101, -0.8, 0.1, mapped: true),
+            stroke(0.102, -0.4, 0.6, mapped: false),
+        ]
+        let columns = AlignmentWaveformProjection.displayColumns(
+            strokes: strokes, start: 0, duration: 1, width: 100, pixelsPerPoint: 2
+        )
+        #expect(columns.count == 2)
+        #expect(columns[0].x == 10.25)
+        #expect(columns[0].low == -0.8 && columns[0].high == 0.3 && columns[0].mapped)
+        #expect(columns[1].low == -0.4 && columns[1].high == 0.6 && !columns[1].mapped)
+        #expect(AlignmentWaveformProjection.displayColumns(
+            strokes: strokes, start: .nan, duration: 1, width: 100, pixelsPerPoint: 2
+        ).isEmpty)
+    }
+
+    @Test func completeMeasuredEnvelopeCanRoundTripThroughDerivedPayload() throws {
+        let source = SourceID()
+        let envelope = WaveformEnvelope(
+            source: source, sampleRate: 48_000, channelCount: 2, totalFrames: 480_000,
+            bins: [WaveformBin(firstFrame: 0, endFrame: 240_000, minimum: -0.7, maximum: 0.9),
+                   WaveformBin(firstFrame: 240_000, endFrame: 480_000, minimum: -0.5, maximum: 0.6)]
+        )
+        #expect(try JSONDecoder().decode(
+            WaveformEnvelope.self, from: JSONEncoder().encode(envelope)
+        ) == envelope)
+    }
+
     @Test func logarithmicZoomKeepsTheTimelineCenterAndBounds() throws {
         #expect(AlignmentWaveformProjection.zoomDuration(for: 0) == 30)
         #expect(AlignmentWaveformProjection.zoomDuration(for: 1) == 0.5)

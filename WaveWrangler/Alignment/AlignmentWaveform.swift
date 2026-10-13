@@ -81,6 +81,51 @@ struct PendingWaveformMove {
 enum AlignmentWaveformProjection {
     static let overviewNavigationRange = 0.0...86_400.0
 
+    struct DisplayColumn: Equatable {
+        let x: Double
+        let low: Float
+        let high: Float
+        let mapped: Bool
+    }
+
+    static func displayColumns(
+        strokes: [AlignmentWaveformStroke], start: Double, duration: Double,
+        width: Double, pixelsPerPoint: Double,
+        draftEpoch: RecordingEpochID? = nil, ratePPM: Double = 0, offsetMilliseconds: Double = 0
+    ) -> [DisplayColumn] {
+        guard start.isFinite, duration.isFinite, duration > 0,
+              width.isFinite, width > 0, pixelsPerPoint.isFinite, pixelsPerPoint > 0 else { return [] }
+        var columns: [Int: (low: Float, high: Float, mapped: Bool)] = [:]
+        for stroke in strokes {
+            let time = stroke.epoch == draftEpoch
+                ? stroke.groupSeconds * (1 + ratePPM / 1_000_000) + offsetMilliseconds / 1_000
+                : stroke.displaySeconds
+            let pixel = (time - start) / duration * width * pixelsPerPoint
+            guard pixel.isFinite, pixel >= 0, pixel < width * pixelsPerPoint else { continue }
+            let column = Int(pixel.rounded(.down))
+            // Keep mapped and unplaced audio separate even if they share a screen column.
+            let key = column * 2 + (stroke.mapped ? 0 : 1)
+            if let prior = columns[key] {
+                columns[key] = (min(prior.low, stroke.low), max(prior.high, stroke.high), stroke.mapped)
+            } else {
+                columns[key] = (stroke.low, stroke.high, stroke.mapped)
+            }
+        }
+        return columns.keys.sorted().compactMap { key in
+            guard let bounds = columns[key] else { return nil }
+            return DisplayColumn(
+                x: (Double(key / 2) + 0.5) / pixelsPerPoint,
+                low: bounds.low, high: bounds.high, mapped: bounds.mapped
+            )
+        }
+    }
+
+    static func speakerColorIndex(for id: SpeakerID, speakers: [SpeakerID], paletteCount: Int) -> Int? {
+        guard paletteCount > 0 else { return nil }
+        let ordered = Set(speakers).sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
+        return ordered.firstIndex(of: id).map { $0 % paletteCount }
+    }
+
     static func zoomDuration(for level: Double) -> Double? {
         guard level.isFinite, (0...1).contains(level) else { return nil }
         return 30 * pow(1.0 / 60, level)

@@ -4,19 +4,34 @@ import WWDecode
 import WWSources
 import WWTimeMap
 
-public struct WaveformBin: Sendable, Equatable {
+public struct WaveformBin: Sendable, Equatable, Codable {
     public let firstFrame: Int64
     public let endFrame: Int64
     public let minimum: Float
     public let maximum: Float
+
+    public init(firstFrame: Int64, endFrame: Int64, minimum: Float, maximum: Float) {
+        self.firstFrame = firstFrame
+        self.endFrame = endFrame
+        self.minimum = minimum
+        self.maximum = maximum
+    }
 }
 
-public struct WaveformEnvelope: Sendable, Equatable {
+public struct WaveformEnvelope: Sendable, Equatable, Codable {
     public let source: SourceID
     public let sampleRate: Int
     public let channelCount: Int
     public let totalFrames: Int64
     public let bins: [WaveformBin]
+
+    public init(source: SourceID, sampleRate: Int, channelCount: Int, totalFrames: Int64, bins: [WaveformBin]) {
+        self.source = source
+        self.sampleRate = sampleRate
+        self.channelCount = channelCount
+        self.totalFrames = totalFrames
+        self.bins = bins
+    }
 }
 
 public enum WaveformWindowError: Error, LocalizedError, Sendable, Equatable {

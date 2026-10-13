@@ -273,6 +273,11 @@ public actor DerivedJobCoordinator {
         return store.payload(for: key)
     }
 
+    public func readyPayload(for slot: DerivedSlot, matching key: DerivedAssetKey) -> Data? {
+        guard case let .ready(current) = state(of: slot), current == key else { return nil }
+        return store.payload(for: key)
+    }
+
     // MARK: - Jobs
 
     /// Starts `work` for `slot` under `key`, superseding any job already running for the slot. `work` runs off

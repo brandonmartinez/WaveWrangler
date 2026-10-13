@@ -306,7 +306,7 @@ actor AlignmentRuntime {
     func waveformTracks(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         startSeconds: Double, durationSeconds: Double, overview: Bool = false,
-        progress: @Sendable (Double) async throws -> Void = { _ in }
+        progress: @escaping @Sendable (Double) async throws -> Void = { _ in }
     ) async throws -> AlignmentWaveformLoad {
         guard let episode = model.episode(episodeID) else {
             throw AlignmentAcceptanceError.episodeNotFound(episodeID)
@@ -336,16 +336,10 @@ actor AlignmentRuntime {
                 let admission = try await waveformSource(record.id, sources: sources)
                 let envelope: WaveformEnvelope
                 if overview {
-                    envelope = try await WaveformWindowReader.readOverview(
-                        sourceURL: admission.url, source: record.id,
-                        matching: admission.witness, decoder: pipeline.decoder,
-                        groupMap: map?.groups.first(where: { $0.group == groupID })
-                    ) { [self] fraction in
-                        guard try await accessStore.record(for: admission.key) == admission.record else {
-                            throw DecodeFailure.sourceIdentityMismatch
-                        }
-                        try await progress((Double(index) + fraction) / Double(max(1, episode.sources.count)))
-                    }
+                    envelope = try await cachedOverview(
+                        admission: admission, episode: episode, group: groupID, map: map,
+                        sourceIndex: index, progress: progress
+                    )
                 } else {
                     envelope = try await WaveformWindowReader.readWindow(
                         sourceURL: admission.url, source: record.id,
@@ -380,7 +374,67 @@ actor AlignmentRuntime {
         return AlignmentWaveformLoad(tracks: tracks, refusals: refusals, map: map, mapWarning: mapWarning)
     }
 
-    private struct WaveformSourceAdmission {
+    private func cachedOverview(
+        admission: WaveformSourceAdmission, episode: Episode, group: RecorderGroupID,
+        map: AlignedTimelineMap?, sourceIndex: Int,
+        progress: @escaping @Sendable (Double) async throws -> Void
+    ) async throws -> WaveformEnvelope {
+        guard let fingerprint = admission.record.recordedIdentity?.fingerprint else {
+            throw DecodeFailure.sourceIdentityMismatch
+        }
+        let asset = AssetSpec(kind: "ww.waveform.overview", revision: 1)
+        let source = admission.key.sourceID
+        let key = DerivedAssetKey(
+            asset: asset, sources: [.metadata(source, fingerprint: fingerprint)],
+            format: .current,
+            map: map.flatMap { _ in
+                episode.alignment?.acceptedRevision.map {
+                    MapRevisionReference(episode: episode.id, revision: $0)
+                }
+            }
+        )
+        let slot = DerivedSlot("ww.waveform.overview.\(episode.id).\(source)")
+        await coordinator.setAssetRevision(asset)
+        if let mapRevision = key.map { await coordinator.acceptMap(mapRevision) }
+        let decoder = pipeline.decoder
+        let accessStore = accessStore
+        let sourceCount = max(1, episode.sources.count)
+        let groupMap = map?.groups.first(where: { $0.group == group })
+        let job = await coordinator.submit(slot, key: key) {
+            let envelope = try await WaveformWindowReader.readOverview(
+                sourceURL: admission.url, source: source,
+                matching: admission.witness, decoder: decoder, groupMap: groupMap
+            ) { fraction in
+                guard try await accessStore.record(for: admission.key) == admission.record else {
+                    throw DecodeFailure.sourceIdentityMismatch
+                }
+                try await progress((Double(sourceIndex) + fraction) / Double(sourceCount))
+            }
+            return try JSONEncoder().encode(envelope)
+        }
+        switch await job.outcome {
+        case .published, .reused: break
+        case .cancelled: throw CancellationError()
+        case .discardedStale: throw DecodeFailure.sourceIdentityMismatch
+        case let .failed(reason): throw SourceAdmissionError(reason: reason)
+        }
+        guard let payload = await coordinator.readyPayload(for: slot, matching: key),
+              let envelope = try? JSONDecoder().decode(WaveformEnvelope.self, from: payload),
+              envelope.source == source, envelope.sampleRate > 0, envelope.channelCount > 0,
+              envelope.totalFrames >= 0, envelope.bins.count <= WaveformWindowReader.maximumBins,
+              envelope.bins.allSatisfy({
+                  $0.firstFrame >= 0 && $0.firstFrame < $0.endFrame
+                      && $0.endFrame <= envelope.totalFrames
+                      && $0.minimum.isFinite && $0.maximum.isFinite
+                      && $0.minimum <= $0.maximum
+              })
+        else { throw SourceAdmissionError(reason: "The cached waveform overview is invalid; refresh its source.") }
+        try await reverify(admission)
+        try await progress(Double(sourceIndex + 1) / Double(sourceCount))
+        return envelope
+    }
+
+    private struct WaveformSourceAdmission: Sendable {
         let key: DeviceAccessKey
         let record: DeviceAccessRecord
         let url: URL

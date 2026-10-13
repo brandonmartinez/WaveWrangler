@@ -4,11 +4,11 @@ import WWCore
 
 struct AlignmentWaveformView: View {
     @Bindable var model: EpisodeAlignmentModel
+    @Environment(\.displayScale) private var displayScale
     @State private var dragSession: AlignmentWaveformDrag?
     @State private var rulerPan: (center: Double, width: Double, duration: Double)?
-    @State private var panAnchorSeconds: Double?
-    @State private var panPosition = 0.5
-    @State private var jumpPreviewSeconds: Double?
+    @State private var timeDraft = "0.000"
+    @FocusState private var editingTime: Bool
     @State private var layout: Layout = .separate
     @State private var normalizeView = false
     @State private var laneHeight = 140.0
@@ -33,9 +33,10 @@ struct AlignmentWaveformView: View {
         let draftEpoch: RecordingEpochID?
         let draftRatePPM: Double
         let draftOffsetMilliseconds: Double
+        let displayScale: Double
 
         nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.snapshot == rhs.snapshot && lhs.size == rhs.size
+            lhs.snapshot == rhs.snapshot && lhs.size == rhs.size && lhs.displayScale == rhs.displayScale
                 && lhs.start == rhs.start && lhs.duration == rhs.duration
                 && lhs.color == rhs.color && lhs.lineWidth == rhs.lineWidth
                 && lhs.gain == rhs.gain && lhs.draftEpoch == rhs.draftEpoch
@@ -55,19 +56,14 @@ struct AlignmentWaveformView: View {
 
         private func path(mapped: Bool) -> Path {
             Path { path in
-                guard duration.isFinite, duration > 0 else { return }
-                for stroke in strokes where stroke.mapped == mapped {
-                    let time: Double
-                    if stroke.epoch == draftEpoch {
-                        time = stroke.groupSeconds * (1 + draftRatePPM / 1_000_000)
-                            + draftOffsetMilliseconds / 1_000
-                    } else {
-                        time = stroke.displaySeconds
-                    }
-                    let position = (time - start) / duration * size.width
-                    guard position.isFinite else { continue }
-                    path.move(to: CGPoint(x: position, y: size.height * (0.5 - Double(stroke.high) * gain * 0.45)))
-                    path.addLine(to: CGPoint(x: position, y: size.height * (0.5 - Double(stroke.low) * gain * 0.45)))
+                for column in AlignmentWaveformProjection.displayColumns(
+                    strokes: strokes, start: start, duration: duration,
+                    width: size.width, pixelsPerPoint: displayScale,
+                    draftEpoch: draftEpoch, ratePPM: draftRatePPM,
+                    offsetMilliseconds: draftOffsetMilliseconds
+                ) where column.mapped == mapped {
+                    path.move(to: CGPoint(x: column.x, y: size.height * (0.5 - Double(column.high) * gain * 0.45)))
+                    path.addLine(to: CGPoint(x: column.x, y: size.height * (0.5 - Double(column.low) * gain * 0.45)))
                 }
             }
         }
@@ -79,10 +75,12 @@ struct AlignmentWaveformView: View {
         let extent: ClosedRange<Double>
         let size: CGSize
         let gain: Double
+        let displayScale: Double
 
         nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.snapshot == rhs.snapshot && lhs.extent == rhs.extent
                 && lhs.size == rhs.size && lhs.gain == rhs.gain
+                && lhs.displayScale == rhs.displayScale
         }
 
         var body: some View {
@@ -95,11 +93,12 @@ struct AlignmentWaveformView: View {
 
         private func path(mapped: Bool) -> Path {
             Path { path in
-                let scale = size.width / (extent.upperBound - extent.lowerBound)
-                for stroke in strokes where stroke.mapped == mapped {
-                    let x = (stroke.displaySeconds - extent.lowerBound) * scale
-                    path.move(to: CGPoint(x: x, y: 24 - Double(stroke.high) * gain * 20))
-                    path.addLine(to: CGPoint(x: x, y: 24 - Double(stroke.low) * gain * 20))
+                for column in AlignmentWaveformProjection.displayColumns(
+                    strokes: strokes, start: extent.lowerBound, duration: extent.upperBound - extent.lowerBound,
+                    width: size.width, pixelsPerPoint: displayScale
+                ) where column.mapped == mapped {
+                    path.move(to: CGPoint(x: column.x, y: 24 - Double(column.high) * gain * 20))
+                    path.addLine(to: CGPoint(x: column.x, y: 24 - Double(column.low) * gain * 20))
                 }
             }
         }
@@ -128,10 +127,8 @@ struct AlignmentWaveformView: View {
                             : model.loadWaveforms(keepingSnapshot: model.pendingWaveformMove != nil)
                     }
                     .accessibilityIdentifier("alignment.waveforms.load")
-                    .disabled(model.isLoadingOverview)
                 }
                 navigationControls
-                timelineScrubber
                 if model.waveformMap == nil, model.pendingWaveformMove == nil,
                    !model.waveformTracks.isEmpty {
                     Button("Place groups at source time") { model.placeGroupsAtSourceTime() }
@@ -142,11 +139,16 @@ struct AlignmentWaveformView: View {
                 }
                 HStack {
                     Text("Compare").font(.caption.weight(.semibold))
-                    ForEach(Layout.allCases, id: \.self) { mode in
-                        Button(mode.rawValue) { layout = mode }
-                            .accessibilityIdentifier("alignment.waveforms.layout.\(mode == .overlay ? "overlay" : "separate")")
-                            .accessibilityAddTraits(layout == mode ? .isSelected : [])
+                    Picker("Compare", selection: $layout) {
+                        ForEach(Layout.allCases, id: \.self) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .accessibilityLabel("Compare waveform layout")
+                    .accessibilityIdentifier("alignment.waveforms.layout")
                     Toggle("Normalize view", isOn: $normalizeView)
                         .toggleStyle(.checkbox)
                         .help("Scales each recording's displayed peaks in its measured tile; playback and originals are unchanged.")
@@ -161,6 +163,7 @@ struct AlignmentWaveformView: View {
                         .accessibilityIdentifier("alignment.waveforms.normalizeNote")
                 }
                 ruler
+                timelineScrubber
                 if model.waveformTracks.isEmpty, model.waveformNavigationEndSeconds > 0 {
                     ContentUnavailableView(
                         "No audio in this window",
@@ -201,11 +204,31 @@ struct AlignmentWaveformView: View {
                         .accessibilityIdentifier("alignment.waveforms.revision")
                 }
                 if !model.waveformTracks.isEmpty { timingControls }
-                DisclosureGroup("Episode overview") { overview }
+                DisclosureGroup {
+                    overview
+                } label: {
+                    HStack(spacing: 8) {
+                        Text("Episode overview")
+                        if model.isLoadingOverview {
+                            ProgressView(value: model.waveformOverviewProgress)
+                                .frame(width: 80)
+                                .accessibilityLabel("Episode overview progress")
+                        }
+                        Text(model.waveformOverviewMessage)
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            .accessibilityIdentifier("alignment.waveforms.overview.status")
+                    }
+                }
             }
             .padding(4)
         }
         .accessibilityIdentifier("alignment.waveforms")
+        .onChange(of: model.waveformPlayheadSeconds, initial: true) { _, time in
+            if !editingTime { timeDraft = String(format: "%.3f", time) }
+        }
+        .onChange(of: editingTime) { _, focused in
+            if !focused { commitTime() }
+        }
     }
 
     private var recordings: some View {
@@ -299,172 +322,121 @@ struct AlignmentWaveformView: View {
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.bordered)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("ALIGNED TIME").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                Text(AlignmentPresentation.formatTime(model.waveformPlayheadSeconds))
-                    .font(.system(.title2, design: .monospaced).weight(.medium))
-                    .monospacedDigit()
-                    .accessibilityIdentifier("alignment.waveforms.transport.time")
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
-            TextField("Seek (s)", value: $model.waveformPlayheadSeconds, format: .number)
-                .frame(width: 75)
-                .onSubmit { model.seekEnabledTracks(to: model.waveformPlayheadSeconds) }
-                .accessibilityLabel("Seek aligned playhead in seconds")
-                .accessibilityIdentifier("alignment.waveforms.playhead")
             Spacer(minLength: 0)
             Text(model.auditionLabel)
                 .font(.caption).foregroundStyle(.secondary)
                 .lineLimit(2)
+                .frame(maxWidth: 230, alignment: .trailing)
                 .accessibilityIdentifier("alignment.waveforms.transport.status")
+        }
+        .overlay(alignment: .center) {
+            VStack(alignment: .center, spacing: 2) {
+                Text("ALIGNED TIME").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                TextField("Aligned time (s)", text: $timeDraft)
+                    .focused($editingTime)
+                    .onSubmit { editingTime = false }
+                    .multilineTextAlignment(.center)
+                    .font(.system(.title2, design: .monospaced).weight(.medium))
+                    .monospacedDigit()
+                    .frame(width: 130)
+                    .accessibilityLabel("Aligned playhead time in seconds")
+                    .accessibilityIdentifier("alignment.waveforms.playhead")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
         }
         .padding(8)
         .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var navigationControls: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Button("Previous", systemImage: "chevron.left") { moveWindow(-1) }
-                Button("Next", systemImage: "chevron.right") { moveWindow(1) }
-                Text("Zoom").font(.caption.weight(.semibold))
-                Image(systemName: "minus.magnifyingglass").accessibilityHidden(true)
-                Slider(value: Binding(
-                    get: { AlignmentWaveformProjection.zoomLevel(for: model.waveformDurationSeconds) ?? 0 },
-                    set: { level in
-                        guard let duration = AlignmentWaveformProjection.zoomDuration(for: level) else { return }
-                        let center = zoomCenterSeconds ?? model.waveformStartSeconds + model.waveformDurationSeconds / 2
-                        zoomCenterSeconds = center
-                        model.waveformDurationSeconds = duration
-                        model.waveformStartSeconds = AlignmentWaveformProjection.windowStart(
-                            centeredAt: center, duration: duration
-                        ) ?? model.waveformStartSeconds
-                    }
-                ), in: 0...1, onEditingChanged: { editing in
-                    if !editing {
-                        zoomCenterSeconds = nil
-                        model.loadWaveforms(keepingSnapshot: true, preload: true)
-                    }
-                }) {
-                    Text("Horizontal zoom, visible span \(model.waveformDurationSeconds, specifier: "%.2f") seconds")
+        HStack(spacing: 10) {
+            Text("Zoom").font(.caption.weight(.semibold))
+            Image(systemName: "minus.magnifyingglass").accessibilityHidden(true)
+            Slider(value: Binding(
+                get: { AlignmentWaveformProjection.zoomLevel(for: model.waveformDurationSeconds) ?? 0 },
+                set: { level in
+                    guard let duration = AlignmentWaveformProjection.zoomDuration(for: level) else { return }
+                    let center = zoomCenterSeconds ?? model.waveformStartSeconds + model.waveformDurationSeconds / 2
+                    zoomCenterSeconds = center
+                    model.waveformDurationSeconds = duration
+                    model.waveformStartSeconds = AlignmentWaveformProjection.windowStart(
+                        centeredAt: center, duration: duration
+                    ) ?? model.waveformStartSeconds
                 }
-                .frame(minWidth: 110, maxWidth: 240)
-                .accessibilityIdentifier("alignment.waveforms.zoom")
-                Image(systemName: "plus.magnifyingglass").accessibilityHidden(true)
-                Text("\(model.waveformDurationSeconds, specifier: "%.2f") s")
-                    .font(.caption.monospacedDigit())
-                    .frame(width: 52)
-                if layout == .separate {
-                    Text("Height").font(.caption.weight(.semibold))
-                    Slider(value: $laneHeight, in: 64...220) {
-                        Text("Source lane height")
-                    }
-                    .frame(minWidth: 70, maxWidth: 160)
-                    .accessibilityIdentifier("alignment.waveforms.laneHeight")
+            ), in: 0...1, onEditingChanged: { editing in
+                if !editing {
+                    zoomCenterSeconds = nil
+                    model.loadWaveforms(keepingSnapshot: true, preload: true)
                 }
-                Spacer(minLength: 0)
+            }) {
+                Text("Horizontal zoom, visible span \(model.waveformDurationSeconds, specifier: "%.2f") seconds")
             }
-            .buttonStyle(.bordered)
-            .disabled(model.isWorking || model.pendingWaveformMove != nil)
-            .accessibilityIdentifier("alignment.waveforms.navigation")
-            HStack(spacing: 3) {
-                Text("Span").font(.caption).foregroundStyle(.secondary).padding(.trailing, 4)
-                ForEach([0.5, 1.0, 2.0, 5.0, 10.0, 30.0], id: \.self) { spanButton($0) }
-                Spacer(minLength: 8)
-                numberField("Window start (s)", value: $model.waveformStartSeconds, identifier: "start")
-                    .frame(maxWidth: 165)
-                    .onSubmit { model.loadWaveforms(keepingSnapshot: true) }
+            .frame(minWidth: 110, maxWidth: 240)
+            .accessibilityIdentifier("alignment.waveforms.zoom")
+            Image(systemName: "plus.magnifyingglass").accessibilityHidden(true)
+            Text("\(model.waveformDurationSeconds, specifier: "%.2f") s")
+                .font(.caption.monospacedDigit())
+                .frame(width: 52)
+            if layout == .separate {
+                Text("Height").font(.caption.weight(.semibold))
+                Slider(value: $laneHeight, in: 64...220) {
+                    Text("Source lane height")
+                }
+                .frame(minWidth: 70, maxWidth: 160)
+                .accessibilityIdentifier("alignment.waveforms.laneHeight")
             }
-            .disabled(model.isWorking || model.pendingWaveformMove != nil)
+            Spacer(minLength: 0)
         }
+        .disabled(model.isWorking || model.pendingWaveformMove != nil)
+        .accessibilityIdentifier("alignment.waveforms.navigation")
     }
 
     private var timelineScrubber: some View {
         let end = min(86_400, max(0, model.waveformNavigationEndSeconds))
-        return VStack(spacing: 6) {
-            HStack {
-                Text("Pan at zoom").font(.caption).frame(width: 100, alignment: .leading)
-                Slider(
-                    value: Binding(
-                        get: { panPosition },
-                        set: { value in
-                            let anchor = panAnchorSeconds ?? model.waveformPlayheadSeconds
-                            panAnchorSeconds = anchor
-                            panPosition = value
-                            model.previewWaveformTimeline(to: min(end, max(0,
-                                anchor + (value - 0.5) * 4 * model.waveformDurationSeconds
-                            )))
-                        }
-                    ),
-                    in: 0...1,
-                    onEditingChanged: { editing in
-                        if editing {
-                            panAnchorSeconds = model.waveformPlayheadSeconds
-                        } else {
-                            model.navigateWaveformTimeline(to: model.waveformPlayheadSeconds)
-                            panAnchorSeconds = nil
-                            panPosition = 0.5
-                        }
-                    }
-                ) {
-                    Text("Pan shared timeline at current zoom")
+        return HStack(spacing: 8) {
+            Text("PLAYHEAD").font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary).frame(width: headerWidth, alignment: .leading)
+            Slider(
+                value: Binding(
+                    get: { min(max(model.waveformPlayheadSeconds, 0), max(end, 1)) },
+                    set: { _ = model.previewWaveformTimeline(to: $0) }
+                ),
+                in: 0...max(end, 1),
+                onEditingChanged: { editing in
+                    if !editing { model.navigateWaveformTimeline(to: model.waveformPlayheadSeconds) }
                 }
-                .accessibilityIdentifier("alignment.waveforms.scrubber")
-                .disabled(end <= 0 || model.isWorking || model.isLoadingOverview
-                          || model.groupDraftMilliseconds != 0 || model.pendingWaveformMove != nil)
-                Text("\(model.waveformPlayheadSeconds, specifier: "%.1f") s")
-                    .font(.caption.monospacedDigit())
-                    .frame(width: 90, alignment: .trailing)
-                    .accessibilityIdentifier("alignment.waveforms.scrubPosition")
+            ) {
+                Text("Scrub shared aligned timeline")
             }
-            HStack {
-                Text("Jump in episode").font(.caption).frame(width: 100, alignment: .leading)
-                Slider(
-                    value: Binding(
-                        get: { min(max(jumpPreviewSeconds ?? model.waveformPlayheadSeconds, 0), max(end, 1)) },
-                        set: { jumpPreviewSeconds = $0 }
-                    ),
-                    in: 0...max(end, 1),
-                    onEditingChanged: { editing in if !editing { commitJump() } }
-                ) {
-                    Text("Jump to an aligned time in the whole episode")
-                }
-                .accessibilityIdentifier("alignment.waveforms.jump")
-                .disabled(end <= 0 || model.isWorking || model.isLoadingOverview
-                          || model.groupDraftMilliseconds != 0 || model.pendingWaveformMove != nil)
-                Text("\(jumpPreviewSeconds ?? model.waveformPlayheadSeconds, specifier: "%.1f") / \(end, specifier: "%.1f") s")
-                    .font(.caption.monospacedDigit())
-                    .accessibilityIdentifier("alignment.waveforms.jumpPosition")
-                Button("Go") { commitJump() }
-                    .disabled(end <= 0 || model.isWorking || model.isLoadingOverview
-                              || model.groupDraftMilliseconds != 0 || model.pendingWaveformMove != nil)
-                    .accessibilityIdentifier("alignment.waveforms.scrubGo")
-            }
+            .accessibilityIdentifier("alignment.waveforms.scrubber")
+            .disabled(end <= 0 || model.isWorking || model.groupDraftMilliseconds != 0
+                      || model.pendingWaveformMove != nil)
+            Text("\(end, specifier: "%.1f") s")
+                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
         }
-        .help("Pan at the current zoom or drag the ruler for fine visual scrolling. Jump in episode moves to a distant time on release. Neither plays audio or changes saved timing.")
+        .padding(.horizontal, 8)
+        .help("Scrub the shared timeline; drag the ruler for fine panning. Neither changes saved timing.")
     }
 
-    private func commitJump() {
-        let time = jumpPreviewSeconds ?? model.waveformPlayheadSeconds
-        jumpPreviewSeconds = nil
-        model.navigateWaveformTimeline(to: time)
+    private func commitTime() {
+        guard let time = Double(timeDraft.trimmingCharacters(in: .whitespacesAndNewlines)),
+              time.isFinite else {
+            model.seekEnabledTracks(to: .nan)
+            timeDraft = String(format: "%.3f", model.waveformPlayheadSeconds)
+            return
+        }
+        model.seekEnabledTracks(to: time)
+        timeDraft = String(format: "%.3f", model.waveformPlayheadSeconds)
     }
 
     private var overview: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Button(model.isLoadingOverview ? "Cancel Overview" : "Build Episode Overview") {
-                model.isLoadingOverview ? model.cancelWaveformOverview() : model.loadWaveformOverview()
+            if !model.waveformOverviewRefusals.isEmpty && !model.isLoadingOverview {
+                Button("Retry unavailable overviews") { model.loadWaveformOverview() }
+                    .accessibilityIdentifier("alignment.waveforms.overview.retry")
             }
-            .disabled(model.isLoadingWaveforms || model.isWorking)
-            .accessibilityIdentifier("alignment.waveforms.overview.load")
-            if model.isLoadingOverview {
-                ProgressView(value: model.waveformOverviewProgress)
-                    .accessibilityLabel("Episode overview progress")
-            }
-            Text(model.waveformOverviewMessage).font(.caption)
-                .accessibilityIdentifier("alignment.waveforms.overview.status")
             let visible = model.waveformOverviewTracks.filter {
                 model.groupEnabled($0.group) && model.trackEnabled($0.id)
             }
@@ -511,7 +483,8 @@ struct AlignmentWaveformView: View {
                         OverviewTrackDrawing(
                             snapshot: model.waveformOverviewSnapshotID, strokes: strokes,
                             extent: extent, size: geometry.size,
-                            gain: normalizeView ? model.waveformOverviewDisplayGains[track.id] ?? 1 : 1
+                            gain: normalizeView ? model.waveformOverviewDisplayGains[track.id] ?? 1 : 1,
+                            displayScale: displayScale
                         )
                         .equatable()
                         Rectangle().fill(Color.accentColor.opacity(0.2))
@@ -919,7 +892,7 @@ struct AlignmentWaveformView: View {
                 }
             }
         }
-        .disabled(model.isWorking || model.isLoadingOverview)
+        .disabled(model.isWorking)
     }
 
     private func numberField(_ title: String, value: Binding<Double>, identifier: String) -> some View {
@@ -930,16 +903,6 @@ struct AlignmentWaveformView: View {
         }
 
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func spanButton(_ duration: Double) -> some View {
-        Button("\(duration, specifier: "%g") s") {
-            model.waveformDurationSeconds = duration
-            if !model.waveformTracks.isEmpty { model.loadWaveforms(keepingSnapshot: true) }
-        }
-        .accessibilityLabel("Visible span \(duration, specifier: "%g") seconds")
-        .accessibilityAddTraits(model.waveformDurationSeconds == duration ? .isSelected : [])
-        .accessibilityIdentifier("alignment.waveforms.span.\(duration)")
     }
 
     @ViewBuilder
@@ -968,7 +931,8 @@ struct AlignmentWaveformView: View {
                 lineWidth: overlay ? (model.selectedWaveformSource == track.id ? 2 : 1.3) : 1.5,
                 gain: normalizeView ? slice.gains[track.id] ?? 1 : 1,
                 draftEpoch: !activeGroup && model.waveformTimingIsDraft ? model.selection : nil,
-                draftRatePPM: model.waveformRatePPM, draftOffsetMilliseconds: model.waveformOffsetMilliseconds
+                draftRatePPM: model.waveformRatePPM, draftOffsetMilliseconds: model.waveformOffsetMilliseconds,
+                displayScale: displayScale
             )
             .equatable()
             .mask(alignment: .leading) {
@@ -1010,17 +974,4 @@ struct AlignmentWaveformView: View {
         return true
     }
 
-    private func moveWindow(_ direction: Double) {
-        guard model.waveformNavigationEndSeconds > 0 else {
-            model.waveformStartSeconds = max(
-                0, model.waveformStartSeconds + direction * model.waveformDurationSeconds
-            )
-            model.loadWaveforms()
-            return
-        }
-        let center = model.waveformStartSeconds + (direction + 0.5) * model.waveformDurationSeconds
-        model.navigateWaveformTimeline(to: min(
-            max(0, center), min(model.waveformNavigationEndSeconds, 86_400)
-        ))
-    }
 }

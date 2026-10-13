@@ -85,6 +85,7 @@ final class EpisodeAlignmentModel {
     @ObservationIgnored private var loadedWaveformRequiresVerification = false
     @ObservationIgnored private var overviewTask: Task<Void, Never>?
     @ObservationIgnored private var overviewGeneration: UInt64 = 0
+    @ObservationIgnored private var requestedOverviewEpisode: Episode?
     private var loadedOverviewEpisode: Episode?
     @ObservationIgnored private var inspectionTask: Task<Void, Never>?
     @ObservationIgnored private var inspectionGeneration: UInt64 = 0
@@ -209,7 +210,10 @@ final class EpisodeAlignmentModel {
         else { return ("Unknown speaker", .gray) }
         let palette: [Color] = [.blue, .purple, .green, .pink, .cyan, .indigo, .mint, .brown]
         let role = reference.isPrimary ? "Primary" : "Backup"
-        return ("\(speaker.name) · \(role)", palette[Int(speaker.id.rawValue.uuid.0) % palette.count])
+        let index = AlignmentWaveformProjection.speakerColorIndex(
+            for: speaker.id, speakers: speakers.map(\.id), paletteCount: palette.count
+        ) ?? 0
+        return ("\(speaker.name) · \(role)", palette[index])
     }
     var enabledSources: [SourceID] {
         waveformTracks.filter { !disabledGroups.contains($0.group) && !disabledTracks.contains($0.id) }
@@ -587,6 +591,7 @@ final class EpisodeAlignmentModel {
         }
         waveformMessage = tile.load.mapWarning
             ?? "\(tile.load.tracks.count) recordings loaded; \(tile.load.refusals.count) unavailable. Measured tiles are cached in memory; originals stay unchanged."
+        ensureWaveformOverview()
     }
 
     private func scheduleScrubTile() {
@@ -625,16 +630,28 @@ final class EpisodeAlignmentModel {
         waveformSnapshotID = UUID()
     }
 
+    func ensureWaveformOverview() {
+        guard let document, let episode = document.store.model.episode(episodeID),
+              timingIsVerified(document.store.model) else { return }
+        if isLoadingOverview, requestedOverviewEpisode == episode { return }
+        if loadedOverviewEpisode == episode,
+           waveformOverviewRefusals.isEmpty,
+           Set(waveformTracks.map(\.id)).isSubset(of: Set(waveformOverviewTracks.map(\.id))) {
+            return
+        }
+        loadWaveformOverview()
+    }
+
     func loadWaveformOverview() {
         guard let document else { return }
         cancelWaveformOverview()
-        stopAudition()
         let generation = overviewGeneration
         let snapshot = document.store.model
         guard timingIsVerified(snapshot) else {
             waveformOverviewMessage = "Timing is not verified on disk yet. Save the show before loading its aligned overview."
             return
         }
+        requestedOverviewEpisode = snapshot.episode(episodeID)
         isLoadingOverview = true
         waveformOverviewMessage = "Scanning every covered PCM sample; no partial overview is published."
         overviewTask = Task { [weak self] in
@@ -654,7 +671,7 @@ final class EpisodeAlignmentModel {
                 try Task.checkCancellation()
                 guard generation == overviewGeneration else { return }
                 guard document.store.model == snapshot, timingIsVerified(snapshot) else {
-                    waveformOverviewMessage = "The episode or verified timing changed. Save and rebuild its overview."
+                    waveformOverviewMessage = "The episode or verified timing changed. Save and reload its overview."
                     return
                 }
                 var strokes: [SourceID: [AlignmentWaveformStroke]] = [:]
@@ -679,7 +696,7 @@ final class EpisodeAlignmentModel {
                 loadedOverviewEpisode = snapshot.episode(episodeID)
                 waveformOverviewProgress = 1
                 waveformOverviewMessage = loaded.mapWarning
-                    ?? "\(loaded.tracks.count) complete PCM overviews; \(loaded.refusals.count) unavailable. Click covered audio to load an exact window; coarse bins are not anchors."
+                    ?? "\(loaded.tracks.count) cached PCM overviews; \(loaded.refusals.count) unavailable. Click covered audio to load an exact window; coarse bins are not anchors."
             } catch is CancellationError {
                 if generation == overviewGeneration {
                     waveformOverviewMessage = "Overview cancelled or episode changed. No partial result was kept."
@@ -707,6 +724,7 @@ final class EpisodeAlignmentModel {
         overviewGeneration += 1
         overviewTask?.cancel()
         overviewTask = nil
+        requestedOverviewEpisode = nil
         isLoadingOverview = false
         waveformOverviewTracks = []
         waveformOverviewStrokes = [:]
@@ -733,7 +751,7 @@ final class EpisodeAlignmentModel {
 
     @discardableResult
     func previewWaveformTimeline(to time: Double) -> Bool {
-        guard !isWorking, !isLoadingOverview, groupDraftMilliseconds == 0,
+        guard !isWorking, groupDraftMilliseconds == 0,
               pendingWaveformMove == nil else {
             waveformMessage = "Finish the group preview or verified audio refresh before moving the shared timeline."
             return false
@@ -829,7 +847,18 @@ final class EpisodeAlignmentModel {
                         transportProgressTask = Task { [weak self] in
                             while let self, !Task.isCancelled, generation == auditionGeneration,
                                   isAuditioning, let started = auditionStartedAt {
-                                waveformPlayheadSeconds = min(end, start + max(0, -started.timeIntervalSinceNow))
+                                let time = min(end, start + max(0, -started.timeIntervalSinceNow))
+                                waveformPlayheadSeconds = time
+                                if time > waveformStartSeconds + waveformDurationSeconds * 0.8,
+                                   let window = AlignmentWaveformProjection.windowStart(
+                                       centeredAt: time, duration: waveformDurationSeconds
+                                   ) {
+                                    waveformStartSeconds = window
+                                    if firstUncoveredWaveformTime(
+                                        start: window, duration: waveformDurationSeconds,
+                                        margin: waveformDurationSeconds / 2
+                                    ) != nil { scheduleScrubTile() }
+                                }
                                 try? await Task.sleep(for: .milliseconds(100))
                             }
                         }
@@ -875,15 +904,24 @@ final class EpisodeAlignmentModel {
     }
 
     func seekEnabledTracks(to seconds: Double) {
-        guard seconds.isFinite, seconds >= 0, seconds <= 86_400 else {
+        guard seconds.isFinite, seconds >= 0, seconds <= 86_400,
+              (waveformNavigationEndSeconds == 0 || seconds <= waveformNavigationEndSeconds) else {
             waveformPlayheadSeconds = auditionPlayheadSeconds
-            auditionLabel = "Choose an aligned playhead between zero and 24 hours."
+            auditionLabel = "Choose an aligned playhead within the available zero-to-24-hour timeline."
             return
         }
         let wasPlaying = canStopAudition
         stopAudition()
         waveformPlayheadSeconds = seconds
         auditionPlayheadSeconds = seconds
+        if let window = AlignmentWaveformProjection.windowStart(
+            centeredAt: seconds, duration: waveformDurationSeconds
+        ), seconds < waveformStartSeconds || seconds > waveformStartSeconds + waveformDurationSeconds {
+            waveformStartSeconds = window
+            if firstUncoveredWaveformTime(
+                start: window, duration: waveformDurationSeconds, margin: waveformDurationSeconds / 2
+            ) != nil { scheduleScrubTile() }
+        }
         if wasPlaying { playEnabledTracks() }
     }
 

@@ -53,6 +53,46 @@ struct DerivedJobCoordinatorTests {
         #expect(coordinator.store.payload(for: key) == Data("peaks".utf8))
     }
 
+    @Test func completeOverviewReusesAcrossOpensAndRebuildsAfterMapOrSourceChanges() async throws {
+        let directory = try TemporaryDirectory("overview-cache")
+        var current = DerivedInputs()
+        current.sources[source] = "metadata:original"
+        current.acceptedMaps[episode] = 1
+        current.assets["ww.waveform.overview"] = 1
+        func overviewKey(token: String, revision: Int) -> DerivedAssetKey {
+            DerivedAssetKey(
+                asset: AssetSpec(kind: "ww.waveform.overview", revision: 1),
+                sources: [SourceRevision(source: source, token: token)],
+                format: .current,
+                map: MapRevisionReference(episode: episode, revision: revision)
+            )
+        }
+        let first = overviewKey(token: "metadata:original", revision: 1)
+        let store = try makeStore(directory)
+        let initial = DerivedJobCoordinator(store: store, inputs: current)
+        #expect(await initial.submit(slot, key: first) { Data("measured bins".utf8) }.outcome == .published(first))
+        await initial.shutdown()
+
+        let reopened = DerivedJobCoordinator(store: store, inputs: current)
+        #expect(await reopened.submit(slot, key: first) {
+            Issue.record("A verified cached overview should not rescan audio")
+            return Data()
+        }.outcome == .reused(first))
+        #expect(await reopened.readyPayload(for: slot) == Data("measured bins".utf8))
+        #expect(await reopened.readyPayload(for: slot, matching: first) == Data("measured bins".utf8))
+
+        await reopened.acceptMap(MapRevisionReference(episode: episode, revision: 2))
+        #expect(await reopened.readyPayload(for: slot) == nil)
+        let remapped = overviewKey(token: "metadata:original", revision: 2)
+        #expect(await reopened.submit(slot, key: remapped) { Data("remapped bins".utf8) }.outcome == .published(remapped))
+        #expect(await reopened.readyPayload(for: slot, matching: first) == nil)
+        #expect(await reopened.readyPayload(for: slot, matching: remapped) == Data("remapped bins".utf8))
+        await reopened.updateSource(SourceRevision(source: source, token: "metadata:replacement"))
+        #expect(await reopened.readyPayload(for: slot) == nil)
+        let replaced = overviewKey(token: "metadata:replacement", revision: 2)
+        #expect(await reopened.submit(slot, key: replaced) { Data("replacement bins".utf8) }.outcome == .published(replaced))
+    }
+
     /// REF-019: accepting a different map while a job is computing makes its late result stale; it is never
     /// published, served or cached.
     @Test func lateResultAfterAMapChangeIsNeverPublished() async throws {

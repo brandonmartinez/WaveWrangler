@@ -46,6 +46,7 @@ struct EpisodeAlignmentContent: View {
                 state.alignmentModel = value
                 value.load()
                 value.loadWaveforms()
+                value.ensureWaveformOverview()
             } catch is CancellationError {
                 return
             } catch {
@@ -57,15 +58,18 @@ struct EpisodeAlignmentContent: View {
             model.stopAudition()
             model.load()
             model.loadWaveforms(keepingSnapshot: model.pendingWaveformMove != nil)
+            model.ensureWaveformOverview()
         }
         .onChange(of: state.saveStatus.state, initial: false) { _, _ in
             guard let document = state.store.document,
                   document.status.saveStatus.state.isVerifiedOnDisk,
                   document.verifiedModel == state.store.model,
-                  let model, model.waveformNeedsRefreshAfterSave,
-                  model.waveformTracks.isEmpty, !model.isLoadingWaveforms
-            else { return }
-            model.loadWaveforms()
+                  let model else { return }
+            if model.waveformNeedsRefreshAfterSave,
+               model.waveformTracks.isEmpty, !model.isLoadingWaveforms {
+                model.loadWaveforms()
+            }
+            model.ensureWaveformOverview()
         }
         .onDisappear {
             model?.suspend()

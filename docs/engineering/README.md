@@ -107,17 +107,22 @@ checks. It may buffer between windows; it does not create an export or promise s
 frame windows, clips to occurrence spans, and never reads gap frames into an envelope. Unsupported
 spans are visibly unplaced source-origin previews. Opposite-polarity channels retain their peaks;
 the envelope is not mono PCM, an alignment estimate or edit authority.
-The alignment workspace puts a compact transport with aligned time, seek and five-second skips above
-the shared pan and logarithmic zoom controls. Recorder-group headers sit beside adjustable-height
+The alignment workspace puts a compact transport with a centered editable live playhead and five-second
+skips above logarithmic zoom and a single shared scrubber beside the ruler. Dragging the ruler pans at
+the current zoom. Recorder-group headers sit beside adjustable-height
 source lanes; a translucent overlay with source selection is available for peak matching. Separate
-lanes and overlay share a ruler and playhead. Zoom changes the visible transform around the current
+lanes and overlay share a ruler and playhead, selected with one segmented control. Zoom changes the
+visible transform around the current
 window center, then requests missing measured tiles on release; cached tiles stay in memory while
 panning or zooming. Each slice is clipped in its own tile coordinates before translation to the
-visible window. A released group drag retains that visual position while the replacement map is saved
+visible window. Peaks falling within one device-pixel column are merged into a min/max display
+envelope (mapped and unplaced audio separately) to avoid overlapping fractional strokes. A released
+group drag retains that visual position while the replacement map is saved
 and verified, then loads fresh measured audio. Numeric move and epoch timing remain keyboard-accessible
 alternatives; visual previews never change playback timing. The episode overview is secondary and
 can be expanded for navigation outside the current measured window.
-Speaker colors derive from stable speaker IDs rather than their order in the show; unknown speakers
+Speaker colors follow sorted stable speaker IDs so distinct speakers receive distinct palette slots
+until the palette wraps; unknown speakers
 remain gray, with names and roles available independently of color.
 
 `AlignmentRuntime` resolves the existing identity/availability records, captures an opened-file
@@ -138,18 +143,22 @@ halo while seeking over skipped prefixes. PCM windows can therefore reach late e
 without decoding earlier hours. Other codecs retain the 600-second decoded-prefix budget until
 their priming and exact seek behavior are established.
 
-`WaveformWindowReader.readOverview` is a separate, explicitly requested PCM scan, not an expansion
-of the automatic 30-second window budget. It streams every covered sample (no stride sampling),
+`WaveformWindowReader.readOverview` is a separate automatic PCM scan when a confirmed episode source
+is first used in alignment or an overview is missing on reopen, not an expansion of the 30-second
+exact-window budget. The app caches complete overviews under its local Derived root, keyed by the
+source metadata revision, decode format and accepted map revision. Reuse still requires current
+source admission and witness verification; changes invalidate the key, and only current complete
+results publish. It streams every covered sample (no stride sampling),
 retains at most 2,048 bins per recording, and refuses more than 24 source hours or 2,048 covered
 ranges. Bins never cross an epoch or affine-segment boundary. Unsupported spans remain unplaced;
 positive gaps are not scanned or bridged. The runtime rechecks the access record after every chunk,
 then witnesses and map currency before publication. Progress also checks the native document
-snapshot; cancellation/change returns no partial overview. The native overview is a coarse,
+snapshot; cancellation/change returns no partial overview. A failed source has an explicit refusal
+and retry action rather than a fabricated preview. The native overview is a coarse,
 stored-map navigator, never an anchor picker; clicking covered audio reloads the exact window.
-Typed start, or playhead plus a real **Open Window at Playhead** button per navigable lane,
+The editable live playhead, or a real **Open Window at Playhead** button per navigable lane,
 remain the keyboard/accessibility alternatives. The overview's descriptive accessibility
 representation is separate from its mouse-position gesture and the native button action.
-No persistent cache is created.
 Source-duration admission does not bound the map's aligned extent. The overview shades and
 labels portions outside the existing exact-window navigator's `0...86_400` aligned seconds as
 unavailable. The native/AX action admits only covered points inside that range; a wholly
