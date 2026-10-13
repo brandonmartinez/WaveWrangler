@@ -1304,3 +1304,11 @@ Lead independently **APPROVED the private #438 full-gate harness only** after ch
 **Boundary:** Report the exact SHA, mini host, pass/fail/skip counts and retained result on #455. Stop if this run fails. The source-safety and durability requirements remain; the autosave timing gate is separately restricted to an eligible quiet physical mini. A failed or incomplete run does not permit merging #455 or starting the follow-up UI coding session as if this PR had merged.
 
 **Result:** At exact pushed `8bffcce01946`, the leased physical-mini synthetic path ran once: zero passed, one failed, zero skipped. Import, grouping, classification, and read-only confirmation of the first generated source succeeded. The second row sat below the compact table viewport; the test clicked outside that row, leaving the first source selected, and stopped at its inspector-name assertion before further confirmation, alignment, playback or reopen. Original result: `~/ww-uitest-runs/pr455-functional-8bffcce01946-20261013T0931/result.xcresult` on the mini, privately retained at `.build/pr455-mini-functional-8bffcce01946.xcresult/`. The exception is consumed; a later test-navigation correction does not authorize another GUI run or a merge.
+
+### 2026-10-13: Authorize bounded #455 synthetic functional mini retries
+
+**By:** Brandon, in response to the failed `8bffcce01946` mini run and the compiled correction for the off-viewport source row.
+
+**What:** When asked to authorize exactly one more focused synthetic behavior run on the mini, Brandon replied, "you are authorized to have 100 runs." Record this as authorization for up to 100 additional leased, synthetic-only functional GUI invocations for this PR, starting with the corrected test. Each attempt still requires a clean pushed exact-head signed runner, checksum staging, a unique lease/result, and truthful pass/fail reporting. Use only the attempts needed to prove the behavior; do not use the allowance to retry paused legacy focus campaigns, inspect private recordings, or test on the working Mac.
+
+**Boundary:** The quiet physical-mini autosave performance gate remains a separate <6 one-minute load, 60-second idle preflight with the unchanged threshold. The GUI allowance does not waive source safety, durability, applicable review, or merge prerequisites.
