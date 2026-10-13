@@ -33,6 +33,10 @@ struct EpisodeSetupContent: View {
             visible = true
             controller?.model.isOnScreen = true
             controller?.model.startObserving()
+            controller?.model.ensureConfirmedOverviews()
+        }
+        .onChange(of: store.document?.status.saveStatus.state) { _, _ in
+            controller?.model.ensureConfirmedOverviews()
         }
         .onDisappear {
             visible = false
@@ -79,6 +83,7 @@ struct EpisodeSetupContent: View {
             self.controller = controller
             connecting = false
             model.startObserving()
+            model.ensureConfirmedOverviews()
         }
     }
 }

@@ -73,6 +73,10 @@ final class EpisodeSetupModel {
     @ObservationIgnored var window: () -> NSWindow? = { nil }
 
     var statuses: [SourceID: SourceStatusSnapshot] = [:]
+    @ObservationIgnored private var overviewTask: Task<Void, Never>?
+    @ObservationIgnored private var overviewGeneration: UInt64 = 0
+    @ObservationIgnored private var requestedOverviewEpisode: Episode?
+    @ObservationIgnored private var requestedOverviewSources: Set<SourceID> = []
     var selection: Set<SetupRowID> = [] {
         didSet { if selection != oldValue { pendingInspectorFocus = false } }
     }
@@ -249,6 +253,11 @@ final class EpisodeSetupModel {
         observation?.cancel()
         observation = nil
         observedIDs = []
+        overviewGeneration += 1
+        overviewTask?.cancel()
+        overviewTask = nil
+        requestedOverviewEpisode = nil
+        requestedOverviewSources = []
     }
 
     private func receive(_ update: [SourceID: SourceStatusSnapshot], for ids: Set<SourceID>) {
@@ -267,6 +276,53 @@ final class EpisodeSetupModel {
         }
         if let focused, let now = statuses[focused], let name = episode?.source(focused)?.displayNameHint {
             announceTransferChange(from: previousFocused, to: now, name: name)
+        }
+        ensureConfirmedOverviews()
+    }
+
+    func ensureConfirmedOverviews(force: Bool = false) {
+        guard isOnScreen, let document = store.document,
+              document.status.saveStatus.state.isVerifiedOnDisk,
+              document.verifiedModel == store.model,
+              let episode = store.model.episode(episodeID) else { return }
+        let confirmed = Set(episode.sources.compactMap { source in
+            statuses[source.id]?.allowsWaveformOverview == true ? source.id : nil
+        })
+        if !requestedOverviewSources.isSubset(of: confirmed) {
+            overviewGeneration += 1
+            overviewTask?.cancel()
+            overviewTask = nil
+            requestedOverviewSources.formIntersection(confirmed)
+        }
+        guard !confirmed.isEmpty,
+              force || requestedOverviewEpisode != episode || !confirmed.isSubset(of: requestedOverviewSources)
+        else { return }
+        overviewGeneration += 1
+        overviewTask?.cancel()
+        let generation = overviewGeneration
+        requestedOverviewEpisode = episode
+        requestedOverviewSources = confirmed
+        let snapshot = store.model
+        overviewTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if generation == overviewGeneration { overviewTask = nil } }
+            do {
+                let runtime = try await AlignmentRuntimeProvider.runtime(for: document, episode: episodeID)
+                let loaded = try await runtime.waveformTracks(
+                    model: snapshot, episode: episodeID,
+                    startSeconds: 0, durationSeconds: 1, overview: true
+                )
+                guard !Task.isCancelled, generation == overviewGeneration,
+                      store.model == snapshot else { return }
+                if let refusal = loaded.refusals.first(where: { confirmed.contains($0.id) }) {
+                    message = "Episode overview unavailable for \(refusal.name): \(refusal.reason)"
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard generation == overviewGeneration else { return }
+                message = "Episode overview unavailable: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -495,6 +551,7 @@ final class EpisodeSetupModel {
             do {
                 try await engine.confirmCurrentOriginal(sourceID)
                 message = "Original confirmed. Audio is available in the editor."
+                ensureConfirmedOverviews()
             } catch {
                 message = "Original wasn't confirmed: \(Self.reason(error)). No audio was opened for playback."
             }
@@ -536,6 +593,10 @@ final class EpisodeSetupModel {
         }
         registrar.relink(context.sourceID, to: context.candidate, identity: context.comparison.acceptedIdentity, actionName: SetupUndoName.relink(context.displayName))
         selection = [.source(context.sourceID)]
+        Task { [weak self] in
+            await registrar.settle()
+            self?.ensureConfirmedOverviews(force: true)
+        }
     }
 
     @ObservationIgnored private var registrarStorage: RelinkUndoRegistrar?

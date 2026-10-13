@@ -7,6 +7,28 @@ import WWSources
 
 @Suite("Source status presentation (states §3)")
 struct SourceStatusTests {
+    @Test func overviewRequiresConfirmedLocalAccessibleSource() {
+        let ready = SourceStatusSnapshot(
+            location: .known, access: .granted, residency: .local, identity: .detailsMatch
+        )
+        #expect(ready.allowsWaveformOverview)
+        var status = ready
+        status.identity = .changed(differences: "synthetic metadata", acceptedByUser: true)
+        #expect(status.allowsWaveformOverview)
+        status.identity = .confirmationNeeded
+        #expect(!status.allowsWaveformOverview)
+        status = ready
+        status.access = .needsPermission
+        #expect(!status.allowsWaveformOverview)
+        status = ready
+        status.location = .missing(sameNamedFileAtOriginalLocation: false)
+        #expect(!status.allowsWaveformOverview)
+        status = ready
+        status.residency = .cloudOnly
+        #expect(!status.allowsWaveformOverview)
+        #expect(!SourceStatusSnapshot.checking.allowsWaveformOverview)
+    }
+
     @Test func inspectorWordingMatchesTheCatalog() {
         #expect(LocationStatus.known.presentation.inspectorText == "At its saved location")
         #expect(LocationStatus.missing(sameNamedFileAtOriginalLocation: false).presentation.inspectorText == "Not found")

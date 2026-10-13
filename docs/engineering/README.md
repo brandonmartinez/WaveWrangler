@@ -143,9 +143,11 @@ halo while seeking over skipped prefixes. PCM windows can therefore reach late e
 without decoding earlier hours. Other codecs retain the 600-second decoded-prefix budget until
 their priming and exact seek behavior are established.
 
-`WaveformWindowReader.readOverview` is a separate automatic PCM scan when a confirmed episode source
-is first used in alignment or an overview is missing on reopen, not an expansion of the 30-second
-exact-window budget. The app caches complete overviews under its local Derived root, keyed by the
+`WaveformWindowReader.readOverview` is a separate automatic PCM scan after a confirmed episode source
+has verified access and the show is saved, or when its overview is missing on alignment open/refresh.
+Leaving Setup cancels an unfinished setup scan; opening Alignment checks again. This is not an
+expansion of the 30-second exact-window budget. The app caches complete overviews under its local
+Derived root, keyed by the
 source metadata revision, decode format and accepted map revision. Reuse still requires current
 source admission and witness verification; changes invalidate the key, and only current complete
 results publish. It streams every covered sample (no stride sampling),

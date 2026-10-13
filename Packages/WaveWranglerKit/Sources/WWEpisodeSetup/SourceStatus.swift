@@ -108,6 +108,14 @@ public struct SourceStatusSnapshot: Hashable, Sendable {
 
     /// Not observed yet: every observable dimension reads "Checking…".
     public static let checking = SourceStatusSnapshot()
+
+    public var allowsWaveformOverview: Bool {
+        guard access == .granted, location == .known, residency == .local else { return false }
+        switch identity {
+        case .detailsMatch, .changed(_, acceptedByUser: true): return true
+        default: return false
+        }
+    }
 }
 
 public enum StatusTint: String, Hashable, Sendable {
