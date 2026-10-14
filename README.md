@@ -24,15 +24,26 @@ timing. Up to eight bounded measured tiles and their projected strokes are cache
 adjacent tiles share the same viewport without rebuilding their paths on each pan. A changed
 episode, source, or verified alignment clears them.
 
-**Find acoustic matches** compares bounded decoded audio from each non-reference recorder epoch
-against a reference recording (up to a centered 10-minute excerpt, within a 120-second search
-around source time). It reports the measured offset, drift in ppm, covered interval, eligible
+Select a non-reference recorder epoch, choose a speaker assigned to a known channel in that
+recorder and in an already aligned recorder, then choose **Match selected speaker**. Only that
+speaker's stated channels are compared; a match proposes the **target recorder group's**
+timing, so its other tracks move with it. You can then match another speaker from the newly
+aligned recorder to a third recorder without moving either already aligned group. Unknown or
+out-of-range channel assignments need correction in Setup; unrelated speakers are not mixed
+to manufacture a match. Matching uses a short centered excerpt to locate an offset and a
+longer (up to 10-minute) excerpt to fit drift. Unequal file lengths do not require a percentage
+setting or imply a worse match: the offset search can account for up to about ten minutes of
+start/stop difference, within the bounded analysis budget. Larger offsets, nonoverlapping
+centered excerpts, and unsupported reference intervals may still require manual placement.
+
+The analysis reports the measured offset, drift in ppm, covered interval, eligible
 windows, peak evidence and residual, or a refusal for silence, ambiguous/periodic peaks,
 inconsistent drift, discontinuities or unavailable sources. These are **not probabilities or
 proof of clock accuracy**: different microphone distances can imitate an offset. Nothing is
 automatically applied. Select an epoch and choose **Accept measured interval** to create an
-undoable, verified manual decision; rate-aware playback stretches that mapped interval without
-altering the original. Outside it, audio stays unplaced. **Extend to whole epoch…** is a
+undoable, verified manual decision; rate-aware playback corrects that mapped interval's
+clock rate (not pitch-preserving time stretching) without altering the original. Outside it,
+audio stays unplaced. **Extend to whole epoch…** is a
 separate, warned human decision to extrapolate its rate and offset into unmeasured audio, not a
 new confidence claim. Restarted epochs and gaps are never bridged; uncertain matches leave
 manual placement, numeric correction and anchors available. Accepting one match never makes

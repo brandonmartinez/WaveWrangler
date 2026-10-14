@@ -16,6 +16,11 @@ public struct AlignmentAnalysisReport: Sendable {
     public let records: [RecordingEpochID: EpochAnalysisRecord]
     public let sourceFailures: [SourceID: AlignmentWorkFailure]
     public let epochFailures: [RecordingEpochID: AlignmentWorkFailure]
+    /// The accepted revision used to project a speaker pair into the shared timeline. A later
+    /// revision (including Undo) invalidates the proposal, even if its audio-derived key is current.
+    public let referenceRevision: Int?
+    public let references: [RecordingEpochID: AlignmentReferenceChoice]
+    public let speakerAssignments: [SpeakerAssignment]?
 }
 
 /// Metadata-only state for the Alignment workspace. Producing this value never probes, opens, hashes,
@@ -27,6 +32,7 @@ public struct AlignmentInspectionSnapshot: Sendable {
     public let states: [EpochAlignmentState]
     public let acceptedMap: AlignedTimelineMap?
     public let acceptedRevision: Int?
+    public let speakerMatches: [RecordingEpochID: [SpeakerMatchOption]]
 }
 
 /// Why aligned assets were not rendered at all. Nothing was opened.
@@ -182,7 +188,12 @@ public final class AlignmentPipeline: Sendable {
             plan: plan, acceptedMap: accepted, analyses: [:], epochFailures: [:], sourceFailures: [:]
         )
         return AlignmentInspectionSnapshot(
-            plan: plan, states: states, acceptedMap: accepted?.map, acceptedRevision: accepted?.revision
+            plan: plan, states: states, acceptedMap: accepted?.map, acceptedRevision: accepted?.revision,
+            speakerMatches: Dictionary(uniqueKeysWithValues: plan.epochs.map {
+                ($0.epoch, AlignmentPlanner.speakerMatches(
+                    episode: episode, plan: plan, accepted: accepted?.map, targetEpoch: $0.epoch
+                ))
+            })
         )
     }
 
@@ -236,7 +247,9 @@ public final class AlignmentPipeline: Sendable {
         }
         return AlignmentAnalysisReport(
             plan: plan, facts: facts, probes: probes, analyses: [:], records: [:],
-            sourceFailures: failures, epochFailures: [:]
+            sourceFailures: failures, epochFailures: [:],
+            referenceRevision: model.episode(episodeID)?.alignment?.acceptedRevision, references: [:],
+            speakerAssignments: nil
         )
     }
 
@@ -372,14 +385,245 @@ public final class AlignmentPipeline: Sendable {
         }
         return AlignmentAnalysisReport(
             plan: plan, facts: facts, probes: probes, analyses: analyses, records: records,
-            sourceFailures: sourceFailures, epochFailures: epochFailures
+            sourceFailures: sourceFailures, epochFailures: epochFailures,
+            referenceRevision: model.episode(episodeID)?.alignment?.acceptedRevision, references: [:],
+            speakerAssignments: nil
         )
+    }
+
+    /// Metadata-only candidate pairs for the selected epoch. Unknown channels are never assumed to
+    /// be channel zero; the person can identify them in Setup instead.
+    public func speakerMatches(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        sources: [AlignmentSource], targetEpoch: RecordingEpochID
+    ) async -> [SpeakerMatchOption] {
+        guard let episode = model.episode(episodeID),
+              let snapshot = await inspect(model: model, episode: episodeID, sources: sources)
+        else { return [] }
+        return AlignmentPlanner.speakerMatches(
+            episode: episode, plan: snapshot.plan, accepted: snapshot.acceptedMap, targetEpoch: targetEpoch
+        )
+    }
+
+    /// Analyses just the selected speaker's assigned channels. A previously aligned recorder can
+    /// serve as reference without moving it: only the target group's clock is proposed for review.
+    public func analyseSpeaker(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        sources: [AlignmentSource], authorizations: [ContentWorkAuthorization],
+        targetEpoch: RecordingEpochID, speaker: SpeakerID,
+        referenceSource: SourceID? = nil, targetSource: SourceID? = nil
+    ) async throws -> AlignmentAnalysisReport {
+        let base = try await prepareManual(
+            model: model, episode: episodeID, sources: sources, authorizations: authorizations
+        )
+        guard let episode = model.episode(episodeID) else {
+            throw AlignmentAcceptanceError.episodeNotFound(episodeID)
+        }
+        let admitted = ContentEligibility(
+            sources: sources, authorizations: authorizations, registered: await coordinator.inputs.sources
+        )
+        let accepted = episode.alignment?.acceptedRevision == nil
+            ? nil : try await admittedMap(model: model, episode: episodeID)
+        if let accepted {
+            guard base.plan.reference?.group == accepted.map.reference.group,
+                  base.plan.reference?.epoch == accepted.map.reference.epoch,
+                  base.plan.reference?.occurrence == accepted.map.reference.occurrence
+            else {
+                throw AlignmentAcceptanceError.invalidMap("The original timeline reference is unavailable; its accepted timing cannot be revised.")
+            }
+        }
+        let options = AlignmentPlanner.speakerMatches(
+            episode: episode, plan: base.plan, accepted: accepted?.map, targetEpoch: targetEpoch
+        )
+        guard let option = options.first(where: {
+            $0.speaker == speaker
+                && (referenceSource == nil || $0.reference.source == referenceSource)
+                && (targetSource == nil || $0.target == targetSource)
+        }),
+              let reference = admitted.admitted(option.reference.source)?.source,
+              let target = admitted.admitted(option.target)?.source,
+              let referenceFacts = base.facts[option.reference.source],
+              let targetFacts = base.facts[option.target]
+        else {
+            throw AlignmentAcceptanceError.invalidMap(
+                "No eligible, known-channel recording of this speaker is available in an already aligned recorder group."
+            )
+        }
+        guard option.referenceChannel < referenceFacts.channelCount,
+              option.targetChannel < targetFacts.channelCount else {
+            throw AlignmentAcceptanceError.invalidMap("The speaker channel is outside the recording's decoded channel count. Check Setup.")
+        }
+        guard let targetGroup = base.plan.epoch(targetEpoch)?.group else {
+            throw AlignmentAcceptanceError.unknownEpoch(targetEpoch)
+        }
+        let difference = Double(referenceFacts.frameCount) / Double(referenceFacts.sampleRate)
+            - Double(targetFacts.frameCount) / Double(targetFacts.sampleRate)
+        let locatorConfiguration = Self.speakerLocatorConfiguration(
+            durationDifference: difference, base: configuration
+        )
+        let digest = accepted?.identity.digest
+        func makeUnit(_ config: AlignmentPipelineConfiguration) -> AnalysisUnit {
+            var unit = AnalysisUnit(
+                referenceChoice: option.reference, reference: reference, referenceFacts: referenceFacts,
+                targetGroup: targetGroup, targetEpoch: targetEpoch, target: target, targetFacts: targetFacts,
+                configuration: config, chunkFrames: decoder.configuration.chunkFrames
+            )
+            unit.referenceChannel = option.referenceChannel
+            unit.targetChannel = option.targetChannel
+            unit.referenceMapDigest = digest
+            return unit
+        }
+        func run(_ unit: AnalysisUnit) async -> (PipelineJobResult, EpochAnalysisRecord?) {
+            await coordinator.setAssetRevision(AlignmentAssetKinds.analysis)
+            await coordinator.setRecipe(unit.recipe)
+            let result = await coordinator.run(
+                PipelineSlots.analysis(targetEpoch), key: unit.key
+            ) { () throws(AlignmentWorkFailure) -> Data in
+                try await unit.run(environment: self.environment)
+            }
+            guard result.isAvailable, let payload = coordinator.store.payload(for: result.key),
+                  let record = try? EpochAnalysisRecord.decode(payload)
+            else { return (result, nil) }
+            return (result, record)
+        }
+        var (result, record) = await run(makeUnit(locatorConfiguration))
+        if abs(difference) > Double(configuration.searchDeviationSeconds),
+           let reason = record?.abstention?.abstentionReason,
+           reason == .weak || reason == .insufficientCoverage || reason == .disconnected {
+            let opposite = AlignmentPipelineConfiguration(
+                concurrency: configuration.concurrency,
+                analysisMemoryBudgetBytes: configuration.analysisMemoryBudgetBytes,
+                targetExcerptSeconds: locatorConfiguration.targetExcerptSeconds,
+                searchDeviationSeconds: locatorConfiguration.searchDeviationSeconds,
+                searchCenterSeconds: -locatorConfiguration.searchCenterSeconds,
+                minimumAnalysisRate: configuration.minimumAnalysisRate,
+                renderSegmentSeconds: configuration.renderSegmentSeconds,
+                outputSettings: configuration.outputSettings
+            )
+            let (alternateResult, alternateRecord) = await run(makeUnit(opposite))
+            (result, record) = (alternateResult, alternateRecord)
+        }
+        // A short, wide search finds a candidate without decoding a 10-minute excerpt at every
+        // possible start time. Refit across the long excerpt for drift and gap evidence.
+        if let candidate = record?.proposal, locatorConfiguration != configuration {
+            let refinedCenter = Int(candidate.segment.alignedOffset.approximateDouble.rounded())
+            let refinement = AlignmentPipelineConfiguration(
+                concurrency: configuration.concurrency,
+                analysisMemoryBudgetBytes: configuration.analysisMemoryBudgetBytes,
+                targetExcerptSeconds: configuration.targetExcerptSeconds,
+                searchDeviationSeconds: configuration.searchDeviationSeconds,
+                searchCenterSeconds: refinedCenter,
+                minimumAnalysisRate: configuration.minimumAnalysisRate,
+                renderSegmentSeconds: configuration.renderSegmentSeconds,
+                outputSettings: configuration.outputSettings
+            )
+            (result, record) = await run(makeUnit(refinement))
+        }
+        var failures: [RecordingEpochID: AlignmentWorkFailure] = [:]
+        if let failure = result.typedFailure { failures[targetEpoch] = failure }
+        if record == nil, failures[targetEpoch] == nil {
+            failures[targetEpoch] = .encoding("the published speaker analysis is missing or unreadable")
+        }
+        if var matched = record, let accepted, matched.proposal != nil {
+            matched = try Self.project(matched, through: accepted.map)
+            record = matched
+        }
+        return AlignmentAnalysisReport(
+            plan: base.plan, facts: base.facts, probes: base.probes,
+            analyses: [targetEpoch: result], records: record.map { [targetEpoch: $0] } ?? [:],
+            sourceFailures: base.sourceFailures, epochFailures: failures,
+            referenceRevision: base.referenceRevision, references: [targetEpoch: option.reference],
+            speakerAssignments: episode.speakerAssignments
+        )
+    }
+
+    static func speakerLocatorConfiguration(
+        durationDifference: Double, base: AlignmentPipelineConfiguration
+    ) -> AlignmentPipelineConfiguration {
+        let halfWidth = min(300, max(base.searchDeviationSeconds, Int(ceil(abs(durationDifference) / 2))))
+        let center = max(-300, min(300, Int((durationDifference / 2).rounded())))
+        return AlignmentPipelineConfiguration(
+            concurrency: base.concurrency,
+            analysisMemoryBudgetBytes: base.analysisMemoryBudgetBytes,
+            targetExcerptSeconds: min(60, base.targetExcerptSeconds),
+            searchDeviationSeconds: halfWidth,
+            searchCenterSeconds: center,
+            minimumAnalysisRate: base.minimumAnalysisRate,
+            renderSegmentSeconds: base.renderSegmentSeconds,
+            outputSettings: base.outputSettings
+        )
+    }
+
+    private static func project(
+        _ record: EpochAnalysisRecord, through map: AlignedTimelineMap
+    ) throws -> EpochAnalysisRecord {
+        guard var proposal = record.proposal,
+              let group = map.groups.first(where: { $0.group == record.reference.group }),
+              let mapping = group.epochs.first(where: { $0.epoch == record.reference.epoch })?.mapping,
+              case let .mapped(segments, _) = mapping, segments.count == 1,
+              let referenceSegment = segments.first,
+              let placement = group.placements.first(where: {
+                  $0.occurrence.source == record.reference.source
+              }),
+              let span = placement.spans.first(where: { $0.epoch == record.reference.epoch })
+        else {
+            throw AlignmentAcceptanceError.invalidMap("The matched speaker's reference has no continuous accepted timing.")
+        }
+        let sourceRate = Double(record.reference.sourceRate)
+        let refStart = max(
+            referenceSegment.groupClockStart.approximateDouble,
+            Double(span.startFrame) / sourceRate + span.groupClockOffset.approximateDouble
+        )
+        let refEnd = min(
+            referenceSegment.groupClockEnd.approximateDouble,
+            Double(span.endFrame) / sourceRate + span.groupClockOffset.approximateDouble
+        )
+        let raw = proposal.segment
+        let a = raw.rateRatio.approximateDouble
+        let b = raw.alignedOffset.approximateDouble
+        let targetRate = Double(record.target.sourceRate)
+        let startFrame = Int64(ceil(max(raw.groupClockStart.approximateDouble, (refStart - b) / a) * targetRate))
+        let endFrame = Int64(floor(min(raw.groupClockEnd.approximateDouble, (refEnd - b) / a) * targetRate))
+        guard endFrame - startFrame >= Int64(record.target.sourceRate) * 10 else {
+            var abstained = record
+            abstained.proposal = nil
+            abstained.abstention = AbstentionRecord(
+                reason: "insufficientCoverage",
+                detail: "The shared speaker match lies outside the already aligned reference interval."
+            )
+            return abstained
+        }
+        let referenceRate = referenceSegment.rateRatio.approximateDouble
+        let (rate, offset) = try MapAcceptance.numeric(
+            record.target.epoch,
+            ppm: (referenceRate * a - 1) * 1_000_000,
+            offsetSeconds: referenceRate * b + referenceSegment.alignedOffset.approximateDouble
+        )
+        do {
+            proposal.segment = try AffineClockSegment(
+                groupClockStart: ExactRational(startFrame, Int64(record.target.sourceRate)),
+                groupClockEnd: ExactRational(endFrame, Int64(record.target.sourceRate)),
+                rateRatio: rate, alignedOffset: offset
+            )
+        } catch {
+            throw AlignmentAcceptanceError.invalidMap(String(describing: error))
+        }
+        proposal.ppm = (rate.approximateDouble - 1) * 1_000_000
+        proposal.offsetAtCenterSeconds = offset.approximateDouble
+            + (rate.approximateDouble - 1) * (Double(startFrame + endFrame) / (2 * targetRate))
+        var projected = record
+        projected.proposal = proposal
+        return projected
     }
 
     /// The engineering state of every planned epoch (inspection spec §1.1–1.2). Analysis records whose keys
     /// went stale since the run are dropped (shown as pending, never as a current proposal).
     public func states(model: ShowDocumentModel, episode episodeID: EpisodeID, report: AlignmentAnalysisReport) async -> [EpochAlignmentState] {
-        let current = await currentRecords(report)
+        let episode = model.episode(episodeID)
+        let current = ((report.references.isEmpty
+            || report.referenceRevision == episode?.alignment?.acceptedRevision)
+            && (report.speakerAssignments == nil || report.speakerAssignments == episode?.speakerAssignments))
+            ? await currentRecords(report) : [:]
         var accepted: (map: AlignedTimelineMap, revision: Int)?
         if let prior = Self.acceptedMap(model: model, episode: episodeID),
            let episode = model.episode(episodeID),
@@ -409,6 +653,12 @@ public final class AlignmentPipeline: Sendable {
         decisions: [RecordingEpochID: EpochMapDecision]
     ) async throws(AlignmentAcceptanceError) -> AcceptedAlignment {
         guard let episode = model.episode(episodeID), report.plan.episode == episodeID else { throw .episodeNotFound(episodeID) }
+        guard report.references.isEmpty || report.referenceRevision == episode.alignment?.acceptedRevision else {
+            throw .invalidMap("The accepted timing changed since this speaker match. Analyse again.")
+        }
+        guard report.speakerAssignments == nil || report.speakerAssignments == episode.speakerAssignments else {
+            throw .invalidMap("Speaker channel assignments changed since this match. Analyse again.")
+        }
         if await coordinator.isShutdown { throw .coordinatorShutDown }
         let inputs = await coordinator.inputs
         // A plan or facts that no longer describe the episode are stale: never filtered, never accepted.
@@ -439,19 +689,27 @@ public final class AlignmentPipeline: Sendable {
         let currentAnalyses = Dictionary(uniqueKeysWithValues: analyses.keys.compactMap { epoch in
             report.analyses[epoch].map { (epoch, $0.key.digest) }
         })
+        let priorAcceptedProposals = priorRevision.flatMap { episode.alignment?.map(revision: $0) }
+            .map(MapDependencies.acceptedProposals) ?? [:]
         let built = try MapAcceptance.build(
             plan: report.plan, facts: facts, analyses: analyses, decisions: decisions,
             prior: prior, priorIsCurrent: priorIsCurrent,
-            priorAcceptedProposals: priorRevision.flatMap { episode.alignment?.map(revision: $0) }
-                .map(MapDependencies.acceptedProposals) ?? [:],
-            currentAnalyses: currentAnalyses
+            priorAcceptedProposals: priorAcceptedProposals,
+            currentAnalyses: currentAnalyses, analysisReferences: report.references
         )
         let acceptedProposals: [String: String] = Dictionary(uniqueKeysWithValues:
             built.map.groups.flatMap(\.epochs).compactMap { epoch -> (String, String)? in
                 guard case let .mapped(_, .manual(correction)) = epoch.mapping,
-                      correction.basis == .acceptedAcousticProposal,
-                      let key = currentAnalyses[epoch.epoch]
+                      correction.basis == .acceptedAcousticProposal
                 else { return nil }
+                let key = currentAnalyses[epoch.epoch] ?? (
+                    priorIsCurrent
+                        && prior?.groups.flatMap(\.epochs).first(where: {
+                            $0.epoch == epoch.epoch
+                        })?.mapping == epoch.mapping
+                        ? priorAcceptedProposals[epoch.epoch.description] : nil
+                )
+                guard let key else { return nil }
                 return (epoch.epoch.description, key)
             }
         )
@@ -867,11 +1125,28 @@ public final class AlignmentPipeline: Sendable {
         let accepted: ShowDocumentModel
         let revision: MapRevisionReference
         let version: TimeMapVersion
+        let priorMap: AlignedTimelineMap
+        do throws(MapHistoryError) {
+            priorMap = try model.timeMap(revision: derivedFrom, in: episodeID)
+        } catch {
+            throw .priorMapUnreadable(error)
+        }
+        let previous = MapDependencies.acceptedProposals(priorVersion)
+        let unchangedProposals = Dictionary(uniqueKeysWithValues: map.groups.flatMap(\.epochs).compactMap {
+            epoch -> (String, String)? in
+            guard case let .mapped(_, .manual(correction)) = epoch.mapping,
+                  correction.basis == .acceptedAcousticProposal,
+                  let old = priorMap.groups.flatMap(\.epochs).first(where: { $0.epoch == epoch.epoch }),
+                  old.mapping == epoch.mapping,
+                  let key = previous[epoch.epoch.description]
+            else { return nil }
+            return (epoch.epoch.description, key)
+        })
         do throws(MapHistoryError) {
             let recorded: ShowDocumentModel
             (recorded, revision) = try model.recordingMap(
                 map, in: episodeID, inputs: priorVersion.inputs.sources,
-                recipe: MapDependencies.recipe(digest: dependencies),
+                recipe: MapDependencies.recipe(digest: dependencies, acceptedProposals: unchangedProposals),
                 derivedFrom: derivedFrom
             )
             accepted = try recorded.acceptingMap(revision: revision.revision, in: episodeID)

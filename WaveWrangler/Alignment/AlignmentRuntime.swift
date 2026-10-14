@@ -111,6 +111,26 @@ actor AlignmentRuntime {
         return report
     }
 
+    func analyseSpeaker(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        targetEpoch: RecordingEpochID, speaker: SpeakerID,
+        referenceSource: SourceID, targetSource: SourceID
+    ) async throws -> AlignmentAnalysisReport {
+        let sources = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        let authorization = sources.filter { $0.availability == .on }
+            .map { ContentWorkAuthorization.explicitUserRequest(for: $0.id) }
+        if model.episode(episodeID)?.alignment?.acceptedRevision != nil {
+            try await pipeline.activate(model: model, episode: episodeID)
+        }
+        let report = try await pipeline.analyseSpeaker(
+            model: model, episode: episodeID, sources: sources, authorizations: authorization,
+            targetEpoch: targetEpoch, speaker: speaker,
+            referenceSource: referenceSource, targetSource: targetSource
+        )
+        reports[episodeID] = report
+        return report
+    }
+
     func prepareManual(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws -> AlignmentAnalysisReport {
         let sources = await resolveSources(model.episode(episodeID)?.sources ?? [])
         let authorizations = sources.filter { $0.availability == .on }
@@ -145,6 +165,7 @@ actor AlignmentRuntime {
             }
         }
         if acceptsProposal, let report = reports[episodeID] {
+            _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
             return try await pipeline.accept(model: model, episode: episodeID, report: report, decisions: decisions)
         }
         if model.episode(episodeID)?.alignment?.acceptedRevision != nil {

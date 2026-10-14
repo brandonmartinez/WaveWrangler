@@ -2,18 +2,18 @@ import Accelerate
 import Foundation
 import WWDecode
 
-/// Streams decoded chunks into a mono, integer-decimated analysis buffer for one source-frame range, holding
+/// Streams decoded chunks into a mono or selected-channel, integer-decimated analysis buffer for one source-frame range, holding
 /// only the output plus a short filter history (bounded memory: the full-rate source is never buffered).
 ///
 /// Design (version `designVersion`, part of the analysis recipe):
-/// * mono = arithmetic mean of every decoded channel (no gain beyond 1/channels, no channel selection);
+/// * mono = the selected channel, or the arithmetic mean of every decoded channel for legacy analyses;
 /// * factor `D` = the largest divisor of the source rate `F` with `F / D >= minimumRate`, so the analysis
 ///   rate `F / D` is an exact integer and analysis sample `j` sits exactly at source frame `start + j·D`;
 /// * anti-alias low-pass: centred Blackman-windowed sinc, `8·D` taps each side, cutoff `0.45 / D` cycles per
 ///   source sample, normalised to unit DC gain (`D == 1` is an exact passthrough);
 /// * frames outside `[0, sourceFrames)` count as zero (the filter's edge context only).
 struct AnalysisDecimator {
-    static let designVersion = 1
+    static let designVersion = 2
 
     enum Refusal: Error, Equatable {
         case rateBelowMinimum(rate: Int, minimum: Int)
@@ -25,6 +25,7 @@ struct AnalysisDecimator {
     let halfTaps: Int
     let outputCount: Int
     let range: Range<Int64>
+    let channel: Int?
     private let taps: [Float]
     private(set) var output: [Float]
     /// Mono samples for source frames `[historyStart, historyStart + history.count)`.
@@ -58,13 +59,14 @@ struct AnalysisDecimator {
         Int((frames + Int64(factor) - 1) / Int64(factor))
     }
 
-    init(sourceRate: Int, minimumRate: Int, range: Range<Int64>) throws(Refusal) {
+    init(sourceRate: Int, minimumRate: Int, range: Range<Int64>, channel: Int? = nil) throws(Refusal) {
         guard !range.isEmpty, range.lowerBound >= 0 else { throw .emptyRange }
         self.sourceRate = sourceRate
         factor = try Self.factor(sourceRate: sourceRate, minimumRate: minimumRate)
         halfTaps = factor == 1 ? 0 : 8 * factor
         taps = Self.design(factor: factor, halfTaps: halfTaps)
         self.range = range
+        self.channel = channel
         outputCount = Self.outputCount(frames: Int64(range.count), factor: factor)
         output = []
         output.reserveCapacity(outputCount)
@@ -105,11 +107,11 @@ struct AnalysisDecimator {
             var mono = [Float](repeating: 0, count: count)
             chunk.samples.withUnsafeBufferPointer { samples in
                 mono.withUnsafeMutableBufferPointer { out in
-                    for c in 0 ..< chunk.channelCount {
+                    for c in 0 ..< chunk.channelCount where channel == nil || channel == c {
                         let base = samples.baseAddress! + c * chunk.frameCount + offset
                         vDSP_vadd(out.baseAddress!, 1, base, 1, out.baseAddress!, 1, vDSP_Length(count))
                     }
-                    var scale = 1 / Float(chunk.channelCount)
+                    var scale: Float = channel == nil ? 1 / Float(chunk.channelCount) : 1
                     vDSP_vsmul(out.baseAddress!, 1, &scale, out.baseAddress!, 1, vDSP_Length(count))
                 }
             }

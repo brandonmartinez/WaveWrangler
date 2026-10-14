@@ -139,13 +139,45 @@ struct AlignmentWaveformView: View {
                 GroupBox("Automatic alignment · review before applying") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Button(model.isWorking ? "Analysing…" : "Find acoustic matches") {
+                            Button(model.isWorking ? "Analysing…" : "Match selected speaker") {
                                 model.analyse()
                             }
-                            .disabled(model.isWorking)
+                            .disabled(model.isWorking || model.selectedSpeakerMatchOptions.isEmpty)
                             .accessibilityIdentifier("alignment.analyse")
-                            Text("Matches use shared audio peaks, not speaker recognition. No timing changes until you accept a proposal.")
+                            Text("Compare assigned speaker channels in different recorder groups. An accepted match moves the target recorder's tracks together; source lengths need not match.")
                                 .font(.caption).foregroundStyle(.secondary)
+                        }
+                        if !model.selectedSpeakerMatchOptions.isEmpty {
+                            Picker("Speaker to match", selection: Binding(
+                                get: { model.selectedMatchSpeaker ?? model.selectedSpeakerMatchOptions.first?.speaker },
+                                set: { model.selectMatchSpeaker($0) }
+                            )) {
+                                ForEach(model.selectedSpeakerMatchOptions, id: \.speaker) { option in
+                                    Text(model.speakerName(option.speaker)).tag(Optional(option.speaker))
+                                }
+                            }
+                            .disabled(model.isWorking)
+                            .accessibilityIdentifier("alignment.auto.speaker")
+                            if model.selectedSpeakerPairs.count > 1 {
+                                Picker("Recording pair", selection: Binding(
+                                    get: { model.selectedMatchOption ?? model.selectedSpeakerPairs.first },
+                                    set: { model.selectMatchOption($0) }
+                                )) {
+                                    ForEach(model.selectedSpeakerPairs, id: \.self) { option in
+                                        Text(model.speakerMatchDescription(option)).tag(Optional(option))
+                                    }
+                                }
+                                .disabled(model.isWorking)
+                                .accessibilityIdentifier("alignment.auto.pair")
+                            } else if let option = model.selectedSpeakerPairs.first {
+                                Text(model.speakerMatchDescription(option))
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("alignment.auto.pairSummary")
+                            }
+                        } else {
+                            Text("No identified speaker has an eligible channel in this recorder and an already aligned recorder. Set speaker channels in Setup, align another group first, or use manual placement.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("alignment.auto.noSpeakerMatch")
                         }
                         if let analysis = model.selectedAnalysis {
                             if let proposal = analysis.proposal {

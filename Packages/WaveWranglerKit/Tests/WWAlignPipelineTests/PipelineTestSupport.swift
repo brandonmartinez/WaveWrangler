@@ -81,6 +81,7 @@ final class ProceduralContentIO: SourceContentIO, @unchecked Sendable {
         var frames: Int64
         var signal: Signal
         var sampleRate = 48_000
+        var channelSignals: [Signal]? = nil
     }
 
     struct Record: Sendable, Equatable {
@@ -187,17 +188,30 @@ final class ProceduralContentIO: SourceContentIO, @unchecked Sendable {
             let count = Int(min(Int64(buffer.capacityFrames), stream.frames - position))
             // Plain while loops and vDSP: generic `Range` iteration dominates heavy suites in debug builds.
             let rate = Double(stream.sampleRate)
-            let first = buffer.channel(0).baseAddress!
-            var frame = 0
-            while frame < count {
-                first[frame] = stream.signal.value(atSourceSeconds: Double(position + Int64(frame)) / rate)
-                frame += 1
-            }
-            var c = buffer.channelCount - 1
-            while c >= 0 {
-                var gain = gains[c]
-                vDSP_vsmul(first, 1, &gain, buffer.channel(c).baseAddress!, 1, vDSP_Length(count))
-                c -= 1
+            if let channelSignals = stream.channelSignals {
+                for c in 0..<buffer.channelCount {
+                    let samples = buffer.channel(c).baseAddress!
+                    var frame = 0
+                    while frame < count {
+                        samples[frame] = channelSignals[c].value(
+                            atSourceSeconds: Double(position + Int64(frame)) / rate
+                        ) * gains[c]
+                        frame += 1
+                    }
+                }
+            } else {
+                let first = buffer.channel(0).baseAddress!
+                var frame = 0
+                while frame < count {
+                    first[frame] = stream.signal.value(atSourceSeconds: Double(position + Int64(frame)) / rate)
+                    frame += 1
+                }
+                var c = buffer.channelCount - 1
+                while c >= 0 {
+                    var gain = gains[c]
+                    vDSP_vsmul(first, 1, &gain, buffer.channel(c).baseAddress!, 1, vDSP_Length(count))
+                    c -= 1
+                }
             }
             position += Int64(count)
             let index = readIndex
@@ -327,6 +341,7 @@ struct SourceSpec: Sendable {
     var channels = 2
     var seconds: Double
     var signal: Signal
+    var channelSignals: [Signal]? = nil
     var availability: SourceAvailabilitySetting = .on
     var authorized = true
     var registered = true
@@ -413,7 +428,10 @@ final class PipelineFixture: @unchecked Sendable {
                 let id = SourceID()
                 let url = media.appendingPathComponent("\(spec.name).wav", isDirectory: false)
                 try Data(repeating: 0x5A, count: 4096).write(to: url)
-                content.register(url, .init(channels: spec.channels, frames: spec.frames, signal: spec.signal, sampleRate: spec.sampleRate))
+                content.register(url, .init(
+                    channels: spec.channels, frames: spec.frames, signal: spec.signal,
+                    sampleRate: spec.sampleRate, channelSignals: spec.channelSignals
+                ))
                 ids[spec.name] = id
                 urls[spec.name] = url
                 specs[spec.name] = spec

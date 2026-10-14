@@ -92,13 +92,22 @@ struct AnalysisUnit: Sendable {
     let targetFacts: SourceFacts
     let configuration: AlignmentPipelineConfiguration
     let chunkFrames: Int
+    var referenceChannel: Int?
+    var targetChannel: Int?
+    var referenceMapDigest: String?
 
     var targetOccurrence: SourceOccurrenceID { alignmentOccurrenceID(for: target.id) }
 
     /// The analysis recipe for this unit. The reference epoch is part of it: the same file re-placed in a
     /// different epoch re-keys the analysis.
     var recipe: RecipeReference {
-        RecipeReference(name: configuration.analysisRecipeName + "[ref=\(referenceChoice.group)/\(referenceChoice.epoch)]", revision: 1)
+        RecipeReference(
+            name: configuration.analysisRecipeName
+                + "[ref=\(referenceChoice.group)/\(referenceChoice.epoch)/\(reference.id);"
+                + "channels=\(referenceChannel.map(String.init) ?? "mix"),\(targetChannel.map(String.init) ?? "mix");"
+                + "map=\(referenceMapDigest ?? "origin")]",
+            revision: 1
+        )
     }
 
     func recipe(peers: [AnalysisUnit]) -> RecipeReference {
@@ -223,9 +232,9 @@ struct AnalysisUnit: Sendable {
             let unit = self
             do {
                 record = try await environment.gate.withAdmission(bytes: bytes) {
-                    let referenceSamples = try await unit.decodeAnalysisBuffer(unit.reference, facts: unit.referenceFacts, range: referenceRange, decoder: environment.decoder)
+                    let referenceSamples = try await unit.decodeAnalysisBuffer(unit.reference, facts: unit.referenceFacts, range: referenceRange, channel: unit.referenceChannel, decoder: environment.decoder)
                     try Task.checkCancellation()
-                    let targetSamples = try await unit.decodeAnalysisBuffer(unit.target, facts: unit.targetFacts, range: targetRange, decoder: environment.decoder)
+                    let targetSamples = try await unit.decodeAnalysisBuffer(unit.target, facts: unit.targetFacts, range: targetRange, channel: unit.targetChannel, decoder: environment.decoder)
                     try Task.checkCancellation()
                     if let cache {
                         await cache.rememberTarget(unit, samples: targetSamples)
@@ -262,12 +271,12 @@ struct AnalysisUnit: Sendable {
 
     /// Streams one source through the gateway into a decimated mono buffer for `range`. Stops reading once
     /// the range (plus filter context) is covered.
-    func decodeAnalysisBuffer(_ source: AlignmentSource, facts: SourceFacts, range: Range<Int64>, decoder: SourceDecoder) async throws -> [Float] {
-        try await Self.decodeAnalysisBuffer(source, facts: facts, range: range, minimumRate: configuration.minimumAnalysisRate, decoder: decoder)
+    func decodeAnalysisBuffer(_ source: AlignmentSource, facts: SourceFacts, range: Range<Int64>, channel: Int? = nil, decoder: SourceDecoder) async throws -> [Float] {
+        try await Self.decodeAnalysisBuffer(source, facts: facts, range: range, channel: channel, minimumRate: configuration.minimumAnalysisRate, decoder: decoder)
     }
 
     static func decodeAnalysisBuffer(
-        _ source: AlignmentSource, facts: SourceFacts, range: Range<Int64>, minimumRate minimum: Int, decoder: SourceDecoder
+        _ source: AlignmentSource, facts: SourceFacts, range: Range<Int64>, channel: Int? = nil, minimumRate minimum: Int, decoder: SourceDecoder
     ) async throws -> [Float] {
         try await decoder.withDecodingCursor(source.url, source: source.id) { cursor in
             let interpretation = cursor.interpretation
@@ -276,9 +285,12 @@ struct AnalysisUnit: Sendable {
                   interpretation.frames.validFrames == facts.frameCount,
                   interpretation.channelCount == facts.channelCount
             else { throw AlignmentWorkFailure.sourceFactsMismatch }
+            guard channel.map({ $0 >= 0 && $0 < facts.channelCount }) ?? true else {
+                throw AlignmentWorkFailure.sourceFactsMismatch
+            }
             var decimator: AnalysisDecimator
             switch Result(catching: { () throws(AnalysisDecimator.Refusal) -> AnalysisDecimator in
-                try AnalysisDecimator(sourceRate: facts.sampleRate, minimumRate: minimum, range: range)
+                try AnalysisDecimator(sourceRate: facts.sampleRate, minimumRate: minimum, range: range, channel: channel)
             }) {
             case .success(let value): decimator = value
             case .failure(.rateBelowMinimum(let rate, let minimum)): throw AlignmentWorkFailure.sourceRateBelowAnalysisMinimum(rate: rate, minimum: minimum)

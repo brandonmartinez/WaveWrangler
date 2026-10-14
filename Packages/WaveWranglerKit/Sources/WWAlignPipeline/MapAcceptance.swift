@@ -125,7 +125,8 @@ enum MapAcceptance {
         prior: AlignedTimelineMap?,
         priorIsCurrent: Bool = false,
         priorAcceptedProposals: [String: String] = [:],
-        currentAnalyses: [RecordingEpochID: String] = [:]
+        currentAnalyses: [RecordingEpochID: String] = [:],
+        analysisReferences: [RecordingEpochID: AlignmentReferenceChoice] = [:]
     ) throws(AlignmentAcceptanceError) -> Built {
         guard let reference = plan.reference else { throw .noReference }
         guard facts[reference.source] != nil else { throw .referenceFactsUnavailable(reference.source) }
@@ -172,7 +173,8 @@ enum MapAcceptance {
                     decision: decisions[epoch.epoch], analysis: analyses[epoch.epoch], facts: facts,
                     prior: priorMappings[epoch.epoch], priorIsCurrent: priorIsCurrent,
                     priorAcceptedProposal: priorAcceptedProposals[epoch.epoch.description],
-                    currentAnalysis: currentAnalyses[epoch.epoch]
+                    currentAnalysis: currentAnalyses[epoch.epoch],
+                    analysisReference: analysisReferences[epoch.epoch] ?? reference
                 )
                 epochMaps.append(EpochClockMap(epoch: epoch.epoch, mapping: mapping))
                 for source in epoch.sources {
@@ -242,7 +244,8 @@ enum MapAcceptance {
         prior: EpochClockMap.Mapping?,
         priorIsCurrent: Bool,
         priorAcceptedProposal: String?,
-        currentAnalysis: String?
+        currentAnalysis: String?,
+        analysisReference: AlignmentReferenceChoice
     ) throws(AlignmentAcceptanceError) -> EpochClockMap.Mapping {
         if epoch == reference.epoch {
             guard let end else { throw .referenceFactsUnavailable(reference.source) }
@@ -260,8 +263,11 @@ enum MapAcceptance {
                         return prior
                     case let .mapped(segments, .manual(correction))
                         where correction.basis == .acceptedAcousticProposal:
+                        if currentAnalysis == nil {
+                            return prior
+                        }
                         if let analysis, let proposal = analysis.proposal,
-                           isCurrent(analysis, epoch: epoch, reference: reference, facts: facts),
+                           isCurrent(analysis, epoch: epoch, reference: analysisReference, facts: facts),
                            let priorAcceptedProposal, priorAcceptedProposal == currentAnalysis,
                            segments.count == 1, let segment = segments.first,
                            segment == proposal.segment || (
@@ -294,13 +300,13 @@ enum MapAcceptance {
             return .unsupported(analysis?.abstention?.abstentionReason?.unsupportedReason ?? .notAttempted)
         case let .acceptProposal(text):
             guard let analysis, let proposal = analysis.proposal else { throw .noCurrentProposal(epoch) }
-            guard isCurrent(analysis, epoch: epoch, reference: reference, facts: facts) else { throw .proposalNotCurrent(epoch) }
+            guard isCurrent(analysis, epoch: epoch, reference: analysisReference, facts: facts) else { throw .proposalNotCurrent(epoch) }
             guard end != nil else { throw .noPlaceableSource(epoch) }
             // The measured interval only; frames outside it stay outsideCoverage.
             return .mapped(segments: [proposal.segment], provenance: .manual(ManualCorrection(basis: .acceptedAcousticProposal, note: text)))
         case let .extendProposalToEpoch(text):
             guard let analysis, let proposal = analysis.proposal else { throw .noCurrentProposal(epoch) }
-            guard isCurrent(analysis, epoch: epoch, reference: reference, facts: facts) else { throw .proposalNotCurrent(epoch) }
+            guard isCurrent(analysis, epoch: epoch, reference: analysisReference, facts: facts) else { throw .proposalNotCurrent(epoch) }
             rate = proposal.segment.rateRatio
             offset = proposal.segment.alignedOffset
             basis = .acceptedAcousticProposal

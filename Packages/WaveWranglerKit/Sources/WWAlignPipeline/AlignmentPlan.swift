@@ -35,6 +35,17 @@ public struct AlignmentReferenceChoice: Sendable, Hashable {
     public var occurrence: SourceOccurrenceID { alignmentOccurrenceID(for: source) }
 }
 
+/// One explicitly assigned speaker channel on each of two different recorder groups. The reference
+/// epoch must already be supported in the shared timeline (or be its original reference epoch).
+public struct SpeakerMatchOption: Sendable, Hashable {
+    public let speaker: SpeakerID
+    public let reference: AlignmentReferenceChoice
+    public let referenceChannel: Int
+    public let target: SourceID
+    public let targetChannel: Int
+    public let targetEpoch: RecordingEpochID
+}
+
 /// Why an epoch gets no analysis in this run.
 public enum NotAttemptedReason: Sendable, Hashable {
     /// No source in the episode is eligible to be the timeline reference.
@@ -150,6 +161,49 @@ extension Episode {
 }
 
 enum AlignmentPlanner {
+    static func speakerMatches(
+        episode: Episode, plan: AlignmentPlan, accepted: AlignedTimelineMap?, targetEpoch: RecordingEpochID
+    ) -> [SpeakerMatchOption] {
+        guard let target = plan.epoch(targetEpoch), target.group != plan.reference?.group else { return [] }
+        let available = Set(plan.eligiblePlacedSources)
+        var result: [SpeakerMatchOption] = []
+        for assignment in episode.speakerAssignments {
+            let channels = ([assignment.primary].compactMap { $0 } + assignment.backups)
+                .filter { available.contains($0.sourceID) && $0.channel.value != nil }
+            for targetChannel in channels where target.eligibleSources.contains(targetChannel.sourceID) {
+                guard let targetIndex = targetChannel.channel.value else { continue }
+                for referenceChannel in channels where referenceChannel.sourceID != targetChannel.sourceID {
+                    guard let refIndex = referenceChannel.channel.value,
+                          let refEpoch = plan.epochs.first(where: {
+                              $0.group != target.group && $0.sources.contains(referenceChannel.sourceID)
+                          }) else { continue }
+                    let reference = AlignmentReferenceChoice(
+                        group: refEpoch.group, epoch: refEpoch.epoch, source: referenceChannel.sourceID
+                    )
+                    if let accepted {
+                        guard let group = accepted.groups.first(where: { $0.group == reference.group }),
+                              group.placements.contains(where: {
+                                  $0.occurrence.source == reference.source
+                                      && $0.spans.contains(where: { $0.epoch == reference.epoch })
+                              }),
+                              let epoch = group.epochs.first(where: { $0.epoch == reference.epoch }),
+                              case .mapped = epoch.mapping
+                        else { continue }
+                    } else {
+                        guard reference.group == plan.reference?.group,
+                              reference.epoch == plan.reference?.epoch else { continue }
+                    }
+                    result.append(SpeakerMatchOption(
+                        speaker: assignment.speakerID, reference: reference,
+                        referenceChannel: refIndex, target: targetChannel.sourceID,
+                        targetChannel: targetIndex, targetEpoch: targetEpoch
+                    ))
+                }
+            }
+        }
+        return result
+    }
+
     static func plan(
         episode: Episode,
         eligibility: ContentEligibility,

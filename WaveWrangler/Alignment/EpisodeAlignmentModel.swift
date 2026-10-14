@@ -16,6 +16,8 @@ final class EpisodeAlignmentModel {
     var selection: RecordingEpochID? {
         didSet {
             if selection != oldValue {
+                selectedMatchSpeaker = nil
+                analysisStates = [:]
                 selectedWaveformSource = nil
                 resetWaveformTiming()
                 stopAudition()
@@ -25,6 +27,28 @@ final class EpisodeAlignmentModel {
     private(set) var isWorking = false
     private(set) var hasAnalysis = false
     private(set) var analysisStates: [RecordingEpochID: EpochAlignmentState] = [:]
+    private(set) var speakerMatches: [RecordingEpochID: [SpeakerMatchOption]] = [:]
+    var selectedMatchSpeaker: SpeakerID?
+    var selectedMatchOption: SpeakerMatchOption?
+    var selectedSpeakerMatchOptions: [SpeakerMatchOption] {
+        guard let selection else { return [] }
+        var seen: Set<SpeakerID> = []
+        return (speakerMatches[selection] ?? []).filter { seen.insert($0.speaker).inserted }
+    }
+    var selectedSpeakerPairs: [SpeakerMatchOption] {
+        guard let selection else { return [] }
+        let speaker = selectedMatchSpeaker ?? selectedSpeakerMatchOptions.first?.speaker
+        return (speakerMatches[selection] ?? []).filter { $0.speaker == speaker }
+    }
+    func selectMatchSpeaker(_ speaker: SpeakerID?) {
+        selectedMatchSpeaker = speaker
+        selectedMatchOption = nil
+        analysisStates = [:]
+    }
+    func selectMatchOption(_ option: SpeakerMatchOption?) {
+        selectedMatchOption = option
+        analysisStates = [:]
+    }
     private var analysisSourceEndByEpoch: [RecordingEpochID: Double] = [:]
     private var analysedSources: [SourceRecord]?
     private var analysedGroups: [RecorderGroup]?
@@ -244,6 +268,16 @@ final class EpisodeAlignmentModel {
     func speakerName(_ id: SpeakerID?) -> String {
         guard let id else { return "Unknown speaker" }
         return document?.store.model.speaker(id)?.name ?? "Unknown speaker"
+    }
+    func speakerMatchDescription(_ option: SpeakerMatchOption) -> String {
+        guard let episode = document?.store.model.episode(episodeID),
+              let targetGroup = episode.sources.first(where: { $0.id == option.target })?.placement.recorderGroupID
+        else { return "Compare this speaker's assigned channels in the aligned and selected recorder groups." }
+        let referenceName = episode.recorderGroup(option.reference.group)?.name ?? "aligned recorder"
+        let targetName = episode.recorderGroup(targetGroup)?.name ?? "selected recorder"
+        let referenceFile = episode.source(option.reference.source)?.displayNameHint ?? "reference track"
+        let targetFile = episode.source(option.target)?.displayNameHint ?? "target track"
+        return "\(referenceName): \(referenceFile) ch \(option.referenceChannel + 1) → \(targetName): \(targetFile) ch \(option.targetChannel + 1). The target recorder moves as one group."
     }
     func trackIdentity(_ source: SourceID) -> (label: String, color: Color) {
         let references = document?.store.model.episode(episodeID)?.references(to: source) ?? []
@@ -1468,6 +1502,7 @@ final class EpisodeAlignmentModel {
                   document.store.model == model else { return }
             let snapshot = prepared.snapshot
             acceptedMap = snapshot?.acceptedMap
+            speakerMatches = snapshot?.speakerMatches ?? [:]
             hasAnalysis = snapshot?.acceptedMap != nil
             rows = Self.makeRows(
                 model: model,
@@ -1495,6 +1530,11 @@ final class EpisodeAlignmentModel {
 
     func analyse() {
         guard let document, !isWorking else { return }
+        guard let epoch = selection,
+              let pair = selectedMatchOption ?? selectedSpeakerPairs.first else {
+            message = "Select an epoch with the same identified speaker on an already aligned recorder. State the speaker's channels in Setup, or place this epoch manually."
+            return
+        }
         isWorking = true
         lastError = nil
         analysisStates = [:]
@@ -1505,12 +1545,19 @@ final class EpisodeAlignmentModel {
         let model = document.store.model
         Task {
             do {
-                let report = try await runtime.analyse(model: model, episode: episodeID)
+                let report = try await runtime.analyseSpeaker(
+                    model: model, episode: episodeID, targetEpoch: epoch, speaker: pair.speaker,
+                    referenceSource: pair.reference.source, targetSource: pair.target
+                )
                 let states = await runtime.states(model: model, episode: episodeID)
                 guard document.store.model.episode(episodeID)?.sources == model.episode(episodeID)?.sources,
-                      document.store.model.episode(episodeID)?.recorderGroups == model.episode(episodeID)?.recorderGroups
+                      document.store.model.episode(episodeID)?.recorderGroups == model.episode(episodeID)?.recorderGroups,
+                      document.store.model.episode(episodeID)?.speakerAssignments == model.episode(episodeID)?.speakerAssignments,
+                      document.store.model.episode(episodeID)?.alignment?.acceptedRevision
+                          == model.episode(episodeID)?.alignment?.acceptedRevision,
+                      selection == epoch, (selectedMatchOption ?? selectedSpeakerPairs.first) == pair
                 else {
-                    message = "Sources or recorder epochs changed during analysis. Run alignment again."
+                    message = "The speaker pair, sources, or accepted timing changed during analysis. Run alignment again."
                     isWorking = false
                     return
                 }
