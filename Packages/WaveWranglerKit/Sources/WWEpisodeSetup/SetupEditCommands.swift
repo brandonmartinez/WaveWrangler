@@ -101,6 +101,17 @@ public struct SetupEditCommands {
         }
     }
 
+    /// The caller has measured one physical channel for this source; state it together with the
+    /// speaker assignment as one Setup edit and one undo step.
+    @discardableResult
+    public func assignSpeaker(_ speakerID: SpeakerID, toMeasuredMonoSource sourceID: SourceID) -> Bool {
+        let id = episodeID
+        return editor.applySetupEdit(SetupUndoName.assignSpeaker(speakerName(speakerID))) { model throws(DomainError) in
+            let withChannel = try model.settingStatedChannel(0, forSource: sourceID, in: id)
+            return try withChannel.assigningSpeaker(speakerID, toSource: sourceID, in: id)
+        }
+    }
+
     @discardableResult
     public func createSpeaker(_ speaker: Speaker, assigning sourceIDs: [SourceID]) -> Bool {
         let id = episodeID

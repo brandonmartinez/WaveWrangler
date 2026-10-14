@@ -20,6 +20,7 @@ struct AlignmentWaveformView: View {
     @State private var hoveringMovableWaveform = false
     @State private var handCursorPushed = false
     @State private var confirmingExtension = false
+    @State private var confirmingReset = false
 
     private let headerWidth: CGFloat = 240
 
@@ -138,11 +139,17 @@ struct AlignmentWaveformView: View {
                 navigationControls
                 if model.waveformMap == nil, model.pendingWaveformMove == nil,
                    !model.waveformTracks.isEmpty {
-                    Button("Place groups at source time") { model.placeGroupsAtSourceTime() }
-                        .disabled(model.isWorking)
-                        .accessibilityIdentifier("alignment.waveforms.placeInitial")
-                    Text("This places the first eligible epoch of each recorder at zero offset, without estimating clock drift. Time restarted epochs separately; then move recorder groups while listening. The reference stays fixed.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    if model.hasAcceptedRevision {
+                        Text("Accepted timing is unavailable for these sources; it cannot be used for another match.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        resetAction
+                    } else {
+                        Button("Place groups at source time") { model.placeGroupsAtSourceTime() }
+                            .disabled(model.isWorking)
+                            .accessibilityIdentifier("alignment.waveforms.placeInitial")
+                        Text("This places the first eligible epoch of each recorder at zero offset, without estimating clock drift. Time restarted epochs separately; then move recorder groups while listening. The reference stays fixed.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 HStack {
                     Text("Compare").font(.caption.weight(.semibold))
@@ -958,19 +965,32 @@ struct AlignmentWaveformView: View {
             .help("Shared with Setup. One speaker channel per source; assignment changes are undoable.")
             .accessibilityLabel("Speaker assigned to \(track.name)")
             .accessibilityIdentifier("alignment.waveforms.speaker.\(track.id)")
-            Picker("Channel", selection: Binding(
-                get: { model.statedChannel(for: track.id) },
-                set: { model.setChannel($0, for: track) }
-            )) {
-                Text("Unknown").tag(Optional<Int>.none)
-                ForEach(0..<track.envelope.channelCount, id: \.self) { channel in
-                    Text("Channel \(channel + 1)").tag(Optional(channel))
+            if track.envelope.channelCount == 1 {
+                if model.statedChannel(for: track.id) == 0 {
+                    Text("Mono · only channel (1)")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("alignment.waveforms.mono.\(track.id)")
+                } else {
+                    Button("Use mono channel 1") { model.setChannel(0, for: track) }
+                        .help("States the only measured channel in Setup; undoable.")
+                        .accessibilityLabel("Use the only channel in \(track.name) for this speaker")
+                        .accessibilityIdentifier("alignment.waveforms.mono.\(track.id)")
                 }
+            } else {
+                Picker("Channel", selection: Binding(
+                    get: { model.statedChannel(for: track.id) },
+                    set: { model.setChannel($0, for: track) }
+                )) {
+                    Text("Unknown").tag(Optional<Int>.none)
+                    ForEach(0..<track.envelope.channelCount, id: \.self) { channel in
+                        Text("Channel \(channel + 1)").tag(Optional(channel))
+                    }
+                }
+                .pickerStyle(.menu)
+                .help("State the assigned speaker's channel in this source. Unknown is not channel 1.")
+                .accessibilityLabel("Speaker channel in \(track.name)")
+                .accessibilityIdentifier("alignment.waveforms.channel.\(track.id)")
             }
-            .pickerStyle(.menu)
-            .help("State the assigned speaker's channel in this source. Unknown is not channel 1.")
-            .accessibilityLabel("Speaker channel in \(track.name)")
-            .accessibilityIdentifier("alignment.waveforms.channel.\(track.id)")
             let options = model.matchOptions(for: track)
             if options.count == 1, let option = options.first {
                 Button(model.isWorking && model.selectedWaveformSource == track.id ? "Analysing…" : "Align…") {
@@ -992,7 +1012,9 @@ struct AlignmentWaveformView: View {
                 .accessibilityLabel("Choose a speaker match for \(track.name)")
                 .accessibilityIdentifier("alignment.waveforms.align.\(track.id)")
             } else {
-                Text(model.waveformMap?.reference.group == track.group
+                Text(model.hasAcceptedRevision && model.waveformMap == nil
+                     ? "Accepted timing is unavailable; start fresh or restore the original"
+                     : model.waveformMap?.reference.group == track.group
                      ? "Reference recorder"
                      : model.trackSpeakerID(track.id) == nil
                          ? (model.availableSpeakers.isEmpty
@@ -1058,6 +1080,9 @@ struct AlignmentWaveformView: View {
                         .foregroundStyle(.red)
                         .accessibilityIdentifier("alignment.auto.error")
                 }
+                if model.staleAcceptedTiming && model.hasAcceptedRevision {
+                    resetAction
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -1068,6 +1093,19 @@ struct AlignmentWaveformView: View {
         } message: {
             Text("This extrapolates the proposed time stretch into unmeasured audio. It cannot establish continuity, drift or clock accuracy outside the measured interval. Review playback; the decision is undoable and originals remain unchanged.")
         }
+    }
+
+    private var resetAction: some View {
+        Button("Start fresh alignment…") { confirmingReset = true }
+            .disabled(model.isWorking)
+            .accessibilityIdentifier("alignment.auto.startFresh")
+            .confirmationDialog("Stop using the accepted timing and start fresh?",
+                                isPresented: $confirmingReset) {
+                Button("Start fresh alignment") { model.clearAcceptedTiming() }
+                Button("Keep accepted timing", role: .cancel) {}
+            } message: {
+                Text("This removes the accepted timing from the current timeline after the show is saved. The old map stays in history, and Undo can restore its selection, but it may remain unusable if its original source revision cannot be verified. You must place the groups again; original recordings are untouched.")
+            }
     }
 
     private func dragGroup(

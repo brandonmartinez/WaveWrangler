@@ -30,7 +30,10 @@ episode Setup assignments (one speaker and one stated channel per source), with 
 normal document saving; they are not temporary match settings. Choose a reference
 recording from the menu if several already aligned tracks share that speaker. The reference
 recorder itself cannot be matched as a target. State known channels on both sides first:
-unknown or out-of-range channels cannot be matched. An eligible match compares only that
+unknown or out-of-range channels cannot be matched. A measured mono source has only one
+possible channel: assigning its speaker also states channel 1, while a previously assigned
+mono source with an unknown channel offers **Use mono channel 1** instead of a channel menu.
+An eligible match compares only that
 speaker's stated channels and proposes the **target recorder group's**
 timing, so its other tracks move with it. You can then match another speaker from the newly
 aligned recorder to a third recorder without moving either already aligned group. Unrelated
@@ -55,6 +58,13 @@ separate, warned human decision to extrapolate its rate and offset into unmeasur
 new confidence claim. Restarted epochs and gaps are never bridged; uncertain matches leave
 manual placement, numeric correction and anchors available. Accepting one match never makes
 other proposals playable.
+If a previously accepted map reports a changed source dependency, alignment refuses rather
+than silently rebasing old timing. Confirm the original in Setup and restore it, or choose
+**Start fresh alignment…**, confirm that the accepted timing should no longer be used, wait
+for the show to save, and place the current groups again. The old map remains in history and
+the change is undoable; restoring the old selection cannot make a genuinely changed source
+current. Tiny metadata timestamp differences within the source-identity comparison tolerance
+no longer change newly recorded revision keys.
 For a recorder with restarted/overlapping source-time epochs, only its first
 placeable epoch is mapped initially; place later epochs explicitly using **Advanced epoch timing**.
 Select a track and drag its waveform, use the 10 ms nudge buttons, or type **Group move (ms)** to move all

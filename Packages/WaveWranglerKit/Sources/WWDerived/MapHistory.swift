@@ -74,6 +74,15 @@ extension ShowDocumentModel {
         return copy
     }
 
+    /// Starts a new timing decision without deleting the append-only map history. Undo may restore the
+    /// previous accepted revision, subject to the same source-identity checks as any other activation.
+    public func clearingAcceptedMap(in episodeID: EpisodeID) throws(MapHistoryError) -> ShowDocumentModel {
+        guard let index = episodes.firstIndex(where: { $0.id == episodeID }) else { throw .episodeNotFound(episodeID) }
+        var copy = self
+        copy.episodes[index].alignment?.acceptedRevision = nil
+        return copy
+    }
+
     public func timeMap(revision: Int, in episodeID: EpisodeID) throws(MapHistoryError) -> AlignedTimelineMap {
         guard let episode = episode(episodeID) else { throw .episodeNotFound(episodeID) }
         guard let version = episode.alignment?.map(revision: revision) else { throw .mapNotFound(revision: revision) }

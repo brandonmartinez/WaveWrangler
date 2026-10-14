@@ -62,6 +62,8 @@ final class EpisodeAlignmentModel {
     private(set) var message = "Alignment has not read or analysed any audio."
     private(set) var dependents = "No dependent work yet."
     private(set) var lastError: String?
+    private(set) var staleAcceptedTiming = false
+    private var pendingResetVerification = false
     private(set) var auditionLabel = "Audition stopped"
     private(set) var isAuditioning = false
     private(set) var isPreparingAudition = false
@@ -251,6 +253,7 @@ final class EpisodeAlignmentModel {
 
     var canAcceptProposal: Bool {
         guard !isWorking, selectedAnalysis?.proposal != nil,
+              (!hasAcceptedRevision || waveformMap != nil),
               let episode = document?.store.model.episode(episodeID)
         else { return false }
         return analysedSources == episode.sources && analysedGroups == episode.recorderGroups
@@ -280,6 +283,7 @@ final class EpisodeAlignmentModel {
     }
 
     var availableSpeakers: [Speaker] { document?.store.model.speakers ?? [] }
+    var hasAcceptedRevision: Bool { document?.store.model.episode(episodeID)?.alignment?.acceptedRevision != nil }
 
     func statedChannel(for source: SourceID) -> Int? {
         document?.store.model.episode(episodeID)?.statedChannel(of: source)
@@ -287,6 +291,7 @@ final class EpisodeAlignmentModel {
 
     func matchOptions(for track: AlignmentWaveformTrack) -> [SpeakerMatchOption] {
         guard let live = document?.store.model.episode(episodeID),
+              (!hasAcceptedRevision || waveformMap != nil),
               let inspectedEpisode,
               live.sources == inspectedEpisode.sources,
               live.recorderGroups == inspectedEpisode.recorderGroups,
@@ -303,7 +308,13 @@ final class EpisodeAlignmentModel {
         }
         selectWaveform(track)
         let commands = SetupEditCommands(editor: document.store, episodeID: episodeID)
-        guard commands.assignSpeaker(speaker, to: [track.id]) else {
+        let applied: Bool
+        if let speaker, track.envelope.channelCount == 1, statedChannel(for: track.id) == nil {
+            applied = commands.assignSpeaker(speaker, toMeasuredMonoSource: track.id)
+        } else {
+            applied = commands.assignSpeaker(speaker, to: [track.id])
+        }
+        guard applied else {
             lastError = document.store.lastError.map(String.init(describing:))
                 ?? "Speaker assignment is unavailable while this show is read-only."
             return
@@ -539,6 +550,10 @@ final class EpisodeAlignmentModel {
     func placeGroupsAtSourceTime() {
         guard let document, !isWorking,
               document.store.model.episode(episodeID)?.alignment?.acceptedRevision == nil else { return }
+        guard !pendingResetVerification || timingIsVerified(document.store.model) else {
+            message = "Save verification must finish before placing the fresh timeline."
+            return
+        }
         let prior = document.store.model
         isWorking = true
         Task {
@@ -594,6 +609,10 @@ final class EpisodeAlignmentModel {
     }
 
     private func timingIsVerified(_ model: ShowDocumentModel) -> Bool {
+        if pendingResetVerification {
+            return document?.verifiedModel == model
+                && document?.status.saveStatus.state.isVerifiedOnDisk == true
+        }
         guard model.episode(episodeID)?.alignment?.acceptedRevision != nil else { return true }
         return document?.verifiedModel == model
             && document?.status.saveStatus.state.isVerifiedOnDisk == true
@@ -1554,6 +1573,7 @@ final class EpisodeAlignmentModel {
         let episode = model.episode(episodeID)
         if observedRevision != episode?.alignment?.acceptedRevision {
             observedRevision = episode?.alignment?.acceptedRevision
+            staleAcceptedTiming = false
             analysisStates = [:]
             speakerMatches = [:]
             selectedMatchOption = nil
@@ -1632,6 +1652,10 @@ final class EpisodeAlignmentModel {
 
     func analyse() {
         guard let document, !isWorking else { return }
+        guard !pendingResetVerification || timingIsVerified(document.store.model) else {
+            message = "Save verification must finish before analysing the fresh timeline."
+            return
+        }
         guard let epoch = selection,
               let pair = selectedMatchOption ?? selectedSpeakerPairs.first else {
             message = "Select an epoch with the same identified speaker on an already aligned recorder. State the speaker's channels in Setup, or place this epoch manually."
@@ -1683,6 +1707,10 @@ final class EpisodeAlignmentModel {
                 selection = selection ?? rows.first?.epochID
                 let proposals = report.records.values.filter { $0.proposal != nil }.count
                 message = "Analysis finished: \(proposals) acoustic proposal\(proposals == 1 ? "" : "s"). Review each epoch's evidence; nothing was applied. Uncertain or unavailable matches stay manual."
+            } catch AlignmentAcceptanceError.analysisStale(let changes) where changes.contains(.dependenciesChanged) {
+                staleAcceptedTiming = true
+                lastError = "Accepted timing no longer matches the recorded source revisions. No new alignment was applied. Confirm and restore changed originals in Setup, or use Start fresh alignment to retire the old timing before placing groups again."
+                message = "Stored timing is stale. Analysis did not run."
             } catch {
                 lastError = String(describing: error)
                 message = "Analysis did not complete. No partial result was accepted."
@@ -1974,6 +2002,10 @@ final class EpisodeAlignmentModel {
         onAccepted: @escaping @MainActor () -> Void = {}
     ) {
         guard let document, !isWorking else { return }
+        guard !pendingResetVerification || timingIsVerified(document.store.model) else {
+            message = "Save verification must finish before editing the fresh timeline."
+            return
+        }
         let prior = document.store.model
         isWorking = true
         lastError = nil
@@ -2024,9 +2056,36 @@ final class EpisodeAlignmentModel {
         }
     }
 
+    func clearAcceptedTiming() {
+        guard let document, !isWorking, hasAcceptedRevision else { return }
+        let prior = document.store.model
+        do {
+            let cleared = try prior.clearingAcceptedMap(in: episodeID)
+            pendingResetVerification = true
+            guard document.store.applyReplacement(
+                "Start Fresh Alignment", expecting: prior, model: cleared,
+                afterChange: persistenceCallback(document: document, accepted: nil)
+            ) else {
+                pendingResetVerification = false
+                lastError = SharedModelPublication.decide(live: document.store.model, expected: prior) == .superseded
+                    ? SharedModelPublication.supersededCorrectionMessage
+                    : "This show is read-only until its format update finishes."
+                return
+            }
+            staleAcceptedTiming = false
+            lastError = nil
+            cancelWaveforms()
+            cancelWaveformOverview()
+            message = "Previous timing is no longer accepted. Its history remains; save verification must finish before new alignment."
+            load()
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
     private func persistenceCallback(
         document: ShowDocument,
-        accepted: AcceptedAlignment
+        accepted: AcceptedAlignment?
     ) -> @MainActor (ShowDocumentModel) -> Void {
         { [weak document, weak self, runtime, episodeID] model in
             guard let document else { return }
@@ -2039,11 +2098,12 @@ final class EpisodeAlignmentModel {
                                 self?.cancelWaveforms()
                                 return
                             }
-                            if model == accepted.model {
+                            if let accepted, model == accepted.model {
                                 try await runtime.activate(accepted)
                             } else {
                                 try await runtime.activate(model: model, episode: episodeID)
                             }
+                            self?.pendingResetVerification = false
                             await self?.updateDependents(announce: true)
                             self?.load()
                             self?.loadWaveforms(keepingSnapshot: self?.pendingWaveformMove != nil)

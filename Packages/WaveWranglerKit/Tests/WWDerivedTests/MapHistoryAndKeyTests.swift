@@ -32,6 +32,15 @@ struct MapHistoryTests {
         let back = try model.acceptingMap(revision: 1, in: fixture.episodeID)
         #expect(back.episode(fixture.episodeID)?.alignment?.maps == alignment.maps)
         #expect(back.episode(fixture.episodeID)?.alignment?.acceptedRevision == 1)
+        let cleared = try back.clearingAcceptedMap(in: fixture.episodeID)
+        #expect(cleared.episode(fixture.episodeID)?.alignment?.maps == alignment.maps)
+        #expect(cleared.episode(fixture.episodeID)?.alignment?.acceptedRevision == nil)
+        #expect(back.episode(fixture.episodeID)?.alignment?.acceptedRevision == 1)
+        let (restarted, r3) = try cleared.recordingMap(first, in: fixture.episodeID)
+        #expect(r3.revision == 3)
+        #expect(restarted.episode(fixture.episodeID)?.alignment?.maps.prefix(2) == alignment.maps.prefix(2))
+        #expect(try restarted.acceptingMap(revision: r3.revision, in: fixture.episodeID)
+            .episode(fixture.episodeID)?.alignment?.acceptedRevision == 3)
 
         // The recorded show round-trips through the strict show coder.
         let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
@@ -98,6 +107,24 @@ struct MapHistoryTests {
 struct DerivedAssetKeyTests {
     let source = SourceID()
     let other = SourceID()
+
+    @Test func metadataRevisionUsesVerifiedBaselineAcrossTimestampPrecisionNoise() {
+        let date = Date(timeIntervalSince1970: 1_000_000)
+        let recorded = FileSystemFingerprint(
+            fileSize: .known(4_096), creationDate: .known(date),
+            contentModificationDate: .known(date), fileIdentifier: .known(42),
+            volumeUUID: .known("volume"), contentType: .known("public.audio")
+        )
+        var observed = recorded
+        observed.contentModificationDate = .known(date.addingTimeInterval(0.0002))
+        #expect(recorded.compare(to: observed) == .matches)
+        #expect(SourceRevision.metadata(source, fingerprint: recorded)
+            != SourceRevision.metadata(source, fingerprint: observed))
+        #expect(SourceRevision.verifiedMetadata(source, recorded: recorded, observed: observed)
+            == SourceRevision.metadata(source, fingerprint: recorded))
+        observed.fileSize = .known(4_097)
+        #expect(SourceRevision.verifiedMetadata(source, recorded: recorded, observed: observed) == nil)
+    }
 
     var base: DerivedAssetKey {
         .sample(

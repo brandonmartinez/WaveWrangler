@@ -181,6 +181,18 @@ struct SetupEditCommandTests {
         #expect(editor.showModel == assigned)
     }
 
+    @Test func measuredMonoSpeakerAssignmentStatesChannelInOneUndoStep() {
+        let (editor, commands) = make()
+        let ana = Speaker(name: "Ana")
+        #expect(commands.createSpeaker(ana, assigning: []))
+        let before = editor.showModel
+        #expect(commands.assignSpeaker(ana.id, toMeasuredMonoSource: tr1.id))
+        #expect(editor.showModel.episode(episodeID)?.statedChannel(of: tr1.id) == 0)
+        #expect(editor.showModel.episode(episodeID)?.references(to: tr1.id).first?.speakerID == ana.id)
+        #expect(editor.showModel.episode(episodeID)?.references(to: tr1.id).first?.channel.channel == .known(0))
+        expectUndo(editor, "Assign Speaker “Ana”", restores: before)
+    }
+
     @Test func refusalsRegisterNoUndoAndExplainWhy() {
         let (editor, commands) = make()
         #expect(!commands.setEpoch(0, for: [tr1.id]))

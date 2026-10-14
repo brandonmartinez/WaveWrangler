@@ -675,9 +675,9 @@ actor AlignmentRuntime {
             let revision = access.withScopedAccess(to: url) { scoped -> SourceRevision? in
                 guard case let .success(metadata) = access.io.metadata(at: scoped),
                       metadata.isReadable.value == true,
-                      record?.recordedIdentity?.fingerprint.compare(to: metadata.fingerprint) == .matches
+                      let recorded = record?.recordedIdentity?.fingerprint
                 else { return nil }
-                return .metadata(source.id, fingerprint: metadata.fingerprint)
+                return .verifiedMetadata(source.id, recorded: recorded, observed: metadata.fingerprint)
             }
             if let revision {
                 await coordinator.updateSource(revision)

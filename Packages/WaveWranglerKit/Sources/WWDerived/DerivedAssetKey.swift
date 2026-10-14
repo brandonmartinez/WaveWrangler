@@ -21,6 +21,15 @@ public struct SourceRevision: Sendable, Hashable, Codable {
         SourceRevision(source: source, token: "metadata:" + CanonicalDigest.hex(of: fingerprint))
     }
 
+    /// Anchor the revision to the recorded identity after verifying current metadata. Timestamp
+    /// precision noise within the identity comparison tolerance must not stale an unchanged map.
+    public static func verifiedMetadata(
+        _ source: SourceID, recorded: FileSystemFingerprint, observed: FileSystemFingerprint
+    ) -> SourceRevision? {
+        guard recorded.compare(to: observed) == .matches else { return nil }
+        return metadata(source, fingerprint: recorded)
+    }
+
     /// A revision pinned to a consent-gated decoded-content digest.
     public static func decodedContent(_ digest: DecodedContentDigest) -> SourceRevision {
         SourceRevision(source: digest.source, token: "decoded-content:" + digest.value)
