@@ -55,7 +55,7 @@ public struct AssetSpec: Sendable, Hashable, Codable {
 }
 
 /// The complete M2-C5 invalidation key of one derived result: asset, source, format, epoch, occurrence,
-/// channel, map, recipe and upstream revisions. Two results are interchangeable only if their keys are equal;
+/// channel, map, source-frame coverage, recipe and upstream revisions. Two results are interchangeable only if their keys are equal;
 /// any component change makes a result stale. `digest` (SHA-256 of the canonical encoding) names the cached
 /// asset file.
 public struct DerivedAssetKey: Sendable, Hashable, Codable {
@@ -67,6 +67,8 @@ public struct DerivedAssetKey: Sendable, Hashable, Codable {
     public var occurrence: SourceOccurrenceID?
     public var channel: Int?
     public var map: MapRevisionReference?
+    /// Digest of the source-frame ranges read by a map-independent measured asset.
+    public var coverage: String?
     public var recipe: RecipeReference?
     /// Digests of the keys this result was computed from; sorted and de-duplicated.
     public private(set) var upstream: [String]
@@ -79,6 +81,7 @@ public struct DerivedAssetKey: Sendable, Hashable, Codable {
         occurrence: SourceOccurrenceID? = nil,
         channel: Int? = nil,
         map: MapRevisionReference? = nil,
+        coverage: String? = nil,
         recipe: RecipeReference? = nil,
         upstream: [DerivedAssetKey] = []
     ) {
@@ -89,6 +92,7 @@ public struct DerivedAssetKey: Sendable, Hashable, Codable {
         self.occurrence = occurrence
         self.channel = channel
         self.map = map
+        self.coverage = coverage
         self.recipe = recipe
         self.upstream = Array(Set(upstream.map(\.digest))).sorted()
     }
@@ -112,6 +116,7 @@ public struct DerivedAssetKey: Sendable, Hashable, Codable {
             occurrence: try c.decodeIfPresent(SourceOccurrenceID.self, forKey: .occurrence),
             channel: try c.decodeIfPresent(Int.self, forKey: .channel),
             map: try c.decodeIfPresent(MapRevisionReference.self, forKey: .map),
+            coverage: try c.decodeIfPresent(String.self, forKey: .coverage),
             recipe: try c.decodeIfPresent(RecipeReference.self, forKey: .recipe)
         )
         setSources(try c.decode([SourceRevision].self, forKey: .sources))

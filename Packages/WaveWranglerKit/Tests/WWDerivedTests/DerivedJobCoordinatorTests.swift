@@ -93,6 +93,41 @@ struct DerivedJobCoordinatorTests {
         #expect(await reopened.submit(slot, key: replaced) { Data("replacement bins".utf8) }.outcome == .published(replaced))
     }
 
+    @Test func sourceCoverageCacheSurvivesMapRevisionsButRejectsDifferentCoverage() async throws {
+        let directory = try TemporaryDirectory("coverage-overview-cache")
+        var current = DerivedInputs()
+        current.sources[source] = "metadata:original"
+        current.acceptedMaps[episode] = 1
+        current.assets["ww.waveform.overview"] = 2
+        let asset = AssetSpec(kind: "ww.waveform.overview", revision: 2)
+        let first = DerivedAssetKey(
+            asset: asset, sources: [SourceRevision(source: source, token: "metadata:original")],
+            format: .current, coverage: "covered-source-frames-a"
+        )
+        let revised = DerivedAssetKey(
+            asset: asset, sources: [SourceRevision(source: source, token: "metadata:original")],
+            format: .current, coverage: "covered-source-frames-b"
+        )
+        let store = try makeStore(directory)
+        let slot = DerivedSlot("source-overview")
+        let coordinator = DerivedJobCoordinator(store: store, inputs: current)
+        #expect(await coordinator.submit(slot, key: first) {
+            Data("source extrema".utf8)
+        }.outcome == .published(first))
+        await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 2))
+        #expect(await coordinator.submit(slot, key: first) {
+            Issue.record("Changing only aligned positions must not decode the source again")
+            return Data()
+        }.outcome == .reused(first))
+        #expect(await coordinator.submit(slot, key: revised) {
+            Data("new coverage".utf8)
+        }.outcome == .published(revised))
+        #expect(await coordinator.readyPayload(for: slot, matching: first) == nil)
+        #expect(await coordinator.readyPayload(for: slot, matching: revised) == Data("new coverage".utf8))
+        await coordinator.updateSource(SourceRevision(source: source, token: "metadata:replacement"))
+        #expect(await coordinator.readyPayload(for: slot) == nil)
+    }
+
     /// REF-019: accepting a different map while a job is computing makes its late result stale; it is never
     /// published, served or cached.
     @Test func lateResultAfterAMapChangeIsNeverPublished() async throws {

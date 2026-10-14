@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import WWAlignPipeline
 import WWCore
@@ -384,26 +385,26 @@ actor AlignmentRuntime {
         guard let fingerprint = admission.record.recordedIdentity?.fingerprint else {
             throw DecodeFailure.sourceIdentityMismatch
         }
-        let asset = AssetSpec(kind: "ww.waveform.overview", revision: 1)
+        let asset = AssetSpec(kind: "ww.waveform.overview", revision: 2)
         let source = admission.key.sourceID
-        let key = DerivedAssetKey(
-            asset: asset, sources: [.metadata(source, fingerprint: fingerprint)],
-            format: .current,
-            map: map.flatMap { _ in
-                episode.alignment?.acceptedRevision.map {
-                    MapRevisionReference(episode: episode.id, revision: $0)
-                }
-            }
-        )
-        let slot = DerivedSlot("ww.waveform.overview.\(episode.id).\(source)")
-        await coordinator.setAssetRevision(asset)
-        if let mapRevision = key.map { await coordinator.acceptMap(mapRevision) }
-        let decoder = pipeline.decoder
-        let accessStore = accessStore
-        let sourceCount = max(1, episode.sources.count)
         let groupMap = map?.groups.first(where: {
             $0.group == group && $0.placements.contains(where: { $0.occurrence.source == source })
         })
+        let coverage = try WaveformWindowReader.overviewCoverage(source: source, groupMap: groupMap)
+        let coverageDigest = coverage.map { ranges in
+            let description = ranges.map { "\($0.lowerBound):\($0.upperBound)" }.joined(separator: ",")
+            return SHA256.hash(data: Data(description.utf8))
+                .map { String(format: "%02x", $0) }.joined()
+        }
+        let key = DerivedAssetKey(
+            asset: asset, sources: [.metadata(source, fingerprint: fingerprint)],
+            format: .current, coverage: coverageDigest
+        )
+        let slot = DerivedSlot("ww.waveform.overview.\(episode.id).\(source)")
+        await coordinator.setAssetRevision(asset)
+        let decoder = pipeline.decoder
+        let accessStore = accessStore
+        let sourceCount = max(1, episode.sources.count)
         let job = await coordinator.submit(slot, key: key) {
             let envelope = try await WaveformWindowReader.readOverview(
                 sourceURL: admission.url, source: source,
@@ -433,6 +434,7 @@ actor AlignmentRuntime {
                       && $0.minimum <= $0.maximum
               })
         else { throw SourceAdmissionError(reason: "The cached waveform overview is invalid; refresh its source.") }
+        try WaveformWindowReader.verifyOverviewCoverage(envelope: envelope, groupMap: groupMap)
         try await reverify(admission)
         try await progress(Double(sourceIndex + 1) / Double(sourceCount))
         return envelope

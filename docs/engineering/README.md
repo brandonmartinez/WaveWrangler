@@ -164,9 +164,11 @@ their priming and exact seek behavior are established.
 has verified access and the show is saved, or when its overview is missing on alignment open/refresh.
 Leaving Setup cancels an unfinished setup scan; opening Alignment checks again. This is not an
 expansion of the 30-second exact-window budget. The app caches complete overviews under its local
-Derived root, keyed by the
-source metadata revision, decode format and accepted map revision. Reuse still requires current
-source admission and witness verification; changes invalidate the key, and only current complete
+Derived root, keyed by the source metadata revision, decode format and exact source-frame coverage
+ranges. Moving an aligned offset or changing drift without changing covered frames reprojects the
+same measured bins rather than rescanning hours of PCM; changing gaps, segment coverage or the
+source invalidates that reuse. Reuse still requires current source admission, witness verification,
+map applicability and matching decoded format/frame count; only current complete
 results publish. It streams every covered sample (no stride sampling),
 retains at most 2,048 bins per recording, and refuses more than 24 source hours or 2,048 covered
 ranges. Bins never cross an epoch or affine-segment boundary. Unsupported spans remain unplaced;

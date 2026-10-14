@@ -83,6 +83,27 @@ struct WaveformEnvelopeTests {
         let covered = try await WaveformWindowReader.readOverview(
             sourceURL: url, source: source, matching: witness, decoder: decoder, groupMap: gapMap
         )
+        let shiftedMap = try WaveformTestAudio.map(
+            source: source, rate: 16_000, frames: Int64(frames), offset: ExactRational(-12),
+            spans: [
+                EpochSpan(startFrame: 0, endFrame: 32_000, epoch: first, groupClockOffset: .zero),
+                EpochSpan(startFrame: Int64(frames - 32_000), endFrame: Int64(frames),
+                          epoch: restarted, groupClockOffset: .zero),
+            ]
+        )
+        #expect(try WaveformWindowReader.overviewCoverage(source: source, groupMap: gapMap)
+                == WaveformWindowReader.overviewCoverage(source: source, groupMap: shiftedMap))
+        #expect(try WaveformWindowReader.overviewCoverage(source: source, groupMap: gapMap)
+                == [0..<32_000, Int64(frames - 32_000)..<Int64(frames)])
+        try WaveformWindowReader.verifyOverviewCoverage(envelope: covered, groupMap: shiftedMap)
+        #expect(throws: WaveformWindowError.mapDoesNotMatchSource) {
+            try WaveformWindowReader.verifyOverviewCoverage(
+                envelope: WaveformEnvelope(
+                    source: source, sampleRate: 16_000, channelCount: 1,
+                    totalFrames: Int64(frames - 1), bins: covered.bins
+                ), groupMap: shiftedMap
+            )
+        }
         #expect(covered.bins.count <= WaveformWindowReader.maximumBins)
         #expect(covered.bins.allSatisfy { $0.endFrame <= 32_000 || $0.firstFrame >= Int64(frames - 32_000) })
         #expect(!covered.bins.contains { $0.minimum == -0.5 })

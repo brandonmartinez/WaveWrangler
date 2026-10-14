@@ -418,7 +418,7 @@ final class EpisodeAlignmentModel {
     }
 
     var canCompareAligned: Bool {
-        guard !isWorking, !isLoadingWaveforms, !isLoadingOverview, pendingWaveformMove == nil,
+        guard !isWorking, !isLoadingWaveforms, pendingWaveformMove == nil,
               let document, timingIsVerified(document.store.model),
               let row = selectedRow, let track = selectedWaveform,
               let map = loadedWaveformMap, track.group != map.reference.group,

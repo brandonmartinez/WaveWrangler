@@ -63,6 +63,28 @@ public enum WaveformWindowReader {
     public static let maximumDecodedPrefixSeconds: Int64 = 600
     public static let maximumOverviewSourceSeconds: Int64 = 86_400
 
+    /// The measured bins depend on these source-frame ranges, not on their aligned positions.
+    public static func overviewCoverage(
+        source: SourceID, groupMap: GroupTimeMap?
+    ) throws -> [Range<Int64>]? {
+        guard let groupMap else { return nil }
+        guard let placement = groupMap.placements.first(where: { $0.occurrence.source == source })
+        else { throw WaveformWindowError.mapDoesNotMatchSource }
+        return try WaveformViewport.overviewRanges(
+            source: source, rate: Int(placement.occurrence.nominalRate.framesPerSecond),
+            totalFrames: placement.occurrence.frameCount, groupMap: groupMap
+        )
+    }
+
+    public static func verifyOverviewCoverage(
+        envelope: WaveformEnvelope, groupMap: GroupTimeMap?
+    ) throws {
+        _ = try WaveformViewport.overviewRanges(
+            source: envelope.source, rate: envelope.sampleRate,
+            totalFrames: envelope.totalFrames, groupMap: groupMap
+        )
+    }
+
     /// Explicit full-coverage scan. Every covered sample contributes; only bounded bins survive a successful read.
     @concurrent
     public static func readOverview(
