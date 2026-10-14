@@ -581,42 +581,30 @@ actor AlignmentRuntime {
         )
     }
 
-    func mixedAudition(
+    func sourceAudition(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
-        enabled: [SourceID], startSeconds: Double, durationSeconds: Double
+        source: SourceID, startSeconds: Double, durationSeconds: Double
     ) async throws -> AuditionClip {
-        guard let episode = model.episode(episodeID), !enabled.isEmpty else {
-            throw AlignmentAcceptanceError.noReference
-        }
+        guard let episode = model.episode(episodeID) else { throw AlignmentAcceptanceError.episodeNotFound(episodeID) }
         let sources = await resolveSources(episode.sources)
         try await pipeline.activate(model: model, episode: episodeID)
         let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
-        var mixed: [Float]?
-        var admissions: [WaveformSourceAdmission] = []
-        for sourceID in enabled {
-            try Task.checkCancellation()
-            guard let record = episode.source(sourceID),
-                  let groupID = record.placement.recorderGroupID,
-                  let group = map.groups.first(where: { $0.group == groupID }),
-                  group.placements.contains(where: { $0.occurrence.source == sourceID })
-            else { throw WaveformWindowError.mapDoesNotMatchSource }
-            let admission = try await waveformSource(sourceID, sources: sources)
-            let channel = episode.statedChannel(of: sourceID) ?? 0
-            let samples = try await AlignedAuditionWindowReader.readWindow(
-                sourceURL: admission.url, source: sourceID,
-                matching: admission.witness, decoder: pipeline.decoder, groupMap: group,
-                decodedChannel: channel, startSeconds: startSeconds, durationSeconds: durationSeconds
-            )
-            var buffer = mixed ?? [Float](repeating: 0, count: samples.count)
-            guard buffer.count == samples.count else { throw WaveformWindowError.invalidSamples }
-            for index in samples.indices { buffer[index] += samples[index] / Float(enabled.count) }
-            mixed = buffer
-            admissions.append(admission)
-        }
-        for admission in admissions { try await reverify(admission) }
+        guard let record = episode.source(source),
+              let groupID = record.placement.recorderGroupID,
+              let group = map.groups.first(where: { $0.group == groupID }),
+              group.placements.contains(where: { $0.occurrence.source == source })
+        else { throw WaveformWindowError.mapDoesNotMatchSource }
+        let admission = try await waveformSource(source, sources: sources)
+        let samples = try await AlignedAuditionWindowReader.readWindow(
+            sourceURL: admission.url, source: source,
+            matching: admission.witness, decoder: pipeline.decoder, groupMap: group,
+            decodedChannel: episode.statedChannel(of: source) ?? 0,
+            startSeconds: startSeconds, durationSeconds: durationSeconds
+        )
+        try await reverify(admission)
         _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         return AuditionClip(
-            sampleRate: Double(AlignedAuditionWindowReader.outputRate), samples: mixed ?? []
+            sampleRate: Double(AlignedAuditionWindowReader.outputRate), samples: samples
         )
     }
 

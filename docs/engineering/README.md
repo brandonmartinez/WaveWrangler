@@ -99,11 +99,14 @@ placement maps only one eligible epoch per non-reference group so recorder resta
 source clocks are not invented as synchronized. The user can place later epochs individually.
 `shiftAcceptedGroup` translates every supported segment of a non-reference group in one revision,
 preserving gaps, unsupported epochs, source spans, Undo, and canonical save verification. Playback
-mixes enabled sources with accepted mapped epochs; enabled untimed sources remain visible but are
-explicitly excluded from the mix, and playback refuses if none is timed. Each mixed window still
-requires the verified map, source witness, and exact decoded format to match; any mismatch stops
-playback rather than substituting audio. It may buffer between windows; it does not create an export
-or promise seamless transport. "Timing not set — not attempted" describes the epoch's clock state,
+prepares separate timed source windows on a shared clock; enabled untimed sources remain visible but are
+explicitly excluded, and playback refuses if none is timed. Show/hear toggles change the gains of
+prepared sources without pausing playback or resetting the playhead; muting every track advances
+silently. An unavailable muted source cannot be heard if enabled until playback is restarted, and
+the transport reports why. Each source window still requires the verified map, source witness, and
+exact decoded format to match; a mismatch on an enabled source stops playback rather than
+substituting audio. It may buffer between windows; it does not create an export or promise seamless
+transport. "Timing not set — not attempted" describes the epoch's clock state,
 not the recording's file format; manual numeric timing or anchors do not require an estimator run.
 
 `WaveformWindowReader` produces at most 2,048 extrema bins per recording for a viewport of at most

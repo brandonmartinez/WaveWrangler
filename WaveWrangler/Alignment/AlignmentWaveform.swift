@@ -83,6 +83,24 @@ struct PendingWaveformMove {
     }
 }
 
+enum AlignmentTransportSelection {
+    static func enabledSources(
+        tracks: [AlignmentWaveformTrack], disabledGroups: Set<RecorderGroupID>,
+        disabledTracks: Set<SourceID>
+    ) -> [SourceID] {
+        tracks.filter { !disabledGroups.contains($0.group) && !disabledTracks.contains($0.id) }
+            .map(\.id)
+    }
+
+    static func gains(prepared: Set<SourceID>, enabled: [SourceID]) -> [SourceID: Float] {
+        let audible = prepared.intersection(enabled)
+        let level = 1 / Float(max(audible.count, 1))
+        return Dictionary(uniqueKeysWithValues: prepared.map { source in
+            (source, audible.contains(source) ? level : 0)
+        })
+    }
+}
+
 enum AlignmentWaveformProjection {
     static let overviewNavigationRange = -86_400.0...86_400.0
 

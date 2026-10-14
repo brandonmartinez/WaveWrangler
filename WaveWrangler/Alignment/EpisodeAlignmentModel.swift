@@ -1,5 +1,6 @@
 import AppKit
 import AVFAudio
+import Darwin
 import Foundation
 import Observation
 import SwiftUI
@@ -181,7 +182,8 @@ final class EpisodeAlignmentModel {
     private weak var document: ShowDocument?
     private let runtime: AlignmentRuntime
     @ObservationIgnored private let auditionEngine = AVAudioEngine()
-    @ObservationIgnored private let transportPlayer = AVAudioPlayerNode()
+    @ObservationIgnored private var transportPlayers: [SourceID: AVAudioPlayerNode] = [:]
+    @ObservationIgnored private var transportUnavailable: [SourceID: String] = [:]
     @ObservationIgnored private var auditionSource: AVAudioSourceNode?
     @ObservationIgnored private var auditionTask: Task<Void, Never>?
     @ObservationIgnored private var auditionGeneration: UInt64 = 0
@@ -227,8 +229,9 @@ final class EpisodeAlignmentModel {
         return ("\(speaker.name) · \(role)", palette[index])
     }
     var enabledSources: [SourceID] {
-        waveformTracks.filter { !disabledGroups.contains($0.group) && !disabledTracks.contains($0.id) }
-            .map(\.id)
+        AlignmentTransportSelection.enabledSources(
+            tracks: waveformTracks, disabledGroups: disabledGroups, disabledTracks: disabledTracks
+        )
     }
     var waveformFitRange: ClosedRange<Double>? {
         guard let extent = AlignmentWaveformProjection.overviewExtent(
@@ -265,8 +268,10 @@ final class EpisodeAlignmentModel {
         )
     }
     var enabledTimelineEnd: Double {
+        timelineEnd(for: Set(enabledSources))
+    }
+    private func timelineEnd(for sources: Set<SourceID>) -> Double {
         guard let map = loadedWaveformMap else { return 0 }
-        let sources = Set(enabledSources)
         return map.groups.flatMap { group in
             let epochs = Set(group.placements.filter { sources.contains($0.occurrence.source) }
                 .flatMap { $0.spans.map(\.epoch) })
@@ -282,12 +287,14 @@ final class EpisodeAlignmentModel {
     func groupEnabled(_ group: RecorderGroupID) -> Bool { !disabledGroups.contains(group) }
     func trackEnabled(_ source: SourceID) -> Bool { !disabledTracks.contains(source) }
     func setGroup(_ group: RecorderGroupID, enabled: Bool) {
-        stopAudition()
+        if transportTask == nil { stopAudition() }
         if enabled { disabledGroups.remove(group) } else { disabledGroups.insert(group) }
+        if transportTask != nil { refreshTransportGains() }
     }
     func setTrack(_ source: SourceID, enabled: Bool) {
-        stopAudition()
+        if transportTask == nil { stopAudition() }
         if enabled { disabledTracks.remove(source) } else { disabledTracks.insert(source) }
+        if transportTask != nil { refreshTransportGains() }
     }
     var canMoveGroup: Bool {
         guard let row = selectedRow, let source = selectedWaveformSource else { return false }
@@ -903,6 +910,8 @@ final class EpisodeAlignmentModel {
         let enabled = enabledSources
         let timed = AlignmentWaveformProjection.timedSources(in: map)
         let sources = enabled.filter { timed.contains($0) }
+        let preparedSources = sources
+            + waveformTracks.map(\.id).filter { timed.contains($0) && !enabled.contains($0) }
         guard !sources.isEmpty else {
             auditionLabel = "No enabled track has accepted timing. Set timing manually or enable a timed track."
             return
@@ -918,29 +927,41 @@ final class EpisodeAlignmentModel {
         transportTask = Task { [weak self] in
             guard let self else { return }
             var position = waveformPlayheadSeconds
-            let end = min(enabledTimelineEnd, 86_400)
+            let end = min(timelineEnd(for: Set(preparedSources)), 86_400)
             let start = position
+            var unavailable: [SourceID: String] = [:]
             while !Task.isCancelled, generation == auditionGeneration, position < end {
                 do {
                     isPreparingAudition = true
                     if !isAuditioning {
-                        auditionLabel = "Preparing \(sources.count) timed \(sources.count == 1 ? "track" : "tracks") at the displayed map revision…"
+                        auditionLabel = "Preparing timed tracks for live listening at the displayed map revision…"
                             + (omitted == 0 ? "" : " \(omitted) enabled untimed \(omitted == 1 ? "track is" : "tracks are") excluded.")
                     }
                     let duration = min(AlignedAuditionWindowReader.maximumDurationSeconds, end - position)
-                    let clip = try await runtime.mixedAudition(
-                        model: snapshot, episode: episodeID, enabled: sources,
-                        startSeconds: position, durationSeconds: duration
-                    )
+                    var clips: [SourceID: AlignmentRuntime.AuditionClip] = [:]
+                    for source in preparedSources where unavailable[source] == nil {
+                        do {
+                            clips[source] = try await runtime.sourceAudition(
+                                model: snapshot, episode: episodeID, source: source,
+                                startSeconds: position, durationSeconds: duration
+                            )
+                        } catch is CancellationError {
+                            throw CancellationError()
+                        } catch {
+                            if enabledSources.contains(source) { throw error }
+                            unavailable[source] = error is LocalizedError
+                                ? error.localizedDescription : String(describing: error)
+                        }
+                    }
                     try Task.checkCancellation()
                     guard generation == auditionGeneration, document.store.model == snapshot,
-                          timingIsVerified(snapshot),
-                          enabledSources == enabled else { throw CancellationError() }
+                          timingIsVerified(snapshot) else { throw CancellationError() }
+                    guard !clips.isEmpty else { throw WaveformWindowError.invalidSamples }
                     isPreparingAudition = false
-                    try enqueueTransport(clip, startSeconds: position, first: !isAuditioning)
+                    try enqueueTransport(clips, startSeconds: position, first: !isAuditioning)
+                    transportUnavailable = unavailable
                     isAuditioning = true
-                    auditionLabel = "Playing \(sources.count) timed \(sources.count == 1 ? "track" : "tracks") on the stored timeline."
-                        + (omitted == 0 ? "" : " \(omitted) enabled untimed \(omitted == 1 ? "track was" : "tracks were") excluded.")
+                    refreshTransportGains()
                     if transportProgressTask == nil {
                         transportProgressTask = Task { [weak self] in
                             while let self, !Task.isCancelled, generation == auditionGeneration,
@@ -961,7 +982,7 @@ final class EpisodeAlignmentModel {
                             }
                         }
                     }
-                    position += Double(clip.samples.count) / clip.sampleRate
+                    position += duration
                     while let started = auditionStartedAt,
                           position - start - max(0, -started.timeIntervalSinceNow)
                             >= 2 * AlignedAuditionWindowReader.maximumDurationSeconds {
@@ -971,8 +992,10 @@ final class EpisodeAlignmentModel {
                     return
                 } catch {
                     guard generation == auditionGeneration else { return }
+                    isPreparingAudition = false
                     lastError = String(describing: error)
                     stopPlayback(updatePlayhead: true)
+                    transportTask = nil
                     let reason = error is LocalizedError ? error.localizedDescription : String(describing: error)
                     auditionLabel = "Playback stopped: \(reason). No substitute audio was played."
                     return
@@ -986,6 +1009,7 @@ final class EpisodeAlignmentModel {
             }
             guard generation == auditionGeneration else { return }
             stopPlayback(updatePlayhead: true)
+            transportTask = nil
             waveformPlayheadSeconds = auditionPlayheadSeconds
             auditionLabel = "Playback reached the end of the available timeline."
         }
@@ -1515,9 +1539,11 @@ final class EpisodeAlignmentModel {
                 + min(elapsed, auditionPlaybackDurationSeconds)
         }
         auditionEngine.stop()
-        if auditionEngine.attachedNodes.contains(transportPlayer) {
-            auditionEngine.detach(transportPlayer)
+        for player in transportPlayers.values where auditionEngine.attachedNodes.contains(player) {
+            auditionEngine.detach(player)
         }
+        transportPlayers.removeAll()
+        transportUnavailable.removeAll()
         if let auditionSource, auditionEngine.attachedNodes.contains(auditionSource) {
             auditionEngine.detach(auditionSource)
         }
@@ -1576,32 +1602,81 @@ final class EpisodeAlignmentModel {
         }
     }
 
-    private func enqueueTransport(
-        _ clip: AlignmentRuntime.AuditionClip, startSeconds: Double, first: Bool
-    ) throws {
-        guard clip.channelCount == 1, !clip.samples.isEmpty,
-              clip.samples.count <= Int(AVAudioFrameCount.max),
-              let format = AVAudioFormat(standardFormatWithSampleRate: clip.sampleRate, channels: 1),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(clip.samples.count)),
-              let samples = buffer.floatChannelData?.pointee
-        else { throw CocoaError(.fileReadCorruptFile) }
-        buffer.frameLength = AVAudioFrameCount(clip.samples.count)
-        clip.samples.withUnsafeBufferPointer { values in
-            if let base = values.baseAddress { samples.update(from: base, count: values.count) }
+    private func refreshTransportGains() {
+        guard transportTask != nil else { return }
+        let enabled = enabledSources
+        let gains = AlignmentTransportSelection.gains(
+            prepared: Set(transportPlayers.keys).subtracting(transportUnavailable.keys),
+            enabled: enabled
+        )
+        for (source, player) in transportPlayers {
+            player.volume = gains[source] ?? 0
         }
+        guard isAuditioning else { return }
+        let missing = enabled.filter { transportUnavailable[$0] != nil }
+        let untimed = enabled.filter { !sourceHasAcceptedTiming($0) }
+        let audible = gains.values.filter { $0 > 0 }.count
+        auditionLabel = audible == 0
+            ? "Playing the stored timeline silently; all timed tracks are muted."
+            : "Playing \(audible) timed \(audible == 1 ? "track" : "tracks") on the stored timeline."
+        if !untimed.isEmpty {
+            auditionLabel += " \(untimed.count) enabled untimed \(untimed.count == 1 ? "track is" : "tracks are") excluded."
+        }
+        if let source = missing.first, let reason = transportUnavailable[source] {
+            let name = waveformTracks.first(where: { $0.id == source })?.name ?? "Track"
+            auditionLabel += " \(name) cannot be heard: \(reason). Restart playback to retry."
+        }
+    }
+
+    private func enqueueTransport(
+        _ clips: [SourceID: AlignmentRuntime.AuditionClip], startSeconds: Double, first: Bool
+    ) throws {
+        guard let representative = clips.values.first, !representative.samples.isEmpty,
+              representative.samples.count <= Int(AVAudioFrameCount.max),
+              let format = AVAudioFormat(
+                  standardFormatWithSampleRate: representative.sampleRate, channels: 1
+              ),
+              clips.values.allSatisfy({
+                  $0.channelCount == 1 && $0.sampleRate == representative.sampleRate
+                      && $0.samples.count == representative.samples.count
+              })
+        else { throw CocoaError(.fileReadCorruptFile) }
         if first {
             stopPlayback(updatePlayhead: false)
-            auditionEngine.attach(transportPlayer)
-            auditionEngine.connect(transportPlayer, to: auditionEngine.mainMixerNode, format: format)
+            for source in clips.keys {
+                let player = AVAudioPlayerNode()
+                transportPlayers[source] = player
+                auditionEngine.attach(player)
+                auditionEngine.connect(player, to: auditionEngine.mainMixerNode, format: format)
+            }
             try auditionEngine.start()
             auditionPlaybackStartSeconds = startSeconds
             auditionPlayheadSeconds = startSeconds
             auditionPlaybackDurationSeconds = 0
-            auditionStartedAt = Date()
         }
-        transportPlayer.scheduleBuffer(buffer)
-        auditionPlaybackDurationSeconds += Double(clip.samples.count) / clip.sampleRate
-        if first { transportPlayer.play() }
+        guard Set(clips.keys).isSubset(of: Set(transportPlayers.keys)) else {
+            throw WaveformWindowError.invalidSamples
+        }
+        for (source, clip) in clips {
+            guard let player = transportPlayers[source],
+                  let buffer = AVAudioPCMBuffer(
+                      pcmFormat: format, frameCapacity: AVAudioFrameCount(clip.samples.count)
+                  ),
+                  let samples = buffer.floatChannelData?.pointee
+            else { throw CocoaError(.fileReadCorruptFile) }
+            buffer.frameLength = AVAudioFrameCount(clip.samples.count)
+            clip.samples.withUnsafeBufferPointer { values in
+                if let base = values.baseAddress { samples.update(from: base, count: values.count) }
+            }
+            player.scheduleBuffer(buffer)
+        }
+        auditionPlaybackDurationSeconds += Double(representative.samples.count) / representative.sampleRate
+        if first {
+            let lead = 0.1
+            let start = AVAudioTime(hostTime: mach_absolute_time() + AVAudioTime.hostTime(forSeconds: lead))
+            auditionStartedAt = Date().addingTimeInterval(lead)
+            for player in transportPlayers.values { player.play(at: start) }
+        }
     }
 
     func editAnchor(id: Int, alignedSeconds: Double) {

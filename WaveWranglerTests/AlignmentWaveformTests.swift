@@ -6,6 +6,44 @@ import WWTimeMap
 
 @Suite("Waveform selection")
 struct AlignmentWaveformTests {
+    @Test func transportShowHearChangesGainsWithoutChangingPreparedTracks() {
+        let recorder = RecorderGroupID()
+        let otherRecorder = RecorderGroupID()
+        let first = SourceID()
+        let second = SourceID()
+        let third = SourceID()
+        let tracks = [(first, recorder), (second, recorder), (third, otherRecorder)].map { source, group in
+            AlignmentWaveformTrack(
+                group: group, epoch: RecordingEpochID(), name: "generated.wav",
+                groupName: "Synthetic", envelope: WaveformEnvelope(
+                    source: source, sampleRate: 1_000, channelCount: 1, totalFrames: 1_000, bins: []
+                )
+            )
+        }
+        let prepared: Set<SourceID> = [first, second, third]
+        let all = AlignmentTransportSelection.enabledSources(
+            tracks: tracks, disabledGroups: [], disabledTracks: []
+        )
+        #expect(AlignmentTransportSelection.gains(prepared: prepared, enabled: all)
+            == [first: Float(1) / 3, second: Float(1) / 3, third: Float(1) / 3])
+        let trackMuted = AlignmentTransportSelection.enabledSources(
+            tracks: tracks, disabledGroups: [], disabledTracks: [second]
+        )
+        #expect(AlignmentTransportSelection.gains(prepared: prepared, enabled: trackMuted)
+            == [first: 0.5, second: 0, third: 0.5])
+        let groupMuted = AlignmentTransportSelection.enabledSources(
+            tracks: tracks, disabledGroups: [recorder], disabledTracks: []
+        )
+        #expect(AlignmentTransportSelection.gains(prepared: prepared, enabled: groupMuted)
+            == [first: 0, second: 0, third: 1])
+        #expect(AlignmentTransportSelection.gains(prepared: prepared, enabled: [])
+            == [first: 0, second: 0, third: 0])
+        #expect(AlignmentTransportSelection.gains(prepared: prepared, enabled: all)
+            == [first: Float(1) / 3, second: Float(1) / 3, third: Float(1) / 3])
+        #expect(AlignmentTransportSelection.gains(prepared: [first, third], enabled: all)
+            == [first: 0.5, third: 0.5])
+    }
+
     @Test func overlayGroupsBySpeakerWithoutSplittingRecorderSets() {
         let firstSpeaker = SpeakerID()
         let secondSpeaker = SpeakerID()
