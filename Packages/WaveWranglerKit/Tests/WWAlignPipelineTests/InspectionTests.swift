@@ -152,6 +152,52 @@ struct InspectionTests {
         #expect(fixture.content.total.reads == 0)
     }
 
+    @Test func manualPlacementRebuildsAPreviouslyMissingRecorderWithoutLosingOtherOffsets() async throws {
+        let fixture = try await PipelineFixture([
+            .init(name: "Reference", sources: [.init(name: "reference", seconds: 12, signal: .sine(hz: 440))]),
+            .init(name: "Placed", sources: [.init(name: "placed", seconds: 12, signal: .sine(hz: 880))]),
+            .init(name: "Later admitted", sources: [
+                .init(name: "late", seconds: 12, signal: .sine(hz: 220), authorized: false)
+            ]),
+        ])
+        let initialReport = try await fixture.pipeline.prepareManual(
+            model: fixture.model, episode: fixture.episodeID,
+            sources: fixture.sources, authorizations: fixture.authorizations
+        )
+        let initial = try await fixture.acceptAndActivate(initialReport, [
+            fixture.epochs[1]: .numeric(ppm: 0, offsetMilliseconds: 7_500),
+        ])
+        #expect(initial.map.groups.allSatisfy { $0.group != fixture.groups[2] })
+        await #expect(throws: AlignmentAcceptanceError.unknownEpoch(fixture.epochs[2])) {
+            _ = try await fixture.pipeline.reviseAcceptedMap(
+                model: initial.model, episode: fixture.episodeID,
+                decisions: [fixture.epochs[2]: .numeric(ppm: 0, offsetMilliseconds: -2_000)]
+            )
+        }
+        let admitted = fixture.authorizations
+            + [ContentWorkAuthorization.explicitUserRequest(for: fixture.id("late"))]
+        let report = try await fixture.pipeline.prepareManual(
+            model: initial.model, episode: fixture.episodeID,
+            sources: fixture.sources, authorizations: admitted
+        )
+        #expect(report.records.isEmpty && report.analyses.isEmpty)
+        let rebuilt = try await fixture.pipeline.accept(
+            model: initial.model, episode: fixture.episodeID, report: report,
+            decisions: [fixture.epochs[2]: .numeric(ppm: 0, offsetMilliseconds: -2_000)]
+        )
+        #expect(rebuilt.map.groups.first(where: { $0.group == fixture.groups[1] })
+                == initial.map.groups.first(where: { $0.group == fixture.groups[1] }))
+        let placed = try #require(rebuilt.map.groups.first { $0.group == fixture.groups[2] })
+        #expect(placed.placements.contains { $0.occurrence.source == fixture.id("late") })
+        guard case let .mapped(segments, _) = placed.epochs[0].mapping else {
+            Issue.record("a previously omitted recording must become timed")
+            return
+        }
+        #expect(segments[0].alignedOffset.approximateDouble == -2)
+        try await fixture.pipeline.activate(rebuilt)
+        #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == rebuilt.revision.revision)
+    }
+
     @Test func openingInspectionReadsNoSourceContentOrMetadata() async throws {
         let fixture = try await PipelineFixture([
             .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 22), registered: false)]),

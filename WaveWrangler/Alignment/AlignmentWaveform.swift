@@ -116,6 +116,18 @@ enum AlignmentWaveformProjection {
         })
     }
 
+    static func hasAcceptedTiming(
+        source: SourceID, epoch: RecordingEpochID, group: RecorderGroupID, map: AlignedTimelineMap?
+    ) -> Bool {
+        guard let groupMap = map?.groups.first(where: { $0.group == group }),
+              let mapping = groupMap.epochs.first(where: { $0.epoch == epoch })?.mapping,
+              case .mapped = mapping
+        else { return false }
+        return groupMap.placements.contains {
+            $0.occurrence.source == source && $0.spans.contains { $0.epoch == epoch }
+        }
+    }
+
     struct RulerTick: Identifiable {
         let id: Int
         let time: Double

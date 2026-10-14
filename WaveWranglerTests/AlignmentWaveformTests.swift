@@ -72,6 +72,12 @@ struct AlignmentWaveformTests {
         ])
         #expect(AlignmentWaveformProjection.timedSources(in: map) == [mapped.source])
         #expect(!AlignmentWaveformProjection.timedSources(in: map).contains(untimed.source))
+        #expect(AlignmentWaveformProjection.hasAcceptedTiming(
+            source: mapped.source, epoch: mappedEpoch, group: group, map: map
+        ))
+        #expect(!AlignmentWaveformProjection.hasAcceptedTiming(
+            source: untimed.source, epoch: untimedEpoch, group: group, map: map
+        ))
         let unplaced = SourceID()
         #expect(!AlignmentWaveformProjection.timedSources(in: map).contains(unplaced))
         let preview = AlignmentWaveformTrack(

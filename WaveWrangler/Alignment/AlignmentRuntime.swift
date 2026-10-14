@@ -135,7 +135,8 @@ actor AlignmentRuntime {
     func accept(
         model: ShowDocumentModel,
         episode episodeID: EpisodeID,
-        decisions: [RecordingEpochID: EpochMapDecision]
+        decisions: [RecordingEpochID: EpochMapDecision],
+        requiringPlacementOf source: SourceID? = nil
     ) async throws -> AcceptedAlignment {
         let acceptsProposal = decisions.values.contains {
             if case .acceptProposal = $0 { return true }
@@ -146,10 +147,69 @@ actor AlignmentRuntime {
         }
         if model.episode(episodeID)?.alignment?.acceptedRevision != nil {
             _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
+            if let source {
+                guard decisions.count == 1, let epoch = decisions.keys.first,
+                      let report = reports[episodeID],
+                      let planned = report.plan.epoch(epoch), planned.sources.contains(source),
+                      report.facts[source] != nil
+                else { throw AlignmentAcceptanceError.invalidMap("The selected recording has no eligible manual placement.") }
+                let prior = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+                let alreadyPlaced = prior.groups.contains { group in
+                    group.group == planned.group && group.placements.contains {
+                        $0.occurrence.source == source && $0.spans.contains { $0.epoch == epoch }
+                    }
+                }
+                if !alreadyPlaced {
+                    let accepted = try await pipeline.accept(
+                        model: model, episode: episodeID, report: report, decisions: decisions
+                    )
+                    guard accepted.map.reference == prior.reference,
+                          prior.groups.allSatisfy({ oldGroup in
+                              guard let updated = accepted.map.groups.first(where: { $0.group == oldGroup.group }) else {
+                                  return false
+                              }
+                              return oldGroup.epochs.allSatisfy { oldEpoch in
+                                  oldEpoch.epoch == epoch || updated.epochs.first(where: {
+                                      $0.epoch == oldEpoch.epoch
+                                  })?.mapping == oldEpoch.mapping
+                              } && oldGroup.placements.allSatisfy { oldPlacement in
+                                  updated.placements.contains(oldPlacement)
+                              }
+                          })
+                    else {
+                        throw AlignmentAcceptanceError.invalidMap(
+                            "Adding this recording would change other accepted timing; no move was saved."
+                        )
+                    }
+                    try Self.requireMappedPlacement(source: source, epoch: epoch, group: planned.group, map: accepted.map)
+                    return accepted
+                }
+                let accepted = try await pipeline.reviseAcceptedMap(
+                    model: model, episode: episodeID, decisions: decisions
+                )
+                try Self.requireMappedPlacement(source: source, epoch: epoch, group: planned.group, map: accepted.map)
+                return accepted
+            }
             return try await pipeline.reviseAcceptedMap(model: model, episode: episodeID, decisions: decisions)
         }
         guard let report = reports[episodeID] else { throw AlignmentAcceptanceError.noReference }
-        return try await pipeline.accept(model: model, episode: episodeID, report: report, decisions: decisions)
+        let accepted = try await pipeline.accept(model: model, episode: episodeID, report: report, decisions: decisions)
+        if let source, let epoch = decisions.keys.first, let planned = report.plan.epoch(epoch) {
+            try Self.requireMappedPlacement(source: source, epoch: epoch, group: planned.group, map: accepted.map)
+        }
+        return accepted
+    }
+
+    private static func requireMappedPlacement(
+        source: SourceID, epoch: RecordingEpochID, group: RecorderGroupID, map: AlignedTimelineMap
+    ) throws {
+        guard let groupMap = map.groups.first(where: { $0.group == group }),
+              groupMap.placements.contains(where: {
+                  $0.occurrence.source == source && $0.spans.contains { $0.epoch == epoch }
+              }),
+              let mapping = groupMap.epochs.first(where: { $0.epoch == epoch })?.mapping,
+              case .mapped = mapping
+        else { throw AlignmentAcceptanceError.noPlaceableSource(epoch) }
     }
 
     func split(

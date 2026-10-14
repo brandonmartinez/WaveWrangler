@@ -258,6 +258,12 @@ final class EpisodeAlignmentModel {
     func sourceHasAcceptedTiming(_ source: SourceID) -> Bool {
         loadedWaveformMap.map { AlignmentWaveformProjection.timedSources(in: $0).contains(source) } ?? false
     }
+    private var selectedWaveformHasAcceptedTiming: Bool {
+        guard let row = selectedRow, let source = selectedWaveformSource else { return false }
+        return AlignmentWaveformProjection.hasAcceptedTiming(
+            source: source, epoch: row.epochID, group: row.groupID, map: loadedWaveformMap
+        )
+    }
     var enabledTimelineEnd: Double {
         guard let map = loadedWaveformMap else { return 0 }
         let sources = Set(enabledSources)
@@ -290,7 +296,7 @@ final class EpisodeAlignmentModel {
             ?? document?.store.model.episode(episodeID)?.recorderGroups.first?.id
         return row.groupID != reference
             && waveformTracks.contains(where: { $0.group == row.groupID })
-            && (loadedWaveformMap == nil || selectedWaveformSource.map(sourceHasAcceptedTiming) == true
+            && (loadedWaveformMap == nil || selectedWaveformHasAcceptedTiming
                 || row.state.remedies.contains("Edit Numerically…"))
     }
     func commitGroupMove() {
@@ -307,7 +313,7 @@ final class EpisodeAlignmentModel {
             do {
                 let accepted: AcceptedAlignment
                 if prior.episode(episodeID)?.alignment?.acceptedRevision != nil,
-                   selectedWaveformSource.map(sourceHasAcceptedTiming) == true {
+                   selectedWaveformHasAcceptedTiming {
                     accepted = try await runtime.shiftGroup(
                         model: prior, episode: episodeID, group: group, microseconds: delta
                     )
@@ -316,10 +322,13 @@ final class EpisodeAlignmentModel {
                     guard group != report.plan.reference?.group else {
                         throw AlignmentAcceptanceError.invalidMap("The reference recorder cannot be moved.")
                     }
+                    guard let source = selectedWaveformSource else {
+                        throw AlignmentAcceptanceError.noPlaceableSource(row.epochID)
+                    }
                     accepted = try await runtime.accept(
                         model: prior, episode: episodeID, decisions: [
                             row.epochID: .numeric(ppm: 0, offsetMilliseconds: Double(delta) / 1_000)
-                        ]
+                        ], requiringPlacementOf: source
                     )
                 }
 
@@ -345,6 +354,7 @@ final class EpisodeAlignmentModel {
                 loadedWaveformMap = nil
                 waveformMessage = "Saving timing; the moved waveform is a visual preview until the verified audio refresh completes."
             } catch {
+                groupDraftMilliseconds = 0
                 lastError = String(describing: error)
                 message = "The recorder group was not moved: \(error)."
             }

@@ -138,6 +138,10 @@ group drag, including an untimed group's first manual placement, retains that vi
 and verified, then loads fresh measured audio. Numeric move and epoch timing remain keyboard-accessible
 alternatives; visual previews never change playback timing. The episode overview is secondary and
 can be expanded for navigation outside the current measured window.
+An untimed drag is accepted only if the selected source and epoch appear as a mapped placement in
+the resulting revision. If an earlier accepted map omitted that source, the manual plan rebuilds
+the map while preserving every other accepted placement and mapping; an ineligible or stale source
+is refused explicitly rather than producing a no-op revision.
 Speaker colors follow sorted stable speaker IDs so distinct speakers receive distinct palette slots
 until the palette wraps; unknown speakers
 remain gray, with names and roles available independently of color.

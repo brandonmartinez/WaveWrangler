@@ -516,6 +516,10 @@ public final class AlignmentPipeline: Sendable {
         try await verifyPriorRevision(
             version: priorVersion, map: prior, episode: episode
         )
+        let mappedEpochs = Set(prior.groups.flatMap { $0.epochs.map(\.epoch) })
+        for epoch in decisions.keys where !mappedEpochs.contains(epoch) {
+            throw .unknownEpoch(epoch)
+        }
 
         let groups = try prior.groups.map { group throws(AlignmentAcceptanceError) in
             let epochs = try group.epochs.map { epoch throws(AlignmentAcceptanceError) in
