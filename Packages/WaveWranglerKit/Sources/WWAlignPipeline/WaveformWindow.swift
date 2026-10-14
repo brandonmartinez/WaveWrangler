@@ -48,7 +48,7 @@ public enum WaveformWindowError: Error, LocalizedError, Sendable, Equatable {
         case .invalidWindow: "Choose a finite audio window of at most 30 seconds."
         case .outsideSource: "This window is outside the recording."
         case .invalidSamples: "The recording contains invalid audio samples."
-        case .mapDoesNotMatchSource: "The timing map does not match this recording."
+        case .mapDoesNotMatchSource: "The timing map does not match this recording's placement or decoded sample rate/frame count. Refresh audio, then review source assignment and timing."
         case .decodeBudgetExceeded: "Random access is not established for this codec. Its preview is limited to the first 10 source minutes; use a PCM recording for later windows."
         case .overviewRequiresPCM: "Episode overview requires PCM with verified random access. Load a bounded window for this codec instead."
         case .overviewBudgetExceeded: "Episode overview supports up to 24 source hours and 2,048 distinct covered ranges per recording."

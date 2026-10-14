@@ -117,7 +117,7 @@ struct AlignmentPresentationTests {
         #expect(rows.first?.groupName == "Remote recorder")
         #expect(rows.first?.epochLabel == "Take 2")
         #expect(rows.first?.sourceNames == "synthetic.wav")
-        #expect(rows.first?.state.heading == "Unsupported — not attempted")
+        #expect(rows.first?.state.heading == "Timing not set — not attempted")
     }
 
     @MainActor

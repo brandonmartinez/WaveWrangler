@@ -235,7 +235,7 @@ struct AlignmentWaveformView: View {
     }
 
     private var recordings: some View {
-        GroupBox("Recordings · show and hear") {
+        GroupBox("Recordings · show and hear timed tracks") {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(groups, id: \.self) { group in
                     let tracks = model.waveformTracks.filter { $0.group == group }
@@ -243,7 +243,7 @@ struct AlignmentWaveformView: View {
                         get: { model.groupEnabled(group) },
                         set: { model.setGroup(group, enabled: $0) }
                     ))
-                    .accessibilityLabel("Show and hear recorder group \(tracks.first?.groupName ?? "")")
+                    .accessibilityLabel("Show recorder group \(tracks.first?.groupName ?? ""); only sources with accepted timing can be heard")
                     .accessibilityIdentifier("alignment.waveforms.group.\(group)")
                     if model.groupEnabled(group) {
                         ForEach(tracks) { track in
@@ -254,7 +254,9 @@ struct AlignmentWaveformView: View {
                                     set: { model.setTrack(track.id, enabled: $0) }
                                 ))
                                 .labelsHidden()
-                                .accessibilityLabel("Show and hear \(identity.label), \(track.name)")
+                                .accessibilityLabel(model.sourceHasAcceptedTiming(track.id)
+                                    ? "Show and hear \(identity.label), \(track.name)"
+                                    : "Show \(identity.label), \(track.name); timing not set, not played")
                                 .accessibilityIdentifier("alignment.waveforms.enabled.\(track.id)")
                                 Button("\(track.groupName) · \(track.name)") { model.selectWaveform(track) }
                                     .buttonStyle(.plain)
@@ -288,7 +290,7 @@ struct AlignmentWaveformView: View {
                 .font(.callout.weight(.semibold))
                 .lineLimit(1)
                 .frame(width: headerWidth, alignment: .leading)
-                .accessibilityLabel("Show and hear recorder group \(tracks.first?.groupName ?? "")")
+                .accessibilityLabel("Show recorder group \(tracks.first?.groupName ?? ""); only sources with accepted timing can be heard")
                 .accessibilityIdentifier("alignment.waveforms.group.\(group)")
                 Text("\(tracks.count) \(tracks.count == 1 ? "source" : "sources") · move this recorder as one unit")
                     .font(.caption)
@@ -328,8 +330,9 @@ struct AlignmentWaveformView: View {
             Spacer(minLength: 0)
             Text(model.auditionLabel)
                 .font(.caption).foregroundStyle(.secondary)
-                .lineLimit(2)
-                .frame(maxWidth: 230, alignment: .trailing)
+                .lineLimit(3)
+                .frame(maxWidth: 320, alignment: .trailing)
+                .help(model.auditionLabel)
                 .accessibilityIdentifier("alignment.waveforms.transport.status")
         }
         .overlay(alignment: .center) {
@@ -761,7 +764,9 @@ struct AlignmentWaveformView: View {
                         set: { model.setTrack(track.id, enabled: $0) }
                     ))
                     .labelsHidden()
-                    .accessibilityLabel("Show and hear \(identity.label), \(track.name)")
+                    .accessibilityLabel(model.sourceHasAcceptedTiming(track.id)
+                        ? "Show and hear \(identity.label), \(track.name)"
+                        : "Show \(identity.label), \(track.name); timing not set, not played")
                     .accessibilityIdentifier("alignment.waveforms.enabled.\(track.id)")
                     Circle().fill(identity.color).frame(width: 10, height: 10)
                         .accessibilityHidden(true)
@@ -777,6 +782,10 @@ struct AlignmentWaveformView: View {
                     Text(model.rows.first(where: { $0.epochID == track.epoch })?.state.heading ?? "Unmapped")
                         .font(.caption)
                         .accessibilityIdentifier("alignment.waveforms.state.\(track.id)")
+                    if model.waveformMap != nil, !model.sourceHasAcceptedTiming(track.id) {
+                        Text("No accepted timing: shown, not played.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
             .frame(width: headerWidth, alignment: .leading)

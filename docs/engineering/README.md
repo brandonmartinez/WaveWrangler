@@ -98,9 +98,13 @@ raw-witness capture before its new confirmed baseline is saved. It never silentl
 placement maps only one eligible epoch per non-reference group so recorder restarts with overlapping
 source clocks are not invented as synchronized. The user can place later epochs individually.
 `shiftAcceptedGroup` translates every supported segment of a non-reference group in one revision,
-preserving gaps, unsupported epochs, source spans, Undo, and canonical save verification. Enabled
-source playback mixes the same map-backed bounded windows and stops on failed witness/map currency
-checks. It may buffer between windows; it does not create an export or promise seamless transport.
+preserving gaps, unsupported epochs, source spans, Undo, and canonical save verification. Playback
+mixes enabled sources with accepted mapped epochs; enabled untimed sources remain visible but are
+explicitly excluded from the mix, and playback refuses if none is timed. Each mixed window still
+requires the verified map, source witness, and exact decoded format to match; any mismatch stops
+playback rather than substituting audio. It may buffer between windows; it does not create an export
+or promise seamless transport. "Timing not set — not attempted" describes the epoch's clock state,
+not the recording's file format; manual numeric timing or anchors do not require an estimator run.
 
 `WaveformWindowReader` produces at most 2,048 extrema bins per recording for a viewport of at most
 30 aligned seconds. `WaveformViewport` inverts each supported affine segment into the correct source

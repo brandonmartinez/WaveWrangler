@@ -143,7 +143,7 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(play, in: app)
         play.click()
         let status = app.staticTexts["alignment.waveforms.transport.status"]
-        XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 1 enabled track") },
+        XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 1 timed track") },
                       app.debugDescription)
         app.buttons["alignment.waveforms.transport.stop"].click()
         scrollTo(remoteToggle, in: app)
@@ -151,7 +151,7 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(waitUntil { tracks.count == 2 })
         scrollTo(play, in: app)
         play.click()
-        XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 2 enabled tracks") },
+        XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 2 timed tracks") },
                       app.debugDescription)
         app.buttons["alignment.waveforms.transport.stop"].click()
         app.typeKey("s", modifierFlags: .command)
@@ -389,7 +389,7 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(play, in: app)
         play.click()
         let status = app.descendants(matching: .any).matching(identifier: "alignment.waveforms.transport.status").firstMatch
-        XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 1 enabled track") }, app.debugDescription)
+        XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 1 timed track") }, app.debugDescription)
         app.buttons["alignment.waveforms.transport.stop"].click()
         scrollTo(group, in: app)
         group.click()
@@ -397,7 +397,7 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(waitUntil { (overlay.value as? String ?? overlay.label).contains("2 enabled tracks") })
         scrollTo(play, in: app)
         play.click()
-        XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 2 enabled tracks") }, app.debugDescription)
+        XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 2 timed tracks") }, app.debugDescription)
         app.buttons["alignment.waveforms.transport.stop"].click()
         let separateMode = app.segmentedControls["alignment.waveforms.layout"].buttons["Separate lanes"]
         scrollTo(separateMode, in: app)

@@ -6,6 +6,43 @@ import WWTimeMap
 
 @Suite("Waveform selection")
 struct AlignmentWaveformTests {
+    @Test func playbackSelectsOnlySourcesWithAcceptedMappedEpochs() throws {
+        let group = RecorderGroupID()
+        let mappedEpoch = RecordingEpochID()
+        let untimedEpoch = RecordingEpochID()
+        let mapped = try SourceOccurrence(
+            source: SourceID(), nominalRate: NominalRate(1_000), frameCount: 1_000
+        )
+        let untimed = try SourceOccurrence(
+            source: SourceID(), nominalRate: NominalRate(1_000), frameCount: 1_000
+        )
+        let reference = TimelineReference(
+            group: group, epoch: mappedEpoch, occurrence: mapped.id
+        )
+        let segment = try AffineClockSegment(
+            groupClockStart: .zero, groupClockEnd: ExactRational(1),
+            rateRatio: ExactRational(1), alignedOffset: .zero
+        )
+        let map = try AlignedTimelineMap(reference: reference, groups: [
+            GroupTimeMap(group: group, reference: reference, epochs: [
+                EpochClockMap(epoch: mappedEpoch, mapping: .mapped(
+                    segments: [segment], provenance: .timelineReference
+                )),
+                EpochClockMap(epoch: untimedEpoch, mapping: .unsupported(.notAttempted)),
+            ], placements: [
+                OccurrencePlacement(occurrence: mapped, spans: [
+                    EpochSpan(startFrame: 0, endFrame: 1_000, epoch: mappedEpoch, groupClockOffset: .zero),
+                ]),
+                OccurrencePlacement(occurrence: untimed, spans: [
+                    EpochSpan(startFrame: 0, endFrame: 1_000, epoch: untimedEpoch, groupClockOffset: .zero),
+                ]),
+            ]),
+        ])
+        #expect(AlignmentWaveformProjection.timedSources(in: map) == [mapped.source])
+        #expect(!AlignmentWaveformProjection.timedSources(in: map).contains(untimed.source))
+        #expect(!AlignmentWaveformProjection.timedSources(in: map).contains(SourceID()))
+    }
+
     @Test func scalableRulerKeepsTimeAndCursorInTheSameCoordinates() throws {
         let start = 90.0
         let width = 800.0

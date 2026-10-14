@@ -167,7 +167,7 @@ final class AlignmentInspectionUITests: XCTestCase {
     func testTM207RejectProposalCommandExists() {
         selectTargetEpoch()
         chooseEpisodeMenu("Reject Proposal")
-        XCTAssertTrue(stateHeading("Unsupported — not attempted").waitForExistence(timeout: 5))
+        XCTAssertTrue(stateHeading("Timing not set — not attempted").waitForExistence(timeout: 5))
     }
 
     func testTM208StartNewEpochCommandExists() {

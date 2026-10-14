@@ -219,6 +219,9 @@ final class EpisodeAlignmentModel {
         waveformTracks.filter { !disabledGroups.contains($0.group) && !disabledTracks.contains($0.id) }
             .map(\.id)
     }
+    func sourceHasAcceptedTiming(_ source: SourceID) -> Bool {
+        loadedWaveformMap.map { AlignmentWaveformProjection.timedSources(in: $0).contains(source) } ?? false
+    }
     var enabledTimelineEnd: Double {
         guard let map = loadedWaveformMap else { return 0 }
         let sources = Set(enabledSources)
@@ -823,9 +826,9 @@ final class EpisodeAlignmentModel {
             return
         }
         guard let document, !isWorking, !enabledSources.isEmpty,
-              loadedWaveformMap != nil, groupDraftMilliseconds == 0, pendingWaveformMove == nil,
+              let map = loadedWaveformMap, groupDraftMilliseconds == 0, pendingWaveformMove == nil,
               !waveformTimingIsDraft, waveformPlayheadSeconds.isFinite,
-              waveformPlayheadSeconds >= 0, waveformPlayheadSeconds < enabledTimelineEnd
+              waveformPlayheadSeconds >= 0
         else {
             auditionLabel = "Place and apply timing before playing; only confirmed, enabled tracks can be heard."
             return
@@ -834,9 +837,20 @@ final class EpisodeAlignmentModel {
             auditionLabel = "Timing is not verified on disk yet. Save the show before playing aligned audio."
             return
         }
+        let enabled = enabledSources
+        let timed = AlignmentWaveformProjection.timedSources(in: map)
+        let sources = enabled.filter { timed.contains($0) }
+        guard !sources.isEmpty else {
+            auditionLabel = "No enabled track has accepted timing. Set timing manually or enable a timed track."
+            return
+        }
+        guard waveformPlayheadSeconds < enabledTimelineEnd else {
+            auditionLabel = "Choose a playhead time covered by an enabled track with accepted timing."
+            return
+        }
+        let omitted = enabled.count - sources.count
         stopAudition()
         let snapshot = document.store.model
-        let sources = enabledSources
         let generation = auditionGeneration
         transportTask = Task { [weak self] in
             guard let self else { return }
@@ -847,7 +861,8 @@ final class EpisodeAlignmentModel {
                 do {
                     isPreparingAudition = true
                     if !isAuditioning {
-                        auditionLabel = "Preparing enabled tracks at the displayed map revision…"
+                        auditionLabel = "Preparing \(sources.count) timed \(sources.count == 1 ? "track" : "tracks") at the displayed map revision…"
+                            + (omitted == 0 ? "" : " \(omitted) enabled untimed \(omitted == 1 ? "track is" : "tracks are") excluded.")
                     }
                     let duration = min(AlignedAuditionWindowReader.maximumDurationSeconds, end - position)
                     let clip = try await runtime.mixedAudition(
@@ -857,11 +872,12 @@ final class EpisodeAlignmentModel {
                     try Task.checkCancellation()
                     guard generation == auditionGeneration, document.store.model == snapshot,
                           timingIsVerified(snapshot),
-                          enabledSources == sources else { throw CancellationError() }
+                          enabledSources == enabled else { throw CancellationError() }
                     isPreparingAudition = false
                     try enqueueTransport(clip, startSeconds: position, first: !isAuditioning)
                     isAuditioning = true
-                    auditionLabel = "Playing \(sources.count) enabled \(sources.count == 1 ? "track" : "tracks") on the stored timeline."
+                    auditionLabel = "Playing \(sources.count) timed \(sources.count == 1 ? "track" : "tracks") on the stored timeline."
+                        + (omitted == 0 ? "" : " \(omitted) enabled untimed \(omitted == 1 ? "track was" : "tracks were") excluded.")
                     if transportProgressTask == nil {
                         transportProgressTask = Task { [weak self] in
                             while let self, !Task.isCancelled, generation == auditionGeneration,

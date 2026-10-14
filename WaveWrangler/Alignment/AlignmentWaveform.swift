@@ -81,6 +81,19 @@ struct PendingWaveformMove {
 enum AlignmentWaveformProjection {
     static let overviewNavigationRange = 0.0...86_400.0
 
+    static func timedSources(in map: AlignedTimelineMap) -> Set<SourceID> {
+        Set(map.groups.flatMap { group in
+            let mappedEpochs = Set(group.epochs.compactMap { epoch -> RecordingEpochID? in
+                if case .mapped = epoch.mapping { return epoch.epoch }
+                return nil
+            })
+            return group.placements.compactMap { placement in
+                placement.spans.contains(where: { mappedEpochs.contains($0.epoch) })
+                    ? placement.occurrence.source : nil
+            }
+        })
+    }
+
     struct RulerTick: Identifiable {
         let id: Int
         let time: Double

@@ -584,7 +584,7 @@ enum AlignmentPresentation {
 
     private static func unsupported(_ reason: WWTimeMap.UnsupportedReason) -> String {
         switch reason {
-        case .notAttempted: "WaveWrangler hasn't attempted timing for this epoch yet."
+        case .notAttempted: "No timing has been set for this epoch. This is not a claim that the audio format is unsupported. You can try manual numeric timing or anchors without running the estimator."
         case .estimatorAbstained: "WaveWrangler's estimator abstained — it couldn't produce a reliable result."
         case .insufficientOverlap: "Not enough shared recording time to estimate timing."
         case .nonlinear: "The drift isn't a simple constant rate, which WaveWrangler doesn't model."
@@ -595,7 +595,7 @@ enum AlignmentPresentation {
 
     private static func unsupportedHeading(_ reason: WWTimeMap.UnsupportedReason) -> String {
         switch reason {
-        case .notAttempted: "Unsupported — not attempted"
+        case .notAttempted: "Timing not set — not attempted"
         case .estimatorAbstained: "Unsupported — estimator abstained"
         case .insufficientOverlap: "Unsupported — insufficient overlap"
         case .nonlinear: "Unsupported — nonlinear drift"
