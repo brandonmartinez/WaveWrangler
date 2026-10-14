@@ -290,14 +290,19 @@ final class EpisodeAlignmentModel {
         if enabled { disabledTracks.remove(source) } else { disabledTracks.insert(source) }
     }
     var canMoveGroup: Bool {
-        guard let row = selectedRow, !isWorking, !isLoadingWaveforms,
-              pendingWaveformMove == nil else { return false }
+        guard let row = selectedRow, let source = selectedWaveformSource else { return false }
+        return canMoveWaveform(source: source, group: row.groupID, epoch: row.epochID)
+    }
+    func canMoveWaveform(source: SourceID, group: RecorderGroupID, epoch: RecordingEpochID) -> Bool {
+        guard !isWorking, !isLoadingWaveforms, pendingWaveformMove == nil else { return false }
         let reference = loadedWaveformMap?.reference.group
             ?? document?.store.model.episode(episodeID)?.recorderGroups.first?.id
-        return row.groupID != reference
-            && waveformTracks.contains(where: { $0.group == row.groupID })
-            && (loadedWaveformMap == nil || selectedWaveformHasAcceptedTiming
-                || row.state.remedies.contains("Edit Numerically…"))
+        return group != reference
+            && waveformTracks.contains(where: { $0.group == group && $0.id == source })
+            && (loadedWaveformMap == nil || AlignmentWaveformProjection.hasAcceptedTiming(
+                source: source, epoch: epoch, group: group, map: loadedWaveformMap
+            ) || rows.first(where: { $0.groupID == group && $0.epochID == epoch })?
+                .state.remedies.contains("Edit Numerically…") == true)
     }
     func commitGroupMove() {
         guard let document, let row = selectedRow, canMoveGroup,

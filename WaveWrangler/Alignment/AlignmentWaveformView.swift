@@ -17,6 +17,8 @@ struct AlignmentWaveformView: View {
     @State private var normalizeView = false
     @State private var laneHeight = 140.0
     @State private var zoomCenterSeconds: Double?
+    @State private var hoveringMovableWaveform = false
+    @State private var handCursorPushed = false
 
     private let headerWidth: CGFloat = 210
 
@@ -232,6 +234,8 @@ struct AlignmentWaveformView: View {
         .onChange(of: editingTime) { _, focused in
             if !focused { commitTime() }
         }
+        .onChange(of: layout) { _, _ in clearHandCursor() }
+        .onDisappear { clearHandCursor() }
     }
 
     private var recordings: some View {
@@ -779,6 +783,15 @@ struct AlignmentWaveformView: View {
                         )
                     }
                     .onEnded { drag in finishGroupDrag(drag) })
+                .onContinuousHover { phase in
+                    switch phase {
+                    case let .active(point):
+                        let track = tracks.first { $0.id == model.selectedWaveformSource }
+                        updateHandHover(track.map { canGrab($0, at: point.x, width: geometry.size.width) } ?? false)
+                    case .ended:
+                        updateHandHover(false)
+                    }
+                }
             }
             .frame(height: max(160, CGFloat(tracks.count * 28 + 92)))
             .clipped()
@@ -869,6 +882,14 @@ struct AlignmentWaveformView: View {
                             )
                         }
                         .onEnded { drag in finishGroupDrag(drag) })
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case let .active(point):
+                            updateHandHover(canGrab(track, at: point.x, width: geometry.size.width))
+                        case .ended:
+                            updateHandHover(false)
+                        }
+                    }
                 }
                 .frame(height: laneHeight)
                 .clipped()
@@ -925,6 +946,7 @@ struct AlignmentWaveformView: View {
                 initialMilliseconds: model.groupDraftMilliseconds,
                 group: track.group, snapshot: model.waveformSnapshotID
             )
+            refreshHandCursor()
         }
         guard let session = dragSession else { return }
         guard session.group == track.group, session.snapshot == model.waveformSnapshotID,
@@ -948,7 +970,9 @@ struct AlignmentWaveformView: View {
         }
         model.groupDraftMilliseconds = preview
         dragSession = nil
+        refreshHandCursor()
         model.commitGroupMove()
+        updateHandHover(false)
     }
 
     private func cancelGroupDrag() {
@@ -957,6 +981,46 @@ struct AlignmentWaveformView: View {
                 && model.selectedRow?.groupID == session.group ? session.initialMilliseconds : 0
         }
         dragSession = nil
+        refreshHandCursor()
+    }
+
+    private func canGrab(_ track: AlignmentWaveformTrack, at x: CGFloat, width: CGFloat) -> Bool {
+        guard width > 0 else { return false }
+        let time = model.waveformStartSeconds + Double(x / width) * model.waveformDurationSeconds
+        guard let stroke = AlignmentWaveformProjection.selectedStroke(
+            at: time, strokes: model.waveformInteractionStrokes(for: track.id),
+            draftEpoch: model.waveformTimingIsDraft ? model.selection : nil,
+            ratePPM: model.waveformRatePPM, offsetMilliseconds: model.waveformOffsetMilliseconds
+        ) else { return false }
+        return model.canMoveWaveform(source: track.id, group: track.group, epoch: stroke.epoch)
+    }
+
+    private func updateHandHover(_ hovering: Bool) {
+        hoveringMovableWaveform = hovering
+        refreshHandCursor()
+    }
+
+    private func refreshHandCursor() {
+        let cursor: NSCursor? = dragSession != nil ? .closedHand : hoveringMovableWaveform ? .openHand : nil
+        if let cursor {
+            if handCursorPushed {
+                cursor.set()
+            } else {
+                cursor.push()
+                handCursorPushed = true
+            }
+        } else if handCursorPushed {
+            NSCursor.pop()
+            handCursorPushed = false
+        }
+    }
+
+    private func clearHandCursor() {
+        hoveringMovableWaveform = false
+        if handCursorPushed {
+            NSCursor.pop()
+            handCursorPushed = false
+        }
     }
 
     @ViewBuilder

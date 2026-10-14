@@ -138,6 +138,8 @@ group drag, including an untimed group's first manual placement, retains that vi
 and verified, then loads fresh measured audio. Numeric move and epoch timing remain keyboard-accessible
 alternatives; visual previews never change playback timing. The episode overview is secondary and
 can be expanded for navigation outside the current measured window.
+The pointer shows an open hand only over a selectable waveform in a movable recorder group, and
+a closed hand during its drag; the fixed reference and empty lane space do not advertise dragging.
 An untimed drag is accepted only if the selected source and epoch appear as a mapped placement in
 the resulting revision. If an earlier accepted map omitted that source, the manual plan rebuilds
 the map while preserving every other accepted placement and mapping; an ineligible or stale source
