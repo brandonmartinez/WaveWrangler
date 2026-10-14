@@ -40,7 +40,19 @@ struct AlignmentWaveformTests {
         ])
         #expect(AlignmentWaveformProjection.timedSources(in: map) == [mapped.source])
         #expect(!AlignmentWaveformProjection.timedSources(in: map).contains(untimed.source))
-        #expect(!AlignmentWaveformProjection.timedSources(in: map).contains(SourceID()))
+        let unplaced = SourceID()
+        #expect(!AlignmentWaveformProjection.timedSources(in: map).contains(unplaced))
+        let preview = AlignmentWaveformTrack(
+            group: group, epoch: untimedEpoch, name: "generated-unplaced.wav",
+            groupName: "Synthetic", envelope: WaveformEnvelope(
+                source: unplaced, sampleRate: 1_000, channelCount: 1, totalFrames: 1_000,
+                bins: [WaveformBin(firstFrame: 0, endFrame: 1_000, minimum: -0.5, maximum: 0.5)]
+            )
+        )
+        let position = try #require(try AlignmentWaveformProjection.position(frame: 500, track: preview, map: map))
+        #expect(position.sourceSeconds == 0.5)
+        #expect(position.displaySeconds == 0.5)
+        #expect(!position.mapped)
     }
 
     @Test func scalableRulerKeepsTimeAndCursorInTheSameCoordinates() throws {
@@ -48,45 +60,50 @@ struct AlignmentWaveformTests {
         let width = 800.0
         let duration = 20.0
         let zoom = try #require(AlignmentWaveformProjection.rulerZoom(
-            start: start, duration: duration, anchor: 0.25, magnification: 2, end: 120
+            start: start, duration: duration, anchor: 0.25, magnification: 2,
+            bounds: 0...120, maximumDuration: 30
         ))
         #expect(zoom.duration == 10)
         #expect(zoom.start == 92.5)
         #expect(AlignmentWaveformProjection.rulerTime(
-            at: 200, width: width, start: zoom.start, duration: zoom.duration, end: 120
+            at: 200, width: width, start: zoom.start, duration: zoom.duration, bounds: 0...120
         ) == 95)
         #expect(AlignmentWaveformProjection.rulerTime(
-            at: 400, width: width, start: start, duration: duration, end: 95
+            at: 400, width: width, start: start, duration: duration, bounds: 0...95
         ) == 95)
         #expect(AlignmentWaveformProjection.rulerTime(
-            at: -100, width: width, start: start, duration: duration, end: 120
+            at: -100, width: width, start: start, duration: duration, bounds: 0...120
         ) == 90)
         #expect(AlignmentWaveformProjection.rulerPanStart(
-            from: 10, translation: 50, width: 500, duration: 5, end: 100
+            from: 10, translation: 50, width: 500, duration: 5, bounds: 0...100
         ) == 9.5)
         #expect(AlignmentWaveformProjection.rulerPanStart(
-            from: 0, translation: 500, width: 500, duration: 5, end: 100
+            from: 0, translation: 500, width: 500, duration: 5, bounds: 0...100
         ) == 0)
         #expect(AlignmentWaveformProjection.rulerPanStart(
-            from: 4, translation: 0, width: 500, duration: 2, end: 5
+            from: 4, translation: 0, width: 500, duration: 2, bounds: 0...5
         ) == 4)
         #expect(AlignmentWaveformProjection.rulerPanStart(
-            from: 4.5, translation: -200, width: 500, duration: 2, end: 5
+            from: 4.5, translation: -200, width: 500, duration: 2, bounds: 0...5
         ) == 4.5)
         #expect(AlignmentWaveformProjection.rulerZoom(
-            start: 0, duration: 20, anchor: 0.25, magnification: 0.01, end: 120
+            start: 0, duration: 20, anchor: 0.25, magnification: 0.01,
+            bounds: 0...120, maximumDuration: 30
         )?.duration == 30)
         #expect(AlignmentWaveformProjection.rulerZoom(
-            start: 0, duration: 20, anchor: 0.25, magnification: 1_000, end: 120
+            start: 0, duration: 20, anchor: 0.25, magnification: 1_000,
+            bounds: 0...120, maximumDuration: 30
         )?.duration == 0.5)
         #expect(AlignmentWaveformProjection.rulerZoom(
-            start: 4, duration: 2, anchor: 0, magnification: 2, end: 4
-        )?.start == 3.5)
+            start: 4, duration: 2, anchor: 0, magnification: 2,
+            bounds: 0...4, maximumDuration: 30
+        )?.start == 3)
         #expect(AlignmentWaveformProjection.rulerZoom(
-            start: 0, duration: 20, anchor: 0.25, magnification: 0, end: 120
+            start: 0, duration: 20, anchor: 0.25, magnification: 0,
+            bounds: 0...120, maximumDuration: 30
         ) == nil)
         #expect(AlignmentWaveformProjection.rulerTime(
-            at: .nan, width: width, start: start, duration: duration, end: 120
+            at: .nan, width: width, start: start, duration: duration, bounds: 0...120
         ) == nil)
     }
 
@@ -162,7 +179,19 @@ struct AlignmentWaveformTests {
         #expect(abs((AlignmentWaveformProjection.zoomDuration(for: level) ?? 0) - 2) < 0.000_001)
         #expect(AlignmentWaveformProjection.windowStart(centeredAt: 10, duration: 2) == 9)
         #expect(AlignmentWaveformProjection.windowStart(centeredAt: 10, duration: 0.5) == 9.75)
-        #expect(AlignmentWaveformProjection.windowStart(centeredAt: 0.5, duration: 30) == 0)
+        #expect(AlignmentWaveformProjection.windowStart(centeredAt: 0.5, duration: 30) == -14.5)
+        #expect(AlignmentWaveformProjection.zoomDuration(for: 0, maximum: 4_200) == 4_200)
+        #expect(AlignmentWaveformProjection.zoomLevel(for: 4_200, maximum: 4_200) == 0)
+        #expect(AlignmentWaveformProjection.rulerPanStart(
+            from: -10, translation: 200, width: 400, duration: 20,
+            bounds: -86_400...86_400
+        ) == -20)
+        let fullRuler = AlignmentWaveformProjection.rulerTicks(
+            start: -9_132, duration: 14_400, width: 900
+        )
+        #expect(fullRuler.contains { $0.time < 0 })
+        #expect(fullRuler.contains { $0.time > 0 })
+        #expect(AlignmentPresentation.formatTime(-9_132) == "−02:32:12.000")
         #expect(AlignmentWaveformProjection.zoomDuration(for: .nan) == nil)
         #expect(AlignmentWaveformProjection.zoomLevel(for: 0) == nil)
         #expect(AlignmentWaveformProjection.zoomLevel(for: 31) == nil)
@@ -226,7 +255,7 @@ struct AlignmentWaveformTests {
         #expect(tile?.start == 237)
         #expect(tile?.duration == 6)
         #expect(AlignmentWaveformProjection.tileWindow(start: 20, visible: 30)?.start == 20)
-        #expect(AlignmentWaveformProjection.tileWindow(start: 0, visible: 5)?.start == 0)
+        #expect(AlignmentWaveformProjection.tileWindow(start: 0, visible: 5)?.start == -5)
         #expect(AlignmentWaveformProjection.tileTranslation(
             tileStart: 237, windowStart: 239, visible: 2, width: 400
         ) == -400)
@@ -266,10 +295,10 @@ struct AlignmentWaveformTests {
         ) == nil)
         #expect(AlignmentWaveformProjection.firstUncoveredTime(
             start: 0, duration: 30, margin: 15, tiles: Array(tiles.prefix(1))
-        ) == 30)
+        ) == -15)
         #expect(AlignmentWaveformProjection.firstUncoveredTime(
             start: 0, duration: 30, margin: 15, tiles: tiles
-        ) == nil)
+        ) == -15)
         let overlap = [(id: first, start: 0.0, duration: 30.0),
                        (id: second, start: 15.0, duration: 30.0)]
         #expect(AlignmentWaveformProjection.visibleTileSlices(
@@ -372,9 +401,9 @@ struct AlignmentWaveformTests {
             AlignmentWaveformProjection.overviewWindowStart(at: time, duration: 5, strokes: [stroke])
         }
         let negativeOffset = try stroke(offset: -180)
-        #expect(AlignmentWaveformProjection.unavailableOverviewRanges(in: negativeOffset.displayRange) == [-180...0])
-        #expect(start(-100, negativeOffset) == nil)
-        #expect(start(0, negativeOffset) == 0)
+        #expect(AlignmentWaveformProjection.unavailableOverviewRanges(in: negativeOffset.displayRange).isEmpty)
+        #expect(start(-100, negativeOffset) == -102.5)
+        #expect(start(0, negativeOffset) == -2.5)
         #expect(start(100, negativeOffset) == 97.5)
         #expect(start(200, negativeOffset) == nil)
 
@@ -388,12 +417,15 @@ struct AlignmentWaveformTests {
         #expect(start(86_400, fasterClock) == 86_397.5)
         #expect(start(86_400.001, fasterClock) == nil)
         #expect(AlignmentWaveformProjection.unavailableOverviewRanges(in: 0...86_400).isEmpty)
+        let farNegative = try stroke(offset: -86_410)
+        #expect(AlignmentWaveformProjection.unavailableOverviewRanges(in: farNegative.displayRange)
+            == [farNegative.displayRange.lowerBound ... -86_400])
     }
 
     @Test func overviewNavigationBoundsExactWindowWithoutMakingAnAnchor() {
         #expect(AlignmentWaveformProjection.windowStart(centeredAt: 7_200, duration: 5) == 7_197.5)
-        #expect(AlignmentWaveformProjection.windowStart(centeredAt: 0, duration: 30) == 0)
-        for time in [-1.0, .nan, .infinity, 86_401] {
+        #expect(AlignmentWaveformProjection.windowStart(centeredAt: 0, duration: 30) == -15)
+        for time in [-86_401, .nan, .infinity, 86_401] {
             #expect(AlignmentWaveformProjection.windowStart(centeredAt: time, duration: 5) == nil)
         }
         #expect(AlignmentWaveformProjection.windowStart(centeredAt: 1, duration: 31) == nil)

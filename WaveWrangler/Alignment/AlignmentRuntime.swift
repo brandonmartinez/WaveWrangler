@@ -345,7 +345,9 @@ actor AlignmentRuntime {
                         sourceURL: admission.url, source: record.id,
                         matching: admission.witness, decoder: pipeline.decoder,
                         startSeconds: startSeconds, durationSeconds: durationSeconds,
-                        groupMap: map?.groups.first(where: { $0.group == groupID })
+                        groupMap: map?.groups.first(where: {
+                            $0.group == groupID && $0.placements.contains(where: { $0.occurrence.source == record.id })
+                        })
                     )
                 }
                 try await reverify(admission)
@@ -399,7 +401,9 @@ actor AlignmentRuntime {
         let decoder = pipeline.decoder
         let accessStore = accessStore
         let sourceCount = max(1, episode.sources.count)
-        let groupMap = map?.groups.first(where: { $0.group == group })
+        let groupMap = map?.groups.first(where: {
+            $0.group == group && $0.placements.contains(where: { $0.occurrence.source == source })
+        })
         let job = await coordinator.submit(slot, key: key) {
             let envelope = try await WaveformWindowReader.readOverview(
                 sourceURL: admission.url, source: source,

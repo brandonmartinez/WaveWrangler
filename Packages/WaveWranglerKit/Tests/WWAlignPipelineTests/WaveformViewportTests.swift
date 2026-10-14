@@ -43,6 +43,13 @@ struct WaveformViewportTests {
             startSeconds: 3, durationSeconds: 2
         )
         #expect(ranges == [2_000..<3_000])
+        let early = try WaveformTestAudio.map(
+            source: source, rate: 1_000, frames: 10_000, offset: ExactRational(-2)
+        )
+        #expect(try WaveformViewport.frameRanges(
+            source: source, rate: 1_000, totalFrames: 10_000, groupMap: early,
+            startSeconds: -1, durationSeconds: 1
+        ) == [1_000..<2_000])
         #expect(throws: WaveformWindowError.mapDoesNotMatchSource) {
             try WaveformViewport.frameRanges(
                 source: source, rate: 2_000, totalFrames: 10_000, groupMap: map,
@@ -73,7 +80,7 @@ struct WaveformViewportTests {
     }
 
     @Test func invalidViewportDoesNotTrapOrInventAWindow() throws {
-        for start in [-1.0, .nan, .infinity, 86_401] {
+        for start in [-86_401.0, .nan, .infinity, 86_401] {
             #expect(throws: WaveformWindowError.invalidWindow) {
                 try WaveformViewport.frameRanges(
                     source: SourceID(), rate: 48_000, totalFrames: 1_000, groupMap: nil,
@@ -86,6 +93,37 @@ struct WaveformViewportTests {
             source: SourceID(), rate: 48_000, totalFrames: 48_000, groupMap: nil,
             startSeconds: 0.5, durationSeconds: 1
         ) == [24_000..<48_000])
+    }
+
+    @Test func negativeAlignedWindowReadsWitnessedAudioWithoutChangingSourceTime() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let rate = 16_000
+        let source = SourceID()
+        let url = folder.appendingPathComponent("generated-early.wav")
+        var samples = Array(repeating: Int16(0), count: rate * 2)
+        for frame in (rate / 2)..<(rate / 2 + rate / 20) { samples[frame] = 16_384 }
+        try WaveformTestAudio.wave(rate: rate, samples: samples).write(to: url)
+        let access = SourceAccessContext()
+        guard case let .success(metadata) = access.io.metadata(at: url) else { throw DecodeFailure.notFound }
+        let decoder = SourceDecoder(access: access)
+        let witness = try await decoder.captureRawIdentity(url, matching: metadata.fingerprint)
+        let map = try WaveformTestAudio.map(
+            source: source, rate: rate, frames: Int64(samples.count), offset: ExactRational(-1)
+        )
+        let envelope = try await WaveformWindowReader.readWindow(
+            sourceURL: url, source: source, matching: witness, decoder: decoder,
+            startSeconds: -0.75, durationSeconds: 0.5, groupMap: map
+        )
+        #expect(envelope.bins.first?.firstFrame == 4_000)
+        #expect(envelope.bins.last?.endFrame == 12_000)
+        let clip = try await AlignedAuditionWindowReader.readWindow(
+            sourceURL: url, source: source, matching: witness, decoder: decoder,
+            groupMap: map, decodedChannel: 0, startSeconds: -0.75, durationSeconds: 0.5
+        )
+        #expect(clip.count == 24_000)
+        #expect(clip.contains { $0 > 0.1 })
     }
 
     @Test func boundsDecodedPrefixIncludingClockOffsetsAndRestartSeeking() throws {

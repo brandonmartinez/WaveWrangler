@@ -16,7 +16,7 @@ public enum AlignedAuditionWindowReader {
         decoder: SourceDecoder, groupMap: GroupTimeMap, decodedChannel: Int,
         startSeconds: Double, durationSeconds: Double
     ) async throws -> [Float] {
-        guard startSeconds.isFinite, startSeconds >= 0, startSeconds <= 86_400,
+        guard startSeconds.isFinite, (-86_400...86_400).contains(startSeconds),
               durationSeconds.isFinite, durationSeconds > 0, durationSeconds <= maximumDurationSeconds,
               let placement = groupMap.placements.first(where: { $0.occurrence.source == source })
         else { throw WaveformWindowError.invalidWindow }

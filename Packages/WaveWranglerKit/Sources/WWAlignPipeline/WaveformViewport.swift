@@ -54,7 +54,7 @@ enum WaveformViewport {
         source: SourceID, rate: Int, totalFrames: Int64, groupMap: GroupTimeMap?,
         startSeconds: Double, durationSeconds: Double
     ) throws -> [Range<Int64>] {
-        guard startSeconds.isFinite, startSeconds >= 0, startSeconds <= 86_400,
+        guard startSeconds.isFinite, (-86_400...86_400).contains(startSeconds),
               durationSeconds.isFinite, durationSeconds > 0, durationSeconds <= 30,
               rate > 0, totalFrames >= 0
         else { throw WaveformWindowError.invalidWindow }

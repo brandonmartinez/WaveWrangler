@@ -92,6 +92,7 @@ final class VisualAlignmentUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.track.")
         )
         XCTAssertTrue(waitUntil { tracks.count == 2 }, app.debugDescription)
+        XCTAssertTrue(app.buttons["alignment.waveforms.fitTimeline"].exists)
         XCTAssertTrue(app.checkBoxes.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "alignment.waveforms.group.", "Studio"

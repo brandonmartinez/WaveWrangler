@@ -79,7 +79,7 @@ struct PendingWaveformMove {
 }
 
 enum AlignmentWaveformProjection {
-    static let overviewNavigationRange = 0.0...86_400.0
+    static let overviewNavigationRange = -86_400.0...86_400.0
 
     static func timedSources(in map: AlignedTimelineMap) -> Set<SourceID> {
         Set(map.groups.flatMap { group in
@@ -101,8 +101,7 @@ enum AlignmentWaveformProjection {
     }
 
     static func rulerTicks(start: Double, duration: Double, width: Double) -> [RulerTick] {
-        guard start.isFinite, (0...86_400).contains(start),
-              duration.isFinite, (0.5...30).contains(duration),
+        guard start.isFinite, duration.isFinite, duration >= 0.5,
               width.isFinite, width > 0 else { return [] }
         let target = duration * 120 / width
         guard target.isFinite, target > 0 else { return [] }
@@ -118,34 +117,43 @@ enum AlignmentWaveformProjection {
     }
 
     static func rulerTime(
-        at x: Double, width: Double, start: Double, duration: Double, end: Double
+        at x: Double, width: Double, start: Double, duration: Double, bounds: ClosedRange<Double>
     ) -> Double? {
         guard x.isFinite, width.isFinite, width > 0, start.isFinite,
-              duration.isFinite, duration > 0, end.isFinite, end > 0 else { return nil }
-        return min(end, max(0, start + min(width, max(0, x)) / width * duration))
+              duration.isFinite, duration > 0,
+              bounds.lowerBound.isFinite, bounds.upperBound.isFinite,
+              bounds.lowerBound < bounds.upperBound else { return nil }
+        return min(bounds.upperBound, max(bounds.lowerBound,
+            start + min(width, max(0, x)) / width * duration))
     }
 
     static func rulerZoom(
-        start: Double, duration: Double, anchor: Double, magnification: Double, end: Double
+        start: Double, duration: Double, anchor: Double, magnification: Double,
+        bounds: ClosedRange<Double>, maximumDuration: Double
     ) -> (start: Double, duration: Double)? {
-        guard start.isFinite, start >= 0, duration.isFinite, duration > 0,
+        guard start.isFinite, duration.isFinite, duration > 0,
               anchor.isFinite, (0...1).contains(anchor),
               magnification.isFinite, magnification > 0,
-              end.isFinite, end > 0 else { return nil }
-        let span = min(30, max(0.5, duration / magnification))
+              bounds.lowerBound.isFinite, bounds.upperBound.isFinite,
+              bounds.lowerBound < bounds.upperBound,
+              maximumDuration.isFinite, maximumDuration >= 0.5 else { return nil }
+        let span = min(maximumDuration, max(0.5, duration / magnification))
         let anchoredTime = start + anchor * duration
         guard anchoredTime.isFinite else { return nil }
-        return (min(max(0, min(end, 86_400) - span / 2),
-                    max(0, anchoredTime - anchor * span)), span)
+        return (min(max(bounds.lowerBound, bounds.upperBound - span),
+                    max(bounds.lowerBound, anchoredTime - anchor * span)), span)
     }
 
     static func rulerPanStart(
-        from start: Double, translation: Double, width: Double, duration: Double, end: Double
+        from start: Double, translation: Double, width: Double, duration: Double,
+        bounds: ClosedRange<Double>
     ) -> Double? {
         guard start.isFinite, translation.isFinite, width.isFinite, width > 0,
-              duration.isFinite, duration > 0, end.isFinite, end > 0 else { return nil }
-        return min(max(start, max(0, end - duration / 2)),
-                   max(0, start - translation / width * duration))
+              duration.isFinite, duration > 0,
+              bounds.lowerBound.isFinite, bounds.upperBound.isFinite,
+              bounds.lowerBound < bounds.upperBound else { return nil }
+        return min(max(start, bounds.upperBound - duration / 2),
+                   max(bounds.lowerBound, start - translation / width * duration))
     }
 
     struct DisplayColumn: Equatable {
@@ -193,14 +201,16 @@ enum AlignmentWaveformProjection {
         return ordered.firstIndex(of: id).map { $0 % paletteCount }
     }
 
-    static func zoomDuration(for level: Double) -> Double? {
-        guard level.isFinite, (0...1).contains(level) else { return nil }
-        return 30 * pow(1.0 / 60, level)
+    static func zoomDuration(for level: Double, maximum: Double = 30) -> Double? {
+        guard level.isFinite, (0...1).contains(level),
+              maximum.isFinite, maximum >= 0.5 else { return nil }
+        return maximum * pow(0.5 / maximum, level)
     }
 
-    static func zoomLevel(for duration: Double) -> Double? {
-        guard duration.isFinite, (0.5...30).contains(duration) else { return nil }
-        return log(30 / duration) / log(60)
+    static func zoomLevel(for duration: Double, maximum: Double = 30) -> Double? {
+        guard duration.isFinite, maximum.isFinite, maximum > 0.5,
+              (0.5...maximum).contains(duration) else { return nil }
+        return log(maximum / duration) / log(maximum / 0.5)
     }
 
     struct TileSlice: Equatable {
@@ -239,8 +249,8 @@ enum AlignmentWaveformProjection {
         tiles: [(id: UUID, start: Double, duration: Double)]
     ) -> Double? {
         guard margin.isFinite, margin >= 0 else { return nil }
-        let lower = max(0, start - margin)
-        let upper = start + duration + margin
+        let lower = max(overviewNavigationRange.lowerBound, start - margin)
+        let upper = min(overviewNavigationRange.upperBound, start + duration + margin)
         guard lower.isFinite, upper.isFinite, upper > lower else { return nil }
         let slices = visibleTileSlices(start: lower, duration: upper - lower, tiles: tiles)
         var coveredUntil = lower
@@ -255,7 +265,7 @@ enum AlignmentWaveformProjection {
         guard start.isFinite, overviewNavigationRange.contains(start),
               visible.isFinite, visible > 0, visible <= 30 else { return nil }
         let duration = min(30, visible * 3)
-        return (max(0, start - (duration - visible) / 2), duration)
+        return (max(overviewNavigationRange.lowerBound, start - (duration - visible) / 2), duration)
     }
 
     static func tileTranslation(tileStart: Double, windowStart: Double, visible: Double, width: Double) -> Double? {
@@ -321,7 +331,7 @@ enum AlignmentWaveformProjection {
         guard time.isFinite, overviewNavigationRange.contains(time),
               duration.isFinite, duration > 0, duration <= 30
         else { return nil }
-        return max(0, time - duration / 2)
+        return max(overviewNavigationRange.lowerBound, time - duration / 2)
     }
 
     static func unavailableOverviewRanges(in extent: ClosedRange<Double>) -> [ClosedRange<Double>] {
@@ -385,7 +395,12 @@ enum AlignmentWaveformProjection {
         }
         guard let group = map.groups.first(where: { $0.group == track.group }),
               let placement = group.placements.first(where: { $0.occurrence.source == track.id })
-        else { return nil }
+        else {
+            return AlignmentWaveformPosition(
+                sourceSeconds: source, groupSeconds: source,
+                displaySeconds: source, epoch: track.epoch, mapped: false
+            )
+        }
         let groupSeconds = source + (placement.spans.first(where: {
             $0.startFrame <= frame && frame < $0.endFrame
         })?.groupClockOffset.approximateDouble ?? 0)

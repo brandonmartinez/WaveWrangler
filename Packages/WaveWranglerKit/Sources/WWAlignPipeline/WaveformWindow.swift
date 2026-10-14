@@ -117,7 +117,7 @@ public enum WaveformWindowReader {
         durationSeconds: Double,
         groupMap: GroupTimeMap? = nil
     ) async throws -> WaveformEnvelope {
-        guard startSeconds.isFinite, startSeconds >= 0, startSeconds <= 86_400,
+        guard startSeconds.isFinite, (-86_400...86_400).contains(startSeconds),
               durationSeconds.isFinite, durationSeconds > 0,
               durationSeconds <= maximumDurationSeconds
         else { throw WaveformWindowError.invalidWindow }

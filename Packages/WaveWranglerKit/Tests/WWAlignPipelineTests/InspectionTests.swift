@@ -123,6 +123,35 @@ struct InspectionTests {
                     .epochs.first(where: { $0.epoch == laterEpoch })?.mapping)
     }
 
+    @Test func unplacedGroupCanReceiveNegativeManualTimingWithoutEstimation() async throws {
+        let fixture = try await PipelineFixture([
+            .init(name: "Reference", sources: [.init(name: "reference", seconds: 12, signal: .sine(hz: 440))]),
+            .init(name: "Device", sources: [.init(name: "early", seconds: 12, signal: .sine(hz: 880))]),
+        ])
+        let report = try await fixture.pipeline.prepareManual(
+            model: fixture.model, episode: fixture.episodeID,
+            sources: fixture.sources, authorizations: fixture.authorizations
+        )
+        #expect(report.records.isEmpty)
+        #expect(fixture.content.total.reads == 0)
+        let unplaced = try await fixture.acceptAndActivate(report, [:])
+        let manual = try await fixture.pipeline.reviseAcceptedMap(
+            model: unplaced.model, episode: fixture.episodeID,
+            decisions: [fixture.epochs[1]: .numeric(ppm: 0, offsetMilliseconds: -9_132_000)]
+        )
+        #expect(manual.map.groups.first { $0.group == fixture.groups[0] }
+                == unplaced.map.groups.first { $0.group == fixture.groups[0] })
+        let target = try #require(manual.map.groups.first { $0.group == fixture.groups[1] })
+        guard case let .mapped(segments, _) = target.epochs[0].mapping else {
+            Issue.record("manual negative timing must create a placement")
+            return
+        }
+        #expect(segments[0].alignedOffset.approximateDouble == -9_132)
+        try await fixture.pipeline.activate(manual)
+        #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == manual.revision.revision)
+        #expect(fixture.content.total.reads == 0)
+    }
+
     @Test func openingInspectionReadsNoSourceContentOrMetadata() async throws {
         let fixture = try await PipelineFixture([
             .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 22), registered: false)]),
