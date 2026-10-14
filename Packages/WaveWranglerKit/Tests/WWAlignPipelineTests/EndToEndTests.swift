@@ -114,6 +114,23 @@ struct EndToEndTests {
         #expect(fixture.content.total.opens == opensBeforeRender + 2, "one cursor per source for the whole group render")
         let firstSegments = try alignedSegments(first, store: fixture.store)
         try checkCoverage(first, firstSegments, fixture: fixture, revision: 1)
+        var measuredFrames = 0
+        for entry in firstSegments where entry.segment.header.source == tgt {
+            let channel = entry.segment.header.decodedChannel
+            if let check = relativeError(
+                entry.segment.samples, firstFrame: entry.segment.header.firstOutputFrame,
+                rate: 48_000, interval: 4 ... 18,
+                expected: { channelGain(channel) * Signal.scene(TwoRecorder.seed, $0) }
+            ) {
+                #expect(check.error < 0.03, "accepted acoustic rate/offset must align the rendered samples")
+                measuredFrames += check.count
+            }
+        }
+        #expect(measuredFrames > 10 * 48_000, "real synthetic samples were compared, not only map metadata")
+        let measuredGroup = try #require(accepted.map.group(containing: alignmentOccurrenceID(for: tgt)))
+        #expect(try measuredGroup.alignedTime(
+            ofFrame: 23 * 48_000, in: alignmentOccurrenceID(for: tgt)
+        ) == .outsideCoverage, "the fitted stretch is not extrapolated into unmeasured audio")
         // The reference group is identity on the timeline.
         for entry in firstSegments where entry.segment.header.source == ref {
             let c = entry.segment.header.decodedChannel

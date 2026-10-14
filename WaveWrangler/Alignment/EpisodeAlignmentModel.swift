@@ -24,6 +24,10 @@ final class EpisodeAlignmentModel {
     }
     private(set) var isWorking = false
     private(set) var hasAnalysis = false
+    private(set) var analysisStates: [RecordingEpochID: EpochAlignmentState] = [:]
+    private var analysisSourceEndByEpoch: [RecordingEpochID: Double] = [:]
+    private var analysedSources: [SourceRecord]?
+    private var analysedGroups: [RecorderGroup]?
     private(set) var message = "Alignment has not read or analysed any audio."
     private(set) var dependents = "No dependent work yet."
     private(set) var lastError: String?
@@ -202,6 +206,32 @@ final class EpisodeAlignmentModel {
 
     var selectedRow: AlignmentRow? {
         rows.first { $0.epochID == selection }
+    }
+
+    var selectedAnalysis: EpochAnalysisRecord? {
+        guard let selection else { return nil }
+        return analysisStates[selection]?.analysis
+    }
+
+    var selectedAnalysisState: EpochAlignmentState? {
+        guard let selection else { return nil }
+        return analysisStates[selection]
+    }
+
+    var canAcceptProposal: Bool {
+        guard !isWorking, selectedAnalysis?.proposal != nil,
+              let episode = document?.store.model.episode(episodeID)
+        else { return false }
+        return analysedSources == episode.sources && analysedGroups == episode.recorderGroups
+            && selectedRow?.groupID != acceptedMap?.reference.group
+    }
+
+    var proposalNeedsExtension: Bool {
+        guard let record = selectedAnalysis, let proposal = record.proposal else { return false }
+        let end = analysisSourceEndByEpoch[record.target.epoch]
+            ?? Double(record.target.sourceFrames) / Double(record.target.sourceRate)
+        return proposal.segment.groupClockStart > .zero
+            || proposal.segment.groupClockEnd.approximateDouble < end - 1 / Double(record.target.sourceRate)
     }
 
     var waveformMap: AlignedTimelineMap? { loadedWaveformMap }
@@ -1406,6 +1436,12 @@ final class EpisodeAlignmentModel {
         inspectionTask?.cancel()
         let model = document.store.model
         let episode = model.episode(episodeID)
+        if analysedSources != episode?.sources || analysedGroups != episode?.recorderGroups {
+            analysisStates = [:]
+            analysisSourceEndByEpoch = [:]
+            analysedSources = nil
+            analysedGroups = nil
+        }
         if let pendingWaveformMove,
            pendingWaveformMove.expectedGeneration != document.store.modelGeneration {
             cancelWaveforms()
@@ -1461,18 +1497,39 @@ final class EpisodeAlignmentModel {
         guard let document, !isWorking else { return }
         isWorking = true
         lastError = nil
+        analysisStates = [:]
+        analysisSourceEndByEpoch = [:]
+        analysedSources = nil
+        analysedGroups = nil
         message = "Analysing available sources…"
         let model = document.store.model
         Task {
             do {
                 let report = try await runtime.analyse(model: model, episode: episodeID)
                 let states = await runtime.states(model: model, episode: episodeID)
+                guard document.store.model.episode(episodeID)?.sources == model.episode(episodeID)?.sources,
+                      document.store.model.episode(episodeID)?.recorderGroups == model.episode(episodeID)?.recorderGroups
+                else {
+                    message = "Sources or recorder epochs changed during analysis. Run alignment again."
+                    isWorking = false
+                    return
+                }
+                analysedSources = model.episode(episodeID)?.sources
+                analysedGroups = model.episode(episodeID)?.recorderGroups
+                analysisStates = Dictionary(uniqueKeysWithValues: states.map { ($0.epoch, $0) })
+                analysisSourceEndByEpoch = Dictionary(uniqueKeysWithValues: report.plan.epochs.map { epoch in
+                    (epoch.epoch, epoch.sources.compactMap { source in
+                        report.facts[source].map { Double($0.frameCount) / Double($0.sampleRate) }
+                    }.max() ?? 0)
+                })
                 hasAnalysis = true
-                rows = Self.makeRows(model: model, episodeID: episodeID, states: states)
+                rows = Self.makeRows(
+                    model: document.store.model, episodeID: episodeID, states: states,
+                    map: acceptedMap
+                )
                 selection = selection ?? rows.first?.epochID
-                message = report.records.isEmpty
-                    ? "Analysis completed. No current acoustic proposal was available; use anchors or numeric correction."
-                    : "Analysis completed. Acoustic results are proposals for review, not clock approval."
+                let proposals = report.records.values.filter { $0.proposal != nil }.count
+                message = "Analysis finished: \(proposals) acoustic proposal\(proposals == 1 ? "" : "s"). Review each epoch's evidence; nothing was applied. Uncertain or unavailable matches stay manual."
             } catch {
                 lastError = String(describing: error)
                 message = "Analysis did not complete. No partial result was accepted."
@@ -1489,12 +1546,17 @@ final class EpisodeAlignmentModel {
     }
 
     func acceptProposal() {
-        guard let epoch = selection else { return }
+        guard canAcceptProposal, let epoch = selection else { return }
         accept(actionName: UndoActionName.acceptProposal, decisions: [epoch: .acceptProposal()])
     }
 
+    func extendProposalToEpoch() {
+        guard canAcceptProposal, proposalNeedsExtension, let epoch = selection else { return }
+        accept(actionName: UndoActionName.acceptProposal, decisions: [epoch: .extendProposalToEpoch()])
+    }
+
     func rejectProposal() {
-        guard let epoch = selection else { return }
+        guard canAcceptProposal, let epoch = selection else { return }
         accept(actionName: UndoActionName.rejectProposal, decisions: [epoch: .unmapped])
     }
 

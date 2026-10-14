@@ -139,8 +139,10 @@ actor AlignmentRuntime {
         requiringPlacementOf source: SourceID? = nil
     ) async throws -> AcceptedAlignment {
         let acceptsProposal = decisions.values.contains {
-            if case .acceptProposal = $0 { return true }
-            return false
+            switch $0 {
+            case .acceptProposal, .extendProposalToEpoch: true
+            default: false
+            }
         }
         if acceptsProposal, let report = reports[episodeID] {
             return try await pipeline.accept(model: model, episode: episodeID, report: report, decisions: decisions)

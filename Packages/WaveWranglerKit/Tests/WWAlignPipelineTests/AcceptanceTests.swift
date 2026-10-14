@@ -6,8 +6,7 @@ import WWCore
 @testable import WWAlignPipeline
 
 /// Every way a person can decide an epoch produces a versioned EpisodeAlignment revision whose provenance is
-/// `.timelineReference` or `.manual(...)`; an undecided epoch at most carries the estimator's own
-/// `.acousticConsistentProposal`. This layer can neither create nor carry a clock approval.
+/// `.timelineReference` or `.manual(...)`; an undecided epoch is never playable.
 @Suite("Accept/apply: versioned map revisions; ClockApproval cannot be faked from this layer")
 struct AcceptanceTests {
     static let truthRate = try! ExactRational(10_001, 10_000)
@@ -58,7 +57,7 @@ struct AcceptanceTests {
 
             let kinds = Self.provenances(accepted.map)
             #expect(kinds[referenceEpoch] == .timelineReference)
-            for kind in kinds.values { #expect(kind == .timelineReference || kind == .manual || kind == .acousticConsistentProposal, "provenance \(kind)") }
+            for kind in kinds.values { #expect(kind == .timelineReference || kind == .manual, "provenance \(kind)") }
             #expect(!kinds.values.contains { $0.isClockApproved })
             let status = await fixture.states(report)[targetEpoch]?.status
             if let basis {
@@ -71,7 +70,7 @@ struct AcceptanceTests {
         }
     }
 
-    @Test("Undecided epoch carries its current proposal unaccepted (U3); an explicit reject returns it to U8 and stays rejected")
+    @Test("An undecided proposal cannot become playable when another decision is saved")
     func undecidedCarriesProposalAndRejectSticks() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "reject")
         let targetEpoch = fixture.epochs[1]
@@ -79,14 +78,13 @@ struct AcceptanceTests {
         let proposal = try #require(await fixture.states(report)[targetEpoch]?.status.proposal)
 
         let undecided = try await fixture.acceptAndActivate(report, [:])
-        #expect(Self.provenances(undecided.map)[targetEpoch] == .acousticConsistentProposal)
-        let carried = try #require(Self.segment(undecided.map, targetEpoch))
-        #expect(carried.rateRatio == proposal.segment.rateRatio)
-        #expect(carried.alignedOffset == proposal.segment.alignedOffset)
-        #expect(carried == proposal.segment, "the proposal's own supported interval, never extended")
+        #expect(Self.provenances(undecided.map)[targetEpoch] == nil)
+        #expect(Self.segment(undecided.map, targetEpoch) == nil)
+        #expect(proposal.segment.groupClockEnd > proposal.segment.groupClockStart)
         let u3 = try #require(await fixture.states(report)[targetEpoch])
-        #expect(u3.status == .proposedInAcceptedMap(revision: 1))
-        #expect(u3.remedies == [.acceptAsManual, .reject, .editNumerically, .placeAnchors, .audition])
+        #expect(u3.status == .unsupported(.notAttempted, .acceptedMap(revision: 1)))
+        #expect(u3.analysis?.proposal != nil)
+        #expect(u3.remedies == [.acceptAsManual, .editNumerically, .placeAnchors])
 
         _ = try await fixture.acceptAndActivate(report, [targetEpoch: .unmapped])
         let rejected = try #require(await fixture.states(report)[targetEpoch])
@@ -103,13 +101,13 @@ struct AcceptanceTests {
         #expect(await fixture.states(report)[targetEpoch]?.status == .manual(.acceptedAcousticProposal, revision: 4))
     }
 
-    @Test("An undecided epoch does not carry an unaccepted acoustic map across cycle abstention")
+    @Test("An undecided epoch remains unmapped before and after cycle abstention")
     func staleCycleProposalIsNotMapped() async throws {
         let fixture = try await PipelineFixture(CycleTests.groups(), label: "cycle-map-stale")
         let target = fixture.epochs[1]
         let initial = try await fixture.analyse(preferredReference: "ref")
         let first = try await fixture.acceptAndActivate(initial, [:])
-        #expect(Self.provenances(first.map)[target] == .acousticConsistentProposal)
+        #expect(Self.provenances(first.map)[target] == nil)
 
         for (name, delay, rate, offset) in [("a", 0.0, 1.0001, 1.25), ("b", 0.02, 0.99995, -0.5)] {
             fixture.content.register(fixture.url(name), .init(
@@ -134,6 +132,7 @@ struct AcceptanceTests {
         let report = try await fixture.analyse(preferredReference: "ref")
         let acceptedFirst = try await fixture.acceptAndActivate(report, [first: .acceptProposal(note: "first")])
         let firstSegment = try #require(Self.segment(acceptedFirst.map, first))
+        #expect(Self.segment(acceptedFirst.map, second) == nil, "reviewing one match never makes another playable")
         let acceptedSecond = try await fixture.acceptAndActivate(report, [second: .acceptProposal(note: "second")])
         #expect(Self.segment(acceptedSecond.map, first) == firstSegment)
         #expect(Self.provenances(acceptedSecond.map)[first] == .manual)
@@ -180,7 +179,7 @@ struct AcceptanceTests {
         let refreshed = try await fixture.analyse(preferredReference: "ref")
         #expect(refreshed.records[first]?.proposal != nil)
         let replaced = try await fixture.acceptAndActivate(refreshed, [:])
-        #expect(Self.provenances(replaced.map)[first] == .acousticConsistentProposal)
+        #expect(Self.provenances(replaced.map)[first] == nil)
     }
 
     @Test("Two-recorder sequential acceptance across restart epochs retains both decisions")
@@ -204,6 +203,28 @@ struct AcceptanceTests {
         #expect(Self.provenances(accepted.map)[second] == .manual)
     }
 
+    @Test("A reviewed drift proposal can replace manual placement and explicitly cover the full epoch")
+    func extendAfterManualPlacement() async throws {
+        let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "extend-after-manual")
+        let target = fixture.epochs[1]
+        let report = try await fixture.analyse(preferredReference: "ref")
+        let manual = try await fixture.acceptAndActivate(report, [
+            target: .numeric(ppm: 0, offsetMilliseconds: 0)
+        ])
+        let extended = try await fixture.acceptAndActivate(report, [
+            target: .extendProposalToEpoch()
+        ])
+        let segment = try #require(Self.segment(extended.map, target))
+        #expect(extended.revision.revision == manual.revision.revision + 1)
+        #expect(extended.model.episode(fixture.episodeID)?.alignment?.acceptedMap?.derivedFrom == manual.revision.revision)
+        #expect(segment.groupClockStart == .zero)
+        #expect(segment.groupClockEnd == ExactRational(24))
+        #expect(abs(segment.rateRatio.approximateDouble - TwoRecorder.rate) < 0.000025)
+        #expect(Self.provenances(extended.map)[target] == .manual)
+        #expect(try extended.model.timeMap(revision: extended.revision.revision, in: fixture.episodeID) == extended.map)
+        #expect(fixture.content.openReaders == 0)
+    }
+
     @Test("A verified manual anchor survives an undecided revision but not a changed dependency")
     func priorAnchorsRequireCurrentDependencies() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "anchor-currency")
@@ -222,7 +243,7 @@ struct AcceptanceTests {
         await fixture.coordinator.updateSource(try PipelineFixture.registration(fixture.id("tgt"), fixture.url("tgt")))
         let refreshed = try await fixture.analyse(preferredReference: "ref")
         let replaced = try await fixture.acceptAndActivate(refreshed, [:])
-        #expect(Self.provenances(replaced.map)[target] == .acousticConsistentProposal)
+        #expect(Self.provenances(replaced.map)[target] == nil)
         #expect(Self.segment(replaced.map, target) != Self.segment(anchored.map, target))
     }
 

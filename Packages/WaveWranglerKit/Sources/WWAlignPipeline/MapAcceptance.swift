@@ -35,9 +35,8 @@ public enum AlignmentAnchorNote {
 }
 
 /// What the person decided for one epoch. There is deliberately no way to pass a `MapProvenance`: this layer
-/// chooses provenance itself and can only ever produce `.timelineReference` (the reference epoch),
-/// `.manual(...)` (a decided epoch) or the estimator's own `.acousticConsistentProposal` (an undecided epoch
-/// with a current proposal). A clock approval cannot be created, forwarded or faked through it.
+/// chooses provenance itself and can only produce `.timelineReference` (the reference epoch) or
+/// `.manual(...)` (a decided epoch). Undecided proposals never enter a playable map.
 public enum EpochMapDecision: Sendable, Hashable {
     /// Accept the epoch's current acoustic proposal over the interval it was measured on. Recorded as
     /// `manual(.acceptedAcousticProposal)`: human acceptance of a proposal is not a clock correction. Frames
@@ -281,13 +280,8 @@ enum MapAcceptance {
                     }
                 }
             }
-            // Undecided with a current proposal: persisted as the unaccepted proposal it is (U3), so
-            // accepting another epoch never silently rejects this one.
-            // Only over the interval it was measured on.
-            if let analysis, let proposal = analysis.proposal, end != nil,
-               isCurrent(analysis, epoch: epoch, reference: reference, facts: facts) {
-                return .mapped(segments: [proposal.segment], provenance: .acousticConsistentProposal(proposal.provenance))
-            }
+            // A current proposal remains available in the analysis report for review, never in an
+            // accepted, playable map merely because a different epoch was accepted.
             return .unsupported(analysis?.abstention?.abstentionReason?.unsupportedReason ?? .notAttempted)
         }
         let rate: ExactRational

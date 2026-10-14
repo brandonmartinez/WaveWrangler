@@ -400,8 +400,8 @@ public final class AlignmentPipeline: Sendable {
     ///
     /// Provenance is chosen here, never supplied: the reference epoch is `.timelineReference`, decided epochs
     /// are `.manual(...)` (an accepted proposal is `manual(.acceptedAcousticProposal)`; a rejected one is
-    /// `unsupported(.notAttempted)`). Undecided epochs carry only verified prior manual decisions or a
-    /// current proposal as `.acousticConsistentProposal`; a prior clock approval is refused.
+    /// `unsupported(.notAttempted)`). Undecided epochs carry only verified prior decisions, never
+    /// unaccepted proposals; a prior clock approval is refused.
     public func accept(
         model: ShowDocumentModel,
         episode episodeID: EpisodeID,

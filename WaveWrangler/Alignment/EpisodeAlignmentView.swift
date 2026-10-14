@@ -133,12 +133,6 @@ private struct AlignmentWorkspace: View {
                 }
                 AlignmentWaveformView(model: model)
                 DisclosureGroup("Detailed alignment inspection") {
-                Button(model.isWorking ? "Analysing…" : "Analyse Available Sources") {
-                    model.analyse()
-                }
-                .disabled(model.isWorking)
-                .accessibilityIdentifier("alignment.analyse")
-
                 AlignmentOutlineTable(model: model)
                     .id("ww.alignment.groupSection")
                     .frame(minHeight: 180, idealHeight: 240)
@@ -177,17 +171,13 @@ private struct AlignmentWorkspace: View {
                     alignment: .leading,
                     spacing: 8
                 ) {
-                    Button("Accept as Manual") { model.acceptProposal() }
-                        .disabled(model.selectedRow?.state.heading.hasPrefix("Proposed") != true)
-                        .help(model.selectedRow?.state.heading.hasPrefix("Proposed") == true
-                              ? "Accept this acoustic proposal as a manual decision."
-                              : "Select an unconfirmed proposal.")
+                    Button("Accept measured interval") { model.acceptProposal() }
+                        .disabled(!model.canAcceptProposal)
+                        .help("Accept only the measured audio interval; unmeasured frames stay unplaced.")
                         .accessibilityIdentifier("alignment.acceptProposal")
                     Button("Reject") { model.rejectProposal() }
-                        .disabled(model.selectedRow?.state.heading.hasPrefix("Proposed") != true)
-                        .help(model.selectedRow?.state.heading.hasPrefix("Proposed") == true
-                              ? "Reject this proposal and leave the epoch unsupported."
-                              : "Select an unconfirmed proposal.")
+                        .disabled(!model.canAcceptProposal)
+                        .help("Reject this proposal and leave the epoch unsupported.")
                         .accessibilityIdentifier("alignment.rejectProposal")
                     Button("Edit Numerically…") { model.requestNumericEditor() }
                         .disabled(!model.canCorrect)

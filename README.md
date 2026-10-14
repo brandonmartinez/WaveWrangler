@@ -23,6 +23,20 @@ tile (and the optional episode overview); it does not change audio, playback, or
 timing. Up to eight bounded measured tiles and their projected strokes are cached in memory;
 adjacent tiles share the same viewport without rebuilding their paths on each pan. A changed
 episode, source, or verified alignment clears them.
+
+**Find acoustic matches** compares bounded decoded audio from each non-reference recorder epoch
+against a reference recording (up to a centered 10-minute excerpt, within a 120-second search
+around source time). It reports the measured offset, drift in ppm, covered interval, eligible
+windows, peak evidence and residual, or a refusal for silence, ambiguous/periodic peaks,
+inconsistent drift, discontinuities or unavailable sources. These are **not probabilities or
+proof of clock accuracy**: different microphone distances can imitate an offset. Nothing is
+automatically applied. Select an epoch and choose **Accept measured interval** to create an
+undoable, verified manual decision; rate-aware playback stretches that mapped interval without
+altering the original. Outside it, audio stays unplaced. **Extend to whole epoch…** is a
+separate, warned human decision to extrapolate its rate and offset into unmeasured audio, not a
+new confidence claim. Restarted epochs and gaps are never bridged; uncertain matches leave
+manual placement, numeric correction and anchors available. Accepting one match never makes
+other proposals playable.
 For a recorder with restarted/overlapping source-time epochs, only its first
 placeable epoch is mapped initially; place later epochs explicitly using **Advanced epoch timing**.
 Select a track and drag its waveform, use the 10 ms nudge buttons, or type **Group move (ms)** to move all

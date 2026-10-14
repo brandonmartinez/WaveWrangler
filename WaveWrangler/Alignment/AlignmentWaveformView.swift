@@ -19,6 +19,7 @@ struct AlignmentWaveformView: View {
     @State private var zoomCenterSeconds: Double?
     @State private var hoveringMovableWaveform = false
     @State private var handCursorPushed = false
+    @State private var confirmingExtension = false
 
     private let headerWidth: CGFloat = 210
 
@@ -135,6 +136,66 @@ struct AlignmentWaveformView: View {
                     .accessibilityIdentifier("alignment.waveforms.load")
                 }
                 navigationControls
+                GroupBox("Automatic alignment · review before applying") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Button(model.isWorking ? "Analysing…" : "Find acoustic matches") {
+                                model.analyse()
+                            }
+                            .disabled(model.isWorking)
+                            .accessibilityIdentifier("alignment.analyse")
+                            Text("Matches use shared audio peaks, not speaker recognition. No timing changes until you accept a proposal.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        if let analysis = model.selectedAnalysis {
+                            if let proposal = analysis.proposal {
+                                Text("Proposed for \(model.selectedRow?.epochLabel ?? "selected epoch"): \(AlignmentPresentation.offsetLabel(proposal.segment.alignedOffset.approximateDouble * 1_000)); \(AlignmentPresentation.rateLabel(proposal.ppm)).")
+                                    .accessibilityIdentifier("alignment.auto.timing")
+                                Text("Measured source interval \(AlignmentPresentation.formatTime(proposal.segment.groupClockStart.approximateDouble))–\(AlignmentPresentation.formatTime(proposal.segment.groupClockEnd.approximateDouble)); \(analysis.coverage.eligibleCount)/\(analysis.coverage.windowCount) windows, peak \(proposal.provenance.evidenceScore.map { String(format: "%.3f", $0) } ?? "unavailable"), residual p95 \(String(format: "%.3f", proposal.acousticResidualP95Milliseconds)) ms. These are evidence measures, not a probability or clock proof.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("alignment.auto.evidence")
+                                HStack {
+                                    Button("Accept measured interval") { model.acceptProposal() }
+                                        .disabled(!model.canAcceptProposal)
+                                        .accessibilityIdentifier("alignment.auto.accept")
+                                    if model.proposalNeedsExtension {
+                                        Button("Extend to whole epoch…") { confirmingExtension = true }
+                                            .disabled(!model.canAcceptProposal)
+                                            .accessibilityIdentifier("alignment.auto.extend")
+                                    }
+                                }
+                                Text(model.proposalNeedsExtension
+                                     ? "Only measured frames align automatically. The rest stays unplaced unless you explicitly extend this rate and offset beyond the measured audio."
+                                     : "Accepting maps only the measured epoch; restarted epochs and gaps remain separate.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else if let abstention = analysis.abstention {
+                                Label("No reliable match: \(abstention.detail)", systemImage: "exclamationmark.triangle")
+                                    .accessibilityIdentifier("alignment.auto.abstention")
+                                Text("No automatic timing was applied. Place the epoch manually or add anchors.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        } else if let state = model.selectedAnalysisState {
+                            let copy = AlignmentPresentation.copy(for: state.status)
+                            Label("\(copy.heading): \(copy.evidence)",
+                                  systemImage: copy.isBlocked ? "exclamationmark.triangle" : "info.circle")
+                                .accessibilityIdentifier("alignment.auto.refusal")
+                        } else {
+                            Text("Select a recorder epoch, then find matches. Silence, repetitive peaks, disagreement and gaps are refused; manual alignment remains available.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .accessibilityIdentifier("alignment.auto")
+                .confirmationDialog(
+                    "Extend the measured timing beyond its evidence?",
+                    isPresented: $confirmingExtension
+                ) {
+                    Button("Extend rate and offset to whole epoch") { model.extendProposalToEpoch() }
+                    Button("Keep measured interval", role: .cancel) {}
+                } message: {
+                    Text("This extrapolates the proposed time stretch into unmeasured audio. It cannot establish continuity, drift or clock accuracy outside the measured interval. Review playback; the decision is undoable and originals remain unchanged.")
+                }
                 if model.waveformMap == nil, model.pendingWaveformMove == nil,
                    !model.waveformTracks.isEmpty {
                     Button("Place groups at source time") { model.placeGroupsAtSourceTime() }

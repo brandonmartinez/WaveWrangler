@@ -298,47 +298,46 @@ struct MapCurrencyTests {
         let occurrence = alignmentOccurrenceID(for: tgt)
 
         let accepted: [RecordingEpochID: EpochMapDecision] = [target: .acceptProposal()]
-        let undecided: [RecordingEpochID: EpochMapDecision] = [:]
-        for decisions in [accepted, undecided] {
-            let built = try MapAcceptance.build(plan: report.plan, facts: facts, analyses: records, decisions: decisions, prior: nil)
-            #expect(built.outsideCoverage.isEmpty)
-            let group = try #require(built.map.group(containing: occurrence))
-            let spans = try #require(group.placements.first { $0.occurrence.id == occurrence }?.spans)
-            #expect(spans.map(\.startFrame) == [first])
-            #expect(spans.map(\.endFrame) == [end])
-            #expect(AcceptanceTests.segment(built.map, target) == segment, "the proposal's own interval, unextended")
-            let kind = AcceptanceTests.provenances(built.map)[target]
-            #expect(kind == (decisions.isEmpty ? .acousticConsistentProposal : .manual))
+        let undecided = try MapAcceptance.build(plan: report.plan, facts: facts, analyses: records, decisions: [:], prior: nil)
+        #expect(AcceptanceTests.segment(undecided.map, target) == nil)
+        #expect(undecided.map.group(containing: occurrence)?.epochs.first { $0.epoch == target }?.mapping == .unsupported(.notAttempted))
+        let built = try MapAcceptance.build(plan: report.plan, facts: facts, analyses: records, decisions: accepted, prior: nil)
+        #expect(built.outsideCoverage.isEmpty)
+        let group = try #require(built.map.group(containing: occurrence))
+        let spans = try #require(group.placements.first { $0.occurrence.id == occurrence }?.spans)
+        #expect(spans.map(\.startFrame) == [first])
+        #expect(spans.map(\.endFrame) == [end])
+        #expect(AcceptanceTests.segment(built.map, target) == segment, "the proposal's own interval, unextended")
+        #expect(AcceptanceTests.provenances(built.map)[target] == .manual)
 
-            for frame in [0, first - 1, end, total - 1] {
-                #expect(try group.alignedTime(ofFrame: frame, in: occurrence) == .outsideCoverage, "frame \(frame)")
-            }
-            for frame in [first, end - 1] {
-                guard case let .aligned(position) = try group.alignedTime(ofFrame: frame, in: occurrence) else {
-                    Issue.record("frame \(frame) is inside the proposal")
-                    continue
-                }
-                let expected = try ExactRational(frame, rate).adding(Self.quarter)
-                #expect(position.instant == expected)
-            }
-            // Where the extrapolated line would have put the source's first and last frames: not inverted.
-            let extrapolatedStart = Self.quarter
-            let extrapolatedEnd = try ExactRational(total - 1, rate).adding(Self.quarter)
-            #expect(try group.sourceFrame(at: extrapolatedStart, in: occurrence) == .outsideCoverage)
-            #expect(try group.sourceFrame(at: extrapolatedEnd, in: occurrence) == .outsideCoverage)
-            guard case let .source(position) = try group.sourceFrame(at: ExactRational(Int64(2000)), in: occurrence) else {
-                Issue.record("an instant inside the proposal inverts")
-                continue
-            }
-            let insideFrame: Int64 = 2000 * rate - 12_000
-            #expect(position.frame == insideFrame)
-
-            // The render hull covers only the mapped interval.
-            let hull = try GroupRenderJob.hull(map: group, occurrences: [occurrence], outputRate: Int(rate))
-            let hullStart: Int64 = first + 12_000
-            let hullEnd: Int64 = end + 12_000
-            #expect(hull == hullStart ..< hullEnd)
+        for frame in [0, first - 1, end, total - 1] {
+            #expect(try group.alignedTime(ofFrame: frame, in: occurrence) == .outsideCoverage, "frame \(frame)")
         }
+        for frame in [first, end - 1] {
+            guard case let .aligned(position) = try group.alignedTime(ofFrame: frame, in: occurrence) else {
+                Issue.record("frame \(frame) is inside the proposal")
+                return
+            }
+            let expected = try ExactRational(frame, rate).adding(Self.quarter)
+            #expect(position.instant == expected)
+        }
+        // Where the extrapolated line would have put the source's first and last frames: not inverted.
+        let extrapolatedStart = Self.quarter
+        let extrapolatedEnd = try ExactRational(total - 1, rate).adding(Self.quarter)
+        #expect(try group.sourceFrame(at: extrapolatedStart, in: occurrence) == .outsideCoverage)
+        #expect(try group.sourceFrame(at: extrapolatedEnd, in: occurrence) == .outsideCoverage)
+        guard case let .source(position) = try group.sourceFrame(at: ExactRational(Int64(2000)), in: occurrence) else {
+            Issue.record("an instant inside the proposal inverts")
+            return
+        }
+        let insideFrame: Int64 = 2000 * rate - 12_000
+        #expect(position.frame == insideFrame)
+
+        // The render hull covers only the mapped interval.
+        let hull = try GroupRenderJob.hull(map: group, occurrences: [occurrence], outputRate: Int(rate))
+        let hullStart: Int64 = first + 12_000
+        let hullEnd: Int64 = end + 12_000
+        #expect(hull == hullStart ..< hullEnd)
     }
 
     @Test("Extending a proposal over the whole epoch is an explicit manual decision that says so")
@@ -394,8 +393,8 @@ struct MapCurrencyTests {
         let segment = try AffineClockSegment(groupClockStart: ExactRational(Int64(1950)), groupClockEnd: ExactRational(Int64(2550)), rateRatio: .one, alignedOffset: Self.quarter)
         let (report, facts, records) = try await Self.longReport(fixture, seconds: 30 * 60, segment: segment)
         let undecided = try MapAcceptance.build(plan: report.plan, facts: facts, analyses: records, decisions: [:], prior: nil)
-        #expect(undecided.outsideCoverage == [tgt])
-        #expect(undecided.map.group(containing: alignmentOccurrenceID(for: tgt)) == nil)
+        #expect(undecided.outsideCoverage.isEmpty)
+        #expect(AcceptanceTests.segment(undecided.map, target) == nil)
         #expect(throws: AlignmentAcceptanceError.noPlaceableSource(target)) {
             try MapAcceptance.build(plan: report.plan, facts: facts, analyses: records, decisions: [target: .acceptProposal()], prior: nil)
         }
