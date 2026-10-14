@@ -689,95 +689,108 @@ struct AlignmentWaveformView: View {
 
     private var overlay: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("OVERLAY · \(visibleTracks.count) SOURCES")
-                        .font(.caption2.weight(.semibold))
-                    ForEach(visibleTracks) { track in
-                        let identity = model.trackIdentity(track.id)
-                        Button {
-                            model.selectWaveform(track)
-                        } label: {
-                            HStack(spacing: 5) {
-                                Circle().fill(identity.color).frame(width: 9, height: 9)
-                                Text("\(track.groupName) · \(identity.label)").lineLimit(1)
-                            }
-                            .font(.caption)
-                            .fontWeight(model.selectedWaveformSource == track.id ? .semibold : .regular)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("alignment.waveforms.select.\(track.id)")
-                    }
-                }
-                .frame(width: headerWidth, alignment: .leading)
-                GeometryReader { geometry in
-                    let slices = model.waveformTileSlices
-                    ZStack {
-                        Rectangle().fill(Color.primary.opacity(0.04))
-                        Path { path in
-                            path.move(to: CGPoint(x: 0, y: geometry.size.height / 2))
-                            path.addLine(to: CGPoint(x: geometry.size.width, y: geometry.size.height / 2))
-                        }
-                        .stroke(Color.secondary.opacity(0.4), lineWidth: 1)
-                        ForEach(slices) { slice in
-                            ForEach(visibleTracks) { track in
-                                if model.waveformDurationSeconds <= 30,
-                                   let strokes = slice.strokes[track.id] {
-                                    waveformDrawing(
-                                        track: track, strokes: strokes, slice: slice,
-                                        size: geometry.size, overlay: true
-                                    )
-                                }
-                            }
-                        }
-                        ForEach(visibleTracks) { track in
-                            if model.waveformDurationSeconds > 30
-                                || model.waveformVisibleStrokes(for: track.id).isEmpty {
-                                cachedOverviewDrawing(track: track, size: geometry.size, overlay: true)
-                            }
-                        }
-                        Rectangle().fill(Color.primary.opacity(0.7)).frame(width: 1)
-                            .position(x: x(model.waveformPlayheadSeconds, width: geometry.size.width),
-                                      y: geometry.size.height / 2)
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture { point in
-                        let time = model.waveformStartSeconds
-                            + Double(point.x / geometry.size.width) * model.waveformDurationSeconds
-                        if let track = model.selectedWaveform,
-                           pick(track, strokes: model.waveformInteractionStrokes(for: track.id), time: time) {
-                            return
-                        }
-                        model.seekEnabledTracks(to: time)
-                    }
-                    .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global)
-                        .onChanged { drag in
-                            guard let track = model.selectedWaveform else { return }
-                            dragGroup(
-                                track, strokes: dragSession == nil ? model.waveformInteractionStrokes(for: track.id) : [],
-                                drag: drag, geometry: geometry
-                            )
-                        }
-                        .onEnded { drag in finishGroupDrag(drag) })
-                }
-                .frame(height: 270)
-                .clipped()
-                .overlay(alignment: .topLeading) { dragPreview }
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3)))
-                .accessibilityRepresentation {
-                    Text("Overlaid measured waveforms for \(visibleTracks.count) enabled \(visibleTracks.count == 1 ? "track" : "tracks"). Select a track beside the overlay to move its recorder group; use the numeric group move for keyboard editing.")
-                        .accessibilityIdentifier("alignment.waveforms.overlay")
-                }
+            ForEach(AlignmentWaveformProjection.speakerGroups(
+                tracks: visibleTracks, speakerForSource: model.trackSpeakerID
+            )) { speakerGroup in
+                speakerOverlay(speakerGroup)
             }
             ForEach(visibleTracks) { track in
                 if let error = model.waveformProjectionErrors[track.id] {
                     Label("\(track.name): \(error)", systemImage: "exclamationmark.triangle")
                 }
             }
-            Text("Select a track beside the overlay to make its recorder active. Drag its waveform to move the entire recorder group; the reference stays fixed.")
+            Text("Overlay compares recordings per speaker. Select a recording beside its waveform, then drag to move its entire recorder group across all speakers; the reference stays fixed.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 8)
+    }
+
+    private func speakerOverlay(_ speakerGroup: AlignmentWaveformSpeakerGroup) -> some View {
+        let tracks = speakerGroup.tracks
+        let speakerName = model.speakerName(speakerGroup.id)
+        return HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("\(speakerName.uppercased()) · \(tracks.count) \(tracks.count == 1 ? "SOURCE" : "SOURCES")")
+                    .font(.caption2.weight(.semibold))
+                ForEach(tracks) { track in
+                    let identity = model.trackIdentity(track.id)
+                    Button {
+                        model.selectWaveform(track)
+                    } label: {
+                        HStack(spacing: 5) {
+                            Circle().fill(identity.color).frame(width: 9, height: 9)
+                            Text("\(track.groupName) · \(track.name)").lineLimit(1)
+                        }
+                        .font(.caption)
+                        .fontWeight(model.selectedWaveformSource == track.id ? .semibold : .regular)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(track.groupName), \(track.name), \(identity.label)")
+                    .accessibilityIdentifier("alignment.waveforms.select.\(track.id)")
+                }
+            }
+            .frame(width: headerWidth, alignment: .leading)
+            GeometryReader { geometry in
+                let slices = model.waveformTileSlices
+                ZStack {
+                    Rectangle().fill(Color.primary.opacity(0.04))
+                    Path { path in
+                        path.move(to: CGPoint(x: 0, y: geometry.size.height / 2))
+                        path.addLine(to: CGPoint(x: geometry.size.width, y: geometry.size.height / 2))
+                    }
+                    .stroke(Color.secondary.opacity(0.4), lineWidth: 1)
+                    ForEach(slices) { slice in
+                        ForEach(tracks) { track in
+                            if model.waveformDurationSeconds <= 30,
+                               let strokes = slice.strokes[track.id] {
+                                waveformDrawing(
+                                    track: track, strokes: strokes, slice: slice,
+                                    size: geometry.size, overlay: true
+                                )
+                            }
+                        }
+                    }
+                    ForEach(tracks) { track in
+                        if model.waveformDurationSeconds > 30
+                            || model.waveformVisibleStrokes(for: track.id).isEmpty {
+                            cachedOverviewDrawing(track: track, size: geometry.size, overlay: true)
+                        }
+                    }
+                    Rectangle().fill(Color.primary.opacity(0.7)).frame(width: 1)
+                        .position(x: x(model.waveformPlayheadSeconds, width: geometry.size.width),
+                                  y: geometry.size.height / 2)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { point in
+                    let time = model.waveformStartSeconds
+                        + Double(point.x / geometry.size.width) * model.waveformDurationSeconds
+                    if let track = tracks.first(where: { $0.id == model.selectedWaveformSource }),
+                       pick(track, strokes: model.waveformInteractionStrokes(for: track.id), time: time) {
+                        return
+                    }
+                    model.seekEnabledTracks(to: time)
+                }
+                .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global)
+                    .onChanged { drag in
+                        guard let track = tracks.first(where: { $0.id == model.selectedWaveformSource }) else { return }
+                        dragGroup(
+                            track, strokes: dragSession == nil ? model.waveformInteractionStrokes(for: track.id) : [],
+                            drag: drag, geometry: geometry
+                        )
+                    }
+                    .onEnded { drag in finishGroupDrag(drag) })
+            }
+            .frame(height: max(160, CGFloat(tracks.count * 28 + 92)))
+            .clipped()
+            .overlay(alignment: .topLeading) {
+                if tracks.contains(where: { $0.group == dragSession?.group }) { dragPreview }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3)))
+            .accessibilityRepresentation {
+                Text("\(speakerName), \(tracks.count) enabled \(tracks.count == 1 ? "track" : "tracks") overlaid. Select a recording in this speaker's panel to move its entire recorder group; use the numeric group move for keyboard editing.")
+                    .accessibilityIdentifier("alignment.waveforms.overlay.\(speakerGroup.id.map { "\($0)" } ?? "unknown")")
+            }
+        }
     }
 
     @ViewBuilder

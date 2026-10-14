@@ -122,7 +122,10 @@ negative placements can be sought and played. The marker and all lanes share the
 also exposes its range and adjustable playhead to accessibility clients. Recorder-group headers sit
 beside adjustable-height
 source lanes; a translucent overlay with source selection is available for peak matching. Separate
-lanes and overlay share a ruler and playhead, selected with one segmented control. Zoom changes the
+lanes and overlay share a ruler and playhead, selected with one segmented control. Overlay panels
+group the enabled recordings by speaker (with an Unknown speaker panel for unassigned sources),
+while selection, drag, save and Undo/Redo still operate on the entire recorder group across panels.
+Zoom changes the
 visible transform around the current window center with the slider or around the gesture anchor
 on the ruler. **Fit timeline** includes the complete cached overview and five minutes of
 negative pre-roll for initial placement. Spans wider than 30 seconds draw the coarse, witnessed

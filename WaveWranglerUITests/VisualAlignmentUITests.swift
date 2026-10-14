@@ -92,6 +92,16 @@ final class VisualAlignmentUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.track.")
         )
         XCTAssertTrue(waitUntil { tracks.count == 2 }, app.debugDescription)
+        let overlayMode = app.segmentedControls["alignment.waveforms.layout"].buttons["Overlay"]
+        scrollTo(overlayMode, in: app)
+        overlayMode.click()
+        let speakerOverlays = app.staticTexts.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "alignment.waveforms.overlay."
+        ))
+        XCTAssertTrue(waitUntil { speakerOverlays.count == 2 })
+        XCTAssertTrue(speakerOverlays.allElementsBoundByIndex.contains { $0.label.contains("Host") })
+        XCTAssertTrue(speakerOverlays.allElementsBoundByIndex.contains { $0.label.contains("Guest") })
+        app.segmentedControls["alignment.waveforms.layout"].buttons["Separate lanes"].click()
         XCTAssertTrue(app.buttons["alignment.waveforms.fitTimeline"].exists)
         XCTAssertTrue(app.checkBoxes.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
@@ -239,7 +249,7 @@ final class VisualAlignmentUITests: XCTestCase {
         let overlayMode = app.segmentedControls["alignment.waveforms.layout"].buttons["Overlay"]
         scrollTo(overlayMode, in: app)
         overlayMode.click()
-        let overlay = app.staticTexts["alignment.waveforms.overlay"]
+        let overlay = app.staticTexts["alignment.waveforms.overlay.unknown"]
         XCTAssertTrue(waitUntil { overlay.exists })
         _ = dragAndAssert(overlay, expectedRevision: 3, previous: first)
     }
@@ -323,7 +333,7 @@ final class VisualAlignmentUITests: XCTestCase {
         let overlayMode = app.segmentedControls["alignment.waveforms.layout"].buttons["Overlay"]
         scrollTo(overlayMode, in: app)
         overlayMode.click()
-        let overlay = app.staticTexts["alignment.waveforms.overlay"]
+        let overlay = app.staticTexts["alignment.waveforms.overlay.unknown"]
         XCTAssertTrue(waitUntil { (overlay.value as? String ?? overlay.label).contains("2 enabled tracks") }, app.debugDescription)
         let normalize = app.checkBoxes["alignment.waveforms.normalizeView"]
         scrollTo(normalize, in: app)
@@ -385,7 +395,7 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(group, in: app)
         group.click()
         XCTAssertTrue(waitUntil { !target.exists })
-        XCTAssertTrue(waitUntil { (overlay.value as? String ?? overlay.label).contains("1 enabled track.") })
+        XCTAssertTrue(waitUntil { (overlay.value as? String ?? overlay.label).contains("1 enabled track") })
         let play = app.buttons["alignment.waveforms.transport.play"]
         scrollTo(play, in: app)
         play.click()

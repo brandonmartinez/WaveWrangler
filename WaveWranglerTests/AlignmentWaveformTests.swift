@@ -6,6 +6,38 @@ import WWTimeMap
 
 @Suite("Waveform selection")
 struct AlignmentWaveformTests {
+    @Test func overlayGroupsBySpeakerWithoutSplittingRecorderSets() {
+        let firstSpeaker = SpeakerID()
+        let secondSpeaker = SpeakerID()
+        let sharedRecorder = RecorderGroupID()
+        let otherRecorder = RecorderGroupID()
+        let first = SourceID()
+        let second = SourceID()
+        let backup = SourceID()
+        let unknown = SourceID()
+        let tracks = [(first, sharedRecorder), (second, sharedRecorder),
+                      (backup, otherRecorder), (unknown, otherRecorder)].map { source, recorder in
+            AlignmentWaveformTrack(
+                group: recorder, epoch: RecordingEpochID(), name: "generated.wav",
+                groupName: "Synthetic", envelope: WaveformEnvelope(
+                    source: source, sampleRate: 1_000, channelCount: 1,
+                    totalFrames: 1_000, bins: []
+                )
+            )
+        }
+        let speakerGroups = AlignmentWaveformProjection.speakerGroups(tracks: tracks) { source in
+            switch source {
+            case first, backup: firstSpeaker
+            case second: secondSpeaker
+            default: nil
+            }
+        }
+        #expect(speakerGroups.map(\.id) == [firstSpeaker, secondSpeaker, nil])
+        #expect(speakerGroups.map { $0.tracks.map(\.id) } == [[first, backup], [second], [unknown]])
+        #expect(speakerGroups[0].tracks[0].group == speakerGroups[1].tracks[0].group)
+        #expect(speakerGroups[0].tracks[1].group == speakerGroups[2].tracks[0].group)
+    }
+
     @Test func playbackSelectsOnlySourcesWithAcceptedMappedEpochs() throws {
         let group = RecorderGroupID()
         let mappedEpoch = RecordingEpochID()

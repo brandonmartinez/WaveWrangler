@@ -206,6 +206,13 @@ final class EpisodeAlignmentModel {
     var waveformNeedsRefreshAfterSave: Bool {
         loadedWaveformEpisode != document?.store.model.episode(episodeID)
     }
+    func trackSpeakerID(_ source: SourceID) -> SpeakerID? {
+        document?.store.model.episode(episodeID)?.references(to: source).first?.speakerID
+    }
+    func speakerName(_ id: SpeakerID?) -> String {
+        guard let id else { return "Unknown speaker" }
+        return document?.store.model.speaker(id)?.name ?? "Unknown speaker"
+    }
     func trackIdentity(_ source: SourceID) -> (label: String, color: Color) {
         let references = document?.store.model.episode(episodeID)?.references(to: source) ?? []
         guard let reference = references.first,

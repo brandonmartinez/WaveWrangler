@@ -12,6 +12,11 @@ struct AlignmentWaveformTrack: Identifiable, Sendable {
     let envelope: WaveformEnvelope
 }
 
+struct AlignmentWaveformSpeakerGroup: Identifiable {
+    let id: SpeakerID?
+    let tracks: [AlignmentWaveformTrack]
+}
+
 struct AlignmentWaveformRefusal: Identifiable, Sendable {
     let id: SourceID
     let name: String
@@ -80,6 +85,23 @@ struct PendingWaveformMove {
 
 enum AlignmentWaveformProjection {
     static let overviewNavigationRange = -86_400.0...86_400.0
+
+    static func speakerGroups(
+        tracks: [AlignmentWaveformTrack], speakerForSource: (SourceID) -> SpeakerID?
+    ) -> [AlignmentWaveformSpeakerGroup] {
+        var groups: [AlignmentWaveformSpeakerGroup] = []
+        for track in tracks {
+            let speaker = speakerForSource(track.id)
+            if let index = groups.firstIndex(where: { $0.id == speaker }) {
+                groups[index] = AlignmentWaveformSpeakerGroup(
+                    id: speaker, tracks: groups[index].tracks + [track]
+                )
+            } else {
+                groups.append(AlignmentWaveformSpeakerGroup(id: speaker, tracks: [track]))
+            }
+        }
+        return groups
+    }
 
     static func timedSources(in map: AlignedTimelineMap) -> Set<SourceID> {
         Set(map.groups.flatMap { group in
