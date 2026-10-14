@@ -159,6 +159,28 @@ struct SetupEditCommandTests {
         #expect(assignment.backups == [ChannelReference(sourceID: tr2.id, channel: .unknown)])
     }
 
+    @Test func inlineChannelAndSpeakerEditsShareSetupAndUndo() throws {
+        let (editor, commands) = make()
+        let ana = Speaker(name: "Ana")
+        #expect(commands.createSpeaker(ana, assigning: []))
+        let before = editor.showModel
+        #expect(commands.setChannel(2, for: [tr1.id]))
+        let afterChannel = editor.showModel
+        #expect(commands.assignSpeaker(ana.id, to: [tr1.id]))
+        let assigned = editor.showModel
+        #expect(assigned.episode(episodeID)?.statedChannel(of: tr1.id) == 1)
+        #expect(assigned.episode(episodeID)?.references(to: tr1.id).first?.speakerID == ana.id)
+        #expect(assigned.episode(episodeID)?.references(to: tr1.id).first?.channel
+            == ChannelReference(sourceID: tr1.id, channel: .known(1)))
+        editor.undoManager.undo()
+        #expect(editor.showModel == afterChannel)
+        editor.undoManager.undo()
+        #expect(editor.showModel == before)
+        editor.undoManager.redo()
+        editor.undoManager.redo()
+        #expect(editor.showModel == assigned)
+    }
+
     @Test func refusalsRegisterNoUndoAndExplainWhy() {
         let (editor, commands) = make()
         #expect(!commands.setEpoch(0, for: [tr1.id]))

@@ -24,14 +24,20 @@ timing. Up to eight bounded measured tiles and their projected strokes are cache
 adjacent tiles share the same viewport without rebuilding their paths on each pan. A changed
 episode, source, or verified alignment clears them.
 
-Select a non-reference recorder epoch, choose a speaker assigned to a known channel in that
-recorder and in an already aligned recorder, then choose **Match selected speaker**. Only that
-speaker's stated channels are compared; a match proposes the **target recorder group's**
+Beside each waveform in **Separate lanes** or **Overlay**, choose its **Speaker** and
+**Channel**, then use **Align…** on a non-reference track. These choices edit the same
+episode Setup assignments (one speaker and one stated channel per source), with Undo and
+normal document saving; they are not temporary match settings. Choose a reference
+recording from the menu if several already aligned tracks share that speaker. The reference
+recorder itself cannot be matched as a target. State known channels on both sides first:
+unknown or out-of-range channels cannot be matched. An eligible match compares only that
+speaker's stated channels and proposes the **target recorder group's**
 timing, so its other tracks move with it. You can then match another speaker from the newly
-aligned recorder to a third recorder without moving either already aligned group. Unknown or
-out-of-range channel assignments need correction in Setup; unrelated speakers are not mixed
-to manufacture a match. Matching uses a short centered excerpt to locate an offset and a
-longer (up to 10-minute) excerpt to fit drift. Unequal file lengths do not require a percentage
+aligned recorder to a third recorder without moving either already aligned group. Unrelated
+speakers are not mixed to manufacture a match. Multichannel files currently have one assigned
+speaker channel per source; split or import separate sources if independent speakers need their
+own assignments. Matching uses a short centered excerpt to locate an offset and a longer
+(up to 10-minute) excerpt to fit drift. Unequal file lengths do not require a percentage
 setting or imply a worse match: the offset search can account for up to about ten minutes of
 start/stop difference, within the bounded analysis budget. Larger offsets, nonoverlapping
 centered excerpts, and unsupported reference intervals may still require manual placement.
@@ -40,7 +46,8 @@ The analysis reports the measured offset, drift in ppm, covered interval, eligib
 windows, peak evidence and residual, or a refusal for silence, ambiguous/periodic peaks,
 inconsistent drift, discontinuities or unavailable sources. These are **not probabilities or
 proof of clock accuracy**: different microphone distances can imitate an offset. Nothing is
-automatically applied. Select an epoch and choose **Accept measured interval** to create an
+automatically applied. Review the proposal or refusal directly under the selected waveform,
+then choose **Accept measured interval** to create an
 undoable, verified manual decision; rate-aware playback corrects that mapped interval's
 clock rate (not pitch-preserving time stretching) without altering the original. Outside it,
 audio stays unplaced. **Extend to whole epoch…** is a

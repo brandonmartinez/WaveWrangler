@@ -218,6 +218,17 @@ struct SpeakerMatchTests {
         ))
         #expect(snapshot.speakerMatches[fixture.epochs[1]]?.isEmpty == true)
         #expect(fixture.content.total.reads == 0)
+        fixture.model = try fixture.model.settingStatedChannel(
+            0, forSource: fixture.id("one"), in: fixture.episodeID
+        )
+        let corrected = try #require(await fixture.pipeline.inspect(
+            model: fixture.model, episode: fixture.episodeID, sources: fixture.sources
+        ))
+        #expect(corrected.speakerMatches[fixture.epochs[1]]?.map(\.speaker) == [speaker])
+        #expect(fixture.content.total.reads == 0)
+        fixture.model = try fixture.model.settingStatedChannel(
+            nil, forSource: fixture.id("one"), in: fixture.episodeID
+        )
         await #expect(throws: AlignmentAcceptanceError.self) {
             try await fixture.pipeline.analyseSpeaker(
                 model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,

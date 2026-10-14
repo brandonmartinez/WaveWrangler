@@ -6,6 +6,7 @@ import Observation
 import SwiftUI
 import WWAlignPipeline
 import WWCore
+import WWEpisodeSetup
 import WWOrganizer
 import WWTimeMap
 
@@ -17,6 +18,7 @@ final class EpisodeAlignmentModel {
         didSet {
             if selection != oldValue {
                 selectedMatchSpeaker = nil
+                selectedMatchOption = nil
                 analysisStates = [:]
                 selectedWaveformSource = nil
                 resetWaveformTiming()
@@ -28,6 +30,7 @@ final class EpisodeAlignmentModel {
     private(set) var hasAnalysis = false
     private(set) var analysisStates: [RecordingEpochID: EpochAlignmentState] = [:]
     private(set) var speakerMatches: [RecordingEpochID: [SpeakerMatchOption]] = [:]
+    private var inspectedEpisode: Episode?
     var selectedMatchSpeaker: SpeakerID?
     var selectedMatchOption: SpeakerMatchOption?
     var selectedSpeakerMatchOptions: [SpeakerMatchOption] {
@@ -52,6 +55,10 @@ final class EpisodeAlignmentModel {
     private var analysisSourceEndByEpoch: [RecordingEpochID: Double] = [:]
     private var analysedSources: [SourceRecord]?
     private var analysedGroups: [RecorderGroup]?
+    private var analysedAssignments: [SpeakerAssignment]?
+    private var observedAssignments: [SpeakerAssignment]?
+    private var analysedRevision: Int?
+    private var observedRevision: Int?
     private(set) var message = "Alignment has not read or analysed any audio."
     private(set) var dependents = "No dependent work yet."
     private(set) var lastError: String?
@@ -247,6 +254,8 @@ final class EpisodeAlignmentModel {
               let episode = document?.store.model.episode(episodeID)
         else { return false }
         return analysedSources == episode.sources && analysedGroups == episode.recorderGroups
+            && analysedAssignments == episode.speakerAssignments
+            && analysedRevision == episode.alignment?.acceptedRevision
             && selectedRow?.groupID != acceptedMap?.reference.group
     }
 
@@ -268,6 +277,76 @@ final class EpisodeAlignmentModel {
     func speakerName(_ id: SpeakerID?) -> String {
         guard let id else { return "Unknown speaker" }
         return document?.store.model.speaker(id)?.name ?? "Unknown speaker"
+    }
+
+    var availableSpeakers: [Speaker] { document?.store.model.speakers ?? [] }
+
+    func statedChannel(for source: SourceID) -> Int? {
+        document?.store.model.episode(episodeID)?.statedChannel(of: source)
+    }
+
+    func matchOptions(for track: AlignmentWaveformTrack) -> [SpeakerMatchOption] {
+        guard let live = document?.store.model.episode(episodeID),
+              let inspectedEpisode,
+              live.sources == inspectedEpisode.sources,
+              live.recorderGroups == inspectedEpisode.recorderGroups,
+              live.speakerAssignments == inspectedEpisode.speakerAssignments,
+              live.alignment?.acceptedRevision == inspectedEpisode.alignment?.acceptedRevision
+        else { return [] }
+        return (speakerMatches[track.epoch] ?? []).filter { $0.target == track.id }
+    }
+
+    func assignSpeaker(_ speaker: SpeakerID?, to track: AlignmentWaveformTrack) {
+        guard let document else {
+            lastError = "The show document is no longer open."
+            return
+        }
+        selectWaveform(track)
+        let commands = SetupEditCommands(editor: document.store, episodeID: episodeID)
+        guard commands.assignSpeaker(speaker, to: [track.id]) else {
+            lastError = document.store.lastError.map(String.init(describing:))
+                ?? "Speaker assignment is unavailable while this show is read-only."
+            return
+        }
+        invalidateMatchAfterSetupEdit()
+    }
+
+    func setChannel(_ channel: Int?, for track: AlignmentWaveformTrack) {
+        guard let document else {
+            lastError = "The show document is no longer open."
+            return
+        }
+        selectWaveform(track)
+        let commands = SetupEditCommands(editor: document.store, episodeID: episodeID)
+        guard commands.setChannel(channel.map { $0 + 1 }, for: [track.id]) else {
+            lastError = document.store.lastError.map(String.init(describing:))
+                ?? "Channel assignment is unavailable while this show is read-only."
+            return
+        }
+        invalidateMatchAfterSetupEdit()
+    }
+
+    private func invalidateMatchAfterSetupEdit() {
+        lastError = nil
+        analysisStates = [:]
+        speakerMatches = [:]
+        selectedMatchOption = nil
+        selectedMatchSpeaker = nil
+        message = "Assignment changed. Finding eligible speaker pairs again; no timing was applied."
+        load()
+    }
+
+    func align(_ track: AlignmentWaveformTrack, with option: SpeakerMatchOption) {
+        guard !isWorking else { return }
+        guard matchOptions(for: track).contains(option) else {
+            message = "Speaker assignments or accepted timing changed. Choose a current pair and try again."
+            load()
+            return
+        }
+        selectWaveform(track)
+        selectedMatchSpeaker = option.speaker
+        selectedMatchOption = option
+        analyse()
     }
     func speakerMatchDescription(_ option: SpeakerMatchOption) -> String {
         guard let episode = document?.store.model.episode(episodeID),
@@ -537,6 +616,9 @@ final class EpisodeAlignmentModel {
         if selection != chosenEpoch || selectedWaveformSource != track.id {
             selection = chosenEpoch
             selectedWaveformSource = track.id
+            selectedMatchOption = nil
+            selectedMatchSpeaker = nil
+            analysisStates = [:]
             resetWaveformTiming()
             stopAudition()
         }
@@ -1470,11 +1552,30 @@ final class EpisodeAlignmentModel {
         inspectionTask?.cancel()
         let model = document.store.model
         let episode = model.episode(episodeID)
+        if observedRevision != episode?.alignment?.acceptedRevision {
+            observedRevision = episode?.alignment?.acceptedRevision
+            analysisStates = [:]
+            speakerMatches = [:]
+            selectedMatchOption = nil
+            analysedRevision = nil
+        }
+        if observedAssignments != episode?.speakerAssignments {
+            observedAssignments = episode?.speakerAssignments
+            analysisStates = [:]
+            speakerMatches = [:]
+            analysedAssignments = nil
+            selectedMatchOption = nil
+            selectedMatchSpeaker = nil
+        }
         if analysedSources != episode?.sources || analysedGroups != episode?.recorderGroups {
             analysisStates = [:]
+            speakerMatches = [:]
+            selectedMatchOption = nil
+            selectedMatchSpeaker = nil
             analysisSourceEndByEpoch = [:]
             analysedSources = nil
             analysedGroups = nil
+            analysedAssignments = nil
         }
         if let pendingWaveformMove,
            pendingWaveformMove.expectedGeneration != document.store.modelGeneration {
@@ -1503,6 +1604,7 @@ final class EpisodeAlignmentModel {
             let snapshot = prepared.snapshot
             acceptedMap = snapshot?.acceptedMap
             speakerMatches = snapshot?.speakerMatches ?? [:]
+            inspectedEpisode = episode
             hasAnalysis = snapshot?.acceptedMap != nil
             rows = Self.makeRows(
                 model: model,
@@ -1541,6 +1643,8 @@ final class EpisodeAlignmentModel {
         analysisSourceEndByEpoch = [:]
         analysedSources = nil
         analysedGroups = nil
+        analysedAssignments = nil
+        analysedRevision = nil
         message = "Analysing available sources…"
         let model = document.store.model
         Task {
@@ -1563,6 +1667,8 @@ final class EpisodeAlignmentModel {
                 }
                 analysedSources = model.episode(episodeID)?.sources
                 analysedGroups = model.episode(episodeID)?.recorderGroups
+                analysedAssignments = model.episode(episodeID)?.speakerAssignments
+                analysedRevision = model.episode(episodeID)?.alignment?.acceptedRevision
                 analysisStates = Dictionary(uniqueKeysWithValues: states.map { ($0.epoch, $0) })
                 analysisSourceEndByEpoch = Dictionary(uniqueKeysWithValues: report.plan.epochs.map { epoch in
                     (epoch.epoch, epoch.sources.compactMap { source in
