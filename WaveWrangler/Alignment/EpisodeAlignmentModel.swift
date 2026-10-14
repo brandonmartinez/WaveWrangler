@@ -773,17 +773,6 @@ final class EpisodeAlignmentModel {
     }
 
     @discardableResult
-    func previewWaveformTimeline(to time: Double) -> Bool {
-        guard previewWaveformPlayhead(to: time),
-              let start = AlignmentWaveformProjection.windowStart(
-                  centeredAt: time, duration: waveformDurationSeconds
-              ) else { return false }
-        waveformStartSeconds = start
-        scheduleVisibleWaveformTile(start: start)
-        return true
-    }
-
-    @discardableResult
     func previewWaveformWindow(start: Double) -> Bool {
         guard !isWorking, groupDraftMilliseconds == 0, pendingWaveformMove == nil,
               let document, loadedWaveformGeneration == document.store.modelGeneration,
@@ -816,13 +805,6 @@ final class EpisodeAlignmentModel {
         ) != nil {
             scheduleScrubTile()
         }
-    }
-
-    func navigateWaveformTimeline(to time: Double) {
-        guard previewWaveformTimeline(to: time) else { return }
-        scrubLoadTask?.cancel()
-        scrubLoadTask = nil
-        loadWaveforms(keepingSnapshot: true)
     }
 
     func suspend() {

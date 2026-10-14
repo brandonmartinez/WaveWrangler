@@ -108,8 +108,8 @@ frame windows, clips to occurrence spans, and never reads gap frames into an env
 spans are visibly unplaced source-origin previews. Opposite-polarity channels retain their peaks;
 the envelope is not mono PCM, an alignment estimate or edit authority.
 The alignment workspace puts a compact transport with a centered editable live playhead and five-second
-skips above logarithmic zoom and a shared episode scrubber. The adaptive ruler immediately above
-the waveforms offers evenly spaced time ticks: click to seek, drag its visible marker to move the
+skips above logarithmic zoom. The adaptive ruler immediately above the waveforms offers evenly
+spaced time ticks: click to seek, drag its visible marker to move the
 playhead, drag empty ruler space to pan without moving the playhead, or pinch to zoom around the
 gesture's time anchor. The marker and all lanes share the same time-to-pixel transform; the ruler
 also exposes its range and adjustable playhead to accessibility clients. Recorder-group headers sit

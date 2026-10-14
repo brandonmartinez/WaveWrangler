@@ -133,7 +133,6 @@ struct AlignmentWaveformView: View {
                     .accessibilityIdentifier("alignment.waveforms.load")
                 }
                 navigationControls
-                timelineScrubber
                 if model.waveformMap == nil, model.pendingWaveformMove == nil,
                    !model.waveformTracks.isEmpty {
                     Button("Place groups at source time") { model.placeGroupsAtSourceTime() }
@@ -172,7 +171,7 @@ struct AlignmentWaveformView: View {
                     ContentUnavailableView(
                         "No audio in this window",
                         systemImage: "waveform",
-                        description: Text("Scrub to another section of the shared timeline. Recordings that failed to load are listed below.")
+                        description: Text("Pan the ruler, enter an aligned time, or open the episode overview. Recordings that failed to load are listed below.")
                     )
                     .frame(minHeight: 200)
                 } else if visibleTracks.isEmpty && layout == .overlay {
@@ -395,33 +394,6 @@ struct AlignmentWaveformView: View {
         }
         .disabled(model.isWorking || model.pendingWaveformMove != nil)
         .accessibilityIdentifier("alignment.waveforms.navigation")
-    }
-
-    private var timelineScrubber: some View {
-        let end = min(86_400, max(0, model.waveformNavigationEndSeconds))
-        return HStack(spacing: 8) {
-            Text("PLAYHEAD").font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary).frame(width: headerWidth, alignment: .leading)
-            Slider(
-                value: Binding(
-                    get: { min(max(model.waveformPlayheadSeconds, 0), max(end, 1)) },
-                    set: { _ = model.previewWaveformTimeline(to: $0) }
-                ),
-                in: 0...max(end, 1),
-                onEditingChanged: { editing in
-                    if !editing { model.navigateWaveformTimeline(to: model.waveformPlayheadSeconds) }
-                }
-            ) {
-                Text("Scrub shared aligned timeline")
-            }
-            .accessibilityIdentifier("alignment.waveforms.scrubber")
-            .disabled(end <= 0 || model.isWorking || model.groupDraftMilliseconds != 0
-                      || model.pendingWaveformMove != nil)
-            Text("\(end, specifier: "%.1f") s")
-                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 8)
-        .help("Scrub the shared timeline; drag the ruler for fine panning. Neither changes saved timing.")
     }
 
     private func commitTime() {

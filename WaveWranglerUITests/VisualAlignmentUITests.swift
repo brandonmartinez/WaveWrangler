@@ -243,14 +243,14 @@ final class VisualAlignmentUITests: XCTestCase {
         _ = dragAndAssert(overlay, expectedRevision: 3, previous: first)
     }
 
-    func testSharedScrubberNavigatesAllSyntheticRecorderWindows() {
+    func testRulerAndTimeFieldNavigateAllSyntheticRecorderWindows() {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
             "-WWUITestHooks", "YES",
             "-WWUITestResetPreferences", "YES",
-            "-WWUITestOpenShow", "Shared Scrubber Fixture",
+            "-WWUITestOpenShow", "Shared Timeline Fixture",
             "-WWUITestShowEpisodes", "1",
             "-WWUITestAlignmentFixture", "YES",
             "-WWUITestVisualAlignmentFixture", "YES",
@@ -262,17 +262,15 @@ final class VisualAlignmentUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.track.")
         )
         XCTAssertTrue(waitUntil { tracks.count == 2 })
-        let slider = app.sliders["alignment.waveforms.scrubber"]
         let playhead = app.textFields["alignment.waveforms.playhead"]
         let revision = app.staticTexts["alignment.waveforms.revision"]
         let ruler = app.staticTexts["alignment.waveforms.ruler"]
-        scrollTo(slider, in: app)
-        XCTAssertTrue(slider.isEnabled)
-        slider.adjust(toNormalizedSliderPosition: 0.7)
+        XCTAssertFalse(app.sliders["alignment.waveforms.scrubber"].exists)
+        replace(playhead, with: "3.5", in: app)
         XCTAssertTrue(waitUntil {
             (Double(playhead.value as? String ?? "") ?? -1) > 2
                 && (ruler.value as? String ?? ruler.label).contains("Visible aligned time ruler")
-        }, "The shared viewport and playhead must move from one scrubber")
+        }, "Editing aligned time must move the shared playhead")
         XCTAssertTrue(waitUntil {
             tracks.count == 2 && !app.buttons["alignment.waveforms.load"].label.contains("Cancel")
         }, app.debugDescription)
@@ -561,9 +559,7 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(waitUntil { tracks.count == 2 && load.label == "Refresh audio" })
         let ruler = app.staticTexts["alignment.waveforms.ruler"]
         XCTAssertTrue((ruler.value as? String ?? ruler.label).contains("Visible aligned time ruler"))
-        let scrubber = app.sliders["alignment.waveforms.scrubber"]
-        scrollTo(scrubber, in: app)
-        scrubber.adjust(toNormalizedSliderPosition: 0.7)
+        replace(app.textFields["alignment.waveforms.playhead"], with: "3", in: app)
         XCTAssertTrue(waitUntil { tracks.count == 2 && load.label == "Refresh audio" })
         XCTAssertTrue((Double(app.textFields["alignment.waveforms.playhead"].value as? String ?? "") ?? 0) > 2)
         attachHierarchy(app, name: "Zoomed genuine audio in second episode; first-episode identities absent")
