@@ -185,4 +185,28 @@ struct CycleTests {
             return
         }
     }
+
+    @Test("Shared recorded silence can bridge two consistent measured regions, but remains reviewable")
+    func sharedSilence() async throws {
+        let seed = TwoRecorder.seed
+        let fixture = try await PipelineFixture([
+            GroupSpec(name: "Reference", sources: [
+                SourceSpec(name: "ref", seconds: 30,
+                           signal: .sharedSilence(seed: seed, rate: 1, offset: 0, start: 9, end: 16))
+            ]),
+            GroupSpec(name: "Field", sources: [
+                SourceSpec(name: "target", seconds: 24,
+                           signal: .sharedSilence(seed: seed, rate: 1.0001, offset: 1.25, start: 9, end: 16))
+            ]),
+        ], label: "cycle-shared-silence")
+        let report = try await fixture.analyse(preferredReference: "ref")
+        #expect(report.epochFailures.isEmpty)
+        let targetEpoch = fixture.epochs[1]
+        let record = try #require(report.records[targetEpoch])
+        #expect(record.flags.contains(EstimateFlag.coverageGap.rawValue))
+        #expect(record.proposal != nil, "\(String(describing: record.abstention))")
+        #expect(record.abstention == nil)
+        #expect(await fixture.states(report)[targetEpoch]?.status.proposal != nil)
+        #expect(fixture.model.episode(fixture.episodeID)?.alignment?.acceptedRevision == nil)
+    }
 }

@@ -1,5 +1,5 @@
 import Testing
-import WWAlignPipeline
+@testable import WWAlignPipeline
 import WWCore
 import WWDerived
 import WWTimeMap
@@ -418,6 +418,85 @@ struct InspectionTests {
             return
         }
         #expect(AlignmentAnchorNote.decode(correction.note) == anchors)
+    }
+
+    @Test func sourceSpecificAnchorRevisionKeepsTheSelectedSourceInAMultiTrackRecorder() async throws {
+        let fixture = try await PipelineFixture([
+            .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 26))]),
+            .init(name: "Target", sources: [
+                .init(name: "other", seconds: 30, signal: .scene(seed: 27)),
+                .init(name: "target", seconds: 30, signal: .scene(seed: 26, offset: 0.02)),
+            ]),
+        ])
+        let report = try await fixture.analyse()
+        let epoch = fixture.epochs[1]
+        let first = try await fixture.acceptAndActivate(
+            report, [epoch: .numeric(ppm: 0, offsetMilliseconds: 20)]
+        )
+        let anchors = [
+            AlignmentAnchor(sourceSeconds: 2, alignedSeconds: 2.02),
+            AlignmentAnchor(sourceSeconds: 20, alignedSeconds: 20.02),
+        ]
+        let selected = fixture.id("target")
+        let revised = try await fixture.pipeline.reviseAcceptedMap(
+            model: first.model, episode: fixture.episodeID,
+            decisions: [epoch: .anchorsForSource(selected, anchors)]
+        )
+        let mapping = try #require(revised.map.groups.flatMap(\.epochs)
+            .first(where: { $0.epoch == epoch })?.mapping)
+        guard case let .mapped(_, .manual(correction)) = mapping else {
+            Issue.record("expected a source-specific manual map")
+            return
+        }
+        #expect(AlignmentAnchorNote.source(in: correction.note) == selected)
+        #expect(AlignmentAnchorNote.decode(correction.note) == anchors)
+        #expect(AlignmentAnchorNote.source(in: AlignmentAnchorNote.encode(anchors)) == nil)
+        try await fixture.pipeline.activate(revised)
+        let moved = try await fixture.pipeline.shiftAcceptedGroup(
+            model: revised.model, episode: fixture.episodeID,
+            group: fixture.groups[1], microseconds: 250_000
+        )
+        let shifted = try #require(moved.map.groups.flatMap(\.epochs)
+            .first(where: { $0.epoch == epoch })?.mapping)
+        guard case let .mapped(_, .manual(shiftedCorrection)) = shifted else {
+            Issue.record("expected a shifted anchor map")
+            return
+        }
+        #expect(AlignmentAnchorNote.source(in: shiftedCorrection.note) == selected)
+        let shiftedAnchors = try #require(AlignmentAnchorNote.decode(shiftedCorrection.note))
+        #expect(shiftedAnchors.count == anchors.count)
+        #expect(zip(shiftedAnchors, anchors).allSatisfy {
+            abs($0.alignedSeconds - $1.alignedSeconds - 0.25) < 0.000_000_1
+                && $0.sourceSeconds == $1.sourceSeconds
+        })
+    }
+
+    @Test func sourceSpecificAnchorFitUsesTheSelectedOccurrenceOffset() throws {
+        let epoch = RecordingEpochID()
+        let other = try SourceOccurrence(source: SourceID(), nominalRate: NominalRate(1_000), frameCount: 10_000)
+        let selected = try SourceOccurrence(source: SourceID(), nominalRate: NominalRate(1_000), frameCount: 10_000)
+        let placements = [
+            OccurrencePlacement(occurrence: other, spans: [
+                EpochSpan(startFrame: 0, endFrame: 10_000, epoch: epoch, groupClockOffset: ExactRational(10))
+            ]),
+            OccurrencePlacement(occurrence: selected, spans: [
+                EpochSpan(startFrame: 0, endFrame: 10_000, epoch: epoch, groupClockOffset: ExactRational(20))
+            ]),
+        ]
+        let anchors = [
+            AlignmentAnchor(sourceSeconds: 2, alignedSeconds: 23),
+            AlignmentAnchor(sourceSeconds: 8, alignedSeconds: 29),
+        ]
+        let groupAnchors = try AlignmentPipeline.groupClockAnchors(
+            anchors, source: selected.source, epoch: epoch, placements: placements
+        )
+        #expect(groupAnchors.map(\.sourceSeconds) == [22, 28])
+        #expect(groupAnchors.map(\.alignedSeconds) == [23, 29])
+        #expect(throws: AlignmentAcceptanceError.self) {
+            try AlignmentPipeline.groupClockAnchors(
+                anchors, source: SourceID(), epoch: epoch, placements: placements
+            )
+        }
     }
 
     @Test func manualRevisionAndSplitRefuseChangedSourceRevisions() async throws {

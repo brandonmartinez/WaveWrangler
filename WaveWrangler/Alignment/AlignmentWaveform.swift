@@ -490,4 +490,14 @@ enum AlignmentWaveformProjection {
         return candidates.first
     }
 
+    static func anchorSourceSeconds(at time: Double, stroke: AlignmentWaveformStroke) -> Double? {
+        guard time.isFinite, stroke.displayRange.contains(time) else { return nil }
+        let displaySpan = stroke.displayRange.upperBound - stroke.displayRange.lowerBound
+        let sourceSpan = stroke.groupRange.upperBound - stroke.groupRange.lowerBound
+        let source = displaySpan > 0
+            ? stroke.sourceSeconds + (time - stroke.displaySeconds) * sourceSpan / displaySpan
+            : stroke.sourceSeconds
+        return source.isFinite && source >= 0 ? source : nil
+    }
+
 }

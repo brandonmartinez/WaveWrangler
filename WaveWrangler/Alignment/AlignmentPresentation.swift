@@ -368,6 +368,56 @@ enum AppUndoRegistration {
 }
 
 enum AlignmentPresentation {
+    static func makeAnchors(map: AlignedTimelineMap?) -> [RecordingEpochID: [AlignmentAnchorRow]] {
+        guard let map else { return [:] }
+        var result: [RecordingEpochID: [AlignmentAnchorRow]] = [:]
+        for group in map.groups {
+            for epoch in group.epochs {
+                guard case let .mapped(segments, .manual(correction)) = epoch.mapping,
+                      correction.basis == .anchors || AlignmentAnchorNote.decode(correction.note) != nil,
+                      let segment = segments.first,
+                      let placement = group.placements.first(where: {
+                          let source = AlignmentAnchorNote.source(in: correction.note)
+                          return (source == nil || $0.occurrence.source == source)
+                              && $0.spans.contains(where: { $0.epoch == epoch.epoch })
+                      }),
+                      let span = placement.spans.first(where: { $0.epoch == epoch.epoch })
+                else { continue }
+                let rate = Double(placement.occurrence.nominalRate.framesPerSecond)
+                if let anchors = AlignmentAnchorNote.decode(correction.note), !anchors.isEmpty {
+                    result[epoch.epoch] = anchors.sorted { $0.sourceSeconds < $1.sourceSeconds }
+                        .enumerated().map { index, anchor in
+                            AlignmentAnchorRow(
+                                id: index,
+                                sourceSeconds: anchor.sourceSeconds,
+                                groupSeconds: anchor.sourceSeconds + span.groupClockOffset.approximateDouble,
+                                alignedSeconds: anchor.alignedSeconds
+                            )
+                        }
+                    continue
+                }
+                let sourceTimes = [
+                    Double(span.startFrame) / rate,
+                    Double(max(span.startFrame, span.endFrame - 1)) / rate,
+                ]
+                result[epoch.epoch] = sourceTimes.enumerated().compactMap { index, source in
+                    let groupTime = source + span.groupClockOffset.approximateDouble
+                    guard let groupRational = try? ExactRational(
+                        numerator: Int128((groupTime * 1_000_000_000).rounded()),
+                        denominator: 1_000_000_000
+                    ), let aligned = try? segment.rateRatio.multiplied(by: groupRational)
+                        .adding(segment.alignedOffset)
+                    else { return nil }
+                    return AlignmentAnchorRow(
+                        id: index, sourceSeconds: source,
+                        groupSeconds: groupTime, alignedSeconds: aligned.approximateDouble
+                    )
+                }
+            }
+        }
+        return result
+    }
+
     static let gap = AlignmentStateCopy(
         heading: "Gap — clock restarted",
         evidence: "The recording stopped and restarted here. WaveWrangler never bridges or guesses across a gap; the epoch on each side is timed separately.",

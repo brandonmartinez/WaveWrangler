@@ -428,7 +428,10 @@ enum AlignedAssetRun {
         let history = CursorSampleProvider.history(for: .m2Candidate)
         return try await decoder.withDecodingCursor(participant.source.url, source: participant.source.id) { cursor in
             let interpretation = cursor.interpretation
-            try SourceProbe.verify(interpretation, source: participant.source.id, token: participant.facts.revisionToken)
+            try SourceProbe.verify(
+                interpretation, source: participant.source.id, token: participant.facts.revisionToken,
+                recorded: participant.source.recordedFingerprint
+            )
             guard interpretation.sourceSampleRate == participant.facts.sampleRate,
                   interpretation.frames.validFrames == participant.facts.frameCount,
                   interpretation.channelCount == participant.facts.channelCount

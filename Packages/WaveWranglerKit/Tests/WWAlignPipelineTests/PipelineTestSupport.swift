@@ -22,6 +22,7 @@ enum Signal: Sendable {
     /// Two independent scenes: the reference hears only the first; the second dominates peer-to-peer.
     case dualScene(seed: UInt64, secondSeed: UInt64, rate: Double, offset: Double, secondDelay: Double)
     case gap(seed: UInt64, rate: Double, offset: Double, start: Double, end: Double)
+    case sharedSilence(seed: UInt64, rate: Double, offset: Double, start: Double, end: Double)
     /// The scene plus an equal copy `delay` seconds later (two equally good alignments).
     case echo(seed: UInt64, delay: Double)
     case silence
@@ -57,6 +58,9 @@ enum Signal: Sendable {
             return Self.scene(seed, t) + 1.6 * Self.scene(secondSeed, t - secondDelay)
         case let .gap(seed, rate, offset, start, end):
             return start <= u && u < end ? 0 : Self.scene(seed, rate * u + offset)
+        case let .sharedSilence(seed, rate, offset, start, end):
+            let sceneTime = rate * u + offset
+            return start <= sceneTime && sceneTime < end ? 0 : Self.scene(seed, sceneTime)
         case let .echo(seed, delay):
             return 0.7 * (Self.scene(seed, u) + Self.scene(seed, u - delay))
         case .silence:

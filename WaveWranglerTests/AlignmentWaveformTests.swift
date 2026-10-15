@@ -6,6 +6,23 @@ import WWTimeMap
 
 @Suite("Waveform selection")
 struct AlignmentWaveformTests {
+    @Test func waveformAnchorUsesClickedTimeWithinMeasuredBin() {
+        let epoch = RecordingEpochID()
+        let mapped = AlignmentWaveformStroke(
+            sourceSeconds: 10.5, groupSeconds: 10.5, displaySeconds: 12.5,
+            low: -0.4, high: 0.5, mapped: true, epoch: epoch,
+            displayRange: 12...13, groupRange: 10...11
+        )
+        #expect(AlignmentWaveformProjection.anchorSourceSeconds(at: 12.75, stroke: mapped) == 10.75)
+        #expect(AlignmentWaveformProjection.anchorSourceSeconds(at: 14, stroke: mapped) == nil)
+        let untimed = AlignmentWaveformStroke(
+            sourceSeconds: 10.5, groupSeconds: 10.5, displaySeconds: 10.5,
+            low: -0.4, high: 0.5, mapped: false, epoch: epoch,
+            displayRange: 10...11, groupRange: 10...11
+        )
+        #expect(AlignmentWaveformProjection.anchorSourceSeconds(at: 10.75, stroke: untimed) == 10.75)
+    }
+
     @Test func transportShowHearChangesGainsWithoutChangingPreparedTracks() {
         let recorder = RecorderGroupID()
         let otherRecorder = RecorderGroupID()
@@ -129,6 +146,68 @@ struct AlignmentWaveformTests {
         #expect(position.sourceSeconds == 0.5)
         #expect(position.displaySeconds == 0.5)
         #expect(!position.mapped)
+    }
+
+    @Test func acceptedAcousticEvidenceAppearsAsSourceSpecificAnchorMarkers() throws {
+        let referenceGroup = RecorderGroupID()
+        let targetGroup = RecorderGroupID()
+        let referenceEpoch = RecordingEpochID()
+        let targetEpoch = RecordingEpochID()
+        let reference = try SourceOccurrence(
+            source: SourceID(), nominalRate: NominalRate(1_000), frameCount: 20_000
+        )
+        let first = try SourceOccurrence(
+            source: SourceID(), nominalRate: NominalRate(1_000), frameCount: 10_000
+        )
+        let measured = try SourceOccurrence(
+            source: SourceID(), nominalRate: NominalRate(1_000), frameCount: 10_000
+        )
+        let timeline = TimelineReference(
+            group: referenceGroup, epoch: referenceEpoch, occurrence: reference.id
+        )
+        let anchors = [
+            AlignmentAnchor(sourceSeconds: 2, alignedSeconds: 5),
+            AlignmentAnchor(sourceSeconds: 8, alignedSeconds: 11),
+        ]
+        let note = AlignmentAnchorNote.encode(anchors, source: measured.source)
+        let referenceSegment = try AffineClockSegment(
+            groupClockStart: .zero, groupClockEnd: ExactRational(20),
+            rateRatio: .one, alignedOffset: .zero
+        )
+        let targetSegment = try AffineClockSegment(
+            groupClockStart: ExactRational(2), groupClockEnd: ExactRational(12),
+            rateRatio: .one, alignedOffset: ExactRational(1)
+        )
+        let map = try AlignedTimelineMap(reference: timeline, groups: [
+            GroupTimeMap(group: referenceGroup, reference: timeline, epochs: [
+                EpochClockMap(epoch: referenceEpoch, mapping: .mapped(
+                    segments: [referenceSegment], provenance: .timelineReference
+                )),
+            ], placements: [
+                OccurrencePlacement(occurrence: reference, spans: [
+                    EpochSpan(startFrame: 0, endFrame: 20_000, epoch: referenceEpoch, groupClockOffset: .zero),
+                ]),
+            ]),
+            GroupTimeMap(group: targetGroup, reference: timeline, epochs: [
+                EpochClockMap(epoch: targetEpoch, mapping: .mapped(
+                    segments: [targetSegment],
+                    provenance: .manual(ManualCorrection(basis: .acceptedAcousticProposal, note: note))
+                )),
+            ], placements: [first, measured].map { occurrence in
+                OccurrencePlacement(occurrence: occurrence, spans: [
+                    EpochSpan(
+                        startFrame: occurrence.source == measured.source ? 0 : 2_000,
+                        endFrame: 10_000, epoch: targetEpoch,
+                        groupClockOffset: occurrence.source == measured.source ? ExactRational(2) : .zero
+                    ),
+                ])
+            }),
+        ])
+        let displayed = try #require(AlignmentPresentation.makeAnchors(map: map)[targetEpoch])
+        #expect(displayed.map(\.sourceSeconds) == [2, 8])
+        #expect(displayed.map(\.groupSeconds) == [4, 10])
+        #expect(displayed.map(\.alignedSeconds) == [5, 11])
+        #expect(AlignmentAnchorNote.source(in: note) == measured.source)
     }
 
     @Test func scalableRulerKeepsTimeAndCursorInTheSameCoordinates() throws {

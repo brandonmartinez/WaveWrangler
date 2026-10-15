@@ -114,6 +114,17 @@ final class EpisodeAlignmentModel {
     var waveformTargetPoint = 0.0
     var waveformAuditionChannel = 0
     private(set) var waveformDraftAnchors: [AlignmentAnchor] = []
+    struct WaveformReferenceMarker: Identifiable {
+        let id = UUID()
+        let source: SourceID
+        let group: RecorderGroupID
+        let speaker: SpeakerID
+        let trackName: String
+        let alignedSeconds: Double
+        let sourceSeconds: Double
+    }
+    private(set) var waveformReferenceMarkers: [WaveformReferenceMarker] = []
+    private(set) var waveformPickedPoint: (source: SourceID, epoch: RecordingEpochID, sourceSeconds: Double, mapped: Bool)?
     @ObservationIgnored private var waveformTask: Task<Void, Never>?
     @ObservationIgnored private var waveformGeneration: UInt64 = 0
     @ObservationIgnored private var scrubLoadTask: Task<Void, Never>?
@@ -338,6 +349,7 @@ final class EpisodeAlignmentModel {
     }
 
     private func invalidateMatchAfterSetupEdit() {
+        clearWaveformMarkers()
         lastError = nil
         analysisStates = [:]
         speakerMatches = [:]
@@ -643,6 +655,87 @@ final class EpisodeAlignmentModel {
         }
     }
 
+    func selectWaveformAnchorPoint(
+        _ track: AlignmentWaveformTrack, position: AlignmentWaveformStroke, sourceSeconds: Double
+    ) {
+        guard !isWorking, groupDraftMilliseconds == 0, pendingWaveformMove == nil,
+              !waveformTimingIsDraft,
+              let document, loadedWaveformGeneration == document.store.modelGeneration,
+              timingIsVerified(document.store.model) else { return }
+        waveformPickedPoint = (track.id, position.epoch, sourceSeconds, position.mapped)
+    }
+
+    func markWaveformReference(_ track: AlignmentWaveformTrack) {
+        guard let document, loadedWaveformGeneration == document.store.modelGeneration,
+              timingIsVerified(document.store.model),
+              let point = waveformPickedPoint, point.source == track.id, point.mapped,
+              sourceHasAcceptedTiming(track.id), let speaker = trackSpeakerID(track.id),
+              let map = waveformMap, let group = map.groups.first(where: { $0.group == track.group }),
+              let placement = group.placements.first(where: { $0.occurrence.source == track.id }),
+              let span = placement.spans.first(where: { $0.epoch == point.epoch }),
+              let mapping = group.epochs.first(where: { $0.epoch == point.epoch })?.mapping,
+              case let .mapped(segments, _) = mapping,
+              let segment = segments.first(where: {
+                  let clock = point.sourceSeconds + span.groupClockOffset.approximateDouble
+                  return clock >= $0.groupClockStart.approximateDouble
+                      && clock < $0.groupClockEnd.approximateDouble
+              })
+        else {
+            waveformMessage = "Click covered audio on an already timed speaker track to mark a reference point."
+            return
+        }
+        let clock = point.sourceSeconds + span.groupClockOffset.approximateDouble
+        let aligned = segment.rateRatio.approximateDouble * clock + segment.alignedOffset.approximateDouble
+        guard aligned.isFinite else {
+            waveformMessage = "The selected reference point cannot be represented on the aligned timeline."
+            return
+        }
+        waveformReferenceMarkers.append(WaveformReferenceMarker(
+            source: track.id, group: track.group, speaker: speaker,
+            trackName: track.name,
+            alignedSeconds: aligned, sourceSeconds: point.sourceSeconds
+        ))
+        waveformMessage = "Reference marker placed. Click the matching sound on another recorder for \(speakerName(speaker)), then link it."
+    }
+
+    func referenceMarkers(for track: AlignmentWaveformTrack) -> [WaveformReferenceMarker] {
+        guard let speaker = trackSpeakerID(track.id) else { return [] }
+        return waveformReferenceMarkers.filter { $0.speaker == speaker && $0.group != track.group }
+    }
+
+    func acceptedAnchorRows(for track: AlignmentWaveformTrack) -> [AlignmentAnchorRow] {
+        guard selectedWaveformSource == track.id, let epoch = selection,
+              let group = acceptedMap?.groups.first(where: { $0.group == track.group }),
+              let mapping = group.epochs.first(where: { $0.epoch == epoch })?.mapping,
+              case let .mapped(_, .manual(correction)) = mapping,
+              AlignmentAnchorNote.source(in: correction.note) == track.id
+        else { return [] }
+        return selectedAnchors
+    }
+
+    func clearWaveformMarkers() {
+        waveformReferenceMarkers = []
+        waveformPickedPoint = nil
+    }
+
+    func linkWaveformAnchor(_ marker: WaveformReferenceMarker, to track: AlignmentWaveformTrack) {
+        guard waveformReferenceMarkers.contains(where: { $0.id == marker.id }),
+              referenceMarkers(for: track).contains(where: { $0.id == marker.id }),
+              let point = waveformPickedPoint, point.source == track.id,
+              point.epoch == selection, canCorrect,
+              let document, timingIsVerified(document.store.model),
+              loadedWaveformGeneration == document.store.modelGeneration
+        else {
+            waveformMessage = "Select covered audio on the target speaker track, then link a current reference marker."
+            return
+        }
+        selectWaveform(track, epoch: point.epoch)
+        waveformTargetPoint = point.sourceSeconds
+        waveformReferencePoint = marker.alignedSeconds
+        addWaveformAnchor()
+        waveformMessage = "\(waveformDraftAnchors.count) linked anchor\(waveformDraftAnchors.count == 1 ? "" : "s") staged. Place at least two pairs on this epoch, then apply; nothing has changed yet."
+    }
+
     func loadWaveforms(keepingSnapshot: Bool = false, preload: Bool = false) {
         guard let document else { return }
         let snapshot = document.store.model
@@ -847,6 +940,7 @@ final class EpisodeAlignmentModel {
         pendingWaveformTile = nil
         isLoadingWaveforms = false
         if keepingSnapshot { return }
+        waveformPickedPoint = nil
         pendingWaveformMove = nil
         waveformTiles = []
         waveformTilesVersion = UUID()
@@ -1274,7 +1368,7 @@ final class EpisodeAlignmentModel {
 
     func applyWaveformAnchors() {
         guard waveformDraftAnchors.count >= 2 else { return }
-        placeAnchors(waveformDraftAnchors)
+        placeAnchors(waveformDraftAnchors, source: selectedWaveformSource)
     }
 
     var canCorrect: Bool {
@@ -1573,6 +1667,7 @@ final class EpisodeAlignmentModel {
         let episode = model.episode(episodeID)
         if observedRevision != episode?.alignment?.acceptedRevision {
             observedRevision = episode?.alignment?.acceptedRevision
+            clearWaveformMarkers()
             staleAcceptedTiming = false
             analysisStates = [:]
             speakerMatches = [:]
@@ -1633,7 +1728,7 @@ final class EpisodeAlignmentModel {
                 map: snapshot?.acceptedMap
             )
             if selection == nil { selection = rows.first?.epochID }
-            anchorsByEpoch = Self.makeAnchors(map: snapshot?.acceptedMap)
+            anchorsByEpoch = AlignmentPresentation.makeAnchors(map: snapshot?.acceptedMap)
             resetWaveformTiming()
             if !waveformTracks.isEmpty, loadedWaveformEpisode?.alignment != episode?.alignment {
                 stopAudition()
@@ -1728,7 +1823,23 @@ final class EpisodeAlignmentModel {
 
     func acceptProposal() {
         guard canAcceptProposal, let epoch = selection else { return }
-        accept(actionName: UndoActionName.acceptProposal, decisions: [epoch: .acceptProposal()])
+        let note = selectedAnalysis.flatMap { record -> String? in
+            guard let proposal = record.proposal else { return nil }
+            let windows = record.windows.filter { $0.status == "eligible" }
+            guard let first = windows.first, let last = windows.last,
+                  first.groupClockCenter < last.groupClockCenter else { return nil }
+            let markers = [first, last].map { window in
+                AlignmentAnchor(
+                    sourceSeconds: window.groupClockCenter,
+                    alignedSeconds: window.groupClockCenter * proposal.segment.rateRatio.approximateDouble
+                        + proposal.segment.alignedOffset.approximateDouble
+                )
+            }
+            guard markers.allSatisfy({ $0.sourceSeconds.isFinite && $0.sourceSeconds >= 0
+                && $0.alignedSeconds.isFinite }) else { return nil }
+            return AlignmentAnchorNote.encode(markers, source: record.target.source)
+        } ?? ""
+        accept(actionName: UndoActionName.acceptProposal, decisions: [epoch: .acceptProposal(note: note)])
     }
 
     func extendProposalToEpoch() {
@@ -1743,12 +1854,15 @@ final class EpisodeAlignmentModel {
 
     func placeAnchors(
         _ anchors: [AlignmentAnchor],
+        source: SourceID? = nil,
         focusSourceSeconds: Double? = nil
     ) {
         guard let epoch = selection else { return }
+        let chosenSource = source ?? existingAnchorSource(for: epoch) ?? selectedWaveformSource
+        let decision: EpochMapDecision = chosenSource.map { .anchorsForSource($0, anchors) } ?? .anchors(anchors)
         accept(
             actionName: UndoActionName.placeAnchor,
-            decisions: [epoch: .anchors(anchors)]
+            decisions: [epoch: decision]
         ) { [weak self] in
             guard let self, let focusSourceSeconds,
                   let focused = self.anchorsByEpoch[epoch]?.min(by: {
@@ -1759,6 +1873,13 @@ final class EpisodeAlignmentModel {
             self.anchorSelection = focused.id
             self.editorRequest = .anchor(focused.id)
         }
+    }
+
+    private func existingAnchorSource(for epoch: RecordingEpochID) -> SourceID? {
+        guard let mapped = acceptedMap?.groups.flatMap(\.epochs).first(where: { $0.epoch == epoch }),
+              case let .mapped(_, .manual(correction)) = mapped.mapping
+        else { return nil }
+        return AlignmentAnchorNote.source(in: correction.note)
     }
 
     func stopAudition() {
@@ -1928,11 +2049,15 @@ final class EpisodeAlignmentModel {
               let index = anchors.firstIndex(where: { $0.id == id })
         else { return }
         anchors[index].alignedSeconds = alignedSeconds
+        let values = anchors.map {
+            AlignmentAnchor(sourceSeconds: $0.sourceSeconds, alignedSeconds: $0.alignedSeconds)
+        }
+        let decision: EpochMapDecision = existingAnchorSource(for: epoch).map {
+            .anchorsForSource($0, values)
+        } ?? .anchors(values)
         accept(
             actionName: UndoActionName.editAnchorTime,
-            decisions: [epoch: .anchors(anchors.map {
-                AlignmentAnchor(sourceSeconds: $0.sourceSeconds, alignedSeconds: $0.alignedSeconds)
-            })]
+            decisions: [epoch: decision]
         ) { [weak self] in
             self?.anchorsByEpoch[epoch] = anchors
             self?.anchorSelection = id
@@ -1966,8 +2091,11 @@ final class EpisodeAlignmentModel {
               let index = anchors.firstIndex(where: { $0.id == anchorSelection })
         else { return }
         anchors.remove(at: index)
+        let values = anchors.map {
+            AlignmentAnchor(sourceSeconds: $0.sourceSeconds, alignedSeconds: $0.alignedSeconds)
+        }
         let decision: EpochMapDecision = anchors.count >= 2
-            ? .anchors(anchors.map { AlignmentAnchor(sourceSeconds: $0.sourceSeconds, alignedSeconds: $0.alignedSeconds) })
+            ? existingAnchorSource(for: epoch).map { .anchorsForSource($0, values) } ?? .anchors(values)
             : .unmapped
         accept(
             actionName: UndoActionName.deleteAnchor,
@@ -2033,7 +2161,7 @@ final class EpisodeAlignmentModel {
                         map: accepted.map
                     )
                     message = "Map revision \(accepted.revision.revision) will activate after the show is verified on disk."
-                    anchorsByEpoch = Self.makeAnchors(map: accepted.map)
+                    anchorsByEpoch = AlignmentPresentation.makeAnchors(map: accepted.map)
                     resetWaveformTiming()
                     onAccepted()
                     if actionName == UndoActionName.acceptProposal {
@@ -2156,53 +2284,6 @@ final class EpisodeAlignmentModel {
         AccessibilityNotification.Announcement(text).post()
     }
 
-    static func makeAnchors(map: AlignedTimelineMap?) -> [RecordingEpochID: [AlignmentAnchorRow]] {
-        guard let map else { return [:] }
-        var result: [RecordingEpochID: [AlignmentAnchorRow]] = [:]
-        for group in map.groups {
-            for epoch in group.epochs {
-                guard case let .mapped(segments, .manual(correction)) = epoch.mapping,
-                      correction.basis == .anchors,
-                      let segment = segments.first,
-                      let placement = group.placements.first(where: {
-                          $0.spans.contains(where: { $0.epoch == epoch.epoch })
-                      }),
-                      let span = placement.spans.first(where: { $0.epoch == epoch.epoch })
-                else { continue }
-                let rate = Double(placement.occurrence.nominalRate.framesPerSecond)
-                if let anchors = AlignmentAnchorNote.decode(correction.note), !anchors.isEmpty {
-                    result[epoch.epoch] = anchors.sorted { $0.sourceSeconds < $1.sourceSeconds }
-                        .enumerated().map { index, anchor in
-                            AlignmentAnchorRow(
-                                id: index,
-                                sourceSeconds: anchor.sourceSeconds,
-                                groupSeconds: anchor.sourceSeconds + span.groupClockOffset.approximateDouble,
-                                alignedSeconds: anchor.alignedSeconds
-                            )
-                        }
-                    continue
-                }
-                let sourceTimes = [
-                    Double(span.startFrame) / rate,
-                    Double(max(span.startFrame, span.endFrame - 1)) / rate,
-                ]
-                result[epoch.epoch] = sourceTimes.enumerated().compactMap { index, source in
-                    let groupTime = source + span.groupClockOffset.approximateDouble
-                    guard let groupRational = try? ExactRational(
-                        numerator: Int128((groupTime * 1_000_000_000).rounded()),
-                        denominator: 1_000_000_000
-                    ), let aligned = try? segment.rateRatio.multiplied(by: groupRational)
-                        .adding(segment.alignedOffset)
-                    else { return nil }
-                    return AlignmentAnchorRow(
-                        id: index, sourceSeconds: source,
-                        groupSeconds: groupTime, alignedSeconds: aligned.approximateDouble
-                    )
-                }
-            }
-        }
-        return result
-    }
 }
 
 /// Audio render callbacks run off the main actor; AVAudioSourceNode invokes this cursor serially.

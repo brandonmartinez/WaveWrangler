@@ -854,16 +854,18 @@ public final class AlignmentPipeline: Sendable {
                     }
                     let correction: ManualCorrection
                     if case let .manual(existing) = provenance,
-                       existing.basis == .anchors,
                        let anchors = AlignmentAnchorNote.decode(existing.note) {
-                        correction = ManualCorrection(
-                            basis: .anchors,
-                            note: AlignmentAnchorNote.encode(anchors.map {
+                        let shiftedAnchors = anchors.map {
                                 AlignmentAnchor(
                                     sourceSeconds: $0.sourceSeconds,
                                     alignedSeconds: $0.alignedSeconds + Double(microseconds) / 1_000_000
                                 )
-                            })
+                            }
+                        correction = ManualCorrection(
+                            basis: existing.basis == .anchors ? .anchors : .numericEntry,
+                            note: AlignmentAnchorNote.source(in: existing.note).map {
+                                AlignmentAnchorNote.encode(shiftedAnchors, source: $0)
+                            } ?? AlignmentAnchorNote.encode(shiftedAnchors)
                         )
                     } else {
                         correction = ManualCorrection(basis: .numericEntry, note: "Recorder group moved by the user.")
@@ -1249,7 +1251,7 @@ public final class AlignmentPipeline: Sendable {
         case let .anchors(anchors, note):
             guard let range else { throw .noPlaceableSource(epoch) }
             let groupAnchors = try Self.groupClockAnchors(
-                anchors, epoch: epoch, placements: placements
+                anchors, source: nil, epoch: epoch, placements: placements
             )
             let (rate, offset) = try MapAcceptance.fit(epoch, anchors: groupAnchors)
             return .mapped(
@@ -1259,15 +1261,28 @@ public final class AlignmentPipeline: Sendable {
                     note: note.isEmpty ? AlignmentAnchorNote.encode(anchors) : note
                 ))
             )
+        case let .anchorsForSource(source, anchors, note):
+            guard let range else { throw .noPlaceableSource(epoch) }
+            let groupAnchors = try Self.groupClockAnchors(
+                anchors, source: source, epoch: epoch, placements: placements
+            )
+            let (rate, offset) = try MapAcceptance.fit(epoch, anchors: groupAnchors)
+            return .mapped(
+                segments: [try Self.segment(range: range, rate: rate, offset: offset)],
+                provenance: .manual(ManualCorrection(
+                    basis: .anchors,
+                    note: note.isEmpty ? AlignmentAnchorNote.encode(anchors, source: source) : note
+                ))
+            )
         }
     }
 
-    private static func groupClockAnchors(
+    static func groupClockAnchors(
         _ anchors: [AlignmentAnchor],
-        epoch: RecordingEpochID,
+        source: SourceID?, epoch: RecordingEpochID,
         placements: [OccurrencePlacement]
     ) throws(AlignmentAcceptanceError) -> [AlignmentAnchor] {
-        for placement in placements {
+        for placement in placements where source == nil || placement.occurrence.source == source {
             let sourceRate = Double(placement.occurrence.nominalRate.framesPerSecond)
             guard let span = placement.spans.first(where: { $0.epoch == epoch }) else { continue }
             let sourceStart = Double(span.startFrame) / sourceRate

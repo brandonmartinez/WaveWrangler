@@ -774,6 +774,9 @@ struct AlignmentWaveformView: View {
                             cachedOverviewDrawing(track: track, size: geometry.size, overlay: true)
                         }
                     }
+                    ForEach(tracks) { track in
+                        anchorMarkers(for: track, size: geometry.size)
+                    }
                     Rectangle().fill(Color.primary.opacity(0.7)).frame(width: 1)
                         .position(x: x(model.waveformPlayheadSeconds, width: geometry.size.width),
                                   y: geometry.size.height / 2)
@@ -889,6 +892,7 @@ struct AlignmentWaveformView: View {
                             || model.waveformVisibleStrokes(for: track.id).isEmpty {
                             cachedOverviewDrawing(track: track, size: geometry.size, overlay: false)
                         }
+                        anchorMarkers(for: track, size: geometry.size)
                         Rectangle().fill(Color.primary.opacity(0.7)).frame(width: 1)
                             .position(x: x(model.waveformPlayheadSeconds, width: geometry.size.width), y: geometry.size.height / 2)
                     }
@@ -923,7 +927,7 @@ struct AlignmentWaveformView: View {
                     .stroke(model.selectedWaveformSource == track.id ? Color.accentColor : Color.secondary.opacity(0.3)))
                 .accessibilityRepresentation {
                     let strokes = model.waveformStrokes[track.id] ?? []
-                    Button("\(track.groupName), \(track.name), audio waveform. \(strokes.count) measured amplitude bins; \(strokes.filter { !$0.mapped }.count) unplaced. Stored offset \(model.rows.first(where: { $0.epochID == track.epoch })?.offsetMilliseconds ?? 0) milliseconds. Select this track, then use numeric timing as a keyboard alternative.") {
+                    Button("\(track.groupName), \(track.name), audio waveform. \(strokes.count) measured amplitude bins; \(strokes.filter { !$0.mapped }.count) unplaced. Stored offset \(model.rows.first(where: { $0.epochID == track.epoch })?.offsetMilliseconds ?? 0) milliseconds. Click a measured point to use marker controls; select this track and use numeric timing as a keyboard alternative.") {
                         model.selectWaveform(track)
                     }
                     .accessibilityIdentifier("alignment.waveforms.track.\(track.id)")
@@ -1026,6 +1030,78 @@ struct AlignmentWaveformView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .accessibilityIdentifier("alignment.waveforms.noMatch.\(track.id)")
             }
+            anchorControls(for: track)
+        }
+    }
+
+    @ViewBuilder
+    private func anchorControls(for track: AlignmentWaveformTrack) -> some View {
+        if let point = model.waveformPickedPoint, point.source == track.id {
+            Text("Selected source point: \(AlignmentPresentation.formatTime(point.sourceSeconds))")
+                .font(.caption).foregroundStyle(.secondary)
+                .accessibilityIdentifier("alignment.waveforms.anchor.point.\(track.id)")
+            if point.mapped && model.sourceHasAcceptedTiming(track.id) {
+                Button("Mark reference point") { model.markWaveformReference(track) }
+                    .disabled(model.isWorking)
+                    .accessibilityIdentifier("alignment.waveforms.anchor.mark.\(track.id)")
+            }
+            let markers = model.referenceMarkers(for: track)
+            if !markers.isEmpty && model.canCorrect {
+                Menu("Link to reference marker…") {
+                    ForEach(markers) { marker in
+                        Button("\(marker.trackName) · \(AlignmentPresentation.formatTime(marker.alignedSeconds))") {
+                            model.linkWaveformAnchor(marker, to: track)
+                        }
+                    }
+                }
+                .disabled(model.isWorking)
+                .accessibilityIdentifier("alignment.waveforms.anchor.link.\(track.id)")
+            }
+        }
+        if model.selectedWaveformSource == track.id, !model.waveformDraftAnchors.isEmpty {
+            HStack {
+                Text("\(model.waveformDraftAnchors.count) linked \(model.waveformDraftAnchors.count == 1 ? "point" : "points")")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Apply anchors") { model.applyWaveformAnchors() }
+                    .disabled(model.waveformDraftAnchors.count < 2 || !model.canCorrect)
+                    .accessibilityIdentifier("alignment.waveforms.anchor.apply.\(track.id)")
+            }
+            if model.waveformDraftAnchors.count < 2 {
+                Text("Link a second point on this epoch to calculate offset and drift.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func anchorMarkers(for track: AlignmentWaveformTrack, size: CGSize) -> some View {
+        ForEach(model.waveformReferenceMarkers.filter { $0.source == track.id }) { marker in
+            let position = x(marker.alignedSeconds, width: size.width)
+            if (0...size.width).contains(position) {
+                Rectangle().fill(Color.orange).frame(width: 2, height: size.height)
+                    .position(x: position, y: size.height / 2)
+                    .allowsHitTesting(false).accessibilityHidden(true)
+            }
+        }
+        ForEach(model.acceptedAnchorRows(for: track)) { anchor in
+            let position = x(anchor.alignedSeconds, width: size.width)
+            if (0...size.width).contains(position) {
+                Rectangle().fill(Color.orange).frame(width: 2, height: size.height)
+                    .position(x: position, y: size.height / 2)
+                    .allowsHitTesting(false).accessibilityHidden(true)
+            }
+        }
+        if model.selectedWaveformSource == track.id {
+            ForEach(model.waveformDraftAnchors, id: \.sourceSeconds) { anchor in
+                let time = model.sourceHasAcceptedTiming(track.id)
+                    ? anchor.alignedSeconds : anchor.sourceSeconds
+                let position = x(time, width: size.width)
+                if (0...size.width).contains(position) {
+                    Rectangle().fill(Color.green).frame(width: 2, height: size.height)
+                        .position(x: position, y: size.height / 2)
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+            }
         }
     }
 
@@ -1046,6 +1122,11 @@ struct AlignmentWaveformView: View {
                         Text("Measured source interval \(AlignmentPresentation.formatTime(proposal.segment.groupClockStart.approximateDouble))–\(AlignmentPresentation.formatTime(proposal.segment.groupClockEnd.approximateDouble)); \(analysis.coverage.eligibleCount)/\(analysis.coverage.windowCount) windows, peak \(proposal.provenance.evidenceScore.map { String(format: "%.3f", $0) } ?? "unavailable"), residual p95 \(String(format: "%.3f", proposal.acousticResidualP95Milliseconds)) ms. These are evidence measures, not a probability or clock proof.")
                             .font(.caption).foregroundStyle(.secondary)
                             .accessibilityIdentifier("alignment.auto.evidence")
+                        Text(analysis.flags.contains("coverageGap")
+                             ? "The silence between the matching regions was verified in both recordings. Accept to retain evidence markers at the first and last reliable windows; this still needs your review."
+                             : "Accept to retain evidence markers at the first and last reliable windows. They do not approve recorder clock accuracy.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("alignment.auto.anchorEvidence")
                         HStack {
                             Button("Accept measured interval") { model.acceptProposal() }
                                 .disabled(!model.canAcceptProposal)
@@ -1363,11 +1444,18 @@ struct AlignmentWaveformView: View {
             draftEpoch: model.waveformTimingIsDraft ? model.selection : nil,
             ratePPM: model.waveformRatePPM, offsetMilliseconds: model.waveformOffsetMilliseconds
         ) else { return false }
+        if let sourceSeconds = AlignmentWaveformProjection.anchorSourceSeconds(at: time, stroke: selected) {
+            model.selectWaveformAnchorPoint(track, position: selected, sourceSeconds: sourceSeconds)
+        }
         if model.waveformMap?.reference.group == track.group {
             model.waveformReferencePoint = time
         } else {
             model.selectWaveform(track, epoch: selected.epoch)
-            model.waveformTargetPoint = selected.sourceSeconds
+            if let point = model.waveformPickedPoint, point.source == track.id {
+                model.waveformTargetPoint = point.sourceSeconds
+            } else {
+                model.waveformTargetPoint = selected.sourceSeconds
+            }
         }
         if seek { model.seekEnabledTracks(to: time) }
         return true

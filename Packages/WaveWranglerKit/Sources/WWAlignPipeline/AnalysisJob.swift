@@ -3,6 +3,7 @@ import WWAlignEstimate
 import WWCore
 import WWDecode
 import WWDerived
+import WWSources
 import WWTimeMap
 
 /// The dependencies every pipeline job shares.
@@ -53,7 +54,8 @@ enum SourceProbe {
             return try await environment.gate.withAdmission(bytes: admissionBytes) {
                 try await decoder.withDecodingCursor(source.url, source: source.id) { cursor in
                     let interpretation = cursor.interpretation
-                    try verify(interpretation, source: source.id, token: token)
+                    try verify(interpretation, source: source.id, token: token,
+                               recorded: source.recordedFingerprint)
                     return SourceFacts(interpretation: interpretation, revisionToken: token)
                 }
             }
@@ -64,16 +66,26 @@ enum SourceProbe {
 
     /// The interpretation must use this build's format revision, and (for a metadata revision) the file the
     /// decoder opened must still be the one the app registered.
-    static func verify(_ interpretation: FormatInterpretation, source: SourceID, token: String) throws(AlignmentWorkFailure) {
+    static func verify(
+        _ interpretation: FormatInterpretation, source: SourceID, token: String,
+        recorded: FileSystemFingerprint? = nil
+    ) throws(AlignmentWorkFailure) {
         let format = FormatRevision.current
         guard interpretation.formatInterpretationVersion == format.interpretationVersion,
               interpretation.envelopeVersion == format.envelopeVersion
         else {
             throw .formatRevisionMismatch(interpretation: interpretation.formatInterpretationVersion, envelope: interpretation.envelopeVersion)
         }
-        if token.hasPrefix("metadata:"),
-           SourceRevision.metadata(source, fingerprint: interpretation.sourceFingerprint).token != token {
-            throw .sourceChangedSinceRegistration
+        if token.hasPrefix("metadata:") {
+            if let recorded {
+                guard SourceRevision.verifiedMetadata(
+                    source, recorded: recorded, observed: interpretation.sourceFingerprint
+                )?.token == token else { throw .sourceChangedSinceRegistration }
+            } else {
+                guard SourceRevision.metadata(
+                    source, fingerprint: interpretation.sourceFingerprint
+                ).token == token else { throw .sourceChangedSinceRegistration }
+            }
         }
     }
 }
@@ -106,7 +118,7 @@ struct AnalysisUnit: Sendable {
                 + "[ref=\(referenceChoice.group)/\(referenceChoice.epoch)/\(reference.id);"
                 + "channels=\(referenceChannel.map(String.init) ?? "mix"),\(targetChannel.map(String.init) ?? "mix");"
                 + "map=\(referenceMapDigest ?? "origin")]",
-            revision: 1
+            revision: 2
         )
     }
 
@@ -280,7 +292,8 @@ struct AnalysisUnit: Sendable {
     ) async throws -> [Float] {
         try await decoder.withDecodingCursor(source.url, source: source.id) { cursor in
             let interpretation = cursor.interpretation
-            try SourceProbe.verify(interpretation, source: source.id, token: facts.revisionToken)
+            try SourceProbe.verify(interpretation, source: source.id, token: facts.revisionToken,
+                                   recorded: source.recordedFingerprint)
             guard interpretation.sourceSampleRate == facts.sampleRate,
                   interpretation.frames.validFrames == facts.frameCount,
                   interpretation.channelCount == facts.channelCount
@@ -340,11 +353,16 @@ struct AnalysisUnit: Sendable {
             throw .estimator(.invalidParameter("the estimator returned no result for the target epoch"))
         }
         var record = EpochAnalysisRecord(recipe: recipe ?? self.recipe.name, reference: referenceParticipant, target: targetParticipant, search: search, estimate: estimate)
-        if estimate.flags.contains(.coverageGap), record.abstention?.abstentionReason != .cycleInconsistent {
+        if estimate.flags.contains(.coverageGap),
+           !Self.matchedSilenceBridges(
+               record: record, reference: referenceSamples, target: targetSamples,
+               referenceParticipant: referenceParticipant, targetParticipant: targetParticipant
+           ),
+           record.abstention?.abstentionReason != .cycleInconsistent {
             record.proposal = nil
             record.abstention = AbstentionRecord(
                 reason: AbstentionReason.discontinuous.rawValue,
-                detail: "Internal coverage gap: declare an epoch boundary or place anchors manually; no inverse is available across the gap."
+                detail: "Internal coverage gap without matching silence in both recordings: declare an epoch boundary or place anchors manually; no inverse is available across the gap."
             )
         }
         if peerTracks.contains(where: { $0.group != targetGroup }), record.cycleTriangles == 0, record.proposal != nil {
@@ -355,6 +373,56 @@ struct AnalysisUnit: Sendable {
             )
         }
         return record
+    }
+
+    private static func matchedSilenceBridges(
+        record: EpochAnalysisRecord, reference: [Float], target: [Float],
+        referenceParticipant: AnalysisParticipant, targetParticipant: AnalysisParticipant
+    ) -> Bool {
+        guard let proposal = record.proposal,
+              let first = record.windows.firstIndex(where: { $0.status == WindowStatus.eligible.rawValue }),
+              let last = record.windows.lastIndex(where: { $0.status == WindowStatus.eligible.rawValue }),
+              last > first else { return false }
+        let inside = record.windows[first...last].filter { $0.status != WindowStatus.eligible.rawValue }
+        guard !inside.isEmpty, inside.allSatisfy({ $0.status == WindowStatus.silent.rawValue }) else {
+            return false
+        }
+        let ratio = proposal.segment.rateRatio.approximateDouble
+        let offset = proposal.segment.alignedOffset.approximateDouble
+        let halfWindow = EstimatorParameters().windowSeconds / 2
+        return inside.allSatisfy { window in
+            let referenceTime = ratio * window.groupClockCenter + offset
+            return isSilent(
+                target, rate: targetParticipant.analysisRate,
+                start: Double(targetParticipant.excerptStartFrame) / Double(targetParticipant.sourceRate),
+                center: window.groupClockCenter, halfWindow: halfWindow
+            ) && isSilent(
+                reference, rate: referenceParticipant.analysisRate,
+                start: Double(referenceParticipant.excerptStartFrame) / Double(referenceParticipant.sourceRate),
+                center: referenceTime, halfWindow: halfWindow
+            )
+        }
+    }
+
+    private static func isSilent(
+        _ samples: [Float], rate: Int, start: Double, center: Double, halfWindow: Double
+    ) -> Bool {
+        guard rate > 0, center.isFinite, start.isFinite else { return false }
+        let lowerFrame = ((center - halfWindow - start) * Double(rate)).rounded()
+        let upperFrame = ((center + halfWindow - start) * Double(rate)).rounded()
+        guard lowerFrame.isFinite, upperFrame.isFinite,
+              lowerFrame >= 0, upperFrame <= Double(samples.count) else { return false }
+        let lower = Int(lowerFrame)
+        let upper = Int(upperFrame)
+        guard lower >= 0, upper <= samples.count, upper > lower else { return false }
+        let count = Double(upper - lower)
+        let mean = samples[lower..<upper].reduce(0.0) { $0 + Double($1) } / count
+        let energy = samples[lower..<upper].reduce(0.0) {
+            let delta = Double($1) - mean
+            return $0 + delta * delta
+        } / count
+        let floor = EstimatorParameters().silenceRMS
+        return energy < floor * floor
     }
 }
 

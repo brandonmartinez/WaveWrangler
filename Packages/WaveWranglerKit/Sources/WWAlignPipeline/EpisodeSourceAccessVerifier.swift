@@ -170,14 +170,15 @@ public struct EpisodeSourceInventorySurveyor: Sendable {
         else { throw EpisodeSourceAccessRefusal.accessUnverified(source) }
         let current = access.withScopedAccess(to: url) { access.io.metadata(at: $0) }
         guard case let .success(metadata) = current,
-              record.recordedIdentity?.fingerprint.compare(to: metadata.fingerprint) == .matches,
+              let recorded = record.recordedIdentity?.fingerprint,
+              recorded.compare(to: metadata.fingerprint) == .matches,
               metadata.isReadable.value == true
         else { throw EpisodeSourceAccessRefusal.sourceChanged(source) }
         guard let volume = metadata.fingerprint.volumeUUID.value,
               let identifier = metadata.fingerprint.fileIdentifier.value
         else { throw EpisodeSourceAccessRefusal.physicalIdentityUnknown(source) }
         return (
-            SourceRevision.metadata(source, fingerprint: metadata.fingerprint),
+            SourceRevision.metadata(source, fingerprint: recorded),
             PhysicalFile(volume: volume, identifier: identifier)
         )
     }

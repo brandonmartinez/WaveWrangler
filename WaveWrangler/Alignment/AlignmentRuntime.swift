@@ -681,7 +681,10 @@ actor AlignmentRuntime {
             }
             if let revision {
                 await coordinator.updateSource(revision)
-                values.append(AlignmentSource(id: source.id, url: url, availability: .on))
+                values.append(AlignmentSource(
+                    id: source.id, url: url, availability: .on,
+                    recordedFingerprint: record?.recordedIdentity?.fingerprint
+                ))
             } else {
                 await coordinator.removeSource(source.id)
                 values.append(AlignmentSource(id: source.id, url: url, availability: .off))

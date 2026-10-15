@@ -39,11 +39,16 @@ public struct AlignmentSource: Sendable, Equatable {
     public let id: SourceID
     public let url: URL
     public let availability: SourceAvailabilitySetting
+    public let recordedFingerprint: FileSystemFingerprint?
 
-    public init(id: SourceID, url: URL, availability: SourceAvailabilitySetting) {
+    public init(
+        id: SourceID, url: URL, availability: SourceAvailabilitySetting,
+        recordedFingerprint: FileSystemFingerprint? = nil
+    ) {
         self.id = id
         self.url = url
         self.availability = availability
+        self.recordedFingerprint = recordedFingerprint
     }
 }
 

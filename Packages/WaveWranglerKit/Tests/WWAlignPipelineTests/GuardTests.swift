@@ -65,6 +65,33 @@ struct GuardTests {
         #expect(throws: AlignmentWorkFailure.self) { try SourceProbe.verify(newerFormat, source: id, token: "content:digest") }
     }
 
+    @Test("Verified baseline metadata remains valid at decoder open only within identity tolerance")
+    func probeUsesTheSameIdentityComparisonAsRegistration() async throws {
+        let fixture = try await PipelineFixture(TwoRecorder.groups(referenceSeconds: 2, targetSeconds: 2), label: "guard-metadata")
+        let source = fixture.id("ref")
+        let decoder = SourceDecoder(access: SourceAccessContext(io: fixture.metadataIO), content: fixture.content)
+        let current = try await decoder.withDecodingCursor(fixture.url("ref"), source: source) { $0.interpretation }
+        let recorded = current.sourceFingerprint
+        let token = SourceRevision.metadata(source, fingerprint: recorded).token
+        guard let timestamp = recorded.contentModificationDate.value else {
+            Issue.record("synthetic source must have a modification date")
+            return
+        }
+        var observed = current
+        observed.sourceFingerprint.contentModificationDate = .known(timestamp.addingTimeInterval(0.0002))
+        #expect(recorded.compare(to: observed.sourceFingerprint) == .matches)
+        #expect(throws: Never.self) {
+            try SourceProbe.verify(observed, source: source, token: token, recorded: recorded)
+        }
+        #expect(throws: AlignmentWorkFailure.sourceChangedSinceRegistration) {
+            try SourceProbe.verify(observed, source: source, token: token)
+        }
+        observed.sourceFingerprint.fileSize = .known((recorded.fileSize.value ?? 0) + 1)
+        #expect(throws: AlignmentWorkFailure.sourceChangedSinceRegistration) {
+            try SourceProbe.verify(observed, source: source, token: token, recorded: recorded)
+        }
+    }
+
     // MARK: Acceptance currency
 
     @Test("`build` refuses or withholds a proposal measured on another revision of either source, even if handed it directly", arguments: ["tgt", "ref"])

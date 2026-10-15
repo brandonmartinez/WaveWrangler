@@ -55,9 +55,17 @@ undoable, verified manual decision; rate-aware playback corrects that mapped int
 clock rate (not pitch-preserving time stretching) without altering the original. Outside it,
 audio stays unplaced. **Extend to whole epoch…** is a
 separate, warned human decision to extrapolate its rate and offset into unmeasured audio, not a
-new confidence claim. Restarted epochs and gaps are never bridged; uncertain matches leave
-manual placement, numeric correction and anchors available. Accepting one match never makes
-other proposals playable.
+new confidence claim. A quiet stretch between consistent matches can remain in the proposal
+only when both decoded recordings measure silence there; this does not prove that no audio is
+missing. One-sided active-audio gaps, unrelated windows, and declared recorder restarts still
+refuse or stay separate. Accepting a proposal
+records visible evidence markers at its first and last reliable windows, not a clock approval.
+Click a covered point on an already timed speaker track, choose **Mark reference point**, then
+click the matching point on the same speaker's track in another recorder and choose **Link to
+reference marker…**. Repeat at a second point and **Apply anchors** to fit offset and drift;
+the marker pairs are staged, not saved timing, until you apply them. Zoom into the waveform
+for precise clicks. Manual numeric editing remains available when no matching reference
+audio exists. Accepting one match never makes other proposals playable.
 If a previously accepted map reports a changed source dependency, alignment refuses rather
 than silently rebasing old timing. Confirm the original in Setup and restore it, or choose
 **Start fresh alignment…**, confirm that the accepted timing should no longer be used, wait

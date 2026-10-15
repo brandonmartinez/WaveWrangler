@@ -20,6 +20,11 @@ public struct AlignmentAnchor: Sendable, Hashable, Codable {
 /// manual provenance's existing free-text note. The prefix makes ordinary notes unambiguous.
 public enum AlignmentAnchorNote {
     private static let prefix = "ww.anchors.v1:"
+    private static let sourcePrefix = "ww.anchors.v2:"
+    private struct SourceAnchors: Codable {
+        let source: SourceID
+        let anchors: [AlignmentAnchor]
+    }
 
     public static func encode(_ anchors: [AlignmentAnchor]) -> String {
         guard let data = try? JSONEncoder().encode(anchors) else { return "" }
@@ -27,10 +32,26 @@ public enum AlignmentAnchorNote {
     }
 
     public static func decode(_ note: String) -> [AlignmentAnchor]? {
+        if note.hasPrefix(sourcePrefix),
+           let data = Data(base64Encoded: String(note.dropFirst(sourcePrefix.count))) {
+            return try? JSONDecoder().decode(SourceAnchors.self, from: data).anchors
+        }
         guard note.hasPrefix(prefix),
               let data = Data(base64Encoded: String(note.dropFirst(prefix.count)))
         else { return nil }
         return try? JSONDecoder().decode([AlignmentAnchor].self, from: data)
+    }
+
+    public static func encode(_ anchors: [AlignmentAnchor], source: SourceID) -> String {
+        guard let data = try? JSONEncoder().encode(SourceAnchors(source: source, anchors: anchors)) else { return "" }
+        return sourcePrefix + data.base64EncodedString()
+    }
+
+    public static func source(in note: String) -> SourceID? {
+        guard note.hasPrefix(sourcePrefix),
+              let data = Data(base64Encoded: String(note.dropFirst(sourcePrefix.count)))
+        else { return nil }
+        return try? JSONDecoder().decode(SourceAnchors.self, from: data).source
     }
 }
 
@@ -49,6 +70,8 @@ public enum EpochMapDecision: Sendable, Hashable {
     case numeric(ppm: Double, offsetMilliseconds: Double, note: String = "")
     /// At least two anchors; fitted by least squares, quantised like numeric entry.
     case anchors([AlignmentAnchor], note: String = "")
+    /// Source-specific anchors preserve the source clock when a recorder group contains multiple files.
+    case anchorsForSource(SourceID, [AlignmentAnchor], note: String = "")
     /// Leave the epoch unsupported (rejecting any proposal).
     case unmapped
 }
@@ -131,8 +154,10 @@ enum MapAcceptance {
         guard let reference = plan.reference else { throw .noReference }
         guard facts[reference.source] != nil else { throw .referenceFactsUnavailable(reference.source) }
         for epoch in decisions.keys {
-            guard plan.epoch(epoch) != nil else { throw .unknownEpoch(epoch) }
+            guard let planned = plan.epoch(epoch) else { throw .unknownEpoch(epoch) }
             if epoch == reference.epoch { throw .decisionForReferenceEpoch(epoch) }
+            if case let .anchorsForSource(source, _, _) = decisions[epoch],
+               !planned.sources.contains(source) { throw .noPlaceableSource(epoch) }
             // A decision needing a proposal is checked where it is applied (`mapping`), which binds the proposal.
         }
         let timelineReference = TimelineReference(group: reference.group, epoch: reference.epoch, occurrence: reference.occurrence)
@@ -319,6 +344,11 @@ enum MapAcceptance {
             (rate, offset) = try fit(epoch, anchors: anchors)
             basis = .anchors
             note = text.isEmpty ? AlignmentAnchorNote.encode(anchors) : text
+        case let .anchorsForSource(source, anchors, text):
+            guard facts[source] != nil else { throw .noPlaceableSource(epoch) }
+            (rate, offset) = try fit(epoch, anchors: anchors)
+            basis = .anchors
+            note = text.isEmpty ? AlignmentAnchorNote.encode(anchors, source: source) : text
         }
         guard let end else { throw .noPlaceableSource(epoch) }
         let segment: AffineClockSegment
@@ -327,6 +357,7 @@ enum MapAcceptance {
         } catch {
             if case .invalidMap(let detail) = error, decision != .unmapped {
                 if case .anchors = decision { throw .invalidAnchors(epoch, detail) }
+                if case .anchorsForSource = decision { throw .invalidAnchors(epoch, detail) }
                 throw .invalidNumericEntry(epoch, detail)
             }
             throw error
