@@ -232,7 +232,7 @@ extension TransferStatus {
         case .paused:
             .init(.transfer, "Download paused", .symbol("pause.circle"), summary: "Paused", spoken: "download paused", priority: 4, tint: .secondary)
         case .cancelled:
-            .init(.transfer, "Download cancelled", .symbol("xmark.circle"), summary: "Cancelled", spoken: "download cancelled", priority: 4, tint: .secondary)
+            .init(.transfer, "Download canceled", .symbol("xmark.circle"), summary: "Canceled", spoken: "download canceled", priority: 4, tint: .secondary)
         case let .failed(reason):
             .init(.transfer, "Download failed: \(reason)", .symbol("exclamationmark.circle"), summary: "Download failed", spoken: "download failed", priority: 4, attention: true, tint: .failed)
         case .noConnection:

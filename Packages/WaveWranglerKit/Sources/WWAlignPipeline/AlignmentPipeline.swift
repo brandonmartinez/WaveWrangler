@@ -654,10 +654,10 @@ public final class AlignmentPipeline: Sendable {
     ) async throws(AlignmentAcceptanceError) -> AcceptedAlignment {
         guard let episode = model.episode(episodeID), report.plan.episode == episodeID else { throw .episodeNotFound(episodeID) }
         guard report.references.isEmpty || report.referenceRevision == episode.alignment?.acceptedRevision else {
-            throw .invalidMap("The accepted timing changed since this speaker match. Analyse again.")
+            throw .invalidMap("The accepted timing changed since this speaker match. Analyze again.")
         }
         guard report.speakerAssignments == nil || report.speakerAssignments == episode.speakerAssignments else {
-            throw .invalidMap("Speaker channel assignments changed since this match. Analyse again.")
+            throw .invalidMap("Speaker channel assignments changed since this match. Analyze again.")
         }
         if await coordinator.isShutdown { throw .coordinatorShutDown }
         let inputs = await coordinator.inputs

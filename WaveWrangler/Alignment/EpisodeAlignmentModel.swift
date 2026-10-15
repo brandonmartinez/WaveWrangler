@@ -59,7 +59,7 @@ final class EpisodeAlignmentModel {
     private var observedAssignments: [SpeakerAssignment]?
     private var analysedRevision: Int?
     private var observedRevision: Int?
-    private(set) var message = "Alignment has not read or analysed any audio."
+    private(set) var message = "Alignment has not read or analyzed any audio."
     private(set) var dependents = "No dependent work yet."
     private(set) var lastError: String?
     private(set) var staleAcceptedTiming = false
@@ -868,7 +868,7 @@ final class EpisodeAlignmentModel {
                     scheduleScrubTile()
                 }
             } catch is CancellationError {
-                if generation == waveformGeneration { waveformMessage = "Waveform loading cancelled." }
+                if generation == waveformGeneration { waveformMessage = "Waveform loading canceled." }
             } catch {
                 guard generation == waveformGeneration else { return }
                 waveformMessage = "Waveforms unavailable: \(error.localizedDescription)"
@@ -1042,7 +1042,7 @@ final class EpisodeAlignmentModel {
                     ?? "\(loaded.tracks.count) cached PCM overviews; \(loaded.refusals.count) failed to load. Click covered audio to load an exact window; coarse bins are not anchors."
             } catch is CancellationError {
                 if generation == overviewGeneration {
-                    waveformOverviewMessage = "Overview cancelled or episode changed. No partial result was kept."
+                    waveformOverviewMessage = "Overview canceled or episode changed. No partial result was kept."
                 }
             } catch {
                 guard generation == overviewGeneration else { return }
@@ -1748,7 +1748,7 @@ final class EpisodeAlignmentModel {
     func analyse() {
         guard let document, !isWorking else { return }
         guard !pendingResetVerification || timingIsVerified(document.store.model) else {
-            message = "Save verification must finish before analysing the fresh timeline."
+            message = "Save verification must finish before analyzing the fresh timeline."
             return
         }
         guard let epoch = selection,
@@ -1764,7 +1764,7 @@ final class EpisodeAlignmentModel {
         analysedGroups = nil
         analysedAssignments = nil
         analysedRevision = nil
-        message = "Analysing available sources…"
+        message = "Analyzing available sources…"
         let model = document.store.model
         Task {
             do {

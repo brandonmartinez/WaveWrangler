@@ -997,7 +997,7 @@ struct AlignmentWaveformView: View {
             }
             let options = model.matchOptions(for: track)
             if options.count == 1, let option = options.first {
-                Button(model.isWorking && model.selectedWaveformSource == track.id ? "Analysing…" : "Align…") {
+                Button(model.isWorking && model.selectedWaveformSource == track.id ? "Analyzing…" : "Align…") {
                     model.align(track, with: option)
                 }
                 .disabled(model.isWorking)

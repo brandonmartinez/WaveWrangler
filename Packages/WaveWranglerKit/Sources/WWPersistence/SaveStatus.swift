@@ -48,7 +48,7 @@ public enum DocumentSaveState: Sendable, Equatable {
         case .autosaveSkipped: "Not saved — autosave is off"
         case .readOnlyNewerFormat: "Read-only — newer format"
         case let .recoveredReadOnly(revision): "Recovered revision \(revision) — read-only"
-        case .cancelled: "Saving cancelled — changes not saved"
+        case .cancelled: "Saving canceled — changes not saved"
         }
     }
 

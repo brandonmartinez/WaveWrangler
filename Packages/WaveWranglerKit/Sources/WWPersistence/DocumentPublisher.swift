@@ -134,10 +134,10 @@ extension PublicationError: LocalizedError {
             case .diskFull: "The document could not be saved because the disk is full."
             case .permissionDenied: "The document could not be saved because WaveWrangler does not have permission."
             case .unavailable: "The document could not be saved because its location is unavailable."
-            case .cancelled: "Saving was cancelled."
+            case .cancelled: "Saving was canceled."
             case .other: "The document could not be saved."
             }
-        case .cancelled: "Saving was cancelled."
+        case .cancelled: "Saving was canceled."
         case .acknowledgementUncertain: "The save may have completed, but it could not be verified."
         }
     }

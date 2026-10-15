@@ -242,7 +242,7 @@ public struct SaveStatusPresentation: Sendable, Equatable {
         case .cancelled:
             text = "Not saved"
             symbol = "pencil.circle"
-            popover = "Save cancelled. Your changes are still open; the last saved version hasn't been changed."
+            popover = "Save canceled. Your changes are still open; the last saved version hasn't been changed."
             actions = [.saveNow]
         case .recovered(let incomplete, let opened):
             text = "Recovered"
