@@ -42,12 +42,15 @@ public struct TimeMapVersion: Sendable, Equatable, Codable {
     public var inputs: TimeMapInputs
     /// The strict `WWTimeMap.AlignedTimelineMap` encoding.
     public var map: EmbeddedJSON
+    public var sourceCorrections: [SourceTimingCorrection]?
 
-    public init(revision: Int, derivedFrom: Int? = nil, inputs: TimeMapInputs, map: EmbeddedJSON) {
+    public init(revision: Int, derivedFrom: Int? = nil, inputs: TimeMapInputs, map: EmbeddedJSON,
+                sourceCorrections: [SourceTimingCorrection]? = nil) {
         self.revision = revision
         self.derivedFrom = derivedFrom
         self.inputs = inputs
         self.map = map
+        self.sourceCorrections = sourceCorrections
     }
 }
 

@@ -69,7 +69,11 @@ public struct AlignmentPipelineConfiguration: Sendable, Equatable {
 
     /// The analysis recipe: estimator identity plus every parameter that changes an analysis result.
     var analysisRecipeName: String {
-        "ww.alignment-analysis[est=\(AlignmentAssetKinds.estimatorIdentifier);excerpt=\(targetExcerptSeconds);dev=\(searchDeviationSeconds);center=\(searchCenterSeconds);rate>=\(minimumAnalysisRate);dec=\(AnalysisDecimator.designVersion)]"
+        analysisRecipeName(estimator: AlignmentAssetKinds.estimatorIdentifier)
+    }
+
+    func analysisRecipeName(estimator: String) -> String {
+        "ww.alignment-analysis[est=\(estimator);excerpt=\(targetExcerptSeconds);dev=\(searchDeviationSeconds);center=\(searchCenterSeconds);rate>=\(minimumAnalysisRate);dec=\(AnalysisDecimator.designVersion)]"
     }
 
     /// The render recipe name (output segmenting and the output-settings policy revision are part of the

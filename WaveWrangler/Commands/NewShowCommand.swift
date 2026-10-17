@@ -49,8 +49,12 @@ enum NewShowCommand {
                         return
                     }
                     controller.addDocument(document)
-                    document.makeWindowControllers()
-                    document.showWindows()
+                    if document.store.model.episodes.isEmpty {
+                        LibraryWindowController.show(document: document)
+                    } else {
+                        document.makeWindowControllers()
+                        document.showWindows()
+                    }
                     controller.noteNewRecentDocument(document)
                 }
             }

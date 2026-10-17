@@ -1,7 +1,10 @@
 import Foundation
 import WWCore
 
-/// Show schema migrations (C5): 1 → current (issue #63) and 2 → current (WW-020).
+/// Show schema migrations (C5): 1, 2 and 3 to current.
+///
+/// Schema 4 adds source-local timing corrections; a schema 3 document cannot contain them.
+/// All previous schemas migrate directly to current, preserving the original bytes in a backup.
 ///
 /// **2 → 3** (WW-020): schema 3 adds the optional `Episode.alignment` (versioned positive maps). A schema 2 show
 /// has none, so the upgrade sets `schemaVersion` to 3 and changes nothing else; a schema 2 file that already
@@ -27,9 +30,9 @@ import WWCore
 /// (retained checkpoints, unpublished edit checkpoints) offerable as whole values.
 public enum ShowSchemaMigration {
     /// Older show schemas this build can migrate.
-    public static let migratableSchemas: Set<Int> = [1, 2]
+    public static let migratableSchemas: Set<Int> = [1, 2, 3]
 
-    /// The registered migration steps (schema 1 → current, schema 2 → current). Each goes straight to the
+    /// The registered migration steps (schema 1, 2 and 3 to current). Each goes straight to the
     /// current schema, so a schema 1 show is never published as an intermediate schema 2 revision.
     public static var steps: [MigrationStep<ShowDocumentModel>] {
         [
@@ -49,6 +52,14 @@ public enum ShowSchemaMigration {
                 },
                 expectations: { original, migrated in schema2ExpectationFailures(original: original, migrated: migrated) }
             ),
+            MigrationStep(
+                fromSchema: 3,
+                migrate: { data in
+                    let decoded = try decodeSchema3(data)
+                    return (decoded.payload, decoded.revision)
+                },
+                expectations: { original, migrated in schema2ExpectationFailures(original: original, migrated: migrated) }
+            ),
         ]
     }
 
@@ -61,7 +72,28 @@ public enum ShowSchemaMigration {
             return try decodeSchema1(data)
         } catch .unsupportedOlderSchema(found: 2, minimum: _) {
             return try decodeSchema2(data)
+        } catch .unsupportedOlderSchema(found: 3, minimum: _) {
+            return try decodeSchema3(data)
         }
+    }
+
+    static func decodeSchema3(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> {
+        let format = DocumentFormat(identifier: DocumentFormat.show.identifier,
+            filenameExtension: DocumentFormat.show.filenameExtension,
+            currentSchemaVersion: 3, minimumReadableSchemaVersion: 3)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>(format: format) { payload, schema in
+            var issues = payload.validationIssues(expectedSchemaVersion: schema) + payload.embeddedMapIssues()
+            if payload.episodes.contains(where: { episode in
+                episode.alignment?.maps.contains(where: { $0.sourceCorrections != nil }) == true
+            }) {
+                issues.append(.init(.invalidAlignment, "schema 3 cannot contain file-local timing corrections"))
+            }
+            return issues
+        }
+        let decoded = try coder.decode(data)
+        var upgraded = decoded.payload
+        upgraded.schemaVersion = SchemaVersion.show
+        return DecodedDocument(payload: upgraded, publication: decoded.publication)
     }
 
     // MARK: - Schema 1 reader

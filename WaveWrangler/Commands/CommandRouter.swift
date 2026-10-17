@@ -12,7 +12,13 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     // MARK: - Context
 
     var activeShowState: ShowWindowState? {
-        ShowWindowRegistry.state(for: NSApp.keyWindow) ?? ShowWindowRegistry.state(for: NSApp.mainWindow)
+        guard keyLibraryState == nil else { return nil }
+        return ShowWindowRegistry.state(for: NSApp.keyWindow) ?? ShowWindowRegistry.state(for: NSApp.mainWindow)
+    }
+
+    private var activeDocumentState: ShowWindowState? {
+        if let library = keyLibraryState { return library.episodeManagementState }
+        return activeShowState
     }
 
     /// The Library window's state when it is key (for Edit/View commands that act on the focused list).
@@ -58,11 +64,22 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
 
     @objc func openDocument(_ sender: Any?) { NSDocumentController.shared.openDocument(sender) }
 
-    @objc func newEpisode(_ sender: Any?) { activeShowState?.newEpisode() }
+    @objc func newEpisode(_ sender: Any?) {
+        if let library = keyLibraryState {
+            library.focusedRegion = .episodes
+            library.episodeManagementState?.newEpisode()
+        } else if let document = activeShowState?.store.document {
+            LibraryWindowController.show(document: document)
+            let library = LibraryWindowController.shared.state
+            library.focusedRegion = .episodes
+            library.episodeManagementState?.newEpisode()
+        }
+    }
 
     @objc func newWindowForShow(_ sender: Any?) {
-        guard let document = activeShowState?.store.document else { return }
-        Self.openNewWindow(for: document)
+        guard let state = activeDocumentState, let id = state.selectedEpisode?.id,
+              let document = state.store.document else { return }
+        document.openEpisode(id, inNewWindow: true)
     }
 
     static func openNewWindow(for document: NSDocument) {
@@ -87,28 +104,31 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     }
 
     @objc func closeShow(_ sender: Any?) {
-        guard let document = activeShowState?.store.document else { return }
+        guard let document = activeDocumentState?.store.document else { return }
         Self.closeAllWindows(of: document)
     }
 
     /// File › Close Show (⇧⌘W): closes every window of the show; the last one runs the native
     /// unsaved-changes decision, so nothing closes silently while dirty.
     static func closeAllWindows(of document: NSDocument) {
-        let windows = document.windowControllers.compactMap(\.window)
-        for window in windows.dropLast() { window.close() }
-        windows.last?.performClose(nil)
+        document.canClose(withDelegate: shared,
+                          shouldClose: #selector(CommandRouter.document(_:shouldClose:contextInfo:)), contextInfo: nil)
+    }
+
+    @objc private func document(_ document: NSDocument, shouldClose: Bool, contextInfo: UnsafeMutableRawPointer?) {
+        if shouldClose { document.close() }
     }
 
     /// File › Save (⌘S). Always available for a writable show, also with Autosave On (ST-14 disables it
     /// in read-only states). Records the explicit save so "Saved" is announced afterwards (states §7).
     @objc func saveShow(_ sender: Any?) {
-        guard let state = activeShowState, let document = state.store.document else { return }
+        guard let state = activeDocumentState, let document = state.store.document else { return }
         state.explicitSavePending = true
         document.save(sender)
     }
 
-    @objc func duplicateShow(_ sender: Any?) { activeShowState?.store.document?.duplicate(sender) }
-    @objc func saveShowAs(_ sender: Any?) { activeShowState?.store.document?.saveAs(sender) }
+    @objc func duplicateShow(_ sender: Any?) { activeDocumentState?.store.document?.duplicate(sender) }
+    @objc func saveShowAs(_ sender: Any?) { activeDocumentState?.store.document?.saveAs(sender) }
 
     @objc func importSources(_ sender: Any?) {
         guard let state = activeShowState, let episode = state.selectedEpisodeID else { return }
@@ -121,7 +141,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     }
 
     @objc func showInFinder(_ sender: Any?) {
-        if let url = activeShowState?.store.document?.fileURL {
+        if let url = activeDocumentState?.store.document?.fileURL {
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } else {
             keyLibraryState?.revealSelectedInFinder()
@@ -133,14 +153,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     @objc func libraryOpenShow(_ sender: Any?) { libraryState?.openSelected() }
 
     @objc func libraryOpenInNewWindow(_ sender: Any?) {
-        guard let state = libraryState else { return }
-        for row in state.selectedRows {
-            if let open = Self.openDocument(for: row.showID) {
-                Self.openNewWindow(for: open)
-            } else {
-                state.open(row.showID)
-            }
-        }
+        libraryState?.openSelectedEpisode(inNewWindow: true)
     }
 
     static func openDocument(for id: ShowID) -> ShowDocument? {
@@ -235,7 +248,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     }
 
     @objc func toggleInspector(_ sender: Any?) { activeShowState?.toggleInspector() }
-    @objc func showSaveStatus(_ sender: Any?) { activeShowState?.showSaveStatus() }
+    @objc func showSaveStatus(_ sender: Any?) { activeDocumentState?.showSaveStatus() }
 
     @objc func selectDestination(_ sender: Any?) {
         guard let tag = (sender as? NSMenuItem)?.tag, ShowDestination.allCases.indices.contains(tag) else { return }
@@ -248,9 +261,12 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
 
     // MARK: - Episode
 
-    @objc func episodeInfo(_ sender: Any?) { activeShowState?.showEpisodeInfo() }
-    @objc func renameEpisode(_ sender: Any?) { activeShowState?.renameSelectedEpisode() }
-    @objc func deleteEpisode(_ sender: Any?) { activeShowState?.deleteSelectedEpisode() }
+    @objc func episodeInfo(_ sender: Any?) {
+        if let library = keyLibraryState { library.focusedRegion = .episodes }
+        activeDocumentState?.showEpisodeInfo()
+    }
+    @objc func renameEpisode(_ sender: Any?) { activeDocumentState?.renameSelectedEpisode() }
+    @objc func deleteEpisode(_ sender: Any?) { activeDocumentState?.deleteSelectedEpisode() }
     @objc func analyseAlignment(_ sender: Any?) { activeShowState?.alignmentModel?.analyse() }
     @objc func acceptAlignmentProposal(_ sender: Any?) { activeShowState?.alignmentModel?.acceptProposal() }
     @objc func rejectAlignmentProposal(_ sender: Any?) { activeShowState?.alignmentModel?.rejectProposal() }
@@ -270,6 +286,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
         let library = libraryState
         let keyLibrary = keyLibraryState
         let selection = library?.selectedRows ?? []
+        let documentState = activeDocumentState
         switch item.action {
         case #selector(showSettings(_:)), #selector(showLibrary(_:)), #selector(newShow(_:)), #selector(openDocument(_:)),
              #selector(textActualSize(_:)), #selector(rebuildLibraryIndex(_:)):
@@ -282,20 +299,20 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
         case #selector(textSmaller(_:)):
             return AppSettings.shared.textSize.smaller != nil
         case #selector(newEpisode(_:)):
-            return show?.canEdit == true
+            return documentState?.canEdit == true
         case #selector(newWindowForShow(_:)):
-            if let title = show?.store.model.show.title {
+            if let title = documentState?.selectedEpisode?.title {
                 item.title = "New Window for “\(title)”"
                 return true
             }
             item.title = "New Window"
             return false
         case #selector(closeShow(_:)):
-            return show != nil
+            return documentState != nil
         case #selector(saveShow(_:)):
-            return show?.isReadOnly == false
+            return documentState?.isReadOnly == false
         case #selector(duplicateShow(_:)), #selector(saveShowAs(_:)):
-            guard let show else { return false }
+            guard let show = documentState else { return false }
             // #159: Save As would make another file this older show's revision before its update; Duplicate stays.
             if item.action == #selector(saveShowAs(_:)), show.store.document?.isAwaitingFormatUpdate == true { return false }
             return show.saveStatus.state.allowsDuplicateOrSaveAs && show.store.document?.isInViewingMode != true
@@ -308,8 +325,10 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
         case #selector(showInFinder(_:)):
             if let show { return show.store.document?.fileURL != nil }
             return keyLibrary?.selectedRows.isEmpty == false
-        case #selector(libraryOpenShow(_:)), #selector(libraryOpenInNewWindow(_:)):
+        case #selector(libraryOpenShow(_:)):
             return !selection.isEmpty
+        case #selector(libraryOpenInNewWindow(_:)):
+            return library?.episodeManagementState?.selectedEpisode != nil
         case #selector(newCollectionWithSelection(_:)):
             return libraryEditable && !selection.isEmpty
         case #selector(renameCollection(_:)), #selector(deleteCollection(_:)):
@@ -330,6 +349,9 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
             if isEditingText { return false }
             if let keyLibrary {
                 item.title = keyLibrary.deleteTitle ?? "Delete"
+                if keyLibrary.focusedRegion == .episodes {
+                    return keyLibrary.episodeManagementState?.canEdit == true && keyLibrary.deleteTitle != nil
+                }
                 return libraryEditable && keyLibrary.deleteTitle != nil
             }
             guard let show, show.canEdit, let episode = show.selectedEpisodeID else {
@@ -360,6 +382,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
             if let keyLibrary {
                 let noun = keyLibrary.moveNoun
                 item.title = noun.isEmpty ? "Move \(direction)" : "Move \(noun) \(direction)"
+                if keyLibrary.focusedRegion == .episodes { return keyLibrary.canMove(by: offset) }
                 return libraryEditable && keyLibrary.canMove(by: offset)
             }
             if let show, episodeListActive(show) {
@@ -378,20 +401,20 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
                 item.title = keyLibrary.isSidebarShown ? "Hide Sidebar" : "Show Sidebar"
                 return true
             }
-            item.title = show?.isSidebarShown == false ? "Show Sidebar" : "Hide Sidebar"
-            return show != nil
+            item.title = "Show Sidebar"
+            return false
         case #selector(toggleInspector(_:)):
             item.title = show?.inspectorPresented == false ? "Show Inspector" : "Hide Inspector"
             return show != nil
         case #selector(showSaveStatus(_:)):
-            return show != nil
+            return documentState != nil
         case #selector(selectDestination(_:)):
             item.state = show?.destination == ShowDestination.allCases[safe: item.tag] ? .on : .off
             return show != nil
         case #selector(episodeInfo(_:)):
-            return show.map { !$0.store.model.episodes.isEmpty } ?? false
+            return documentState?.selectedEpisode != nil
         case #selector(renameEpisode(_:)), #selector(deleteEpisode(_:)):
-            return show?.canEdit == true && show?.selectedEpisodeID != nil
+            return documentState?.canEdit == true && documentState?.selectedEpisode != nil
         case #selector(analyseAlignment(_:)):
             return show?.destination == .alignment && show?.alignmentModel?.isWorking == false
         case #selector(acceptAlignmentProposal(_:)), #selector(rejectAlignmentProposal(_:)):

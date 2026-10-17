@@ -35,12 +35,13 @@ extension ShowDocumentModel {
         in episodeID: EpisodeID,
         inputs: [TimeMapSourceInput]? = nil,
         recipe: RecipeReference? = nil,
-        derivedFrom: Int? = nil
+        derivedFrom: Int? = nil,
+        sourceCorrections: [SourceTimingCorrection]? = nil
     ) throws(MapHistoryError) -> (model: ShowDocumentModel, revision: MapRevisionReference) {
         guard let index = episodes.firstIndex(where: { $0.id == episodeID }) else { throw .episodeNotFound(episodeID) }
         let encoded: EmbeddedJSON
         do { encoded = try EmbeddedTimeMapCodec.encode(map) } catch { throw .invalidMap(error.description) }
-        let placed = EmbeddedTimeMapCodec.placedSources(map)
+        let placed = EmbeddedTimeMapCodec.usedSources(map, corrections: sourceCorrections ?? [])
         let sourceInputs = inputs ?? placed.map { TimeMapSourceInput(sourceID: $0) }
         guard Set(sourceInputs.map(\.sourceID)) == Set(placed), sourceInputs.count == placed.count else {
             throw .inputsDoNotMatchPlacedSources
@@ -52,7 +53,7 @@ extension ShowDocumentModel {
             revision: revision,
             derivedFrom: derivedFrom,
             inputs: TimeMapInputs(sources: sourceInputs, recipe: recipe),
-            map: encoded
+            map: encoded, sourceCorrections: sourceCorrections
         ))
         let issues = alignment.structuralIssues(episode: episodeID)
         guard issues.isEmpty else { throw .invalidMap(issues.map(\.description).joined(separator: "; ")) }
@@ -135,6 +136,16 @@ extension Episode {
                 if record.placement.recorderGroupID != group.group {
                     note(.sourceRegrouped(sourceID, mapGroup: group.group, currentGroup: record.placement.recorderGroupID))
                 }
+            }
+        }
+        for correction in version.sourceCorrections ?? [] {
+            guard let record = source(correction.source) else { note(.sourceMissing(correction.source)); continue }
+            if record.placement.recorderGroupID != correction.group {
+                note(.sourceRegrouped(correction.source, mapGroup: correction.group,
+                                     currentGroup: record.placement.recorderGroupID))
+            }
+            if recorderGroup(correction.group)?.epochs.contains(where: { $0.id == correction.epoch }) != true {
+                note(.epochMissing(correction.epoch))
             }
         }
         return MapApplicability(revision: MapRevisionReference(episode: id, revision: revision), staleness: staleness)

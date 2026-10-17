@@ -12,6 +12,7 @@ final class LibraryWindowState {
     enum Region: Hashable {
         case sidebar
         case entries
+        case episodes
     }
 
     var sidebarSelection: LibrarySidebarItem? = .shows {
@@ -23,7 +24,23 @@ final class LibraryWindowState {
         }
     }
 
-    var entrySelection: Set<ShowID> = []
+    var entrySelection: Set<ShowID> = [] {
+        didSet {
+            guard oldValue != entrySelection else { return }
+            if selectedShow.map({ entrySelection != [$0.store.model.show.id] }) == true {
+                selectedShow = nil
+                episodeManagementState = nil
+            }
+            actionMessage = nil
+            isLoadingShow = false
+        }
+    }
+    private(set) var selectedShow: ShowDocument?
+    private(set) var episodeManagementState: ShowWindowState?
+    private(set) var isLoadingShow = false
+    @ObservationIgnored private var loadingShowID: ShowID?
+    @ObservationIgnored private var loadingShowTask: Task<ShowDocument, Error>?
+    @ObservationIgnored private var loadingShowToken = UUID()
     var focusedRegion: Region?
     var columnVisibility: NavigationSplitViewVisibility = .all
     /// Inline outcome of the last open/locate attempt, shown in the detail column.
@@ -162,7 +179,8 @@ final class LibraryWindowState {
     }
 
     var moveNoun: String {
-        switch moveTarget {
+        if focusedRegion == .episodes { return "Episode" }
+        return switch moveTarget {
         case .collection: "Collection"
         case .showInCollection: "Show"
         case nil: ""
@@ -170,6 +188,7 @@ final class LibraryWindowState {
     }
 
     func canMove(by offset: Int) -> Bool {
+        if focusedRegion == .episodes { return episodeManagementState?.canMoveSelectedEpisode(by: offset) == true }
         switch moveTarget {
         case .collection(let id):
             return store.library.canMoveCollection(id, by: offset)
@@ -183,6 +202,10 @@ final class LibraryWindowState {
 
     func move(by offset: Int) {
         guard canMove(by: offset) else { return }
+        if focusedRegion == .episodes {
+            episodeManagementState?.moveSelectedEpisode(by: offset)
+            return
+        }
         switch moveTarget {
         case .collection(let id):
             store.apply(UndoActionName.moveCollection, moving: .init(collections: [id])) { library throws(LibraryError) in
@@ -207,6 +230,9 @@ final class LibraryWindowState {
     // MARK: - Delete (⌫) acts on the focused list
 
     var deleteTitle: String? {
+        if focusedRegion == .episodes {
+            return episodeManagementState?.selectedEpisode == nil ? nil : "Delete Episode…"
+        }
         if focusedRegion == .entries, !entrySelection.isEmpty {
             return selectedCollectionID == nil ? "Remove from Library…" : "Remove from Collection"
         }
@@ -217,6 +243,10 @@ final class LibraryWindowState {
     }
 
     func deleteFocused() {
+        if focusedRegion == .episodes {
+            episodeManagementState?.deleteSelectedEpisode()
+            return
+        }
         if focusedRegion == .entries, !entrySelection.isEmpty {
             if selectedCollectionID == nil { removeSelectedShowsFromLibrary() } else { removeSelectedShowsFromCollection() }
         } else if let id = selectedCollectionID {
@@ -231,14 +261,77 @@ final class LibraryWindowState {
     }
 
     func open(_ id: ShowID, readOnly: Bool = false) {
-        Responsiveness.beginShowOpen()
+        entrySelection = [id]
         Task {
-            do {
-                actionMessage = nil
-                try await store.services.entries.openShow(id, readOnly: readOnly)
-            } catch {
-                actionMessage = error.localizedDescription
+            await loadSelectedShow(readOnly: readOnly)
+        }
+    }
+
+    func loadSelectedShow(readOnly: Bool = false) async {
+        guard entrySelection.count == 1, let id = entrySelection.first,
+              selectedShow?.store.model.show.id != id else { return }
+        let task: Task<ShowDocument, Error>
+        if loadingShowID == id, let pending = loadingShowTask {
+            task = pending
+        } else {
+            loadingShowID = id
+            loadingShowToken = UUID()
+            let entries = store.services.entries
+            task = Task { try await entries.openShow(id, readOnly: readOnly, display: false) }
+            loadingShowTask = task
+        }
+        let token = loadingShowToken
+        isLoadingShow = true
+        actionMessage = nil
+        defer {
+            if loadingShowToken == token {
+                loadingShowID = nil
+                loadingShowTask = nil
+                isLoadingShow = false
             }
+        }
+        do {
+            let document = try await task.value
+            guard !Task.isCancelled, entrySelection == [id] else { return }
+            browse(document)
+        } catch {
+            if !Task.isCancelled, entrySelection == [id] { actionMessage = error.localizedDescription }
+        }
+    }
+
+    func browse(_ document: ShowDocument) {
+        let model = document.store.model
+        document.retainForLibrary(in: window)
+        store.showDidOpen(id: model.show.id, model: model, fileURL: document.fileURL, hasUnsavedChanges: document.isDocumentEdited)
+        entrySelection = [model.show.id]
+        selectedShow = document
+        if episodeManagementState?.store !== document.store {
+            let state = ShowWindowState(store: document.store)
+            state.attachForLibrary(to: window)
+            episodeManagementState = state
+        }
+        isLoadingShow = false
+        document.windowDidAttach()
+        document.presentFormatUpdatePromptIfNeeded(preferring: window)
+    }
+
+    func documentDidClose(_ document: ShowDocument) {
+        guard selectedShow === document else { return }
+        selectedShow = nil
+        episodeManagementState = nil
+        actionMessage = "The show was closed. Open it again to manage its episodes."
+    }
+
+    func openSelectedEpisode(inNewWindow: Bool = false) {
+        guard let state = episodeManagementState, let id = state.selectedEpisode?.id else { return }
+        openEpisode(id, inNewWindow: inNewWindow)
+    }
+
+    func openEpisode(_ id: EpisodeID, inNewWindow: Bool = false) {
+        guard let document = selectedShow else { return }
+        guard document.openEpisode(id, inNewWindow: inNewWindow) != nil else {
+            actionMessage = "That episode is no longer in the show."
+            return
         }
     }
 

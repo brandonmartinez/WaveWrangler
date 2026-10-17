@@ -116,7 +116,7 @@ enum MainMenu {
     private static func libraryMenu() -> NSMenu {
         let menu = NSMenu(title: "Library")
         menu.addItem(routed("Open Show", #selector(CommandRouter.libraryOpenShow(_:))))
-        menu.addItem(routed("Open in New Window", #selector(CommandRouter.libraryOpenInNewWindow(_:))))
+        menu.addItem(routed("Open Episode in New Window", #selector(CommandRouter.libraryOpenInNewWindow(_:))))
         menu.addItem(.separator())
         menu.addItem(routed("New Collection…", #selector(CommandRouter.newCollection(_:))))
         menu.addItem(routed("Rename Collection", #selector(CommandRouter.renameCollection(_:))))

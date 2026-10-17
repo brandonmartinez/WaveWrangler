@@ -7,6 +7,48 @@ import WWTimeMap
 
 @Suite("Alignment presentation")
 struct AlignmentPresentationTests {
+    @Test func wholeTrackIndexingIsNotPresentedAsContinuousFineVerification() {
+        let copy = AlignmentPresentation.automaticMethod(fingerprintSeconds: [4500, 4400])
+        #expect(copy.contains("both complete speaker channels"))
+        #expect(copy.contains("01:15:00.000"))
+        #expect(copy.contains("No initial anchor is required"))
+        #expect(!copy.contains("every frame"))
+        #expect(!AlignmentPresentation.automaticMethod(fingerprintSeconds: nil).contains("Indexed"))
+    }
+
+    @Test func automaticEvidenceSeparatesMeasuredDelaysFromAnAcceptedFit() {
+        let proposed = AlignmentPresentation.automaticEvidence(
+            usable: 15, total: 16, attempts: 48, rejected: 1, start: 40, end: 4400, hasProposal: true,
+            statuses: [String](repeating: "eligible", count: 45) + ["weak", "sharedSilence", "inconsistentMethods"]
+        )
+        #expect(proposed.contains("15/16 regions agree"))
+        #expect(proposed.contains("48 fresh window attempts, 1 isolated outlier excluded"))
+        #expect(proposed.contains("00:00:40.000"))
+        #expect(proposed.contains("45 passed local checks"))
+        #expect(proposed.contains("1 shared silence"))
+        #expect(proposed.contains("1 weak"))
+        #expect(proposed.contains("1 methods disagree"))
+        let refused = AlignmentPresentation.automaticEvidence(
+            usable: 16, total: 16, attempts: 48, rejected: 0, start: 40, end: 4400, hasProposal: false
+        )
+        #expect(refused.contains("regions supplied usable delays"))
+        #expect(!refused.contains("regions agree"))
+        #expect(!refused.localizedCaseInsensitiveContains("clock approved"))
+    }
+
+    @Test func analysisCompensationIsNotPresentedAsAcceptedClockOrPolarityCorrection() {
+        let copy = AlignmentPresentation.automaticMethod(fingerprintSeconds: [4500, 4400], refinementRatePPM: -145.25)
+        #expect(copy.contains("-145.2 ppm analysis-only"))
+        #expect(copy.contains("coarse search estimate, not accepted timing"))
+        #expect(copy.contains("polarity-aware"))
+        let evidence = AlignmentPresentation.automaticEvidence(
+            usable: 14, total: 16, attempts: 144, rejected: 0, start: 0, end: 4400, hasProposal: true,
+            reversedRegions: 14
+        )
+        #expect(evidence.contains("14 usable regions matched opposite polarity"))
+        #expect(evidence.contains("recordings were not inverted"))
+    }
+
     @Test func wordingCatalogUsesEvidenceNotProbability() throws {
         let segment = try AffineClockSegment(
             groupClockStart: .zero,

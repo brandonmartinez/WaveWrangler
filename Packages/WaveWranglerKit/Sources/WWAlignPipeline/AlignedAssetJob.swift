@@ -28,6 +28,7 @@ public struct AlignedAudioSegment: Sendable, Equatable {
         public var rendererVersion: Int
         public var renderRecipeVersion: Int
         public var outputAssetFormatVersion: Int
+        public var processing: String? = nil
     }
 
     public static let formatVersion = 2

@@ -40,6 +40,49 @@ struct AlignmentRegionPresentation: Equatable {
     var nearestSourceSeconds: Double?
 }
 
+extension AlignmentPresentation {
+    static func automaticMethod(fingerprintSeconds: [Double]?, refinementRatePPM: Double? = nil) -> String {
+        if let durations = fingerprintSeconds, durations.count == 2 {
+            if let rate = refinementRatePPM, rate.isFinite {
+                return "Indexed both complete speaker channels (\(formatTime(durations[0])) and \(formatTime(durations[1]))). Fine checks compare filtered speech with polarity-aware waveform and phase correlation, using \(String(format: "%+.1f", rate)) ppm analysis-only speed compensation (coarse search estimate, not accepted timing). No initial anchor is required."
+            }
+            return "Indexed both complete speaker channels (\(formatTime(durations[0])) and \(formatTime(durations[1]))). Matched distinctive passages across the recordings, then checked their precise timing with waveform and phase-weighted correlation. No initial anchor is required."
+        }
+        return "Compared fresh windows across the shared recording, not just the visible timeline. Precise delays must agree between waveform correlation and phase-weighted correlation before the offset and rate are fitted."
+    }
+
+    static func automaticEvidence(_ analysis: EpochAnalysisRecord) -> String {
+        let rejected = analysis.windows.filter { $0.status == "outlier" }.count
+        return automaticEvidence(
+            usable: analysis.coverage.eligibleCount, total: analysis.coverage.windowCount,
+            attempts: analysis.automaticAttempts?.count ?? 0, rejected: rejected,
+            start: analysis.coverage.declaredStart, end: analysis.coverage.declaredEnd,
+            hasProposal: analysis.proposal != nil, statuses: analysis.automaticAttempts?.map(\.status) ?? [],
+            reversedRegions: analysis.windows.filter { $0.status == "eligible" && $0.polarity == -1 }.count
+        )
+    }
+
+    static func automaticEvidence(
+        usable: Int, total: Int, attempts: Int, rejected: Int, start: Double, end: Double, hasProposal: Bool,
+        statuses: [String] = [], reversedRegions: Int = 0
+    ) -> String {
+        let interval = formatTime(start) + "–" + formatTime(end)
+        let relationship = hasProposal ? "regions agree" : "regions supplied usable delays"
+        let outliers = rejected == 1 ? "isolated outlier" : "isolated outliers"
+        let counts = statuses.reduce(into: [String: Int]()) { $0[$1, default: 0] += 1 }
+        let labels = [
+            "eligible": "passed local checks", "sharedSilence": "shared silence", "silent": "silent target",
+            "weak": "weak", "ambiguous": "competing peaks", "edgePeak": "search-edge peaks",
+            "noReference": "outside reference coverage", "inconsistentMethods": "methods disagree",
+        ]
+        let local = counts.sorted { $0.key < $1.key }.map { "\($0.value) \(labels[$0.key] ?? $0.key)" }.joined(separator: ", ")
+        let detail = local.isEmpty ? "" : " Local checks: \(local)."
+        let polarity = reversedRegions == 0 ? ""
+            : " \(reversedRegions) usable regions matched opposite polarity; recordings were not inverted."
+        return "\(usable)/\(total) \(relationship) across source \(interval); \(attempts) fresh window attempts, \(rejected) \(outliers) excluded.\(detail)\(polarity)"
+    }
+}
+
 enum AlignmentRegionProjection {
     static func project(
         map: AlignedTimelineMap?,

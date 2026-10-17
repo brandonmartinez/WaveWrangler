@@ -3,18 +3,9 @@ import SwiftUI
 import WWCore
 import WWOrganizer
 
-/// Show window content (IA §4): two-level sidebar (Episodes, Show Info) → destination content →
-/// selection-driven inspector. `ShowDocument` hosts this view; each window gets its own `ShowWindowState`
-/// while the document, its undo history and save state are shared (IA-02).
+/// One episode's editor. Browsing and episode management live in Library.
 struct ShowWorkspaceView: View {
-    let store: ShowDocumentStore
-
-    @State private var state: ShowWindowState
-
-    init(store: ShowDocumentStore) {
-        self.store = store
-        _state = State(initialValue: ShowWindowState(store: store))
-    }
+    @Bindable var state: ShowWindowState
 
     var body: some View {
         ShowWindowContent(state: state)
@@ -62,20 +53,19 @@ private struct ShowWindowContent: View {
     }
 
     private var core: some View {
-        NavigationSplitView(columnVisibility: $state.sidebarVisibility) {
-            ShowSidebar(state: state)
-                .navigationSplitViewColumnWidth(min: 180, ideal: 230, max: 380)
-        } detail: {
-            // The message bar is a top safe-area inset of the detail content: the content's own (possibly very tall)
-            // ideal height can't push the bar out of the window.
-            ShowDetailContent(state: state)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    ShowMessageBar(state: state)
-                }
+        ShowDetailContent(state: state)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            ShowMessageBar(state: state)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button("Library", systemImage: "books.vertical") {
+                    if let document = state.store.document {
+                        LibraryWindowController.show(document: document)
+                    }
+                }
+                .accessibilityIdentifier("ww.show.library")
                 SaveStatusItem(state: state)
                 Button {
                     state.toggleInspector()
@@ -101,8 +91,9 @@ private struct ShowWindowContent: View {
 
 // MARK: - Sidebar
 
-private struct ShowSidebar: View {
+struct LibraryEpisodeList: View {
     @Bindable var state: ShowWindowState
+    let openEpisode: (EpisodeID) -> Void
     @FocusState private var listFocused: Bool
 
     var body: some View {
@@ -146,13 +137,26 @@ private struct ShowSidebar: View {
         .listStyle(.sidebar)
         .focused($listFocused)
         .onChange(of: listFocused, initial: true) { _, focused in state.episodeListFocused = focused }
+        .onChange(of: state.renamingEpisodeID) { previous, current in
+            if previous != nil, current == nil { listFocused = true }
+        }
         .accessibilityLabel("Episodes")
         .accessibilityValue(ShowSidebarPresentation.episodesValue(episodes.count))
-        .accessibilityIdentifier("ww.show.sidebar.episodes")
+        .accessibilityIdentifier("ww.library.episodes")
+        .contextMenu(forSelectionType: ShowWindowState.SidebarSelection.self) { selections in
+            if selections.count == 1, let selection = selections.first, case .episode(let id) = selection,
+               let episode = state.store.model.episode(id) {
+                episodeMenu(episode)
+            }
+        } primaryAction: { selections in
+            for case .episode(let id) in selections { openEpisode(id) }
+        }
     }
 
     @ViewBuilder
     private func episodeMenu(_ episode: Episode) -> some View {
+        Button("Open Episode") { openEpisode(episode.id) }
+        Divider()
         Button("Rename") {
             state.sidebarSelection = .episode(episode.id)
             state.renameSelectedEpisode()
@@ -240,7 +244,15 @@ private struct ShowDetailContent: View {
 
     var body: some View {
         let model = state.store.model
-        if state.sidebarSelection == .showInfo {
+        if state.boundEpisodeID != nil, state.selectedEpisode == nil {
+            ContentUnavailableView {
+                Label("Episode Unavailable", systemImage: "music.mic")
+            } description: {
+                Text("This episode is no longer in the show. Undo its deletion or return to Library to open another episode.")
+            } actions: {
+                Button("Library") { LibraryWindowController.show() }
+            }
+        } else if state.sidebarSelection == .showInfo && state.boundEpisodeID == nil {
             ShowInfoSummary(state: state)
         } else if state.destination == .review {
             TranscriptReviewView(state: state.reviewState)
@@ -260,16 +272,17 @@ private struct ShowDetailContent: View {
         } else if let episode = state.selectedEpisode {
             if state.destination == .alignment {
                 VStack(spacing: 0) {
-                    EpisodeEditorSetup(store: state.store, episode: episode)
                     if !episode.recorderGroups.isEmpty {
                         EpisodeAlignmentContent(state: state, episodeID: episode.id)
                             .id(episode.id)
                     } else {
-                        ContentUnavailableView(
-                            "Add a recorder group to begin",
-                            systemImage: "waveform",
-                            description: Text("Add recordings together, assign them to recorder groups, then confirm each original before loading its waveform.")
-                        )
+                        ContentUnavailableView {
+                            Label("Add recordings to begin", systemImage: "waveform")
+                        } description: {
+                            Text("Organize recordings into recorder groups and confirm their originals in Setup.")
+                        } actions: {
+                            Button("Manage recordings…") { state.select(.setup) }
+                        }
                     }
                 }
             } else {
@@ -279,27 +292,6 @@ private struct ShowDetailContent: View {
             ContentUnavailableView("No Episode Selected", systemImage: "music.mic", description: Text("Select an episode in the sidebar."))
                 .wwFont(.body)
         }
-    }
-}
-
-private struct EpisodeEditorSetup: View {
-    let store: ShowDocumentStore
-    let episode: Episode
-    @State private var expanded = false
-
-    var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            EpisodeSetupContent(store: store, episodeID: episode.id, showsInspector: true)
-                .frame(height: 380)
-                .accessibilityIdentifier("ww.editor.setup")
-        } label: {
-            Label("Recordings, groups and speakers", systemImage: "slider.horizontal.3")
-                .font(.headline)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(.regularMaterial)
-        .onAppear { if episode.recorderGroups.isEmpty { expanded = true } }
     }
 }
 
@@ -366,7 +358,7 @@ private struct ShowInfoSummary: View {
     }
 }
 
-private struct ShowMessageBar: View {
+struct ShowMessageBar: View {
     @Bindable var state: ShowWindowState
 
     var body: some View {
@@ -410,12 +402,23 @@ private struct WindowBinder: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: BinderView, context: Context) {
-        nsView.state = state
+        nsView.bind(state)
     }
 
     final class BinderView: NSView {
         var state: ShowWindowState?
         private weak var attachedWindow: NSWindow?
+
+        func bind(_ state: ShowWindowState) {
+            guard self.state !== state else { return }
+            self.state?.reviewWindowDidClose()
+            self.state = state
+            attachedWindow = nil
+            if let window {
+                attachedWindow = window
+                state.attach(to: window)
+            }
+        }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()

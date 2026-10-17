@@ -60,6 +60,19 @@ struct SetupEditCommandTests {
         editor.undoManager.redo()
     }
 
+    @Test func referencePreferenceHasOneUndoStepAndNeverCertifiesAClock() {
+        let (editor, commands) = make()
+        let before = editor.showModel
+        #expect(commands.preferAlignmentReference(true, group: group.id))
+        let after = editor.showModel
+        #expect(after.episodes[0].recorderGroups[0].preferredAlignmentReference == true)
+        #expect(after.episodes[0].recorderGroups[0].clockNote == before.episodes[0].recorderGroups[0].clockNote)
+        #expect(after.episodes[0].sources == before.episodes[0].sources)
+        #expect(after.episodes[0].alignment == before.episodes[0].alignment)
+        expectUndo(editor, SetupUndoName.timingReferencePreference, restores: before)
+        #expect(editor.showModel == after)
+    }
+
     @Test func groupingCommandsAreNamed() {
         let (editor, commands) = make()
         var before = editor.showModel

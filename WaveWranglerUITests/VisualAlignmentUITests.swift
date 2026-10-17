@@ -92,7 +92,7 @@ final class VisualAlignmentUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.track.")
         )
         XCTAssertTrue(waitUntil { tracks.count == 2 }, app.debugDescription)
-        let overlayMode = app.segmentedControls["alignment.waveforms.layout"].buttons["Overlay"]
+        let overlayMode = layoutOption("Overlay", in: app)
         scrollTo(overlayMode, in: app)
         overlayMode.click()
         let speakerOverlays = app.staticTexts.matching(NSPredicate(
@@ -101,7 +101,7 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(waitUntil { speakerOverlays.count == 2 })
         XCTAssertTrue(speakerOverlays.allElementsBoundByIndex.contains { $0.label.contains("Host") })
         XCTAssertTrue(speakerOverlays.allElementsBoundByIndex.contains { $0.label.contains("Guest") })
-        app.segmentedControls["alignment.waveforms.layout"].buttons["Separate lanes"].click()
+        layoutOption("By recorder", in: app).click()
         XCTAssertTrue(app.buttons["alignment.waveforms.fitTimeline"].exists)
         XCTAssertTrue(app.checkBoxes.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
@@ -195,6 +195,7 @@ final class VisualAlignmentUITests: XCTestCase {
             "-WWUITestShowEpisodes", "1",
             "-WWUITestAlignmentFixture", "YES",
             "-WWUITestVisualAlignmentFixture", "YES",
+            "-WWUITestUnplacedAlignmentFixture", "YES",
             "-WWUITestDelayWaveformPublication", "YES",
         ]
         app.launch()
@@ -204,8 +205,10 @@ final class VisualAlignmentUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.track.")
         )
         XCTAssertTrue(waitUntil { tracks.count == 2 })
-        let revision = app.staticTexts["alignment.waveforms.revision"]
-        XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 1") })
+        let place = app.buttons["alignment.waveforms.placeInitial"]
+        scrollTo(place, in: app)
+        place.click()
+        XCTAssertTrue(waitForMapRevision(1, in: app))
         let zoom = app.sliders["alignment.waveforms.zoom"]
         scrollTo(zoom, in: app)
         zoom.adjust(toNormalizedSliderPosition: 0.66)
@@ -214,23 +217,24 @@ final class VisualAlignmentUITests: XCTestCase {
             format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "alignment.waveforms.track.", "synthetic-remote.wav"
         )).firstMatch
-        let separateMode = app.segmentedControls["alignment.waveforms.layout"].buttons["Separate lanes"]
+        let separateMode = layoutOption("By recorder", in: app)
 
         func dragAndAssert(_ surface: XCUIElement, expectedRevision: Int, previous: Double) -> Double {
             scrollTo(surface, in: app)
             let width = surface.frame.width
             XCTAssertGreaterThan(width, 100)
             let start = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
-            start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 12, dy: 0)))
+            start.click(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 12, dy: 0)))
             let status = app.staticTexts["alignment.waveforms.status"]
-            XCTAssertTrue(waitUntil { status.label.contains("visual preview") },
-                          "The accepted drag should retain its visible position while the revised tile loads")
-            XCTAssertEqual(tracks.count, 2, "Saving must not remove the measured waveform lanes")
+            XCTAssertTrue(surface.exists, "Saving must retain the measured waveform surface")
+            let shownRecordings = app.checkBoxes.matching(NSPredicate(
+                format: "identifier BEGINSWITH %@", "alignment.waveforms.enabled."
+            ))
+            XCTAssertEqual(shownRecordings.count, 2, "Saving must retain both measured recordings in either layout")
             XCTAssertFalse(app.staticTexts["No waveforms showing"].exists)
-            XCTAssertFalse(app.buttons["alignment.waveforms.transport.play"].isEnabled)
+            XCTAssertTrue(waitForMapRevision(expectedRevision, in: app), app.debugDescription)
             XCTAssertTrue(waitUntil {
-                (revision.value as? String ?? revision.label).contains("Map revision \(expectedRevision)")
-                    && !status.label.contains("visual preview")
+                (status.value as? String ?? status.label).contains("updated in place")
                     && app.buttons["alignment.waveforms.load"].label == "Refresh audio"
             }, app.debugDescription)
             scrollTo(separateMode, in: app)
@@ -246,12 +250,16 @@ final class VisualAlignmentUITests: XCTestCase {
             return stored ?? 0
         }
         let first = dragAndAssert(target, expectedRevision: 2, previous: 0)
-        let overlayMode = app.segmentedControls["alignment.waveforms.layout"].buttons["Overlay"]
+        let speakerMode = layoutOption("By speaker", in: app)
+        scrollTo(speakerMode, in: app)
+        speakerMode.click()
+        let second = dragAndAssert(target, expectedRevision: 3, previous: first)
+        let overlayMode = layoutOption("Overlay", in: app)
         scrollTo(overlayMode, in: app)
         overlayMode.click()
         let overlay = app.staticTexts["alignment.waveforms.overlay.unknown"]
         XCTAssertTrue(waitUntil { overlay.exists })
-        _ = dragAndAssert(overlay, expectedRevision: 3, previous: first)
+        _ = dragAndAssert(overlay, expectedRevision: 4, previous: second)
     }
 
     func testRulerAndTimeFieldNavigateAllSyntheticRecorderWindows() {
@@ -265,6 +273,7 @@ final class VisualAlignmentUITests: XCTestCase {
             "-WWUITestShowEpisodes", "1",
             "-WWUITestAlignmentFixture", "YES",
             "-WWUITestVisualAlignmentFixture", "YES",
+            "-WWUITestUnplacedAlignmentFixture", "YES",
         ]
         app.launch()
         defer { app.terminate() }
@@ -273,10 +282,16 @@ final class VisualAlignmentUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.track.")
         )
         XCTAssertTrue(waitUntil { tracks.count == 2 })
+        let place = app.buttons["alignment.waveforms.placeInitial"]
+        scrollTo(place, in: app)
+        place.click()
         let playhead = app.textFields["alignment.waveforms.playhead"]
         let revision = app.staticTexts["alignment.waveforms.revision"]
         let ruler = app.staticTexts["alignment.waveforms.ruler"]
         XCTAssertFalse(app.sliders["alignment.waveforms.scrubber"].exists)
+        XCTAssertTrue(waitUntil {
+            revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 1")
+        }, app.debugDescription)
         replace(playhead, with: "3.5", in: app)
         XCTAssertTrue(waitUntil {
             (Double(playhead.value as? String ?? "") ?? -1) > 2
@@ -302,10 +317,21 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(marker.exists)
         XCTAssertTrue(marker.label.contains("Aligned playhead"))
         let beforeDrag = Double(playhead.value as? String ?? "") ?? -1
-        let handle = marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        handle.press(forDuration: 0.1, thenDragTo: handle.withOffset(CGVector(dx: 12, dy: 0)))
-        XCTAssertTrue(waitUntil { (Double(playhead.value as? String ?? "") ?? -1) > beforeDrag },
+        let handle = rulerSurface.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+            dx: marker.frame.midX - rulerSurface.frame.minX, dy: 37
+        ))
+        handle.click(forDuration: 0.1, thenDragTo: handle.withOffset(CGVector(dx: 12, dy: 0)))
+        let markerMoved = waitUntil { (Double(playhead.value as? String ?? "") ?? -1) > beforeDrag }
+        if !markerMoved { attachDisplay(app, name: "Ruler after marker drag") }
+        XCTAssertTrue(markerMoved,
                       "Dragging the ruler marker should move the shared audible playhead")
+        let afterDrag = Double(playhead.value as? String ?? "") ?? -1
+        let beforePan = ruler.value as? String ?? ruler.label
+        let emptyRuler = rulerSurface.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.8))
+        emptyRuler.click(forDuration: 0.3, thenDragTo: emptyRuler.withOffset(CGVector(dx: -60, dy: 0)))
+        XCTAssertTrue(waitUntil { (ruler.value as? String ?? ruler.label) != beforePan },
+                      "Dragging empty ruler space should still pan the shared timeline")
+        XCTAssertEqual(Double(playhead.value as? String ?? "") ?? -1, afterDrag, accuracy: 0.001)
     }
 
     func testEnabledManualGroupMoveAndPlaybackOnSyntheticRecorders() throws {
@@ -330,25 +356,24 @@ final class VisualAlignmentUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.track.")
         )
         XCTAssertTrue(waitUntil { tracks.count == 2 }, app.debugDescription)
-        let overlayMode = app.segmentedControls["alignment.waveforms.layout"].buttons["Overlay"]
+        let overlayMode = layoutOption("Overlay", in: app)
         scrollTo(overlayMode, in: app)
         overlayMode.click()
         let overlay = app.staticTexts["alignment.waveforms.overlay.unknown"]
         XCTAssertTrue(waitUntil { (overlay.value as? String ?? overlay.label).contains("2 enabled tracks") }, app.debugDescription)
         let normalize = app.checkBoxes["alignment.waveforms.normalizeView"]
         scrollTo(normalize, in: app)
+        if !normalize.exists { attachDisplay(app, name: "Overlay comparison controls") }
         XCTAssertTrue(normalize.exists)
         normalize.click()
-        XCTAssertTrue(app.staticTexts["alignment.waveforms.normalizeNote"].exists)
+        XCTAssertEqual(String(describing: normalize.value ?? ""), "1")
         normalize.click()
-        XCTAssertFalse(app.staticTexts["alignment.waveforms.normalizeNote"].exists)
+        XCTAssertEqual(String(describing: normalize.value ?? ""), "0")
         let place = app.buttons["alignment.waveforms.placeInitial"]
         scrollTo(place, in: app)
         place.click()
         let revision = app.descendants(matching: .any).matching(identifier: "alignment.waveforms.revision").firstMatch
-        XCTAssertTrue(waitUntil {
-            revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 1")
-        })
+        XCTAssertTrue(waitForMapRevision(1, in: app))
         let target = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "alignment.waveforms.select.", "synthetic-remote.wav"
@@ -359,20 +384,15 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(nudge, in: app)
         XCTAssertTrue(nudge.isEnabled)
         nudge.click()
-        XCTAssertTrue(waitUntil {
-            revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 2")
-        })
+        XCTAssertTrue(waitForMapRevision(2, in: app))
         app.typeKey("z", modifierFlags: .command)
-        XCTAssertTrue(waitUntil {
-            revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 1")
-        }, "Undo must restore the prior verified map. \(app.debugDescription)")
+        XCTAssertTrue(waitForMapRevision(1, in: app),
+                      "Undo must restore the prior verified map. \(app.debugDescription)")
         XCTAssertTrue(waitUntil {
             overlay.exists && (overlay.value as? String ?? overlay.label).contains("2 enabled tracks")
         }, "Undo must restore both measured tracks in the overlay.")
         app.typeKey("z", modifierFlags: [.command, .shift])
-        XCTAssertTrue(waitUntil {
-            revision.exists && (revision.value as? String ?? revision.label).contains("Map revision 2")
-        })
+        XCTAssertTrue(waitForMapRevision(2, in: app))
         XCTAssertTrue(waitUntil {
             overlay.exists && (overlay.value as? String ?? overlay.label).contains("2 enabled tracks")
         }, "Redo must restore both measured tracks in the overlay.")
@@ -410,7 +430,7 @@ final class VisualAlignmentUITests: XCTestCase {
         play.click()
         XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 2 timed tracks") }, app.debugDescription)
         app.buttons["alignment.waveforms.transport.stop"].click()
-        let separateMode = app.segmentedControls["alignment.waveforms.layout"].buttons["Separate lanes"]
+        let separateMode = layoutOption("By recorder", in: app)
         scrollTo(separateMode, in: app)
         separateMode.click()
         XCTAssertTrue(waitUntil { tracks.count == 2 })
@@ -442,6 +462,7 @@ final class VisualAlignmentUITests: XCTestCase {
             "-WWUITestShowEpisodes", "1",
             "-WWUITestAlignmentFixture", "YES",
             "-WWUITestVisualAlignmentFixture", "YES",
+            "-WWUITestUnplacedAlignmentFixture", "YES",
         ]
         app.launch()
         defer { app.terminate() }
@@ -455,6 +476,10 @@ final class VisualAlignmentUITests: XCTestCase {
         for track in tracks.allElementsBoundByIndex {
             XCTAssertTrue(track.label.contains("measured amplitude bins"))
         }
+        let place = app.buttons["alignment.waveforms.placeInitial"]
+        scrollTo(place, in: app)
+        place.click()
+        XCTAssertTrue(waitForMapRevision(1, in: app), app.debugDescription)
         attachHierarchy(app, name: "Decoded waveform display")
         let before = XCTAttachment(screenshot: app.screenshot())
         before.name = "Actual synthetic audio before manual alignment"
@@ -465,11 +490,15 @@ final class VisualAlignmentUITests: XCTestCase {
             "alignment.waveforms.select.", "synthetic-remote.wav"
         )).firstMatch
         target.click()
-        let advanced = app.disclosureTriangles["Advanced epoch timing"]
+        let advanced = app.disclosureTriangles["Advanced timing"]
         scrollTo(advanced, in: app)
-        if String(describing: advanced.value ?? "") == "0" { advanced.click() }
+        if String(describing: advanced.value ?? "") == "0" {
+            advanced.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+                .withOffset(CGVector(dx: 27, dy: 0)).click()
+        }
         let offset = app.textFields["alignment.waveforms.offset"]
         scrollTo(offset, in: app)
+        if !offset.isHittable { attachDisplay(app, name: "Advanced timing after disclosure activation") }
         XCTAssertTrue(offset.isHittable)
         offset.click()
         app.typeKey("a", modifierFlags: .command)
@@ -480,9 +509,8 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(apply.isEnabled)
         apply.click()
         attachHierarchy(app, name: "Manual correction publication")
-        let revision = app.staticTexts["alignment.waveforms.revision"]
-        XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 2") }, app.debugDescription)
-        let targetState = app.staticTexts[target.identifier.replacingOccurrences(of: ".select.", with: ".state.")]
+        XCTAssertTrue(waitForMapRevision(2, in: app), app.debugDescription)
+        let targetState = app.staticTexts["ww.inspector.alignment.state"]
         XCTAssertTrue(waitUntil {
             (targetState.value as? String ?? targetState.label) == "Set by you"
         })
@@ -490,7 +518,7 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(compare, in: app)
         XCTAssertTrue(compare.isEnabled)
         compare.click()
-        let listening = app.staticTexts["alignment.waveforms.auditionStatus"]
+        let listening = app.staticTexts["alignment.waveforms.transport.status"]
         XCTAssertTrue(waitUntil { (listening.value as? String ?? listening.label).contains("reference channel 1 left") })
         compare.click()
         XCTAssertTrue(waitUntil { compare.label == "Compare Aligned Audio" })
@@ -500,7 +528,7 @@ final class VisualAlignmentUITests: XCTestCase {
         app.typeKey("z", modifierFlags: .command)
         XCTAssertTrue(waitUntil { (offset.value as? String ?? "") == "0" })
         XCTAssertTrue(waitUntil { tracks.count == 2 }, "Undo must restore actual audio envelopes, not mock data")
-        XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 1") })
+        XCTAssertTrue(waitForMapRevision(1, in: app), app.debugDescription)
         let referencePoint = app.textFields["alignment.waveforms.referencePoint"]
         let targetPoint = app.textFields["alignment.waveforms.targetPoint"]
         replace(referencePoint, with: "0.6", in: app)
@@ -516,11 +544,23 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(anchors, in: app)
         XCTAssertTrue(anchors.isEnabled)
         anchors.click()
-        XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 2") }, app.debugDescription)
+        XCTAssertTrue(waitForMapRevision(2, in: app), app.debugDescription)
+        let details = app.disclosureTriangles["Detailed alignment inspection"]
+        scrollTo(details, in: app)
+        if String(describing: details.value ?? "") == "0" {
+            details.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+                .withOffset(CGVector(dx: 27, dy: 0)).click()
+        }
         XCTAssertEqual(app.staticTexts["ww.alignment.anchor.0.sourceTime"].value as? String, "00:00:00.780")
         XCTAssertEqual(app.staticTexts["ww.alignment.anchor.0.alignedTime"].value as? String, "00:00:00.600")
         XCTAssertEqual(app.staticTexts["ww.alignment.anchor.1.sourceTime"].value as? String, "00:00:01.780")
         XCTAssertEqual(app.staticTexts["ww.alignment.anchor.1.alignedTime"].value as? String, "00:00:01.600")
+        let evidence = app.disclosureTriangles["Timing evidence"]
+        scrollTo(evidence, in: app)
+        if String(describing: evidence.value ?? "") == "0" {
+            evidence.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+                .withOffset(CGVector(dx: 27, dy: 0)).click()
+        }
         XCTAssertTrue((app.staticTexts["ww.inspector.alignment.basis"].value as? String ?? "").contains("Fitted from"))
         scrollTo(offset, in: app)
         XCTAssertEqual(Double(offset.value as? String ?? ""), -180)
@@ -551,13 +591,8 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(waitUntil { tracks.count == 2 })
         let oldIDs = Set(tracks.allElementsBoundByIndex.map(\.identifier))
         load.click()
-        XCTAssertEqual(load.label, "Cancel", "Switch episodes while the actual decoded result is awaiting publication")
-        let second = app.staticTexts.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND (value CONTAINS %@ OR label CONTAINS %@)",
-            "ww.show.sidebar.episode.", "Synthetic Episode 2", "Synthetic Episode 2"
-        )).firstMatch
-        XCTAssertTrue(second.exists)
-        second.click()
+        XCTAssertEqual(load.label, "Cancel audio loading", "Close the episode while the actual decoded result is awaiting publication")
+        EpisodeLibraryNavigation.openEpisode(containing: "Synthetic Episode 2", in: app, destination: "2")
         XCTAssertTrue(waitUntil { app.windows["ww.show.window"].title.contains("Synthetic Episode 2") })
         XCTAssertTrue(waitUntil { load.exists && load.label == "Refresh audio" && tracks.count == 2 })
         XCTAssertTrue(oldIDs.isDisjoint(with: Set(tracks.allElementsBoundByIndex.map(\.identifier))))
@@ -576,7 +611,7 @@ final class VisualAlignmentUITests: XCTestCase {
         attachHierarchy(app, name: "Zoomed genuine audio in second episode; first-episode identities absent")
     }
 
-    func testMeasuredOverviewOpensExactWindowAndEpisodeSwitchClearsIt() {
+    func testMainTimelineNavigationNeedsNoSecondaryOverviewAndEpisodeSwitchClearsTracks() {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = [
@@ -584,6 +619,7 @@ final class VisualAlignmentUITests: XCTestCase {
             "-WWUITestResetPreferences", "YES", "-WWUITestOpenShow", "Visual Alignment Overview",
             "-WWUITestShowEpisodes", "2", "-WWUITestAlignmentFixture", "YES",
             "-WWUITestVisualAlignmentFixture", "YES",
+            "-WWUITestUnplacedAlignmentFixture", "YES",
         ]
         app.launch()
         defer { app.terminate() }
@@ -594,74 +630,48 @@ final class VisualAlignmentUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.track.")
         )
         XCTAssertTrue(waitUntil { tracks.count == 2 && load.label == "Refresh audio" })
+        let place = app.buttons["alignment.waveforms.placeInitial"]
+        scrollTo(place, in: app)
+        place.click()
+        XCTAssertTrue(waitForMapRevision(1, in: app))
         let zoom = app.sliders["alignment.waveforms.zoom"]
         scrollTo(zoom, in: app)
         zoom.adjust(toNormalizedSliderPosition: 0.82)
         XCTAssertTrue(waitUntil { tracks.count == 2 && load.label == "Refresh audio" })
 
-        app.disclosureTriangles["Episode overview"].click()
-        let overviews = app.descendants(matching: .any).matching(
-            NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.overview.track.")
-        )
-        XCTAssertTrue(waitUntil { overviews.count == 2 })
-        for overview in overviews.allElementsBoundByIndex {
-            XCTAssertTrue(
-                overview.label.contains("complete measured PCM overview")
-                    || (overview.value as? String ?? "").contains("complete measured PCM overview")
-            )
-        }
-        let oldOverviewIDs = Set(overviews.allElementsBoundByIndex.map(\.identifier))
+        let overviewDisclosure = app.disclosureTriangles.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Episode overview")
+        ).firstMatch
+        XCTAssertFalse(overviewDisclosure.exists)
         let oldTrackIDs = Set(tracks.allElementsBoundByIndex.map(\.identifier))
-        let status = app.staticTexts["alignment.waveforms.overview.status"]
-        XCTAssertTrue((status.value as? String ?? status.label).contains("2 cached PCM overviews"))
-        let overviewActions = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH %@", "alignment.waveforms.overview.open.")
-        )
-        XCTAssertEqual(overviewActions.count, 2)
-        let oldActionIDs = Set(overviewActions.allElementsBoundByIndex.map(\.identifier))
-        let target = app.buttons.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
-            "alignment.waveforms.overview.open.", "synthetic-remote.wav"
-        )).firstMatch
-        XCTAssertTrue(target.exists)
         let playhead = app.textFields["alignment.waveforms.playhead"]
         let revision = app.staticTexts["alignment.waveforms.revision"]
         scrollTo(revision, in: app)
         XCTAssertTrue(revision.exists)
         let storedRevision = revision.value as? String ?? revision.label
-        replace(playhead, with: "-1", in: app)
+        replace(playhead, with: "-86401", in: app)
         XCTAssertTrue(waitUntil { (Double(playhead.value as? String ?? "") ?? -1) >= 0 },
-                      "Out-of-range overview navigation must be refused")
+                      "Out-of-range timeline navigation must be refused")
         replace(playhead, with: "3.5", in: app)
-        XCTAssertTrue(waitUntil { target.isEnabled })
-        scrollTo(target, in: app)
-        XCTAssertTrue(target.isHittable)
-        target.click()
         XCTAssertTrue(waitUntil {
             tracks.count == 2 && load.label == "Refresh audio"
         }, app.debugDescription)
         let ruler = app.staticTexts["alignment.waveforms.ruler"]
         XCTAssertTrue((ruler.value as? String ?? ruler.label).contains("Visible aligned time ruler"))
         XCTAssertEqual(revision.value as? String ?? revision.label, storedRevision)
-        scrollTo(target, in: app)
-        XCTAssertEqual(Set(overviews.allElementsBoundByIndex.map(\.identifier)), oldOverviewIDs)
-        attachHierarchy(app, name: "Measured episode overview opened exact audio window without editing timing")
-        let second = app.staticTexts.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND (value CONTAINS %@ OR label CONTAINS %@)",
-            "ww.show.sidebar.episode.", "Synthetic Episode 2", "Synthetic Episode 2"
-        )).firstMatch
-        XCTAssertTrue(second.exists)
-        second.click()
+        XCTAssertEqual(Set(tracks.allElementsBoundByIndex.map(\.identifier)), oldTrackIDs)
+        attachHierarchy(app, name: "Main timeline navigated without a secondary overview or timing edit")
+        EpisodeLibraryNavigation.openEpisode(containing: "Synthetic Episode 2", in: app, destination: "2")
         XCTAssertTrue(waitUntil { app.windows["ww.show.window"].title.contains("Synthetic Episode 2") })
-        XCTAssertTrue(waitUntil {
-            oldOverviewIDs.isDisjoint(with: Set(overviews.allElementsBoundByIndex.map(\.identifier)))
-        })
-        XCTAssertTrue(waitUntil { overviews.count == 2 })
-        XCTAssertTrue(oldOverviewIDs.isDisjoint(with: Set(overviews.allElementsBoundByIndex.map(\.identifier))))
-        XCTAssertEqual(overviewActions.count, 2)
-        XCTAssertTrue(oldActionIDs.isDisjoint(with: Set(overviewActions.allElementsBoundByIndex.map(\.identifier))))
+        XCTAssertTrue(waitUntil { tracks.count == 2 })
+        XCTAssertFalse(overviewDisclosure.exists)
         XCTAssertTrue(oldTrackIDs.isDisjoint(with: Set(tracks.allElementsBoundByIndex.map(\.identifier))))
-        attachHierarchy(app, name: "Second episode overview replaces all first-episode waveform identities")
+        attachHierarchy(app, name: "Second episode replaces all first-episode waveform identities")
+    }
+
+    private func layoutOption(_ title: String, in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)["alignment.waveforms.layout"]
+            .descendants(matching: .any)[title]
     }
 
     private func openAlignment(in app: XCUIApplication) {
@@ -669,6 +679,9 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(destination.waitForExistence(timeout: 10))
         destination.click()
         XCTAssertTrue(destination.isSelected)
+        if !app.scrollViews["ww.inspector"].exists {
+            app.typeKey("i", modifierFlags: [.control, .command])
+        }
     }
 
     private func chooseImportFolder(_ folder: URL, in app: XCUIApplication) {
@@ -725,6 +738,14 @@ final class VisualAlignmentUITests: XCTestCase {
         app.typeKey(.tab, modifierFlags: [])
     }
 
+    private func attachDisplay(_ app: XCUIApplication, name: String) {
+        attachHierarchy(app, name: name)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     private func attachHierarchy(_ app: XCUIApplication, name: String) {
         let attachment = XCTAttachment(string: app.debugDescription)
         attachment.name = name
@@ -741,7 +762,25 @@ final class VisualAlignmentUITests: XCTestCase {
         return false
     }
 
+    private func waitForMapRevision(_ revision: Int, in app: XCUIApplication) -> Bool {
+        let text = "Map revision \(revision)"
+        return app.staticTexts.matching(NSPredicate(
+            format: "identifier == %@ AND (label CONTAINS %@ OR value CONTAINS %@)",
+            "alignment.waveforms.revision", text, text
+        )).firstMatch.waitForExistence(timeout: 20)
+    }
+
     private func scrollTo(_ element: XCUIElement, in app: XCUIApplication) {
+        let inspector = app.scrollViews["ww.inspector"]
+        if element.exists, inspector.exists, inspector.descendants(matching: element.elementType)
+            .matching(identifier: element.identifier.isEmpty ? element.label : element.identifier)
+            .firstMatch.exists {
+            for _ in 0..<10 {
+                if element.isHittable && inspector.frame.contains(element.frame) { return }
+                inspector.scroll(byDeltaX: 0, deltaY: element.frame.midY < inspector.frame.midY ? 150 : -150)
+            }
+            return
+        }
         let scroll = app.scrollViews["ww.alignment.workspace"]
         for _ in 0..<10 {
             if element.exists {

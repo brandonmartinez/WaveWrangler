@@ -65,8 +65,12 @@ public enum WaveformWindowReader {
 
     /// The measured bins depend on these source-frame ranges, not on their aligned positions.
     public static func overviewCoverage(
-        source: SourceID, groupMap: GroupTimeMap?
+        source: SourceID, groupMap: GroupTimeMap?, sourceCorrection: SourceTimingCorrection? = nil
     ) throws -> [Range<Int64>]? {
+        if let sourceCorrection {
+            return try AdaptiveViewport.ranges(sourceCorrection, source: source, rate: sourceCorrection.sourceRate,
+                                                totalFrames: sourceCorrection.sourceFrames)
+        }
         guard let groupMap else { return nil }
         guard let placement = groupMap.placements.first(where: { $0.occurrence.source == source })
         else { throw WaveformWindowError.mapDoesNotMatchSource }
@@ -77,11 +81,14 @@ public enum WaveformWindowReader {
     }
 
     public static func verifyOverviewCoverage(
-        envelope: WaveformEnvelope, groupMap: GroupTimeMap?
+        envelope: WaveformEnvelope, groupMap: GroupTimeMap?, sourceCorrection: SourceTimingCorrection? = nil
     ) throws {
+        if let sourceCorrection, sourceCorrection.channelCount != envelope.channelCount {
+            throw WaveformWindowError.mapDoesNotMatchSource
+        }
         _ = try WaveformViewport.overviewRanges(
             source: envelope.source, rate: envelope.sampleRate,
-            totalFrames: envelope.totalFrames, groupMap: groupMap
+            totalFrames: envelope.totalFrames, groupMap: groupMap, sourceCorrection: sourceCorrection
         )
     }
 
@@ -89,17 +96,20 @@ public enum WaveformWindowReader {
     @concurrent
     public static func readOverview(
         sourceURL: URL, source: SourceID, matching witness: RawSourceIdentity,
-        decoder: SourceDecoder, groupMap: GroupTimeMap? = nil,
+        decoder: SourceDecoder, groupMap: GroupTimeMap? = nil, sourceCorrection: SourceTimingCorrection? = nil,
         progress: @Sendable (Double) async throws -> Void = { _ in }
     ) async throws -> WaveformEnvelope {
         try await decoder.withWitnessBoundDecodingCursor(
             sourceURL, source: source, matching: witness
         ) { cursor in
             guard cursor.supportsRandomAccess else { throw WaveformWindowError.overviewRequiresPCM }
+            if let sourceCorrection, sourceCorrection.channelCount != cursor.interpretation.channelCount {
+                throw WaveformWindowError.mapDoesNotMatchSource
+            }
             let rate = cursor.interpretation.sourceSampleRate
             let total = cursor.interpretation.frames.validFrames
             let ranges = try WaveformViewport.overviewRanges(
-                source: source, rate: rate, totalFrames: total, groupMap: groupMap
+                source: source, rate: rate, totalFrames: total, groupMap: groupMap, sourceCorrection: sourceCorrection
             )
             let coveredFrames = ranges.reduce(Int64(0)) { $0 + ($1.upperBound - $1.lowerBound) }
             let availableBins = maximumBins - ranges.count
@@ -137,7 +147,7 @@ public enum WaveformWindowReader {
         decoder: SourceDecoder,
         startSeconds: Double,
         durationSeconds: Double,
-        groupMap: GroupTimeMap? = nil
+        groupMap: GroupTimeMap? = nil, sourceCorrection: SourceTimingCorrection? = nil
     ) async throws -> WaveformEnvelope {
         guard startSeconds.isFinite, (-86_400...86_400).contains(startSeconds),
               durationSeconds.isFinite, durationSeconds > 0,
@@ -146,11 +156,14 @@ public enum WaveformWindowReader {
         return try await decoder.withWitnessBoundDecodingCursor(
             sourceURL, source: source, matching: witness
         ) { cursor in
+            if let sourceCorrection, sourceCorrection.channelCount != cursor.interpretation.channelCount {
+                throw WaveformWindowError.mapDoesNotMatchSource
+            }
             let rate = cursor.interpretation.sourceSampleRate
             let total = cursor.interpretation.frames.validFrames
             let ranges = try WaveformViewport.frameRanges(
                 source: source, rate: rate, totalFrames: total, groupMap: groupMap,
-                startSeconds: startSeconds, durationSeconds: durationSeconds
+                startSeconds: startSeconds, durationSeconds: durationSeconds, sourceCorrection: sourceCorrection
             )
             try WaveformViewport.verifyDecodeBudget(ranges: ranges, rate: rate, randomAccess: cursor.supportsRandomAccess)
             let budget = maximumBins / max(1, ranges.count)

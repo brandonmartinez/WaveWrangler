@@ -3,9 +3,23 @@ Local-first macOS multitrack podcast alignment and editing
 
 Native macOS multitrack podcast preparation: local audio processing, referenced media, cloud canonical projects.
 
+## Library and episode editors
+
+Select a show in **Library** to browse and manage its episodes. Create, rename, reorder, or delete
+episodes there, and edit show or episode information without opening an editor.
+Double-click an episode or choose **Open Episode** to edit it in a dedicated window. Multiple
+episodes, including episodes from different shows, can remain open together. Opening an already-open
+episode brings its window forward; **Open Episode in New Window** creates another view.
+
+Editors have no episode selector. Each stays bound to the episode it opened; deleting that episode
+shows an unavailable state rather than switching the editor to another episode. Windows belonging to
+the same show share its document, Save/autosave state, and Undo history. Closing an episode window
+does not discard a show that is still being managed in Library; **Close Show** closes that show
+through the normal unsaved-changes decision.
+
 ## Visual alignment
 
-Import recordings under **Recordings** to review device groups, epochs, and speaker/channel
+Import recordings in **Setup** to review device groups, epochs, and speaker/channel
 assignments. A new import has provisional file identity: choose **Confirm original** for each
 unchanged local source before decoding or playback. A changed original must be reviewed through
 **Relink Source** instead. Sources remain referenced in place and are never modified.
@@ -13,19 +27,23 @@ Device-local records left by sources removed from the show do not block confirmi
 imported source; an original still used by another source in the show remains unavailable.
 
 In **Alignment**, the shared timeline is the primary editor. **Refresh audio** loads bounded
-measured waveform windows on one seconds-based ruler. Use **Separate lanes** to inspect each
-recording or **Overlay** to compare peaks from enabled tracks on the same scale. The recordings
-list below the timeline controls which groups and tracks are shown and heard; select a track
-there to make its recorder active for overlay dragging. Choose **Place groups at source time**
+measured waveform windows on one seconds-based ruler. **By speaker** is the first and default layout,
+grouping lanes by assigned speaker across recorders. **By recorder** groups lanes by recorder group.
+Unassigned recordings remain under **Unknown speaker**. **Overlay** always combines enabled
+recordings by speaker on the same scale. Changing layout does not change timing, recorder-group
+membership, or which recordings are shown and heard. Use the lane
+checkboxes, overlay recordings list, or **Recording** inspector to choose which groups and tracks
+are shown and heard. Select a recording to make its recorder active for overlay dragging.
+Choose **Place groups at source time**
 to accept a first manual placement without running
 acoustic analysis. **Normalize view** scales each recording's displayed peaks within its measured
-tile (and the optional episode overview); it does not change audio, playback, or saved
+tile (including zoomed-out main lanes); it does not change audio, playback, or saved
 timing. Up to eight bounded measured tiles and their projected strokes are cached in memory;
 adjacent tiles share the same viewport without rebuilding their paths on each pan. A changed
 episode, source, or verified alignment clears them.
 
-Beside each waveform in **Separate lanes** or **Overlay**, choose its **Speaker** and
-**Channel**, then use **Align…** on a non-reference track. These choices edit the same
+Open a recording's settings button to choose its **Speaker** and **Channel** in the
+**Recording** inspector, then use **Align…** beside a non-reference track. These choices edit the same
 episode Setup assignments (one speaker and one stated channel per source), with Undo and
 normal document saving; they are not temporary match settings. Choose a reference
 recording from the menu if several already aligned tracks share that speaker. The reference
@@ -39,30 +57,64 @@ timing, so its other tracks move with it. You can then match another speaker fro
 aligned recorder to a third recorder without moving either already aligned group. Unrelated
 speakers are not mixed to manufacture a match. Multichannel files currently have one assigned
 speaker channel per source; split or import separate sources if independent speakers need their
-own assignments. Matching uses a short centered excerpt to locate an offset and a longer
-(up to 10-minute) excerpt to fit drift. Unequal file lengths do not require a percentage
-setting or imply a worse match: the offset search can account for up to about ten minutes of
-start/stop difference, within the bounded analysis budget. Larger offsets, nonoverlapping
-centered excerpts, and unsupported reference intervals may still require manual placement.
+own assignments. Selected-speaker matching streams each complete channel into a compact spectral
+fingerprint, finds shared passages across the whole reference, then precisely checks distinctive
+passages distributed over the overlap to fit offset and drift. Fine matching filters low-frequency
+rumble, tolerates opposite waveform polarity, and uses the coarse drift estimate to speed-compensate
+short analysis snippets before comparing them; originals are never filtered, stretched, or inverted.
+These analysis hints do not approve timing or relax the ambiguity and coverage checks.
+**No initial anchor or manual placement is required.** The first scan can take a while; unchanged channel fingerprints are cached
+locally for reuse. Unequal file lengths do not require a percentage setting. This candidate supports
+channels up to two hours and needs at least twenty seconds of shared audio; ambiguous content or
+insufficient distributed evidence can still require a different speaker or manual anchors.
 
 The analysis reports the measured offset, drift in ppm, covered interval, eligible
 windows, peak evidence and residual, or a refusal for silence, ambiguous/periodic peaks,
 inconsistent drift, discontinuities or unavailable sources. These are **not probabilities or
 proof of clock accuracy**: different microphone distances can imitate an offset. Nothing is
 automatically applied. Review the proposal or refusal directly under the selected waveform,
-then choose **Accept measured interval** to create an
+using **Show proposed alignment** to toggle a dashed teal ghost of the proposed measured interval
+in the main lanes or speaker overlay. The ghost moves every loaded track in the affected recorder
+epoch, without changing saved timing, playback, anchors, or extending beyond measured coverage.
+Then choose **Accept measured interval** to create an
 undoable, verified manual decision; rate-aware playback corrects that mapped interval's
 clock rate (not pitch-preserving time stretching) without altering the original. Outside it,
 audio stays unplaced. **Extend to whole epoch…** is a
 separate, warned human decision to extrapolate its rate and offset into unmeasured audio, not a
-new confidence claim. A quiet stretch between consistent matches can remain in the proposal
-only when both decoded recordings measure silence there; this does not prove that no audio is
-missing. One-sided active-audio gaps, unrelated windows, and declared recorder restarts still
-refuse or stay separate. Accepting a proposal
+new confidence claim. Whole-track feature indexing is not precise verification of every intervening
+frame, so brief edits between checked passages can be missed. A quiet stretch between consistent
+matches can remain in the proposal only when both decoded recordings measure silence there; this
+does not prove that no audio is missing. One-sided active-audio gaps, unrelated windows, and declared
+recorder restarts still refuse or stay separate. Accepting a proposal
 records visible evidence markers at its first and last reliable windows, not a clock approval.
+
+For software/network recordings whose delay changes within a take, select the target waveform and
+choose **Adaptive review…**. This experimental path measures overlapping local
+windows throughout the shared audio instead of forcing one offset/rate over the entire file.
+Dashed teal waveforms and clock icons show locally supported timing runs for **only that file**;
+uncertain transitions, silent/ambiguous regions and unmeasured ends are not filled or extrapolated.
+Choose **Accept supported file timing…** to save a file-local correction and enable pitch-preserving
+playback. Review the confirmation carefully: **unsupported intervals are silent**, including
+unverified gaps and ends. This is not yet a reliable whole-track repair for every software recording.
+One shared multichannel processor applies the curve to every channel in that file; sibling files
+and original media remain unchanged. Blue clock icons mark applied timing. **Remove adaptive file
+timing** and native Undo/Redo restore earlier timing without discarding decoded waveform bins.
+Full-length review reports progress and can be cancelled without accepting any partial timing.
+Listening and derived aligned audio use the same bounded, pitch-preserving audio tiles, not the
+ordinary pitch-changing affine resampler. Source-region processing origins and shared crossfades
+avoid restarting audio phase at playback-window boundaries. Remove file-local corrections before
+editing recorder-group timing. Shows now use schema 4; older shows require the normal backed-up
+migration before saving.
+
+In a recording's inspector, **Prefer this recorder as timing reference** marks an explicit preference
+for a reliable source, such as your main hardware recorder. Multiple recorders may be preferred.
+An already accepted timeline reference stays fixed; otherwise preferred eligible recorders rank
+before speaker primaries, then the normal source order. Among already timed matching speaker
+sources, preferred recorders rank first. Device brands and filenames never certify clock quality.
+
 Click a covered point on an already timed speaker track, choose **Mark reference point**, then
 click the matching point on the same speaker's track in another recorder and choose **Link to
-reference marker…**. Repeat at a second point and **Apply anchors** to fit offset and drift;
+reference marker…** in the inspector. Repeat at a second point and **Apply anchors** to fit offset and drift;
 the marker pairs are staged, not saved timing, until you apply them. Zoom into the waveform
 for precise clicks. Manual numeric editing remains available when no matching reference
 audio exists. Accepting one match never makes other proposals playable.
@@ -74,8 +126,8 @@ the change is undoable; restoring the old selection cannot make a genuinely chan
 current. Tiny metadata timestamp differences within the source-identity comparison tolerance
 no longer change newly recorded revision keys.
 For a recorder with restarted/overlapping source-time epochs, only its first
-placeable epoch is mapped initially; place later epochs explicitly using **Advanced epoch timing**.
-Select a track and drag its waveform, use the 10 ms nudge buttons, or type **Group move (ms)** to move all
+placeable epoch is mapped initially; place later epochs explicitly using **Advanced timing**.
+Select a track and drag its waveform, use the inspector's 10 ms nudge buttons, or type **Group move (ms)** to move all
 mapped epochs of its recorder together in one undoable revision. A drag shows its shift in seconds and commits on
 release; the offset change is the pointer distance divided by the visible waveform width, multiplied by
 the visible span. Further drags add or subtract from the saved offset. Zoom to a shorter span for fine
@@ -88,27 +140,25 @@ Changes to accepted timing save in the show document and can be undone or redone
 playhead; **Pause**, **Stop**, click-to-seek, and typed aligned playhead are available. Unsupported
 or uncovered regions are silent. Playback reads witnessed five-second windows and may briefly
 buffer between windows; a source or map mismatch stops playback rather than substituting audio.
-**Visible span**, **Window start**, **Previous**, and **Next** navigate measured windows. Drag
-the ruler or use **Pan at zoom** to scroll the shared viewport at its visible scale, with all
-recorder lanes moving together. **Jump in episode** is a separate coarse whole-episode control;
-it loads a distant window on release rather than decoding each intermediate position. The
-playhead is ready for **Play** afterward; panning and jumping do not play audio or change saved
+Use the compact zoom and lane-height sliders beside **Fit timeline** above the ruler.
+Drag the playhead flag to seek, drag empty ruler space to pan without moving the playhead,
+or pinch the ruler to zoom around a time point. All recorder lanes share that viewport.
+**Fit timeline** shows the full episode in the main tracks; zoom in or type a time to load
+a distant measured window. The playhead is ready for **Play** afterward; panning does not play audio or change saved
 timing. Cached adjacent tiles translate without rebuilding their paths. An uncached section may
 take a moment to display; unavailable reads are reported rather than silently replaced.
 Windows outside a recording show its explicit unavailability;
-navigation remains within the supported 0-to-24-hour aligned range. The advanced
-**Compare Aligned Audio** control still plays up to five seconds of reference/selected
+navigation remains within the supported minus-24-to-plus-24-hour aligned range. The inspector's
+**Compare Aligned Audio** control plays up to five seconds of reference/selected
 audio in separate channels for an internal listening check, not an export or cut authorization.
 
-**Episode overview**, below the timeline, can explicitly scan every covered PCM sample into at most 2,048 amplitude
-bins per recording, with cancellable progress. Click covered overview audio to open an exact
-window; **Window start**, or the typed playhead with **Open Window at Playhead**, are keyboard
-and accessibility alternatives. Overview bins never
-create anchors. Gaps stay absent, unplaced audio stays marked, and source/timing changes invalidate
-the result. A scan supports up to 24 source hours per recording and keeps no persistent PCM/cache.
-Stored offsets/rates can place audio outside the exact navigator's 0-to-86,400 aligned-second
-range. Those overview regions are shaded and explicitly unavailable, not offered as clickable
-exact windows; the source-time scan cap does not change stored timing.
+There is no secondary episode overview. Zoomed-out main lanes use at most 2,048 measured amplitude
+bins per recording; precise windows remain available when zoomed in. Timing-only acceptance and
+Undo/Redo retain source-coordinate bins and reproject them after save/source verification instead
+of clearing and decoding every lane again. Changed sources still invalidate the display, gaps
+stay absent, and audio outside an accepted measured interval remains visibly unplaced, not playable.
+A full-scale scan supports up to 24 source hours per recording; exact navigation remains bounded
+to minus 86,400 through plus 86,400 aligned seconds without changing stored timing.
 
 This is an alignment workspace, not a DAW or complete editing workflow. PCM recordings support
 exact random-access waveform windows and aligned listening throughout an episode, without decoding

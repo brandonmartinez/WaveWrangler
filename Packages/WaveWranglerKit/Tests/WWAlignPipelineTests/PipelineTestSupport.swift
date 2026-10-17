@@ -19,10 +19,12 @@ enum Signal: Sendable {
     /// The recorder at source time `u` hears `scene(seed, rate·u + offset)`, plus `stepBy` seconds of extra
     /// offset from source time `stepAt` on (a discontinuity).
     case scene(seed: UInt64, rate: Double = 1, offset: Double = 0, stepAt: Double? = nil, stepBy: Double = 0)
+    case processedScene(seed: UInt64, rate: Double, offset: Double, polarity: Double)
     /// Two independent scenes: the reference hears only the first; the second dominates peer-to-peer.
     case dualScene(seed: UInt64, secondSeed: UInt64, rate: Double, offset: Double, secondDelay: Double)
     case gap(seed: UInt64, rate: Double, offset: Double, start: Double, end: Double)
     case sharedSilence(seed: UInt64, rate: Double, offset: Double, start: Double, end: Double)
+    case quietScene(seed: UInt64, offset: Double = 0, stepAt: Double? = nil, stepBy: Double = 0)
     /// The scene plus an equal copy `delay` seconds later (two equally good alignments).
     case echo(seed: UInt64, delay: Double)
     case silence
@@ -53,6 +55,12 @@ enum Signal: Sendable {
             var t = rate * u + offset
             if let stepAt, u >= stepAt { t += stepBy }
             return Self.scene(seed, t)
+        case let .processedScene(seed, rate, offset, polarity):
+            let t = rate * u + offset
+            let colored = Self.scene(seed, t) - 0.4 * Self.scene(seed, t - 0.0005)
+                + 0.2 * Self.scene(seed, t - 0.001)
+            return Float(polarity) * 0.15 * tanh(2 * colored)
+                + Float(0.1 * sin(2 * .pi * 60 * u) + 0.05 * sin(2 * .pi * 90 * u))
         case let .dualScene(seed, secondSeed, rate, offset, secondDelay):
             let t = rate * u + offset
             return Self.scene(seed, t) + 1.6 * Self.scene(secondSeed, t - secondDelay)
@@ -61,6 +69,9 @@ enum Signal: Sendable {
         case let .sharedSilence(seed, rate, offset, start, end):
             let sceneTime = rate * u + offset
             return start <= sceneTime && sceneTime < end ? 0 : Self.scene(seed, sceneTime)
+        case let .quietScene(seed, offset, stepAt, stepBy):
+            let t = u + offset + (stepAt.map { u >= $0 ? stepBy : 0 } ?? 0)
+            return (28..<68).contains(t) ? 0.00003 : Self.scene(seed, t)
         case let .echo(seed, delay):
             return 0.7 * (Self.scene(seed, u) + Self.scene(seed, u - delay))
         case .silence:
@@ -86,6 +97,7 @@ final class ProceduralContentIO: SourceContentIO, @unchecked Sendable {
         var signal: Signal
         var sampleRate = 48_000
         var channelSignals: [Signal]? = nil
+        var randomAccess = false
     }
 
     struct Record: Sendable, Equatable {
@@ -95,6 +107,7 @@ final class ProceduralContentIO: SourceContentIO, @unchecked Sendable {
         var readsOnMainThread = 0
         /// Highest frame position any reader of the file reached.
         var furthestFrame: Int64 = 0
+        var decodedFrames: Int64 = 0
     }
 
     private let lock = NSLock()
@@ -120,6 +133,7 @@ final class ProceduralContentIO: SourceContentIO, @unchecked Sendable {
                 sum.closes += r.closes
                 sum.readsOnMainThread += r.readsOnMainThread
                 sum.furthestFrame = max(sum.furthestFrame, r.furthestFrame)
+                sum.decodedFrames += r.decodedFrames
             }
         }
     }
@@ -153,11 +167,12 @@ final class ProceduralContentIO: SourceContentIO, @unchecked Sendable {
         return Reader(owner: self, path: path, stream: stream, facts: facts)
     }
 
-    fileprivate func didRead(_ path: String, index: Int, reached: Int64) {
+    fileprivate func didRead(_ path: String, index: Int, reached: Int64, frames: Int) {
         let action: (@Sendable (String, Int) -> Void)? = lock.withLock {
             records[path, default: Record()].reads += 1
             if pthread_main_np() != 0 { records[path, default: Record()].readsOnMainThread += 1 }
             records[path, default: Record()].furthestFrame = max(records[path]?.furthestFrame ?? 0, reached)
+            records[path, default: Record()].decodedFrames += Int64(frames)
             return _onRead
         }
         action?(path, index)
@@ -179,6 +194,13 @@ final class ProceduralContentIO: SourceContentIO, @unchecked Sendable {
         var position: Int64 = 0
         var readIndex = 0
         var closed = false
+        var supportsRandomAccess: Bool { stream.randomAccess }
+
+        func seekRawFrame(to frame: Int64) throws(DecodeFailure) {
+            guard supportsRandomAccess else { throw .seekUnavailable }
+            guard frame >= 0, frame <= stream.frames else { throw .invalidSourceFrame(frame) }
+            position = frame
+        }
 
         init(owner: ProceduralContentIO, path: String, stream: Stream, facts: EncodedStreamFacts) {
             self.owner = owner
@@ -220,7 +242,7 @@ final class ProceduralContentIO: SourceContentIO, @unchecked Sendable {
             position += Int64(count)
             let index = readIndex
             readIndex += 1
-            owner.didRead(path, index: index, reached: position)
+            owner.didRead(path, index: index, reached: position, frames: count)
             return count
         }
 
@@ -351,6 +373,7 @@ struct SourceSpec: Sendable {
     var registered = true
     var located = true
     var sampleRate = 48_000
+    var randomAccess = false
 
     var frames: Int64 { Int64((seconds * Double(sampleRate)).rounded()) }
 }
@@ -400,14 +423,15 @@ final class PipelineFixture: @unchecked Sendable {
         chunkFrames: Int = 16_384,
         skipCurrencyCheck: Bool = false,
         hooks: AlignmentPipelineTestHooks = AlignmentPipelineTestHooks(),
-        label: String = "pipeline"
+        label: String = "pipeline", nativeAudio: Bool = false
     ) async throws {
         directory = try TemporaryDirectory(label)
         // Originals and the cache never share a folder (the store refuses a root beside originals).
         media = try directory.folder("originals/media")
         store = try DerivedAssetStore(root: directory.url.appendingPathComponent("cache/DerivedAssets/v1", isDirectory: true), sourceLocations: [media])
         coordinator = DerivedJobCoordinator(store: store, inputs: DerivedInputs(), testHooks: script.hooks(skipCurrencyCheck: skipCurrencyCheck))
-        let decoder = SourceDecoder(access: SourceAccessContext(io: metadataIO), content: content, configuration: .init(chunkFrames: chunkFrames))
+        let gateway: any SourceContentIO = nativeAudio ? SystemSourceContentIO() : content
+        let decoder = SourceDecoder(access: SourceAccessContext(io: metadataIO), content: gateway, configuration: .init(chunkFrames: chunkFrames))
         self.decoder = decoder
         self.configuration = configuration
         self.hooks = hooks
@@ -431,10 +455,10 @@ final class PipelineFixture: @unchecked Sendable {
             for spec in groupSpec.sources {
                 let id = SourceID()
                 let url = media.appendingPathComponent("\(spec.name).wav", isDirectory: false)
-                try Data(repeating: 0x5A, count: 4096).write(to: url)
+                try (nativeAudio ? Self.nativeWave(spec) : Data(repeating: 0x5A, count: 4096)).write(to: url)
                 content.register(url, .init(
                     channels: spec.channels, frames: spec.frames, signal: spec.signal,
-                    sampleRate: spec.sampleRate, channelSignals: spec.channelSignals
+                    sampleRate: spec.sampleRate, channelSignals: spec.channelSignals, randomAccess: spec.randomAccess
                 ))
                 ids[spec.name] = id
                 urls[spec.name] = url
@@ -456,6 +480,30 @@ final class PipelineFixture: @unchecked Sendable {
             show: Show(title: "Synthetic"),
             episodes: [Episode(id: episodeID, title: "Synthetic episode", recorderGroups: recorderGroups, sources: records)]
         )
+    }
+
+    private static func nativeWave(_ spec: SourceSpec) -> Data {
+        let frames = Int(spec.frames), bytes = frames * spec.channels * 4
+        var data = Data(capacity: 44 + bytes)
+        func append<T: FixedWidthInteger>(_ number: T) {
+            var value = number.littleEndian
+            withUnsafeBytes(of: &value) { data.append(contentsOf: $0) }
+        }
+        data.append(contentsOf: "RIFF".utf8)
+        append(UInt32(36 + bytes))
+        data.append(contentsOf: "WAVEfmt ".utf8)
+        append(UInt32(16)); append(UInt16(3)); append(UInt16(spec.channels))
+        append(UInt32(spec.sampleRate)); append(UInt32(spec.sampleRate * spec.channels * 4))
+        append(UInt16(spec.channels * 4)); append(UInt16(32))
+        data.append(contentsOf: "data".utf8)
+        append(UInt32(bytes))
+        for frame in 0..<frames {
+            for channel in 0..<spec.channels {
+                let signal = spec.channelSignals?[channel] ?? spec.signal
+                append((signal.value(atSourceSeconds: Double(frame) / Double(spec.sampleRate)) * channelGain(channel)).bitPattern)
+            }
+        }
+        return data
     }
 
     /// The metadata-only revision the app registers for a source (no content read).

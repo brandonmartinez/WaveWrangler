@@ -37,6 +37,22 @@ final class UITestIsolation: NSObject, XCTestObservation {
 
     @MainActor
     private static func resetApp(before className: String) {
+        let notifications = XCUIApplication(bundleIdentifier: "com.apple.UserNotificationCenter")
+        let dialog = notifications.dialogs.firstMatch
+        if dialog.exists {
+            print("UITestIsolation: existing system dialog: \(dialog.debugDescription)")
+            let appName = dialog.staticTexts.matching(NSPredicate(
+                format: "label CONTAINS %@ OR value CONTAINS %@",
+                "WaveWrangler quit unexpectedly", "WaveWrangler quit unexpectedly"
+            )).firstMatch
+            let ignore = dialog.buttons["Ignore"]
+            if appName.exists, ignore.exists {
+                ignore.click()
+            } else {
+                XCTFail("GUI environment has an unrecognized system dialog; refusing to dismiss it")
+                return
+            }
+        }
         let app = XCUIApplication()
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES", "-WWUITestResetStorage", "YES",
                                "-WWUITestResetPreferences", "YES", "-WWUITestLibraryFixture", "empty"]

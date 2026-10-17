@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import Testing
 import WWCore
 import WWPersistence
@@ -32,6 +33,38 @@ struct AppConfigurationTests {
         let show = try #require(types.first { ($0["LSItemContentTypes"] as? [String])?.contains(DocumentFormat.show.identifier) == true })
         #expect(show["NSDocumentClass"] as? String == "ShowDocument")
         #expect(show["CFBundleTypeRole"] as? String == "Editor")
+    }
+
+    @Test func appIconIncludesEveryMacSizeAndScale() throws {
+        struct Catalog: Decodable {
+            struct Image: Decodable {
+                let filename: String
+                let idiom: String
+                let size: String
+                let scale: String
+            }
+            let images: [Image]
+        }
+        let folder = Self.appFolder.appending(path: "Assets.xcassets/AppIcon.appiconset")
+        let catalog = try JSONDecoder().decode(Catalog.self, from: Data(contentsOf: folder.appending(path: "Contents.json")))
+        let expected = Set([16, 32, 128, 256, 512].flatMap { size in
+            [1, 2].map { "\(size)x\(size)@\($0)x" }
+        })
+        #expect(catalog.images.count == 10)
+        #expect(Set(catalog.images.map { "\($0.size)@\($0.scale)" }) == expected)
+        for image in catalog.images {
+            #expect(image.idiom == "mac")
+            let size = try #require(Int(image.size.split(separator: "x")[0]))
+            let scale = try #require(Int(image.scale.dropLast()))
+            let source = try #require(CGImageSourceCreateWithURL(folder.appending(path: image.filename) as CFURL, nil))
+            let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+            #expect(properties[kCGImagePropertyPixelWidth] as? Int == size * scale)
+            #expect(properties[kCGImagePropertyPixelHeight] as? Int == size * scale)
+            #expect(properties[kCGImagePropertyHasAlpha] as? Bool == true)
+        }
+        let project = try String(contentsOf: Self.appFolder.deletingLastPathComponent()
+            .appending(path: "WaveWrangler.xcodeproj/project.pbxproj"), encoding: .utf8)
+        #expect(project.components(separatedBy: "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;").count - 1 == 2)
     }
 
     @Test func entitlementsAreSandboxedUserSelectedFilesWithBookmarksAndNoNetwork() throws {

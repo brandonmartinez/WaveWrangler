@@ -471,6 +471,7 @@ public final class AlignmentPipeline: Sendable {
             unit.referenceChannel = option.referenceChannel
             unit.targetChannel = option.targetChannel
             unit.referenceMapDigest = digest
+            unit.automatic = true
             return unit
         }
         func run(_ unit: AnalysisUnit) async -> (PipelineJobResult, EpochAnalysisRecord?) {
@@ -486,39 +487,8 @@ public final class AlignmentPipeline: Sendable {
             else { return (result, nil) }
             return (result, record)
         }
-        var (result, record) = await run(makeUnit(locatorConfiguration))
-        if abs(difference) > Double(configuration.searchDeviationSeconds),
-           let reason = record?.abstention?.abstentionReason,
-           reason == .weak || reason == .insufficientCoverage || reason == .disconnected {
-            let opposite = AlignmentPipelineConfiguration(
-                concurrency: configuration.concurrency,
-                analysisMemoryBudgetBytes: configuration.analysisMemoryBudgetBytes,
-                targetExcerptSeconds: locatorConfiguration.targetExcerptSeconds,
-                searchDeviationSeconds: locatorConfiguration.searchDeviationSeconds,
-                searchCenterSeconds: -locatorConfiguration.searchCenterSeconds,
-                minimumAnalysisRate: configuration.minimumAnalysisRate,
-                renderSegmentSeconds: configuration.renderSegmentSeconds,
-                outputSettings: configuration.outputSettings
-            )
-            let (alternateResult, alternateRecord) = await run(makeUnit(opposite))
-            (result, record) = (alternateResult, alternateRecord)
-        }
-        // A short, wide search finds a candidate without decoding a 10-minute excerpt at every
-        // possible start time. Refit across the long excerpt for drift and gap evidence.
-        if let candidate = record?.proposal, locatorConfiguration != configuration {
-            let refinedCenter = Int(candidate.segment.alignedOffset.approximateDouble.rounded())
-            let refinement = AlignmentPipelineConfiguration(
-                concurrency: configuration.concurrency,
-                analysisMemoryBudgetBytes: configuration.analysisMemoryBudgetBytes,
-                targetExcerptSeconds: configuration.targetExcerptSeconds,
-                searchDeviationSeconds: configuration.searchDeviationSeconds,
-                searchCenterSeconds: refinedCenter,
-                minimumAnalysisRate: configuration.minimumAnalysisRate,
-                renderSegmentSeconds: configuration.renderSegmentSeconds,
-                outputSettings: configuration.outputSettings
-            )
-            (result, record) = await run(makeUnit(refinement))
-        }
+        let (result, initialRecord) = await run(makeUnit(locatorConfiguration))
+        var record = initialRecord
         var failures: [RecordingEpochID: AlignmentWorkFailure] = [:]
         if let failure = result.typedFailure { failures[targetEpoch] = failure }
         if record == nil, failures[targetEpoch] == nil {
@@ -653,6 +623,9 @@ public final class AlignmentPipeline: Sendable {
         decisions: [RecordingEpochID: EpochMapDecision]
     ) async throws(AlignmentAcceptanceError) -> AcceptedAlignment {
         guard let episode = model.episode(episodeID), report.plan.episode == episodeID else { throw .episodeNotFound(episodeID) }
+        guard episode.alignment?.acceptedMap?.sourceCorrections?.isEmpty != false else {
+            throw .invalidMap("Remove adaptive file timing before editing recorder-group timing.")
+        }
         guard report.references.isEmpty || report.referenceRevision == episode.alignment?.acceptedRevision else {
             throw .invalidMap("The accepted timing changed since this speaker match. Analyze again.")
         }
@@ -985,7 +958,8 @@ public final class AlignmentPipeline: Sendable {
     /// map (another revision, or another map with the same revision number) becomes stale and late results
     /// for it are discarded. Call after the document is saved. Refused when a later acceptance superseded
     /// this one, when the episode's alignment changed since its snapshot, or when its sources, format or
-    /// placements changed since it was accepted. Activations are serialized.
+    /// placements changed since it was accepted. Activations are serialized. Retrying an exact ready identity
+    /// leaves it published so concurrent readers never see a redundant publication's transient running state.
     public func activate(_ accepted: AcceptedAlignment) async throws(AlignmentAcceptanceError) {
         await activation.lock()
         var failure: AlignmentAcceptanceError?
@@ -1019,11 +993,13 @@ public final class AlignmentPipeline: Sendable {
         await coordinator.acceptMap(accepted.revision)
         await coordinator.setRecipe(identity.recipe)
         await coordinator.setAssetRevision(AlignmentAssetKinds.acceptedMapIdentity)
-        let canonical = Data(identity.digest.utf8)
-        let published = await coordinator.run(identity.slot, key: identity.key) { () throws(AlignmentWorkFailure) -> Data in canonical }
-        guard published.isAvailable else {
-            if await coordinator.isShutdown { throw .coordinatorShutDown }
-            throw .invalidMap("the accepted map identity did not publish: \(published.outcome)")
+        if await coordinator.state(of: identity.slot) != .ready(identity.key) {
+            let canonical = Data(identity.digest.utf8)
+            let published = await coordinator.run(identity.slot, key: identity.key) { () throws(AlignmentWorkFailure) -> Data in canonical }
+            guard published.isAvailable else {
+                if await coordinator.isShutdown { throw .coordinatorShutDown }
+                throw .invalidMap("the accepted map identity did not publish: \(published.outcome)")
+            }
         }
     }
 
@@ -1091,14 +1067,16 @@ public final class AlignmentPipeline: Sendable {
         await coordinator.acceptMap(reference)
         await coordinator.setRecipe(identity.recipe)
         await coordinator.setAssetRevision(AlignmentAssetKinds.acceptedMapIdentity)
-        let canonical = Data(identity.digest.utf8)
-        let published = await coordinator.run(
-            identity.slot,
-            key: identity.key
-        ) { () throws(AlignmentWorkFailure) -> Data in canonical }
-        guard published.isAvailable else {
-            if await coordinator.isShutdown { throw .coordinatorShutDown }
-            throw .invalidMap("the restored map identity did not publish: \(published.outcome)")
+        if await coordinator.state(of: identity.slot) != .ready(identity.key) {
+            let canonical = Data(identity.digest.utf8)
+            let published = await coordinator.run(
+                identity.slot,
+                key: identity.key
+            ) { () throws(AlignmentWorkFailure) -> Data in canonical }
+            guard published.isAvailable else {
+                if await coordinator.isShutdown { throw .coordinatorShutDown }
+                throw .invalidMap("the restored map identity did not publish: \(published.outcome)")
+            }
         }
         await coordinator.restoreCachedCurrentSlots()
         await ledger.reconcile(
@@ -1116,6 +1094,9 @@ public final class AlignmentPipeline: Sendable {
         guard let episode = model.episode(episodeID),
               let priorVersion = episode.alignment?.map(revision: derivedFrom)
         else { throw .episodeNotFound(episodeID) }
+        guard priorVersion.sourceCorrections?.isEmpty != false else {
+            throw .invalidMap("Remove adaptive file timing before editing recorder-group timing.")
+        }
         if await coordinator.isShutdown { throw .coordinatorShutDown }
         let inputs = await coordinator.inputs
         guard let dependencies = MapDependencies.digest(
@@ -1457,6 +1438,24 @@ public final class AlignmentPipeline: Sendable {
         let eligibility = ContentEligibility(sources: sources, authorizations: authorizations, registered: registered)
 
         var notRendered: [SourceID: NotRenderedReason] = [:]
+        let corrections = model.episode(episodeID)?.alignment?.acceptedMap?.sourceCorrections ?? []
+        let corrected = Set(corrections.map(\.source))
+        var adaptive: [(SourceTimingCorrection, GroupRenderJob.Participant)] = []
+        for correction in corrections {
+            if let reason = eligibility.check(correction.source) {
+                notRendered[correction.source] = .ineligible(reason)
+                continue
+            }
+            guard let (source, token) = eligibility.admitted(correction.source),
+                  let payload = coordinator.store.payload(for: SourceProbe.key(source: correction.source, token: token)),
+                  let facts = try? SourceFacts.decode(payload), facts.revisionToken == token,
+                  facts.sampleRate == correction.sourceRate, facts.frameCount == correction.sourceFrames,
+                  facts.channelCount == correction.channelCount else {
+                notRendered[correction.source] = .factsUnavailable
+                continue
+            }
+            adaptive.append((correction, GroupRenderJob.Participant(source: source, facts: facts)))
+        }
         var renderable: [(map: GroupTimeMap, participants: [GroupRenderJob.Participant])] = []
         for group in map.groups {
             var mapped = Set<RecordingEpochID>()
@@ -1466,6 +1465,7 @@ public final class AlignmentPipeline: Sendable {
             var participants: [GroupRenderJob.Participant] = []
             for placement in group.placements {
                 let id = placement.occurrence.source
+                if corrected.contains(id) { continue }
                 if let unmapped = placement.spans.first(where: { !mapped.contains($0.epoch) }) {
                     notRendered[id] = .epochUnsupported(unmapped.epoch)
                     continue
@@ -1491,6 +1491,7 @@ public final class AlignmentPipeline: Sendable {
 
         // One common output rate for the whole episode, from the probed interpretations alone (WW-050).
         let interpretations = renderable.flatMap { $0.participants.map(\.facts.interpretation) }
+            + adaptive.map { $0.1.facts.interpretation }
         guard !interpretations.isEmpty else {
             return AlignedAssetReport(revision: revision, outputSettings: nil, groups: [], notRendered: notRendered)
         }
@@ -1531,7 +1532,28 @@ public final class AlignmentPipeline: Sendable {
             await Self.tracked(renders, environment: environment) { await AlignedAssetRun.run(job, environment: environment) }
                 ?? Self.cancelledReport(job)
         }
-        return AlignedAssetReport(revision: revision, outputSettings: decision, groups: failedGroups + reports, notRendered: notRendered)
+        var combined = failedGroups + reports
+        for (correction, participant) in adaptive {
+            let report = await Self.tracked(renders, environment: environment) {
+                await self.renderAdaptiveAssets(model: model, episode: episodeID, correction: correction,
+                    participant: participant, identity: identity, outputRate: outputRate)
+            } ?? GroupRenderReport(group: correction.group, outputRate: outputRate, outputFrames: 0..<0,
+                                   segments: 0, failure: .cancelled)
+            if let index = combined.firstIndex(where: { $0.group == report.group }) {
+                let previous = combined[index]
+                var joined = GroupRenderReport(group: report.group, outputRate: outputRate,
+                    outputFrames: min(previous.outputFrames.lowerBound, report.outputFrames.lowerBound)..<max(previous.outputFrames.upperBound, report.outputFrames.upperBound),
+                    segments: previous.segments + report.segments)
+                joined.segmentsRendered = previous.segmentsRendered + report.segmentsRendered
+                joined.segmentsReused = previous.segmentsReused + report.segmentsReused
+                joined.results = previous.results + report.results
+                joined.failure = previous.failure ?? report.failure
+                joined.peakStreamFrames = max(previous.peakStreamFrames, report.peakStreamFrames)
+                joined.peakRenderWorkingSetBytes = max(previous.peakRenderWorkingSetBytes, report.peakRenderWorkingSetBytes)
+                combined[index] = joined
+            } else { combined.append(report) }
+        }
+        return AlignedAssetReport(revision: revision, outputSettings: decision, groups: combined, notRendered: notRendered)
     }
 
     // MARK: Helpers

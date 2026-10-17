@@ -96,6 +96,8 @@ public enum UndoActionName {
     public static let deleteAnchor = "Delete Anchor"
     public static let editEpochTiming = "Edit Epoch Timing"
     public static let acceptProposal = "Accept Proposal"
+    public static let acceptAdaptiveTiming = "Accept Adaptive File Timing"
+    public static let removeAdaptiveTiming = "Remove Adaptive File Timing"
     public static let rejectProposal = "Reject Proposal"
     public static let startNewEpochAtAnchor = "Start New Epoch at Anchor"
     public static let newCollection = "New Collection"

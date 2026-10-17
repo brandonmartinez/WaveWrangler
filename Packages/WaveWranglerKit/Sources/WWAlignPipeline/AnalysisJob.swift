@@ -107,6 +107,7 @@ struct AnalysisUnit: Sendable {
     var referenceChannel: Int?
     var targetChannel: Int?
     var referenceMapDigest: String?
+    var automatic = false
 
     var targetOccurrence: SourceOccurrenceID { alignmentOccurrenceID(for: target.id) }
 
@@ -114,10 +115,11 @@ struct AnalysisUnit: Sendable {
     /// different epoch re-keys the analysis.
     var recipe: RecipeReference {
         RecipeReference(
-            name: configuration.analysisRecipeName
+            name: configuration.analysisRecipeName(estimator: automatic ? AutomaticAnalysis.estimatorIdentifier : AlignmentAssetKinds.estimatorIdentifier)
                 + "[ref=\(referenceChoice.group)/\(referenceChoice.epoch)/\(reference.id);"
                 + "channels=\(referenceChannel.map(String.init) ?? "mix"),\(targetChannel.map(String.init) ?? "mix");"
-                + "map=\(referenceMapDigest ?? "origin")]",
+                + "map=\(referenceMapDigest ?? "origin")]"
+                + (automatic ? AutomaticAnalysis.recipe : ""),
             revision: 2
         )
     }
@@ -178,12 +180,14 @@ struct AnalysisUnit: Sendable {
     /// and per-window scratch ≈ 32 B per analysis sample), the largest correlation FFT (≈ 56 B per point),
     /// decode chunks in flight for the wider source and fixed overhead. Measured against real peaks in the
     /// heavy suite (`PipelineMemoryTests`).
-    func estimatedWorkingSetBytes(peers: [AnalysisUnit] = []) throws(AlignmentWorkFailure) -> Int {
+    func estimatedWorkingSetBytes(
+        peers: [AnalysisUnit] = [], referenceFrames: Int64? = nil, targetFrames: Int64? = nil
+    ) throws(AlignmentWorkFailure) -> Int {
         let minimum = configuration.minimumAnalysisRate
         let referenceFactor = try Self.factor(referenceFacts.sampleRate, minimum)
         let targetFactor = try Self.factor(targetFacts.sampleRate, minimum)
-        let referenceOut = AnalysisDecimator.outputCount(frames: Int64(referenceRange.count), factor: referenceFactor)
-        let targetOut = AnalysisDecimator.outputCount(frames: Int64(targetRange.count), factor: targetFactor)
+        let referenceOut = AnalysisDecimator.outputCount(frames: referenceFrames ?? Int64(referenceRange.count), factor: referenceFactor)
+        let targetOut = AnalysisDecimator.outputCount(frames: targetFrames ?? Int64(targetRange.count), factor: targetFactor)
         var fft = 1
         while fft < 2 * configuration.searchDeviationSeconds * 4000 + 8000 { fft <<= 1 }
         let channels = Swift.max(referenceFacts.channelCount, targetFacts.channelCount)
@@ -228,6 +232,7 @@ struct AnalysisUnit: Sendable {
         environment: PipelineEnvironment, peers: [AnalysisUnit] = [],
         cache: CycleExcerptCache? = nil, retainedBytes: Int = 0
     ) async throws(AlignmentWorkFailure) -> Data {
+        if automatic { return try await AutomaticAnalysis.run(unit: self, environment: environment) }
         let referenceRange = referenceRange
         let targetRange = targetRange
         let referenceParticipant = try participant(referenceChoice.group, referenceChoice.epoch, reference, referenceFacts, range: referenceRange)
@@ -353,16 +358,19 @@ struct AnalysisUnit: Sendable {
             throw .estimator(.invalidParameter("the estimator returned no result for the target epoch"))
         }
         var record = EpochAnalysisRecord(recipe: recipe ?? self.recipe.name, reference: referenceParticipant, target: targetParticipant, search: search, estimate: estimate)
-        if estimate.flags.contains(.coverageGap),
+        if record.proposal != nil, estimate.flags.contains(.coverageGap),
            !Self.matchedSilenceBridges(
                record: record, reference: referenceSamples, target: targetSamples,
                referenceParticipant: referenceParticipant, targetParticipant: targetParticipant
            ),
            record.abstention?.abstentionReason != .cycleInconsistent {
             record.proposal = nil
+            let missingSilence = Self.hasUnmeasuredSilence(record)
             record.abstention = AbstentionRecord(
-                reason: AbstentionReason.discontinuous.rawValue,
-                detail: "Internal coverage gap without matching silence in both recordings: declare an epoch boundary or place anchors manually; no inverse is available across the gap."
+                reason: (missingSilence ? AbstentionReason.discontinuous : .insufficientCoverage).rawValue,
+                detail: missingSilence
+                    ? "Internal coverage gap without matching silence in both recordings: declare an epoch boundary or place anchors manually; no inverse is available across the gap."
+                    : "Consecutive windows provide insufficient timing evidence. Weak or competing correlations do not establish a recorder restart; retry with a shared speaker or place anchors."
             )
         }
         if peerTracks.contains(where: { $0.group != targetGroup }), record.cycleTriangles == 0, record.proposal != nil {
@@ -373,6 +381,13 @@ struct AnalysisUnit: Sendable {
             )
         }
         return record
+    }
+
+    private static func hasUnmeasuredSilence(_ record: EpochAnalysisRecord) -> Bool {
+        guard let first = record.windows.firstIndex(where: { $0.status == "eligible" }),
+              let last = record.windows.lastIndex(where: { $0.status == "eligible" }), last > first else { return false }
+        let inside = record.windows[first...last].filter { $0.status != "eligible" }
+        return !inside.isEmpty && inside.allSatisfy { $0.status == "silent" || $0.status == "noReference" }
     }
 
     private static func matchedSilenceBridges(

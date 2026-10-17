@@ -14,7 +14,7 @@ struct EpisodeAlignmentContent: View {
     var body: some View {
         Group {
             if let model {
-                AlignmentContentHost(model: model)
+                AlignmentContentHost(model: model, showInspector: { state.inspectorPresented = true })
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let startupError {
                 ContentUnavailableView(
@@ -57,17 +57,15 @@ struct EpisodeAlignmentContent: View {
             guard let model else { return }
             model.stopAudition()
             model.load()
-            model.loadWaveforms(keepingSnapshot: model.pendingWaveformMove != nil)
-            model.ensureWaveformOverview()
+            model.synchronizeWaveforms()
         }
         .onChange(of: state.saveStatus.state, initial: false) { _, _ in
             guard let document = state.store.document,
                   document.status.saveStatus.state.isVerifiedOnDisk,
                   document.verifiedModel == state.store.model,
                   let model else { return }
-            if model.waveformNeedsRefreshAfterSave,
-               model.waveformTracks.isEmpty, !model.isLoadingWaveforms {
-                model.loadWaveforms()
+            if model.waveformNeedsRefreshAfterSave {
+                model.synchronizeWaveforms()
             }
             model.ensureWaveformOverview()
         }
@@ -80,20 +78,21 @@ struct EpisodeAlignmentContent: View {
 
 private struct AlignmentContentHost: NSViewRepresentable {
     let model: EpisodeAlignmentModel
+    let showInspector: () -> Void
 
     func makeNSView(context: Context) -> HostedView {
-        HostedView(model: model)
+        HostedView(model: model, showInspector: showInspector)
     }
 
     func updateNSView(_ nsView: HostedView, context: Context) {
-        nsView.hostingView.rootView = AlignmentWorkspace(model: model)
+        nsView.hostingView.rootView = AlignmentWorkspace(model: model, showInspector: showInspector)
     }
 
     final class HostedView: NSView {
         let hostingView: NSHostingView<AlignmentWorkspace>
 
-        init(model: EpisodeAlignmentModel) {
-            hostingView = NSHostingView(rootView: AlignmentWorkspace(model: model))
+        init(model: EpisodeAlignmentModel, showInspector: @escaping () -> Void) {
+            hostingView = NSHostingView(rootView: AlignmentWorkspace(model: model, showInspector: showInspector))
             hostingView.sizingOptions = []
             // The hosting view is the single labelled container for the workspace. Labelling it on the
             // AppKit side keeps the SwiftUI tree untouched: `accessibilityElement(children: .contain)`
@@ -120,18 +119,13 @@ private struct AlignmentContentHost: NSViewRepresentable {
 
 private struct AlignmentWorkspace: View {
     @Bindable var model: EpisodeAlignmentModel
+    let showInspector: () -> Void
 
     var body: some View {
         ScrollViewReader { scrollProxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Alignment workspace")
-                        .font(.title2.weight(.semibold))
-                    Text("Place recorder groups at source time, then align their measured waveforms with the shared ruler and playhead. Drag a group or use precise timing below.")
-                        .foregroundStyle(.secondary)
-                }
-                AlignmentWaveformView(model: model)
+                AlignmentWaveformView(model: model, showInspector: showInspector)
                 DisclosureGroup("Detailed alignment inspection") {
                 AlignmentOutlineTable(model: model)
                     .id("ww.alignment.groupSection")
@@ -267,6 +261,7 @@ private struct AlignmentWorkspace: View {
                     .accessibilityIdentifier("ww.alignment.region")
                 }
                 }
+                .padding(.leading, 24)
 
                 Text(model.message)
                     .font(.callout)
@@ -655,40 +650,100 @@ private enum AlignmentKeyHandler {
 
 struct AlignmentInspectorView: View {
     @Bindable var model: EpisodeAlignmentModel
+    let manageRecordings: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Alignment Evidence")
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Recording")
                 .font(.headline)
+            Picker("Recording", selection: Binding(
+                get: { model.selectedWaveformSource },
+                set: { source in
+                    if let track = model.waveformTracks.first(where: { $0.id == source }) {
+                        model.selectWaveform(track)
+                    }
+                }
+            )) {
+                Text("Select a recording").tag(Optional<SourceID>.none)
+                ForEach(model.waveformTracks) { track in
+                    Text("\(track.groupName) · \(track.name)").tag(Optional(track.id))
+                }
+            }
+            .labelsHidden()
+            .accessibilityIdentifier("ww.inspector.alignment.recording")
+            Button("Manage recordings…", action: manageRecordings)
+                .help("Add recordings, edit recorder groups, and manage speakers in Setup.")
+                .accessibilityIdentifier("ww.inspector.alignment.manageRecordings")
+            if let track = model.selectedWaveform {
+                Divider()
+                Text(track.groupName).font(.subheadline.weight(.semibold))
+                Text(track.name).font(.caption).foregroundStyle(.secondary)
+                AlignmentTrackAssignmentControls(model: model, track: track)
+                Toggle("Show and hear recording", isOn: Binding(
+                    get: { model.trackEnabled(track.id) },
+                    set: { model.setTrack(track.id, enabled: $0) }
+                ))
+                .help("Only recordings with accepted timing are played.")
+                Toggle("Show recorder group", isOn: Binding(
+                    get: { model.groupEnabled(track.group) },
+                    set: { model.setGroup(track.group, enabled: $0) }
+                ))
+                if track.envelope.channelCount > 1 {
+                    Picker("Comparison channel", selection: $model.waveformAuditionChannel) {
+                        ForEach(0..<track.envelope.channelCount, id: \.self) { channel in
+                            Text("Channel \(channel + 1)").tag(channel)
+                        }
+                    }
+                    .accessibilityIdentifier("alignment.waveforms.compareChannel")
+                }
+                Button(model.canStopAudition ? "Stop comparison" : "Compare Aligned Audio") {
+                    model.canStopAudition ? model.stopAudition() : model.compareAlignedAtPlayhead()
+                }
+                .disabled(!model.canStopAudition && !model.canCompareAligned)
+                .help("Listen to the reference on the left and this recording on the right, using saved timing.")
+                .accessibilityIdentifier("alignment.waveforms.compare")
+                AlignmentAnchorControls(model: model, track: track)
+            }
+            if let point = model.waveformPickedPoint,
+               point.source != model.selectedWaveformSource,
+               let track = model.waveformTracks.first(where: { $0.id == point.source }) {
+                Divider()
+                Text("Picked point · \(track.name)").font(.caption.weight(.semibold))
+                AlignmentAnchorControls(model: model, track: track)
+            }
+            if let revision = model.waveformMapRevision {
+                Text("Map revision \(revision)")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("alignment.waveforms.revision")
+            }
             if let row = model.selectedRow {
+                Divider()
                 Text(row.state.heading)
                     .font(.subheadline.weight(.semibold))
                     .accessibilityIdentifier("ww.inspector.alignment.state")
-                Text(row.state.evidence)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("ww.inspector.alignment.evidence")
-                Text(row.state.basis ?? "No manual basis")
+                AlignmentTimingControls(model: model)
+                DisclosureGroup("Timing evidence") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(row.state.evidence)
+                            .accessibilityIdentifier("ww.inspector.alignment.evidence")
+                        Text(row.state.basis ?? "No manual basis")
+                            .accessibilityIdentifier("ww.inspector.alignment.basis")
+                        if let details = row.state.details { Text(details) }
+                        if !row.state.remedies.isEmpty {
+                            Text("Available: \(row.state.remedies.joined(separator: ", "))")
+                        }
+                        Text("Rate: \(row.ratePPM.map(AlignmentPresentation.rateLabel) ?? "Not set")")
+                            .accessibilityIdentifier("ww.inspector.alignment.rate")
+                        Text("Offset: \(row.offsetMilliseconds.map(AlignmentPresentation.offsetLabel) ?? "Not set")")
+                            .accessibilityIdentifier("ww.inspector.alignment.offset")
+                    }
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("ww.inspector.alignment.basis")
-                if let details = row.state.details {
-                    DisclosureGroup("Details") {
-                        Text(details)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
                 }
-                if !row.state.remedies.isEmpty {
-                    Text("Available: \(row.state.remedies.joined(separator: ", "))")
-                        .font(.caption)
-                }
-                Text("Rate: \(AlignmentPresentation.rateLabel(row.ratePPM ?? 0))")
-                    .accessibilityIdentifier("ww.inspector.alignment.rate")
-                Text("Offset: \(AlignmentPresentation.offsetLabel(row.offsetMilliseconds ?? 0))")
-                    .accessibilityIdentifier("ww.inspector.alignment.offset")
+                .padding(.leading, 24)
             } else {
-                Text("Select an epoch to inspect its evidence and correction.")
+                Text("Select a recording to assign its speaker, choose a channel, or adjust timing.")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
             }
         }

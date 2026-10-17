@@ -70,6 +70,9 @@ public struct RecorderGroup: Sendable, Equatable, Codable, Identifiable {
     public var name: String
     public var deviceName: String
     public var clockNote: String
+    /// User-stated reference preference, not a measured or certified clock property.
+    /// Absent in older shows; never inferred from a device name or brand.
+    public var preferredAlignmentReference: Bool?
     public var epochs: [RecordingEpoch]
 
     public init(
@@ -77,13 +80,15 @@ public struct RecorderGroup: Sendable, Equatable, Codable, Identifiable {
         name: String,
         deviceName: String = "",
         clockNote: String = "",
-        epochs: [RecordingEpoch] = []
+        epochs: [RecordingEpoch] = [],
+        preferredAlignmentReference: Bool? = nil
     ) {
         self.id = id
         self.name = name
         self.deviceName = deviceName
         self.clockNote = clockNote
         self.epochs = epochs
+        self.preferredAlignmentReference = preferredAlignmentReference
     }
 }
 

@@ -26,7 +26,7 @@ public enum AlignmentDependencyChange: Sendable, Hashable {
 /// revision's recipe name and re-verified before activation and before rendering.
 enum MapDependencies {
     /// Where each placed source sits in the map: its group and the epochs of its spans.
-    static func placements(of map: AlignedTimelineMap) -> [SourceID: (group: RecorderGroupID, epochs: [RecordingEpochID])] {
+    static func placements(of map: AlignedTimelineMap, corrections: [SourceTimingCorrection] = []) -> [SourceID: (group: RecorderGroupID, epochs: [RecordingEpochID])] {
         var result: [SourceID: (group: RecorderGroupID, epochs: [RecordingEpochID])] = [:]
         for group in map.groups {
             for placement in group.placements {
@@ -34,14 +34,18 @@ enum MapDependencies {
                 result[placement.occurrence.source] = (group.group, epochs)
             }
         }
+        for correction in corrections {
+            result[correction.source] = (correction.group, [correction.epoch])
+        }
         return result
     }
 
     /// Digest over every placed source's revision token, the format revision and its placement; `nil` when a
     /// placed source has no token.
-    static func digest(map: AlignedTimelineMap, tokens: [SourceID: String], format: FormatRevision) -> String? {
+    static func digest(map: AlignedTimelineMap, tokens: [SourceID: String], format: FormatRevision,
+                       corrections: [SourceTimingCorrection] = []) -> String? {
         var entries: [SourceRevision] = []
-        for (source, placement) in placements(of: map) {
+        for (source, placement) in placements(of: map, corrections: corrections) {
             guard let token = tokens[source] else { return nil }
             let epochs = placement.epochs.map(\.description).joined(separator: ",")
             entries.append(SourceRevision(
@@ -83,9 +87,10 @@ enum MapDependencies {
     }
 
     /// Every placed source must still be placed exactly where the map places it.
-    static func placementChanges(map: AlignedTimelineMap, episode: Episode) -> [AlignmentDependencyChange] {
+    static func placementChanges(map: AlignedTimelineMap, episode: Episode,
+                                 corrections: [SourceTimingCorrection] = []) -> [AlignmentDependencyChange] {
         var changes: [AlignmentDependencyChange] = []
-        for (source, placement) in placements(of: map).sorted(by: { $0.key.description < $1.key.description }) {
+        for (source, placement) in placements(of: map, corrections: corrections).sorted(by: { $0.key.description < $1.key.description }) {
             guard let record = episode.source(source),
                   case let .success((group, epoch))? = episode.alignmentPlacement(of: record),
                   group == placement.group, placement.epochs.contains(epoch)
@@ -106,15 +111,16 @@ enum MapDependencies {
         registered: [SourceID: String],
         format: FormatRevision
     ) -> [AlignmentDependencyChange] {
-        var changes = placementChanges(map: map, episode: episode)
+        let corrections = version.sourceCorrections ?? []
+        var changes = placementChanges(map: map, episode: episode, corrections: corrections)
         for input in version.inputs.sources where input.formatInterpretationVersion != format.interpretationVersion {
             changes.append(.formatChanged(input.sourceID))
         }
-        for source in placements(of: map).keys.sorted(by: { $0.description < $1.description }) where registered[source] == nil {
+        for source in placements(of: map, corrections: corrections).keys.sorted(by: { $0.description < $1.description }) where registered[source] == nil {
             changes.append(.sourceNotRegistered(source))
         }
         guard let persisted = persistedDigest(version) else { return changes + [.dependenciesMissing] }
-        if digest(map: map, tokens: registered, format: format) != persisted, changes.isEmpty {
+        if digest(map: map, tokens: registered, format: format, corrections: corrections) != persisted, changes.isEmpty {
             changes.append(.dependenciesChanged)
         }
         return changes

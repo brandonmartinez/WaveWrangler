@@ -50,6 +50,12 @@ public enum EmbeddedTimeMapCodec {
         return map.groups.flatMap(\.placements).map(\.occurrence.source).filter { seen.insert($0).inserted }
     }
 
+    public static func usedSources(_ map: AlignedTimelineMap, corrections: [SourceTimingCorrection]) -> [SourceID] {
+        var seen = Set<SourceID>()
+        return (placedSources(map) + corrections.flatMap { [$0.source, $0.reference] })
+            .filter { seen.insert($0).inserted }
+    }
+
     private static var encoder: JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -88,7 +94,15 @@ extension ShowDocumentModel {
                     issues.append(.init(.invalidAlignment, "episode \(episode.id) map \(version.revision): \(error)"))
                     continue
                 }
-                let placed = EmbeddedTimeMapCodec.placedSources(map)
+                let corrections = version.sourceCorrections ?? []
+                let placed = EmbeddedTimeMapCodec.usedSources(map, corrections: corrections)
+                let reference = map.groups.flatMap(\.placements)
+                    .first { $0.occurrence.id == map.reference.occurrence }?.occurrence.source
+                for correction in corrections {
+                    if correction.source == reference || !EmbeddedTimeMapCodec.placedSources(map).contains(correction.reference) {
+                        issues.append(.init(.invalidAlignment, "adaptive timing needs an unchanged placed reference"))
+                    }
+                }
                 if Set(placed) != Set(version.inputs.sources.map(\.sourceID)) {
                     issues.append(.init(.invalidAlignment, "episode \(episode.id) map \(version.revision) inputs differ from placed sources"))
                 }

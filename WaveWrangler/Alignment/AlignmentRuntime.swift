@@ -142,6 +142,24 @@ actor AlignmentRuntime {
         return report
     }
 
+    func analyseAdaptiveSpeaker(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        targetEpoch: RecordingEpochID, pair: SpeakerMatchOption,
+        progress: @escaping @Sendable (Double) async -> Void
+    ) async throws -> AdaptiveAnalysisRecord {
+        let sources = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        let authorizations = sources.filter { $0.availability == .on }
+            .map { ContentWorkAuthorization.explicitUserRequest(for: $0.id) }
+        if model.episode(episodeID)?.alignment?.acceptedRevision != nil {
+            try await pipeline.activate(model: model, episode: episodeID)
+        }
+        return try await pipeline.analyseAdaptiveSpeaker(
+            model: model, episode: episodeID, sources: sources, authorizations: authorizations,
+            targetEpoch: targetEpoch, speaker: pair.speaker,
+            referenceSource: pair.reference.source, targetSource: pair.target, progress: progress
+        )
+    }
+
     func shiftGroup(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         group: RecorderGroupID, microseconds: Int64
@@ -150,6 +168,24 @@ actor AlignmentRuntime {
         return try await pipeline.shiftAcceptedGroup(
             model: model, episode: episodeID, group: group, microseconds: microseconds
         )
+    }
+
+    func acceptAdaptive(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, record: AdaptiveAnalysisRecord,
+        includeEstimated: Bool = false
+    ) async throws -> AcceptedAlignment {
+        let sources = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        let authorizations = sources.filter { $0.availability == .on }
+            .map { ContentWorkAuthorization.explicitUserRequest(for: $0.id) }
+        return try await pipeline.acceptAdaptive(model: model, episode: episodeID, record: record,
+            sources: sources, authorizations: authorizations, includeEstimated: includeEstimated)
+    }
+
+    func removeAdaptive(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, source: SourceID
+    ) async throws -> AcceptedAlignment {
+        _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        return try await pipeline.removeAdaptiveCorrection(model: model, episode: episodeID, source: source)
     }
 
     func accept(
@@ -425,20 +461,22 @@ actor AlignmentRuntime {
                         sourceIndex: index, progress: progress
                     )
                 } else {
+                    let sourceMap = map?.groups.first(where: {
+                        $0.group == groupID && $0.placements.contains(where: { $0.occurrence.source == record.id })
+                    })
+                    let correction = episode.alignment?.acceptedMap?.sourceCorrections?.first { $0.source == record.id }
                     envelope = try await WaveformWindowReader.readWindow(
                         sourceURL: admission.url, source: record.id,
                         matching: admission.witness, decoder: pipeline.decoder,
                         startSeconds: startSeconds, durationSeconds: durationSeconds,
-                        groupMap: map?.groups.first(where: {
-                            $0.group == groupID && $0.placements.contains(where: { $0.occurrence.source == record.id })
-                        })
+                        groupMap: sourceMap, sourceCorrection: correction
                     )
                 }
                 try await reverify(admission)
                 admissions[record.id] = admission
                 tracks.append(AlignmentWaveformTrack(
                     group: groupID, epoch: epochID, name: record.displayNameHint,
-                    groupName: group.name, envelope: envelope
+                    groupName: group.name, envelope: envelope, sourceIdentity: admission.witness
                 ))
             } catch is CancellationError {
                 throw CancellationError()
@@ -460,6 +498,37 @@ actor AlignmentRuntime {
         return AlignmentWaveformLoad(tracks: tracks, refusals: refusals, map: map, mapWarning: mapWarning)
     }
 
+    /// Timing-only edits reuse source-coordinate bins, but only after fresh gateway identity checks.
+    func revalidateWaveforms(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, tracks retained: [AlignmentWaveformTrack]
+    ) async throws -> AlignedTimelineMap? {
+        guard let episode = model.episode(episodeID) else {
+            throw AlignmentAcceptanceError.episodeNotFound(episodeID)
+        }
+        let sources = await resolveSources(episode.sources)
+        var admissions: [SourceID: WaveformSourceAdmission] = [:]
+        for track in retained {
+            try Task.checkCancellation()
+            let admission: WaveformSourceAdmission
+            if let existing = admissions[track.id] {
+                admission = existing
+            } else {
+                admission = try await waveformSource(track.id, sources: sources)
+                admissions[track.id] = admission
+            }
+            guard track.sourceIdentity == admission.witness else { throw DecodeFailure.sourceIdentityMismatch }
+        }
+        let map: AlignedTimelineMap?
+        if episode.alignment?.acceptedRevision != nil {
+            try await pipeline.activate(model: model, episode: episodeID)
+            map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        } else {
+            map = nil
+        }
+        for admission in admissions.values { try await reverify(admission) }
+        return map
+    }
+
     private func cachedOverview(
         admission: WaveformSourceAdmission, episode: Episode, group: RecorderGroupID,
         map: AlignedTimelineMap?, sourceIndex: Int,
@@ -473,7 +542,8 @@ actor AlignmentRuntime {
         let groupMap = map?.groups.first(where: {
             $0.group == group && $0.placements.contains(where: { $0.occurrence.source == source })
         })
-        let coverage = try WaveformWindowReader.overviewCoverage(source: source, groupMap: groupMap)
+        let correction = episode.alignment?.acceptedMap?.sourceCorrections?.first { $0.source == source }
+        let coverage = try WaveformWindowReader.overviewCoverage(source: source, groupMap: groupMap, sourceCorrection: correction)
         let coverageDigest = coverage.map { ranges in
             let description = ranges.map { "\($0.lowerBound):\($0.upperBound)" }.joined(separator: ",")
             return SHA256.hash(data: Data(description.utf8))
@@ -491,7 +561,7 @@ actor AlignmentRuntime {
         let job = await coordinator.submit(slot, key: key) {
             let envelope = try await WaveformWindowReader.readOverview(
                 sourceURL: admission.url, source: source,
-                matching: admission.witness, decoder: decoder, groupMap: groupMap
+                matching: admission.witness, decoder: decoder, groupMap: groupMap, sourceCorrection: correction
             ) { fraction in
                 guard try await accessStore.record(for: admission.key) == admission.record else {
                     throw DecodeFailure.sourceIdentityMismatch
@@ -517,7 +587,7 @@ actor AlignmentRuntime {
                       && $0.minimum <= $0.maximum
               })
         else { throw SourceAdmissionError(reason: "The cached waveform overview is invalid; refresh its source.") }
-        try WaveformWindowReader.verifyOverviewCoverage(envelope: envelope, groupMap: groupMap)
+        try WaveformWindowReader.verifyOverviewCoverage(envelope: envelope, groupMap: groupMap, sourceCorrection: correction)
         try await reverify(admission)
         try await progress(Double(sourceIndex + 1) / Double(sourceCount))
         return envelope
@@ -580,7 +650,6 @@ actor AlignmentRuntime {
         let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         guard let referenceGroup = map.groups.first(where: { $0.group == map.reference.group }),
               let reference = referenceGroup.placements.first(where: { $0.occurrence.id == map.reference.occurrence }),
-              let targetGroup = map.groups.first(where: { $0.placements.contains(where: { $0.occurrence.source == target }) }),
               reference.occurrence.source != target
         else { throw AlignmentAcceptanceError.noReference }
         let referenceAdmission = try await waveformSource(reference.occurrence.source, sources: sources)
@@ -590,11 +659,21 @@ actor AlignmentRuntime {
             matching: referenceAdmission.witness, decoder: pipeline.decoder, groupMap: referenceGroup,
             decodedChannel: 0, startSeconds: startSeconds, durationSeconds: durationSeconds
         )
-        let right = try await AlignedAuditionWindowReader.readWindow(
-            sourceURL: targetAdmission.url, source: target, matching: targetAdmission.witness,
-            decoder: pipeline.decoder, groupMap: targetGroup, decodedChannel: targetChannel,
-            startSeconds: startSeconds, durationSeconds: durationSeconds
-        )
+        let right: [Float]
+        if episode.alignment?.acceptedMap?.sourceCorrections?.contains(where: { $0.source == target }) == true {
+            let channels = try await pipeline.adaptiveAudioWindow(model: model, episode: episodeID, source: target,
+                sourceURL: targetAdmission.url, matching: targetAdmission.witness,
+                startSeconds: startSeconds, durationSeconds: durationSeconds)
+            guard channels.indices.contains(targetChannel) else { throw WaveformWindowError.invalidSamples }
+            right = channels[targetChannel]
+        } else {
+            guard let targetGroup = map.groups.first(where: { $0.placements.contains(where: { $0.occurrence.source == target }) })
+            else { throw AlignmentAcceptanceError.noReference }
+            right = try await AlignedAuditionWindowReader.readWindow(
+                sourceURL: targetAdmission.url, source: target, matching: targetAdmission.witness,
+                decoder: pipeline.decoder, groupMap: targetGroup, decodedChannel: targetChannel,
+                startSeconds: startSeconds, durationSeconds: durationSeconds)
+        }
         try await reverify(referenceAdmission)
         try await reverify(targetAdmission)
         _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
@@ -612,6 +691,16 @@ actor AlignmentRuntime {
         let sources = await resolveSources(episode.sources)
         try await pipeline.activate(model: model, episode: episodeID)
         let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        if episode.alignment?.acceptedMap?.sourceCorrections?.contains(where: { $0.source == source }) == true {
+            let admission = try await waveformSource(source, sources: sources)
+            let channels = try await pipeline.adaptiveAudioWindow(model: model, episode: episodeID, source: source,
+                sourceURL: admission.url, matching: admission.witness,
+                startSeconds: startSeconds, durationSeconds: durationSeconds)
+            let channel = episode.statedChannel(of: source) ?? 0
+            guard channels.indices.contains(channel) else { throw WaveformWindowError.invalidSamples }
+            try await reverify(admission)
+            return AuditionClip(sampleRate: 48000, samples: channels[channel])
+        }
         guard let record = episode.source(source),
               let groupID = record.placement.recorderGroupID,
               let group = map.groups.first(where: { $0.group == groupID }),

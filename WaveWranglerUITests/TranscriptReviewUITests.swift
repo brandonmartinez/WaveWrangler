@@ -97,7 +97,7 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["ww.review.timelinePane"].exists)
     }
 
-    func testBoundSyntheticTranscriptDisappearsFromAccessibilityAfterEpisodeSwitch() {
+    func testBoundSyntheticTranscriptStaysInItsEpisodeEditor() {
         app.terminate()
         var arguments = app.launchArguments
         if let index = arguments.firstIndex(of: "-WWUITestOpenShow") {
@@ -134,28 +134,28 @@ final class TranscriptReviewUITests: XCTestCase {
                        "Synthetic fixture A sentence")
         XCTAssertFalse(app.descendants(matching: .any)["ww.review.proposals"].exists)
 
-        let showWindow = app.windows["ww.show.window"]
-        let secondEpisode = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND value CONTAINS %@",
-                                  "ww.show.sidebar.episode.", "Synthetic Episode 2"))
-            .firstMatch
+        EpisodeLibraryNavigation.openEpisode(
+            containing: "Synthetic Episode 2", in: app, destination: "3", closePrevious: false
+        )
+        let showWindow = app.windows.matching(identifier: "ww.show.window")
+            .matching(NSPredicate(format: "title CONTAINS %@", "Synthetic Episode 2")).firstMatch
+        let otherNotice = showWindow.descendants(matching: .any)["ww.review.provisionalNotice"]
         func selectionEvidence() -> String {
-            let exists = secondEpisode.exists
-            return "window title: \(showWindow.title), B row exists: \(exists), role: \(exists ? secondEpisode.elementType : .any), label: \(exists ? secondEpisode.label : ""), value: \(String(describing: exists ? secondEpisode.value : nil)), selected: \(exists && secondEpisode.isSelected)"
+            "window title: \(showWindow.title)"
         }
-        XCTAssertTrue(secondEpisode.waitForExistence(timeout: 5), "B row not found; \(selectionEvidence())")
-        secondEpisode.click()
         XCTAssertTrue(showWindow.title.contains("Synthetic Episode 2"),
                       "B episode not selected; \(selectionEvidence())")
         XCTAssertTrue(Acceptance.waitFor(timeout: 3) {
-            notice.exists && (notice.label.contains("unavailable")
-                || (notice.value as? String)?.contains("unavailable") == true)
-        }, "Expected the unavailable Review notice after switching episodes; \(selectionEvidence()), notice exists: \(notice.exists), role: \(notice.elementType), label: \(notice.label), value: \(String(describing: notice.value))")
-        XCTAssertFalse(occurrence.exists, "A's text must not remain in B's accessible transcript")
-        XCTAssertEqual(app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
-                       "No occurrence selected")
-        XCTAssertFalse(app.descendants(matching: .any)["ww.review.lane.selected-primary"].exists)
-        XCTAssertFalse(app.buttons["ww.review.action.acceptShorten"].isEnabled)
+            otherNotice.exists && (otherNotice.label.contains("synthetic fixture only")
+                || (otherNotice.value as? String)?.contains("synthetic fixture only") == true)
+        }, "B must show its own unbound shell, not A's selected-Primary transcript; \(selectionEvidence())")
+        XCTAssertFalse(showWindow.descendants(matching: .any)[occurrence.identifier].exists,
+                       "A's text must not appear in B's accessible transcript")
+        XCTAssertTrue(occurrence.exists, "Opening B must not discard A's bound transcript")
+        XCTAssertNotEqual(showWindow.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
+                          "Synthetic fixture A sentence")
+        XCTAssertFalse(showWindow.descendants(matching: .any)["ww.review.lane.selected-primary"].exists)
+        XCTAssertFalse(showWindow.buttons["ww.review.action.acceptShorten"].isEnabled)
     }
 
     func testKeyboardOccurrenceSelectionUpdatesTheInspector() {
@@ -312,19 +312,7 @@ final class TranscriptReviewUITests: XCTestCase {
     }
 
     private func selectFirstEpisode() {
-        let showInfo = app.descendants(matching: .any)["ww.show.sidebar.showInfo"]
-        XCTAssertTrue(showInfo.waitForExistence(timeout: 5))
-        showInfo.click()
-        XCTAssertTrue(app.staticTexts["ww.show.showInfoSummary.title"].waitForExistence(timeout: 5))
-
-        let episode = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "ww.show.sidebar.episode."))
-            .firstMatch
-        XCTAssertTrue(episode.waitForExistence(timeout: 5), "The synthetic show has a selectable episode")
-        episode.click()
-        XCTAssertFalse(
-            app.descendants(matching: .any)["ww.show.showInfoSummary.title"].exists,
-            "Selecting the synthetic episode leaves Show Info"
-        )
+        XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["ww.show.sidebar.episodes"].exists)
     }
 }

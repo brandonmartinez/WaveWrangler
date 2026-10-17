@@ -128,27 +128,31 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
 
     // MARK: - Opening
 
-    func openShow(_ id: ShowID, readOnly: Bool) async throws {
+    func openShow(_ id: ShowID, readOnly: Bool, display: Bool) async throws -> ShowDocument {
         if let open = NSDocumentController.shared.documents.compactMap({ $0 as? ShowDocument }).first(where: { $0.store.model.show.id == id }) {
-            open.showWindows()
-            return
+            if display { open.showWindows() }
+            return open
         }
         let store = self.store
         let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: nil)
         let interval = OpenSignposts.begin("library.openShow")
         defer { OpenSignposts.end(interval) }
         do {
+            var openedDocument: ShowDocument?
             // Resolve, start the scope and verify the ShowID; the store ends access exactly once on any
             // failure, including a failed NSDocument open below.
             let grant = try await store.openVerified(id, opener: opener) { grant in
-                let (document, alreadyOpen) = try await NSDocumentController.shared.openDocument(withContentsOf: grant.url, display: true)
+                let (document, alreadyOpen) = try await NSDocumentController.shared.openDocument(withContentsOf: grant.url, display: display)
                 guard let show = document as? ShowDocument, show.store.model.show.id == id else {
                     if !alreadyOpen { document.close() }
                     throw LibraryBackendError.differentShow
                 }
+                openedDocument = show
             }
             if let previous = grants[id] { store.endAccess(previous) }
             grants[id] = grant
+            guard let openedDocument else { throw LibraryBackendError.notAShowFile }
+            return openedDocument
         } catch let error as ShowAccessError {
             details[id, default: LibraryEntryDetails()].state = Self.state(for: error)
             throw Self.backendError(for: error)

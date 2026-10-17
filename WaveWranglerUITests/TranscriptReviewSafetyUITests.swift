@@ -248,10 +248,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
             app.launchArguments = baseArguments + ["-WWUITestAppearance", appearance]
             app.launch()
             app.activate()
-            let episode = app.descendants(matching: .any)
-                .matching(NSPredicate(format: "identifier BEGINSWITH %@", "ww.show.sidebar.episode.")).firstMatch
-            XCTAssertTrue(episode.waitForExistence(timeout: 5))
-            episode.click()
+            selectFirstEpisode()
             app.buttons["ww.show.destination.review"].click()
             for percent in [100, 200] {
                 if percent == 200 {
@@ -485,19 +482,7 @@ final class TranscriptReviewSafetyUITests: XCTestCase {
     }
 
     private func selectFirstEpisode() {
-        let showInfo = app.descendants(matching: .any)["ww.show.sidebar.showInfo"]
-        XCTAssertTrue(showInfo.waitForExistence(timeout: 5))
-        showInfo.click()
-        XCTAssertTrue(app.staticTexts["ww.show.showInfoSummary.title"].waitForExistence(timeout: 5))
-
-        let episode = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "ww.show.sidebar.episode."))
-            .firstMatch
-        XCTAssertTrue(episode.waitForExistence(timeout: 5), "The synthetic show has a selectable episode")
-        episode.click()
-        XCTAssertFalse(
-            app.descendants(matching: .any)["ww.show.showInfoSummary.title"].exists,
-            "Selecting the synthetic episode leaves Show Info"
-        )
+        XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["ww.show.sidebar.episodes"].exists)
     }
 }

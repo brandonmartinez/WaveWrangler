@@ -45,10 +45,11 @@ final class SelectionContrastUITests: XCTestCase {
             launch(["-WWUITestOpenShow", "Synthetic Show", "-WWUITestShowEpisodes", "2"] + overrides)
             let window = app.windows.matching(identifier: "ww.show.window").firstMatch
             XCTAssertTrue(window.waitForExistence(timeout: 15), "\(appearance): show window")
+            EpisodeLibraryNavigation.browseCurrentShow(in: app)
             let episode = app.descendants(matching: .any)
                 .matching(NSPredicate(format: "identifier BEGINSWITH 'ww.show.sidebar.episode.'")).firstMatch
             XCTAssertTrue(episode.waitForExistence(timeout: 10), "\(appearance): episode row")
-            results.append(measureSelected(episode, surface: "Show sidebar episode row", appearance: appearance, increaseContrast: increaseContrast))
+            results.append(measureSelected(episode, surface: "Library episode row", appearance: appearance, increaseContrast: increaseContrast))
             app.terminate()
         }
         Acceptance.writeEvidence("selection-contrast", ["revision": Acceptance.revision(), "results": results], test: self)

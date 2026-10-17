@@ -1,5 +1,6 @@
 import Foundation
 import WWAlignEstimate
+import WWAutoAlign
 import WWCore
 import WWDecode
 import WWDerived
@@ -13,10 +14,12 @@ public enum AlignmentAssetKinds {
     /// content access, so probes are consent-gated like any decode.
     public static let sourceFacts = AssetSpec(kind: "ww.source-facts", revision: 1)
     /// One epoch's analysis: a proposal or an abstention, with its full evidence (`EpochAnalysisRecord`).
-    public static let analysis = AssetSpec(kind: "ww.alignment-analysis", revision: 2)
+    public static let analysis = AssetSpec(kind: "ww.alignment-analysis", revision: 4)
+    public static let fingerprint = AssetSpec(kind: "ww.alignment-fingerprint", revision: 1)
     /// One output channel of one aligned segment (`AlignedAudioSegment`). The revision is WWRender's output
     /// asset format version, so a format bump stales every aligned asset.
     public static let alignedAudio = AssetSpec(kind: "ww.aligned-audio-segment", revision: RenderVersions.outputAssetFormat)
+    public static let adaptiveAlignedAudio = AssetSpec(kind: "ww.adaptive-aligned-audio-segment", revision: PitchPreservingAudio.renderRecipeVersion)
 
     public static let estimatorIdentifier = AcousticEstimator.identifier
     public static let rendererVersion = RenderVersions.renderer
@@ -30,7 +33,7 @@ public enum AlignmentAssetKinds {
     public static let acceptanceRecipePrefix = "ww.alignment-acceptance;deps="
     public static let acceptanceRecipeRevision = 2
 
-    static let all = [sourceFacts, analysis, alignedAudio, acceptedMapIdentity]
+    static let all = [sourceFacts, analysis, fingerprint, alignedAudio, adaptiveAlignedAudio, acceptedMapIdentity]
 }
 
 /// A source as the caller (the app) currently knows it: where it is and its Setup availability. The
@@ -102,12 +105,18 @@ public struct AnalysisParticipant: Sendable, Codable, Equatable {
 public struct WindowRecord: Sendable, Codable, Equatable {
     public var index: Int
     public var groupClockCenter: Double
-    /// `WindowStatus` raw value.
+    /// A v1 `WindowStatus` raw value, or a separately versioned automatic observation status.
     public var status: String
     public var peakScore: Double
     public var secondPeakScore: Double
     public var periodicityScore: Double
     public var offsetSeconds: Double?
+    public var method: String? = nil
+    public var phatOffsetSeconds: Double? = nil
+    public var phatPeakRatio: Double? = nil
+    public var polarity: Int? = nil
+    public var corroborations: [TemporalCorroboration]? = nil
+    public var spectralWitness: SpectralTimingWitness? = nil
 }
 
 public struct CoverageRecord: Sendable, Codable, Equatable {
@@ -157,7 +166,7 @@ public struct AbstentionRecord: Sendable, Codable, Equatable {
 
 /// The full, versioned result of analysing one epoch against the timeline reference.
 public struct EpochAnalysisRecord: Sendable, Codable, Equatable {
-    public static let currentVersion = 2
+    public static let currentVersion = 4
 
     public var recordVersion: Int
     public var estimator: String
@@ -178,6 +187,12 @@ public struct EpochAnalysisRecord: Sendable, Codable, Equatable {
     public var cycleTriangles: Int
     /// Worst measured disagreement, in milliseconds; nil when no triangle was measured.
     public var cycleMaximumMilliseconds: Double?
+    /// Present only for the separately versioned automatic path. Every fresh attempt, including rejected
+    /// candidates, is retained; `windows` contains at most one independent observation per temporal station.
+    public var automaticAttempts: [WindowRecord]? = nil
+    public var coarseWindows: [WindowRecord]? = nil
+    public var fingerprintSeconds: [Double]? = nil
+    public var refinementRatePPM: Double? = nil
 
     init(
         recipe: String,
@@ -223,6 +238,50 @@ public struct EpochAnalysisRecord: Sendable, Codable, Equatable {
             cycleTriangles = triangles
             cycleMaximumMilliseconds = maximumMilliseconds
         }
+    }
+
+    init(
+        recipe: String, reference: AnalysisParticipant, target: AnalysisParticipant,
+        search: SearchRange, automatic: AutomaticAlignmentResult, coarse: [DelayEvidence]
+    ) {
+        self.init(recipe: recipe, reference: reference, target: target, search: search,
+                  abstention: .insufficientCoverage, detail: "Automatic matching did not produce a proposal.")
+        estimator = AutomaticAlignment.identifier
+        if let p = automatic.proposal {
+            proposal = ProposalRecord(
+                segment: p.segment, ppm: p.ppm, offsetAtCenterSeconds: p.offsetAtCenterSeconds,
+                acousticResidualP95Milliseconds: p.acousticResidualP95Milliseconds,
+                acousticResidualMaxMilliseconds: p.acousticResidualMaxMilliseconds, provenance: p.provenance
+            )
+            abstention = nil
+        } else if let a = automatic.abstention {
+            abstention = AbstentionRecord(reason: a.reason.rawValue, detail: a.detail)
+        }
+        windows = automatic.windows.map(Self.window)
+        automaticAttempts = automatic.attempts.map(Self.window)
+        coarseWindows = coarse.map(Self.window)
+        let inliers = windows.filter { $0.status == "eligible" }
+        coverage = CoverageRecord(
+            declaredStart: automatic.startSeconds, declaredEnd: automatic.endSeconds,
+            windowCount: automatic.expectedStations, eligibleCount: inliers.count,
+            eligibleWindowFraction: Double(inliers.count) / Double(automatic.expectedStations),
+            eligibleSpanFraction: automatic.spanFraction
+        )
+        medianPeakScore = proposal?.provenance.evidenceScore ?? 0
+        let margins = inliers.map { 1 - $0.secondPeakScore / max($0.peakScore, 1e-10) }.sorted()
+        let mid = margins.count / 2
+        medianPeakMargin = margins.isEmpty ? 0 : margins.count.isMultiple(of: 2)
+            ? (margins[mid - 1] + margins[mid]) / 2 : margins[mid]
+        flags = automatic.flags
+    }
+
+    private static func window(_ evidence: DelayEvidence) -> WindowRecord {
+        WindowRecord(
+            index: evidence.station, groupClockCenter: evidence.targetCenter, status: evidence.status,
+            peakScore: evidence.nccScore, secondPeakScore: evidence.nccSecond, periodicityScore: 0,
+            offsetSeconds: evidence.offsetSeconds, method: evidence.method,
+            phatOffsetSeconds: evidence.phatOffsetSeconds, phatPeakRatio: evidence.phatPeakRatio, polarity: evidence.polarity
+        )
     }
 
     /// A record for an epoch the pipeline could not analyse for a structural reason it decided itself (no

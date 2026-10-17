@@ -8,7 +8,7 @@ struct InspectorContainer: View {
     @Bindable var state: ShowWindowState
 
     var body: some View {
-        if state.sidebarSelection != .showInfo && state.destination == .review {
+        if (state.boundEpisodeID != nil || state.sidebarSelection != .showInfo) && state.destination == .review {
             ReviewInspectorViewport(
                 state: state,
                 selectedOccurrence: state.reviewState.selectedSyntheticOccurrence,
@@ -27,10 +27,10 @@ private struct InspectorScrollContent: View {
     var body: some View {
         ScrollView {
             Group {
-                if state.sidebarSelection == .showInfo {
+                if state.sidebarSelection == .showInfo && state.boundEpisodeID == nil {
                     ShowInfoInspector(state: state)
                 } else if state.destination == .alignment, let model = state.alignmentModel {
-                    AlignmentInspectorView(model: model)
+                    AlignmentInspectorView(model: model, manageRecordings: { state.select(.setup) })
                 } else if let episode = state.selectedEpisode {
                     EpisodeInspector(state: state, episodeID: episode.id)
                         .id(episode.id)

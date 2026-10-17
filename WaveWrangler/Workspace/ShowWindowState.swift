@@ -64,12 +64,15 @@ final class ShowWindowState {
     @ObservationIgnored private var reportsInteractions = false
 
     let store: ShowDocumentStore
+    /// Nil only for Library's episode-management state.
+    let boundEpisodeID: EpisodeID?
     @ObservationIgnored weak var window: NSWindow?
     @ObservationIgnored private var fallbackStatus: NativeDocumentStatusObserver?
 
-    init(store: ShowDocumentStore) {
+    init(store: ShowDocumentStore, episodeID: EpisodeID? = nil) {
         self.store = store
-        sidebarSelection = store.model.episodes.first.map { .episode($0.id) }
+        boundEpisodeID = episodeID
+        sidebarSelection = (episodeID ?? store.model.episodes.first?.id).map { .episode($0) }
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "WWUITestHooks"),
            UserDefaults.standard.bool(forKey: "WWUITestReviewBindingFixture"),
@@ -117,6 +120,7 @@ final class ShowWindowState {
     // MARK: - Selection
 
     var selectedEpisodeID: EpisodeID? {
+        if let boundEpisodeID { return boundEpisodeID }
         if case .episode(let id) = sidebarSelection { return id }
         return nil
     }
@@ -125,6 +129,10 @@ final class ShowWindowState {
 
     /// Keeps the selection valid after undo/redo or deletion elsewhere (IA §9: fall back to the first).
     func reconcileSelection(previousOrder: [EpisodeID]) {
+        if let boundEpisodeID {
+            if store.model.episode(boundEpisodeID) == nil { invalidateBoundReview() }
+            return
+        }
         guard case .episode(let id) = sidebarSelection, store.model.episode(id) == nil else {
             if sidebarSelection == nil, let first = store.model.episodes.first { sidebarSelection = .episode(first.id) }
             return
@@ -139,9 +147,10 @@ final class ShowWindowState {
 
     // MARK: - Episode commands
 
-    var canEdit: Bool { !isReadOnly }
+    var canEdit: Bool { !isReadOnly && (boundEpisodeID == nil || selectedEpisode != nil) }
 
     func newEpisode() {
+        guard boundEpisodeID == nil else { return }
         guard canEdit else { return }
         let episode = store.model.nextNewEpisode()
         if store.apply(UndoActionName.newEpisode, { model throws(DomainError) in try model.addingEpisode(episode) }) {
@@ -152,6 +161,10 @@ final class ShowWindowState {
 
     func renameSelectedEpisode() {
         guard canEdit, let id = selectedEpisodeID else { return }
+        if boundEpisodeID != nil {
+            showEpisodeInfo()
+            return
+        }
         renamingEpisodeID = id
     }
 
@@ -431,6 +444,12 @@ final class ShowWindowState {
 
     // MARK: - Window
 
+    func attachForLibrary(to window: NSWindow?) {
+        self.window = window
+        isWindowAttached = true
+        DispatchQueue.main.async { [weak self] in self?.reportsInteractions = true }
+    }
+
     func attach(to window: NSWindow) {
         self.window = window
         ShowWindowRegistry.register(self, for: window)
@@ -525,6 +544,11 @@ final class ShowWindowState {
 
     /// IA-06: subtitle = selected episode's title.
     func updateSubtitle() {
+        if boundEpisodeID != nil {
+            window?.title = selectedEpisode.map(ShowSidebarPresentation.episodeRowTitle) ?? "Episode Unavailable"
+            window?.subtitle = store.model.show.title
+            return
+        }
         window?.subtitle = ShowSidebarPresentation.windowSubtitle(model: store.model, selectedEpisode: selectedEpisodeID)
     }
 }

@@ -27,6 +27,24 @@ private struct SetupFixture {
 struct EpisodeSetupOperationTests {
     private let f = SetupFixture()
 
+    @Test func timingReferencePreferenceIsExplicitPortableAndDoesNotAlterSourcesOrClockNotes() throws {
+        let result = try f.model.preferringAlignmentReference(true, group: f.group.id, in: f.episode.id)
+        let episode = try f.ep(result)
+        #expect(episode.recorderGroup(f.group.id)?.preferredAlignmentReference == true)
+        #expect(episode.sources == f.episode.sources)
+        #expect(episode.alignment == f.episode.alignment)
+        #expect(episode.recorderGroups[0].clockNote == f.group.clockNote)
+        let group = try JSONDecoder().decode(RecorderGroup.self, from: JSONEncoder().encode(episode.recorderGroups[0]))
+        #expect(group == episode.recorderGroups[0])
+        let legacy = try JSONDecoder().decode(RecorderGroup.self, from: JSONEncoder().encode(f.group))
+        #expect(legacy.preferredAlignmentReference == nil)
+        #expect(try f.ep(result.preferringAlignmentReference(false, group: f.group.id, in: f.episode.id)).recorderGroups[0].preferredAlignmentReference == nil)
+        let unknown = RecorderGroupID()
+        #expect(throws: DomainError.recorderGroupNotFound(unknown)) {
+            try f.model.preferringAlignmentReference(true, group: unknown, in: f.episode.id)
+        }
+    }
+
     @Test func deletingAGroupKeepsItsSourcesAsUngrouped() throws {
         let result = try f.model.removingRecorderGroup(f.group.id, in: f.episode.id)
         let episode = try f.ep(result)

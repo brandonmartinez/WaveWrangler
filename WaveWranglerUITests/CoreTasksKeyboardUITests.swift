@@ -49,14 +49,13 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             app.typeKey(.return, modifierFlags: [])
             let file = workDirectory.appending(path: "Keyboard Show.wwshow")
             check(Acceptance.waitFor(timeout: 10) { FileManager.default.fileExists(atPath: file.path) }, "show file created at the chosen location")
-            let window = app.windows.matching(identifier: "ww.show.window").firstMatch
-            check(window.waitForExistence(timeout: 10), "new show window")
-            check(window.title.hasPrefix("Keyboard Show"), "window title = show name: \(window.title)")
-            let episodes = element("ww.show.sidebar.episodes")
+            let window = app.windows["ww.library.window"]
+            check(window.waitForExistence(timeout: 10), "new show managed in Library")
+            check(app.staticTexts["Keyboard Show"].exists, "Library displays the show name")
+            let episodes = element("ww.library.episodes")
             check(episodes.waitForExistence(timeout: 5) && value(episodes) == "0 episodes", "Episodes — 0 episodes: \(value(episodes))")
             let status = element("ww.show.saveStatus")
             check(Acceptance.waitFor(timeout: 10) { self.value(status).hasPrefix("Saved") }, "Saved only after verified create: \(value(status))")
-            check(isFocused("ww.show.sidebar.episodes") || isFocused("ww.show.empty.newEpisode"), "keyboard focus starts in the episode list")
             try audit("T01 new show window")
         }
     }
@@ -66,10 +65,11 @@ final class CoreTasksKeyboardUITests: XCTestCase {
         let document = try makeDocument("Metadata")
         try task("T02 undo") {
             let window = try launchAndOpen(document, autosave: false)
-            let episodes = element("ww.show.sidebar.episodes")
+            EpisodeLibraryNavigation.browseCurrentShow(in: app)
+            let episodes = element("ww.library.episodes")
             check(episodes.waitForExistence(timeout: 5), "episode list")
             let before = value(episodes)
-            window.typeKey("n", modifierFlags: [.command, .shift])
+            app.typeKey("n", modifierFlags: [.command, .shift])
             let rename = element("ww.show.sidebar.rename")
             check(rename.waitForExistence(timeout: 5), "inline rename focused after New Episode")
             check(isFocused("ww.show.sidebar.rename"), "focus in the rename field")

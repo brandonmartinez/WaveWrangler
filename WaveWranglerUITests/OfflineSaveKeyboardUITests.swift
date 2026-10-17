@@ -188,7 +188,10 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             activatePopoverButton("Save a Copy Elsewhere…", tabs: 1, task: "T28")
             let copy = try saveCopyThroughPanel(named: "Offline Copy copy", into: elsewhere, surface: "T28 save panel")
             check(Acceptance.waitFor(timeout: 10) { self.diskEpisodeCount(copy) == 1 }, "the copy holds the edit: \(String(describing: diskEpisodeCount(copy)))")
-            check(Acceptance.waitFor(timeout: 5) { window.title.hasPrefix("Offline Copy copy") }, "window title is the copy: \(window.title)")
+            check(Acceptance.waitFor(timeout: 5) {
+                window.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "Offline Copy copy", "Offline Copy copy"))
+                    .firstMatch.exists
+            }, "window subtitle identifies the copied show: \(window.title)")
             check(Acceptance.waitFor(timeout: 5) { self.value(status).hasPrefix("Saved") }, "status Saved after the copy: \(value(status))")
             let bar = window.descendants(matching: .any).matching(identifier: "ww.show.messageBar").firstMatch
             let expected = "You're now editing “Offline Copy copy” in Elsewhere. The original at Unreachable wasn't changed."

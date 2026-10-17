@@ -173,6 +173,8 @@ enum AlignmentPlanner {
             for targetChannel in channels where target.eligibleSources.contains(targetChannel.sourceID) {
                 guard let targetIndex = targetChannel.channel.value else { continue }
                 for referenceChannel in channels where referenceChannel.sourceID != targetChannel.sourceID {
+                    guard episode.alignment?.acceptedMap?.sourceCorrections?
+                        .contains(where: { $0.source == referenceChannel.sourceID }) != true else { continue }
                     guard let refIndex = referenceChannel.channel.value,
                           let refEpoch = plan.epochs.first(where: {
                               $0.group != target.group && $0.sources.contains(referenceChannel.sourceID)
@@ -201,7 +203,15 @@ enum AlignmentPlanner {
                 }
             }
         }
-        return result
+        return result.sorted { left, right in
+            let leftPreferred = episode.recorderGroup(left.reference.group)?.preferredAlignmentReference == true
+            let rightPreferred = episode.recorderGroup(right.reference.group)?.preferredAlignmentReference == true
+            if leftPreferred != rightPreferred { return leftPreferred }
+            let leftPrimary = left.reference.source == episode.assignment(for: left.speaker)?.primary?.sourceID
+            let rightPrimary = right.reference.source == episode.assignment(for: right.speaker)?.primary?.sourceID
+            if leftPrimary != rightPrimary { return leftPrimary }
+            return false
+        }
     }
 
     static func plan(
@@ -231,6 +241,24 @@ enum AlignmentPlanner {
             return AlignmentReferenceChoice(group: group, epoch: epoch, source: source)
         }
         var reference = referenceCandidate(preferredReference) ?? referenceCandidate(priorReference)
+        if reference == nil {
+            for group in episode.recorderGroups where group.preferredAlignmentReference == true {
+                if let source = episode.sources.first(where: {
+                    $0.placement.recorderGroupID == group.id && referenceCandidate($0.id) != nil
+                }) {
+                    reference = referenceCandidate(source.id)
+                    break
+                }
+            }
+        }
+        if reference == nil {
+            for assignment in episode.speakerAssignments {
+                if let candidate = referenceCandidate(assignment.primary?.sourceID) {
+                    reference = candidate
+                    break
+                }
+            }
+        }
         if reference == nil {
             search: for group in episode.recorderGroups {
                 for epoch in group.epochs {

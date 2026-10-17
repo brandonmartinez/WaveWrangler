@@ -63,6 +63,9 @@ final class ResponsivenessUITests: XCTestCase {
         let before = showWindows.count
         let start = Date()
         app.typeKey(.return, modifierFlags: [])
+        let openEpisode = app.buttons["ww.library.episode.open"]
+        guard openEpisode.waitForExistence(timeout: 10), openEpisode.isEnabled else { return nil }
+        openEpisode.click()
         let opened = Acceptance.waitFor(timeout: 10) { self.showWindows.count > before }
         return opened ? Date().timeIntervalSince(start) * 1000 : nil
     }
@@ -155,11 +158,13 @@ final class ResponsivenessUITests: XCTestCase {
         XCTAssertNotNil(openFirstAvailable(from: 3), "opened an available show")
         let window = showWindows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10))
-        let episodes = app.descendants(matching: .any).matching(identifier: "ww.show.sidebar.episodes").firstMatch
+        EpisodeLibraryNavigation.browseCurrentShow(in: app)
+        let episodes = app.descendants(matching: .any).matching(identifier: "ww.library.episodes").firstMatch
         XCTAssertTrue(episodes.waitForExistence(timeout: 5))
+        episodes.click()
         Thread.sleep(forTimeInterval: 0.5)
 
-        // Episode switch: the episode list has focus when the window opens; walk 5 episodes down and up.
+        // Preserve the 100-sample selection-to-commit metric in the Library's episode list.
         Acceptance.phase("interaction-episode-switch") {
             for index in 0..<samples {
                 app.typeKey((index / 4) % 2 == 0 ? .downArrow : .upArrow, modifierFlags: [])
@@ -167,7 +172,7 @@ final class ResponsivenessUITests: XCTestCase {
         }
 
         // Metadata edit: ⌘I focuses Title; each typed character (then each deletion) is a live, undoable edit.
-        window.typeKey("i", modifierFlags: .command)
+        app.typeKey("i", modifierFlags: .command)
         let title = app.descendants(matching: .any).matching(identifier: "ww.inspector.episode.title").firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         app.typeKey(.rightArrow, modifierFlags: .command)

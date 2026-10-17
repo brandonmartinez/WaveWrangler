@@ -844,7 +844,7 @@ struct ForbiddenAPITests {
         "IOPOL_MATERIALIZE_DATALESS_FILES_ON",
     ]
 
-    /// Decoding and playback APIs: only WWDecode's gateway may use them; every other module and the app are scanned.
+    /// Source decoding/playback belongs to the gateway; the bounded planar-PCM helper may convert memory only.
     static let decodeTokens = [
         "AudioFileOpen", "ExtAudioFile", "AudioFileStream", "AudioConverter", "AVAudioFile", "AVAsset", "AVURLAsset",
         "AVAudioConverter", "AudioQueue", "AVPlayer", "AVAudioPlayer", "NSSound",
@@ -878,7 +878,7 @@ struct ForbiddenAPITests {
 
     /// `fileName` is the path relative to Sources/WWDecode.
     static func decodeViolations(in source: String, fileName: String) -> [String] {
-        let code = code(source)
+        let code = maskingInMemoryContentsOf(code(source))
         let isGateway = fileName == contentGatewayFile
         var found = (forbidden + decodeMutationTokens)
             .filter { !(isGateway && contentGatewayAllowed.contains($0)) && code.contains($0) }
@@ -909,7 +909,10 @@ struct ForbiddenAPITests {
     /// `path` is relative to the package's Sources directory, or starts with `WaveWrangler/` for the app.
     static func otherModuleViolations(in source: String, path: String) -> [String] {
         if path == "WWDecode/\(contentGatewayFile)" { return [] }
-        let code = code(source)
+        var code = code(source)
+        if path == "WWDecode/PCMResampling.swift" {
+            code = code.replacingOccurrences(of: #"\bAVAudioConverter(?:InputBlock)?\b"#, with: "", options: .regularExpression)
+        }
         var tokens = decodeTokens
         if !path.hasPrefix("WWDecode/") { tokens += contentGatewayAPITokens }
         return tokens.filter { token in
@@ -971,6 +974,12 @@ struct ForbiddenAPITests {
         #expect(Self.otherModuleViolations(in: "let a = AVURLAsset(url: url)", path: "WWWaveform/Peaks.swift").contains("WWWaveform/Peaks.swift: AVURLAsset"))
         #expect(Self.otherModuleViolations(in: "let p = try AVAudioPlayer(contentsOf: url)", path: "WWDecode/Playback/Preview.swift").contains("WWDecode/Playback/Preview.swift: AVAudioPlayer"))
         #expect(Self.otherModuleViolations(in: "let p = AVAudioPlayerNode()", path: "WaveWrangler/Alignment/Preview.swift").isEmpty)
+        #expect(Self.otherModuleViolations(in: "AVAudioConverter(from: pcm, to: pcm)", path: "WWDecode/PCMResampling.swift").isEmpty)
+        #expect(Self.otherModuleViolations(in: "AVAudioConverter(from: pcm, to: pcm)", path: "WWDecode/Sub/PCMResampling.swift").contains("WWDecode/Sub/PCMResampling.swift: AVAudioConverter"))
+        #expect(Self.otherModuleViolations(in: "AudioConverterNew(a, b, &c)", path: "WWDecode/PCMResampling.swift").contains("WWDecode/PCMResampling.swift: AudioConverter"))
+        #expect(Self.otherModuleViolations(in: "AVAudioFile(forReading: url)", path: "WWDecode/PCMResampling.swift").contains("WWDecode/PCMResampling.swift: AVAudioFile"))
+        #expect(Self.decodeViolations(in: "samples.append(contentsOf: buffer)", fileName: "PCMResampling.swift").isEmpty)
+        #expect(Self.decodeViolations(in: "Data(contentsOf: url)", fileName: "PCMResampling.swift").contains("PCMResampling.swift: contentsOf"))
         #expect(Self.otherModuleViolations(in: "let r = try SystemSourceContentIO().openForDecoding(url)", path: "WWShow/Probe.swift") == ["WWShow/Probe.swift: SystemSourceContentIO", "WWShow/Probe.swift: openForDecoding"])
         #expect(Self.otherModuleViolations(in: "try reader.readRawFrames(into: list, frames: 4)", path: "WaveWrangler/Probe.swift") == ["WaveWrangler/Probe.swift: readRawFrames"])
         #expect(Self.otherModuleViolations(in: "content.openForDecoding(url)", path: "WWDecode/SourceDecoder.swift").isEmpty, "WWDecode itself may use its gateway")
@@ -1122,7 +1131,11 @@ struct ForbiddenAPITests {
     static func pipelineViolations(in source: String, fileName: String) -> [String] {
         let code = maskingInMemoryContentsOf(code(source))
         let tokens = Set(forbidden + decodeMutationTokens + derivedStoreTokens + decodeTokens + contentGatewayAPITokens + pipelineTokens)
-        return tokens.filter { code.contains($0) }.sorted().map { "\(fileName): \($0)" }
+        return tokens.filter { token in
+            token == "AVAudioPlayer"
+                ? !matches(#"\bAVAudioPlayer\b"#, in: code).isEmpty
+                : code.contains(token)
+        }.sorted().map { "\(fileName): \($0)" }
     }
 
     @Test func pipelineScannerDetectsFilesContentHooksAndThreads() {
@@ -1134,6 +1147,7 @@ struct ForbiddenAPITests {
             ("try files.writeNew(bytes, to: url)", "writeNew"),
             ("let h = SHA256.hash(data: bytes)", "SHA256"),
             ("let a = AVURLAsset(url: url)", "AVURLAsset"),
+            ("let p = try AVAudioPlayer(contentsOf: url)", "AVAudioPlayer"),
             ("let n = ProcessInfo.processInfo.activeProcessorCount", "activeProcessorCount"),
             ("DerivedJobCoordinator(store: s, inputs: i, testHooks: .init(skipCurrencyCheck: true))", "skipCurrencyCheck"),
             ("DispatchQueue.main.async { }", "DispatchQueue"),
@@ -1146,6 +1160,7 @@ struct ForbiddenAPITests {
         }
         #expect(Self.pipelineViolations(in: "/// FileManager, Thread and activeProcessorCount in a doc comment", fileName: "AnalysisJob.swift").isEmpty)
         #expect(Self.pipelineViolations(in: "samples.append(contentsOf: chunk)", fileName: "AnalysisJob.swift").isEmpty)
+        #expect(Self.pipelineViolations(in: "let player = AVAudioPlayerNode()", fileName: "PitchPreservingAudio.swift").isEmpty)
         #expect(Self.pipelineViolations(in: "let samples = try await decoder.withDecodingCursor(url, source: id) { try await $0.next() }", fileName: "AnalysisJob.swift").isEmpty)
     }
 

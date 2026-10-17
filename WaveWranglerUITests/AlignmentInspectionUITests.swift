@@ -20,7 +20,24 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.launch()
         app.activate()
         app.typeKey("2", modifierFlags: .command)
-        XCTAssertTrue(app.outlines["ww.alignment.groups"].waitForExistence(timeout: 5))
+        let details = app.disclosureTriangles["Detailed alignment inspection"]
+        if details.waitForExistence(timeout: 5), String(describing: details.value ?? "") == "0" {
+            scrollIntoWindow(details)
+            details.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+                .withOffset(CGVector(dx: 27, dy: 0)).click()
+        }
+        let expanded = app.outlines["ww.alignment.groups"].waitForExistence(timeout: 5)
+        if !expanded {
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "Detailed inspection after disclosure activation"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Detailed inspection disclosure activation"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+        XCTAssertTrue(expanded)
     }
 
     func testTM201ReachEveryAlignmentControl() {
@@ -37,7 +54,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         selectTargetEpoch()
         XCTAssertTrue(app.staticTexts["ww.inspector.alignment.evidence"].waitForExistence(timeout: 2))
         for identifier in [
-            "alignment.analyse", "alignment.acceptProposal", "alignment.rejectProposal",
+            "alignment.waveforms.load", "alignment.acceptProposal", "alignment.rejectProposal",
             "alignment.editNumeric", "alignment.placeAnchors", "alignment.placeAnchorAtPlayhead",
             "alignment.deleteAnchor", "alignment.editAnchor", "alignment.startNewEpoch",
             "ww.alignment.audition.play",
@@ -239,15 +256,15 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.launch()
         app.activate()
         app.typeKey("2", modifierFlags: .command)
-        XCTAssertTrue(app.staticTexts["ww.show.blocked.heading"].waitForExistence(timeout: 5))
-        let goToSetup = app.buttons["ww.show.blocked.goToSetup"]
+        XCTAssertTrue(app.staticTexts["Add recordings to begin"].waitForExistence(timeout: 5))
+        let goToSetup = app.buttons["Manage recordings…"]
         XCTAssertTrue(goToSetup.exists)
         guard UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0 else {
             throw XCTSkip("Tab-only recovery requires system Full Keyboard Access")
         }
         XCTAssertTrue(tabToFocus(goToSetup))
         app.typeKey(.space, modifierFlags: [])
-        XCTAssertTrue(app.tables["ww.setup.sources"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.outlines["ww.setup.sources"].waitForExistence(timeout: 5))
     }
 
     func testAlignmentWindowSmokeAndResize() throws {
@@ -255,18 +272,14 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(window.exists)
         window.doubleClick()
         let contentInspector = app.descendants(matching: .any)["ww.show.contentInspector"]
-        let sidebar = app.descendants(matching: .any)["ww.show.sidebar.episodes"]
-        let newEpisode = app.buttons["New Episode"]
-        let showInfo = app.descendants(matching: .any)["ww.show.sidebar.showInfo"]
         XCTAssertTrue(contentInspector.waitForExistence(timeout: 2))
-        XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
-        XCTAssertTrue(newEpisode.waitForExistence(timeout: 2))
-        XCTAssertTrue(showInfo.waitForExistence(timeout: 2))
+        XCTAssertFalse(window.descendants(matching: .any)["ww.show.sidebar.episodes"].exists)
+        XCTAssertTrue(app.buttons["ww.show.library"].exists)
         let workspaceRoot = app.descendants(matching: .any)["ww.alignment.workspaceRoot"]
         XCTAssertTrue(workspaceRoot.waitForExistence(timeout: 2))
         XCTAssertEqual(workspaceRoot.label, "Alignment workspace")
         for identifier in [
-            "ww.alignment.workspace", "ww.alignment.groups", "ww.alignment.anchors", "alignment.analyse",
+            "ww.alignment.workspace", "ww.alignment.groups", "ww.alignment.anchors", "alignment.waveforms.load",
             "alignment.editAnchor", "alignment.startNewEpoch"
         ] {
             scrollIntoWindow(workspaceRoot.descendants(matching: .any)[identifier])
@@ -281,7 +294,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         // one element's exact frame and to the identified children it exposes, rather than to any group of
         // roughly the right shape (#219 review).
         let inspectorColumn = resolveInspectorColumn(
-            around: inspector, excluding: [contentInspector.frame, sidebar.frame]
+            around: inspector, excluding: [contentInspector.frame]
         )
         let actionRows = resolveActionRows(in: workspaceRoot)
         let touchBar = app.descendants(matching: .touchBar).firstMatch
@@ -310,7 +323,6 @@ final class AlignmentInspectionUITests: XCTestCase {
         var layoutContainerFindings = 0
         var inspectorColumnFindings = 0
         var actionRowFindings = 0
-        var showSectionFindings = 0
         var outlineCellFindings = 0
         try app.performAccessibilityAudit(
             for: [.elementDetection, .sufficientElementDescription, .hitRegion, .action]
@@ -334,10 +346,6 @@ final class AlignmentInspectionUITests: XCTestCase {
                 ? ["ww.inspector"] : []
             let isInspectorColumn = inspector.exists
                 && inspectorColumn?.matches(element, exposing: exposedInspector) == true
-            let isSidebar = self.approximatelyEqual(element.frame, sidebar.frame)
-            let isShowSection = sidebar.frame.contains(element.frame)
-                && element.frame.contains(showInfo.frame)
-                && element.frame.height < 80
             // AppKit builds the container around an outline's disclosure-column cell itself, and no
             // SwiftUI description reaches it: labelling the cell content, combining its children and
             // the value-keypath shorthand all leave this one container undescribed (#219). It is waived
@@ -354,7 +362,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             let isOutlineCell = outlineCellFrames.contains(element.frame)
                 && element.descendants(matching: .any).allElementsBoundByIndex
                     .contains { !$0.label.isEmpty || !(($0.value as? String) ?? "").isEmpty }
-            guard isContent || isSidebar || isShowSection || isOutlineCell || isInspectorColumn
+            guard isContent || isOutlineCell || isInspectorColumn
                     || isActionRow
             else {
                 return self.reportUnwaived(issue)
@@ -371,17 +379,11 @@ final class AlignmentInspectionUITests: XCTestCase {
                     "AUDIT WAIVED [alignment-outline-cell] \(issue.compactDescription) — " +
                     "AppKit-owned outline cell container; its labelled text child remains exposed"
                 )
-            } else if isInspectorColumn && !isContent && !isSidebar {
+            } else if isInspectorColumn && !isContent {
                 inspectorColumnFindings += 1
                 print(
                     "AUDIT WAIVED [show-inspector-column] \(issue.compactDescription) \(element.frame) — " +
                     "SwiftUI-owned inspector column; the labelled Inspector scroll area remains exposed"
-                )
-            } else if isShowSection {
-                showSectionFindings += 1
-                print(
-                    "AUDIT WAIVED [show-sidebar-section] \(issue.compactDescription) — " +
-                    "noninteractive Section group; labelled Show Info child remains exposed"
                 )
             } else {
                 layoutContainerFindings += 1
@@ -397,7 +399,6 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertLessThanOrEqual(layoutContainerFindings, 3)
         XCTAssertLessThanOrEqual(inspectorColumnFindings, 1)
         XCTAssertLessThanOrEqual(actionRowFindings, 2)
-        XCTAssertLessThanOrEqual(showSectionFindings, 1)
         // At most one finding per cell: each is the container AppKit builds around that cell.
         XCTAssertGreaterThan(outlineCellFrames.count, 0, "The alignment outlines must expose their cells")
         XCTAssertLessThanOrEqual(outlineCellFindings, outlineCellFrames.count)
@@ -413,48 +414,23 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.launch()
         app.activate()
         app.typeKey("2", modifierFlags: .command)
-        XCTAssertTrue(app.staticTexts["ww.show.blocked.heading"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Add recordings to begin"].waitForExistence(timeout: 5))
         let window = app.windows["ww.show.window"]
         let titlebarBottom = window.frame.minY + 56
-        let sidebar = app.descendants(matching: .any)["ww.show.sidebar.episodes"]
         var titlebarFindings = 0
-        var sidebarFindings = 0
         try app.performAccessibilityAudit(for: [.contrast]) { issue in
             guard issue.auditType == .contrast, let element = issue.element,
                   element.elementType == .staticText
             else { return self.reportUnwaived(issue) }
-            let isTitle = (element.value as? String ?? element.label) == "Empty Alignment"
+            let title = element.value as? String ?? element.label
+            let isTitle = (title == "Empty Alignment" || title == window.title)
                 && element.frame.maxY <= titlebarBottom
-            // #219 review, finding 4: the former blanket "anything in the sidebar" waiver is gone. Sidebar
-            // text is waived one element at a time, and only on measured proof that it is legible now —
-            // the same `ContrastMeter` p75 ≥ 4.5 bar the other narrow handlers use. Anything that fails to
-            // measure is a real finding and fails the audit.
-            if !isTitle {
-                guard sidebar.exists, sidebar.frame.contains(element.frame), element.exists else {
-                    return self.reportUnwaived(issue)
-                }
-                let measured = ContrastMeter.measure(element.screenshot().image) ?? [:]
-                let count = measured["glyphPixels"] as? Int ?? 0
-                let p75 = measured["glyphP75"] as? Double ?? 0
-                let stats = "glyphPixels \(count), p75 \(p75), max \(measured["ratio"] ?? 0), " +
-                    "\(measured["text"] ?? "") on \(measured["background"] ?? "")"
-                guard count >= AcceptanceAudit.minimumGlyphPixels, p75 >= 4.5 else {
-                    print("AUDIT UNWAIVED [blocked-sidebar] \(issue.compactDescription) — measured \(stats)")
-                    return self.reportUnwaived(issue)
-                }
-                sidebarFindings += 1
-                print(
-                    "AUDIT WAIVED [blocked-sidebar-measured] \(issue.compactDescription) " +
-                    "id=\(element.identifier) label=\(element.label) — measured legible: \(stats)"
-                )
-                return true
-            }
+            guard isTitle else { return self.reportUnwaived(issue) }
             titlebarFindings += 1
             print("AUDIT WAIVED [blocked-titlebar] \(issue.compactDescription) — AppKit window title outside the blocked content")
             return true
         }
         XCTAssertLessThanOrEqual(titlebarFindings, 1)
-        XCTAssertLessThanOrEqual(sidebarFindings, 4)
     }
 
     private func chooseEpisodeMenu(_ item: String) {
@@ -555,6 +531,11 @@ final class AlignmentInspectionUITests: XCTestCase {
         let epochName = app.staticTexts["Guest take"]
         scrollIntoWindow(epochName)
         epochName.click()
+        let evidence = app.disclosureTriangles["Timing evidence"]
+        if evidence.exists, String(describing: evidence.value ?? "") == "0" {
+            evidence.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+                .withOffset(CGVector(dx: 27, dy: 0)).click()
+        }
         XCTAssertTrue(app.staticTexts["ww.inspector.alignment.evidence"].waitForExistence(timeout: 2))
     }
 
@@ -653,7 +634,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             // The action grid is lazy: once it is scrolled past, its buttons leave the tree, so a blind
             // search can never find them again. Start from the top and walk down in viewport-sized steps.
             scrollWorkspaceToTop()
-            let probe = app.descendants(matching: .any)["alignment.analyse"]
+            let probe = app.descendants(matching: .any)["alignment.waveforms.transport.back"]
             let probeBefore = probe.frame.midY
             scroll.scroll(byDeltaX: 0, deltaY: -100)
             let down: CGFloat = probe.frame.midY <= probeBefore ? -100 : 100
@@ -755,7 +736,7 @@ final class AlignmentInspectionUITests: XCTestCase {
     /// Returns the workspace to the top so a lazily built control is always met on the way down.
     private func scrollWorkspaceToTop() {
         let scroll = app.descendants(matching: .any)["ww.alignment.workspace"]
-        let top = app.descendants(matching: .any)["alignment.analyse"]
+        let top = app.descendants(matching: .any)["alignment.waveforms.transport.back"]
         for _ in 0..<20 {
             guard top.exists else { return }
             let frame = top.frame

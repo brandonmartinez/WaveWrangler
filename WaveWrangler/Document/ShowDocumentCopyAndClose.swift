@@ -61,7 +61,7 @@ extension ShowDocument: DocumentStatusActionHandling {
     /// none (every window is a background tab, minimized or not yet shown) the prompt stays pending: it's asked when a
     /// window of this show becomes key or is shown, and Update… in the status item asks it again at any time.
     func presentFormatUpdatePromptIfNeeded(preferring preferred: NSWindow? = nil) {
-        let ownWindows = windowControllers.compactMap(\.window)
+        let ownWindows = windowControllers.compactMap(\.window) + (libraryWindow.map { [$0] } ?? [])
         let candidates = (preferred.map { [$0] } ?? []).filter { ownWindows.contains($0) } + ownWindows
         let window = candidates.first { Self.promptWindow($0).canShowPrompt }
         guard FormatUpdatePolicy.shouldPresentPrompt(pending: formatUpdatePromptPending, state: status.formatUpdate,

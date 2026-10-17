@@ -12,13 +12,16 @@ struct LibraryView: View {
     var body: some View {
         splitView
             .onChange(of: focus) { _, region in
-                // The AppKit entry outline reports its own focus; SwiftUI sees it as no focused region.
-                if region != nil || !(state.window?.firstResponder is EntryOutlineView) { state.focusedRegion = region }
+                // Text editors and AppKit outlines can clear SwiftUI focus without leaving their column.
+                if let region { state.focusedRegion = region }
             }
             .onAppear { DispatchQueue.main.async { focus = .sidebar } }
             .task {
                 if !store.isLoaded { await store.load() }
                 Responsiveness.libraryReady(entryCount: store.library.entries.count)
+            }
+            .task(id: state.entrySelection) {
+                await state.loadSelectedShow()
             }
     }
 
@@ -49,7 +52,8 @@ struct LibraryView: View {
                 .navigationSplitViewColumnWidth(min: 320, ideal: 520)
         } detail: {
             LibraryEntryDetail(state: state)
-                .navigationSplitViewColumnWidth(min: 240, ideal: 300)
+                .focused($focus, equals: .episodes)
+                .navigationSplitViewColumnWidth(min: 240, ideal: 480)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -350,7 +354,11 @@ private struct LibraryEntryDetail: View {
     var body: some View {
         let rows = state.selectedRows
         if rows.count == 1, let row = rows.first {
-            detail(row)
+            if let show = state.episodeManagementState, show.store.model.show.id == row.showID {
+                LibraryShowDetail(state: state, show: show)
+            } else {
+                detail(row)
+            }
         } else {
             CenteredScrollView {
             VStack(spacing: 8) {
@@ -399,6 +407,9 @@ private struct LibraryEntryDetail: View {
                         .accessibilityLabel("Couldn't complete: \(message)")
                 }
                 Divider()
+                if state.isLoadingShow {
+                    ProgressView("Loading episodes…")
+                }
                 Text("Episodes (as of last open)")
                     .wwFont(.headline)
                     .accessibilityAddTraits(.isHeader)

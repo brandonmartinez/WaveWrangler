@@ -27,7 +27,7 @@ protocol LibraryPersisting: AnyObject {
 /// Derived, device-local per-show details and the actions that need show locations. Observable.
 @MainActor
 protocol LibraryEntryObserving: LibraryEntryChecking {
-    func openShow(_ id: ShowID, readOnly: Bool) async throws
+    func openShow(_ id: ShowID, readOnly: Bool, display: Bool) async throws -> ShowDocument
     func revealShowInFinder(_ id: ShowID) -> Bool
     /// Locate…/Grant Access…: lets the user pick the show file; the implementation matches by the show
     /// identity inside the file, never by name.
@@ -204,11 +204,20 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
         details[id, default: LibraryEntryDetails(state: .available)].lastOpened = Date()
     }
 
-    func openShow(_ id: ShowID, readOnly: Bool) async throws {
+    func openShow(_ id: ShowID, readOnly: Bool, display: Bool) async throws -> ShowDocument {
+        if let document = CommandRouter.openDocument(for: id) {
+            if display { document.showWindows() }
+            return document
+        }
         guard let url = locations[id] else { throw LibraryBackendError.showLocationUnknown }
         let interval = OpenSignposts.begin("library.openShow")
         defer { OpenSignposts.end(interval) }
-        _ = try await NSDocumentController.shared.openDocument(withContentsOf: url, display: true)
+        let (document, alreadyOpen) = try await NSDocumentController.shared.openDocument(withContentsOf: url, display: display)
+        guard let show = document as? ShowDocument, show.store.model.show.id == id else {
+            if !alreadyOpen { document.close() }
+            throw LibraryBackendError.differentShow
+        }
+        return show
     }
 
     func canRevealShow(_ id: ShowID) -> Bool { locations[id] != nil }

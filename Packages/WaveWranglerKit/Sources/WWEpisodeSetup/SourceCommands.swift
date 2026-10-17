@@ -257,6 +257,7 @@ public enum SetupUndoName {
     public static let newRecorderGroup = "New Recorder Group"
     public static let renameRecorderGroup = "Rename Recorder Group"
     public static let deleteRecorderGroup = "Delete Recorder Group"
+    public static let timingReferencePreference = "Set Timing Reference Preference"
     public static let setEpoch = "Set Epoch"
     public static let startNewEpoch = "Start New Epoch"
     public static let setChannel = "Set Channel"

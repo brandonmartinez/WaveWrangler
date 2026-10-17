@@ -434,13 +434,15 @@ final class LibraryWorkspaceUITests: XCTestCase {
         // Autosave ON with a long delay so "Edited" is observable before the automatic save.
         launch(["-WWUITestLibraryFixture", "empty", "-WWUITestOpenShow", "Synthetic Show", "-WWUITestShowEpisodes", "0",
                 "-WWUITestAutosave", "ON", "-WWUITestAutosaveDelaySeconds", "30"])
-        let window = app.windows.matching(identifier: "ww.show.window").firstMatch
-        waitFor(window, timeout: 15)
-        XCTAssertTrue(window.title.hasPrefix("Synthetic Show"))
-        let episodes = element("ww.show.sidebar.episodes")
+        let library = app.windows["ww.library.window"]
+        waitFor(library, timeout: 15)
+        XCTAssertEqual(app.windows.matching(identifier: "ww.show.window").count, 0)
+        let dismiss = library.buttons["Dismiss"]
+        if dismiss.exists { dismiss.click() }
+        let episodes = element("ww.library.episodes")
         waitFor(episodes)
         XCTAssertEqual(value(episodes), "0 episodes")
-        waitFor(element("ww.show.empty.newEpisode"))
+        waitFor(element("ww.show.sidebar.newEpisode"))
 
         // Honest status: the create was published and read back by persistence, so it says "Saved" (D1).
         let status = element("ww.show.saveStatus")
@@ -449,7 +451,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [saved], timeout: 10), .completed, "verified create shows Saved: \(value(status))")
 
         // K02: ⇧⌘N → inline rename → type → Return.
-        window.typeKey("n", modifierFlags: [.command, .shift])
+        library.typeKey("n", modifierFlags: [.command, .shift])
         let rename = element("ww.show.sidebar.rename")
         waitFor(rename)
         rename.typeKey("a", modifierFlags: .command)
@@ -457,13 +459,14 @@ final class LibraryWorkspaceUITests: XCTestCase {
         XCTAssertEqual(value(episodes), "1 episode")
         waitFor(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR value == %@", "1 Pilot", "1 Pilot")).firstMatch)
         app.menuBars.menuBarItems["Edit"].click()
-        XCTAssertTrue(menuItem("Undo Rename Episode").exists, "Named undo for rename")
+        XCTAssertTrue(menuItem("Undo Rename Episode").exists,
+                      "Named undo for rename; Undo enabled: \(menuItem("Undo").isEnabled). \(app.debugDescription)")
         app.typeKey(.escape, modifierFlags: [])
         let edited = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Edited'"), object: status)
         XCTAssertEqual(XCTWaiter().wait(for: [edited], timeout: 5), .completed, "edits show Edited (D2), never Saved: \(value(status))")
 
         // K03: ⌘I focuses Title; invalid Number shows inline text error.
-        window.typeKey("i", modifierFlags: .command)
+        library.typeKey("i", modifierFlags: .command)
         let title = element("ww.inspector.episode.title")
         waitFor(title)
         let number = element("ww.inspector.episode.number")
@@ -476,22 +479,24 @@ final class LibraryWorkspaceUITests: XCTestCase {
         XCTAssertEqual(value(number), "12")
         waitFor(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR value == %@", "12 Pilot", "12 Pilot")).firstMatch)
 
-        // K24: ⌘2 shows the blocked Alignment panel; Go to Setup returns.
+        element("ww.library.episode.open").click()
+        let window = app.windows.matching(identifier: "ww.show.window").firstMatch
+        waitFor(window)
+        XCTAssertTrue(window.title.contains("Pilot"))
+        XCTAssertFalse(element("ww.show.sidebar.episodes").exists)
+        app.typeKey("l", modifierFlags: [.command, .shift])
+        app.typeKey("w", modifierFlags: .command)
+        // K24: the editor is bound to Pilot; episode management stays in Library.
         window.typeKey("2", modifierFlags: .command)
-        let blocked = element("ww.show.blocked.alignment")
-        waitFor(blocked)
-        XCTAssertTrue(app.staticTexts["Alignment isn't available yet"].exists)
-        XCTAssertEqual(value(element("ww.show.destination.alignment")), "", "Alignment is available; this episode needs a recorder group")
-        waitFor(app.staticTexts["Set up at least one recorder group in Setup first. WaveWrangler hasn't read or analysed any audio."])
-        waitFor(element("ww.show.blocked.goToSetup"))
-        try audit("Show window (blocked Alignment)")
-        element("ww.show.blocked.goToSetup").click()
+        waitFor(app.buttons["Manage recordings…"])
+        app.buttons["Manage recordings…"].click()
         waitFor(element("ww.setup.sources"))
         waitFor(element("ww.setup.speakers"))
         try audit("Show window (Setup)")
 
-        // T24: second window on the same show shares the document.
-        menuItem("New Window for “Synthetic Show”").click()
+        // T24: a second view is bound to this same episode.
+        app.menuBars.menuBarItems["File"].click()
+        menuItem("New Window for “Pilot”").click()
         let windows = app.windows.matching(identifier: "ww.show.window")
         XCTAssertTrue(windows.element(boundBy: 1).waitForExistence(timeout: 5))
     }
@@ -578,19 +583,19 @@ final class LibraryWorkspaceUITests: XCTestCase {
         try audit("Library after relaunch")
 
         row.cells.firstMatch.click()
-        let open = element("ww.library.detail.open")
+        let open = element("ww.library.episode.open")
         waitFor(open)
         open.click()
         let reopened = app.windows.matching(identifier: "ww.show.window").firstMatch
         waitFor(reopened, timeout: 15)
-        XCTAssertTrue(reopened.title.hasPrefix("Relaunch Show"), "opened the same show: \(reopened.title)")
+        XCTAssertTrue(reopened.title.contains("Synthetic Episode 1"), "opened the saved show's episode: \(reopened.title)")
 
         // Edit and save through the reopened (bookmark-resolved) location.
         reopened.typeKey("n", modifierFlags: [.command, .shift])
         let rename = element("ww.show.sidebar.rename")
         waitFor(rename)
         app.typeText("After Relaunch\r")
-        reopened.typeKey("s", modifierFlags: .command)
+        app.typeKey("s", modifierFlags: .command)
         let reopenedStatus = element("ww.show.saveStatus")
         let savedAgain = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Saved'"), object: reopenedStatus)
         XCTAssertEqual(XCTWaiter().wait(for: [savedAgain], timeout: 10), .completed, "saved after relaunch: \(value(reopenedStatus))")

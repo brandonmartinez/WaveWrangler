@@ -60,6 +60,14 @@ public struct SetupEditCommands {
     }
 
     @discardableResult
+    public func preferAlignmentReference(_ preferred: Bool, group groupID: RecorderGroupID) -> Bool {
+        let id = episodeID
+        return editor.applySetupEdit(SetupUndoName.timingReferencePreference) { model throws(DomainError) in
+            try model.preferringAlignmentReference(preferred, group: groupID, in: id)
+        }
+    }
+
+    @discardableResult
     public func deleteGroup(_ groupID: RecorderGroupID) -> Bool {
         let id = episodeID
         return editor.applySetupEdit(SetupUndoName.deleteRecorderGroup) { model throws(DomainError) in try model.removingRecorderGroup(groupID, in: id) }

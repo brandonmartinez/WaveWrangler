@@ -24,6 +24,8 @@ import WWPersistence
 @objc(ShowDocument)
 final class ShowDocument: NSDocument {
     let store: ShowDocumentStore
+    private var libraryController: NSWindowController?
+    weak var libraryWindow: NSWindow?
     let status = DocumentStatusModel()
     private let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
     /// Publication of the last coherent value read or verified on disk (`nil` for a new document).
@@ -120,27 +122,42 @@ final class ShowDocument: NSDocument {
     override func makeWindowControllers() {
         let interval = OpenSignposts.begin("document.makeWindowControllers")
         defer { OpenSignposts.end(interval) }
-        let hosting = NSHostingController(rootView: ShowWorkspaceView(store: store))
-        // The complete show window owns its minimum size. SwiftUI's preferred content size includes
-        // the sidebar and inspector and would otherwise expand (or re-enter constraint updates for)
-        // the window instead of laying those columns out inside the permitted 760 pt content width.
-        hosting.sizingOptions = []
-        let window = NSWindow(contentViewController: hosting)
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        #if DEBUG
-        let minimumFixture = UserDefaults.standard.bool(forKey: "WWUITestMinimumShowWindow")
-        let initialHeight = minimumFixture ? 440.0 : 520.0
-        let initialWidth = minimumFixture ? 760.0 : 1030.0
-        #else
-        let initialHeight = 520.0
-        let initialWidth = 1030.0
-        #endif
-        // The Setup table needs the native inspector's original default room; the 760 pt
-        // minimum remains available for the compact Alignment workspace and explicit resizing.
-        window.contentMinSize = NSSize(width: 760, height: 440)
-        window.setContentSize(NSSize(width: initialWidth, height: initialHeight))
-        window.tabbingMode = .preferred
-        addWindowController(NSWindowController(window: window))
+        guard let episode = store.model.episodes.first else {
+            LibraryWindowController.show(document: self)
+            return
+        }
+        addWindowController(EpisodeWindowController(store: store, episodeID: episode.id))
+    }
+
+    /// A windowless controller keeps a browsed show in NSDocument's normal save/quit lifecycle
+    /// when its last episode editor closes. It never creates a hidden NSWindow.
+    func retainForLibrary(in window: NSWindow?) {
+        libraryWindow = window
+        guard libraryController == nil else { return }
+        let controller = NSWindowController(window: nil)
+        libraryController = controller
+        addWindowController(controller)
+    }
+
+    override var windowForSheet: NSWindow? {
+        super.windowForSheet ?? libraryWindow
+    }
+
+    @discardableResult
+    func openEpisode(_ id: EpisodeID, inNewWindow: Bool = false) -> EpisodeWindowController? {
+        guard store.model.episode(id) != nil else { return nil }
+        if !inNewWindow, let existing = windowControllers.compactMap({ $0 as? EpisodeWindowController })
+            .first(where: { $0.state.boundEpisodeID == id }) {
+            existing.showWindow(nil)
+            existing.window?.deminiaturize(nil)
+            existing.window?.makeKeyAndOrderFront(nil)
+            return existing
+        }
+        let controller = EpisodeWindowController(store: store, episodeID: id)
+        addWindowController(controller)
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        return controller
     }
 
     // NSDocument declares reading/writing nonisolated because subclasses may opt into concurrent reading
@@ -826,7 +843,9 @@ final class ShowDocument: NSDocument {
         }
         scheduler?.cancelPending()
         cancelSaveRetry()
+        LibraryWindowController.documentDidClose(self)
         super.close()
+        libraryController = nil
     }
 
     // MARK: - Provider versions (evidence only)

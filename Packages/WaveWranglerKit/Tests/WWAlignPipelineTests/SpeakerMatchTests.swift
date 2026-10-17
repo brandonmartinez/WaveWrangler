@@ -92,7 +92,7 @@ struct SpeakerMatchTests {
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
             authorizations: fixture.authorizations, targetEpoch: fixture.epochs[1], speaker: speaker
         )
-        _ = try #require(first.records[fixture.epochs[1]]?.proposal)
+        _ = try #require(first.records[fixture.epochs[1]]?.proposal, "\(String(describing: first.records[fixture.epochs[1]]?.abstention)); \(String(describing: first.records[fixture.epochs[1]]?.coarseWindows))")
         _ = try await fixture.acceptAndActivate(first, [fixture.epochs[1]: .acceptProposal()])
         let snapshot = try #require(await fixture.pipeline.inspect(
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources
@@ -255,7 +255,7 @@ struct SpeakerMatchTests {
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
             authorizations: fixture.authorizations, targetEpoch: fixture.epochs[1], speaker: speaker
         )
-        _ = try #require(report.records[fixture.epochs[1]]?.proposal)
+        _ = try #require(report.records[fixture.epochs[1]]?.proposal, "\(String(describing: report.records[fixture.epochs[1]]?.abstention)); \(String(describing: report.records[fixture.epochs[1]]?.coarseWindows))")
         let assignment = fixture.model.episodes[0].speakerAssignments
         fixture.model.episodes[0].speakerAssignments = []
         await #expect(throws: AlignmentAcceptanceError.self) {

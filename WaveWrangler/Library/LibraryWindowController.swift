@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The single Library window (IA §2: app window, not a document; Window › Library ⇧⌘L).
 @MainActor
-final class LibraryWindowController: NSWindowController, NSWindowDelegate, NSWindowRestoration {
+final class LibraryWindowController: NSWindowController, NSWindowRestoration {
     static let restorationIdentifier = NSUserInterfaceItemIdentifier("ww.library.window")
     private static var instance: LibraryWindowController?
 
@@ -34,13 +34,24 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate, NSWin
         window.makeKeyAndOrderFront(nil)
     }
 
+    static func show(document: ShowDocument) {
+        show()
+        shared.state.sidebarSelection = .shows
+        shared.state.browse(document)
+    }
+
+    static func documentDidClose(_ document: ShowDocument) {
+        instance?.state.documentDidClose(document)
+    }
+
     private init(store: LibraryUIStore) {
         state = LibraryWindowState(store: store)
         let hosting = NSHostingController(rootView: LibraryView(state: state).wwAppEnvironment())
         hosting.sceneBridgingOptions = [.toolbars]
         hosting.sizingOptions = []
         hosting.view.setAccessibilityLabel("Library")
-        let window = NSWindow(contentViewController: hosting)
+        let window = LibraryWindow(contentViewController: hosting)
+        window.state = state
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.title = "Library"
         window.toolbarStyle = .unified
@@ -54,10 +65,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate, NSWin
         window.tabbingMode = .disallowed
         window.isReleasedWhenClosed = false
         super.init(window: window)
-        window.delegate = self
         window.setFrameAutosaveName("WaveWranglerLibraryWindow")
         state.window = window
-        store.undoManagerProvider = { [weak window] in window?.undoManager }
+        store.undoManagerProvider = { [weak window] in window?.collectionsUndoManager }
         #if DEBUG
         SidebarSwitchBenchmark.startIfRequested(state: state)
         #endif
@@ -75,6 +85,34 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate, NSWin
             completionHandler(nil, nil)
             return
         }
+
         completionHandler(shared.window, nil)
+    }
+}
+
+private final class LibraryWindow: NSWindow {
+    weak var state: LibraryWindowState?
+    let collectionsUndoManager = UndoManager()
+
+    // NSWindow caches its delegate's manager; this window must follow the focused show and column.
+    override var undoManager: UndoManager? {
+        if state?.focusedRegion == .episodes { return state?.selectedShow?.undoManager }
+        return collectionsUndoManager
+    }
+
+    @objc func undo(_ sender: Any?) { undoManager?.undo() }
+    @objc func redo(_ sender: Any?) { undoManager?.redo() }
+
+    override func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case Selector(("undo:")):
+            item.title = undoManager?.undoMenuItemTitle ?? "Undo"
+            return undoManager?.canUndo == true
+        case Selector(("redo:")):
+            item.title = undoManager?.redoMenuItemTitle ?? "Redo"
+            return undoManager?.canRedo == true
+        default:
+            return super.validateMenuItem(item)
+        }
     }
 }

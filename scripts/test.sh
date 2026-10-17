@@ -83,15 +83,15 @@ swift test \
 # The CPU-heavy WW-016 estimator suites run alone after the parallel suite. Calibration schedules at most
 # WW_ESTIMATOR_MAX_CONCURRENCY cases in flight (default 2, hard maximum 4); higher values require a matching
 # explicit WW_ESTIMATOR_CONCURRENCY_GRANT. Scenario tests are serialized and this pass disables test parallelism.
-echo "==> swift test estimator pass: ScenarioTests, CalibrationTests (max ${WW_ESTIMATOR_MAX_CONCURRENCY} cases)"
+echo "==> swift test estimator pass: ScenarioTests, CalibrationTests, automatic reliability (max ${WW_ESTIMATOR_MAX_CONCURRENCY} cases)"
 ESTIMATOR_LOG="$(mktemp)"
 WW_ESTIMATOR_TESTS=1 swift test \
   --package-path "$ROOT/Packages/WaveWranglerKit" \
   --scratch-path "$ROOT/.build/swiftpm" \
   --jobs "$JOBS" \
   --no-parallel \
-  --filter 'WWAlignEstimateTests\.(ScenarioTests|CalibrationTests)' 2>&1 | tee "$ESTIMATOR_LOG"
-for estimator_suite in 'Estimator scenarios' 'Estimator calibration'; do
+  --filter 'WWAlignEstimateTests\.(ScenarioTests|CalibrationTests)|WWAutoAlignTests\.AutomaticReliabilityTests|WWAlignPipelineTests\.AutomaticPipelineReliabilityTests' 2>&1 | tee "$ESTIMATOR_LOG"
+for estimator_suite in 'Estimator scenarios' 'Estimator calibration' 'Automatic alignment synthetic reliability' 'Automatic alignment pipeline reliability'; do
   if ! grep -q "Suite \"$estimator_suite\" passed" "$ESTIMATOR_LOG"; then
     echo "estimator pass: '$estimator_suite' did not run and pass" >&2
     rm -f "$ESTIMATOR_LOG"

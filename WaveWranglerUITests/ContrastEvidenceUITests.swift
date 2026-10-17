@@ -105,9 +105,10 @@ final class ContrastEvidenceUITests: XCTestCase {
         // elements are occluded and their screenshots show Library pixels (mini 479eb9e: an episode row
         // "measured" 63 px at p75 1.69 that way).
         _ = try AcceptanceAudit.run(app, surface: "200% text (show window)", test: self)
+        EpisodeLibraryNavigation.browseCurrentShow(in: app)
         if let row = Optional(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.show.sidebar.episode.'")).firstMatch),
            row.exists, let m = ContrastMeter.measure(row.screenshot().image) {
-            Acceptance.record(self, "C03 show sidebar episode row at 200% (frontmost): glyphPixels \(m["glyphPixels"] ?? 0), p75 \(m["glyphP75"] ?? 0), \(m["text"] ?? "") on \(m["background"] ?? "")")
+            Acceptance.record(self, "C03 Library episode row at 200% (frontmost): glyphPixels \(m["glyphPixels"] ?? 0), p75 \(m["glyphP75"] ?? 0), \(m["text"] ?? "") on \(m["background"] ?? "")")
         }
         app.typeKey("l", modifierFlags: [.command, .shift])
         Thread.sleep(forTimeInterval: 1.5)
@@ -316,9 +317,12 @@ final class ContrastEvidenceUITests: XCTestCase {
             Thread.sleep(forTimeInterval: 1)
             window.typeKey("1", modifierFlags: .command)
             Thread.sleep(forTimeInterval: 1)
-            let episode = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.show.sidebar.episode.'")).firstMatch
-            textOnAccent("Show sidebar selected episode row", episode)
             textOnAccent("Toolbar selected destination 'Setup' (accent 25% fill)", app.descendants(matching: .any)["ww.show.destination.setup"])
+            EpisodeLibraryNavigation.browseCurrentShow(in: app)
+            let episode = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.show.sidebar.episode.'")).firstMatch
+            episode.click()
+            textOnAccent("Library selected episode row", episode)
+            window.click()
             app.typeKey("i", modifierFlags: [.command, .shift])
             Thread.sleep(forTimeInterval: 1.5)
             // Row 0 is the selected row: there the checkbox's state is its white checkmark on the accent fill

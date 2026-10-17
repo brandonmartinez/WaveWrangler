@@ -32,6 +32,9 @@ Packages/WaveWranglerKit/         Local Swift package linked by the app
                                   format-interpretation descriptor, typed decode failures
   Sources/WWAlignEstimate/        Pure acoustic offset/drift PROPOSAL estimator with abstention (decoded Float buffers in,
                                   WWTimeMap proposals/unsupported maps out; no I/O, never approves a clock)
+  Sources/WWAutoAlign/            Streaming whole-channel spectral fingerprints, precise speaker matching, robust affine proposal,
+                                  and separate review-only source-local timing support;
+                                  frozen WWAlignEstimate trees remain unchanged (see automatic-alignment.md)
   Sources/WWDerived/              Versioned map history/acceptance, M2-C5 derived-asset keys, app-cache asset store,
                                   cancellable job coordinator, consent-gated decoded-content digest (WW-020)
   Sources/WWAlignSegment/         Pure discontinuity segmenter (WW-017): splits a recorder group at offset steps/slope
@@ -71,6 +74,7 @@ Parallel sessions work on disjoint folders. Cross-folder changes go through the 
 | `Sources/`, `WWSources` | Sources owner | Access records, bookmarks, availability/download states, relink. |
 | `WWDecode` | Mac (WW-050) | Only `SystemSourceContentIO.swift` may open source content, read-only (`ForbiddenAPITests` enforces this, recursively). No writes, no dataless materialization, no partial publication on failure or cancel. Bump `formatInterpretationVersion` whenever the interpretation of the same bytes changes. Envelope evidence: [`docs/m2/evidence/ww-050-decode-envelope.md`](../m2/evidence/ww-050-decode-envelope.md). |
 | `WWAlignEstimate` | Alignment (WW-016/WW-021) | Pure: imports only Foundation, WWCore and WWTimeMap; no file/content/decode APIs, no Accelerate, and no clock-approval surface (`EstimatorPurityTests`). Emits only `acousticConsistentProposal` or a typed abstention; audio alone cannot tell propagation delay from clock change, so it never produces `clockApproved`. Scores are not probabilities, and the vocabulary scan bans such wording. Calibration and the frozen holdout definition: [`docs/m2/evidence/ww-016-estimator-calibration.md`](../m2/evidence/ww-016-estimator-calibration.md), [`docs/m2/fixtures/m2-freeze-estimator.json`](../m2/fixtures/m2-freeze-estimator.json). |
+| `WWAutoAlign` | Alignment | Native, decoded-buffer-only acoustic candidate for selected-speaker Align: time-indexed whole-channel fingerprints, content-selected NCC/PHAT evidence and bounded robust affine fitting. The pipeline caches fingerprints through the authorized gateway and revision-checked derived coordinator. No source I/O or clock-approval surface in the estimator. It is versioned separately rather than changing frozen v1 semantics. Design, exact bounds and synthetic evidence: [automatic alignment](automatic-alignment.md). |
 | `WWDerived` | Mac (WW-020) | Versioned maps are append-only revisions with one accepted pointer, embedded in the show (`Episode.alignment`, strict canonical `WWTimeMap` JSON, re-validated on open and save). Derived assets live only in the app cache: `DerivedAssetStore` refuses roots in or containing a source folder (canonical, case-folded paths; only exactly the user `~/Library` is exempt) and roots in iCloud Drive, `~/Library/CloudStorage` or any ubiquitous location. Assets are keyed by every M2-C5 component, and publish only after a currency check in the same coordinator turn (late results are discarded). The owner calls `DerivedJobCoordinator.shutdown()` before releasing source access: it cancels every job, refuses later submits and returns once no job runs; releasing the coordinator also cancels its jobs. Content digests need an explicit per-source request and availability ON, and go through `SourceDecoder` only. `ForbiddenAPITests` confines file mutation to `DerivedAssetStore.swift` and hashing to `DerivedAssetKey.swift`/`ContentDigest.swift`. |
 | `WWAlignSegment` | Alignment (WW-017) | Pure: imports only Foundation, `WWCore`, `WWTimeMap` and `WWAlignEstimate` (public API only; the estimator stays frozen under `m2-freeze-estimator`). `SegmentPurityTests` and the repo-wide scan ban file/content/decode APIs, random/UUID/shuffle/hashing APIs (epoch IDs are minted at exactly two counted sites), wall clocks, concurrency, `clockApproved` and probability wording. Every region is its own epoch: mapped regions are `acousticConsistentProposal`, and anything not localised to the WW-016 gate stays a typed unsupported region (no inverse). It never fits one map across a detected jump. Revision 2 requires time-persistent fitted runs before declaring a boundary; the rev-1 failed holdout remains recorded. Calibration harness concurrency is capped by `WW_SEGMENT_MAX_CONCURRENCY` (default 4, may only lower). CI runs only the gated calibration (`WW_SEGMENT_SWEEPS=0`); the floor and edge-silence sweeps run in local `scripts/test.sh`. Evidence and frozen revision: [`docs/m2/evidence/ww-017-discontinuities.md`](../m2/evidence/ww-017-discontinuities.md), [`docs/m2/fixtures/m2-freeze-discontinuity-2.json`](../m2/fixtures/m2-freeze-discontinuity-2.json). |
 | `WWRender` | Alignment (WW-018) | Pure: imports only Foundation, `WWCore` and `WWTimeMap` (`RenderPurityTests` plus the repo-wide `ForbiddenAPITests` scan). Consumes plain decoded buffers through `RenderSampleProvider`; applies no gain, mix, proxy or stretch. It plans from `GroupTimeMap` inverses and never redefines their conventions. Bump `RenderVersions.renderer` (or `RenderRecipe.currentVersion` / `RenderVersions.outputAssetFormat`) whenever the same inputs would render or lay out differently. The SRC is a calibrated **candidate**, not qualified. Listening is blocked. Calibration and the frozen holdout definition: [`docs/m2/evidence/ww-018-render-calibration.md`](../m2/evidence/ww-018-render-calibration.md), [`docs/m2/fixtures/m2-freeze-render.json`](../m2/fixtures/m2-freeze-render.json). |
@@ -85,15 +89,26 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
 `WWAlignSegment` depends on `WWCore`, `WWTimeMap` and `WWAlignEstimate`;
 `WWDerived` depends on `WWCore`, `WWTimeMap`, `WWSources`, `WWDecode` and `WWPersistence`;
 `WWAlignPipeline` depends on those plus `WWAlignEstimate` and `WWRender`; nothing depends on the app.
+The selected-speaker path additionally depends on `WWAutoAlign`; general multi-recorder cycle analysis
+continues to use the frozen `WWAlignEstimate`.
 
 ### Bounded visual alignment
 
-The native episode editor embeds grouped source Setup beside measured shared-ruler lanes. Import
+The native episode editor keeps measured shared-ruler lanes as its main surface. Its contextual
+Recording inspector owns speaker/channel assignments, group nudges, numeric timing, and picked-point
+anchor actions; timing evidence is expandable. Recording settings buttons select their own source
+and open that inspector. Manage recordings opens Setup for import, recorder grouping, and speaker
+management rather than embedding a second copy of Setup above the timeline. Import
 identity is provisional until the user explicitly confirms an unchanged original; the Setup engine
 checks current metadata and captures the decoder-owned raw witness before saving confirmation.
 Relink/Grant Access can also restore a missing device-local record or accept different file details
 only after the user acknowledges the comparison; the chosen local file is rechecked around read-only
 raw-witness capture before its new confirmed baseline is saved. It never silently substitutes a file.
+
+Layout is per-window presentation: separate lanes can be grouped by recorder or assigned speaker,
+while overlay always groups enabled recordings by speaker. Both speaker layouts use the same
+source-to-speaker projection and retain unknown speakers. Recorder IDs and group-move semantics
+are unchanged; switching layouts preserves track/group visibility and the shared viewport.
 `AlignmentPipeline.prepareManual` gathers header facts without requiring estimator output; initial
 placement maps only one eligible epoch per non-reference group so recorder restarts with overlapping
 source clocks are not invented as synchronized. The user can place later epochs individually.
@@ -117,7 +132,8 @@ frame windows, clips to occurrence spans, and never reads gap frames into an env
 spans are visibly unplaced source-origin previews. Opposite-polarity channels retain their peaks;
 the envelope is not mono PCM, an alignment estimate or edit authority.
 The alignment workspace puts a compact transport with a centered editable live playhead and five-second
-skips above logarithmic zoom. The adaptive ruler immediately above the waveforms offers evenly
+skips above compact icon/slider zoom and lane-height controls beside Fit Timeline. The adaptive ruler
+uses a larger draggable flag and a high-contrast position line through each waveform, and offers evenly
 spaced time ticks: click to seek, drag its visible marker to move the
 playhead, drag empty ruler space to pan without moving the playhead, or pinch to zoom around the
 gesture's time anchor. Aligned time may be negative relative to the reference, and verified
@@ -169,6 +185,14 @@ halo while seeking over skipped prefixes. PCM windows can therefore reach late e
 without decoding earlier hours. Other codecs retain the 600-second decoded-prefix budget until
 their priming and exact seek behavior are established.
 
+File-local adaptive listening uses a separate pitch-preserving multichannel path, not `WWRender`'s
+affine SRC. Witnessed reads feed a memory-only nominal PCM converter inside `WWDecode`, then one
+direct native TimePitch unit with unchanged channel order. Region-anchored twelve-second processing
+blocks and complementary overlap feed the shared five-second listening/derived cache tiles without
+cache-cut phase jumps. Unsupported timing remains silence. See
+[automatic alignment](automatic-alignment.md#persistence-and-audible-application) for processing
+identity, cache revision and native accuracy limits.
+
 `WaveformWindowReader.readOverview` is a separate automatic PCM scan after a confirmed episode source
 has verified access and the show is saved, or when its overview is missing on alignment open/refresh.
 Leaving Setup cancels an unfinished setup scan; opening Alignment checks again. This is not an
@@ -207,9 +231,10 @@ refusal, exact viewport selection and mixed-rate aligned audio.
   SwiftUI views (`NSHostingController`). No storyboard and no SwiftUI `DocumentGroup`.
 - **Portable show document** (`.wwshow`, UTI `com.brandonmartinez.wavewrangler.show`): one canonical
   JSON value, `ShowDocumentModel` — show, all episodes, recorder groups/epochs, logical source records,
-  speakers and per-episode assignments, edit-history skeleton, and (WW-020, show schema 3) an optional
-  per-episode `alignment`: append-only versioned time maps plus the accepted revision. Schema 1 and 2
-  shows open as "needs update" and migrate straight to 3 through `ShowSchemaMigration` (C5: backup, C3
+  speakers and per-episode assignments, edit-history skeleton, and an optional
+  per-episode `alignment`: append-only versioned time maps plus the accepted revision. Show schema 4
+  additionally persists file-local adaptive timing alongside unchanged recorder-clock maps. Schema 1, 2 and 3
+  shows open as "needs update" and migrate straight to 4 through `ShowSchemaMigration` (C5: backup, C3
   publication, unknown-newer refusal). An embedded map from a newer time-map schema is refused as
   unknown-newer, never as damaged; a time-map schema bump requires a show schema bump.
 - **Canonical library document** (`.wwlibrary`, UTI `com.brandonmartinez.wavewrangler.library`):
@@ -296,6 +321,14 @@ refusal, exact viewport selection and mixed-rate aligned audio.
   Results are appended to `Packages/WaveWranglerKit/.build/persistence-evidence.log`.
 
 ## Build and test
+
+The app icon is the complete macOS 16/32/128/256/512 pt, 1x/2x set in
+`WaveWrangler/Assets.xcassets/AppIcon.appiconset`, selected for both Debug and Release.
+To regenerate from the original square SVG, run
+`python3 scripts/generate-app-icon.py "/path/to/logo.svg" "/path/to/new-output-folder"`
+with ImageMagick installed. The generator preserves the original and creates a padded, transparent
+macOS squircle SVG, an Xcode appiconset, a standard iconset, and an ICNS. Copy the generated
+`AppIcon.appiconset` into the app's asset catalog; do not put the source artwork in app resources.
 
 Prerequisites: Xcode with the macOS 26+ SDK (local: Xcode 27; CI: newest stable Xcode 26.x on
 `macos-26`). The package uses `swift-tools-version: 6.2` so both toolchains work — do not raise it
@@ -417,9 +450,19 @@ additively and update this table.
 | `AutosavePolicyConnection` (`Settings/AutosavePolicyConnection.swift`) | Persistence `AutosavePolicyController` | The Settings toggle binds to `AutosavePolicyController.shared.isEnabled` (`WWAutosaveEnabled`/`WWAutosaveDelaySeconds`); `isConnected` is true only while that controller is the source of truth. |
 | `SetupSourcesContent.makeView` (`Workspace/SetupContainerView.swift`) | Sources UI | `(ShowDocumentStore, EpisodeID) -> AnyView` hosted in the Setup destination (Sources outline + Speakers table). |
 
-Show windows: `ShowDocument` hosts `ShowWorkspaceView(store:)`; per-window state (`ShowWindowState`) is
-registered for menu routing (`CommandRouter`). Edits go through `ShowDocumentStore.apply(_:coalescing:_:)`
-with the user-facing undo names in `WWOrganizer.UndoActionName`.
+Episode windows: `EpisodeWindowController` hosts `ShowWorkspaceView(state:)` with a fixed
+`ShowWindowState.boundEpisodeID`, restored by logical episode ID. Opening the same episode reuses its
+window unless a new window was explicitly requested. Deleting its episode never retargets that editor.
+The states are registered for menu routing (`CommandRouter`); all windows for a show share one
+`ShowDocument`/`ShowDocumentStore`, save status, and document undo manager.
+
+Library selects shows and opens their documents with `display: false` to manage live episodes in
+`LibraryShowDetail`, not cached last-open summaries. A windowless document controller retains each
+browsed show in AppKit's save/quit lifecycle after its last episode editor closes; no hidden window is
+created. Library's episode panel routes Undo to that show's undo manager, while collection edits retain
+Library's separate history. `Close Show` calls `canClose` before closing the whole document.
+Edits go through `ShowDocumentStore.apply(_:coalescing:_:)` with the user-facing names in
+`WWOrganizer.UndoActionName`; canonical show/library formats are unchanged.
 
 Library ordering: `LibraryUIStore` (backed by the pure, unit-tested `WWOrganizer.LibrarySession`) loads at
 launch, never writes before load / after a failed load / while read-only (L4/L5), queues show-open bookkeeping,

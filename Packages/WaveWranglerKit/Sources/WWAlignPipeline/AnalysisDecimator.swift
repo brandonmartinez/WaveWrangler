@@ -59,7 +59,7 @@ struct AnalysisDecimator {
         Int((frames + Int64(factor) - 1) / Int64(factor))
     }
 
-    init(sourceRate: Int, minimumRate: Int, range: Range<Int64>, channel: Int? = nil) throws(Refusal) {
+    init(sourceRate: Int, minimumRate: Int, range: Range<Int64>, channel: Int? = nil, streaming: Bool = false) throws(Refusal) {
         guard !range.isEmpty, range.lowerBound >= 0 else { throw .emptyRange }
         self.sourceRate = sourceRate
         factor = try Self.factor(sourceRate: sourceRate, minimumRate: minimumRate)
@@ -69,7 +69,7 @@ struct AnalysisDecimator {
         self.channel = channel
         outputCount = Self.outputCount(frames: Int64(range.count), factor: factor)
         output = []
-        output.reserveCapacity(outputCount)
+        output.reserveCapacity(streaming ? min(outputCount, 65_536) : outputCount)
         historyStart = Swift.max(0, range.lowerBound - Int64(halfTaps))
     }
 
@@ -91,6 +91,13 @@ struct AnalysisDecimator {
     }
 
     var isComplete: Bool { nextOutput == outputCount }
+
+    /// Releases completed samples without changing the filter's history or source coordinates.
+    mutating func drainOutput() -> [Float] {
+        let samples = output
+        output = []
+        return samples
+    }
 
     /// Consumes the next decoded chunk (chunks arrive in source order). Frames outside `neededInput` are
     /// skipped without being mixed.

@@ -14,6 +14,33 @@ struct MapCurrencyTests {
 
     // MARK: Content identity (one snapshot, two maps)
 
+    @Test("Repeating an activation keeps the exact ready identity continuously available", arguments: [false, true])
+    func repeatedActivationDoesNotRepublishIdentity(persisted: Bool) async throws {
+        let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "repeat-activation")
+        let report = try await fixture.analyse(preferredReference: "ref")
+        let accepted = try await fixture.acceptAndActivate(report, [fixture.epochs[1]: ConcurrencyTests.truth])
+        let opens = fixture.content.total.opens
+        if persisted {
+            try await fixture.pipeline.activate(model: accepted.model, episode: fixture.episodeID)
+        } else {
+            try await fixture.pipeline.activate(accepted)
+        }
+        let map = try await fixture.pipeline.verifiedAcceptedMap(
+            model: accepted.model, episode: fixture.episodeID
+        )
+        #expect(map == accepted.map)
+        #expect(fixture.content.total.opens == opens)
+        await fixture.coordinator.shutdown()
+        var identityRuns = 0
+        for await change in fixture.coordinator.changes {
+            if change.slot == accepted.identity.slot,
+               case let .running(key) = change.state, key == accepted.identity.key {
+                identityRuns += 1
+            }
+        }
+        #expect(identityRuns == 1, "A redundant activation must not withdraw a ready identity from concurrent readers")
+    }
+
     @Test("Two accepts from one snapshot: only the latest activates, and the stale snapshot is refused afterwards")
     func twoAcceptsFromOneSnapshot() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "two-accepts")

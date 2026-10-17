@@ -25,6 +25,7 @@ let package = Package(
         // Pure acoustic offset/drift PROPOSAL estimator with abstention (WW-016). Consumes decoded sample
         // buffers; no I/O, no decoding, never approves a clock.
         .library(name: "WWAlignEstimate", targets: ["WWAlignEstimate"]),
+        .library(name: "WWAutoAlign", targets: ["WWAutoAlign"]),
         // Pure channel-consistent clock-correction renderer (WW-018/WW-023). Consumes decoded buffers through a
         // caller-owned provider; never opens files.
         .library(name: "WWRender", targets: ["WWRender"]),
@@ -57,9 +58,10 @@ let package = Package(
         .target(name: "WWDecode", dependencies: ["WWCore", "WWSources"]),
         .target(name: "WWDerived", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWPersistence"]),
         .target(name: "WWAlignEstimate", dependencies: ["WWCore", "WWTimeMap"]),
+        .target(name: "WWAutoAlign", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
         .target(name: "WWRender", dependencies: ["WWCore", "WWTimeMap"]),
         .target(name: "WWAlignSegment", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
-        .target(name: "WWAlignPipeline", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWDerived", "WWPersistence", "WWAlignEstimate", "WWRender"]),
+        .target(name: "WWAlignPipeline", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWDerived", "WWPersistence", "WWAlignEstimate", "WWAutoAlign", "WWRender"]),
         .target(name: "WWWordEvaluation"),
         .target(name: "WWSpeech", dependencies: ["WWCore", "WWWhisperNative"]),
         .target(
@@ -89,6 +91,7 @@ let package = Package(
         .testTarget(name: "WWDecodeTests", dependencies: ["WWDecode", "WWSources", "WWCore"]),
         .testTarget(name: "WWDerivedTests", dependencies: ["WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWCore"]),
         .testTarget(name: "WWAlignEstimateTests", dependencies: ["WWAlignEstimate", "WWTimeMap", "WWCore"]),
+        .testTarget(name: "WWAutoAlignTests", dependencies: ["WWAutoAlign", "WWAlignEstimate", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWRenderTests", dependencies: ["WWRender", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWAlignSegmentTests", dependencies: ["WWAlignSegment", "WWAlignEstimate", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWAlignPipelineTests", dependencies: ["WWAlignPipeline", "WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWAlignEstimate", "WWRender", "WWCore"]),
@@ -96,9 +99,9 @@ let package = Package(
         .testTarget(name: "WWSpeechTests", dependencies: ["WWSpeech", "WWCore", "WWWhisperNative"]),
         .testTarget(name: "WWTinyPCMProbeTests", dependencies: ["WWTinyPCMProbe"]),
         .testTarget(name: "WWCutPolicyTests", dependencies: ["WWCutPolicy", "WWCore"]),
-        // Headless validation on a user-approved local episode copy. Skipped unless WW_LOCAL_EPISODE_DIR is
-        // set at run time (never on CI); see docs/m2/evidence/m2-local-episode-validation.md.
-        .testTarget(name: "WWLocalEpisodeValidationTests", dependencies: ["WWDecode", "WWSources", "WWAlignEstimate", "WWRender", "WWTimeMap", "WWCore", "WWDerived", "WWPersistence", "WWAlignPipeline"]),
+        // Headless, explicitly opted-in local episode/pair validation; never automatic CI media access.
+        // See docs/m2/evidence/m2-local-episode-validation.md and docs/engineering/automatic-alignment.md.
+        .testTarget(name: "WWLocalEpisodeValidationTests", dependencies: ["WWDecode", "WWSources", "WWAlignEstimate", "WWAutoAlign", "WWRender", "WWTimeMap", "WWCore", "WWDerived", "WWPersistence", "WWAlignPipeline"]),
     ],
     swiftLanguageModes: [.v6],
     cLanguageStandard: .c11,

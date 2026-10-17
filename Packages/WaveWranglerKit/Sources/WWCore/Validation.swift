@@ -136,6 +136,15 @@ extension EpisodeAlignment {
         }
         var previous = 0
         for version in maps {
+            if let corrections = version.sourceCorrections {
+                if corrections.isEmpty || Set(corrections.map(\.source)).count != corrections.count
+                    || !corrections.allSatisfy(\.isValid)
+                    || corrections.contains(where: { correction in
+                        corrections.contains(where: { $0.source == correction.reference })
+                    }) {
+                    issues.append(.init(.invalidAlignment, "episode \(episode) map \(version.revision) invalid file-local timing"))
+                }
+            }
             if version.revision <= previous {
                 issues.append(.init(.invalidAlignment, "episode \(episode) map revision \(version.revision) after \(previous)"))
             }

@@ -1,11 +1,247 @@
 import Foundation
 import Testing
-import WWAlignPipeline
+@testable import WWAlignPipeline
+@testable import WWAutoAlign
 import WWCore
 import WWTimeMap
 
 @Suite("Waveform selection")
 struct AlignmentWaveformTests {
+    @Test func adaptiveGhostAndClockMarkersAreFileLocalAndNeverBridgeUnsupportedAudio() throws {
+        let f = try previewFixture()
+        func participant(_ track: AlignmentWaveformTrack) -> AnalysisParticipant {
+            AnalysisParticipant(group: track.group, epoch: track.epoch, source: track.id,
+                occurrence: SourceOccurrenceID(), revisionToken: "synthetic", sourceRate: 1000,
+                sourceFrames: 20_000, channelCount: 1, excerptStartFrame: 0, excerptEndFrame: 20_000, analysisRate: 1000)
+        }
+        let observations = (4..<11).map { index in
+            DelayEvidence(station: index, attempt: 0, targetCenter: Double(index), status: "eligible",
+                offsetSeconds: -3, nccScore: 0.8, nccSecond: 0.1, phatOffsetSeconds: -3,
+                phatPeakRatio: 0.1, method: AutomaticAlignment.fineMethod)
+        } + (12..<19).map { index in
+            DelayEvidence(station: index % 16, attempt: 0, targetCenter: Double(index), status: "eligible",
+                offsetSeconds: -2.98, nccScore: 0.8, nccSecond: 0.1, phatOffsetSeconds: -2.98,
+                phatPeakRatio: 0.1, method: AutomaticAlignment.fineMethod)
+        }
+        let timing = try AdaptiveAlignment.regions(observations: observations, start: 0, end: 20)
+        let record = AdaptiveAnalysisRecord(
+            reference: participant(f.track), target: participant(f.track), timing: timing,
+            referenceToAlignedRate: 1.0002, referenceToAlignedOffset: 0.5, referenceCoverageEnd: 20
+        )
+        let before = try AlignmentWaveformProjection.strokes(track: f.track, map: f.map)
+        let ghosts = AlignmentWaveformProjection.adaptiveStrokes(track: f.track, record: record)
+        #expect(ghosts.count == 12)
+        #expect(ghosts.allSatisfy { $0.sourceSeconds < 10 || $0.sourceSeconds >= 12 })
+        for ghost in ghosts {
+            let delay = ghost.sourceSeconds < 10 ? -3.0 : -2.98
+            #expect(abs(ghost.displaySeconds - ((ghost.sourceSeconds + delay) * 1.0002 + 0.5)) < 1e-9)
+            #expect(ghost.low == -0.4 && ghost.high == 0.6)
+        }
+        let markers = AlignmentWaveformProjection.adaptiveMarkers(track: f.track, record: record)
+        #expect(markers.map(\.sourceSeconds) == [4, 12])
+        #expect(markers.allSatisfy { !$0.isQuiet })
+        #expect(record.playbackIntervals(includeEstimated: true).allSatisfy { $0.kind != .estimated },
+                "the estimate's native rate bound is checked after accepted-reference projection")
+        let estimateRecord = AdaptiveAnalysisRecord(reference: record.reference, target: record.target, timing: timing,
+            referenceToAlignedOffset: 0.5, referenceCoverageEnd: 20)
+        let estimatedGhosts = AlignmentWaveformProjection.adaptiveStrokes(
+            track: f.track, record: estimateRecord, includeEstimated: true)
+        #expect(estimatedGhosts.count > ghosts.count)
+        #expect(estimatedGhosts.contains { $0.sourceSeconds > 10 && $0.sourceSeconds < 12 })
+        #expect(estimatedGhosts.allSatisfy { $0.sourceSeconds >= 4 && $0.sourceSeconds < 18 })
+        let estimatedMarkers = AlignmentWaveformProjection.adaptiveMarkers(
+            track: f.track, record: estimateRecord, includeEstimated: true)
+        #expect(estimatedMarkers.filter { $0.kind == .estimated }.count == 1)
+        #expect(estimatedMarkers.filter { $0.kind == nil }
+            == AlignmentWaveformProjection.adaptiveMarkers(track: f.track, record: estimateRecord))
+        #expect(AlignmentWaveformProjection.adaptiveStrokes(track: f.track, record: record) == ghosts,
+                "estimated preview is explicit and must not mutate the conservative proposal")
+        func energy(reference: Bool) throws -> QuietAudioProfile {
+            let samples: [Float] = (0..<160000).map {
+                let time = Double($0) / 8000
+                let quiet = reference ? (7.05..<9).contains(time) : (10.05..<12).contains(time)
+                return quiet ? 0.00003 : 0.1
+            }
+            var builder = try QuietAudioProfileBuilder(sampleRate: 8000, channelCount: 1,
+                selectedChannel: 0, allChannels: !reference)
+            try builder.append(samples, firstFrame: 0, frameCount: samples.count)
+            return try builder.finish()
+        }
+        let quietTiming = try AdaptiveQuietTiming.adding(
+            to: timing, target: energy(reference: false), reference: energy(reference: true))
+        try #require(quietTiming.quietSeconds > 0.5)
+        let quietRecord = AdaptiveAnalysisRecord(
+            reference: record.reference, target: record.target, timing: quietTiming,
+            referenceToAlignedRate: record.referenceToAlignedRate,
+            referenceToAlignedOffset: record.referenceToAlignedOffset, referenceCoverageEnd: 20)
+        let quietMarkers = AlignmentWaveformProjection.adaptiveMarkers(track: f.track, record: quietRecord)
+        #expect(quietMarkers.filter(\.isQuiet).count == 1)
+        #expect(quietMarkers.filter { !$0.isQuiet } == markers)
+        let fineTrack = AlignmentWaveformTrack(group: f.track.group, epoch: f.track.epoch,
+            name: f.track.name, groupName: f.track.groupName,
+            envelope: WaveformEnvelope(source: f.track.id, sampleRate: 1000, channelCount: 1, totalFrames: 20000,
+                bins: stride(from: 0, to: 20000, by: 100).map {
+                    WaveformBin(firstFrame: Int64($0), endFrame: Int64($0 + 100), minimum: -0.4, maximum: 0.6)
+                }))
+        let quietGhosts = AlignmentWaveformProjection.adaptiveStrokes(track: fineTrack, record: quietRecord)
+        #expect(quietGhosts.contains { $0.sourceSeconds > 10 && $0.sourceSeconds < 12 })
+        #expect(quietGhosts.allSatisfy {
+            quietTiming.containsPlayableInterval(from: $0.groupRange.lowerBound, to: $0.groupRange.upperBound)
+        })
+        #expect(try AlignmentWaveformProjection.strokes(track: f.track, map: f.map) == before)
+        let sibling = AlignmentWaveformTrack(group: f.track.group, epoch: f.track.epoch,
+            name: "another file", groupName: f.track.groupName,
+            envelope: WaveformEnvelope(source: SourceID(), sampleRate: 1000, channelCount: 1,
+                                      totalFrames: 20_000, bins: f.track.envelope.bins))
+        #expect(AlignmentWaveformProjection.adaptiveStrokes(track: sibling, record: record).isEmpty)
+        #expect(AlignmentWaveformProjection.adaptiveMarkers(track: sibling, record: record).isEmpty)
+    }
+
+    @Test func speakerLayoutIsFirstAndDefault() {
+        #expect(AlignmentWaveformLayout.defaultValue == .speaker)
+        #expect(AlignmentWaveformLayout.allCases == [.speaker, .recorderGroup, .overlay])
+        #expect(AlignmentWaveformLayout.allCases.map(\.rawValue) == ["By speaker", "By recorder", "Overlay"])
+    }
+
+    @Test func acceptedAdaptiveProjectionRetainsBinsAndUndoRestoresCoordinatesWithoutBridgingGaps() throws {
+        let f = try previewFixture()
+        let track = AlignmentWaveformTrack(group: f.track.group, epoch: f.track.epoch, name: f.track.name,
+            groupName: f.track.groupName,
+            envelope: WaveformEnvelope(source: f.track.id, sampleRate: 8000, channelCount: 1, totalFrames: 160000,
+                bins: f.track.envelope.bins.map {
+                    WaveformBin(firstFrame: $0.firstFrame * 8, endFrame: $0.endFrame * 8, minimum: $0.minimum, maximum: $0.maximum)
+                }))
+        let correction = SourceTimingCorrection(source: track.id, group: track.group, epoch: track.epoch,
+            reference: SourceID(), sourceRate: 8000, sourceFrames: 160000, channelCount: 1,
+            analysisDigest: String(repeating: "a", count: 64), processing: PitchPreservingAudio.identifier,
+            segments: [
+                SourceTimingSegment(sourceStart: 4, sourceEnd: 10, alignedStart: 1, rateRatio: 1.0002),
+                SourceTimingSegment(sourceStart: 12, sourceEnd: 18, alignedStart: 9.02, rateRatio: 1),
+            ])
+        let before = try AlignmentWaveformProjection.strokes(track: track, map: nil)
+        let after = try AlignmentWaveformProjection.strokes(track: track, map: nil, correction: correction)
+        #expect(after.filter(\.mapped).count == 12)
+        #expect(after.count == before.count, "unverified source bins stay visible rather than disappearing")
+        #expect(after.filter { !$0.mapped }.allSatisfy { $0.displaySeconds == $0.sourceSeconds })
+        for stroke in after where stroke.mapped {
+            #expect(abs(stroke.displaySeconds - (try #require(correction.alignedTime(at: stroke.sourceSeconds)))) < 1e-9)
+        }
+        #expect(try AlignmentWaveformProjection.strokes(track: track, map: nil) == before)
+        let spanning = AlignmentWaveformTrack(group: track.group, epoch: track.epoch, name: track.name,
+            groupName: track.groupName,
+            envelope: WaveformEnvelope(source: track.id, sampleRate: 8000, channelCount: 1, totalFrames: 160000,
+                bins: [WaveformBin(firstFrame: 72000, endFrame: 104000, minimum: -0.2, maximum: 0.2)]))
+        #expect(try AlignmentWaveformProjection.strokes(track: spanning, map: nil, correction: correction).isEmpty)
+    }
+
+    private func previewFixture() throws -> (
+        track: AlignmentWaveformTrack, map: AlignedTimelineMap, reference: TimelineReference, segment: AffineClockSegment
+    ) {
+        let referenceGroup = RecorderGroupID(), targetGroup = RecorderGroupID()
+        let referenceEpoch = RecordingEpochID(), targetEpoch = RecordingEpochID()
+        let reference = try SourceOccurrence(source: SourceID(), nominalRate: NominalRate(1_000), frameCount: 20_000)
+        let target = try SourceOccurrence(source: SourceID(), nominalRate: NominalRate(1_000), frameCount: 20_000)
+        let timeline = TimelineReference(group: referenceGroup, epoch: referenceEpoch, occurrence: reference.id)
+        let identity = try AffineClockSegment(groupClockStart: .zero, groupClockEnd: ExactRational(20),
+                                             rateRatio: .one, alignedOffset: .zero)
+        let targetIdentity = try AffineClockSegment(groupClockStart: ExactRational(1), groupClockEnd: ExactRational(21),
+                                                   rateRatio: .one, alignedOffset: .zero)
+        let map = try AlignedTimelineMap(reference: timeline, groups: [
+            GroupTimeMap(group: referenceGroup, reference: timeline, epochs: [
+                EpochClockMap(epoch: referenceEpoch, mapping: .mapped(segments: [identity], provenance: .timelineReference))
+            ], placements: [OccurrencePlacement(occurrence: reference, spans: [
+                EpochSpan(startFrame: 0, endFrame: 20_000, epoch: referenceEpoch, groupClockOffset: .zero)
+            ])]),
+            GroupTimeMap(group: targetGroup, reference: timeline, epochs: [
+                EpochClockMap(epoch: targetEpoch, mapping: .mapped(segments: [targetIdentity],
+                    provenance: .manual(ManualCorrection(basis: .numericEntry))))
+            ], placements: [OccurrencePlacement(occurrence: target, spans: [
+                EpochSpan(startFrame: 0, endFrame: 20_000, epoch: targetEpoch, groupClockOffset: ExactRational(1))
+            ])])
+        ])
+        let track = AlignmentWaveformTrack(
+            group: targetGroup, epoch: targetEpoch, name: "target.wav", groupName: "Synthetic",
+            envelope: WaveformEnvelope(source: target.source, sampleRate: 1_000, channelCount: 1, totalFrames: 20_000,
+                bins: (0..<20).map { WaveformBin(firstFrame: Int64($0 * 1_000), endFrame: Int64(($0 + 1) * 1_000),
+                                               minimum: -0.4, maximum: 0.6) })
+        )
+        return (track, map, timeline, try AffineClockSegment(
+            groupClockStart: ExactRational(2), groupClockEnd: ExactRational(12),
+            rateRatio: ExactRational(10_001, 10_000), alignedOffset: ExactRational(-3)))
+    }
+
+    @Test func proposalGhostUsesGroupCoordinatesAndNeverExtrapolatesOrChangesTheMap() throws {
+        let f = try previewFixture()
+        let before = f.map
+        let ghosts = AlignmentWaveformProjection.proposedStrokes(
+            track: f.track, map: f.map, targetGroup: f.track.group, targetEpoch: f.track.epoch, segment: f.segment
+        )
+        #expect(ghosts.count == 10)
+        for ghost in ghosts {
+            #expect(ghost.groupRange.lowerBound >= 2 && ghost.groupRange.upperBound <= 12)
+            #expect(abs(ghost.displaySeconds - (1.0001 * ghost.groupSeconds - 3)) < 1e-10)
+            #expect(abs(ghost.sourceSeconds + 1 - ghost.groupSeconds) < 1e-10)
+            #expect(ghost.low == -0.4 && ghost.high == 0.6)
+        }
+        #expect(f.map == before)
+        #expect(AlignmentWaveformProjection.proposedStrokes(
+            track: f.track, map: f.map, targetGroup: f.reference.group,
+            targetEpoch: f.track.epoch, segment: f.segment
+        ).isEmpty)
+        #expect(AlignmentWaveformProjection.proposedStrokes(
+            track: f.track, map: f.map, targetGroup: f.track.group,
+            targetEpoch: RecordingEpochID(), segment: f.segment
+        ).isEmpty)
+    }
+
+    @Test func timingOnlyChangesReprojectExistingBinsWithoutRemovingUnmeasuredAudio() throws {
+        let f = try previewFixture()
+        let group = try #require(f.map.groups.first { $0.group == f.track.group })
+        let updated = try AlignedTimelineMap(reference: f.reference, groups: f.map.groups.map {
+            $0.group == f.track.group ? try GroupTimeMap(
+                group: group.group, reference: group.reference, epochs: [
+                    EpochClockMap(epoch: f.track.epoch, mapping: .mapped(segments: [f.segment],
+                        provenance: .manual(ManualCorrection(basis: .acceptedAcousticProposal))))
+                ], placements: group.placements.map {
+                    OccurrencePlacement(occurrence: $0.occurrence, spans: [
+                        EpochSpan(startFrame: 1_000, endFrame: 11_000, epoch: f.track.epoch,
+                                  groupClockOffset: ExactRational(1))
+                    ])
+                }
+            ) : $0
+        })
+        let before = try AlignmentWaveformProjection.strokes(track: f.track, map: f.map)
+        let after = try AlignmentWaveformProjection.strokes(track: f.track, map: updated)
+        #expect(before.count == 20 && after.count == 20)
+        #expect(after.filter(\.mapped).count == 10)
+        #expect(after.filter { !$0.mapped }.count == 10)
+        #expect(after.map(\.low) == before.map(\.low))
+        #expect(after.map(\.high) == before.map(\.high))
+        let measured = try #require(after.first { $0.mapped })
+        #expect(abs(measured.displaySeconds - (1.0001 * measured.groupSeconds - 3)) < 1e-10)
+        #expect(try AlignmentWaveformProjection.strokes(track: f.track, map: f.map).map(\.displaySeconds)
+            == before.map(\.displaySeconds), "Undo reuses the same source-coordinate envelope")
+    }
+
+    @Test func cachedSamplesCannotCrossEpisodeOrSourceChanges() {
+        let epoch = RecordingEpoch(label: "Synthetic")
+        let group = RecorderGroup(name: "Recorder", epochs: [epoch])
+        let source = SourceRecord(displayNameHint: "synthetic.wav",
+                                  placement: SourcePlacement(recorderGroupID: group.id, epochID: epoch.id))
+        let episode = Episode(title: "Synthetic", recorderGroups: [group], sources: [source])
+        var renamed = episode
+        renamed.title = "Renamed"
+        #expect(AlignmentWaveformProjection.canReuseSamples(from: episode, to: renamed))
+        var changed = episode
+        changed.sources[0].displayNameHint = "replacement.wav"
+        #expect(!AlignmentWaveformProjection.canReuseSamples(from: episode, to: changed))
+        changed = episode
+        changed.recorderGroups = []
+        #expect(!AlignmentWaveformProjection.canReuseSamples(from: episode, to: changed))
+        #expect(!AlignmentWaveformProjection.canReuseSamples(from: episode, to: Episode(title: "Other")))
+        #expect(!AlignmentWaveformProjection.canReuseSamples(from: nil, to: episode))
+    }
+
     @Test func waveformAnchorUsesClickedTimeWithinMeasuredBin() {
         let epoch = RecordingEpochID()
         let mapped = AlignmentWaveformStroke(
@@ -61,7 +297,7 @@ struct AlignmentWaveformTests {
             == [first: 0.5, third: 0.5])
     }
 
-    @Test func overlayGroupsBySpeakerWithoutSplittingRecorderSets() {
+    @Test func speakerLayoutsGroupSourcesWithoutChangingRecorderMembership() {
         let firstSpeaker = SpeakerID()
         let secondSpeaker = SpeakerID()
         let sharedRecorder = RecorderGroupID()
@@ -91,6 +327,31 @@ struct AlignmentWaveformTests {
         #expect(speakerGroups.map { $0.tracks.map(\.id) } == [[first, backup], [second], [unknown]])
         #expect(speakerGroups[0].tracks[0].group == speakerGroups[1].tracks[0].group)
         #expect(speakerGroups[0].tracks[1].group == speakerGroups[2].tracks[0].group)
+    }
+
+    @Test func speakerLayoutsRetainUnknownSourcesAndFollowReassignments() throws {
+        let recorder = RecorderGroupID()
+        let sources = [SourceID(), SourceID(), SourceID()]
+        let tracks = sources.map { source in
+            AlignmentWaveformTrack(
+                group: recorder, epoch: RecordingEpochID(), name: "generated.wav",
+                groupName: "Synthetic", envelope: WaveformEnvelope(
+                    source: source, sampleRate: 1_000, channelCount: 1, totalFrames: 1_000, bins: []
+                )
+            )
+        }
+        #expect(AlignmentWaveformProjection.speakerGroups(tracks: [], speakerForSource: { _ in nil }).isEmpty)
+        let unknown = AlignmentWaveformProjection.speakerGroups(tracks: tracks) { _ in nil }
+        try #require(unknown.count == 1)
+        #expect(unknown[0].id == nil)
+        #expect(unknown[0].tracks.map(\.id) == sources)
+        let speaker = SpeakerID()
+        let reassigned = AlignmentWaveformProjection.speakerGroups(tracks: tracks) {
+            $0 == sources[1] ? speaker : nil
+        }
+        #expect(reassigned.map(\.id) == [nil, speaker])
+        #expect(reassigned.map { $0.tracks.map(\.id) } == [[sources[0], sources[2]], [sources[1]]])
+        #expect(reassigned.flatMap(\.tracks).allSatisfy { $0.group == recorder })
     }
 
     @Test func playbackSelectsOnlySourcesWithAcceptedMappedEpochs() throws {

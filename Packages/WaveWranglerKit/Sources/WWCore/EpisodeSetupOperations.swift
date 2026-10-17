@@ -84,6 +84,17 @@ public struct SpeakerChannelReference: Sendable, Hashable {
 extension ShowDocumentModel {
     // MARK: Recorder groups
 
+    public func preferringAlignmentReference(
+        _ preferred: Bool, group groupID: RecorderGroupID, in episodeID: EpisodeID
+    ) throws(DomainError) -> ShowDocumentModel {
+        try updatingSetup(episodeID) { (episode: inout Episode) throws(DomainError) in
+            guard let index = episode.recorderGroups.firstIndex(where: { $0.id == groupID }) else {
+                throw .recorderGroupNotFound(groupID)
+            }
+            episode.recorderGroups[index].preferredAlignmentReference = preferred ? true : nil
+        }
+    }
+
     public func renamingRecorderGroup(_ groupID: RecorderGroupID, in episodeID: EpisodeID, to name: String) throws(DomainError) -> ShowDocumentModel {
         let trimmed = Self.trimmed(name)
         guard !trimmed.isEmpty else { throw .emptyTitle }

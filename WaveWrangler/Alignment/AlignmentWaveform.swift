@@ -1,7 +1,16 @@
 import Foundation
 import WWAlignPipeline
 import WWCore
+import WWSources
 import WWTimeMap
+
+enum AlignmentWaveformLayout: String, CaseIterable {
+    case speaker = "By speaker"
+    case recorderGroup = "By recorder"
+    case overlay = "Overlay"
+
+    static let defaultValue: Self = .speaker
+}
 
 struct AlignmentWaveformTrack: Identifiable, Sendable {
     var id: SourceID { envelope.source }
@@ -10,6 +19,19 @@ struct AlignmentWaveformTrack: Identifiable, Sendable {
     let name: String
     let groupName: String
     let envelope: WaveformEnvelope
+    let sourceIdentity: RawSourceIdentity?
+
+    init(
+        group: RecorderGroupID, epoch: RecordingEpochID, name: String, groupName: String,
+        envelope: WaveformEnvelope, sourceIdentity: RawSourceIdentity? = nil
+    ) {
+        self.group = group
+        self.epoch = epoch
+        self.name = name
+        self.groupName = groupName
+        self.envelope = envelope
+        self.sourceIdentity = sourceIdentity
+    }
 }
 
 struct AlignmentWaveformSpeakerGroup: Identifiable {
@@ -103,6 +125,38 @@ enum AlignmentTransportSelection {
 
 enum AlignmentWaveformProjection {
     static let overviewNavigationRange = -86_400.0...86_400.0
+
+    static func canReuseSamples(from loaded: Episode?, to current: Episode?) -> Bool {
+        guard let loaded, let current else { return false }
+        return loaded.id == current.id && loaded.sources == current.sources
+            && loaded.recorderGroups == current.recorderGroups
+    }
+
+    static func proposedStrokes(
+        track: AlignmentWaveformTrack, map: AlignedTimelineMap?,
+        targetGroup: RecorderGroupID, targetEpoch: RecordingEpochID, segment: AffineClockSegment
+    ) -> [AlignmentWaveformStroke] {
+        guard track.group == targetGroup else { return [] }
+        let placement = map?.groups.first { $0.group == track.group }?
+            .placements.first { $0.occurrence.source == track.id }
+        let rate = Double(track.envelope.sampleRate)
+        return track.envelope.bins.compactMap { bin in
+            let span = placement?.spans.first { $0.startFrame <= bin.firstFrame && bin.endFrame <= $0.endFrame }
+            guard (span?.epoch ?? track.epoch) == targetEpoch,
+                  placement == nil || span != nil else { return nil }
+            let offset = span?.groupClockOffset.approximateDouble ?? 0
+            let first = max(Double(bin.firstFrame) / rate + offset, segment.groupClockStart.approximateDouble)
+            let last = min(Double(bin.endFrame - 1) / rate + offset, segment.groupClockEnd.approximateDouble)
+            guard first <= last, first < segment.groupClockEnd.approximateDouble else { return nil }
+            let a = segment.rateRatio.approximateDouble, b = segment.alignedOffset.approximateDouble
+            return AlignmentWaveformStroke(
+                sourceSeconds: (first + last) / 2 - offset, groupSeconds: (first + last) / 2,
+                displaySeconds: a * (first + last) / 2 + b, low: bin.minimum, high: bin.maximum,
+                mapped: true, epoch: targetEpoch, displayRange: (a * first + b)...(a * last + b),
+                groupRange: first...last
+            )
+        }
+    }
 
     static func speakerGroups(
         tracks: [AlignmentWaveformTrack], speakerForSource: (SourceID) -> SpeakerID?
@@ -418,12 +472,58 @@ enum AlignmentWaveformProjection {
             .spans.contains(where: { $0.epoch == selectedEpoch }) == true
     }
 
-    static func strokes(track: AlignmentWaveformTrack, map: AlignedTimelineMap?) throws -> [AlignmentWaveformStroke] {
+    static func adaptiveStrokes(
+        track: AlignmentWaveformTrack, record: AdaptiveAnalysisRecord, includeEstimated: Bool = false
+    ) -> [AlignmentWaveformStroke] {
+        guard track.id == record.target.source, track.epoch == record.target.epoch else { return [] }
+        let rate = Double(track.envelope.sampleRate)
+        let intervals = record.playbackIntervals(includeEstimated: includeEstimated)
+        return track.envelope.bins.compactMap { bin in
+            let first = Double(bin.firstFrame) / rate, last = Double(bin.endFrame - 1) / rate
+            guard let interval = intervals.first(where: { first >= $0.sourceStart && last < $0.sourceEnd }) else { return nil }
+            let start = interval.alignedStart + (first - interval.sourceStart) * interval.rateRatio
+            let end = interval.alignedStart + (last - interval.sourceStart) * interval.rateRatio
+            guard start.isFinite, end.isFinite, end >= start else { return nil }
+            return AlignmentWaveformStroke(
+                sourceSeconds: (first + last) / 2, groupSeconds: (first + last) / 2,
+                displaySeconds: (start + end) / 2, low: bin.minimum, high: bin.maximum,
+                mapped: true, epoch: track.epoch, displayRange: start...end, groupRange: first...last
+            )
+        }
+    }
+
+    struct AdaptiveMarker: Identifiable, Equatable {
+        let sourceSeconds: Double
+        let alignedSeconds: Double
+        let adjustmentMilliseconds: Double
+        let kind: SourceTimingSegment.Kind?
+        var isQuiet: Bool { kind == .quietTransition }
+        var id: Double { sourceSeconds }
+    }
+
+    static func adaptiveMarkers(
+        track: AlignmentWaveformTrack, record: AdaptiveAnalysisRecord, includeEstimated: Bool = false
+    ) -> [AdaptiveMarker] {
+        guard track.id == record.target.source, track.epoch == record.target.epoch else { return [] }
+        let intervals = record.playbackIntervals(includeEstimated: includeEstimated)
+        return intervals.map { region in
+            let source = region.sourceStart, aligned = region.alignedStart
+            return AdaptiveMarker(sourceSeconds: source, alignedSeconds: aligned,
+                                  adjustmentMilliseconds: (aligned - source) * 1000, kind: region.kind)
+        }
+    }
+
+    static func strokes(track: AlignmentWaveformTrack, map: AlignedTimelineMap?,
+                        correction: SourceTimingCorrection? = nil) throws -> [AlignmentWaveformStroke] {
         try track.envelope.bins.compactMap { bin in
-            guard let first = try position(frame: bin.firstFrame, track: track, map: map),
-                  let last = try position(frame: bin.endFrame - 1, track: track, map: map),
+            guard let first = try position(frame: bin.firstFrame, track: track, map: map, correction: correction),
+                  let last = try position(frame: bin.endFrame - 1, track: track, map: map, correction: correction),
                   first.epoch == last.epoch, first.mapped == last.mapped
             else { return nil }
+            if let correction, first.mapped,
+               !correction.segments.contains(where: { first.sourceSeconds >= $0.sourceStart && last.sourceSeconds < $0.sourceEnd }) {
+                return nil
+            }
             return AlignmentWaveformStroke(
                 sourceSeconds: (first.sourceSeconds + last.sourceSeconds) / 2,
                 groupSeconds: (first.groupSeconds + last.groupSeconds) / 2,
@@ -436,9 +536,18 @@ enum AlignmentWaveformProjection {
     }
 
     static func position(
-        frame: Int64, track: AlignmentWaveformTrack, map: AlignedTimelineMap?
+        frame: Int64, track: AlignmentWaveformTrack, map: AlignedTimelineMap?,
+        correction: SourceTimingCorrection? = nil
     ) throws -> AlignmentWaveformPosition? {
         let source = Double(frame) / Double(track.envelope.sampleRate)
+        if let correction {
+            guard correction.source == track.id, correction.isValid,
+                  correction.sourceRate == track.envelope.sampleRate,
+                  correction.sourceFrames == track.envelope.totalFrames else { throw WaveformWindowError.mapDoesNotMatchSource }
+            let aligned = correction.alignedTime(at: source)
+            return AlignmentWaveformPosition(sourceSeconds: source, groupSeconds: source,
+                displaySeconds: aligned ?? source, epoch: correction.epoch, mapped: aligned != nil)
+        }
         guard let map else {
             return AlignmentWaveformPosition(
                 sourceSeconds: source, groupSeconds: source,
@@ -468,7 +577,12 @@ enum AlignmentWaveformProjection {
                 sourceSeconds: source, groupSeconds: groupSeconds,
                 displaySeconds: source, epoch: epoch, mapped: false
             )
-        case .gap, .outsideCoverage:
+        case .outsideCoverage:
+            return AlignmentWaveformPosition(
+                sourceSeconds: source, groupSeconds: groupSeconds,
+                displaySeconds: source, epoch: track.epoch, mapped: false
+            )
+        case .gap:
             return nil
         }
     }

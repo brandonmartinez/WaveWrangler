@@ -3,11 +3,15 @@ import WWTimeMap
 
 enum WaveformViewport {
     static func overviewRanges(
-        source: SourceID, rate: Int, totalFrames: Int64, groupMap: GroupTimeMap?
+        source: SourceID, rate: Int, totalFrames: Int64, groupMap: GroupTimeMap?,
+        sourceCorrection: SourceTimingCorrection? = nil
     ) throws -> [Range<Int64>] {
         guard rate > 0, totalFrames >= 0,
               Int128(totalFrames) <= Int128(rate) * Int128(WaveformWindowReader.maximumOverviewSourceSeconds)
         else { throw WaveformWindowError.overviewBudgetExceeded }
+        if let sourceCorrection {
+            return try AdaptiveViewport.ranges(sourceCorrection, source: source, rate: rate, totalFrames: totalFrames)
+        }
         guard let groupMap else { return totalFrames > 0 ? [0..<totalFrames] : [] }
         guard let placement = groupMap.placements.first(where: { $0.occurrence.source == source }),
               placement.occurrence.nominalRate.framesPerSecond == Int64(rate),
@@ -52,12 +56,16 @@ enum WaveformViewport {
 
     static func frameRanges(
         source: SourceID, rate: Int, totalFrames: Int64, groupMap: GroupTimeMap?,
-        startSeconds: Double, durationSeconds: Double
+        startSeconds: Double, durationSeconds: Double, sourceCorrection: SourceTimingCorrection? = nil
     ) throws -> [Range<Int64>] {
         guard startSeconds.isFinite, (-86_400...86_400).contains(startSeconds),
               durationSeconds.isFinite, durationSeconds > 0, durationSeconds <= 30,
               rate > 0, totalFrames >= 0
         else { throw WaveformWindowError.invalidWindow }
+        if let sourceCorrection {
+            return try AdaptiveViewport.ranges(sourceCorrection, source: source, rate: rate, totalFrames: totalFrames,
+                                                start: startSeconds, end: startSeconds + durationSeconds)
+        }
         let start = try seconds(startSeconds)
         let end = try seconds(startSeconds + durationSeconds)
         let frequency = ExactRational(Int64(rate))
