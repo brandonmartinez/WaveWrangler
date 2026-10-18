@@ -1222,6 +1222,17 @@ static size_t aheads_masks_nbytes(struct whisper_aheads_masks & aheads_masks) {
     return size;
 }
 
+int whisper_uses_metal(struct whisper_context * ctx) {
+    if (!ctx || !ctx->state) return -1;
+#ifdef GGML_USE_METAL
+    const bool model = ggml_backend_is_metal(ctx->backend);
+    const bool state = ggml_backend_is_metal(ctx->state->backend);
+    return model == state ? int(model) : -1;
+#else
+    return 0;
+#endif
+}
+
 static ggml_backend_t whisper_backend_init(const whisper_context_params & params) {
     ggml_backend_t backend_gpu = NULL;
 
@@ -1239,7 +1250,6 @@ static ggml_backend_t whisper_backend_init(const whisper_context_params & params
 #ifdef GGML_USE_METAL
     if (params.use_gpu) {
         WHISPER_LOG_INFO("%s: using Metal backend\n", __func__);
-        ggml_backend_metal_log_set_callback(g_state.log_callback, g_state.log_callback_user_data);
         backend_gpu = ggml_backend_metal_init();
         if (!backend_gpu) {
             WHISPER_LOG_ERROR("%s: ggml_backend_metal_init() failed\n", __func__);

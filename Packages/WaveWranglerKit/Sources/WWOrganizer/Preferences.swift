@@ -17,6 +17,8 @@ public enum PreferenceKey {
     public static let whisperModel = "WWSelectedWhisperModel"
     /// Int, 1...4. App-wide concurrent Primary transcriptions; default 1.
     public static let transcriptionWorkers = "WWTranscriptionWorkers"
+    public static let transcriptionBackend = "WWTranscriptionBackend"
+    public static let transcriptionThreads = "WWTranscriptionThreads"
 }
 
 /// Typed accessor over a `UserDefaults` store with the product defaults applied.

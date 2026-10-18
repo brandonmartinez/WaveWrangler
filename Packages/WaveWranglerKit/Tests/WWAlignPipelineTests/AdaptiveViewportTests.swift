@@ -6,6 +6,24 @@ import WWDecode
 
 @Suite("Source-only adaptive waveform reads")
 struct AdaptiveViewportTests {
+    @Test func sharedRenderReservationIncludesEveryChannelAndRejectsOverflow() throws {
+        #expect(try AlignmentPipeline.adaptiveAudioReservationBytes(channels: 2, sourceRate: 48000)
+                == 2 * (48000 * 15 + 48000 * 6) * 4 * 8 + (32 << 20))
+        for channels in [0, -1, Int.max] {
+            #expect(throws: WaveformWindowError.invalidWindow) {
+                try AlignmentPipeline.adaptiveAudioReservationBytes(channels: channels, sourceRate: 48000)
+            }
+        }
+        for rate in [0, 7999, 192001, Int.max] {
+            #expect(throws: WaveformWindowError.invalidWindow) {
+                try AlignmentPipeline.adaptiveAudioReservationBytes(channels: 1, sourceRate: rate)
+            }
+            #expect(throws: WaveformWindowError.invalidWindow) {
+                try AlignmentPipeline.adaptiveAudioReservationBytes(channels: 1, sourceRate: 48000, outputRate: rate)
+            }
+        }
+    }
+
     @Test func inverseReadsKeepUnsupportedSpansAndEndsAbsent() throws {
         let source = SourceID(), group = RecorderGroupID(), epoch = RecordingEpochID()
         let correction = SourceTimingCorrection(source: source, group: group, epoch: epoch, reference: SourceID(),

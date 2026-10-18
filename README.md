@@ -205,21 +205,36 @@ before transcription. Old external model bookmarks are retained as a compatibili
 required setup flow. Model bodies and device-local preferences/bookmarks are not saved in the show.
 The app has outgoing-network permission for model downloads, not a network-server entitlement.
 No audio or transcript is uploaded, and inference needs no network. The bundled engine is
-**whisper.cpp 1.6.2 with a local token-timestamp bounds fix, English, CPU/Accelerate, four inference threads**, with a generic disfluency
-prompt; it is not the 1.9.4 Metal research runner, and its accuracy/speed must not be inferred from
-that runner's scores. Turbo is substantially more expensive than base.en, particularly in Debug.
+**whisper.cpp 1.6.2 with local timestamp/backend fixes**, English and a generic disfluency prompt.
+**Settings > Transcription > Hardware** offers **Automatic**, **CPU / Accelerate**, and
+**CPU + GPU / Metal**. Automatic chooses Metal on a supported Apple-family-7-or-newer GPU,
+otherwise CPU. CPU remains explicitly selectable. Both encoder and decoder tensor inference use
+the selected native backend; Metal still needs CPU audio preparation and decoding control.
+Initialization failure stops with choose-CPU-and-retry recovery, never silent substitution.
+Core ML / Neural Engine is not enabled: the encoder-only candidate needed extra converted weights
+and did not consistently improve on Metal. See the
+[measured acceleration report](docs/research/apple-silicon-transcription.md) for actual production-adapter
+scores, resource choices, provenance and limitations. These are not the older 1.9.4 research runner's
+scores, nor a promise for every Mac. Turbo CPU is particularly slow in Debug.
 
 **Settings > Transcription > Concurrent transcriptions** selects **1–4 workers** for all episodes
-(default **1**, preserving the previous resource use). Start with **2** on a high-memory Mac.
-Each worker transcribes one speaker's Primary with sequential bounded chunks; it has four Whisper
-threads and its own native inference context/working memory, sharing only immutable verified weights.
-The app-wide pool prevents separate episode windows from each claiming the full selected limit.
+(default **1**). Start with one; two improved throughput in our M5 Max pilot.
+**Whisper threads per worker** offers **1, 2, 4 or 8** (default **4**).
+Each worker transcribes one speaker's Primary with sequential bounded chunks, separately retained
+verified weights and native working memory. Model verification/loading occurs only after admission.
+The one app-wide pool also caps requested Whisper threads at the smaller of 16 and the active CPU
+count, Metal workers at **2**, and conservative memory reservations at one quarter of physical RAM
+(minimum 4 GiB, maximum 16 GiB). Reservations include 768 MiB/Base or 3 GiB/Turbo per worker,
+plus the actual source's multichannel render envelope; model-download verification uses this same pool.
+These are admission budgets, not total OS-thread or unified-memory guarantees: Accelerate/Metal may
+use additional execution resources. Work can queue below the chosen worker maximum.
 Extra workers beyond an episode's speaker count can serve other episodes. More workers consume more
-CPU/RAM and are not guaranteed to improve throughput. New jobs capture the selected per-job
-parallelism. Changing the global limit affects queued tracks; active tracks finish without being
+CPU/RAM and are not guaranteed to improve throughput. New jobs capture model, requested/resolved
+hardware, thread count and per-job parallelism. Saved transcript recipes record actual backend and
+threads. Preference changes never retarget active/queued jobs or cancel them.
+Changing the global worker limit affects queued tracks; active tracks finish without being
 interrupted, even when lowering the limit. Cancellation removes queued work and drains active workers.
 Native context initialization is serialized for upstream shared FFT/backend setup, not inference.
-Neither Metal GPU inference nor Core ML/Neural Engine inference is enabled in this build.
 
 **Transcribe Episode** processes each aligned Primary separately, using the existing pitch-preserving
 renderer for accepted adaptive file timing. Bounded 28-second cores have up to one second of context
@@ -231,7 +246,8 @@ completed chunks, not fabricated intra-inference progress. Remaining time starts
 chunk and can vary with speakers, silence and hardware; final source/timing verification is shown
 separately before any result is published. Cancelling or failing never saves a partial transcript.
 Concurrent chunks contribute once to a shared progress total; completion order never changes speaker
-or word ordering. A job queued behind other episodes explicitly reports that it is waiting for a worker.
+or word ordering. Queued jobs explicitly report waiting for the shared worker/memory/thread budget;
+loading verified weights is a separate active-speaker stage.
 Chunk planning and both aligned renderers pass exact 48 kHz frame ranges, rather than testing
 floating-point differences against the 30-second limit. Whisper receives bounded, already-aligned
 PCM buffers; no full-length temporary working recording is required.
@@ -292,11 +308,14 @@ saved file permissions may stop resolving, and even **Grant Access** can fail fo
 Launch the freshly built app before retrying access. Do not delete device-access records, change file
 ownership, or grant Full Disk Access to work around a stale running build.
 
-The vendored Whisper has one local correction: its token-timestamp VAD must check the token count,
+The vendored Whisper's token-timestamp VAD must check the token count,
 not the audio-sample count, before reading the next token. A trailing text token without an end
 timestamp could otherwise abort the app. The backend recipe identifies this as
-`1.6.2+ww-token-bounds-v1`; weight hashes, decoding settings and approximate-timing limitations are
+`1.6.2+ww-token-bounds-v1+metal-v1`; weight hashes, decoding settings and approximate-timing limitations are
 unchanged. `bash scripts/verify-whisper-native.sh` pins the exact patched source set.
+The compatible MIT-licensed Metal sources are bundled alongside the existing source. Shaders are
+compiled through public Metal APIs from signed SwiftPM resources, not the current directory or an
+environment override. No external Metal toolchain installation is needed.
 `bash scripts/test-whisper-timestamps.sh` exercises the actual private C++ routine with 80 generated
 token/energy cases and hardened bounds checking, without a model or recording. It also runs in
 the standard `scripts/test.sh` path.
@@ -304,6 +323,7 @@ the standard `scripts/test.sh` path.
 ## Planning
 
 - [Editing-first transcription engine research: Gemma feasibility and measured Whisper filler retention](docs/research/transcription-engine-comparison.md)
+- [Apple Silicon transcription: CPU/Metal/Core ML measurements and shipped resource budgets](docs/research/apple-silicon-transcription.md)
 - [Start M1: copyable Squad kickoff](docs/planning/kickoffs/m1.md) · [milestone execution runbook](docs/planning/milestone-runbook.md)
 - [Live GitHub milestone/issue index](docs/planning/github-backlog.md) · [machine-readable mapping](docs/planning/github-backlog.json)
 - [Public sanitized-provenance index](docs/planning/publication-provenance.json)

@@ -1,3 +1,5 @@
+import AVFoundation
+import CryptoKit
 import Foundation
 import Testing
 import WWCore
@@ -17,6 +19,7 @@ struct TranscriptionSettingsTests {
     @Test func defaultsAreGlobalButNeverStartDownloadsOrCreateStorage() throws {
         let (settings, defaults, directory) = try fixture()
         #expect(settings.selection == .turbo)
+        #expect(settings.backend == .automatic && settings.threads == .four)
         #expect(settings.available.isEmpty && settings.selectedURL == nil && !settings.isBusy)
         #expect(!FileManager.default.fileExists(atPath: directory.path))
         #expect(defaults.object(forKey: PreferenceKey.whisperModel) == nil)
@@ -25,6 +28,53 @@ struct TranscriptionSettingsTests {
         #expect(reopened.selection == .baseEnglish)
         #expect(!reopened.isBusy && reopened.selectedURL == nil)
         #expect(SettingsPane.allCases.contains(.transcription))
+    }
+
+    @Test func hardwareThreadsPersistWhileCapturedJobsNeverRetarget() throws {
+        let (_, defaults, directory) = try fixture()
+        let settings = TranscriptionSettings(defaults: defaults, directory: directory, metalAvailable: true)
+        settings.backend = .metal
+        settings.threads = .two
+        let captured = try settings.captureConfiguration()
+        let recipe = captured.revision(weights: .turbo)
+        settings.backend = .cpu
+        settings.threads = .eight
+        #expect(captured.backend == .metal && captured.threads == .two)
+        #expect(captured.revision(weights: .turbo) == recipe)
+        let reopened = TranscriptionSettings(defaults: defaults, directory: directory, metalAvailable: false)
+        #expect(reopened.backend == .cpu && reopened.threads == .eight)
+        reopened.backend = .metal
+        #expect(reopened.backendStatus.contains("unavailable"))
+        #expect(throws: TranscriptionConfigurationError.metalUnavailable) { try reopened.captureConfiguration() }
+        reopened.backend = .automatic
+        #expect(try reopened.captureConfiguration().backend == .cpu)
+        defaults.set("neural", forKey: PreferenceKey.transcriptionBackend)
+        defaults.set(99, forKey: PreferenceKey.transcriptionThreads)
+        let invalid = TranscriptionSettings(defaults: defaults, directory: directory)
+        #expect(invalid.backend == .automatic && invalid.threads == .four)
+        #expect(invalid.error?.contains("unsupported") == true)
+        invalid.backend = .cpu
+        #expect(invalid.error == nil, "Choosing a supported backend clears the recovered preference error")
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_ASR_ACCELERATION_FIXTURES"] != nil))
+    func signedAppBundleRunsMetalFromItsOwnResourcesOffline() async throws {
+        let root = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["WW_ASR_ACCELERATION_FIXTURES"]))
+        let url = root.appendingPathComponent("clips/ami-01.wav")
+        try #require(SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
+                     == "56f4b4abd278c61426b7ec4c844c5aff1420204a7b18ac7976321f8dc26c9b83")
+        let audio = try AVAudioFile(forReading: url)
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: audio.processingFormat,
+            frameCapacity: AVAudioFrameCount(audio.length)))
+        try audio.read(into: buffer)
+        let values = try #require(buffer.floatChannelData?[0])
+        let pcm = Array(UnsafeBufferPointer(start: values, count: Int(buffer.frameLength)))
+        let configuration = try TranscriptionConfiguration.resolve(backend: .metal, threads: .four)
+        let engine = try await LocalWhisper.load(url: root.appendingPathComponent("downloads/\(LocalWhisperWeights.baseEnglish.filename)"),
+                                                weights: .baseEnglish, configuration: configuration)
+        let result = try await engine.transcribeWindow(pcm: pcm, sampleRate: 16_000)
+        #expect(result.segments.map(\.text).joined(separator: " ").lowercased().contains("meeting"))
     }
 
     @Test func workerSelectionPersistsAndAllEpisodeWindowsUseTheSamePool() async throws {
@@ -142,6 +192,34 @@ struct TranscriptionSettingsTests {
         try await wait { !settings.isBusy }
         #expect(settings.error?.contains("pinned size or SHA-256") == true && settings.available.isEmpty)
         #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    }
+
+    @Test func downloadVerificationQueuesInTheSamePoolAndCancelsBeforeLoading() async throws {
+        let (settings, _, directory) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let pool = settings.workerPool
+        let holder = Task {
+            try await pool.withAdmission(resources: .init(memoryBytes: 10)) {
+                try await Task.sleep(for: .seconds(30))
+            }
+        }
+        defer { holder.cancel() }
+        let activeDeadline = Date().addingTimeInterval(10)
+        while await pool.snapshot.active < 1, Date() < activeDeadline { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(await pool.snapshot.active == 1)
+        settings.download(fetch: { _, target, _ in try Data([1, 2, 3]).write(to: target) })
+        let deadline = Date().addingTimeInterval(10)
+        while await pool.snapshot.waiting < 1, Date() < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(await pool.snapshot.waiting == 1)
+        #expect(settings.isBusy && settings.isVerifying)
+        settings.cancelDownload()
+        try await wait { !settings.isBusy }
+        #expect(settings.error == nil && settings.status.hasPrefix("Download cancelled"))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+        #expect(await pool.snapshot.reservedBytes == 10)
+        holder.cancel()
+        await #expect(throws: CancellationError.self) { try await holder.value }
+        #expect(await pool.snapshot.active == 0)
     }
 
     @Test func cancellationAndTransportFailuresDoNotInstallPartialModels() async throws {

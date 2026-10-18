@@ -1,5 +1,8 @@
 #include "WWWhisperNative.h"
 #include "whisper.h"
+#ifdef GGML_USE_METAL
+#include "ggml-metal.h"
+#endif
 #include <ctype.h>
 #include <math.h>
 #include <pthread.h>
@@ -33,6 +36,9 @@ static pthread_mutex_t context_init_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void configure_logging(void) {
     whisper_log_set(discard_probe_log, NULL);
+#ifdef GGML_USE_METAL
+    ggml_backend_metal_log_set_callback(discard_probe_log, NULL);
+#endif
 }
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
@@ -139,10 +145,11 @@ void ww_whisper_free_transcript(WWNativeTranscript *transcript) {
 
 static WWNativeTranscript infer_pcm(
     void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
-    int32_t (*cancelled)(void *), void *cancel_context, int window
+    int32_t (*cancelled)(void *), void *cancel_context, int window, WWWhisperConfiguration configuration
 ) {
     WWNativeTranscript result = { .status = WW_INFERENCE_INVALID_INPUT };
-    if (!cancelled) return result;
+    if (!cancelled || configuration.threads < 1 || configuration.threads > 8 ||
+        (configuration.use_metal != 0 && configuration.use_metal != 1)) return result;
     if (cancelled(cancel_context)) {
         result.status = WW_INFERENCE_CANCELLED;
         return result;
@@ -167,15 +174,20 @@ static WWNativeTranscript infer_pcm(
     }
 
     struct whisper_context_params context_params = whisper_context_default_params();
-    context_params.use_gpu = false;
+    context_params.use_gpu = configuration.use_metal != 0;
     context_params.flash_attn = false;
     context_params.dtw_token_timestamps = false;
     struct whisper_context *context = whisper_init_from_buffer_with_params(model_bytes, model_size, context_params);
     // Upstream initializes shared FFT/backend tables here. Decode uses independent contexts.
     pthread_mutex_unlock(&context_init_lock);
     if (!context) {
-        result.status = cancelled(cancel_context) ? WW_INFERENCE_CANCELLED : WW_INFERENCE_LOAD_FAILED;
+        result.status = cancelled(cancel_context) ? WW_INFERENCE_CANCELLED :
+            (configuration.use_metal ? WW_INFERENCE_BACKEND_UNAVAILABLE : WW_INFERENCE_LOAD_FAILED);
         return result;
+    }
+    if (whisper_uses_metal(context) != configuration.use_metal) {
+        result.status = WW_INFERENCE_BACKEND_UNAVAILABLE;
+        goto release_context;
     }
     if (cancelled(cancel_context)) {
         result.status = WW_INFERENCE_CANCELLED;
@@ -185,7 +197,7 @@ static WWNativeTranscript infer_pcm(
     struct cancel_state cancel_state = { cancelled, cancel_context };
     struct whisper_full_params params = whisper_full_default_params(
         window ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
-    params.n_threads = window ? 4 : 2;
+    params.n_threads = configuration.threads;
     params.language = "en";
     params.duration_ms = (sample_count + 15) / 16;
     params.no_context = true;
@@ -259,12 +271,21 @@ WWNativeTranscript ww_whisper_infer_pcm(
     void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
     int32_t (*cancelled)(void *), void *cancel_context
 ) {
-    return infer_pcm(model_bytes, model_size, pcm, sample_count, cancelled, cancel_context, 0);
+    return infer_pcm(model_bytes, model_size, pcm, sample_count, cancelled, cancel_context, 0,
+        (WWWhisperConfiguration) { .use_metal = 0, .threads = 2 });
 }
 
 WWNativeTranscript ww_whisper_infer_window(
     void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
     int32_t (*cancelled)(void *), void *cancel_context
 ) {
-    return infer_pcm(model_bytes, model_size, pcm, sample_count, cancelled, cancel_context, 1);
+    return infer_pcm(model_bytes, model_size, pcm, sample_count, cancelled, cancel_context, 1,
+        (WWWhisperConfiguration) { .use_metal = 0, .threads = 4 });
+}
+
+WWNativeTranscript ww_whisper_infer_window_configured(
+    void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
+    WWWhisperConfiguration configuration, int32_t (*cancelled)(void *), void *cancel_context
+) {
+    return infer_pcm(model_bytes, model_size, pcm, sample_count, cancelled, cancel_context, 1, configuration);
 }

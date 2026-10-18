@@ -70,12 +70,14 @@ let package = Package(
             sources: [
                 "CPUBridge.c",
                 "upstream/ggml.c", "upstream/ggml-alloc.c", "upstream/ggml-backend.c",
-                "upstream/ggml-quants.c", "upstream/whisper.cpp",
+                "upstream/ggml-quants.c", "upstream/whisper.cpp", "upstream/ggml-metal.m", "Hardware.m",
             ],
+            resources: [.copy("upstream/ggml-metal.metal"), .copy("upstream/ggml-common.h")],
             publicHeadersPath: "include",
-            cSettings: [.headerSearchPath("upstream"), .define("GGML_USE_ACCELERATE")],
-            cxxSettings: [.headerSearchPath("upstream"), .define("GGML_USE_ACCELERATE")],
-            linkerSettings: [.linkedFramework("Accelerate")]
+            cSettings: [.headerSearchPath("upstream"), .define("GGML_USE_ACCELERATE"), .define("GGML_USE_METAL"),
+                        .unsafeFlags(["-fno-objc-arc"])],
+            cxxSettings: [.headerSearchPath("upstream"), .define("GGML_USE_ACCELERATE"), .define("GGML_USE_METAL")],
+            linkerSettings: [.linkedFramework("Accelerate"), .linkedFramework("Metal"), .linkedFramework("Foundation")]
         ),
         .target(name: "WWCutPolicy", dependencies: ["WWCore"]),
         .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),

@@ -47,15 +47,32 @@ struct TranscriptionSettingsView: View {
                 }
             }
             Section("Performance") {
+                Picker("Hardware", selection: $settings.backend) {
+                    ForEach(TranscriptionBackend.allCases, id: \.self) { backend in
+                        Text(backend.title).tag(backend)
+                    }
+                }
+                .accessibilityIdentifier("ww.settings.transcription.backend")
+                Text(settings.backendStatus).wwFont(.caption)
+                Picker("Whisper threads per worker", selection: $settings.threads) {
+                    ForEach(TranscriptionThreads.allCases, id: \.self) { threads in
+                        Text("\(threads.rawValue)").tag(threads)
+                    }
+                }
+                .accessibilityIdentifier("ww.settings.transcription.threads")
                 Picker("Concurrent transcriptions", selection: $settings.concurrency) {
                     ForEach(TranscriptionConcurrency.allCases, id: \.self) { policy in
                         Text("\(policy.rawValue) \(policy == .one ? "worker" : "workers")").tag(policy)
                     }
                 }
                 .accessibilityIdentifier("ww.settings.transcription.workers")
-                Text("One worker transcribes one speaker's Primary track. Two is a good starting point on a high-memory Mac. Extra workers can serve other episodes; the limit is shared across all windows.")
+                Text("One worker transcribes one speaker's Primary track. Start with one; two improved throughput in our M5 Max pilot. Extra workers can serve other episodes; all windows share the same budget.")
                     .wwFont(.caption)
-                Text("Each worker uses four Whisper threads and its own inference working memory. More workers use more CPU/RAM and may not be faster. New jobs use this parallelism; lowering the app-wide limit lets active tracks finish before admitting more.")
+                Text("App-wide ceilings: \(settings.workerPool.budget.cpuThreads) requested Whisper threads, \(settings.workerPool.budget.metalWorkers) Metal workers, and \(ByteCountFormatter.string(fromByteCount: Int64(settings.workerPool.budget.memoryBytes), countStyle: .memory)) of conservative memory reservations, including weights and render buffers. A job can queue below your worker limit. Accelerate and Metal may use additional system threads; this is not a total OS-memory cap.")
+                    .wwFont(.caption)
+                Text("Model, hardware, and threads are captured for the next job and saved with its transcript. Changing them never retargets active or queued jobs. Lowering workers lets active tracks finish before admitting more. Metal threads also control command-buffer submission; more is not necessarily faster.")
+                    .wwFont(.caption)
+                Text("Neural Engine / Core ML is not enabled. Our encoder-only candidate did not consistently beat Metal end to end, needed extra converted weights, and changed some recognition. No pure Neural Engine mode is claimed.")
                     .wwFont(.caption)
             }
             Section("Privacy & accuracy") {
@@ -66,8 +83,7 @@ struct TranscriptionSettingsView: View {
             .wwFont(.caption)
         }
         .formStyle(.grouped)
-        .frame(width: 580)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: 620, height: 760)
         .onAppear { settings.refreshAvailability() }
         .accessibilityIdentifier("ww.settings.transcription")
     }

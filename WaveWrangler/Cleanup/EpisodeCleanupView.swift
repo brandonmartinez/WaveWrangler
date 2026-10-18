@@ -227,7 +227,11 @@ struct EpisodeCleanupContent: View {
                     if update.stage != .verifying {
                         Text("\(update.activeSpeakers.count) active speakers | Up to \(update.workerLimit) workers for this job | \(update.speakerCount) speakers total")
                         ForEach(update.activeSpeakers) { speaker in
-                            Text("\(speaker.speaker) | \(speaker.stage == .rendering ? "Preparing" : "Transcribing") chunk \(speaker.windowIndex) of \(speaker.windowCount) | Aligned \(AlignmentPresentation.formatTime(speaker.alignedStart)) to \(AlignmentPresentation.formatTime(speaker.alignedEnd))")
+                            if speaker.stage == .loading {
+                                Text("\(speaker.speaker) | Verifying and loading local weights")
+                            } else {
+                                Text("\(speaker.speaker) | \(speaker.stage == .rendering ? "Preparing" : "Transcribing") chunk \(speaker.windowIndex) of \(speaker.windowCount) | Aligned \(AlignmentPresentation.formatTime(speaker.alignedStart)) to \(AlignmentPresentation.formatTime(speaker.alignedEnd))")
+                            }
                         }
                     }
                 }

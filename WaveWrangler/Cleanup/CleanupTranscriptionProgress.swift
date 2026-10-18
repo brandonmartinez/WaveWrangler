@@ -1,7 +1,7 @@
 import Foundation
 
 struct CleanupTranscriptionProgress: Sendable, Equatable {
-    enum Stage: Sendable, Equatable { case waiting, rendering, recognizing, completedWindow, verifying }
+    enum Stage: Sendable, Equatable { case waiting, loading, rendering, recognizing, completedWindow, verifying }
     struct ActiveSpeaker: Sendable, Equatable, Identifiable {
         var id: Int { speakerIndex }
         let speaker: String
@@ -31,12 +31,14 @@ struct CleanupTranscriptionProgress: Sendable, Equatable {
         if stage == .verifying { return "Finalizing: verifying sources and accepted timing…" }
         if activeSpeakers.count > 1 { return "Processing \(activeSpeakers.count) speakers concurrently…" }
         if let active = activeSpeakers.first {
+            if active.stage == .loading { return "Loading verified local weights for \(active.speaker)…" }
             return active.stage == .rendering
                 ? "Preparing aligned audio for \(active.speaker)…" : "Transcribing \(active.speaker)…"
         }
-        if sequence > 0, completedSeconds < totalSeconds { return "Waiting for a transcription worker…" }
+        if sequence > 0, completedSeconds < totalSeconds { return "Waiting for the shared worker, memory, or thread budget…" }
         switch stage {
-        case .waiting: return "Waiting for a transcription worker…"
+        case .waiting: return "Waiting for the shared worker, memory, or thread budget…"
+        case .loading: return "Loading verified local weights for \(speaker)…"
         case .rendering: return "Preparing aligned audio for \(speaker)…"
         case .recognizing: return "Transcribing \(speaker)…"
         case .completedWindow: return "Recognized chunk \(windowIndex) for \(speaker)"

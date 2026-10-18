@@ -154,11 +154,24 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertTrue(workers.exists)
         workers.click()
         app.menuItems["2 workers"].click()
+        let hardware = settings.popUpButtons["ww.settings.transcription.backend"]
+        XCTAssertTrue(hardware.exists)
+        hardware.click()
+        XCTAssertTrue(app.menuItems["Automatic"].exists)
+        XCTAssertTrue(app.menuItems["CPU + GPU / Metal"].exists)
+        XCTAssertFalse(app.menuItems["Neural Engine"].exists)
+        app.menuItems["CPU / Accelerate"].click()
+        let threads = settings.popUpButtons["ww.settings.transcription.threads"]
+        XCTAssertTrue(threads.exists)
+        threads.click()
+        app.menuItems["2"].click()
         settings.buttons[XCUIIdentifierCloseWindow].click()
         XCTAssertTrue(text(app.staticTexts["ww.cleanup.model"]).contains("Base English"))
         app.buttons["ww.cleanup.settings"].click()
         XCTAssertTrue((picker.value as? String ?? "").contains("Base English"))
         XCTAssertTrue((workers.value as? String ?? "").contains("2 workers"))
+        XCTAssertTrue((hardware.value as? String ?? "").contains("CPU / Accelerate"))
+        XCTAssertEqual(threads.value as? String, "2")
     }
 
     private func text(_ element: XCUIElement) -> String { element.value as? String ?? element.label }

@@ -1,5 +1,9 @@
 # WW-026: pinned CPU speech source link (model-free)
 
+Historical evidence for the initial CPU-only link. The current 17-file native pin and enabled
+CPU/Metal implementation are documented in the
+[Apple Silicon acceleration report](../../research/apple-silicon-transcription.md).
+
 **Status: preparatory, not transcription or offline acceptance.** Refs #23 #32. This
 unit builds an in-process native C library into the signed app, but
 `SpeechInference.infer` still checks the current confirmed Primary and always

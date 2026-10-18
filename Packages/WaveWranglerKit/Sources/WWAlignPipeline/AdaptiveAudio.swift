@@ -11,6 +11,15 @@ struct AdaptivePCM: Sendable, Codable {
 }
 
 extension AlignmentPipeline {
+    public static func adaptiveAudioReservationBytes(channels: Int, sourceRate: Int, outputRate: Int = 48000) throws -> Int {
+        guard channels > 0, (8000...192000).contains(sourceRate), (8000...192000).contains(outputRate) else {
+            throw WaveformWindowError.invalidWindow
+        }
+        let perChannel = (sourceRate * 15 + outputRate * 6) * 4 * 8
+        guard channels <= (Int.max - (32 << 20)) / perChannel else { throw WaveformWindowError.invalidWindow }
+        return channels * perChannel + (32 << 20)
+    }
+
     /// The same canonical, witnessed five-second tiles serve listening and aligned derived assets.
     public func adaptiveAudioWindow(
         model: ShowDocumentModel, episode episodeID: EpisodeID, source: SourceID,
@@ -82,7 +91,8 @@ extension AlignmentPipeline {
         await coordinator.setAssetRevision(asset)
         await coordinator.setRecipe(recipe)
         let decoder = decoder, gate = gate
-        let admittedBytes = correction.channelCount * (correction.sourceRate * 15 + outputRate * 6) * 4 * 8 + (32 << 20)
+        let admittedBytes = try Self.adaptiveAudioReservationBytes(channels: correction.channelCount,
+            sourceRate: correction.sourceRate, outputRate: outputRate)
         let result = await coordinator.run(slot, key: key) { () throws(AlignmentWorkFailure) -> Data in
             do {
                 return try await gate.withAdmission(bytes: admittedBytes) {

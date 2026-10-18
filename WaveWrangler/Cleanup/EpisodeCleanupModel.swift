@@ -259,6 +259,9 @@ final class EpisodeCleanupModel {
     func transcribe() {
         guard canTranscribe, let modelURL = transcriptionSettings.selectedURL,
               let document = state.store.document else { return }
+        let configuration: TranscriptionConfiguration
+        do { configuration = try transcriptionSettings.captureConfiguration() }
+        catch { self.error = Self.describe(error); return }
         stopPlayback()
         cancelWaveforms()
         let snapshot = state.store.model
@@ -268,20 +271,20 @@ final class EpisodeCleanupModel {
         isBusy = true
         error = nil
         transcriptionStatus = CleanupTranscriptionStatus(startedAt: Date())
-        message = "Verifying local Whisper weights…"
+        message = "Waiting for the shared transcription resource budget…"
         let weights = transcriptionSettings.selection
         let concurrency = transcriptionSettings.concurrency
-        activeModelName = weights.title
+        activeModelName = "\(weights.title) | \(configuration.backend.title) | \(configuration.threads.rawValue) threads"
         job = Task { [weak self] in
             guard let self else { return }
             defer { if generation == token { isBusy = false; job = nil; workSnapshot = nil } }
             do {
                 let workerPool = await transcriptionSettings.configuredWorkerPool()
-                let engine = try await LocalWhisper.load(url: modelURL, weights: weights)
                 try Task.checkCancellation()
                 message = "Verifying aligned Primaries and source access…"
                 let runtime = try await resolveRuntime(for: document)
-                let result = try await runtime.transcribeCleanup(model: snapshot, episode: episodeID, engine: engine,
+                let result = try await runtime.transcribeCleanup(model: snapshot, episode: episodeID,
+                    modelURL: modelURL, weights: weights, configuration: configuration,
                     concurrency: concurrency, workerPool: workerPool) {
                     [weak self] update in
                     await self?.reportProgress(token: token, update: update)

@@ -1,9 +1,10 @@
 import AVFoundation
+import CryptoKit
 import Foundation
 import Testing
 import WWSpeech
 
-@Suite("Pinned local Whisper")
+@Suite("Pinned local Whisper", .serialized)
 struct LocalWhisperTests {
     @Test func catalogOffersOnlyPinnedQualifiedModelsWithExplicitHTTPSDownloads() {
         #expect(LocalWhisperWeights.allCases.count == 2)
@@ -35,7 +36,7 @@ struct LocalWhisperTests {
         let path = try #require(env["WW_LOCAL_ASR_MODEL"])
         let weights: LocalWhisperWeights = path.contains("turbo") ? .turbo : .baseEnglish
         let engine = try await LocalWhisper.load(url: URL(fileURLWithPath: path), weights: weights)
-        #expect(engine.revision == "whisper.cpp/1.6.2+ww-token-bounds-v1/\(weights.rawValue)/\(weights.sha256)/verbatim-v1")
+        #expect(engine.revision == TranscriptionConfiguration.cpu.revision(weights: weights))
         let file = try AVAudioFile(forReading: URL(fileURLWithPath: #require(env["WW_LOCAL_ASR_PUBLIC_WAV"])))
         #expect(file.processingFormat.channelCount == 1)
         #expect(file.length < 30 * Int64(file.processingFormat.sampleRate))
@@ -101,12 +102,179 @@ struct LocalWhisperTests {
         }
     }
 
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_ASR_ACCELERATION_FIXTURES"] != nil),
+          arguments: [LocalWhisperWeights.baseEnglish, .turbo])
+    func optedInBundledMetalAndCPUUseVerifiedPublicAudio(_ weights: LocalWhisperWeights) async throws {
+        let root = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["WW_ASR_ACCELERATION_FIXTURES"]))
+        let audio = root.appendingPathComponent("clips/ami-01.wav")
+        #expect(SHA256.hash(data: try Data(contentsOf: audio)).map { String(format: "%02x", $0) }.joined()
+                == "56f4b4abd278c61426b7ec4c844c5aff1420204a7b18ac7976321f8dc26c9b83")
+        let file = try AVAudioFile(forReading: audio)
+        try #require(file.processingFormat.channelCount == 1 && file.processingFormat.sampleRate == 16_000)
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+            frameCapacity: AVAudioFrameCount(file.length)))
+        try file.read(into: buffer)
+        let samples = try #require(buffer.floatChannelData?[0])
+        let pcm = Array(UnsafeBufferPointer(start: samples, count: Int(buffer.frameLength))).flatMap { [$0, $0, $0] }
+        try #require(TranscriptionConfiguration.metalAvailable, "This opt-in qualification requires supported Apple silicon")
+        for backend in [TranscriptionBackend.cpu, .metal] {
+            let configuration = try TranscriptionConfiguration.resolve(backend: backend, threads: .four)
+            let engine = try await LocalWhisper.load(url: root.appendingPathComponent("downloads/\(weights.filename)"),
+                                                    weights: weights, configuration: configuration)
+            let heartbeat = Task { @MainActor in
+                var last = ProcessInfo.processInfo.systemUptime, maximumGap = 0.0, count = 0
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .milliseconds(20)) }
+                    catch is CancellationError { break }
+                    let now = ProcessInfo.processInfo.systemUptime
+                    maximumGap = max(maximumGap, now - last)
+                    last = now
+                    count += 1
+                }
+                return (maximumGap, count)
+            }
+            defer { heartbeat.cancel() }
+            let reference = try await engine.transcribeWindow(pcm: pcm, sampleRate: 48_000)
+            let text = reference.segments.map(\.text).joined(separator: " ").lowercased()
+            #expect(text.contains("kick") && text.contains("meeting"))
+            #expect(reference.segments.contains { $0.startSeconds != nil })
+            for segment in reference.segments {
+                if let start = segment.startSeconds, let end = segment.endSeconds {
+                    #expect(start >= 0 && end > start && end <= Double(pcm.count) / 48_000)
+                }
+            }
+            let barrier = NativeInferenceBarrier(expected: 2)
+            let pool = TranscriptionWorkerPool(concurrency: .two)
+            let cost = try TranscriptionResources(weights: weights, configuration: configuration)
+            try await withThrowingTaskGroup(of: PCMTranscript.self) { group in
+                for _ in 0..<2 {
+                    group.addTask {
+                        try await pool.withAdmission(resources: cost) {
+                            try await Self.nativeControl(engine, pcm: pcm, barrier: barrier)
+                        }
+                    }
+                }
+                for try await result in group { #expect(result == reference) }
+            }
+            #expect(barrier.overlapped)
+            #expect(await pool.snapshot.reservedBytes == 0)
+            let checks = NativeInferenceStart()
+            let cancelled = Task { try await Self.nativeCancelControl(engine, pcm: pcm, checks: checks) }
+            defer { cancelled.cancel() }
+            let deadline = Date().addingTimeInterval(30)
+            while !checks.started, Date() < deadline { try await Task.sleep(for: .milliseconds(2)) }
+            try #require(checks.started, "Wait for a native graph checkpoint, not just model initialization")
+            try await Task.sleep(for: .milliseconds(20))
+            let cancelStart = ProcessInfo.processInfo.systemUptime
+            cancelled.cancel()
+            await #expect(throws: PCMInferenceRefusal.cancelled) { try await cancelled.value }
+            let cancelWall = ProcessInfo.processInfo.systemUptime - cancelStart
+            #expect(cancelWall < 30, "Native graph/command buffers must drain; cancellation is not instantaneous")
+            heartbeat.cancel()
+            let (gap, ticks) = try await heartbeat.value
+            #expect(ticks > 0 && gap < 1, "Native inference must not block the MainActor heartbeat")
+            #expect(try engine.transcribe(pcm: [Float](repeating: 0, count: 16_000), sampleRate: 16_000).segments.isEmpty)
+            print("BUNDLED-ACCELERATION \(weights.rawValue) \(backend.rawValue): overlap=2; cancellation_wall=\(cancelWall); main_actor_max_gap=\(gap); ticks=\(ticks); text=\(text)")
+        }
+    }
+
+    @concurrent
+    private static func nativeCancelControl(
+        _ engine: LocalWhisper, pcm: [Float], checks: NativeInferenceStart
+    ) async throws -> PCMTranscript {
+        try engine.transcribe(pcm: pcm, sampleRate: 48_000, isCancelled: { checks.check() })
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_ASR_FULL_CORPUS"] == "1"))
+    func optedInProductionCorpusPersistsActualAdapterOutputs() async throws {
+        let root = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["WW_ASR_ACCELERATION_FIXTURES"]))
+        let manifest = try JSONDecoder().decode(NativeCorpusManifest.self,
+            from: Data(contentsOf: root.appendingPathComponent("manifest.json")))
+        try #require(manifest.clips.count == 7 && manifest.clips.first?.id == "ami-01")
+        var inputs: [[Float]] = []
+        for clip in manifest.clips {
+            let url = root.appendingPathComponent(clip.audio)
+            try #require(SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
+                         == clip.audio_sha256)
+            let file = try AVAudioFile(forReading: url)
+            try #require(file.processingFormat.channelCount == 1 && file.processingFormat.sampleRate == 16_000)
+            let buffer = try #require(AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                frameCapacity: AVAudioFrameCount(file.length)))
+            try file.read(into: buffer)
+            let samples = try #require(buffer.floatChannelData?[0])
+            inputs.append(Array(UnsafeBufferPointer(start: samples, count: Int(buffer.frameLength))).flatMap { [$0, $0, $0] })
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        for weights in LocalWhisperWeights.allCases {
+            for backend in [TranscriptionBackend.cpu, .metal] {
+                let configuration = try TranscriptionConfiguration.resolve(backend: backend, threads: .four)
+                let loadStart = ProcessInfo.processInfo.systemUptime
+                let engine = try await LocalWhisper.load(url: root.appendingPathComponent("downloads/\(weights.filename)"),
+                                                        weights: weights, configuration: configuration)
+                let load = ProcessInfo.processInfo.systemUptime - loadStart
+                var rounds: [NativeCorpusRound] = []
+                for _ in 0..<2 {
+                    let start = ProcessInfo.processInfo.systemUptime
+                    var clips: [NativeCorpusOutput] = []
+                    for (index, pcm) in inputs.enumerated() {
+                        let result = try await engine.transcribeWindow(pcm: pcm, sampleRate: 48_000)
+                        clips.append(NativeCorpusOutput(index: index, segments: result.segments.map {
+                            NativeCorpusSegment(text: $0.text, start: $0.startSeconds, end: $0.endSeconds)
+                        }))
+                    }
+                    #expect(clips.last?.segments.isEmpty == true, "Production bypasses exact digital zero")
+                    rounds.append(NativeCorpusRound(wall_seconds: ProcessInfo.processInfo.systemUptime - start, clips: clips))
+                }
+                let evidence = NativeCorpusEvidence(recipe: engine.revision, model_load_seconds: load, rounds: rounds)
+                try encoder.encode(evidence).write(to: root.appendingPathComponent("acceleration/production-\(weights.rawValue)-\(backend.rawValue).json"))
+            }
+        }
+    }
+
     @concurrent
     private static func nativeControl(
         _ engine: LocalWhisper, pcm: [Float], barrier: NativeInferenceBarrier
     ) async throws -> PCMTranscript {
         let checks = NativeCancellationChecks(barrier: barrier)
         return try engine.transcribe(pcm: pcm, sampleRate: 48_000, isCancelled: { checks.check() })
+    }
+}
+
+private struct NativeCorpusManifest: Decodable {
+    struct Clip: Decodable {
+        let id: String
+        let audio: String
+        let audio_sha256: String
+    }
+    let clips: [Clip]
+}
+private struct NativeCorpusSegment: Encodable {
+    let text: String
+    let start: Double?
+    let end: Double?
+}
+private struct NativeCorpusOutput: Encodable {
+    let index: Int
+    let segments: [NativeCorpusSegment]
+}
+private struct NativeCorpusRound: Encodable {
+    let wall_seconds: Double
+    let clips: [NativeCorpusOutput]
+}
+private struct NativeCorpusEvidence: Encodable {
+    let recipe: String
+    let model_load_seconds: Double
+    let rounds: [NativeCorpusRound]
+}
+
+private final class NativeInferenceStart: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+    var started: Bool { lock.withLock { calls >= 5 } }
+    func check() -> Bool {
+        lock.withLock { calls += 1 }
+        return Task<Never, Never>.isCancelled
     }
 }
 

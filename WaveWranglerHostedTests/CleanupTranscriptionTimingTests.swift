@@ -209,6 +209,55 @@ struct CleanupTranscriptionTimingTests {
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
 
+    @Test func verifiedModelLoadingWaitsForAdmissionAndFailuresReleaseEverything() async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2)
+        defer { f.close() }
+        f.model.placeGroupsAtSourceTime()
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
+            episodeID: f.model.episodeID, runtime: f.runtime)
+        defer { cleanup.cancel() }
+        cleanup.saveRange(inValue: 0, outValue: 5)
+        await cleanup.refresh()
+        try #require(cleanup.plan?.isReady == true)
+        let snapshot = f.document.store.model
+        let pool = TranscriptionWorkerPool(concurrency: .four,
+            budget: .init(memoryBytes: 10, cpuThreads: 4, metalWorkers: 1))
+        let cost = TranscriptionResources(memoryBytes: 10, cpuThreads: 4, metalWorkers: 1)
+        let holder = Task {
+            try await pool.withAdmission(resources: cost) { try await Task.sleep(for: .seconds(30)) }
+        }
+        defer { holder.cancel() }
+        let probe = TranscriptionLoadingProbe()
+        let job = Task {
+            try await f.runtime.transcribeCleanupWorkers(model: snapshot, episode: f.model.episodeID,
+                modelRevision: "captured-metal-recipe", concurrency: .two, workerPool: pool,
+                resources: { bytes in
+                    #expect(bytes > 32 << 20, "Actual multichannel decoder/render memory is included")
+                    return cost
+                },
+                makeTranscriber: {
+                    let budget = await pool.snapshot
+                    #expect(budget.reservedBytes == 10 && budget.activeCPUThreads == 4 && budget.activeMetalWorkers == 1)
+                    await probe.loaded()
+                    throw TranscriptionConfigurationError.metalUnavailable
+                }, progress: { await probe.progress($0) })
+        }
+        defer { job.cancel() }
+        let deadline = Date().addingTimeInterval(10)
+        while await pool.snapshot.waiting < 2, Date() < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(await pool.snapshot.waiting == 2)
+        #expect(await probe.loads == 0, "No verified model bytes are retained while work queues behind another episode")
+        holder.cancel()
+        await #expect(throws: CancellationError.self) { try await holder.value }
+        await #expect(throws: TranscriptionConfigurationError.metalUnavailable) { try await job.value }
+        let drained = await pool.snapshot
+        #expect(drained.active == 0 && drained.waiting == 0 && drained.reservedBytes == 0)
+        #expect(drained.activeCPUThreads == 0 && drained.activeMetalWorkers == 0)
+        #expect(await probe.sawLoading)
+        #expect(f.document.store.model == snapshot, "Model/backend failure cannot publish partial words")
+    }
+
     private func wait(_ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(30)
         while !condition(), Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
@@ -251,6 +300,15 @@ private actor ParallelTranscriptionProbe {
     }
 
     func progress(_ update: CleanupTranscriptionProgress) { updates.append(update) }
+}
+
+private actor TranscriptionLoadingProbe {
+    var loads = 0
+    var sawLoading = false
+    func loaded() { loads += 1 }
+    func progress(_ update: CleanupTranscriptionProgress) {
+        if update.stage == .loading { sawLoading = true }
+    }
 }
 
 private actor TranscriptionFrameProbe {

@@ -738,6 +738,7 @@ actor AlignmentRuntime {
     struct CleanupPreparation: Sendable {
         let plan: PrimaryCleanupPlan
         let identities: [SourceID: String]
+        var renderBytes: [SourceID: Int] = [:]
     }
 
     struct CleanupAudio: Sendable {
@@ -783,6 +784,7 @@ actor AlignmentRuntime {
         let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         let plan = PrimaryCleanupPlan.make(model: model, episode: episodeID, map: map)
         var identities: [SourceID: String] = [:]
+        var renderBytes: [SourceID: Int] = [:]
         guard plan.isReady || !requireReady else { return CleanupPreparation(plan: plan, identities: identities) }
         for lane in plan.lanes {
             let admission = try await waveformSource(lane.primary.sourceID, sources: sources)
@@ -795,8 +797,10 @@ actor AlignmentRuntime {
             }
             try await reverify(admission)
             identities[lane.primary.sourceID] = try cleanupIdentity(admission.witness)
+            renderBytes[lane.primary.sourceID] = try AlignmentPipeline.adaptiveAudioReservationBytes(
+                channels: format.channelCount, sourceRate: lane.sourceRate)
         }
-        return CleanupPreparation(plan: plan, identities: identities)
+        return CleanupPreparation(plan: plan, identities: identities, renderBytes: renderBytes)
     }
 
     private func cleanupIdentity(_ witness: RawSourceIdentity) throws -> String {
@@ -903,15 +907,23 @@ actor AlignmentRuntime {
         }
     }
 
+    typealias CleanupWindowTranscriber = @Sendable ([Float]) async throws -> PCMTranscript
+
     func transcribeCleanup(
-        model: ShowDocumentModel, episode episodeID: EpisodeID, engine: LocalWhisper,
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        modelURL: URL, weights: LocalWhisperWeights, configuration: TranscriptionConfiguration,
         concurrency: TranscriptionConcurrency = .one,
         workerPool: TranscriptionWorkerPool? = nil,
         progress: @escaping @Sendable (CleanupTranscriptionProgress) async -> Void
     ) async throws -> [SpeakerTranscript] {
-        try await transcribeCleanup(model: model, episode: episodeID, modelRevision: engine.revision,
+        try await transcribeCleanupWorkers(model: model, episode: episodeID,
+            modelRevision: configuration.revision(weights: weights),
             concurrency: concurrency, workerPool: workerPool,
-            transcribeWindow: { try await engine.transcribeWindow(pcm: $0, sampleRate: 48_000) },
+            resources: { try TranscriptionResources(weights: weights, configuration: configuration, renderBytes: $0) },
+            makeTranscriber: {
+                let engine = try await LocalWhisper.load(url: modelURL, weights: weights, configuration: configuration)
+                return { try await engine.transcribeWindow(pcm: $0, sampleRate: 48_000) }
+            },
             progress: progress)
     }
 
@@ -922,6 +934,19 @@ actor AlignmentRuntime {
         transcribeWindow: @escaping @Sendable ([Float]) async throws -> PCMTranscript,
         progress: @escaping @Sendable (CleanupTranscriptionProgress) async -> Void
     ) async throws -> [SpeakerTranscript] {
+        try await transcribeCleanupWorkers(model: model, episode: episodeID, modelRevision: modelRevision,
+            concurrency: concurrency, workerPool: workerPool,
+            resources: { _ in .init() }, makeTranscriber: { transcribeWindow }, progress: progress)
+    }
+
+    func transcribeCleanupWorkers(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, modelRevision: String,
+        concurrency: TranscriptionConcurrency,
+        workerPool: TranscriptionWorkerPool?,
+        resources: @escaping @Sendable (Int) throws -> TranscriptionResources,
+        makeTranscriber: @escaping @Sendable () async throws -> CleanupWindowTranscriber,
+        progress: @escaping @Sendable (CleanupTranscriptionProgress) async -> Void
+    ) async throws -> [SpeakerTranscript] {
         let preparation = try await prepareCleanup(model: model, episode: episodeID)
         guard preparation.plan.isReady, let revision = preparation.plan.alignmentRevision,
               let episode = model.episode(episodeID) else {
@@ -930,6 +955,12 @@ actor AlignmentRuntime {
         let sources = await resolveSources(episode.sources)
         let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         let total = preparation.plan.lanes.reduce(0.0) { $0 + $1.end - $1.start }
+        let requests = try preparation.plan.lanes.map { lane in
+            guard let bytes = preparation.renderBytes[lane.primary.sourceID] else {
+                throw CleanupFailure(reason: "The Primary's render resource requirements could not be verified.")
+            }
+            return try resources(bytes)
+        }
         let workerPool = workerPool ?? TranscriptionWorkerPool(concurrency: concurrency)
         let reporter = CleanupTranscriptionReporter(workerLimit: concurrency.rawValue, sink: progress)
         await reporter.report(CleanupTranscriptionProgress(stage: .waiting, speaker: "",
@@ -943,8 +974,15 @@ actor AlignmentRuntime {
                     var results: [(Int, SpeakerTranscript)] = []
                     while let index = await queue.next() {
                         try Task.checkCancellation()
-                        let transcript = try await workerPool.withAdmission {
-                            try await self.transcribeCleanupLane(model: model, episodeID: episodeID,
+                        let transcript = try await workerPool.withAdmission(resources: requests[index]) {
+                            let lane = preparation.plan.lanes[index]
+                            await reporter.report(CleanupTranscriptionProgress(stage: .loading, speaker: lane.name,
+                                speakerIndex: index + 1, speakerCount: preparation.plan.lanes.count,
+                                windowIndex: 0, windowCount: 0, alignedStart: lane.start, alignedEnd: lane.end,
+                                completedSeconds: 0, totalSeconds: total))
+                            let transcribeWindow = try await makeTranscriber()
+                            try Task.checkCancellation()
+                            return try await self.transcribeCleanupLane(model: model, episodeID: episodeID,
                                 lane: preparation.plan.lanes[index], laneIndex: index,
                                 speakerCount: preparation.plan.lanes.count, sources: sources, map: map,
                                 expectedIdentity: preparation.identities[preparation.plan.lanes[index].primary.sourceID],

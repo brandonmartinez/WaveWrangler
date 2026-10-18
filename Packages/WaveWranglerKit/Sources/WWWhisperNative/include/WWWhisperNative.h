@@ -38,6 +38,7 @@ typedef enum {
     WW_INFERENCE_LOAD_FAILED = 2,
     WW_INFERENCE_CANCELLED = 3,
     WW_INFERENCE_FAILED = 4,
+    WW_INFERENCE_BACKEND_UNAVAILABLE = 5,
 } WWInferenceStatus;
 
 typedef struct {
@@ -63,6 +64,17 @@ void ww_whisper_free_transcript(WWNativeTranscript *transcript);
 WWNativeTranscript ww_whisper_infer_window(
     void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
     int32_t (*cancelled)(void *), void *cancel_context
+);
+
+typedef struct {
+    int32_t use_metal;
+    int32_t threads;
+} WWWhisperConfiguration;
+
+int32_t ww_whisper_metal_available(void);
+WWNativeTranscript ww_whisper_infer_window_configured(
+    void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
+    WWWhisperConfiguration configuration, int32_t (*cancelled)(void *), void *cancel_context
 );
 
 #endif

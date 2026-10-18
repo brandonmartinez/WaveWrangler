@@ -17,7 +17,7 @@ public enum LocalWhisperWeights: String, Sendable, CaseIterable {
     public var detail: String {
         switch self {
         case .baseEnglish: "148 MB. Smaller and faster, but less accurate in our conversational test."
-        case .turbo: "574 MB, Q5_0. Best recognition and filler retention in our small conversational test; slower than Base on this CPU backend."
+        case .turbo: "574 MB, Q5_0. Better recognition and filler retention than Base in our small conversational test. Metal accelerates inference on supported Apple silicon."
         }
     }
 
@@ -50,15 +50,18 @@ public enum LocalWhisperWeights: String, Sendable, CaseIterable {
 /// Offline inference, with no external process. Only an exact hash-pinned local model is admitted.
 public struct LocalWhisper: Sendable {
     public let weights: LocalWhisperWeights
+    public let configuration: TranscriptionConfiguration
     private let bytes: Data
-    public var revision: String { "whisper.cpp/1.6.2+ww-token-bounds-v1/\(weights.rawValue)/\(weights.sha256)/verbatim-v1" }
+    public var revision: String { configuration.revision(weights: weights) }
 
     @concurrent
-    public static func load(url: URL, weights: LocalWhisperWeights) async throws -> Self {
+    public static func load(
+        url: URL, weights: LocalWhisperWeights, configuration: TranscriptionConfiguration = .cpu
+    ) async throws -> Self {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         try Task.checkCancellation()
-        let model = try load(path: url.path, weights: weights)
+        let model = try load(path: url.path, weights: weights, configuration: configuration)
         try Task.checkCancellation()
         return model
     }
@@ -68,7 +71,12 @@ public struct LocalWhisper: Sendable {
         try transcribe(pcm: pcm, sampleRate: sampleRate)
     }
 
-    public static func load(path: String, weights: LocalWhisperWeights) throws -> Self {
+    public static func load(
+        path: String, weights: LocalWhisperWeights, configuration: TranscriptionConfiguration = .cpu
+    ) throws -> Self {
+        if configuration.backend == .metal, !TranscriptionConfiguration.metalAvailable {
+            throw TranscriptionConfigurationError.metalUnavailable
+        }
         let policy = IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES
         let previous = getiopolicy_np(policy, IOPOL_SCOPE_THREAD)
         guard previous >= 0, setiopolicy_np(policy, IOPOL_SCOPE_THREAD, IOPOL_MATERIALIZE_DATALESS_FILES_OFF) == 0
@@ -78,7 +86,7 @@ public struct LocalWhisper: Sendable {
         let bytes = try result.get()
         guard SHA256.hash(data: bytes).map({ String(format: "%02x", $0) }).joined() == weights.sha256
         else { throw SpeechModelError.hashMismatch }
-        return Self(weights: weights, bytes: bytes)
+        return Self(weights: weights, configuration: configuration, bytes: bytes)
     }
 
     public func transcribe(
@@ -104,13 +112,16 @@ public struct LocalWhisper: Sendable {
         }
         var native = bytes.withUnsafeBytes { model in
             samples.withUnsafeBufferPointer { audio in
-                ww_whisper_infer_window(UnsafeMutableRawPointer(mutating: model.baseAddress), model.count,
-                    audio.baseAddress, Int32(audio.count), callback, raw)
+                ww_whisper_infer_window_configured(UnsafeMutableRawPointer(mutating: model.baseAddress), model.count,
+                    audio.baseAddress, Int32(audio.count),
+                    WWWhisperConfiguration(use_metal: configuration.backend == .metal ? 1 : 0,
+                                           threads: Int32(configuration.threads.rawValue)), callback, raw)
             }
         }
         defer { ww_whisper_free_transcript(&native) }
         withExtendedLifetime(cancellation) {}
         guard !isCancelled(), native.status != WW_INFERENCE_CANCELLED else { throw PCMInferenceRefusal.cancelled }
+        if native.status == WW_INFERENCE_BACKEND_UNAVAILABLE { throw TranscriptionConfigurationError.metalUnavailable }
         guard native.status == WW_INFERENCE_OK else {
             throw native.status == WW_INFERENCE_LOAD_FAILED ? PCMInferenceRefusal.modelLoadFailed : .inferenceFailed
         }

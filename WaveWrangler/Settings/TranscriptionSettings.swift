@@ -10,6 +10,19 @@ final class TranscriptionSettings {
     static let shared = TranscriptionSettings()
     static let legacyBookmarkKey = "WWLocalWhisperModelBookmark"
 
+    var backend: TranscriptionBackend {
+        didSet {
+            defaults.set(backend.rawValue, forKey: PreferenceKey.transcriptionBackend)
+            error = nil
+        }
+    }
+    var threads: TranscriptionThreads {
+        didSet {
+            defaults.set(threads.rawValue, forKey: PreferenceKey.transcriptionThreads)
+            error = nil
+        }
+    }
+    let metalAvailable: Bool
     var concurrency: TranscriptionConcurrency {
         didSet {
             defaults.set(concurrency.rawValue, forKey: PreferenceKey.transcriptionWorkers)
@@ -43,9 +56,19 @@ final class TranscriptionSettings {
 
     init(defaults: UserDefaults = PersistenceEnvironment.preferences,
          directory: URL = URL.applicationSupportDirectory.appending(
-            path: "\(PersistenceEnvironment.storageName)/WhisperModels", directoryHint: .isDirectory)) {
+            path: "\(PersistenceEnvironment.storageName)/WhisperModels", directoryHint: .isDirectory),
+         metalAvailable: Bool = TranscriptionConfiguration.metalAvailable) {
         self.defaults = defaults
         self.directory = directory
+        self.metalAvailable = metalAvailable
+        let storedBackend = defaults.string(forKey: PreferenceKey.transcriptionBackend)
+        backend = storedBackend.flatMap(TranscriptionBackend.init(rawValue:)) ?? .automatic
+        let storedThreads = defaults.object(forKey: PreferenceKey.transcriptionThreads)
+        threads = (storedThreads as? Int).flatMap(TranscriptionThreads.init(rawValue:)) ?? .four
+        if (storedBackend.map { TranscriptionBackend(rawValue: $0) == nil } ?? false)
+            || (storedThreads != nil && (storedThreads as? Int).flatMap(TranscriptionThreads.init(rawValue:)) == nil) {
+            error = "The saved hardware or thread preference is unsupported. Review Automatic and four threads before starting another transcription."
+        }
         let storedWorkers = defaults.object(forKey: PreferenceKey.transcriptionWorkers)
         let policy = (storedWorkers as? Int).flatMap(TranscriptionConcurrency.init(rawValue:))
         concurrency = policy ?? .one
@@ -83,6 +106,24 @@ final class TranscriptionSettings {
 
     var selectedURL: URL? { available.contains(selection) ? modelURL(for: selection) : nil }
 
+    func captureConfiguration() throws -> TranscriptionConfiguration {
+        try TranscriptionConfiguration.resolve(backend: backend, threads: threads, metalAvailable: metalAvailable)
+    }
+
+    var backendStatus: String {
+        switch backend {
+        case .automatic:
+            metalAvailable
+                ? "Automatic chooses CPU + GPU / Metal on this Mac. Initialization failure stops the job; choose CPU and retry."
+                : "Automatic chooses CPU because a supported Apple GPU is unavailable."
+        case .cpu: "CPU / Accelerate only. No Metal inference or Core ML encoder."
+        case .metal:
+            metalAvailable
+                ? "Encoder and decoder tensor inference use Metal; audio preparation and decoding control also use the CPU."
+                : "Metal is unavailable on this Mac. Choose CPU or Automatic before transcribing."
+        }
+    }
+
     func configuredWorkerPool() async -> TranscriptionWorkerPool {
         await workerPool.configure(concurrency, revision: workerConfigurationRevision)
         return workerPool
@@ -117,7 +158,7 @@ final class TranscriptionSettings {
 
     func download(
         fetch: @escaping Fetch = { try await TranscriptionSettings.fetch($0, to: $1, progress: $2) },
-        verify: @escaping Verify = { _ = try await LocalWhisper.load(url: $0, weights: $1) }
+        verify: Verify? = nil
     ) {
         guard !isBusy else { return }
         let weights = selection
@@ -130,6 +171,12 @@ final class TranscriptionSettings {
         error = nil
         status = "Downloading \(weights.title)…"
         let directory = directory
+        let pool = workerPool
+        let verify = verify ?? { url, weights in
+            try await pool.withAdmission(resources: .init(memoryBytes: weights.byteCount * 2)) {
+                _ = try await LocalWhisper.load(url: url, weights: weights)
+            }
+        }
         job = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -149,7 +196,7 @@ final class TranscriptionSettings {
                         guard let self, self.transferID == token else { return }
                         self.isVerifying = true
                         self.receivedBytes = Int64(weights.byteCount)
-                        self.status = "Checking model size and SHA-256 before installation…"
+                        self.status = "Waiting for the shared resource budget, then checking model size and SHA-256 before installation…"
                     })
                 status = "\(weights.title) is installed. It can be used offline in every episode."
                 if legacy == nil || legacy?.weights == weights {

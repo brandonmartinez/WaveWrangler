@@ -575,6 +575,9 @@ extern "C" {
     // NOTE: this function allocates memory, and it is the responsibility of the caller to free the pointer - see whisper_free_context_params & whisper_free_params()
     WHISPER_API struct whisper_context_params * whisper_context_default_params_by_ref();
     WHISPER_API struct whisper_context_params whisper_context_default_params(void);
+
+    // WaveWrangler: report the actual backend; a requested GPU must not silently become CPU.
+    WHISPER_API int whisper_uses_metal(struct whisper_context * ctx);
     WHISPER_API struct whisper_full_params * whisper_full_default_params_by_ref(enum whisper_sampling_strategy strategy);
     WHISPER_API struct whisper_full_params whisper_full_default_params(enum whisper_sampling_strategy strategy);
 
