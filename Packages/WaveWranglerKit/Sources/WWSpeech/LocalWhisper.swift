@@ -142,7 +142,7 @@ public struct LocalWhisper: Sendable {
         return PCMTranscript(segments: segments)
     }
 
-    private static func resample(_ pcm: [Float], sampleRate: Int) throws -> [Float] {
+    static func resample(_ pcm: [Float], sampleRate: Int) throws -> [Float] {
         if sampleRate == 16_000 { return pcm }
         guard let inputFormat = AVAudioFormat(standardFormatWithSampleRate: Double(sampleRate), channels: 1),
               let outputFormat = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1),

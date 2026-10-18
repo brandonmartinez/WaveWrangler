@@ -11,6 +11,9 @@ struct CleanupTranscriptionProgress: Sendable, Equatable {
         let alignedStart: Double
         let alignedEnd: Double
         let stage: Stage
+        var chunkDescription: String {
+            windowCount > 0 ? "\(windowIndex) of \(windowCount)" : "\(windowIndex)"
+        }
     }
     let stage: Stage
     let speaker: String

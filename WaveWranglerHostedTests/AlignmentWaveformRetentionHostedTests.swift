@@ -27,7 +27,8 @@ struct AlignmentWaveformRetentionHostedTests {
         }
     }
 
-    func fixture(cleanupPrimaries: Int = 0, durationSeconds: Int = 40) async throws -> Fixture {
+    func fixture(cleanupPrimaries: Int = 0, durationSeconds: Int = 40,
+                 pauses: [Range<Double>] = []) async throws -> Fixture {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let referenceEpoch = RecordingEpoch(label: "Reference")
@@ -69,7 +70,7 @@ struct AlignmentWaveformRetentionHostedTests {
         var files: [URL] = []
         for (index, source) in [reference, target].enumerated() {
             let file = folder.appendingPathComponent(source.displayNameHint)
-            try Self.wave(target: index == 1, durationSeconds: durationSeconds).write(to: file)
+            try Self.wave(target: index == 1, durationSeconds: durationSeconds, pauses: pauses).write(to: file)
             files.append(file)
             guard case let .success(metadata) = io.metadata(at: file) else { throw DecodeFailure.notFound }
             let witness = try await decoder.captureRawIdentity(file, matching: metadata.fingerprint)
@@ -283,7 +284,7 @@ struct AlignmentWaveformRetentionHostedTests {
         #expect(f.document.store.model == snapshot)
     }
 
-    private static func wave(target: Bool, durationSeconds: Int = 40) -> Data {
+    private static func wave(target: Bool, durationSeconds: Int = 40, pauses: [Range<Double>] = []) -> Data {
         let rate = 8000, frames = rate * durationSeconds
         var data = Data()
         func put<T: FixedWidthInteger>(_ value: T) {
@@ -307,7 +308,7 @@ struct AlignmentWaveformRetentionHostedTests {
             let u = Double(frame) / Double(rate)
             let t = target ? 1.00012 * u + 0.18 : u
             let x = t * 2000, index = Int64(floor(x)), fraction = x - floor(x)
-            let value = noise(index) * (1 - fraction) + noise(index + 1) * fraction
+            let value = pauses.contains { $0.contains(u) } ? 0 : noise(index) * (1 - fraction) + noise(index + 1) * fraction
             put(Int16((value * 20_000).rounded()))
         }
         return data

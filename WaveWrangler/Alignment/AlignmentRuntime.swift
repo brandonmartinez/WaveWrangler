@@ -917,7 +917,7 @@ actor AlignmentRuntime {
         progress: @escaping @Sendable (CleanupTranscriptionProgress) async -> Void
     ) async throws -> [SpeakerTranscript] {
         try await transcribeCleanupWorkers(model: model, episode: episodeID,
-            modelRevision: configuration.revision(weights: weights),
+            modelRevision: configuration.revision(weights: weights) + "/" + TranscriptionChunking.pausePreferred.revision,
             concurrency: concurrency, workerPool: workerPool,
             resources: { try TranscriptionResources(weights: weights, configuration: configuration, renderBytes: $0) },
             makeTranscriber: {
@@ -931,11 +931,13 @@ actor AlignmentRuntime {
         model: ShowDocumentModel, episode episodeID: EpisodeID, modelRevision: String,
         concurrency: TranscriptionConcurrency = .one,
         workerPool: TranscriptionWorkerPool? = nil,
+        chunking: TranscriptionChunking = .pausePreferred,
         transcribeWindow: @escaping @Sendable ([Float]) async throws -> PCMTranscript,
         progress: @escaping @Sendable (CleanupTranscriptionProgress) async -> Void
     ) async throws -> [SpeakerTranscript] {
         try await transcribeCleanupWorkers(model: model, episode: episodeID, modelRevision: modelRevision,
             concurrency: concurrency, workerPool: workerPool,
+            chunking: chunking,
             resources: { _ in .init() }, makeTranscriber: { transcribeWindow }, progress: progress)
     }
 
@@ -943,6 +945,7 @@ actor AlignmentRuntime {
         model: ShowDocumentModel, episode episodeID: EpisodeID, modelRevision: String,
         concurrency: TranscriptionConcurrency,
         workerPool: TranscriptionWorkerPool?,
+        chunking: TranscriptionChunking = .pausePreferred,
         resources: @escaping @Sendable (Int) throws -> TranscriptionResources,
         makeTranscriber: @escaping @Sendable () async throws -> CleanupWindowTranscriber,
         progress: @escaping @Sendable (CleanupTranscriptionProgress) async -> Void
@@ -988,6 +991,7 @@ actor AlignmentRuntime {
                                 expectedIdentity: preparation.identities[preparation.plan.lanes[index].primary.sourceID],
                                 revision: revision, modelRevision: modelRevision,
                                 workingRange: episode.cleanup?.workingRange, total: total,
+                                chunking: chunking,
                                 transcribeWindow: transcribeWindow, reporter: reporter)
                         }
                         results.append((index, transcript))
@@ -1014,6 +1018,7 @@ actor AlignmentRuntime {
         speakerCount: Int, sources: [AlignmentSource], map: AlignedTimelineMap,
         expectedIdentity: String?, revision: Int, modelRevision: String,
         workingRange: EpisodeWorkingRange?, total: Double,
+        chunking: TranscriptionChunking,
         transcribeWindow: @escaping @Sendable ([Float]) async throws -> PCMTranscript,
         reporter: CleanupTranscriptionReporter
     ) async throws -> SpeakerTranscript {
@@ -1022,31 +1027,36 @@ actor AlignmentRuntime {
         let identity = try cleanupIdentity(admission.witness)
         guard identity == expectedIdentity else { throw DecodeFailure.sourceIdentityMismatch }
         var words: [TranscriptWord] = []
-        let windows = try Self.cleanupTranscriptionWindows(start: lane.start, end: lane.end)
-        for (windowIndex, window) in windows.enumerated() {
+        var planner = try TranscriptionChunkPlanner(start: lane.start, end: lane.end, policy: chunking)
+        var windowIndex = 0
+        while let candidate = planner.candidate {
             try Task.checkCancellation()
-            let cursor = Double(window.coreFrames.lowerBound) / 48_000
-            let coreEnd = Double(window.coreFrames.upperBound) / 48_000
-            let start = Double(window.audioFrames.lowerBound) / 48_000
-            let end = Double(window.audioFrames.upperBound) / 48_000
-            func update(_ stage: CleanupTranscriptionProgress.Stage, completed: Double) -> CleanupTranscriptionProgress {
+            windowIndex += 1
+            func update(_ stage: CleanupTranscriptionProgress.Stage, window: TranscriptionWindow) -> CleanupTranscriptionProgress {
                 CleanupTranscriptionProgress(stage: stage, speaker: lane.name,
                     speakerIndex: laneIndex + 1, speakerCount: speakerCount,
-                    windowIndex: windowIndex + 1, windowCount: windows.count,
-                    alignedStart: cursor, alignedEnd: coreEnd,
+                    windowIndex: windowIndex, windowCount: planner.candidate == nil ? windowIndex : 0,
+                    alignedStart: Double(window.coreFrames.lowerBound) / 48_000,
+                    alignedEnd: Double(window.coreFrames.upperBound) / 48_000,
                     completedSeconds: completed, totalSeconds: total)
             }
-            await reporter.report(update(.rendering, completed: completed))
-            let pcm = try await cleanupSamples(model: model, episode: episodeID, lane: lane,
-                admission: admission, map: map, start: start, end: end)
-            await reporter.report(update(.recognizing, completed: completed))
+            await reporter.report(update(.rendering, window: candidate))
+            var pcm = try await cleanupSamples(model: model, episode: episodeID, lane: lane,
+                admission: admission, map: map,
+                start: Double(candidate.audioFrames.lowerBound) / 48_000,
+                end: Double(candidate.audioFrames.upperBound) / 48_000)
+            let window = try planner.next(pcm: pcm)
+            // Keep the selected window's right context; re-render overlap on the next iteration.
+            pcm.removeLast(pcm.count - window.audioFrames.count)
+            let start = Double(window.audioFrames.lowerBound) / 48_000
+            await reporter.report(update(.recognizing, window: window))
             let transcript = try await transcribeWindow(pcm)
             try Task.checkCancellation()
             for segment in transcript.segments {
                 if segment.text == "[BLANK_AUDIO]" { continue }
                 if let a = segment.startSeconds, let b = segment.endSeconds {
-                    let lo = start + a, hi = start + b, center = (lo + hi) / 2
-                    guard center >= cursor, center < coreEnd else { continue }
+                    guard window.owns(startSeconds: a, endSeconds: b) else { continue }
+                    let lo = start + a, hi = start + b
                     if let range = lane.sourceRange(start: lo, end: hi) {
                         words.append(TranscriptWord(text: segment.text, sourceStartFrame: range.lowerBound,
                             sourceEndFrame: range.upperBound, alignedStart: lo, alignedEnd: hi))
@@ -1056,8 +1066,8 @@ actor AlignmentRuntime {
                 // Preserve recognized but untimed text; never spread it across neighbouring words.
                 words.append(TranscriptWord(text: segment.text))
             }
-            completed += Double(window.coreFrames.count) / 48_000
-            await reporter.report(update(.completedWindow, completed: completed))
+            completed = Double(window.coreFrames.upperBound - Int64((lane.start * 48_000).rounded())) / 48_000
+            await reporter.report(update(.completedWindow, window: window))
         }
         try await reverify(admission)
         return SpeakerTranscript(speaker: lane.speaker, primary: lane.primary, sourceRate: lane.sourceRate,

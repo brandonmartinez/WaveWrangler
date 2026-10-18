@@ -235,6 +235,9 @@ Current ordered 17-file pin:
 enforced by `scripts/verify-whisper-native.sh`.
 Recipe: `whisper.cpp/1.6.2+ww-token-bounds-v1+metal-v1/<model>/<sha>/verbatim-v1/`
 `requested=<choice>;backend=<actual>;threads=<count>`.
+The subsequent [pause-preferred chunking integration](transcription-chunking.md) appends its
+versioned boundary policy to saved Cleanup transcripts; the standalone adapter recipe above
+identifies raw inference, not chunk planning.
 Settings affect future jobs; lowering workers drains existing active work.
 Loading, waiting, rendering, recognition and final verification remain visible.
 

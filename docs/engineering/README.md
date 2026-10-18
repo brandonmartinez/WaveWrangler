@@ -453,16 +453,30 @@ two is a reasonable manual starting point on high-memory machines, not a measure
 Whisper contexts and per-context CPU backends are independent. The native bridge sets the shared
 log callback once and serializes context initialization (which initializes upstream shared FFT/backend
 tables), then releases the lock **before** inference. No live context is shared between workers.
-Each inference still requests four Whisper threads; Accelerate may use additional internal execution
-resources. The 1–4 worker limit is not an OS-process count or a strict total-thread count.
-Aligned decode/render resource gates remain independently bounded; their byte budget is **not** a
-Whisper-model-memory budget. Every worker needs additional inference working memory beyond the
-model file size. CPU/Accelerate is the only production backend; GPU/ANE execution is a separate
-qualification task.
+Each inference uses its captured 1/2/4/8-thread configuration; Accelerate/Metal may use additional
+internal resources. The 1–4 worker limit is not an OS-process count or a strict total-thread count.
+The app-wide pool accounts for verified weights, inference, requested threads, Metal slots and the
+actual multichannel renderer envelope from `AlignmentPipeline.adaptiveAudioReservationBytes`.
+See the [CPU/Metal qualification and budgets](../research/apple-silicon-transcription.md);
+Core ML/ANE remains deferred.
+
+`TranscriptionChunkPlanner` advances one sample-exact 48 kHz core at a time inside that admission.
+The candidate has a 28-second core and clipped one-second left/right context (30 seconds maximum).
+Only its final four core seconds plus right context are examined in 10 ms RMS hops. The latest
+qualifying low-energy run (at least 300 ms, below both -50 dBFS RMS and 20 dB below the local
+90th-percentile RMS) supplies a center boundary, clamped to the fixed maximum. Otherwise the fixed
+boundary remains. Selected PCM is trimmed to its retained right context, never silence-compacted;
+the next iteration re-renders overlapping context. The planner retains only frame coordinates, not
+whole-recording PCM or a precomputed episode-wide boundary array. Midpoint ownership compares
+window-relative frame coordinates; aligned/source timing still uses the accepted lane map.
+The production saved recipe includes the versioned chunk policy. The old fixed-window reference
+remains available to synthetic and opt-in public comparisons, not as an extra UI setting.
+See [measurements and timing limits](../research/transcription-chunking.md).
 
 `CleanupTranscriptionReporter` aggregates unique completed cores by speaker, publishes the full
 active-speaker set, and sequences packets so delayed concurrent UI callbacks cannot roll progress
 backwards. Initial global queue wait is excluded from the first processing-speed estimate.
+Chunk totals remain zero/unknown until the final core, and the UI omits an unknown denominator.
 Results are sorted back into plan order, all sources/maps are rechecked, and only the caller may
 publish the complete, current episode result.
 

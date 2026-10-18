@@ -70,6 +70,7 @@ struct CleanupTranscriptionTimingTests {
         let probe = TranscriptionFrameProbe()
         let transcripts = try await f.runtime.transcribeCleanup(
             model: snapshot, episode: f.model.episodeID, modelRevision: "synthetic-window-probe",
+            chunking: .fixed,
             transcribeWindow: { await probe.transcribe($0) },
             progress: { await probe.progress($0) })
         let counts = await probe.counts
@@ -117,6 +118,61 @@ struct CleanupTranscriptionTimingTests {
         #expect(preview.channels.count == 2)
         #expect(preview.channels.values.allSatisfy { $0.count == 1 && $0[0] == 0 })
         #expect(f.document.store.model == snapshot)
+    }
+
+    @Test func actualPausePreferredPCMRetainsSilenceCoverageFillersAndSourceAnchors() async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1,
+            durationSeconds: 70, pauses: [26..<27, 51..<52])
+        defer { f.close() }
+        f.model.placeGroupsAtSourceTime()
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
+            episodeID: f.model.episodeID, runtime: f.runtime)
+        defer { cleanup.cancel() }
+        cleanup.saveRange(inValue: 1.0 / 48_000, outValue: 69.5)
+        await cleanup.refresh()
+        try #require(cleanup.plan?.isReady == true)
+        let lane = try #require(cleanup.plan?.lanes.first)
+        let snapshot = f.document.store.model
+        let originals = try f.files.map { try Data(contentsOf: $0) }
+        let probe = TranscriptionFrameProbe()
+        let transcripts = try await f.runtime.transcribeCleanup(model: snapshot, episode: f.model.episodeID,
+            modelRevision: "pause-window-probe", transcribeWindow: { pcm in
+                _ = await probe.transcribe(pcm)
+                return PCMTranscript(segments: [
+                    PCMSegment(text: "um,", startSeconds: 1.25, endSeconds: 1.5),
+                    PCMSegment(text: "untimed filler uh", startSeconds: nil, endSeconds: nil),
+                ])
+            }, progress: { await probe.progress($0) })
+        let updates = await probe.updates
+        let completed = updates.filter { $0.stage == .completedWindow }
+        let recognizing = updates.filter { $0.stage == .recognizing }
+        #expect(completed.count == 3 && recognizing.count == 3)
+        #expect(abs(completed[0].alignedEnd - 26.5) < 0.02)
+        #expect(abs(completed[1].alignedEnd - 51.5) < 0.02)
+        #expect(completed.last?.alignedEnd == lane.end)
+        #expect(zip(completed, completed.dropFirst()).allSatisfy { $0.alignedEnd == $1.alignedStart })
+        #expect(completed.map(\.windowCount) == [0, 0, 3])
+        #expect(zip(updates, updates.dropFirst()).allSatisfy { $0.fraction <= $1.fraction })
+        let firstFrame = Int64((lane.start * 48_000).rounded())
+        let lastFrame = Int64((lane.end * 48_000).rounded())
+        let expectedCounts = recognizing.map { update -> Int in
+            let first = max(firstFrame, Int64((update.alignedStart * 48_000).rounded()) - 48_000)
+            let last = min(lastFrame, Int64((update.alignedEnd * 48_000).rounded()) + 48_000)
+            return Int(last - first)
+        }
+        #expect(await probe.counts == expectedCounts)
+        let transcript = try #require(transcripts.first)
+        #expect(transcript.words.map(\.text) == ["um,", "untimed filler uh", "um,", "untimed filler uh", "um,", "untimed filler uh"])
+        for (index, update) in recognizing.enumerated() {
+            let audioStart = max(lane.start, update.alignedStart - 1)
+            let word = transcript.words[index * 2]
+            #expect(abs(try #require(word.alignedStart) - audioStart - 1.25) < 1.0 / 48_000)
+            #expect(word.sourceStartFrame == lane.sourceRange(start: audioStart + 1.25, end: audioStart + 1.5)?.lowerBound)
+            #expect(word.sourceEndFrame == lane.sourceRange(start: audioStart + 1.25, end: audioStart + 1.5)?.upperBound)
+        }
+        #expect(f.document.store.model == snapshot)
+        #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
 
     @Test func progressAccumulatesCompletedCoresAcrossEveryPrimary() async throws {

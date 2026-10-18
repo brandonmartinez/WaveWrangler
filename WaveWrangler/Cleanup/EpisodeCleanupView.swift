@@ -230,7 +230,7 @@ struct EpisodeCleanupContent: View {
                             if speaker.stage == .loading {
                                 Text("\(speaker.speaker) | Verifying and loading local weights")
                             } else {
-                                Text("\(speaker.speaker) | \(speaker.stage == .rendering ? "Preparing" : "Transcribing") chunk \(speaker.windowIndex) of \(speaker.windowCount) | Aligned \(AlignmentPresentation.formatTime(speaker.alignedStart)) to \(AlignmentPresentation.formatTime(speaker.alignedEnd))")
+                                Text("\(speaker.speaker) | \(speaker.stage == .rendering ? "Preparing" : "Transcribing") chunk \(speaker.chunkDescription) | Aligned \(AlignmentPresentation.formatTime(speaker.alignedStart)) to \(AlignmentPresentation.formatTime(speaker.alignedEnd))")
                             }
                         }
                     }

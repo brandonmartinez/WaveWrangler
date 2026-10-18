@@ -69,6 +69,21 @@ struct CleanupTranscriptionProgressTests {
         #expect(status.elapsed(at: start.addingTimeInterval(120)) == 120)
     }
 
+    @Test func streamingChunkCountsStayUnknownUntilTheFinalCore() async throws {
+        let sink = ProgressSink()
+        let reporter = CleanupTranscriptionReporter(workerLimit: 1) { await sink.record($0) }
+        for (index, count, completed) in [(1, 0, 26.5), (2, 0, 53.0), (3, 3, 60.0)] {
+            await reporter.report(CleanupTranscriptionProgress(stage: .completedWindow, speaker: "Synthetic",
+                speakerIndex: 1, speakerCount: 1, windowIndex: index, windowCount: count,
+                alignedStart: 0, alignedEnd: completed, completedSeconds: completed, totalSeconds: 60))
+        }
+        let packets = await sink.packets
+        #expect(packets[0].activeSpeakers.first?.chunkDescription == "1")
+        #expect(packets[1].activeSpeakers.first?.chunkDescription == "2")
+        #expect(packets[2].activeSpeakers.isEmpty)
+        #expect(packets.map(\.completedSeconds) == [26.5, 53, 60])
+    }
+
     private func update(completed: Double,
                         stage: CleanupTranscriptionProgress.Stage = .recognizing,
                         speaker: Int = 1) -> CleanupTranscriptionProgress {

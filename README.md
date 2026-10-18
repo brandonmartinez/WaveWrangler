@@ -237,10 +237,17 @@ interrupted, even when lowering the limit. Cancellation removes queued work and 
 Native context initialization is serialized for upstream shared FFT/backend setup, not inference.
 
 **Transcribe Episode** processes each aligned Primary separately, using the existing pitch-preserving
-renderer for accepted adaptive file timing. Bounded 28-second cores have up to one second of context
-on either side; timed words are owned by their core, not duplicated by the context overlap.
+renderer for accepted adaptive file timing. Near each planned 28-second core boundary, it prefers the
+center of a sustained low-energy pause within a four-second lookback, otherwise retaining the fixed
+boundary. Cores retain up to one second of context on either side; **every actual recognition input,
+including context, is at most 30 seconds**. Timed words are owned by their core, not duplicated by
+the context overlap. This is sentence-friendly, not grammatical sentence detection: it can still
+split a sentence, and never removes silence, quiet speech or fillers. No extra control is required.
+The [chunking and timing comparison](docs/research/transcription-chunking.md) documents the
+300 ms/relative-energy policy and mixed accuracy results; pause boundaries do not make word timings
+safe for automatic slicing.
 A pinned status panel stays visible while scrolling the tracks: it shows the current stage and every active speaker,
-speaker/chunk counts, aligned interval, completed audio and percentage across **all** Primaries,
+speaker count/current chunk, aligned interval, completed audio and percentage across **all** Primaries,
 elapsed time, a measured remaining-time estimate, and cancellation. Percentages advance only after
 completed chunks, not fabricated intra-inference progress. Remaining time starts after a completed
 chunk and can vary with speakers, silence and hardware; final source/timing verification is shown
@@ -248,6 +255,8 @@ separately before any result is published. Cancelling or failing never saves a p
 Concurrent chunks contribute once to a shared progress total; completion order never changes speaker
 or word ordering. Queued jobs explicitly report waiting for the shared worker/memory/thread budget;
 loading verified weights is a separate active-speaker stage.
+The final chunk count is unknown until the last core is selected, rather than estimated as a fixed
+window total.
 Chunk planning and both aligned renderers pass exact 48 kHz frame ranges, rather than testing
 floating-point differences against the 30-second limit. Whisper receives bounded, already-aligned
 PCM buffers; no full-length temporary working recording is required.
