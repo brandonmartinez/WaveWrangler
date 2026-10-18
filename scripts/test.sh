@@ -74,6 +74,9 @@ if [[ "$UI" == 1 ]]; then
   exit 0
 fi
 
+echo "==> generated native Whisper timestamp bounds regression"
+bash "$ROOT/scripts/test-whisper-timestamps.sh"
+
 echo "==> swift test (Packages/WaveWranglerKit)"
 swift test \
   --package-path "$ROOT/Packages/WaveWranglerKit" \

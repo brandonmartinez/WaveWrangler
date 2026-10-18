@@ -4,315 +4,287 @@ import XCTest
 final class TranscriptReviewUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUp() async throws {
-        continueAfterFailure = false
-        app = XCUIApplication()
-        app.launchArguments = [
-            "-ApplePersistenceIgnoreState", "YES",
-            "-WWUITestHooks", "YES",
-            "-WWUITestResetPreferences", "YES",
-            "-WWUITestCenterWindows", "YES",
-            "-WWUITestOpenShow", "Synthetic Review Fixture",
-            "-WWUITestShowEpisodes", "1",
-        ]
-        app.launch()
-        app.activate()
-        XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 5))
-        selectFirstEpisode()
-        let reviewDestination = app.buttons["ww.show.destination.review"]
-        XCTAssertTrue(reviewDestination.waitForExistence(timeout: 5))
-        reviewDestination.click()
-        XCTAssertTrue(reviewDestination.isSelected, "Selecting Review updates the destination control")
-        XCTAssertFalse(
-            app.descendants(matching: .any)["ww.show.showInfoSummary.title"].exists,
-            "Selecting an episode leaves the Show Info surface"
-        )
-        let reviewHeading = app.descendants(matching: .any)["ww.review.heading"]
-        let reviewHeadingFound = reviewHeading.waitForExistence(timeout: 5)
-        let reviewState = [
-            "selected=\(reviewDestination.isSelected)",
-            "notice=\(app.descendants(matching: .any)["ww.review.provisionalNotice"].exists)",
-            "timeline=\(app.descendants(matching: .any)["ww.review.timelinePane"].exists)",
-            "inspector=\(app.staticTexts["ww.review.inspector.heading"].exists)",
-            "showInfo=\(app.descendants(matching: .any)["ww.show.showInfoSummary.title"].exists)",
-            "setup=\(app.descendants(matching: .any)["ww.setup.sources"].exists)",
-        ].joined(separator: "; ")
-        XCTAssertTrue(reviewHeadingFound, "Review heading missing after selection: \(reviewState)")
-    }
-
     override func tearDown() async throws {
         if let app, app.state != .notRunning { app.terminate() }
     }
 
-    func testReviewShellExposesSyntheticPrimaryBackupAndBlockedStates() {
-        XCTAssertTrue(app.descendants(matching: .any)["ww.review.provisionalNotice"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["ww.review.blockedReason"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["ww.review.lane.speaker-a-primary"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["ww.review.lane.speaker-a-backup"].exists)
-        XCTAssertTrue(app.staticTexts["ww.review.inspector.analysisState"].exists)
-        XCTAssertTrue(app.staticTexts["ww.review.inspector.defaultMode"].exists)
-        XCTAssertEqual(
-            app.descendants(matching: .any)["ww.review.inspector.tokenID"].value as? String,
-            "token-stub-001"
-        )
-        XCTAssertTrue(
-            (app.descendants(matching: .any)["ww.review.inspector.proposal"].value as? String ?? "")
-                .contains("Synthetic contextual filler proposal 1")
-        )
-        XCTAssertEqual(
-            app.descendants(matching: .any)["ww.review.inspector.proposalTiming"].value as? String,
-            "Timing unavailable — no word timing or source-frame interval."
-        )
-        XCTAssertEqual(
-            app.descendants(matching: .any)["ww.review.inspector.proposalSource"].value as? String,
-            "Source unavailable — no selected Primary is connected or authorized."
-        )
-        XCTAssertEqual(
-            app.descendants(matching: .any)["ww.review.inspector.proposalProtection"].value as? String,
-            "Protection unsupported — coverage is not established."
-        )
-
-        for identifier in [
-            "acceptShorten", "lift", "reject", "singleLaneAudition", "fullPreview",
-        ] {
-            let action = app.buttons["ww.review.action.\(identifier)"]
-            XCTAssertTrue(action.exists, "\(identifier) remains discoverable")
-            XCTAssertEqual(action.elementType, .button)
-            XCTAssertFalse(action.isEnabled, "\(identifier) stays blocked without policy/map evidence")
-            XCTAssertFalse((action.value as? String ?? "").isEmpty, "\(identifier) exposes its block reason")
+    private func launch(aligned: Bool, publicWAV: String? = nil, timeline: Bool = false) {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "-WWUITestHooks", "YES", "-WWUITestResetPreferences", "YES",
+            "-WWUITestOpenShow", "Cleanup Fixture",
+            "-WWUITestShowFolder", "WWUITests-Cleanup-\(UUID().uuidString)",
+            "-WWUITestShowEpisodes", "1",
+        ]
+        if aligned {
+            app.launchArguments += ["-WWUITestAlignmentFixture", "YES", "-WWUITestCleanupFixture", "YES"]
         }
-
-        let fullPreview = app.buttons["ww.review.action.fullPreview"]
-        XCTAssertTrue((fullPreview.value as? String ?? "").contains("every affected lane"))
-        XCTAssertTrue(app.buttons["ww.review.remedy.setup"].exists)
-    }
-
-    func testTimelineListsDistinctTimeDomainsWithoutInventedValues() {
-        for domain in ["source", "group", "aligned", "output"] {
-            let field = app.descendants(matching: .any)["ww.review.timeline.domain.\(domain)"]
-            XCTAssertTrue(field.exists, "\(domain) time has a distinct accessible field")
-            XCTAssertTrue((field.value as? String ?? "").contains("Not established"))
-        }
-        XCTAssertTrue(app.descendants(matching: .any)["ww.review.occurrences"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["ww.review.timelinePane"].exists)
-    }
-
-    func testBoundSyntheticTranscriptStaysInItsEpisodeEditor() {
-        app.terminate()
-        var arguments = app.launchArguments
-        if let index = arguments.firstIndex(of: "-WWUITestOpenShow") {
-            arguments[index + 1] = "Synthetic Review Binding Fixture"
-        }
-        if let index = arguments.firstIndex(of: "-WWUITestShowEpisodes") {
-            arguments[index + 1] = "2"
-        }
-        arguments += ["-WWUITestReviewBindingFixture", "YES"]
-        app.launchArguments = arguments
+        if let publicWAV { app.launchArguments += ["-WWUITestCleanupPublicSpeech", publicWAV] }
+        if timeline { app.launchArguments += ["-WWUITestCleanupTimelineFixture", "YES"] }
         app.launch()
         app.activate()
-        XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 5))
-        selectFirstEpisode()
-        XCTAssertTrue(app.descendants(matching: .any)["ww.setup.speakers"].waitForExistence(timeout: 5))
-        app.buttons["ww.show.destination.review"].click()
+        XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 10))
+        app.typeKey("3", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["ww.cleanup.heading"].waitForExistence(timeout: 10), app.debugDescription)
+    }
 
-        let occurrence = app.descendants(matching: .any)["ww.review.occurrence.synthetic-bound-segment"]
-        XCTAssertTrue(occurrence.waitForExistence(timeout: 5))
-        XCTAssertEqual(occurrence.label, "Synthetic fixture A sentence")
-        XCTAssertTrue((occurrence.value as? String ?? "").contains("Word timing unavailable"))
-        let notice = app.descendants(matching: .any)["ww.review.provisionalNotice"]
-        let boundNoticeExists = notice.exists
-        let boundNoticeRole = boundNoticeExists ? notice.elementType : .any
-        let boundNoticeLabel = boundNoticeExists ? notice.label : ""
-        let boundNoticeValue = boundNoticeExists ? notice.value : nil
-        let expectedPrimary = "Synthetic review fixture Primary"
-        XCTAssertTrue(
-            boundNoticeExists && (boundNoticeLabel.contains(expectedPrimary)
-                || (boundNoticeValue as? String)?.contains(expectedPrimary) == true),
-            "Expected the selected Primary in the Review notice; AX exists: \(boundNoticeExists), role: \(boundNoticeRole), label: \(boundNoticeLabel), value: \(String(describing: boundNoticeValue))"
-        )
-        XCTAssertEqual(app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
-                       "Synthetic fixture A sentence")
-        XCTAssertFalse(app.descendants(matching: .any)["ww.review.proposals"].exists)
+    func testUnalignedEpisodeCannotTranscribeOrFabricateWordsAndHasRecoveryNavigation() {
+        launch(aligned: false)
+        openPrecisionRange()
+        XCTAssertFalse(app.buttons["ww.cleanup.transcribe"].isEnabled)
+        XCTAssertFalse(app.buttons["ww.cleanup.range.apply"].isEnabled)
+        XCTAssertFalse(app.buttons["ww.cleanup.load"].isEnabled)
+        XCTAssertFalse(app.descendants(matching: .any)["ww.review.occurrence.synthetic-001"].exists)
+        XCTAssertFalse(app.staticTexts["ww.cleanup.ready"].exists)
+        XCTAssertTrue(app.buttons["ww.cleanup.settings"].exists)
+        XCTAssertFalse(app.buttons["Choose Local Model…"].exists)
+        app.buttons["Go to Alignment"].click()
+        XCTAssertTrue(app.buttons["ww.show.destination.alignment"].isSelected)
+        app.typeKey("3", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["ww.cleanup.heading"].waitForExistence(timeout: 5))
+        app.buttons["Manage Recordings"].click()
+        XCTAssertTrue(app.outlines["ww.setup.sources"].waitForExistence(timeout: 5))
+    }
 
-        EpisodeLibraryNavigation.openEpisode(
-            containing: "Synthetic Episode 2", in: app, destination: "3", closePrevious: false
-        )
-        let showWindow = app.windows.matching(identifier: "ww.show.window")
-            .matching(NSPredicate(format: "title CONTAINS %@", "Synthetic Episode 2")).firstMatch
-        let otherNotice = showWindow.descendants(matching: .any)["ww.review.provisionalNotice"]
-        func selectionEvidence() -> String {
-            "window title: \(showWindow.title)"
+    func testAlignedPrimaryLoadsRealWaveformsAndSharedRangeIsUndoable() {
+        launch(aligned: true)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.cleanup.ready"].waitForExistence(timeout: 15), app.debugDescription)
+        let lanes = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.cleanup.speaker.'"))
+        XCTAssertEqual(lanes.count, 1, "The Backup is not a cleanup speaker lane")
+        openPrecisionRange()
+        let inField = app.textFields["ww.cleanup.tracksIn"]
+        let outField = app.textFields["ww.cleanup.tracksOut"]
+        replace(inField, with: "1")
+        replace(outField, with: "4")
+        app.buttons["ww.cleanup.range.apply"].click()
+        XCTAssertTrue(wait { (inField.value as? String) == "1.000000" && (outField.value as? String) == "4.000000" })
+        XCTAssertTrue(wait { self.app.buttons["ww.cleanup.load"].label == "Refresh audio" })
+        app.buttons["ww.cleanup.load"].click()
+        let loaded = app.staticTexts["ww.cleanup.loadedWindow"]
+        XCTAssertTrue(wait { (loaded.value as? String ?? loaded.label).hasPrefix("Measured Primary waveforms") },
+                      app.debugDescription)
+        let summary = app.staticTexts["ww.cleanup.range.summary"]
+        XCTAssertTrue((summary.value as? String ?? summary.label).contains("1.000"))
+        XCTAssertTrue((summary.value as? String ?? summary.label).contains("4.000"))
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(wait { (inField.value as? String ?? "").isEmpty && (outField.value as? String ?? "").isEmpty },
+                      app.debugDescription)
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(wait { (inField.value as? String) == "1.000000" })
+        app.buttons["ww.cleanup.range.reset"].click()
+        XCTAssertTrue(wait { (inField.value as? String ?? "").isEmpty })
+    }
+
+    func testInvalidMarkersAreRejectedWithoutChangingAcceptedRange() {
+        launch(aligned: true)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.cleanup.ready"].waitForExistence(timeout: 15))
+        openPrecisionRange()
+        replace(app.textFields["ww.cleanup.tracksIn"], with: "4")
+        replace(app.textFields["ww.cleanup.tracksOut"], with: "1")
+        app.buttons["ww.cleanup.range.apply"].click()
+        XCTAssertTrue(app.staticTexts["ww.cleanup.error"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["ww.cleanup.ready"].exists)
+        app.buttons["ww.cleanup.range.reset"].click()
+        XCTAssertTrue(wait { (app.textFields["ww.cleanup.tracksIn"].value as? String ?? "").isEmpty })
+    }
+
+    func testOptedInPublicSpeechTranscribesThroughTheRealEpisodeWorkspace() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let model = env["WW_CLEANUP_UI_DOWNLOAD_MODEL"], ["baseEnglish", "turbo"].contains(model),
+              let wav = env["WW_CLEANUP_PUBLIC_48K_WAV"] else {
+            throw XCTSkip("Opt in to a real model download with WW_CLEANUP_UI_DOWNLOAD_MODEL=baseEnglish or turbo and the licensed public 48 kHz control.")
         }
-        XCTAssertTrue(showWindow.title.contains("Synthetic Episode 2"),
-                      "B episode not selected; \(selectionEvidence())")
-        XCTAssertTrue(Acceptance.waitFor(timeout: 3) {
-            otherNotice.exists && (otherNotice.label.contains("synthetic fixture only")
-                || (otherNotice.value as? String)?.contains("synthetic fixture only") == true)
-        }, "B must show its own unbound shell, not A's selected-Primary transcript; \(selectionEvidence())")
-        XCTAssertFalse(showWindow.descendants(matching: .any)[occurrence.identifier].exists,
-                       "A's text must not appear in B's accessible transcript")
-        XCTAssertTrue(occurrence.exists, "Opening B must not discard A's bound transcript")
-        XCTAssertNotEqual(showWindow.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
-                          "Synthetic fixture A sentence")
-        XCTAssertFalse(showWindow.descendants(matching: .any)["ww.review.lane.selected-primary"].exists)
-        XCTAssertFalse(showWindow.buttons["ww.review.action.acceptShorten"].isEnabled)
-    }
-
-    func testKeyboardOccurrenceSelectionUpdatesTheInspector() {
-        let inspectorHeading = app.staticTexts["ww.review.inspector.heading"]
-        XCTAssertTrue(inspectorHeading.waitForExistence(timeout: 3))
-
-        let firstOccurrence = app.descendants(matching: .any)["ww.review.occurrence.synthetic-001"]
-        XCTAssertTrue(firstOccurrence.waitForExistence(timeout: 3))
-        firstOccurrence.click()
-        let occurrences = app.descendants(matching: .any)["ww.review.occurrences"]
-        XCTAssertTrue(
-            Acceptance.hasKeyboardFocus(occurrences)
-                || occurrences.descendants(matching: .outline).allElementsBoundByIndex.contains(where: Acceptance.hasKeyboardFocus)
-                || occurrences.descendants(matching: .table).allElementsBoundByIndex.contains(where: Acceptance.hasKeyboardFocus),
-            "The native occurrence list or its outline/table owns keyboard focus"
-        )
-        XCTAssertTrue(
-            inspectorHeading.exists,
-            "The Review inspector remains selected after choosing an occurrence"
-        )
-        let tokenID = app.descendants(matching: .any)["ww.review.inspector.tokenID"]
-        XCTAssertEqual(tokenID.value as? String, "token-stub-001")
-
-        let inspector = app.scrollViews["ww.inspector"]
-        XCTAssertTrue(inspector.waitForExistence(timeout: 3))
-        for _ in 0..<4 { inspector.swipeUp() }
-        XCTAssertTrue(
-            Acceptance.hasKeyboardFocus(occurrences)
-                || occurrences.descendants(matching: .outline).allElementsBoundByIndex.contains(where: Acceptance.hasKeyboardFocus)
-                || occurrences.descendants(matching: .table).allElementsBoundByIndex.contains(where: Acceptance.hasKeyboardFocus),
-            "Scrolling the inspector must not steal the native occurrence table's first responder"
-        )
-        app.typeKey(.downArrow, modifierFlags: [])
-        XCTAssertTrue(Acceptance.waitFor(timeout: 3) {
-            tokenID.value as? String == "token-stub-002"
-        })
-        XCTAssertEqual(
-            app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"].value as? String,
-            "Synthetic example occurrence 2"
-        )
-        XCTAssertEqual(
-            app.descendants(matching: .any)["ww.review.inspector.tokenID"].value as? String,
-            "token-stub-002"
-        )
-        XCTAssertFalse(app.buttons["ww.review.action.acceptShorten"].isEnabled)
-    }
-
-    func testKeyboardProposalSelectionUpdatesAccessibleProvisionalDetails() {
-        let firstProposal = app.descendants(matching: .any)["ww.review.proposal.synthetic-proposal-001"]
-        XCTAssertTrue(firstProposal.waitForExistence(timeout: 3))
-        XCTAssertTrue(firstProposal.label.contains("Synthetic contextual filler proposal 1"))
-        XCTAssertTrue(firstProposal.label.contains("synthetic-proposal-001"))
-        firstProposal.click()
-
-        let proposals = app.descendants(matching: .any)["ww.review.proposals"]
-        XCTAssertTrue(
-            Acceptance.hasKeyboardFocus(proposals)
-                || proposals.descendants(matching: .outline).allElementsBoundByIndex.contains(where: Acceptance.hasKeyboardFocus)
-                || proposals.descendants(matching: .table).allElementsBoundByIndex.contains(where: Acceptance.hasKeyboardFocus),
-            "The native synthetic proposal list or its table owns keyboard focus"
-        )
-        XCTAssertEqual(
-            app.descendants(matching: .any)["ww.review.inspector.proposalID"].value as? String,
-            "synthetic-proposal-001"
-        )
-        XCTAssertEqual(
-            app.descendants(matching: .any)["ww.review.inspector.proposalStatus"].value as? String,
-            "Provisional synthetic proposal — not verified or actionable."
-        )
-
-        app.typeKey(.downArrow, modifierFlags: [])
-        XCTAssertTrue(Acceptance.waitFor(timeout: 3) {
-            app.descendants(matching: .any)["ww.review.inspector.proposalID"].value as? String
-                == "synthetic-proposal-002"
-        })
-        let secondProposal = app.descendants(matching: .any)["ww.review.proposal.synthetic-proposal-002"]
-        XCTAssertTrue(secondProposal.label.contains("Synthetic contextual filler proposal 2"))
-        XCTAssertTrue(secondProposal.label.contains("synthetic-proposal-002"))
-        XCTAssertTrue(
-            (app.descendants(matching: .any)["ww.review.inspector.proposalTiming"].value as? String ?? "")
-                .contains("Timing unavailable")
-        )
-        XCTAssertTrue(
-            (app.descendants(matching: .any)["ww.review.inspector.proposalSource"].value as? String ?? "")
-                .contains("no selected Primary")
-        )
-        XCTAssertTrue(
-            (app.descendants(matching: .any)["ww.review.inspector.proposalProtection"].value as? String ?? "")
-                .contains("Protection unsupported")
-        )
-        for identifier in ["acceptShorten", "lift", "reject", "singleLaneAudition", "fullPreview"] {
-            XCTAssertFalse(app.buttons["ww.review.action.\(identifier)"].isEnabled, "\(identifier) remains disabled")
+        launch(aligned: true, publicWAV: wav)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.cleanup.ready"].waitForExistence(timeout: 15))
+        app.buttons["ww.cleanup.settings"].click()
+        let settings = app.windows["ww.settings.window"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10), app.debugDescription)
+        let picker = settings.popUpButtons["ww.settings.transcription.model"]
+        picker.click()
+        app.menuItems[model == "turbo" ? "Whisper Turbo (recommended)" : "Whisper Base English"].click()
+        if !settings.descendants(matching: .any)["ww.settings.transcription.installed"].exists {
+            settings.buttons["ww.settings.transcription.download"].click()
+            XCTAssertTrue(wait(timeout: 600) {
+                settings.descendants(matching: .any)["ww.settings.transcription.installed"].exists
+            }, app.debugDescription)
         }
+        settings.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertTrue(wait { self.app.buttons["ww.cleanup.transcribe"].isEnabled }, app.debugDescription)
+        app.buttons["ww.cleanup.transcribe"].click()
+        let status = app.staticTexts["ww.cleanup.status"]
+        let completed = NSPredicate(format: "label BEGINSWITH 'Transcribed 1 speaker locally' OR value BEGINSWITH 'Transcribed 1 speaker locally'")
+        expectation(for: completed, evaluatedWith: status)
+        waitForExpectations(timeout: 120)
+        XCTAssertFalse(app.staticTexts["ww.cleanup.error"].exists, app.debugDescription)
+        let middle = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'middle,'")).firstMatch
+        XCTAssertTrue(middle.waitForExistence(timeout: 10),
+                      "Actual recognized words, not a synthetic review fixture")
+        app.buttons["ww.cleanup.fitTimeline"].click()
+        assertWordPosition(middle)
+        middle.click()
+        let interval = (middle.value as? String ?? "").split(separator: " ")
+        let wordStart = try XCTUnwrap(interval.count > 3 ? Double(interval[3]) : nil)
+        XCTAssertTrue(wait {
+            abs((Double(self.app.textFields["ww.cleanup.playhead"].value as? String ?? "") ?? -1) - wordStart) < 0.002
+        })
+        let oldRuler = text(app.staticTexts["ww.cleanup.ruler"])
+        app.sliders["ww.cleanup.zoom"].coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).click()
+        XCTAssertTrue(wait { self.text(self.app.staticTexts["ww.cleanup.ruler"]) != oldRuler })
+        assertWordPosition(middle)
+        capture("Time-aligned transcription")
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'middle,'")).firstMatch.exists)
     }
 
-    func testReturnAndEscapeWhileFilteringDoNotAcceptOrAudition() {
-        let filter = app.textFields["ww.review.filter"]
-        XCTAssertTrue(filter.waitForExistence(timeout: 3))
-        XCTAssertTrue(filter.isHittable, "The filter must be visible before keyboard focus is requested")
-        filter.click()
-        XCTAssertTrue(Acceptance.hasKeyboardFocus(filter))
-        filter.typeText("synthetic")
-        let typedValue = filter.value as? String
+    func testTranscriptionSetupIsGlobalSettingsNotAnEpisodeFilePicker() {
+        launch(aligned: false)
+        app.buttons["ww.cleanup.settings"].click()
+        let settings = app.windows["ww.settings.window"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10), app.debugDescription)
+        let picker = settings.popUpButtons["ww.settings.transcription.model"]
+        XCTAssertTrue(picker.exists)
+        XCTAssertTrue(settings.buttons["ww.settings.transcription.download"].exists)
+        XCTAssertFalse(app.sheets.firstMatch.exists)
+        picker.click()
+        app.menuItems["Whisper Base English"].click()
+        let workers = settings.popUpButtons["ww.settings.transcription.workers"]
+        XCTAssertTrue(workers.exists)
+        workers.click()
+        app.menuItems["2 workers"].click()
+        settings.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertTrue(text(app.staticTexts["ww.cleanup.model"]).contains("Base English"))
+        app.buttons["ww.cleanup.settings"].click()
+        XCTAssertTrue((picker.value as? String ?? "").contains("Base English"))
+        XCTAssertTrue((workers.value as? String ?? "").contains("2 workers"))
+    }
 
+    private func text(_ element: XCUIElement) -> String { element.value as? String ?? element.label }
+
+    private func assertWordPosition(_ word: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        let interval = (word.value as? String ?? "").split(separator: " ")
+        guard interval.count > 3, let time = Double(interval[3]) else {
+            XCTFail("Missing actual recognizer interval: \(word.debugDescription)", file: file, line: line)
+            return
+        }
+        let ruler = text(app.staticTexts["ww.cleanup.ruler"])
+        let numbers = ruler.split(separator: " ").compactMap { Double($0) }
+        guard numbers.count >= 2 else { XCTFail("Missing viewport times: \(ruler)", file: file, line: line); return }
+        let waveform = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'ww.cleanup.waveform.'")).firstMatch
+        let expected = waveform.frame.minX + max(0, time - numbers[0]) / (numbers[1] - numbers[0]) * waveform.frame.width
+        XCTAssertEqual(word.frame.minX, expected, accuracy: 2, "Word and waveform use the same aligned-time scale", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(word.frame.minY, waveform.frame.maxY, "Words are below their Primary waveform", file: file, line: line)
+    }
+
+    func testCompactSharedTimelineHasZoomScaleClickMarkersAndNoTrackMoves() {
+        launch(aligned: true, timeline: true)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.cleanup.ready"].waitForExistence(timeout: 15))
+        let waveforms = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.cleanup.waveform.'"))
+        XCTAssertTrue(wait { waveforms.count == 2 && self.app.buttons["ww.cleanup.load"].label == "Refresh audio" },
+                      app.debugDescription)
+        XCTAssertEqual(waveforms.element(boundBy: 0).frame.height, 96, accuracy: 2)
+        let gap = waveforms.element(boundBy: 1).frame.minY - waveforms.element(boundBy: 0).frame.maxY
+        XCTAssertGreaterThanOrEqual(gap, 0)
+        XCTAssertLessThan(gap, 40, "No empty transcript-sized spacers or separate track cards")
+        let details = app.buttons.matching(identifier: "Details")
+        XCTAssertLessThan(details.element(boundBy: 0).frame.maxX, waveforms.element(boundBy: 0).frame.minX)
+        XCTAssertTrue(app.sliders["ww.cleanup.zoom"].exists)
+        XCTAssertTrue(app.sliders["ww.cleanup.laneHeight"].exists)
+        app.buttons["ww.cleanup.fitTimeline"].click()
+        app.buttons["ww.cleanup.tool.in"].click()
+        waveforms.element(boundBy: 0).coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).click()
+        XCTAssertTrue(wait {
+            let text = self.app.staticTexts["ww.cleanup.range.summary"]
+            return (text.value as? String ?? text.label).contains("2.400")
+        })
+        app.buttons["ww.cleanup.tool.out"].click()
+        waveforms.element(boundBy: 1).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        XCTAssertTrue(wait {
+            let text = self.app.staticTexts["ww.cleanup.range.summary"]
+            return (text.value as? String ?? text.label).contains("6.000")
+        })
+        app.buttons["ww.cleanup.tool.seek"].click()
+        capture("Compact Primary timeline with shared In and Out")
+        let playhead = app.textFields["ww.cleanup.playhead"]
+        waveforms.element(boundBy: 0).coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).click()
+        XCTAssertTrue(wait { (Double(playhead.value as? String ?? "") ?? 0) > 10 },
+                      "Banter beyond Tracks Out remains available without resetting the markers")
+        let beforeDrag = Double(playhead.value as? String ?? "") ?? -1
+        let point = waveforms.element(boundBy: 0).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        point.click(forDuration: 0.1, thenDragTo: point.withOffset(CGVector(dx: 60, dy: 0)))
+        XCTAssertEqual(Double(playhead.value as? String ?? "") ?? -1, beforeDrag, accuracy: 0.001)
+        XCTAssertFalse(app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'alignment.waveforms.'")).firstMatch.exists)
+        app.checkBoxes["ww.cleanup.normalizeView"].click()
+        XCTAssertEqual((app.checkBoxes["ww.cleanup.normalizeView"].value as? NSNumber)?.boolValue, true)
+        let heightSlider = app.sliders["ww.cleanup.laneHeight"]
+        heightSlider.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)).click()
+        XCTAssertTrue(wait { waveforms.element(boundBy: 0).frame.height > 130 })
+        let zoom = app.sliders["ww.cleanup.zoom"]
+        zoom.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).click()
+        let ruler = app.staticTexts["ww.cleanup.ruler"]
+        XCTAssertTrue(wait { !(ruler.value as? String ?? ruler.label).contains("to 12.000") })
+        XCTAssertEqual(Double(playhead.value as? String ?? "") ?? -1, beforeDrag, accuracy: 0.001)
+    }
+
+    func testContinuousPrimaryPlaybackCrossesFiveSecondChunksAndWorkingMarkers() {
+        launch(aligned: true, timeline: true)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.cleanup.ready"].waitForExistence(timeout: 15))
+        openPrecisionRange()
+        replace(app.textFields["ww.cleanup.tracksIn"], with: "2")
+        replace(app.textFields["ww.cleanup.tracksOut"], with: "4")
+        app.buttons["ww.cleanup.range.apply"].click()
+        let playhead = app.textFields["ww.cleanup.playhead"]
+        replace(playhead, with: "0")
         app.typeKey(.return, modifierFlags: [])
-        XCTAssertEqual(filter.value as? String, typedValue)
-        app.typeKey(.escape, modifierFlags: [])
-
-        XCTAssertFalse(app.buttons["ww.review.action.acceptShorten"].isEnabled)
-        XCTAssertFalse(app.buttons["ww.review.action.singleLaneAudition"].isEnabled)
-        XCTAssertTrue(app.staticTexts["ww.review.inspector.analysisState"].exists)
+        let play = app.buttons["ww.cleanup.transport.play"]
+        XCTAssertTrue(wait { play.isEnabled })
+        play.click()
+        XCTAssertTrue(wait { (Double(playhead.value as? String ?? "") ?? 0) > 1 }, app.debugDescription)
+        let hear = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.cleanup.enabled.'")).firstMatch
+        hear.click()
+        XCTAssertTrue(wait(timeout: 15) { (Double(playhead.value as? String ?? "") ?? 0) > 6.5 },
+                      "Playback continues across bounded chunks and beyond the analysis-only Tracks Out")
+        play.click()
+        let paused = Double(playhead.value as? String ?? "") ?? -1
+        Thread.sleep(forTimeInterval: 0.4)
+        XCTAssertEqual(Double(playhead.value as? String ?? "") ?? -1, paused, accuracy: 0.08)
+        XCTAssertFalse(app.staticTexts["ww.cleanup.error"].exists, app.debugDescription)
+        app.buttons["ww.cleanup.transport.stop"].click()
+        XCTAssertTrue(wait { (Double(playhead.value as? String ?? "") ?? -1) < 0.01 })
     }
 
-    func testBlockedReviewRemedyReturnsToSetup() {
-        app.buttons["ww.review.remedy.setup"].click()
-        XCTAssertTrue(app.buttons["ww.show.destination.setup"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.descendants(matching: .any)["ww.setup.sources"].waitForExistence(timeout: 3))
+    private func openPrecisionRange() {
+        if !app.textFields["ww.cleanup.tracksIn"].exists {
+            app.descendants(matching: .any)["ww.cleanup.range.precision"].click()
+        }
+        XCTAssertTrue(app.textFields["ww.cleanup.tracksIn"].waitForExistence(timeout: 5))
     }
 
-    func testEpisodeInfoFromReviewShowsEditableTitleAndKeepsReviewSelection() {
-        let occurrence = app.descendants(matching: .any)["ww.review.occurrence.synthetic-002"]
-        XCTAssertTrue(occurrence.waitForExistence(timeout: 3))
-        occurrence.click()
-        XCTAssertEqual(app.descendants(matching: .any)["ww.review.inspector.tokenID"].value as? String, "token-stub-002")
-        let timelineSelection = app.descendants(matching: .any)["ww.review.timeline.selectedOccurrence"]
-        XCTAssertEqual(timelineSelection.value as? String, "Synthetic example occurrence 2")
-
-        app.menuBars.menuBarItems["Episode"].click()
-        let episodeInfo = app.menuItems["Episode Info"]
-        XCTAssertTrue(episodeInfo.waitForExistence(timeout: 3))
-        XCTAssertTrue(episodeInfo.isEnabled, "Episode Info is available for the selected episode in Review")
-        episodeInfo.click()
-
-        let title = app.textFields["ww.inspector.episode.title"]
-        XCTAssertTrue(title.waitForExistence(timeout: 5), "Episode Info must render the episode inspector, not Review")
-        XCTAssertTrue(title.isEnabled && title.isHittable, "Episode Title must be editable")
-        XCTAssertTrue(Acceptance.hasKeyboardFocus(title), "Episode Info moves keyboard focus to Title")
-        title.typeText(" Review Edit")
-        XCTAssertTrue((title.value as? String ?? "").hasSuffix(" Review Edit"))
-
-        app.typeKey("3", modifierFlags: .command)
-        XCTAssertTrue(app.staticTexts["ww.review.inspector.heading"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.descendants(matching: .any)["ww.review.inspector.tokenID"].value as? String, "token-stub-002")
-        XCTAssertEqual(timelineSelection.value as? String, "Synthetic example occurrence 2")
-        app.typeKey("1", modifierFlags: .command)
-        XCTAssertTrue(app.descendants(matching: .any)["ww.setup.sources"].waitForExistence(timeout: 5))
-        app.typeKey("3", modifierFlags: .command)
-        XCTAssertTrue(app.staticTexts["ww.review.inspector.heading"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.descendants(matching: .any)["ww.review.inspector.tokenID"].value as? String, "token-stub-002")
-        XCTAssertEqual(timelineSelection.value as? String, "Synthetic example occurrence 2")
-        app.typeKey("i", modifierFlags: .command)
-        XCTAssertTrue(title.waitForExistence(timeout: 5), "The keyboard shortcut reopens Episode Info from Review")
-        XCTAssertTrue(Acceptance.hasKeyboardFocus(title))
+    private func capture(_ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
-    private func selectFirstEpisode() {
-        XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.descendants(matching: .any)["ww.show.sidebar.episodes"].exists)
+    private func replace(_ field: XCUIElement, with value: String) {
+        field.click()
+        app.typeKey("a", modifierFlags: .command)
+        field.typeText(value)
+    }
+
+    private func wait(timeout: TimeInterval = 10, _ condition: () -> Bool) -> Bool {
+        let end = Date().addingTimeInterval(timeout)
+        while Date() < end {
+            if condition() { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return condition()
     }
 }

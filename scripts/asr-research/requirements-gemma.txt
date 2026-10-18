@@ -1,0 +1,4 @@
+# Isolated, optional independent-reproduction experiment; not app dependencies.
+numpy==2.5.3
+torch==2.14.1
+transformers==5.19.0

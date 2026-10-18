@@ -7,13 +7,6 @@ struct AlignmentWaveformView: View {
     let showInspector: () -> Void
     @Environment(\.displayScale) private var displayScale
     @State private var dragSession: AlignmentWaveformDrag?
-    @State private var rulerPan: (start: Double, width: Double, duration: Double)?
-    @State private var rulerPlayheadDrag: (
-        time: Double, start: Double, duration: Double, width: Double, wasPlaying: Bool
-    )?
-    @State private var rulerZoom: (start: Double, duration: Double, anchor: Double)?
-    @State private var timeDraft = "0.000"
-    @FocusState private var editingTime: Bool
     @State private var layout = AlignmentWaveformLayout.defaultValue
     @State private var normalizeView = false
     @State private var showProposedAlignment = true
@@ -27,58 +20,7 @@ struct AlignmentWaveformView: View {
 
     private let headerWidth: CGFloat = 190
 
-    private struct WaveformTrackDrawing: View, Equatable {
-        let snapshot: UUID
-        let strokes: [AlignmentWaveformStroke]
-        let size: CGSize
-        let start: Double
-        let duration: Double
-        let color: Color
-        let lineWidth: Double
-        let gain: Double
-        let draftEpoch: RecordingEpochID?
-        let draftRatePPM: Double
-        let draftOffsetMilliseconds: Double
-        let displayScale: Double
-        var ghost = false
-
-        nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.snapshot == rhs.snapshot && lhs.size == rhs.size && lhs.displayScale == rhs.displayScale
-                && lhs.start == rhs.start && lhs.duration == rhs.duration
-                && lhs.color == rhs.color && lhs.lineWidth == rhs.lineWidth
-                && lhs.gain == rhs.gain && lhs.draftEpoch == rhs.draftEpoch
-                && lhs.ghost == rhs.ghost
-                && (!lhs.ghost || lhs.strokes == rhs.strokes)
-                && (lhs.draftEpoch == nil || (
-                    lhs.draftRatePPM == rhs.draftRatePPM
-                        && lhs.draftOffsetMilliseconds == rhs.draftOffsetMilliseconds
-                ))
-        }
-
-        var body: some View {
-            ZStack {
-                path(mapped: true).stroke(color, style: StrokeStyle(
-                    lineWidth: lineWidth, dash: ghost ? [4, 3] : []
-                ))
-                path(mapped: false).stroke(Color.orange, style: StrokeStyle(lineWidth: lineWidth, dash: [3, 2]))
-            }
-            .frame(width: size.width, height: size.height)
-        }
-
-        private func path(mapped: Bool) -> Path {
-            Path { path in
-                for column in AlignmentWaveformProjection.displayColumns(
-                    strokes: strokes, start: start, duration: duration,
-                    width: size.width, pixelsPerPoint: displayScale,
-                    draftEpoch: draftEpoch, ratePPM: draftRatePPM,
-                    offsetMilliseconds: draftOffsetMilliseconds
-                ) where column.mapped == mapped {
-                    path.move(to: CGPoint(x: column.x, y: size.height * (0.5 - Double(column.high) * gain * 0.45)))
-                    path.addLine(to: CGPoint(x: column.x, y: size.height * (0.5 - Double(column.low) * gain * 0.45)))
-                }
-            }
-        }
-    }
+    private typealias WaveformTrackDrawing = AudioTimelineWaveformDrawing
 
     private var groups: [RecorderGroupID] {
         var seen: Set<RecorderGroupID> = []
@@ -171,12 +113,6 @@ struct AlignmentWaveformView: View {
             .padding(4)
         }
         .accessibilityIdentifier("alignment.waveforms")
-        .onChange(of: model.waveformPlayheadSeconds, initial: true) { _, time in
-            if !editingTime { timeDraft = String(format: "%.3f", time) }
-        }
-        .onChange(of: editingTime) { _, focused in
-            if !focused { commitTime() }
-        }
         .onChange(of: layout) { _, _ in clearHandCursor() }
         .onDisappear { clearHandCursor() }
     }
@@ -274,297 +210,69 @@ struct AlignmentWaveformView: View {
     }
 
     private var transport: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 4) {
-                Button("Back 5 s", systemImage: "gobackward.5") {
-                    model.seekEnabledTracks(to: max(-86_400, model.waveformPlayheadSeconds - 5))
-                }
-                .accessibilityIdentifier("alignment.waveforms.transport.back")
-                Button(model.canStopAudition ? "Pause" : "Play",
-                       systemImage: model.canStopAudition ? "pause.fill" : "play.fill") {
-                    model.canStopAudition ? model.pauseEnabledTracks() : model.playEnabledTracks()
-                }
-                .accessibilityIdentifier("alignment.waveforms.transport.play")
-                .disabled(model.pendingWaveformMove != nil)
-                Button("Stop", systemImage: "stop.fill") { model.stopEnabledTracks() }
-                    .accessibilityIdentifier("alignment.waveforms.transport.stop")
-                Button("Forward 5 s", systemImage: "goforward.5") {
-                    model.seekEnabledTracks(to: min(86_400, model.waveformPlayheadSeconds + 5))
-                }
-                .accessibilityIdentifier("alignment.waveforms.transport.forward")
-            }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.bordered)
-            Spacer(minLength: 0)
-            Text(model.auditionLabel)
-                .font(.caption).foregroundStyle(.secondary)
-                .lineLimit(3)
-                .frame(maxWidth: 320, alignment: .trailing)
-                .help(model.auditionLabel)
-                .accessibilityIdentifier("alignment.waveforms.transport.status")
-        }
-        .overlay(alignment: .center) {
-            VStack(alignment: .center, spacing: 2) {
-                Text("ALIGNED TIME").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                TextField("Aligned time (s)", text: $timeDraft)
-                    .focused($editingTime)
-                    .onSubmit { editingTime = false }
-                    .multilineTextAlignment(.center)
-                    .font(.system(.title2, design: .monospaced).weight(.medium))
-                    .monospacedDigit()
-                    .frame(width: 130)
-                    .accessibilityLabel("Aligned playhead time in seconds")
-                    .accessibilityIdentifier("alignment.waveforms.playhead")
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
-        }
+        AudioTimelineTransport(
+            prefix: "alignment.waveforms", isPlaying: model.canStopAudition,
+            isPreparing: model.isPreparingAudition, canPlay: model.pendingWaveformMove == nil,
+            canNavigate: model.pendingWaveformMove == nil,
+            playhead: model.waveformPlayheadSeconds, status: model.auditionLabel,
+            back: { model.seekEnabledTracks(to: max(-86_400, model.waveformPlayheadSeconds - 5)) },
+            playPause: { model.canStopAudition ? model.pauseEnabledTracks() : model.playEnabledTracks() },
+            stop: { model.stopEnabledTracks() },
+            forward: { model.seekEnabledTracks(to: min(86_400, model.waveformPlayheadSeconds + 5)) },
+            seek: { model.seekEnabledTracks(to: $0) }
+        )
         .padding(8)
         .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var navigationControls: some View {
-        HStack(spacing: 6) {
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.left.and.right").accessibilityHidden(true)
-                Slider(value: Binding(
-                    get: {
-                        AlignmentWaveformProjection.zoomLevel(
-                            for: model.waveformDurationSeconds, maximum: model.maximumWaveformDuration
-                        ) ?? 0
-                    },
-                    set: { level in
-                        guard let duration = AlignmentWaveformProjection.zoomDuration(
-                            for: level, maximum: model.maximumWaveformDuration
-                        ) else { return }
-                        let center = zoomCenterSeconds ?? model.waveformStartSeconds + model.waveformDurationSeconds / 2
-                        zoomCenterSeconds = center
-                        model.waveformDurationSeconds = duration
-                        model.waveformStartSeconds = min(
-                            model.waveformViewingBounds.upperBound - duration,
-                            max(model.waveformViewingBounds.lowerBound, center - duration / 2)
-                        )
+        AudioTimelineNavigation(
+            prefix: "alignment.waveforms", maximumDuration: model.maximumWaveformDuration,
+            duration: Binding(get: { model.waveformDurationSeconds }, set: { duration in
+                let center = zoomCenterSeconds ?? model.waveformStartSeconds + model.waveformDurationSeconds / 2
+                zoomCenterSeconds = center
+                model.waveformDurationSeconds = duration
+                model.waveformStartSeconds = min(
+                    model.waveformViewingBounds.upperBound - duration,
+                    max(model.waveformViewingBounds.lowerBound, center - duration / 2)
+                )
+            }), laneHeight: $laneHeight, showsLaneHeight: layout != .overlay,
+            isLoading: model.isLoadingWaveforms,
+            canNavigate: !model.isWorking && model.pendingWaveformMove == nil,
+            zoomEditing: { editing in
+                if !editing {
+                    zoomCenterSeconds = nil
+                    if model.waveformDurationSeconds <= 30 {
+                        model.loadWaveforms(keepingSnapshot: true, preload: true)
                     }
-                ), in: 0...1, onEditingChanged: { editing in
-                    if !editing {
-                        zoomCenterSeconds = nil
-                        if model.waveformDurationSeconds <= 30 {
-                            model.loadWaveforms(keepingSnapshot: true, preload: true)
-                        }
-                    }
-                }) {
-                    Text("Horizontal zoom, visible span \(model.waveformDurationSeconds, specifier: "%.2f") seconds")
                 }
-                .frame(width: 90)
-                .labelsHidden()
-                .accessibilityIdentifier("alignment.waveforms.zoom")
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
-            .disabled(model.isWorking || model.pendingWaveformMove != nil)
-            .help("Horizontal zoom. Visible span: \(model.waveformDurationSeconds.formatted(.number.precision(.fractionLength(2)))) seconds.")
-            Button("Fit timeline", systemImage: "arrow.up.left.and.arrow.down.right") { model.fitWaveformTimeline() }
-                .disabled(model.waveformFitRange == nil || model.isWorking || model.pendingWaveformMove != nil)
-                .accessibilityIdentifier("alignment.waveforms.fitTimeline")
-                .help("Fit the complete episode in the main timeline, including negative aligned time.")
-            if layout != .overlay {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.up.and.down").accessibilityHidden(true)
-                    Slider(value: $laneHeight, in: 64...220) {
-                        Text("Source lane height")
-                    }
-                    .frame(width: 65)
-                    .labelsHidden()
-                    .accessibilityIdentifier("alignment.waveforms.laneHeight")
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
-                .disabled(model.isWorking || model.pendingWaveformMove != nil)
-                .help("Recording lane height")
-            }
-            Button(model.isLoadingWaveforms ? "Cancel audio loading" : "Refresh audio",
-                   systemImage: model.isLoadingWaveforms ? "xmark" : "arrow.clockwise") {
-                model.isLoadingWaveforms
-                    ? model.cancelWaveforms()
+            },
+            fit: { if model.waveformFitRange != nil { model.fitWaveformTimeline() } },
+            refresh: {
+                model.isLoadingWaveforms ? model.cancelWaveforms()
                     : model.loadWaveforms(keepingSnapshot: model.pendingWaveformMove != nil)
             }
-            .accessibilityIdentifier("alignment.waveforms.load")
-        }
-        .controlSize(.small)
-        .buttonStyle(.bordered)
-        .labelStyle(.iconOnly)
-    }
-
-    private func commitTime() {
-        guard let time = Double(timeDraft.trimmingCharacters(in: .whitespacesAndNewlines)),
-              time.isFinite else {
-            model.seekEnabledTracks(to: .nan)
-            timeDraft = String(format: "%.3f", model.waveformPlayheadSeconds)
-            return
-        }
-        model.seekEnabledTracks(to: time)
-        timeDraft = String(format: "%.3f", model.waveformPlayheadSeconds)
+        )
     }
 
     private var ruler: some View {
-        HStack(spacing: 8) {
-            Text("ALIGNED SECONDS")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: headerWidth, alignment: .leading)
-                .accessibilityLabel(String(
-                    format: "Visible aligned time ruler: %.3f to %.3f seconds",
-                    model.waveformStartSeconds, model.waveformStartSeconds + model.waveformDurationSeconds
-                ))
-                .accessibilityIdentifier("alignment.waveforms.ruler")
-            GeometryReader { geometry in
-                let width = geometry.size.width
-                let start = model.waveformStartSeconds
-                let duration = model.waveformDurationSeconds
-                let bounds = model.waveformViewingBounds
-                let seekBounds = -86_400.0...min(86_400, max(0, model.waveformNavigationEndSeconds))
-                ZStack(alignment: .topLeading) {
-                    Rectangle().fill(Color.primary.opacity(0.04))
-                    ForEach(AlignmentWaveformProjection.rulerTicks(
-                        start: start, duration: duration, width: width
-                    )) { tick in
-                        let position = (tick.time - start) / duration * width
-                        Path { path in
-                            path.move(to: CGPoint(x: position, y: tick.major ? 25 : 36))
-                            path.addLine(to: CGPoint(x: position, y: 44))
-                        }
-                        .stroke(Color.secondary.opacity(tick.major ? 0.7 : 0.35), lineWidth: 1)
-                        if tick.major, width >= 92 {
-                            Text(AlignmentPresentation.formatTime(tick.time))
-                                .font(.caption2.monospacedDigit())
-                                .position(x: max(46, min(width - 46, position)), y: 12)
-                        }
-                    }
+        AudioTimelineRuler(
+            prefix: "alignment.waveforms", headerWidth: headerWidth,
+            start: model.waveformStartSeconds, duration: model.waveformDurationSeconds,
+            playhead: model.waveformPlayheadSeconds, bounds: model.waveformViewingBounds,
+            seekBounds: -86_400...min(86_400, max(0, model.waveformNavigationEndSeconds)),
+            maximumDuration: model.maximumWaveformDuration, isPlaying: model.canStopAudition,
+            canNavigate: !model.isWorking && model.pendingWaveformMove == nil,
+            previewSeek: { model.previewWaveformPlayhead(to: $0) },
+            resumePlayback: { model.playEnabledTracks() },
+            previewPan: { _ = model.previewWaveformWindow(start: $0) },
+            setWindow: { model.waveformStartSeconds = $0; model.waveformDurationSeconds = $1 },
+            commitWindow: {
+                if model.waveformDurationSeconds <= 30 {
+                    model.loadWaveforms(keepingSnapshot: true, preload: true)
                 }
-                .contentShape(Rectangle())
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Aligned ruler. Click to seek, drag empty space to pan, or pinch to zoom.")
-                .accessibilityIdentifier("alignment.waveforms.ruler.surface")
-                .overlay(alignment: .topLeading) {
-                    if width > 0 {
-                        let position = (model.waveformPlayheadSeconds - start) / duration * width
-                        if position.isFinite, (0...width).contains(position) {
-                            Path { path in
-                                path.move(to: CGPoint(x: position, y: 33))
-                                path.addLine(to: CGPoint(x: position, y: 44))
-                            }
-                            .stroke(Color.accentColor, lineWidth: 1)
-                            .allowsHitTesting(false)
-                            Rectangle()
-                                .fill(Color.clear)
-                                .frame(width: 28, height: 44)
-                                .overlay(alignment: .bottom) {
-                                    AlignmentPlayheadCap()
-                                        .fill(Color.accentColor)
-                                        .overlay(AlignmentPlayheadCap().stroke(Color.primary.opacity(0.5), lineWidth: 0.5))
-                                        .frame(width: 16, height: 18)
-                                }
-                                .contentShape(Rectangle())
-                                .accessibilityLabel("Aligned playhead marker")
-                                .accessibilityValue(AlignmentPresentation.formatTime(model.waveformPlayheadSeconds))
-                                .accessibilityAdjustableAction { direction in
-                                    let increment = max(0.1, duration / 20)
-                                    let delta = direction == .increment ? increment : -increment
-                                    let time = min(seekBounds.upperBound, max(
-                                        seekBounds.lowerBound, model.waveformPlayheadSeconds + delta
-                                    ))
-                                    let wasPlaying = model.canStopAudition
-                                    if model.previewWaveformPlayhead(to: time), wasPlaying {
-                                        model.playEnabledTracks()
-                                    }
-                                }
-                                .accessibilityIdentifier("alignment.waveforms.ruler.playhead")
-                                .position(x: position, y: 22)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                }
-                .onTapGesture { point in
-                    guard let time = AlignmentWaveformProjection.rulerTime(
-                        at: point.x, width: width, start: start, duration: duration, bounds: seekBounds
-                    ) else { return }
-                    let wasPlaying = model.canStopAudition
-                    if model.previewWaveformPlayhead(to: time), wasPlaying { model.playEnabledTracks() }
-                }
-                .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .local)
-                    .onChanged { value in
-                        guard width > 0 else { return }
-                        let origin = value.startLocation.x
-                        let translation = value.translation.width
-                        if rulerPan == nil, rulerPlayheadDrag == nil {
-                            let marker = (model.waveformPlayheadSeconds - start) / duration * width
-                            if abs(origin - marker) <= 14 {
-                                rulerPlayheadDrag = (
-                                    time: model.waveformPlayheadSeconds, start: start,
-                                    duration: duration, width: width,
-                                    wasPlaying: model.canStopAudition
-                                )
-                            } else {
-                                rulerPan = (start: start, width: width, duration: duration)
-                            }
-                        }
-                        if let session = rulerPlayheadDrag {
-                            let time = min(seekBounds.upperBound, max(
-                                seekBounds.lowerBound, max(session.start, min(
-                                    session.start + session.duration,
-                                    session.time + Double(translation / session.width)
-                                        * session.duration
-                                ))
-                            ))
-                            _ = model.previewWaveformPlayhead(to: time)
-                            return
-                        }
-                        guard let pan = rulerPan else { return }
-                        guard let window = AlignmentWaveformProjection.rulerPanStart(
-                            from: pan.start, translation: translation,
-                            width: pan.width, duration: pan.duration, bounds: bounds
-                        ) else { return }
-                        _ = model.previewWaveformWindow(start: window)
-                    }
-                    .onEnded { _ in
-                        if let session = rulerPlayheadDrag, session.wasPlaying {
-                            model.playEnabledTracks()
-                        }
-                        if rulerPan != nil, model.waveformDurationSeconds <= 30 {
-                            model.loadWaveforms(keepingSnapshot: true)
-                        }
-                        rulerPan = nil
-                        rulerPlayheadDrag = nil
-                    })
-                .simultaneousGesture(MagnifyGesture(minimumScaleDelta: 0.02)
-                    .onChanged { value in
-                        guard !model.isWorking, model.pendingWaveformMove == nil else { return }
-                        if rulerZoom == nil {
-                            rulerZoom = (
-                                start: start, duration: duration,
-                                anchor: min(1, max(0, value.startAnchor.x))
-                            )
-                        }
-                        guard let zoom = rulerZoom,
-                              let window = AlignmentWaveformProjection.rulerZoom(
-                                  start: zoom.start, duration: zoom.duration,
-                                  anchor: zoom.anchor, magnification: value.magnification,
-                                  bounds: bounds, maximumDuration: model.maximumWaveformDuration
-                              ) else { return }
-                        model.waveformStartSeconds = window.start
-                        model.waveformDurationSeconds = window.duration
-                    }
-                    .onEnded { _ in
-                        if rulerZoom != nil, model.waveformDurationSeconds <= 30 {
-                            model.loadWaveforms(keepingSnapshot: true, preload: true)
-                        }
-                        rulerZoom = nil
-                    })
             }
-        }
+        )
         .padding(.horizontal, 8)
         .frame(height: 44)
         .help("Click the ruler to seek, drag its marker to move the playhead, drag empty space to pan, or pinch to zoom around the pointer.")
@@ -594,7 +302,7 @@ struct AlignmentWaveformView: View {
     private func speakerOverlay(_ speakerGroup: AlignmentWaveformSpeakerGroup) -> some View {
         let tracks = speakerGroup.tracks
         let speakerName = model.speakerName(speakerGroup.id)
-        return HStack(alignment: .top, spacing: 8) {
+        return AudioTimelineTrackRow(headerWidth: headerWidth) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("\(speakerName.uppercased()) · \(tracks.count) \(tracks.count == 1 ? "SOURCE" : "SOURCES")")
                     .font(.caption2.weight(.semibold))
@@ -618,7 +326,7 @@ struct AlignmentWaveformView: View {
                     }
                 }
             }
-            .frame(width: headerWidth, alignment: .leading)
+        } content: {
             GeometryReader { geometry in
                 let slices = model.waveformTileSlices
                 ZStack {
@@ -724,7 +432,7 @@ struct AlignmentWaveformView: View {
     private func laneContent(_ track: AlignmentWaveformTrack) -> some View {
         let identity = model.trackIdentity(track.id)
         let shown = model.groupEnabled(track.group) && model.trackEnabled(track.id)
-        return HStack(alignment: .top, spacing: 8) {
+        return AudioTimelineTrackRow(headerWidth: headerWidth) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 5) {
                     Toggle("", isOn: Binding(
@@ -757,7 +465,7 @@ struct AlignmentWaveformView: View {
                         .accessibilityIdentifier("alignment.waveforms.state.\(track.id)")
                 }
             }
-            .frame(width: headerWidth, alignment: .leading)
+        } content: {
             if shown,
                (model.waveformTileSlices.contains(where: { $0.strokes[track.id]?.isEmpty == false })
                    || !model.retainedWaveformStrokes(for: track.id).isEmpty

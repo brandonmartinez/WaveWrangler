@@ -103,7 +103,7 @@ Full-length review reports progress and can be cancelled without accepting any p
 Listening and derived aligned audio use the same bounded, pitch-preserving audio tiles, not the
 ordinary pitch-changing affine resampler. Source-region processing origins and shared crossfades
 avoid restarting audio phase at playback-window boundaries. Remove file-local corrections before
-editing recorder-group timing. Shows now use schema 4; older shows require the normal backed-up
+editing recorder-group timing. Shows now use schema 5; older shows require the normal backed-up
 migration before saving.
 
 In a recording's inspector, **Prefer this recorder as timing reference** marks an explicit preference
@@ -165,11 +165,145 @@ exact random-access waveform windows and aligned listening throughout an episode
 the preceding hours. Other codecs retain the first-10-source-minutes limit (including inverse map
 offsets); later windows are explicitly refused until exact seeking is established. No persistent
 waveform cache is created; when a wider tile reaches a codec preview limit, a narrower exact
-window is tried before reporting unavailability. Real local transcription and protected filler-word editing remain
-separate, incomplete MVP work.
+window is tried before reporting unavailability. Local transcription is available in **Edit & Cleanup**;
+protected filler-word editing remains separate, incomplete MVP work.
+
+## Edit & Cleanup: transcription and episode boundaries
+
+**Edit & Cleanup** (Cmd+3) shows only speaker Primaries, not Backup tracks. Every Primary must be
+assigned to a speaker, have a confirmed channel and original, and have current accepted alignment
+throughout its working range. The timeline reference counts as aligned. Unplaced audio, unsupported
+gaps, ambiguous placements, stale timing or inaccessible/changed originals block episode transcription;
+one ready speaker does not authorize the rest. Supported source rates are 8-192 kHz.
+
+Select **Mark In** or **Mark Out**, then click a waveform or the ruler to place that shared marker.
+**In at Playhead / Out at Playhead** set it at the current listening position; **Precise Tracks In / Out**
+opens numeric aligned-second fields. Blank ends
+include available audio. These undoable, saved markers exclude pre/post-recording banter from cleanup
+analysis; they never trim originals, change alignment, or imply an export cut. Shaded banter remains
+visible and playable outside the markers, so boundaries can be refined without resetting them.
+**Reset Range** includes the full recording in analysis again. An alignment revision change requires resetting or re-setting
+the markers. Each Primary needs at least 0.1 seconds of supported audio in the range.
+
+Choose a model in **Settings > Transcription**, also reachable from Cleanup's **Transcription Settings**
+button. The dropdown applies to every episode; no file picker is needed. **Whisper Turbo Q5_0**
+(574,041,195 bytes) is the recommended default for new setups; **Whisper Base English**
+(147,964,211 bytes) is smaller and faster but less accurate in our small conversational research test.
+An existing model bookmark/selection remains usable without choosing the file again. Changing the
+preference does not replace saved transcripts or change the model of an already-running job.
+Only these two pinned, previously exercised weights are offered; full Large v3 may be worth comparing
+later but has not been qualified here. OpenAI describes Turbo as a faster optimized Large v3 with
+some accuracy tradeoff: see the [upstream model comparison](https://github.com/openai/whisper#available-models-and-languages).
+
+**Download Model** explicitly fetches the selected MIT-licensed
+[whisper.cpp weights](https://huggingface.co/ggerganov/whisper.cpp) over HTTPS, with byte progress,
+cancellation and retry. Merely selecting a model never starts a download. Completed weights are
+installed into the sandbox's `Application Support/WaveWrangler/WhisperModels` only after exact
+size/SHA-256 verification against `LocalWhisperWeights`; interrupted or rejected files never replace
+an existing model. Files are reused across episodes and app launches, with integrity checked again
+before transcription. Old external model bookmarks are retained as a compatibility path, not a
+required setup flow. Model bodies and device-local preferences/bookmarks are not saved in the show.
+The app has outgoing-network permission for model downloads, not a network-server entitlement.
+No audio or transcript is uploaded, and inference needs no network. The bundled engine is
+**whisper.cpp 1.6.2 with a local token-timestamp bounds fix, English, CPU/Accelerate, four inference threads**, with a generic disfluency
+prompt; it is not the 1.9.4 Metal research runner, and its accuracy/speed must not be inferred from
+that runner's scores. Turbo is substantially more expensive than base.en, particularly in Debug.
+
+**Settings > Transcription > Concurrent transcriptions** selects **1–4 workers** for all episodes
+(default **1**, preserving the previous resource use). Start with **2** on a high-memory Mac.
+Each worker transcribes one speaker's Primary with sequential bounded chunks; it has four Whisper
+threads and its own native inference context/working memory, sharing only immutable verified weights.
+The app-wide pool prevents separate episode windows from each claiming the full selected limit.
+Extra workers beyond an episode's speaker count can serve other episodes. More workers consume more
+CPU/RAM and are not guaranteed to improve throughput. New jobs capture the selected per-job
+parallelism. Changing the global limit affects queued tracks; active tracks finish without being
+interrupted, even when lowering the limit. Cancellation removes queued work and drains active workers.
+Native context initialization is serialized for upstream shared FFT/backend setup, not inference.
+Neither Metal GPU inference nor Core ML/Neural Engine inference is enabled in this build.
+
+**Transcribe Episode** processes each aligned Primary separately, using the existing pitch-preserving
+renderer for accepted adaptive file timing. Bounded 28-second cores have up to one second of context
+on either side; timed words are owned by their core, not duplicated by the context overlap.
+A pinned status panel stays visible while scrolling the tracks: it shows the current stage and every active speaker,
+speaker/chunk counts, aligned interval, completed audio and percentage across **all** Primaries,
+elapsed time, a measured remaining-time estimate, and cancellation. Percentages advance only after
+completed chunks, not fabricated intra-inference progress. Remaining time starts after a completed
+chunk and can vary with speakers, silence and hardware; final source/timing verification is shown
+separately before any result is published. Cancelling or failing never saves a partial transcript.
+Concurrent chunks contribute once to a shared progress total; completion order never changes speaker
+or word ordering. A job queued behind other episodes explicitly reports that it is waiting for a worker.
+Chunk planning and both aligned renderers pass exact 48 kHz frame ranges, rather than testing
+floating-point differences against the 30-second limit. Whisper receives bounded, already-aligned
+PCM buffers; no full-length temporary working recording is required.
+Analysis converts to mono 16 kHz and peak-normalizes only if resampling exceeds full scale.
+Original and playback audio remain unchanged. Recognizer text is preserved, including fillers when
+recognized; there is no guarantee that every filler is retained. Exact digital-zero windows are skipped,
+but this is not general silence detection or protection against hallucinations.
+Long repetitive output is marked **Uncertain recognition** in amber on the word timeline and in the
+speaker/word inspector; raw text, timing and source anchors remain available unchanged. Review hints
+also apply to existing saved transcripts without retranscribing. Six identical consecutive words,
+or four repetitions of a two-to-four-word phrase, trigger review; short stutters do not. Timed runs
+separate at gaps over one second or backwards timing. This text-only heuristic can flag genuine
+repetition and miss other hallucinations: it is not voice-activity detection, proof of silence,
+an accuracy/confidence score or cut permission. Listen before trusting flagged text.
+
+Alignment and Cleanup share the transport, editable aligned-time display, ruler navigation, logarithmic
+horizontal zoom, **Fit timeline**, waveform drawing and track-height controls. Cleanup uses compact
+DAW-style rows with speaker/source details to the left and words below each waveform, without track
+dragging or alignment/matching actions. Click to seek, pan empty ruler space, drag its playhead to
+scrub, or pinch to zoom. **Normalize view** scales displayed peaks only; it never changes playback.
+Full-span measured overviews and bounded precise windows show only each assigned Primary channel.
+Hatched regions have no accepted timing, not measured silence. **Refresh audio** reloads measured data.
+
+**Play / Pause / Stop** and the five-second skip buttons control continuous Primary-only aligned
+playback, including recoverable banter. Playback buffers up to ten seconds before starting, then
+renders bounded five-second chunks ahead of time with at most two chunks queued and one preparing;
+seeking restarts at the requested aligned time and zooming/scaling does not
+interrupt audio. Individual speaker checkboxes mute playback only; they never exempt a Primary from
+episode transcription readiness. Backups are neither drawn nor heard in Cleanup.
+Approximate words appear beneath each Primary; select one for its aligned interval and original
+source-frame anchors and a matching highlight on that waveform. Word bars use their actual approximate
+start/end on the same viewport scale as the audio; readable labels stack without shifting the timing.
+At dense episode-wide zoom, a compact graphical word overview replaces overlapping labels; click it
+to seek and zoom in. Untimed segments remain separate and may repeat across overlapping windows.
+Saved transcripts retain Primary/channel, witnessed source identity, model recipe, alignment revision
+and analyzed range; changing those inputs makes old text stale rather than silently re-timing it.
+Results publish as one undoable episode update. Cancellation or changed document/source/timing
+publishes no partial transcript. Existing transcripts and markers use the ordinary backed-up schema
+upgrade and Save/autosave path.
+
+**No filler/silence suggestions or cuts are applied in this increment.** Recognizer timestamps are
+approximate, not cut-qualified. Reviewed configurable filler phrases, all-speaker long-silence
+detection, adjustable cut windows, common-timeline shortening and speaker-only silence are next.
+Speaker-only silence must keep existing overlap in place, not slide later speech earlier.
+
+## Local development builds and file access
+
+Keep the app used for editing separate from the bundles rebuilt by tests:
+
+```bash
+WW_DERIVED_DATA="$PWD/.build/AppDerivedData" bash scripts/build.sh
+open "$PWD/.build/AppDerivedData/Build/Products/Debug/WaveWrangler.app"
+```
+
+Tests use `.build/DerivedData` by default. Quit the editing app before rebuilding its own bundle.
+Replacing a running app's signed executable can prevent macOS from identifying its code signature;
+saved file permissions may stop resolving, and even **Grant Access** can fail for an unchanged file.
+Launch the freshly built app before retrying access. Do not delete device-access records, change file
+ownership, or grant Full Disk Access to work around a stale running build.
+
+The vendored Whisper has one local correction: its token-timestamp VAD must check the token count,
+not the audio-sample count, before reading the next token. A trailing text token without an end
+timestamp could otherwise abort the app. The backend recipe identifies this as
+`1.6.2+ww-token-bounds-v1`; weight hashes, decoding settings and approximate-timing limitations are
+unchanged. `bash scripts/verify-whisper-native.sh` pins the exact patched source set.
+`bash scripts/test-whisper-timestamps.sh` exercises the actual private C++ routine with 80 generated
+token/energy cases and hardened bounds checking, without a model or recording. It also runs in
+the standard `scripts/test.sh` path.
 
 ## Planning
 
+- [Editing-first transcription engine research: Gemma feasibility and measured Whisper filler retention](docs/research/transcription-engine-comparison.md)
 - [Start M1: copyable Squad kickoff](docs/planning/kickoffs/m1.md) · [milestone execution runbook](docs/planning/milestone-runbook.md)
 - [Live GitHub milestone/issue index](docs/planning/github-backlog.md) · [machine-readable mapping](docs/planning/github-backlog.json)
 - [Public sanitized-provenance index](docs/planning/publication-provenance.json)

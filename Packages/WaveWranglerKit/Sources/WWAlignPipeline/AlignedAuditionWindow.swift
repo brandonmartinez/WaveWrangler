@@ -17,11 +17,30 @@ public enum AlignedAuditionWindowReader {
         startSeconds: Double, durationSeconds: Double
     ) async throws -> [Float] {
         guard startSeconds.isFinite, (-86_400...86_400).contains(startSeconds),
-              durationSeconds.isFinite, durationSeconds > 0, durationSeconds <= maximumDurationSeconds,
-              let placement = groupMap.placements.first(where: { $0.occurrence.source == source })
+              durationSeconds.isFinite, durationSeconds > 0, durationSeconds <= maximumDurationSeconds
         else { throw WaveformWindowError.invalidWindow }
         let first = Int64((startSeconds * Double(outputRate)).rounded(.down))
         let count = Int64((durationSeconds * Double(outputRate)).rounded(.up))
+        return try await readWindow(sourceURL: sourceURL, source: source, matching: witness,
+            decoder: decoder, groupMap: groupMap, decodedChannel: decodedChannel,
+            outputFrames: first..<(first + count))
+    }
+
+    /// Frame-domain callers retain their exact start and exclusive end through rendering.
+    @concurrent
+    public static func readWindow(
+        sourceURL: URL, source: SourceID, matching witness: RawSourceIdentity,
+        decoder: SourceDecoder, groupMap: GroupTimeMap, decodedChannel: Int,
+        outputFrames: Range<Int64>
+    ) async throws -> [Float] {
+        guard (-86_400 * Int64(outputRate)...86_400 * Int64(outputRate)).contains(outputFrames.lowerBound),
+              outputFrames.upperBound > outputFrames.lowerBound,
+              outputFrames.upperBound <= outputFrames.lowerBound + 5 * Int64(outputRate),
+              let placement = groupMap.placements.first(where: { $0.occurrence.source == source })
+        else { throw WaveformWindowError.invalidWindow }
+        let count = outputFrames.upperBound - outputFrames.lowerBound
+        let startSeconds = Double(outputFrames.lowerBound) / Double(outputRate)
+        let durationSeconds = Double(count) / Double(outputRate)
         return try await decoder.withWitnessBoundDecodingCursor(
             sourceURL, source: source, matching: witness
         ) { cursor in
@@ -45,7 +64,7 @@ public enum AlignedAuditionWindowReader {
             )
             let request = RenderRequest(
                 groupMap: groupMap, outputRate: try NominalRate(Int64(outputRate)),
-                outputFrames: first..<(first + count),
+                outputFrames: outputFrames,
                 channels: [RenderChannel(
                     occurrence: placement.occurrence.id, decodedChannel: decodedChannel,
                     statedChannel: .known(decodedChannel)

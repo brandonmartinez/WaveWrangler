@@ -67,10 +67,11 @@ struct AppConfigurationTests {
         #expect(project.components(separatedBy: "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;").count - 1 == 2)
     }
 
-    @Test func entitlementsAreSandboxedUserSelectedFilesWithBookmarksAndNoNetwork() throws {
+    @Test func entitlementsAllowModelDownloadsButNoNetworkServer() throws {
         let entitlements = try Self.plist("WaveWrangler.entitlements")
         #expect(entitlements as NSDictionary == [
             "com.apple.security.app-sandbox": true,
+            "com.apple.security.network.client": true,
             "com.apple.security.files.user-selected.read-write": true,
             "com.apple.security.files.bookmarks.app-scope": true,
             "com.apple.security.files.bookmarks.document-scope": true,

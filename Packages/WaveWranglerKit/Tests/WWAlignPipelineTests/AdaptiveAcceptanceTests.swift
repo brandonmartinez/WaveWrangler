@@ -144,6 +144,18 @@ struct AdaptiveAcceptanceTests {
             source: correction.source, sourceURL: fixture.url("backup"), matching: witness,
             startSeconds: start, durationSeconds: duration)
         #expect(repeated == audio, "listening reuses exactly the same canonical multichannel tile")
+        let firstFrame = Int64(start * 48_000) + 1
+        func renderFrames(_ frames: Range<Int64>) async throws -> [[Float]] {
+            try await fixture.pipeline.adaptiveAudioWindow(model: restored, episode: fixture.episodeID,
+                source: correction.source, sourceURL: fixture.url("backup"), matching: witness,
+                outputFrames: frames)
+        }
+        let exact = try await renderFrames(firstFrame..<(firstFrame + 48_001))
+        let exactHead = try await renderFrames(firstFrame..<(firstFrame + 12_347))
+        let exactTail = try await renderFrames((firstFrame + 12_347)..<(firstFrame + 48_001))
+        #expect(exact.allSatisfy { $0.count == 48_001 })
+        #expect(exact == zip(exactHead, exactTail).map { $0 + $1 },
+                "Fractional frame boundaries preserve the same pitch-preserving multichannel tiles")
         let firstHalf = try await fixture.pipeline.adaptiveAudioWindow(model: restored, episode: fixture.episodeID,
             source: correction.source, sourceURL: fixture.url("backup"), matching: witness,
             startSeconds: start, durationSeconds: 0.5)

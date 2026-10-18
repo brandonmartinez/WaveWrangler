@@ -32,3 +32,6 @@ xcuserdata/
 *.xcuserstate
 .swiftpm/
 Packages/WaveWranglerKit/.build/
+
+# Isolated ASR research helper imports
+/scripts/asr-research/__pycache__/

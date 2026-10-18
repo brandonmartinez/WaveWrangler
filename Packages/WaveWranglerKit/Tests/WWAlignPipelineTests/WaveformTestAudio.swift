@@ -39,7 +39,7 @@ enum WaveformTestAudio {
         }
     }
 
-    static func wave(rate: Int, samples: [Int16]) -> Data {
+    static func wave(rate: Int, samples: [Int16], channels: Int = 1) -> Data {
         var data = Data()
         func number<T: FixedWidthInteger>(_ value: T) {
             var little = value.littleEndian
@@ -50,10 +50,10 @@ enum WaveformTestAudio {
         data.append(contentsOf: "WAVEfmt ".utf8)
         number(UInt32(16))
         number(UInt16(1))
-        number(UInt16(1))
+        number(UInt16(channels))
         number(UInt32(rate))
-        number(UInt32(rate * 2))
-        number(UInt16(2))
+        number(UInt32(rate * channels * 2))
+        number(UInt16(channels * 2))
         number(UInt16(16))
         data.append(contentsOf: "data".utf8)
         number(UInt32(samples.count * 2))

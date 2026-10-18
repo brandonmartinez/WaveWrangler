@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import WWAlignPipeline
 import WWCore
 import WWDecode
@@ -30,6 +31,10 @@ import WWTimeMap
 ///   with synthetic logical source records only. No recording exists and no source content can be read.
 /// - `-WWUITestUnplacedAlignmentFixture YES`: with an alignment fixture, omit its seeded accepted map
 ///   so the native editor can exercise initial manual placement on generated recordings.
+/// - `-WWUITestCleanupFixture YES`: with an alignment fixture, assign the fully mapped generated
+///   recording as Host's confirmed Primary and the other recording as a Backup.
+///   `-WWUITestCleanupPublicSpeech <path>` optionally copies an explicitly supplied public 48 kHz
+///   mono WAV (4-30 s) into that isolated fixture. Never supply private recordings.
 /// - `-WWUITestMinimumShowWindow YES`: open a synthetic show at the supported 760×440 minimum content size.
 /// - `-WWUITestAppearance aqua|darkAqua|highContrastAqua|highContrastDarkAqua`: app appearance for C04/C07
 ///   checks. The high-contrast names are AppKit's Increase Contrast appearances (labelled "override, not
@@ -85,7 +90,7 @@ enum LaunchFixtures {
             // Persistence's isolated UI-test preferences (autosave policy) also start from the defaults, so
             // results don't depend on test order.
             if let suite = UserDefaults(suiteName: "com.brandonmartinez.wavewrangler.uitest-preferences") {
-                for key in [PreferenceKey.autosaveEnabled, "WWAutosaveDelaySeconds"] { suite.removeObject(forKey: key) }
+                for key in [PreferenceKey.autosaveEnabled, "WWAutosaveDelaySeconds", "WWLocalWhisperModelBookmark", PreferenceKey.whisperModel, PreferenceKey.transcriptionWorkers] { suite.removeObject(forKey: key) }
             }
             for key in [PreferenceKey.autosaveEnabled, PreferenceKey.downloadSourcesAutomatically, PreferenceKey.textSizePercent, PreferenceKey.settingsLastPane] {
                 defaults.removeObject(forKey: key)
@@ -152,6 +157,7 @@ enum LaunchFixtures {
             }
             var model = ShowDocumentModel.untitled(id: showID, title: name)
             for fixture in fixtures {
+                model.speakers.append(contentsOf: fixture.speakers)
                 model = (try? model.addingEpisode(fixture.episode)) ?? model
             }
             Task {
@@ -171,6 +177,7 @@ enum LaunchFixtures {
     private struct AlignmentEpisodeFixture {
         var episode: Episode
         var records: [DeviceAccessRecord]
+        var speakers: [Speaker] = []
     }
 
     private static func alignmentEpisode(
@@ -201,13 +208,27 @@ enum LaunchFixtures {
             sources: [reference, target]
         )
         let rate = try! NominalRate(48_000)
-        let frames: Int64 = 48_000 * 5
+        let publicPath = UserDefaults.standard.bool(forKey: "WWUITestCleanupFixture")
+            ? UserDefaults.standard.string(forKey: "WWUITestCleanupPublicSpeech") : nil
+        let cleanupTimeline = UserDefaults.standard.bool(forKey: "WWUITestCleanupFixture")
+            && UserDefaults.standard.bool(forKey: "WWUITestCleanupTimelineFixture")
+        let frames: Int64
+        if let publicPath {
+            let file = try! AVAudioFile(forReading: URL(filePath: publicPath))
+            precondition(file.processingFormat.channelCount == 1 && file.processingFormat.sampleRate == 48_000
+                && (48_000 * 4...48_000 * 30).contains(file.length), "Public cleanup control must be 48 kHz mono, 4-30 seconds")
+            frames = file.length
+        } else { frames = 48_000 * (cleanupTimeline ? 12 : 5) }
         let sourceFolder = folder.appending(path: "AlignmentSources-\(index)", directoryHint: .isDirectory)
         try! FileManager.default.createDirectory(at: sourceFolder, withIntermediateDirectories: true)
         let referenceURL = sourceFolder.appending(path: reference.displayNameHint)
         let targetURL = sourceFolder.appending(path: target.displayNameHint)
         let visual = UserDefaults.standard.bool(forKey: "WWUITestVisualAlignmentFixture")
-        writeSyntheticWAV(referenceURL, frames: Int(frames), phase: 0, eventDelayFrames: visual ? 0 : nil)
+        if let publicPath {
+            try! FileManager.default.copyItem(at: URL(filePath: publicPath), to: referenceURL)
+        } else {
+            writeSyntheticWAV(referenceURL, frames: Int(frames), phase: 0, eventDelayFrames: visual ? 0 : nil)
+        }
         writeSyntheticWAV(targetURL, frames: Int(frames), phase: 31, eventDelayFrames: visual ? 8_640 : nil)
         let sourceURLs = [(reference, referenceURL), (target, targetURL)]
         let revisions = sourceURLs.map { source, url -> SourceRevision in
@@ -228,7 +249,7 @@ enum LaunchFixtures {
             group: referenceGroup.id, epoch: referenceEpoch.id,
             occurrence: referenceOccurrence.id
         )
-        let end = try! ExactRational(numerator: 5, denominator: 1)
+        let end = try! ExactRational(numerator: Int128(frames), denominator: 48_000)
         let referenceSegment = try! AffineClockSegment(
             groupClockStart: .zero, groupClockEnd: end,
             rateRatio: .one, alignedOffset: .zero
@@ -268,7 +289,7 @@ enum LaunchFixtures {
                 EpochClockMap(
                     epoch: targetEpoch.id,
                     mapping: visual ? .unsupported(.notAttempted) : .mapped(
-                        segments: [targetSegment],
+                        segments: [cleanupTimeline ? referenceSegment : targetSegment],
                         provenance: .acousticConsistentProposal(proposal)
                     )
                 ),
@@ -279,7 +300,9 @@ enum LaunchFixtures {
             ],
             placements: [OccurrencePlacement(
                 occurrence: targetOccurrence,
-                spans: [
+                spans: cleanupTimeline ? [
+                    EpochSpan(startFrame: 0, endFrame: frames, epoch: targetEpoch.id, groupClockOffset: .zero),
+                ] : [
                     EpochSpan(
                         startFrame: 0,
                         endFrame: 48_000 * 2,
@@ -338,7 +361,31 @@ enum LaunchFixtures {
                 createdAt: Date()
             )
         }
-        return AlignmentEpisodeFixture(episode: episode, records: records)
+        var speakers: [Speaker] = []
+        if UserDefaults.standard.bool(forKey: "WWUITestCleanupFixture") {
+            let speaker = Speaker(name: "Host")
+            speakers = [speaker]
+            episode.sources[0].role = .primary
+            episode.sources[0].roleConfirmation = .userConfirmed
+            episode.sources[1].role = .backup
+            episode.sources[1].roleConfirmation = .userConfirmed
+            episode.speakerAssignments = [
+                SpeakerAssignment(speakerID: speaker.id,
+                    primary: ChannelReference(sourceID: reference.id, statedChannel: 0),
+                    primaryConfirmation: .userConfirmed,
+                    backups: [ChannelReference(sourceID: target.id, statedChannel: 0)]),
+            ]
+            if cleanupTimeline {
+                let guest = Speaker(name: "Guest")
+                speakers.append(guest)
+                episode.sources[1].role = .primary
+                episode.speakerAssignments[0].backups = []
+                episode.speakerAssignments.append(SpeakerAssignment(speakerID: guest.id,
+                    primary: ChannelReference(sourceID: target.id, statedChannel: 0),
+                    primaryConfirmation: .userConfirmed))
+            }
+        }
+        return AlignmentEpisodeFixture(episode: episode, records: records, speakers: speakers)
     }
 
     private static func writeSyntheticWAV(

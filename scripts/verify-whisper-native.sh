@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Verify the exact official v1.6.2 CPU source subset; no model or generated artifact is vendored.
+# Verify v1.6.2 plus the local next-token VAD bounds fix; no model or generated artifact is vendored.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="$ROOT/Packages/WaveWranglerKit/Sources/WWWhisperNative/upstream"
-EXPECTED=b4a7363a36dfeb9812b4d68d91f1b01f16af80edf4c9803aaf985f26033a9942
+EXPECTED=40a7df71ea16a0b8b1ef733c4e81e39ab102ca610e94ed6e6af95c0cc4d2d6ba
 if [[ ! -d "$SOURCE" || -L "$SOURCE" ]]; then
   echo "Vendored CPU source must be a real directory" >&2
   exit 1
@@ -37,7 +37,7 @@ for entry in "${entries[@]}"; do
 done
 ACTUAL="$(shasum -a 256 "${FILES[@]}" | shasum -a 256 | cut -d ' ' -f 1)"
 if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-  echo "Pinned whisper.cpp v1.6.2 CPU source hash mismatch" >&2
+  echo "Pinned whisper.cpp v1.6.2+ww-token-bounds-v1 CPU source hash mismatch" >&2
   exit 1
 fi
-echo "Pinned whisper.cpp v1.6.2 CPU source verified"
+echo "Pinned whisper.cpp v1.6.2+ww-token-bounds-v1 CPU source verified"

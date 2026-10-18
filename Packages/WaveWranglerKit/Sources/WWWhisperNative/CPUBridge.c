@@ -28,6 +28,13 @@ static void discard_probe_log(enum ggml_log_level level, const char *text, void 
     (void) user_data;
 }
 
+static pthread_once_t logging_once = PTHREAD_ONCE_INIT;
+static pthread_mutex_t context_init_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void configure_logging(void) {
+    whisper_log_set(discard_probe_log, NULL);
+}
+
 static double elapsed_seconds(struct timespec start, struct timespec end) {
     return (double) (end.tv_sec - start.tv_sec) +
            (double) (end.tv_nsec - start.tv_nsec) / 1000000000.0;
@@ -40,14 +47,16 @@ WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe(void *model_bytes, size_t model_s
     }
 
     // The probe runs in its own executable; suppress upstream model and recognition diagnostics.
-    whisper_log_set(discard_probe_log, NULL);
+    if (pthread_once(&logging_once, configure_logging) != 0) return result;
     struct whisper_context_params context_params = whisper_context_default_params();
     context_params.use_gpu = false;
     context_params.flash_attn = false;
     context_params.dtw_token_timestamps = false;
     struct timespec before, after;
     clock_gettime(CLOCK_MONOTONIC, &before);
+    if (pthread_mutex_lock(&context_init_lock) != 0) return result;
     struct whisper_context *context = whisper_init_from_buffer_with_params(model_bytes, model_size, context_params);
+    pthread_mutex_unlock(&context_init_lock);
     clock_gettime(CLOCK_MONOTONIC, &after);
     result.load_seconds = elapsed_seconds(before, after);
     if (!context) {
@@ -104,8 +113,6 @@ WWTinyPCMProbeResult ww_whisper_tiny_pcm_probe(void *model_bytes, size_t model_s
     return result;
 }
 
-static pthread_mutex_t inference_lock = PTHREAD_MUTEX_INITIALIZER;
-
 struct cancel_state {
     int32_t (*check)(void *);
     void *user_data;
@@ -130,9 +137,9 @@ void ww_whisper_free_transcript(WWNativeTranscript *transcript) {
     transcript->segment_count = 0;
 }
 
-WWNativeTranscript ww_whisper_infer_pcm(
+static WWNativeTranscript infer_pcm(
     void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
-    int32_t (*cancelled)(void *), void *cancel_context
+    int32_t (*cancelled)(void *), void *cancel_context, int window
 ) {
     WWNativeTranscript result = { .status = WW_INFERENCE_INVALID_INPUT };
     if (!cancelled) return result;
@@ -140,28 +147,35 @@ WWNativeTranscript ww_whisper_infer_pcm(
         result.status = WW_INFERENCE_CANCELLED;
         return result;
     }
-    if (!model_bytes || model_size != 77704715 || !pcm || sample_count != 32000) return result;
+    if (!model_bytes || !pcm) return result;
+    if (window) {
+        if ((model_size != 147964211 && model_size != 574041195) ||
+            sample_count < 1600 || sample_count > 480000) return result;
+    } else if (model_size != 77704715 || sample_count != 32000) return result;
     for (int32_t i = 0; i < sample_count; ++i) {
         if (!isfinite(pcm[i]) || fabsf(pcm[i]) > 1.0f) return result;
     }
-    if (pthread_mutex_lock(&inference_lock) != 0) {
+    if (pthread_once(&logging_once, configure_logging) != 0 ||
+        pthread_mutex_lock(&context_init_lock) != 0) {
         result.status = WW_INFERENCE_FAILED;
         return result;
     }
     if (cancelled(cancel_context)) {
         result.status = WW_INFERENCE_CANCELLED;
-        goto unlock;
+        pthread_mutex_unlock(&context_init_lock);
+        return result;
     }
 
-    whisper_log_set(discard_probe_log, NULL);
     struct whisper_context_params context_params = whisper_context_default_params();
     context_params.use_gpu = false;
     context_params.flash_attn = false;
     context_params.dtw_token_timestamps = false;
     struct whisper_context *context = whisper_init_from_buffer_with_params(model_bytes, model_size, context_params);
+    // Upstream initializes shared FFT/backend tables here. Decode uses independent contexts.
+    pthread_mutex_unlock(&context_init_lock);
     if (!context) {
         result.status = cancelled(cancel_context) ? WW_INFERENCE_CANCELLED : WW_INFERENCE_LOAD_FAILED;
-        goto unlock;
+        return result;
     }
     if (cancelled(cancel_context)) {
         result.status = WW_INFERENCE_CANCELLED;
@@ -169,16 +183,21 @@ WWNativeTranscript ww_whisper_infer_pcm(
     }
 
     struct cancel_state cancel_state = { cancelled, cancel_context };
-    struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-    params.n_threads = 2;
+    struct whisper_full_params params = whisper_full_default_params(
+        window ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
+    params.n_threads = window ? 4 : 2;
     params.language = "en";
-    params.duration_ms = 2000;
+    params.duration_ms = (sample_count + 15) / 16;
     params.no_context = true;
     params.no_timestamps = false;
-    params.token_timestamps = false;
-    params.single_segment = true;
-    params.max_tokens = 16;
-    params.greedy.best_of = 1;
+    params.token_timestamps = window != 0;
+    params.single_segment = window == 0;
+    params.max_tokens = window ? 0 : 16;
+    params.greedy.best_of = window ? 5 : 1;
+    params.beam_search.beam_size = window ? 5 : -1;
+    params.max_len = window ? 1 : 0;
+    params.split_on_word = window != 0;
+    params.initial_prompt = window ? "Um, uh, well, I, I mean, you know, like, sort of." : NULL;
     params.temperature_inc = 0.0f;
     params.print_progress = false;
     params.print_realtime = false;
@@ -196,7 +215,7 @@ WWNativeTranscript ww_whisper_infer_pcm(
         goto release_context;
     }
     const int count = whisper_full_n_segments(context);
-    if (count < 0 || count > 16) {
+    if (count < 0 || count > (window ? 2048 : 16)) {
         result.status = WW_INFERENCE_FAILED;
         goto release_context;
     }
@@ -233,7 +252,19 @@ WWNativeTranscript ww_whisper_infer_pcm(
 release_context:
     whisper_free(context);
     if (result.status != WW_INFERENCE_OK) ww_whisper_free_transcript(&result);
-unlock:
-    pthread_mutex_unlock(&inference_lock);
     return result;
+}
+
+WWNativeTranscript ww_whisper_infer_pcm(
+    void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
+    int32_t (*cancelled)(void *), void *cancel_context
+) {
+    return infer_pcm(model_bytes, model_size, pcm, sample_count, cancelled, cancel_context, 0);
+}
+
+WWNativeTranscript ww_whisper_infer_window(
+    void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
+    int32_t (*cancelled)(void *), void *cancel_context
+) {
+    return infer_pcm(model_bytes, model_size, pcm, sample_count, cancelled, cancel_context, 1);
 }

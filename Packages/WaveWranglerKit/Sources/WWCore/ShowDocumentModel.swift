@@ -14,7 +14,8 @@ public enum SchemaVersion {
     /// An embedded map's `timeMapSchemaVersion` is part of this schema: a time-map schema bump requires a show
     /// schema bump (pinned by `AlignmentPersistenceTests.schemaVersionsArePinned`).
     /// 4: human-accepted file-local pitch-preserving timing beside the unchanged recorder maps.
-    public static let show = 4
+    /// 5: shared episode in/out markers and source-bound local transcripts.
+    public static let show = 5
     /// Canonical library document payload (`LibraryModel`).
     /// 2: adds `libraryID`. Schema 1 libraries are upgraded with a derived, stable ID (see WWPersistence
     /// `LibraryCoder`); the original bytes are kept as a backup before the first schema 2 publication.

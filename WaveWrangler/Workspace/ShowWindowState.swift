@@ -49,6 +49,7 @@ final class ShowWindowState {
     @ObservationIgnored var explicitSavePending = false
     /// The Alignment workspace currently displayed in this window, for inspector and menu routing.
     var alignmentModel: EpisodeAlignmentModel?
+    var cleanupModel: EpisodeCleanupModel?
     /// Presentation-only Review selection shared by the linked transcript and inspector panes.
     private let reviewPresentationState = TranscriptReviewState()
     var reviewState: TranscriptReviewState {
@@ -323,12 +324,17 @@ final class ShowWindowState {
         reviewPresentationState.present(.refusal(TranscriptReviewPresentation.ValidationError.missingPrimarySource.refusal))
     }
 
-    func reviewModelDidChange() { invalidateBoundReview() }
+    func reviewModelDidChange() {
+        invalidateBoundReview()
+        cleanupModel?.modelDidChange()
+    }
 
     func reviewSpeakerSelectionDidChange() { invalidateBoundReview() }
 
     func reviewWindowDidClose() {
         reviewWindowClosed = true
+        cleanupModel?.cancel()
+        cleanupModel = nil
         invalidateBoundReview()
     }
 

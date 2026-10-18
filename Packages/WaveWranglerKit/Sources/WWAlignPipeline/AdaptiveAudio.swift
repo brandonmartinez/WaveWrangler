@@ -17,14 +17,30 @@ extension AlignmentPipeline {
         sourceURL: URL, matching witness: RawSourceIdentity,
         startSeconds: Double, durationSeconds: Double, outputRate: Int = 48000
     ) async throws -> [[Float]] {
-        _ = try await verifiedAcceptedMap(model: model, episode: episodeID)
-        guard let version = model.episode(episodeID)?.alignment?.acceptedMap,
-              let correction = version.sourceCorrections?.first(where: { $0.source == source }),
-              correction.isValid, startSeconds.isFinite, (-86400...86400).contains(startSeconds),
+        guard startSeconds.isFinite, (-86400...86400).contains(startSeconds),
               durationSeconds.isFinite, durationSeconds > 0, durationSeconds <= 5,
               (8000...192000).contains(outputRate) else { throw WaveformWindowError.invalidWindow }
         let first = Int64(floor(startSeconds * Double(outputRate)))
-        let count = Int(ceil(durationSeconds * Double(outputRate)))
+        let count = Int64(ceil(durationSeconds * Double(outputRate)))
+        return try await adaptiveAudioWindow(model: model, episode: episodeID, source: source,
+            sourceURL: sourceURL, matching: witness, outputFrames: first..<(first + count), outputRate: outputRate)
+    }
+
+    public func adaptiveAudioWindow(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, source: SourceID,
+        sourceURL: URL, matching witness: RawSourceIdentity,
+        outputFrames: Range<Int64>, outputRate: Int = 48000
+    ) async throws -> [[Float]] {
+        _ = try await verifiedAcceptedMap(model: model, episode: episodeID)
+        guard let version = model.episode(episodeID)?.alignment?.acceptedMap,
+              let correction = version.sourceCorrections?.first(where: { $0.source == source }),
+              correction.isValid, (8000...192000).contains(outputRate),
+              (-86400 * Int64(outputRate)...86400 * Int64(outputRate)).contains(outputFrames.lowerBound),
+              outputFrames.upperBound > outputFrames.lowerBound,
+              outputFrames.upperBound <= outputFrames.lowerBound + 5 * Int64(outputRate)
+        else { throw WaveformWindowError.invalidWindow }
+        let first = outputFrames.lowerBound
+        let count = Int(outputFrames.upperBound - first)
         var output = (0..<correction.channelCount).map { _ in [Float](repeating: 0, count: count) }
         let tileFrames = Int64(outputRate) * 5
         let firstTile = GroupRenderJob.floorDiv(first, tileFrames)

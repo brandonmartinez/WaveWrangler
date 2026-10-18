@@ -14,6 +14,7 @@ public struct ValidationIssue: Sendable, Equatable, CustomStringConvertible {
         case emptyTitle
         /// A structurally inconsistent `EpisodeAlignment` (revision order, accepted/derived references, map bytes).
         case invalidAlignment
+        case invalidCleanup
     }
 
     public var code: Code
@@ -46,6 +47,9 @@ extension ShowDocumentModel {
         let speakerIDs = Set(speakers.map(\.id))
         for episode in episodes {
             issues += Self.issues(in: episode, speakerIDs: speakerIDs)
+            if episode.cleanup?.isValid == false {
+                issues.append(.init(.invalidCleanup, "episode \(episode.id) has invalid cleanup state"))
+            }
             if let alignment = episode.alignment {
                 issues += alignment.structuralIssues(episode: episode.id)
             }

@@ -14,7 +14,7 @@ public enum ShowDestination: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .setup: "Setup"
         case .alignment: "Alignment"
-        case .review: "Review"
+        case .review: "Edit & Cleanup"
         case .export: "Export"
         }
     }
@@ -41,7 +41,7 @@ public enum ShowDestination: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .setup: "Set up sources and speakers for this episode"
         case .alignment: "Inspect and correct recorder alignment"
-        case .review: "Inspect the provisional transcript and timeline review shell"
+        case .review: "Transcribe aligned Primary speakers and set the shared episode working range"
         case .export: "Later: not available in this version"
         }
     }

@@ -7,6 +7,7 @@ import WWDerived
 import WWEpisodeSetup
 import WWSources
 import WWTimeMap
+import WWSpeech
 
 actor AlignmentRuntime {
     struct Prepared: Sendable {
@@ -426,6 +427,7 @@ actor AlignmentRuntime {
     func waveformTracks(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         startSeconds: Double, durationSeconds: Double, overview: Bool = false,
+        onlySources: Set<SourceID>? = nil, decodedChannels: [SourceID: Int] = [:],
         progress: @escaping @Sendable (Double) async throws -> Void = { _ in }
     ) async throws -> AlignmentWaveformLoad {
         guard let episode = model.episode(episodeID) else {
@@ -446,7 +448,8 @@ actor AlignmentRuntime {
         var tracks: [AlignmentWaveformTrack] = []
         var refusals: [AlignmentWaveformRefusal] = []
         var admissions: [SourceID: WaveformSourceAdmission] = [:]
-        for (index, record) in episode.sources.enumerated() {
+        let selectedSources = episode.sources.filter { onlySources?.contains($0.id) ?? true }
+        for (index, record) in selectedSources.enumerated() {
             try Task.checkCancellation()
             guard let groupID = record.placement.recorderGroupID,
                   let epochID = record.placement.epochID,
@@ -458,7 +461,8 @@ actor AlignmentRuntime {
                 if overview {
                     envelope = try await cachedOverview(
                         admission: admission, episode: episode, group: groupID, map: map,
-                        sourceIndex: index, progress: progress
+                        sourceIndex: index, sourceCount: selectedSources.count,
+                        decodedChannel: decodedChannels[record.id], progress: progress
                     )
                 } else {
                     let sourceMap = map?.groups.first(where: {
@@ -469,7 +473,8 @@ actor AlignmentRuntime {
                         sourceURL: admission.url, source: record.id,
                         matching: admission.witness, decoder: pipeline.decoder,
                         startSeconds: startSeconds, durationSeconds: durationSeconds,
-                        groupMap: sourceMap, sourceCorrection: correction
+                        groupMap: sourceMap, sourceCorrection: correction,
+                        decodedChannel: decodedChannels[record.id]
                     )
                 }
                 try await reverify(admission)
@@ -531,13 +536,14 @@ actor AlignmentRuntime {
 
     private func cachedOverview(
         admission: WaveformSourceAdmission, episode: Episode, group: RecorderGroupID,
-        map: AlignedTimelineMap?, sourceIndex: Int,
+        map: AlignedTimelineMap?, sourceIndex: Int, sourceCount: Int, decodedChannel: Int?,
         progress: @escaping @Sendable (Double) async throws -> Void
     ) async throws -> WaveformEnvelope {
         guard let fingerprint = admission.record.recordedIdentity?.fingerprint else {
             throw DecodeFailure.sourceIdentityMismatch
         }
-        let asset = AssetSpec(kind: "ww.waveform.overview", revision: 2)
+        let channelSuffix = decodedChannel.map { ".channel.\($0)" } ?? ""
+        let asset = AssetSpec(kind: "ww.waveform.overview\(channelSuffix)", revision: 2)
         let source = admission.key.sourceID
         let groupMap = map?.groups.first(where: {
             $0.group == group && $0.placements.contains(where: { $0.occurrence.source == source })
@@ -553,15 +559,16 @@ actor AlignmentRuntime {
             asset: asset, sources: [.metadata(source, fingerprint: fingerprint)],
             format: .current, coverage: coverageDigest
         )
-        let slot = DerivedSlot("ww.waveform.overview.\(episode.id).\(source)")
+        let slot = DerivedSlot("ww.waveform.overview.\(episode.id).\(source)\(channelSuffix)")
         await coordinator.setAssetRevision(asset)
         let decoder = pipeline.decoder
         let accessStore = accessStore
-        let sourceCount = max(1, episode.sources.count)
+        let sourceCount = max(1, sourceCount)
         let job = await coordinator.submit(slot, key: key) {
             let envelope = try await WaveformWindowReader.readOverview(
                 sourceURL: admission.url, source: source,
-                matching: admission.witness, decoder: decoder, groupMap: groupMap, sourceCorrection: correction
+                matching: admission.witness, decoder: decoder, groupMap: groupMap, sourceCorrection: correction,
+                decodedChannel: decodedChannel
             ) { fraction in
                 guard try await accessStore.record(for: admission.key) == admission.record else {
                     throw DecodeFailure.sourceIdentityMismatch
@@ -726,6 +733,298 @@ actor AlignmentRuntime {
             counts.total += 1
             if case .stale = state { counts.stale += 1 }
         }
+    }
+
+    struct CleanupPreparation: Sendable {
+        let plan: PrimaryCleanupPlan
+        let identities: [SourceID: String]
+    }
+
+    struct CleanupAudio: Sendable {
+        let start: Double
+        let duration: Double
+        let channels: [SpeakerID: [Float]]
+    }
+
+    struct CleanupTranscriptionWindow: Sendable {
+        let coreFrames: Range<Int64>
+        let audioFrames: Range<Int64>
+    }
+
+    static func cleanupTranscriptionWindows(start: Double, end: Double) throws -> [CleanupTranscriptionWindow] {
+        guard start.isFinite, end.isFinite, (-86_400...86_400).contains(start),
+              (-86_400...86_400).contains(end), end > start else {
+            throw CleanupFailure(reason: "The transcription range must contain finite supported aligned times.")
+        }
+        let first = Int64((start * 48_000).rounded()), last = Int64((end * 48_000).rounded())
+        guard last > first else { throw CleanupFailure(reason: "The transcription range contains no audio frames.") }
+        var windows: [CleanupTranscriptionWindow] = []
+        var cursor = first
+        while cursor < last {
+            let coreEnd = min(last, cursor + 28 * 48_000)
+            windows.append(CleanupTranscriptionWindow(coreFrames: cursor..<coreEnd,
+                audioFrames: max(first, cursor - 48_000)..<min(last, coreEnd + 48_000)))
+            cursor = coreEnd
+        }
+        return windows
+    }
+
+    private struct CleanupFailure: LocalizedError {
+        let reason: String
+        var errorDescription: String? { reason }
+    }
+
+    func prepareCleanup(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, requireReady: Bool = true
+    ) async throws -> CleanupPreparation {
+        guard let episode = model.episode(episodeID) else { throw AlignmentAcceptanceError.episodeNotFound(episodeID) }
+        let sources = await resolveSources(episode.sources)
+        try await pipeline.activate(model: model, episode: episodeID)
+        let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        let plan = PrimaryCleanupPlan.make(model: model, episode: episodeID, map: map)
+        var identities: [SourceID: String] = [:]
+        guard plan.isReady || !requireReady else { return CleanupPreparation(plan: plan, identities: identities) }
+        for lane in plan.lanes {
+            let admission = try await waveformSource(lane.primary.sourceID, sources: sources)
+            let format = try await pipeline.decoder.withDecodingCursor(admission.url, source: lane.primary.sourceID) {
+                $0.interpretation
+            }
+            guard let channel = lane.primary.channel.value, channel < format.channelCount,
+                  format.sourceSampleRate == lane.sourceRate, format.frames.validFrames == lane.sourceFrames else {
+                throw CleanupFailure(reason: "\(lane.name): the Primary's channel or measured format no longer matches its accepted placement.")
+            }
+            try await reverify(admission)
+            identities[lane.primary.sourceID] = try cleanupIdentity(admission.witness)
+        }
+        return CleanupPreparation(plan: plan, identities: identities)
+    }
+
+    private func cleanupIdentity(_ witness: RawSourceIdentity) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return SHA256.hash(data: try encoder.encode(witness)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func cleanupSamples(
+        model: ShowDocumentModel, episode: EpisodeID, lane: CleanupSpeakerLane,
+        admission: WaveformSourceAdmission, map: AlignedTimelineMap, start: Double, end: Double
+    ) async throws -> [Float] {
+        guard let channel = lane.primary.channel.value,
+              lane.sourceRange(start: start, end: end) != nil
+        else { throw CleanupFailure(reason: "\(lane.name): the requested audio crosses unsupported timing.") }
+        let firstFrame = Int64((start * 48_000).rounded())
+        let endFrame = Int64((end * 48_000).rounded())
+        guard endFrame > firstFrame, endFrame - firstFrame <= 30 * 48_000 else {
+            throw CleanupFailure(reason: "\(lane.name): the transcription audio window must contain at most 30 seconds.")
+        }
+        var samples: [Float] = []
+        samples.reserveCapacity(Int(endFrame - firstFrame))
+        var frame = firstFrame
+        while frame < endFrame {
+            try Task.checkCancellation()
+            let count = min(Int64(5 * 48_000), endFrame - frame)
+            let frames = frame..<(frame + count)
+            let audio: [Float]
+            if model.episode(episode)?.alignment?.acceptedMap?.sourceCorrections?
+                .contains(where: { $0.source == lane.primary.sourceID }) == true {
+                let channels = try await pipeline.adaptiveAudioWindow(
+                    model: model, episode: episode, source: lane.primary.sourceID,
+                    sourceURL: admission.url, matching: admission.witness,
+                    outputFrames: frames)
+                guard channels.indices.contains(channel) else { throw WaveformWindowError.invalidSamples }
+                audio = channels[channel]
+            } else {
+                guard let group = map.groups.first(where: {
+                    $0.placements.contains { $0.occurrence.source == lane.primary.sourceID }
+                }) else { throw WaveformWindowError.mapDoesNotMatchSource }
+                audio = try await AlignedAuditionWindowReader.readWindow(
+                    sourceURL: admission.url, source: lane.primary.sourceID, matching: admission.witness,
+                    decoder: pipeline.decoder, groupMap: group, decodedChannel: channel,
+                    outputFrames: frames)
+            }
+            guard audio.count == count else { throw WaveformWindowError.invalidSamples }
+            samples.append(contentsOf: audio)
+            frame += count
+        }
+        try await reverify(admission)
+        return samples
+    }
+
+    func cleanupPreview(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, start: Double, duration: Double,
+        respectWorkingRange: Bool = true
+    ) async throws -> CleanupAudio {
+        let prepared = try await prepareCleanup(model: model, episode: episodeID, requireReady: respectWorkingRange)
+        guard (!respectWorkingRange || prepared.plan.isReady), !prepared.plan.lanes.isEmpty,
+              let episode = model.episode(episodeID) else {
+            throw CleanupFailure(reason: prepared.plan.blockers.joined(separator: "\n"))
+        }
+        guard start.isFinite, duration.isFinite, duration > 0,
+              abs(start) <= 86_400, abs(start + duration) <= 86_400 else {
+            throw CleanupFailure(reason: "Choose a finite aligned window of at most 30 seconds within the supported timeline.")
+        }
+        let first = (start * 48_000).rounded(), last = ((start + duration) * 48_000).rounded()
+        let start = first / 48_000, end = last / 48_000, duration = (last - first) / 48_000
+        guard last > first, last - first <= 30 * 48_000 else {
+            throw CleanupFailure(reason: "The preview window must contain between one frame and 30 seconds.")
+        }
+        let sources = await resolveSources(episode.sources)
+        let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        let count = Int(last - first)
+        var channels: [SpeakerID: [Float]] = [:]
+        for lane in prepared.plan.lanes {
+            var output = [Float](repeating: 0, count: count)
+            let admission = try await waveformSource(lane.primary.sourceID, sources: sources)
+            for region in lane.regions {
+                let lo = max(start, region.alignedStart, respectWorkingRange ? lane.start : -.infinity)
+                let hi = min(end, region.alignedEnd, respectWorkingRange ? lane.end : .infinity)
+                guard hi > lo, (hi * 48_000).rounded() > (lo * 48_000).rounded() else { continue }
+                let samples = try await cleanupSamples(model: model, episode: episodeID, lane: lane,
+                    admission: admission, map: map, start: lo, end: hi)
+                let offset = max(0, Int((lo * 48_000).rounded() - first))
+                let copied = min(samples.count, count - offset)
+                guard copied >= 0 else { throw WaveformWindowError.invalidSamples }
+                output.replaceSubrange(offset..<(offset + copied), with: samples.prefix(copied))
+            }
+            channels[lane.speaker] = output
+        }
+        _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        return CleanupAudio(start: start, duration: duration, channels: channels)
+    }
+
+    private actor CleanupLaneQueue {
+        let count: Int
+        private var cursor = 0
+        init(count: Int) { self.count = count }
+        func next() -> Int? {
+            guard cursor < count else { return nil }
+            defer { cursor += 1 }
+            return cursor
+        }
+    }
+
+    func transcribeCleanup(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, engine: LocalWhisper,
+        concurrency: TranscriptionConcurrency = .one,
+        workerPool: TranscriptionWorkerPool? = nil,
+        progress: @escaping @Sendable (CleanupTranscriptionProgress) async -> Void
+    ) async throws -> [SpeakerTranscript] {
+        try await transcribeCleanup(model: model, episode: episodeID, modelRevision: engine.revision,
+            concurrency: concurrency, workerPool: workerPool,
+            transcribeWindow: { try await engine.transcribeWindow(pcm: $0, sampleRate: 48_000) },
+            progress: progress)
+    }
+
+    func transcribeCleanup(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, modelRevision: String,
+        concurrency: TranscriptionConcurrency = .one,
+        workerPool: TranscriptionWorkerPool? = nil,
+        transcribeWindow: @escaping @Sendable ([Float]) async throws -> PCMTranscript,
+        progress: @escaping @Sendable (CleanupTranscriptionProgress) async -> Void
+    ) async throws -> [SpeakerTranscript] {
+        let preparation = try await prepareCleanup(model: model, episode: episodeID)
+        guard preparation.plan.isReady, let revision = preparation.plan.alignmentRevision,
+              let episode = model.episode(episodeID) else {
+            throw CleanupFailure(reason: preparation.plan.blockers.joined(separator: "\n"))
+        }
+        let sources = await resolveSources(episode.sources)
+        let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        let total = preparation.plan.lanes.reduce(0.0) { $0 + $1.end - $1.start }
+        let workerPool = workerPool ?? TranscriptionWorkerPool(concurrency: concurrency)
+        let reporter = CleanupTranscriptionReporter(workerLimit: concurrency.rawValue, sink: progress)
+        await reporter.report(CleanupTranscriptionProgress(stage: .waiting, speaker: "",
+            speakerIndex: 0, speakerCount: preparation.plan.lanes.count,
+            windowIndex: 0, windowCount: 0, alignedStart: 0, alignedEnd: 0,
+            completedSeconds: 0, totalSeconds: total))
+        let queue = CleanupLaneQueue(count: preparation.plan.lanes.count)
+        let ordered = try await withThrowingTaskGroup(of: [(Int, SpeakerTranscript)].self) { group in
+            for _ in 0..<min(concurrency.rawValue, preparation.plan.lanes.count) {
+                group.addTask {
+                    var results: [(Int, SpeakerTranscript)] = []
+                    while let index = await queue.next() {
+                        try Task.checkCancellation()
+                        let transcript = try await workerPool.withAdmission {
+                            try await self.transcribeCleanupLane(model: model, episodeID: episodeID,
+                                lane: preparation.plan.lanes[index], laneIndex: index,
+                                speakerCount: preparation.plan.lanes.count, sources: sources, map: map,
+                                expectedIdentity: preparation.identities[preparation.plan.lanes[index].primary.sourceID],
+                                revision: revision, modelRevision: modelRevision,
+                                workingRange: episode.cleanup?.workingRange, total: total,
+                                transcribeWindow: transcribeWindow, reporter: reporter)
+                        }
+                        results.append((index, transcript))
+                    }
+                    return results
+                }
+            }
+            var results: [(Int, SpeakerTranscript)] = []
+            for try await batch in group { results.append(contentsOf: batch) }
+            return results.sorted { $0.0 < $1.0 }.map(\.1)
+        }
+        try Task.checkCancellation()
+        await reporter.report(CleanupTranscriptionProgress(stage: .verifying, speaker: "",
+            speakerIndex: preparation.plan.lanes.count, speakerCount: preparation.plan.lanes.count,
+            windowIndex: 0, windowCount: 0, alignedStart: 0, alignedEnd: 0,
+            completedSeconds: total, totalSeconds: total))
+        let final = try await prepareCleanup(model: model, episode: episodeID)
+        guard final.plan.isReady, final.identities == preparation.identities else { throw DecodeFailure.sourceIdentityMismatch }
+        return ordered
+    }
+
+    private func transcribeCleanupLane(
+        model: ShowDocumentModel, episodeID: EpisodeID, lane: CleanupSpeakerLane, laneIndex: Int,
+        speakerCount: Int, sources: [AlignmentSource], map: AlignedTimelineMap,
+        expectedIdentity: String?, revision: Int, modelRevision: String,
+        workingRange: EpisodeWorkingRange?, total: Double,
+        transcribeWindow: @escaping @Sendable ([Float]) async throws -> PCMTranscript,
+        reporter: CleanupTranscriptionReporter
+    ) async throws -> SpeakerTranscript {
+        var completed = 0.0
+        let admission = try await waveformSource(lane.primary.sourceID, sources: sources)
+        let identity = try cleanupIdentity(admission.witness)
+        guard identity == expectedIdentity else { throw DecodeFailure.sourceIdentityMismatch }
+        var words: [TranscriptWord] = []
+        let windows = try Self.cleanupTranscriptionWindows(start: lane.start, end: lane.end)
+        for (windowIndex, window) in windows.enumerated() {
+            try Task.checkCancellation()
+            let cursor = Double(window.coreFrames.lowerBound) / 48_000
+            let coreEnd = Double(window.coreFrames.upperBound) / 48_000
+            let start = Double(window.audioFrames.lowerBound) / 48_000
+            let end = Double(window.audioFrames.upperBound) / 48_000
+            func update(_ stage: CleanupTranscriptionProgress.Stage, completed: Double) -> CleanupTranscriptionProgress {
+                CleanupTranscriptionProgress(stage: stage, speaker: lane.name,
+                    speakerIndex: laneIndex + 1, speakerCount: speakerCount,
+                    windowIndex: windowIndex + 1, windowCount: windows.count,
+                    alignedStart: cursor, alignedEnd: coreEnd,
+                    completedSeconds: completed, totalSeconds: total)
+            }
+            await reporter.report(update(.rendering, completed: completed))
+            let pcm = try await cleanupSamples(model: model, episode: episodeID, lane: lane,
+                admission: admission, map: map, start: start, end: end)
+            await reporter.report(update(.recognizing, completed: completed))
+            let transcript = try await transcribeWindow(pcm)
+            try Task.checkCancellation()
+            for segment in transcript.segments {
+                if segment.text == "[BLANK_AUDIO]" { continue }
+                if let a = segment.startSeconds, let b = segment.endSeconds {
+                    let lo = start + a, hi = start + b, center = (lo + hi) / 2
+                    guard center >= cursor, center < coreEnd else { continue }
+                    if let range = lane.sourceRange(start: lo, end: hi) {
+                        words.append(TranscriptWord(text: segment.text, sourceStartFrame: range.lowerBound,
+                            sourceEndFrame: range.upperBound, alignedStart: lo, alignedEnd: hi))
+                        continue
+                    }
+                }
+                // Preserve recognized but untimed text; never spread it across neighbouring words.
+                words.append(TranscriptWord(text: segment.text))
+            }
+            completed += Double(window.coreFrames.count) / 48_000
+            await reporter.report(update(.completedWindow, completed: completed))
+        }
+        try await reverify(admission)
+        return SpeakerTranscript(speaker: lane.speaker, primary: lane.primary, sourceRate: lane.sourceRate,
+            sourceIdentity: identity, alignmentRevision: revision, model: modelRevision,
+            workingRange: workingRange, words: words)
     }
 
     func shutdown() async {

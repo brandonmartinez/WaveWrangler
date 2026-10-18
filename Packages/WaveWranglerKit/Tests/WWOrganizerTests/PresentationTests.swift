@@ -188,8 +188,8 @@ struct SaveStatusTests {
 
 @Suite("Destinations")
 struct DestinationTests {
-    @Test func reviewShellIsAvailableWhileExportRemainsBlocked() {
-        #expect(ShowDestination.allCases.map(\.title) == ["Setup", "Alignment", "Review", "Export"])
+    @Test func cleanupIsAvailableWhileExportRemainsBlocked() {
+        #expect(ShowDestination.allCases.map(\.title) == ["Setup", "Alignment", "Edit & Cleanup", "Export"])
         #expect(ShowDestination.setup.blockedPanel == nil)
         #expect(ShowDestination.alignment.blockedPanel == nil)
         #expect(ShowDestination.alignment.isAvailableInThisVersion)
@@ -197,7 +197,7 @@ struct DestinationTests {
         #expect(ShowDestination.review.isAvailableInThisVersion)
         #expect(ShowDestination.review.unavailableValue == nil)
         #expect(ShowDestination.review.blockedPanel == nil)
-        #expect(ShowDestination.review.helpText.contains("provisional"))
+        #expect(ShowDestination.review.helpText.contains("aligned Primary"))
         #expect(ShowDestination.export.blockedPanel?.body.hasSuffix("Nothing has been exported.") == true)
         #expect(ShowDestination.export.unavailableValue == "Not available in this version")
         #expect(ShowDestination.export.blockedPanel?.buttonTitle == "Go to Setup")

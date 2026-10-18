@@ -63,7 +63,7 @@ let package = Package(
         .target(name: "WWAlignSegment", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
         .target(name: "WWAlignPipeline", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWDerived", "WWPersistence", "WWAlignEstimate", "WWAutoAlign", "WWRender"]),
         .target(name: "WWWordEvaluation"),
-        .target(name: "WWSpeech", dependencies: ["WWCore", "WWWhisperNative"]),
+        .target(name: "WWSpeech", dependencies: ["WWCore", "WWTimeMap", "WWWhisperNative"]),
         .target(
             name: "WWWhisperNative",
             exclude: ["upstream/LICENSE"],
@@ -73,8 +73,9 @@ let package = Package(
                 "upstream/ggml-quants.c", "upstream/whisper.cpp",
             ],
             publicHeadersPath: "include",
-            cSettings: [.headerSearchPath("upstream")],
-            cxxSettings: [.headerSearchPath("upstream")]
+            cSettings: [.headerSearchPath("upstream"), .define("GGML_USE_ACCELERATE")],
+            cxxSettings: [.headerSearchPath("upstream"), .define("GGML_USE_ACCELERATE")],
+            linkerSettings: [.linkedFramework("Accelerate")]
         ),
         .target(name: "WWCutPolicy", dependencies: ["WWCore"]),
         .executableTarget(name: "WWPersistenceProbe", dependencies: ["WWPersistence", "WWCore", "WWSources"]),
@@ -96,7 +97,7 @@ let package = Package(
         .testTarget(name: "WWAlignSegmentTests", dependencies: ["WWAlignSegment", "WWAlignEstimate", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWAlignPipelineTests", dependencies: ["WWAlignPipeline", "WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWAlignEstimate", "WWRender", "WWCore"]),
         .testTarget(name: "WWWordEvaluationTests", dependencies: ["WWWordEvaluation"]),
-        .testTarget(name: "WWSpeechTests", dependencies: ["WWSpeech", "WWCore", "WWWhisperNative"]),
+        .testTarget(name: "WWSpeechTests", dependencies: ["WWSpeech", "WWCore", "WWTimeMap", "WWWhisperNative"]),
         .testTarget(name: "WWTinyPCMProbeTests", dependencies: ["WWTinyPCMProbe"]),
         .testTarget(name: "WWCutPolicyTests", dependencies: ["WWCutPolicy", "WWCore"]),
         // Headless, explicitly opted-in local episode/pair validation; never automatic CI media access.

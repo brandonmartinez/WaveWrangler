@@ -385,7 +385,9 @@ All outputs live under the gitignored `.build/` inside your worktree.
 
 Settings: macOS 26.0 deployment target, arm64 only, Swift 6 language mode with complete strict
 concurrency, App Sandbox + user-selected read-write files + app/document-scoped bookmarks, hardened
-runtime, ad-hoc signing (`CODE_SIGN_IDENTITY=-`, no team). There is no network entitlement.
+runtime, ad-hoc signing (`CODE_SIGN_IDENTITY=-`, no team). Outgoing-network permission supports
+explicit, hash-verified Whisper model downloads in Settings; there is no network-server entitlement,
+telemetry, or audio/transcript upload. Inference remains local and offline.
 
 `WaveWranglerTests` is an **unhosted** bundle: it links the package products and reads the app's
 `Info.plist`/entitlements from the source tree, so running it never launches the app.
@@ -433,7 +435,44 @@ the product defaults applied, so a missing key always means the default. The Set
 | `WWAutosaveEnabled` | Bool | `true` (autosave ON) | Persistence (autosave policy), show save status |
 | `WWDownloadSourcesAutomatically` | Bool | `true` (downloads ON) | Sources (availability/download) |
 | `WWTextSizePercent` | Int 100–200, step 25 | `100` | All WaveWrangler windows (in-app text size, CMD-20) |
-| `WWSettingsLastPane` | String (`general`/`sources`) | `general` | Settings window |
+| `WWSettingsLastPane` | String (`general`/`sources`/`transcription`) | `general` | Settings window |
+| `WWSelectedWhisperModel` | String (`baseEnglish`/`turbo`) | `turbo` (preserves legacy bookmarked choice) | App-wide transcription settings |
+| `WWTranscriptionWorkers` | Int 1–4 | `1` | Shared transcription settings and app-wide ASR admission |
+
+### Transcription worker admission
+
+`TranscriptionSettings.shared` owns one `TranscriptionWorkerPool` across all episode windows.
+Jobs capture their selected 1–4-way speaker fan-out, with sequential, source-anchored chunks within
+each Primary. The pool admits an entire Primary worker including aligned rendering, inference and
+source reverification. Its FIFO continuations are cancellable and release on success, error and
+cancel/grant races. Increasing the limit wakes queued tracks; lowering never interrupts active
+tracks, but refuses new starts until occupancy is below the new limit. Versioned configuration
+prevents a delayed settings task from restoring an old limit. The conservative default is one;
+two is a reasonable manual starting point on high-memory machines, not a measured optimum.
+
+Whisper contexts and per-context CPU backends are independent. The native bridge sets the shared
+log callback once and serializes context initialization (which initializes upstream shared FFT/backend
+tables), then releases the lock **before** inference. No live context is shared between workers.
+Each inference still requests four Whisper threads; Accelerate may use additional internal execution
+resources. The 1–4 worker limit is not an OS-process count or a strict total-thread count.
+Aligned decode/render resource gates remain independently bounded; their byte budget is **not** a
+Whisper-model-memory budget. Every worker needs additional inference working memory beyond the
+model file size. CPU/Accelerate is the only production backend; GPU/ANE execution is a separate
+qualification task.
+
+`CleanupTranscriptionReporter` aggregates unique completed cores by speaker, publishes the full
+active-speaker set, and sequences packets so delayed concurrent UI callbacks cannot roll progress
+backwards. Initial global queue wait is excluded from the first processing-speed estimate.
+Results are sorted back into plan order, all sources/maps are rechecked, and only the caller may
+publish the complete, current episode result.
+
+Worker tests cover all four caps, shared independent jobs, queued cancellation, configuration changes
+and error release. Hosted generated-audio tests force overlapping Primaries and out-of-order finishes,
+and verify serial-equivalent source anchors plus all-or-nothing failure/cancellation. Native controls
+are explicitly opt-in with `WW_LOCAL_ASR_CONCURRENT=1`, `WW_LOCAL_ASR_MODEL` and
+`WW_LOCAL_ASR_PUBLIC_WAV`: 2/4 actual contexts rendezvous inside their CPU-graph abort callbacks, then
+must reproduce serial text and timestamps. They use caller-authorized public audio, never private
+episode recordings.
 
 ## UI seams between lanes
 

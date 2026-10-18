@@ -8,6 +8,53 @@ import WWTimeMap
 
 @Suite("Bounded measured waveform envelopes")
 struct WaveformEnvelopeTests {
+    @Test func selectedPrimaryChannelIsIsolatedInWindowAndOverviewWithoutChangingSourceFormat() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("stereo.wav")
+        try WaveformTestAudio.wave(rate: 16_000,
+            samples: (0..<16_000).flatMap { _ in [Int16(8_192), -24_576] }, channels: 2).write(to: url)
+        let access = SourceAccessContext()
+        guard case let .success(metadata) = access.io.metadata(at: url) else { throw DecodeFailure.notFound }
+        let decoder = SourceDecoder(access: access)
+        let witness = try await decoder.captureRawIdentity(url, matching: metadata.fingerprint)
+        let source = SourceID()
+        let overview = try await WaveformWindowReader.readOverview(
+            sourceURL: url, source: source, matching: witness, decoder: decoder, decodedChannel: 0)
+        #expect(overview.channelCount == 2 && overview.totalFrames == 16_000)
+        #expect(!overview.bins.isEmpty && overview.bins.allSatisfy { $0.minimum == 0.25 && $0.maximum == 0.25 })
+        let window = try await WaveformWindowReader.readWindow(
+            sourceURL: url, source: source, matching: witness, decoder: decoder,
+            startSeconds: 0.25, durationSeconds: 0.25, decodedChannel: 1)
+        #expect(window.channelCount == 2 && window.bins.first?.firstFrame == 4_000)
+        #expect(window.bins.allSatisfy { $0.minimum == -0.75 && $0.maximum == -0.75 })
+        let combined = try await WaveformWindowReader.readOverview(
+            sourceURL: url, source: source, matching: witness, decoder: decoder)
+        #expect(combined.bins.allSatisfy { $0.minimum == -0.75 && $0.maximum == 0.25 })
+        for invalid in [-1, 2] {
+            await #expect(throws: WaveformWindowError.invalidSamples) {
+                _ = try await WaveformWindowReader.readOverview(
+                    sourceURL: url, source: source, matching: witness, decoder: decoder, decodedChannel: invalid)
+            }
+            await #expect(throws: WaveformWindowError.invalidSamples) {
+                _ = try await WaveformWindowReader.readWindow(
+                    sourceURL: url, source: source, matching: witness, decoder: decoder,
+                    startSeconds: 0, durationSeconds: 1, decodedChannel: invalid)
+            }
+        }
+    }
+
+    @Test func channelBuilderRefusesInvalidChannelsEvenWhenTheWindowIsOutsideTheChunk() {
+        for channel in [-1, 2] {
+            var builder = WaveformEnvelopeBuilder(firstFrame: 8, endFrame: 10, decodedChannel: channel)
+            #expect(throws: WaveformWindowError.invalidSamples) {
+                try builder.append(DecodedChunk(firstSourceFrame: 0, frameCount: 1, channelCount: 2, samples: [0.1, 0.2]))
+            }
+            #expect(builder.bins.isEmpty)
+        }
+    }
+
     @Test func overviewRefusesAReaderWithoutVerifiedSeekCapability() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

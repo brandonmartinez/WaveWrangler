@@ -48,6 +48,7 @@ public struct VerifiedTinyModel: Sendable {
 
     package static func readModel(
         path: String,
+        byteCount: Int = Self.byteCount,
         fileSystemStatus: (Int32, UnsafeMutablePointer<statfs>) -> Int32 = Darwin.fstatfs,
         descriptorRead: (Int32, UnsafeMutableRawPointer, Int, off_t) -> ssize_t = Darwin.pread
     ) throws -> Data {

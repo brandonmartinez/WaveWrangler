@@ -226,4 +226,31 @@ struct WaveformViewportTests {
         #expect(abs((target.firstIndex(where: { $0 > 0.25 }) ?? -1) - 24_000) <= 1)
         #expect(target[30_000..<40_000].allSatisfy { abs($0) < 0.001 })
     }
+
+    @Test func frameDomainListeningPreservesFractionalStartsAndAdjacentSamples() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let rate = 16_000, source = SourceID()
+        let url = folder.appendingPathComponent("generated-frame-grid.wav")
+        let samples = (0..<(rate * 2)).map { Int16(($0 % 1_000 - 500) * 30) }
+        try WaveformTestAudio.wave(rate: rate, samples: samples).write(to: url)
+        let access = SourceAccessContext()
+        guard case let .success(metadata) = access.io.metadata(at: url) else { throw DecodeFailure.notFound }
+        let decoder = SourceDecoder(access: access)
+        let witness = try await decoder.captureRawIdentity(url, matching: metadata.fingerprint)
+        let map = try WaveformTestAudio.map(source: source, rate: rate, frames: Int64(samples.count), offset: .zero)
+        func render(_ frames: Range<Int64>) async throws -> [Float] {
+            try await AlignedAuditionWindowReader.readWindow(sourceURL: url, source: source, matching: witness,
+                decoder: decoder, groupMap: map, decodedChannel: 0, outputFrames: frames)
+        }
+        let whole = try await render(1..<48_239)
+        let first = try await render(1..<17_777)
+        let second = try await render(17_777..<48_239)
+        #expect(whole.count == 48_238)
+        #expect(first + second == whole, "No frame is repeated or lost by a seconds round trip")
+        for frames: Range<Int64> in [0..<0, 0..<240_001, Int64.min..<Int64.max] {
+            await #expect(throws: WaveformWindowError.invalidWindow) { try await render(frames) }
+        }
+    }
 }

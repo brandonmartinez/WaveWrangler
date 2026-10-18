@@ -23,6 +23,7 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
     /// Versioned positive maps (M2, WW-020; show schema 3). `nil` (omitted from the encoding) until the first
     /// map is recorded.
     public var alignment: EpisodeAlignment?
+    public var cleanup: EpisodeCleanup?
 
     public init(
         id: EpisodeID = EpisodeID(),
@@ -35,7 +36,8 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
         recorderGroups: [RecorderGroup] = [],
         sources: [SourceRecord] = [],
         speakerAssignments: [SpeakerAssignment] = [],
-        alignment: EpisodeAlignment? = nil
+        alignment: EpisodeAlignment? = nil,
+        cleanup: EpisodeCleanup? = nil
     ) {
         self.id = id
         self.title = title
@@ -48,6 +50,7 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
         self.sources = sources
         self.speakerAssignments = speakerAssignments
         self.alignment = alignment
+        self.cleanup = cleanup
     }
 
     public func source(_ id: SourceID) -> SourceRecord? {

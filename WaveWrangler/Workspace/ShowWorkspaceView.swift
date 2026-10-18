@@ -255,7 +255,12 @@ private struct ShowDetailContent: View {
         } else if state.sidebarSelection == .showInfo && state.boundEpisodeID == nil {
             ShowInfoSummary(state: state)
         } else if state.destination == .review {
-            TranscriptReviewView(state: state.reviewState)
+            if let episode = state.selectedEpisode {
+                EpisodeCleanupContent(state: state, episodeID: episode.id)
+                    .id(episode.id)
+            } else {
+                ContentUnavailableView("No Episode Selected", systemImage: "music.mic")
+            }
         } else if model.episodes.isEmpty {
             ContentUnavailableView {
                 Label("No episodes yet", systemImage: "music.mic")

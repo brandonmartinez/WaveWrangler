@@ -58,4 +58,11 @@ WWNativeTranscript ww_whisper_infer_pcm(
 );
 void ww_whisper_free_transcript(WWNativeTranscript *transcript);
 
+// Bounded local transcription: verified base.en / turbo Q5_0, <=30 seconds of mono 16 kHz PCM.
+// Returned word-like segments are approximate engine timestamps, never cut authority.
+WWNativeTranscript ww_whisper_infer_window(
+    void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
+    int32_t (*cancelled)(void *), void *cancel_context
+);
+
 #endif

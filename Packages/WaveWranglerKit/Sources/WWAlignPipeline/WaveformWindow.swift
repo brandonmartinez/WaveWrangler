@@ -97,12 +97,16 @@ public enum WaveformWindowReader {
     public static func readOverview(
         sourceURL: URL, source: SourceID, matching witness: RawSourceIdentity,
         decoder: SourceDecoder, groupMap: GroupTimeMap? = nil, sourceCorrection: SourceTimingCorrection? = nil,
+        decodedChannel: Int? = nil,
         progress: @Sendable (Double) async throws -> Void = { _ in }
     ) async throws -> WaveformEnvelope {
         try await decoder.withWitnessBoundDecodingCursor(
             sourceURL, source: source, matching: witness
         ) { cursor in
             guard cursor.supportsRandomAccess else { throw WaveformWindowError.overviewRequiresPCM }
+            if let decodedChannel, !(0..<cursor.interpretation.channelCount).contains(decodedChannel) {
+                throw WaveformWindowError.invalidSamples
+            }
             if let sourceCorrection, sourceCorrection.channelCount != cursor.interpretation.channelCount {
                 throw WaveformWindowError.mapDoesNotMatchSource
             }
@@ -116,7 +120,8 @@ public enum WaveformWindowReader {
             var builders = ranges.map { range in
                 let count = range.upperBound - range.lowerBound
                 let budget = 1 + Int(Int128(availableBins) * Int128(count) / Int128(max(1, coveredFrames)))
-                return WaveformEnvelopeBuilder(firstFrame: range.lowerBound, endFrame: range.upperBound, maximumBins: budget)
+                return WaveformEnvelopeBuilder(firstFrame: range.lowerBound, endFrame: range.upperBound,
+                                               maximumBins: budget, decodedChannel: decodedChannel)
             }
             var completed: Int64 = 0
             try await progress(0)
@@ -147,7 +152,8 @@ public enum WaveformWindowReader {
         decoder: SourceDecoder,
         startSeconds: Double,
         durationSeconds: Double,
-        groupMap: GroupTimeMap? = nil, sourceCorrection: SourceTimingCorrection? = nil
+        groupMap: GroupTimeMap? = nil, sourceCorrection: SourceTimingCorrection? = nil,
+        decodedChannel: Int? = nil
     ) async throws -> WaveformEnvelope {
         guard startSeconds.isFinite, (-86_400...86_400).contains(startSeconds),
               durationSeconds.isFinite, durationSeconds > 0,
@@ -156,6 +162,9 @@ public enum WaveformWindowReader {
         return try await decoder.withWitnessBoundDecodingCursor(
             sourceURL, source: source, matching: witness
         ) { cursor in
+            if let decodedChannel, !(0..<cursor.interpretation.channelCount).contains(decodedChannel) {
+                throw WaveformWindowError.invalidSamples
+            }
             if let sourceCorrection, sourceCorrection.channelCount != cursor.interpretation.channelCount {
                 throw WaveformWindowError.mapDoesNotMatchSource
             }
@@ -168,7 +177,8 @@ public enum WaveformWindowReader {
             try WaveformViewport.verifyDecodeBudget(ranges: ranges, rate: rate, randomAccess: cursor.supportsRandomAccess)
             let budget = maximumBins / max(1, ranges.count)
             var builders = ranges.map {
-                WaveformEnvelopeBuilder(firstFrame: $0.lowerBound, endFrame: $0.upperBound, maximumBins: budget)
+                WaveformEnvelopeBuilder(firstFrame: $0.lowerBound, endFrame: $0.upperBound,
+                                        maximumBins: budget, decodedChannel: decodedChannel)
             }
             if cursor.supportsRandomAccess {
                 for index in ranges.indices {
@@ -198,11 +208,14 @@ struct WaveformEnvelopeBuilder {
     let firstFrame: Int64
     let endFrame: Int64
     private let width: Int64
+    private let decodedChannel: Int?
     private var extrema: [(Float, Float)?]
 
-    init(firstFrame: Int64, endFrame: Int64, maximumBins: Int = WaveformWindowReader.maximumBins) {
+    init(firstFrame: Int64, endFrame: Int64, maximumBins: Int = WaveformWindowReader.maximumBins,
+         decodedChannel: Int? = nil) {
         self.firstFrame = firstFrame
         self.endFrame = endFrame
+        self.decodedChannel = decodedChannel
         let count = max(0, endFrame - firstFrame)
         width = max(1, (count + Int64(maximumBins) - 1) / Int64(maximumBins))
         extrema = Array(repeating: nil, count: Int((count + width - 1) / width))
@@ -210,7 +223,8 @@ struct WaveformEnvelopeBuilder {
 
     mutating func append(_ chunk: DecodedChunk) throws {
         guard chunk.channelCount > 0,
-              chunk.samples.count == chunk.frameCount * chunk.channelCount
+              chunk.samples.count == chunk.frameCount * chunk.channelCount,
+              decodedChannel.map({ (0..<chunk.channelCount).contains($0) }) ?? true
         else { throw WaveformWindowError.invalidSamples }
         let lower = max(firstFrame, chunk.firstSourceFrame)
         let upper = min(endFrame, chunk.firstSourceFrame + Int64(chunk.frameCount))
@@ -218,7 +232,7 @@ struct WaveformEnvelopeBuilder {
         for frame in lower..<upper {
             let index = Int((frame - firstFrame) / width)
             let offset = Int(frame - chunk.firstSourceFrame)
-            for channel in 0..<chunk.channelCount {
+            for channel in decodedChannel.map({ $0..<($0 + 1) }) ?? (0..<chunk.channelCount) {
                 let sample = chunk.samples[channel * chunk.frameCount + offset]
                 guard sample.isFinite else { throw WaveformWindowError.invalidSamples }
                 if let prior = extrema[index] {

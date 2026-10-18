@@ -9,9 +9,9 @@ import WWSources
 @testable import WaveWrangler
 
 @MainActor
-@Suite("Alignment waveform retention (synthetic only)", .serialized)
+@Suite("Waveform retention and accepted timeline playback (synthetic only)", .serialized)
 struct AlignmentWaveformRetentionHostedTests {
-    @MainActor private struct Fixture {
+    @MainActor struct Fixture {
         let folder: URL
         let document: ShowDocument
         let model: EpisodeAlignmentModel
@@ -27,7 +27,7 @@ struct AlignmentWaveformRetentionHostedTests {
         }
     }
 
-    private func fixture() async throws -> Fixture {
+    func fixture(cleanupPrimaries: Int = 0, durationSeconds: Int = 40) async throws -> Fixture {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let referenceEpoch = RecordingEpoch(label: "Reference")
@@ -39,20 +39,37 @@ struct AlignmentWaveformRetentionHostedTests {
         let target = SourceRecord(displayNameHint: "target.wav",
             placement: .init(recorderGroupID: targetGroup.id, epochID: targetEpoch.id))
         let speaker = Speaker(name: "Synthetic")
-        let episode = Episode(title: "Synthetic", recorderGroups: [referenceGroup, targetGroup],
+        var episode = Episode(title: "Synthetic", recorderGroups: [referenceGroup, targetGroup],
             sources: [reference, target], speakerAssignments: [
                 SpeakerAssignment(speakerID: speaker.id,
                     primary: ChannelReference(sourceID: reference.id, statedChannel: 0),
                     backups: [ChannelReference(sourceID: target.id, statedChannel: 0)])
             ])
-        let initial = ShowDocumentModel(show: Show(title: "Retention fixture"), speakers: [speaker], episodes: [episode])
+        var speakers = [speaker]
+        if cleanupPrimaries > 0 {
+            episode.sources[0].role = .primary
+            episode.sources[0].roleConfirmation = .userConfirmed
+            episode.sources[1].role = .backup
+            episode.sources[1].roleConfirmation = .userConfirmed
+            episode.speakerAssignments[0].primaryConfirmation = .userConfirmed
+            if cleanupPrimaries == 2 {
+                let guest = Speaker(name: "Guest")
+                speakers.append(guest)
+                episode.sources[1].role = .primary
+                episode.speakerAssignments[0].backups = []
+                episode.speakerAssignments.append(SpeakerAssignment(speakerID: guest.id,
+                    primary: ChannelReference(sourceID: target.id, statedChannel: 0),
+                    primaryConfirmation: .userConfirmed))
+            }
+        }
+        let initial = ShowDocumentModel(show: Show(title: "Retention fixture"), speakers: speakers, episodes: [episode])
         let accessStore = FileDeviceAccessStore(fileURL: folder.appendingPathComponent("access.json"))
         let io = SystemSourceIO()
         let decoder = SourceDecoder(access: SourceAccessContext(io: io))
         var files: [URL] = []
         for (index, source) in [reference, target].enumerated() {
             let file = folder.appendingPathComponent(source.displayNameHint)
-            try Self.wave(target: index == 1).write(to: file)
+            try Self.wave(target: index == 1, durationSeconds: durationSeconds).write(to: file)
             files.append(file)
             guard case let .success(metadata) = io.metadata(at: file) else { throw DecodeFailure.notFound }
             let witness = try await decoder.captureRawIdentity(file, matching: metadata.fingerprint)
@@ -170,8 +187,104 @@ struct AlignmentWaveformRetentionHostedTests {
         #expect(f.model.waveformMap == nil)
     }
 
-    private static func wave(target: Bool) -> Data {
-        let rate = 8000, frames = rate * 40
+    @Test func cleanupPlaysBothPrimariesAcrossChunksAndMarkersWithoutStoppingForZoom() async throws {
+        let f = try await fixture(cleanupPrimaries: 2)
+        defer { f.close() }
+        let originals = try f.files.map { try Data(contentsOf: $0) }
+        f.model.placeGroupsAtSourceTime()
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        let revision = try #require(f.document.store.model.episodes[0].alignment?.acceptedRevision)
+        let state = ShowWindowState(store: f.document.store)
+        let cleanup = EpisodeCleanupModel(state: state, episodeID: f.model.episodeID, runtime: f.runtime)
+        defer { cleanup.cancel() }
+        cleanup.saveRange(inValue: 2, outValue: 4)
+        await cleanup.refresh()
+        try #require(cleanup.plan?.isReady == true, "\(cleanup.error ?? ""); \(cleanup.plan?.blockers ?? [])")
+        try #require(cleanup.canNavigate && cleanup.plan?.lanes.count == 2)
+        try await wait(cleanup.error ?? "Primary waveforms") {
+            !cleanup.isLoadingWaveforms && !cleanup.isLoadingOverview
+        }
+        let speakers = Set(try #require(cleanup.plan).lanes.map(\.speaker))
+        #expect(Set(cleanup.overviewStrokes.keys) == speakers)
+        #expect(Set(cleanup.windowStrokes.keys) == speakers)
+        for speaker in speakers { cleanup.setSpeaker(speaker, enabled: false) }
+        cleanup.seek(to: 0)
+        cleanup.play()
+        try await wait(cleanup.error ?? cleanup.transportMessage) { cleanup.isPlaying && cleanup.playhead > 0.5 }
+        #expect(cleanup.transportMessage.contains("all speakers muted"))
+        let beforeZoom = cleanup.playhead
+        cleanup.setWindow(start: 10, duration: 1)
+        #expect(cleanup.isPlaying)
+        try await wait(cleanup.error ?? cleanup.transportMessage) {
+            cleanup.playhead > 6 || (!cleanup.isPlaying && !cleanup.isPreparingPlayback)
+        }
+        try #require(cleanup.isPlaying, "\(cleanup.error ?? cleanup.transportMessage)")
+        #expect(cleanup.playhead > 6 && cleanup.playhead > beforeZoom)
+        #expect(cleanup.playhead > (cleanup.episode?.cleanup?.workingRange?.tracksOut ?? .infinity))
+        cleanup.stopPlayback()
+        let paused = cleanup.playhead
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!cleanup.isPlaying && abs(cleanup.playhead - paused) < 1 / 48_000)
+        cleanup.stop()
+        #expect(cleanup.playhead == cleanup.windowStart)
+        let end = cleanup.bounds.upperBound
+        cleanup.seek(to: end - 0.3)
+        cleanup.play()
+        try await wait(cleanup.error ?? cleanup.transportMessage) {
+            !cleanup.isPlaying && !cleanup.isPreparingPlayback
+        }
+        #expect(cleanup.error == nil)
+        #expect(abs(cleanup.playhead - end) < 1 / 48_000, "A short tail starts without waiting for ten seconds of audio")
+        #expect(cleanup.transportMessage.hasPrefix("Reached the end"))
+        cleanup.play()
+        cleanup.stopPlayback()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(!cleanup.isPlaying && !cleanup.isPreparingPlayback, "Cancelling preparation never starts late audio")
+        #expect(cleanup.episode?.alignment?.acceptedRevision == revision)
+        #expect(cleanup.episode?.cleanup?.workingRange?.tracksIn == 2)
+        #expect(cleanup.episode?.cleanup?.workingRange?.tracksOut == 4)
+        #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
+    }
+
+    @Test func cleanupMeasuresOnlyThePrimaryAndQueuesFractionalWindowsWithoutLosingFrames() async throws {
+        let f = try await fixture(cleanupPrimaries: 1)
+        defer { f.close() }
+        f.model.placeGroupsAtSourceTime()
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        let state = ShowWindowState(store: f.document.store)
+        let cleanup = EpisodeCleanupModel(state: state, episodeID: f.model.episodeID, runtime: f.runtime)
+        defer { cleanup.cancel() }
+        await cleanup.refresh()
+        try #require(cleanup.plan?.isReady == true, "\(cleanup.error ?? "Cleanup not ready")")
+        let lane = try #require(cleanup.plan?.lanes.first)
+        try await wait(cleanup.error ?? "Primary-only waveforms") {
+            !cleanup.isLoadingWaveforms && !cleanup.isLoadingOverview
+        }
+        #expect(cleanup.overviewStrokes.count == 1 && cleanup.windowStrokes.count == 1)
+        #expect(cleanup.identities.keys.contains(lane.primary.sourceID))
+        #expect(!cleanup.identities.keys.contains(f.target))
+        let snapshot = f.document.store.model
+        let first = try await f.runtime.cleanupPreview(model: snapshot, episode: f.model.episodeID,
+            start: 0.123456, duration: 1.25, respectWorkingRange: false)
+        let next = try await f.runtime.cleanupPreview(model: snapshot, episode: f.model.episodeID,
+            start: first.start + first.duration, duration: 1.5, respectWorkingRange: false)
+        let whole = try await f.runtime.cleanupPreview(model: snapshot, episode: f.model.episodeID,
+            start: 0.123456, duration: 2.75, respectWorkingRange: false)
+        #expect(Set(first.channels.keys) == [lane.speaker] && first.channels.count == 1)
+        let firstSamples = try #require(first.channels[lane.speaker])
+        let nextSamples = try #require(next.channels[lane.speaker])
+        let wholeSamples = try #require(whole.channels[lane.speaker])
+        #expect(firstSamples.count == 60_000 && nextSamples.count == 72_000)
+        #expect(firstSamples.count + nextSamples.count == wholeSamples.count)
+        #expect(firstSamples + nextSamples == wholeSamples)
+        #expect(first.start + first.duration == next.start)
+        #expect(abs(next.start + next.duration - (whole.start + whole.duration)) < 1 / 48_000)
+        #expect(firstSamples.allSatisfy(\.isFinite) && firstSamples.contains { abs($0) > 0.001 })
+        #expect(f.document.store.model == snapshot)
+    }
+
+    private static func wave(target: Bool, durationSeconds: Int = 40) -> Data {
+        let rate = 8000, frames = rate * durationSeconds
         var data = Data()
         func put<T: FixedWidthInteger>(_ value: T) {
             var little = value.littleEndian

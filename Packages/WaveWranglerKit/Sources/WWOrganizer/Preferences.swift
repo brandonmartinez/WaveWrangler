@@ -13,6 +13,10 @@ public enum PreferenceKey {
     public static let textSizePercent = "WWTextSizePercent"
     /// String raw value of the last Settings pane shown.
     public static let settingsLastPane = "WWSettingsLastPane"
+    /// String raw value of the app-wide pinned local Whisper model.
+    public static let whisperModel = "WWSelectedWhisperModel"
+    /// Int, 1...4. App-wide concurrent Primary transcriptions; default 1.
+    public static let transcriptionWorkers = "WWTranscriptionWorkers"
 }
 
 /// Typed accessor over a `UserDefaults` store with the product defaults applied.
@@ -97,11 +101,13 @@ public struct TextSize: Hashable, Sendable, Comparable, CustomStringConvertible 
 public enum SettingsPane: String, CaseIterable, Sendable {
     case general
     case sources
+    case transcription
 
     public var title: String {
         switch self {
         case .general: "General"
         case .sources: "Sources"
+        case .transcription: "Transcription"
         }
     }
 
@@ -109,6 +115,7 @@ public enum SettingsPane: String, CaseIterable, Sendable {
         switch self {
         case .general: "gearshape"
         case .sources: "music.mic"
+        case .transcription: "waveform"
         }
     }
 }

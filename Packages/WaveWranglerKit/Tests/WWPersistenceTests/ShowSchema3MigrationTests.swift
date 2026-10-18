@@ -8,15 +8,15 @@ struct ShowSchema3MigrationTests {
     static let golden = Data(#"{"checksum":"sha256:72298d835deb70c50f7208b844510425060e4cbb45a58dd962fc921158ed8bad","format":"com.brandonmartinez.wavewrangler.show","payload":{"episodes":[],"history":{"cursor":0,"entries":[]},"schemaVersion":3,"show":{"id":"00000000-0000-4000-8000-000000000301","notes":"","title":"Schema 3 golden"},"speakers":[]},"publicationID":"00000000-0000-4000-8000-000000000302","revision":7,"schemaVersion":3}"#.utf8)
 
     @Test func previousSchemaRequiresExplicitMigrationAndPreservesItsValue() throws {
-        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 3, minimum: 4)) {
+        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 3, minimum: SchemaVersion.show)) {
             try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Self.golden)
         }
         let migrated = try ShowSchemaMigration.decodeUpgradingOlder(Self.golden)
-        #expect(migrated.payload.schemaVersion == 4)
+        #expect(migrated.payload.schemaVersion == SchemaVersion.show)
         #expect(migrated.payload.show.title == "Schema 3 golden")
         #expect(migrated.revision == 7)
         #expect(ShowSchemaMigration.schema2ExpectationFailures(original: Self.golden, migrated: migrated.payload).isEmpty)
-        #expect(ShowSchemaMigration.migratableSchemas == [1, 2, 3])
+        #expect(ShowSchemaMigration.migratableSchemas == [1, 2, 3, 4])
         #expect(ShowSchemaMigration.steps.contains { $0.fromSchema == 3 })
     }
 
@@ -59,9 +59,9 @@ struct ShowSchema3MigrationTests {
         #expect(try Data(contentsOf: receipt.backup) == Self.golden)
         #expect(receipt.publication.revision == 8)
         guard case let .editable(document, _) = ShowSchemaMigrationTests.opener(rig).open(url, key: key) else {
-            Issue.record("Migrated schema 4 must be editable")
+            Issue.record("Migrated current schema must be editable")
             return
         }
-        #expect(document.payload.schemaVersion == 4)
+        #expect(document.payload.schemaVersion == SchemaVersion.show)
     }
 }
