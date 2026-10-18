@@ -214,8 +214,11 @@ struct AlignmentWaveformRetentionHostedTests {
         try await wait(cleanup.error ?? cleanup.transportMessage) { cleanup.isPlaying && cleanup.playhead > 0.5 }
         #expect(cleanup.transportMessage.contains("all speakers muted"))
         let beforeZoom = cleanup.playhead
-        cleanup.setWindow(start: 10, duration: 1)
+        cleanup.setWindow(start: 10, duration: 2)
+        cleanup.zoomTimeline(duration: 1)
         #expect(cleanup.isPlaying)
+        #expect(cleanup.playhead == beforeZoom && cleanup.windowDuration == 1)
+        #expect(abs(cleanup.windowStart + cleanup.windowDuration / 2 - beforeZoom) < 0.000_001)
         try await wait(cleanup.error ?? cleanup.transportMessage) {
             cleanup.playhead > 6 || (!cleanup.isPlaying && !cleanup.isPreparingPlayback)
         }

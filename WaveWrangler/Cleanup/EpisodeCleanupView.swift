@@ -6,7 +6,6 @@ struct EpisodeCleanupContent: View {
     @Bindable var state: ShowWindowState
     @State private var model: EpisodeCleanupModel
     @State private var showsPrecisionRange = false
-    @State private var zoomCenter: Double?
     @Environment(\.displayScale) private var displayScale
 
     private let headerWidth: CGFloat = 190
@@ -286,13 +285,11 @@ struct EpisodeCleanupContent: View {
         AudioTimelineNavigation(
             prefix: "ww.cleanup", maximumDuration: model.maximumDuration,
             duration: Binding(get: { model.windowDuration }, set: { value in
-                let center = zoomCenter ?? model.windowStart + model.windowDuration / 2
-                zoomCenter = center
-                model.setWindow(start: center - value / 2, duration: value)
+                model.zoomTimeline(duration: value)
             }),
             laneHeight: $model.laneHeight, showsLaneHeight: true,
             isLoading: model.isLoadingWaveforms || model.isLoadingOverview, canNavigate: model.canNavigate,
-            zoomEditing: { editing in if !editing { zoomCenter = nil; model.loadWaveforms() } },
+            zoomEditing: { editing in if !editing { model.loadWaveforms() } },
             fit: { model.fitTimeline() },
             refresh: {
                 model.isLoadingWaveforms || model.isLoadingOverview
@@ -363,7 +360,7 @@ struct EpisodeCleanupContent: View {
             clicked: { model.timelineClick(at: $0) },
             previewSeek: { model.previewSeek(to: $0) }, resumePlayback: { model.play() },
             previewPan: { model.setWindow(start: $0, duration: model.windowDuration) },
-            setWindow: { model.setWindow(start: $0, duration: $1) },
+            setWindow: { _, duration in model.zoomTimeline(duration: duration) },
             commitWindow: { model.loadWaveforms() }
         )
     }
@@ -472,7 +469,7 @@ struct EpisodeCleanupContent: View {
             select: { model.select($0, speaker: lane.speaker) },
             zoom: { time in
                 model.seek(to: time)
-                model.setWindow(start: time - 2.5, duration: min(5, model.maximumDuration))
+                model.zoomTimeline(duration: min(5, model.maximumDuration))
             }, uncertainWordIDs: uncertainIDs)
             .accessibilityIdentifier("ww.cleanup.words.\(lane.id)")
     }

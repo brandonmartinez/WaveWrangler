@@ -277,6 +277,8 @@ horizontal zoom, **Fit timeline**, waveform drawing and track-height controls. C
 DAW-style rows with speaker/source details to the left and words below each waveform, without track
 dragging or alignment/matching actions. Click to seek, pan empty ruler space, drag its playhead to
 scrub, or pinch to zoom. **Normalize view** scales displayed peaks only; it never changes playback.
+In Cleanup, horizontal slider and pinch zoom center on the current playhead, clamped at the episode's
+aligned-time edges. Zoom never seeks or interrupts playback; **Fit timeline** still shows the full span.
 Full-span measured overviews and bounded precise windows show only each assigned Primary channel.
 Hatched regions have no accepted timing, not measured silence. **Refresh audio** reloads measured data.
 

@@ -238,10 +238,34 @@ final class TranscriptReviewUITests: XCTestCase {
         heightSlider.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)).click()
         XCTAssertTrue(wait { waveforms.element(boundBy: 0).frame.height > 130 })
         let zoom = app.sliders["ww.cleanup.zoom"]
-        zoom.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).click()
         let ruler = app.staticTexts["ww.cleanup.ruler"]
-        XCTAssertTrue(wait { !(ruler.value as? String ?? ruler.label).contains("to 12.000") })
+        let beforeZoom = text(ruler)
+        zoom.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).click()
+        XCTAssertTrue(wait { self.text(ruler) != beforeZoom })
+        assertPlayheadCentered(beforeDrag, bounds: 0...12)
+        let zoomedIn = text(ruler)
+        zoom.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).click()
+        XCTAssertTrue(wait { self.text(ruler) != zoomedIn })
+        assertPlayheadCentered(beforeDrag, bounds: 0...12)
         XCTAssertEqual(Double(playhead.value as? String ?? "") ?? -1, beforeDrag, accuracy: 0.001)
+        app.buttons["ww.cleanup.fitTimeline"].click()
+        XCTAssertTrue(wait { self.text(ruler).contains("0.000 to 12.000") })
+    }
+
+    private func assertPlayheadCentered(_ time: Double, bounds: ClosedRange<Double>,
+                                       file: StaticString = #filePath, line: UInt = #line) {
+        let ruler = text(app.staticTexts["ww.cleanup.ruler"])
+        let times = ruler.split(separator: " ").compactMap { Double($0) }
+        guard times.count == 2 else {
+            XCTFail("Missing viewport times: \(ruler)", file: file, line: line)
+            return
+        }
+        let duration = times[1] - times[0]
+        let expectedStart = min(bounds.upperBound - duration, max(bounds.lowerBound, time - duration / 2))
+        XCTAssertEqual(times[0], expectedStart, accuracy: 0.003, file: file, line: line)
+        XCTAssertLessThanOrEqual(times[0], time, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(times[1], time, file: file, line: line)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.cleanup.ruler.playhead"].exists, file: file, line: line)
     }
 
     func testContinuousPrimaryPlaybackCrossesFiveSecondChunksAndWorkingMarkers() {

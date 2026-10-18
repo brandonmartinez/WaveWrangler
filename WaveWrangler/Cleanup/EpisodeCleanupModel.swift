@@ -338,6 +338,14 @@ final class EpisodeCleanupModel {
         if overviewStrokes.isEmpty { loadWaveforms(overview: true) }
     }
 
+    func zoomTimeline(duration: Double) {
+        guard playhead.isFinite, abs(playhead) <= 86_400 else {
+            error = "Enter finite aligned seconds within the supported timeline."
+            return
+        }
+        setWindow(start: max(bounds.lowerBound, playhead - duration / 2), duration: duration)
+    }
+
     private func scheduleWaveforms() {
         waveformDebounce?.cancel()
         guard windowStart.isFinite, windowDuration.isFinite, windowDuration > 0 else { return }
