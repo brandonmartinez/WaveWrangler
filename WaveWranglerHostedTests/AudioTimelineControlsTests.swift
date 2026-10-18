@@ -178,6 +178,18 @@ struct AudioTimelineControlsTests {
             CGPoint(x: sliders[0].minX + sliders[0].width * 0.65, y: sliders[0].midY))
         #expect(model.windowDuration < 10 && model.windowDuration >= 0.5)
         #expect(model.playhead == playhead)
+        #expect(abs(model.windowStart + model.windowDuration / 2 - playhead) < 0.000_001)
+        let zoomedDuration = model.windowDuration
+        try await host.click(
+            CGPoint(x: sliders[0].minX + sliders[0].width * 0.25, y: sliders[0].midY))
+        #expect(model.windowDuration > zoomedDuration && model.playhead == playhead)
+        #expect(abs(model.windowStart - max(0, playhead - model.windowDuration / 2)) < 0.000_001)
+        model.setWindow(start: 25, duration: 5)
+        try await host.settle()
+        try await host.click(
+            CGPoint(x: sliders[0].minX + sliders[0].width * 0.8, y: sliders[0].midY))
+        #expect(model.playhead == playhead)
+        #expect(abs(model.windowStart + model.windowDuration / 2 - playhead) < 0.000_001)
         try await host.click(
             CGPoint(x: sliders[1].minX + sliders[1].width * 0.8, y: sliders[1].midY))
         #expect(model.laneHeight > 130)
@@ -222,6 +234,11 @@ struct AudioTimelineControlsTests {
         }
         try #require(
             model.error == nil && model.isPlaying, "\(model.error ?? model.transportMessage)")
+        try await host.click(
+            CGPoint(x: sliders[0].minX + sliders[0].width * 0.8, y: sliders[0].midY))
+        #expect(model.isPlaying && model.playhead >= beforePlayback)
+        #expect(abs(model.windowStart + model.windowDuration / 2 - model.playhead) < 0.5)
+        #expect(model.windowStart <= model.playhead && model.playhead <= model.windowStart + model.windowDuration)
         try await host.click(CGPoint(x: transport[1].midX, y: transport[1].midY))
         #expect(!model.isPlaying && !model.isPreparingPlayback)
         let paused = model.playhead
