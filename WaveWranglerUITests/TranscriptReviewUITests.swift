@@ -91,6 +91,91 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertTrue(wait { (app.textFields["ww.cleanup.tracksIn"].value as? String ?? "").isEmpty })
     }
 
+    func testManualFillerRailsHaveIndependentDragsPreciseReviewAndUndo() throws {
+        launch(aligned: true, timeline: true)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.cleanup.ready"].waitForExistence(timeout: 15))
+        app.buttons["ww.cleanup.fitTimeline"].click()
+        let waveform = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'ww.cleanup.waveform.'")).firstMatch
+        XCTAssertTrue(app.buttons["ww.cleanup.filler.manual"].exists, app.debugDescription)
+        revealInWorkspace(waveform)
+        waveform.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).click()
+        app.buttons["ww.cleanup.filler.manual"].click()
+        let region = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.cleanup.filler.' AND label CONTAINS 'Manual filler'")).firstMatch
+        XCTAssertTrue(region.waitForExistence(timeout: 5), app.debugDescription)
+        revealInWorkspace(region)
+        let identifier = region.identifier
+        let start = app.buttons[identifier + ".start"]
+        let end = app.buttons[identifier + ".end"]
+        let originalStart = try XCTUnwrap(Double((start.value as? String ?? "").split(separator: " ").first.map(String.init) ?? ""))
+        let originalEnd = try XCTUnwrap(Double((end.value as? String ?? "").split(separator: " ").first.map(String.init) ?? ""))
+        let startPoint = start.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        startPoint.click(forDuration: 0.1, thenDragTo: startPoint.withOffset(CGVector(dx: -12, dy: 0)))
+        let startField = app.textFields["ww.cleanup.filler.start.seconds"]
+        let endField = app.textFields["ww.cleanup.filler.end.seconds"]
+        XCTAssertTrue(startField.waitForExistence(timeout: 5), app.debugDescription)
+        let movedStart = try XCTUnwrap(Double(startField.value as? String ?? ""))
+        XCTAssertLessThan(movedStart, originalStart)
+        XCTAssertEqual(Double(endField.value as? String ?? "") ?? -1, originalEnd, accuracy: 0.000001)
+        app.typeKey(.escape, modifierFlags: [])
+        let endPoint = end.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        endPoint.click(forDuration: 0.1, thenDragTo: endPoint.withOffset(CGVector(dx: 12, dy: 0)))
+        XCTAssertTrue(startField.waitForExistence(timeout: 5))
+        XCTAssertEqual(Double(startField.value as? String ?? "") ?? -1, movedStart, accuracy: 0.000001)
+        XCTAssertGreaterThan(Double(endField.value as? String ?? "") ?? -1, originalEnd)
+        XCTAssertFalse(app.buttons["ww.cleanup.filler.revert"].exists, "Manual intervals never claim detected times")
+        replace(startField, with: String(format: "%.6f", movedStart + 0.01))
+        app.buttons["ww.cleanup.filler.apply"].click()
+        XCTAssertTrue(wait { abs((Double(startField.value as? String ?? "") ?? -1) - movedStart - 0.01) < 0.000002 })
+        let savedEnd = try XCTUnwrap(Double(endField.value as? String ?? ""))
+        app.checkBoxes["ww.cleanup.filler.loop"].click()
+        app.buttons["ww.cleanup.filler.context"].click()
+        let stop = app.buttons["ww.cleanup.filler.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(wait {
+            let time = Double(self.app.textFields["ww.cleanup.playhead"].value as? String ?? "") ?? -1
+            return time > movedStart + 0.1 && time <= savedEnd + 0.5
+        }, "The popup starts bounded context playback")
+        stop.click()
+        XCTAssertTrue(wait { !stop.exists })
+        app.checkBoxes["ww.cleanup.filler.loop"].click()
+        XCTAssertFalse(app.staticTexts["ww.cleanup.error"].exists, app.debugDescription)
+        app.buttons["ww.cleanup.filler.reject"].click()
+        XCTAssertTrue(app.staticTexts["Not a filler"].waitForExistence(timeout: 5))
+        app.typeKey(.escape, modifierFlags: [])
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(wait { !self.app.staticTexts["Not a filler"].exists })
+        capture("Nondestructive filler audible-word timing review")
+        app.typeKey("s", modifierFlags: .command)
+        let saveStatus = app.descendants(matching: .any)["ww.show.saveStatus"]
+        XCTAssertTrue(wait { self.text(saveStatus).hasPrefix("Saved") }, app.debugDescription)
+        let folderArgument = try XCTUnwrap(app.launchArguments.firstIndex(of: "-WWUITestShowFolder"))
+        let relativePath = app.launchArguments[folderArgument + 1] + "/Cleanup Fixture.wwshow"
+        app.terminate()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES",
+            "-WWUITestOpenWithoutShowWindows", relativePath,
+        ]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 10), app.debugDescription)
+        app.typeKey("3", modifierFlags: .command)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.cleanup.ready"].waitForExistence(timeout: 15),
+                      app.debugDescription)
+        app.buttons["ww.cleanup.fitTimeline"].click()
+        let reopened = app.buttons[identifier]
+        XCTAssertTrue(reopened.waitForExistence(timeout: 5), app.debugDescription)
+        revealInWorkspace(reopened)
+        reopened.click()
+        XCTAssertTrue(startField.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(Double(startField.value as? String ?? "") ?? -1, movedStart + 0.01, accuracy: 0.000002)
+        XCTAssertEqual(Double(endField.value as? String ?? "") ?? -1, savedEnd, accuracy: 0.000001)
+        XCTAssertFalse(app.staticTexts["Not a filler"].exists, "The undo result persists across a fresh app launch")
+        XCTAssertFalse(app.buttons["ww.cleanup.filler.revert"].exists)
+        capture("Saved and reopened manual filler timing review")
+    }
+
     func testOptedInPublicSpeechTranscribesThroughTheRealEpisodeWorkspace() throws {
         let env = ProcessInfo.processInfo.environment
         guard let model = env["WW_CLEANUP_UI_DOWNLOAD_MODEL"], ["baseEnglish", "turbo"].contains(model),
@@ -209,12 +294,14 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertTrue(app.sliders["ww.cleanup.laneHeight"].exists)
         app.buttons["ww.cleanup.fitTimeline"].click()
         app.buttons["ww.cleanup.tool.in"].click()
+        revealInWorkspace(waveforms.element(boundBy: 0))
         waveforms.element(boundBy: 0).coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).click()
         XCTAssertTrue(wait {
             let text = self.app.staticTexts["ww.cleanup.range.summary"]
             return (text.value as? String ?? text.label).contains("2.400")
         })
         app.buttons["ww.cleanup.tool.out"].click()
+        revealInWorkspace(waveforms.element(boundBy: 1))
         waveforms.element(boundBy: 1).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertTrue(wait {
             let text = self.app.staticTexts["ww.cleanup.range.summary"]
@@ -223,6 +310,7 @@ final class TranscriptReviewUITests: XCTestCase {
         app.buttons["ww.cleanup.tool.seek"].click()
         capture("Compact Primary timeline with shared In and Out")
         let playhead = app.textFields["ww.cleanup.playhead"]
+        revealInWorkspace(waveforms.element(boundBy: 0))
         waveforms.element(boundBy: 0).coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).click()
         XCTAssertTrue(wait { (Double(playhead.value as? String ?? "") ?? 0) > 10 },
                       "Banter beyond Tracks Out remains available without resetting the markers")
@@ -250,6 +338,16 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertEqual(Double(playhead.value as? String ?? "") ?? -1, beforeDrag, accuracy: 0.001)
         app.buttons["ww.cleanup.fitTimeline"].click()
         XCTAssertTrue(wait { self.text(ruler).contains("0.000 to 12.000") })
+    }
+
+    private func revealInWorkspace(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        let scroll = app.scrollViews["ww.cleanup.workspace"]
+        for _ in 0..<12 {
+            let frame = element.frame, viewport = scroll.frame
+            if frame.minY >= viewport.minY + 8 && frame.maxY <= viewport.maxY - 8 { return }
+            scroll.scroll(byDeltaX: 0, deltaY: frame.midY > viewport.midY ? -100 : 100)
+        }
+        XCTFail("Timeline control is outside the visible workspace: \(element.debugDescription)", file: file, line: line)
     }
 
     private func assertPlayheadCentered(_ time: Double, bounds: ClosedRange<Double>,

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 import WWCore
@@ -124,7 +125,9 @@ struct EpisodeCleanupModelTests {
         let episode = Episode(title: "Synthetic", recorderGroups: [referenceGroup, group], sources: [referenceSource, source],
             speakerAssignments: [.init(speakerID: speaker.id,
                 primary: .init(sourceID: source.id, statedChannel: 0), primaryConfirmation: .userConfirmed)],
-            alignment: .init(maps: [.init(revision: 1, inputs: .init(sources: []),
+            alignment: .init(maps: [.init(revision: 1, inputs: .init(sources: [
+                .init(sourceID: referenceSource.id), .init(sourceID: source.id),
+            ]),
                                          map: try EmbeddedTimeMapCodec.encode(map))], acceptedRevision: 1),
             cleanup: .init(workingRange: .init(alignmentRevision: 1, tracksIn: 1, tracksOut: 4)))
         let model = ShowDocumentModel(show: Show(title: "Synthetic"), speakers: [speaker], episodes: [episode])
@@ -326,5 +329,275 @@ struct EpisodeCleanupModelTests {
         try save(transcript)
         #expect(model.transcript(for: lane)?.id == transcript.id)
         #expect(model.uncertainWordIDs(for: lane).isEmpty, "Same-ID transcript edits invalidate cached review")
+    }
+
+    private func fillerFixture(adaptiveGap: Bool? = nil) throws -> EpisodeCleanupModel {
+        let model = try timelineFixture()
+        var snapshot = model.state.store.model
+        if let adaptiveGap {
+            let lane = try #require(model.plan?.lanes.first)
+            let region = try #require(lane.regions.first)
+            let group = try #require(model.episode?.sources.first { $0.id == lane.primary.sourceID }?.placement.recorderGroupID)
+            let reference = snapshot.episodes[0].sources[0].id
+            snapshot.episodes[0].alignment?.maps[0].sourceCorrections = [
+                SourceTimingCorrection(source: lane.primary.sourceID, group: group, epoch: region.epoch,
+                    reference: reference,
+                    sourceRate: 16_000, sourceFrames: 480_000, channelCount: 1,
+                    analysisDigest: String(repeating: "a", count: 64),
+                    processing: "ww-native-time-pitch-multichannel/1", segments: [
+                        SourceTimingSegment(sourceStart: 0, sourceEnd: 6, alignedStart: -2, rateRatio: 1),
+                        SourceTimingSegment(sourceStart: adaptiveGap ? 8 : 6, sourceEnd: 30,
+                                            alignedStart: adaptiveGap ? 6 : 4, rateRatio: 1.0002),
+                    ]),
+            ]
+            snapshot.episodes[0].cleanup?.workingRange?.tracksOut = 12
+        }
+        let map = try snapshot.timeMap(revision: 1, in: model.episodeID)
+        model.plan = PrimaryCleanupPlan.make(model: snapshot, episode: model.episodeID, map: map)
+        let lane = try #require(model.plan?.lanes.first)
+        let identity = String(repeating: "a", count: 64)
+        model.identities[lane.primary.sourceID] = identity
+        let a = adaptiveGap == nil ? 2.0 : 3.75
+        let b = adaptiveGap == false ? 4.15 : a + 0.2
+        let frames = try #require(lane.sourceRange(start: a, end: b))
+        let words = [
+            TranscriptWord(text: "Um,", sourceStartFrame: frames.lowerBound, sourceEndFrame: frames.upperBound,
+                           alignedStart: a, alignedEnd: b),
+            TranscriptWord(text: "uh"),
+        ]
+        let workingRange = snapshot.episodes[0].cleanup?.workingRange
+        snapshot.episodes[0].cleanup?.transcripts = [
+            SpeakerTranscript(speaker: lane.speaker, primary: lane.primary, sourceRate: lane.sourceRate,
+                sourceIdentity: identity, alignmentRevision: 1, model: "synthetic-review-recipe",
+                workingRange: workingRange, words: words),
+        ]
+        model.state.store.replaceLoadedModel(snapshot)
+        return model
+    }
+
+    @Test func findingCandidatesIsIdempotentAndReviewNeverChangesRawTextOrTiming() throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        let raw = model.episode?.cleanup?.transcripts
+        let alignment = model.episode?.alignment
+        model.proposeFillers()
+        let review = try #require(model.fillerReviews.first)
+        #expect(model.fillerReviews.count == 1, "Untimed uh has no invented rails")
+        #expect(model.fillerIssue(review) == nil)
+        let snapshot = model.state.store.model
+        model.proposeFillers()
+        #expect(model.state.store.model == snapshot)
+        model.selectFiller(review.id)
+        model.nudgeFiller(review.id, edge: .start, seconds: -0.001)
+        #expect(model.selectedFiller?.bounds.alignedEnd == review.bounds.alignedEnd)
+        #expect(model.selectedFiller?.bounds.alignedStart == review.bounds.alignedStart - 0.001)
+        model.nudgeFiller(review.id, edge: .end, seconds: 0.001)
+        #expect(model.selectedFiller?.bounds.alignedEnd == review.bounds.alignedEnd + 0.001)
+        #expect(model.selectedFiller?.status == "Adjusted")
+        #expect(model.selectedFiller?.detectedBounds == review.detectedBounds)
+        #expect(model.episode?.cleanup?.transcripts == raw)
+        #expect(model.episode?.alignment == alignment)
+        model.decideFiller(review.id, decision: .rejected)
+        model.proposeFillers()
+        #expect(model.selectedFiller?.decision == .rejected)
+        model.revertFiller(review.id)
+        #expect(model.selectedFiller == review)
+        model.decideFiller(review.id, decision: .reviewed)
+        #expect(model.selectedFiller?.status == "Reviewed unchanged")
+    }
+
+    @Test func cancellingReviewClearsReactiveRefreshSkip() async throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        model.proposeFillers()
+        let reviews = model.fillerReviews
+        try #require(model.fillerPublicationGeneration == model.state.store.modelGeneration)
+        try #require(!model.identities.isEmpty)
+        model.cancel()
+        #expect(model.fillerPublicationGeneration == nil)
+        await model.refresh(skippingReviewOnlyChange: true)
+        #expect(model.identities.isEmpty, "Re-entering the view requires fresh source verification")
+        #expect(model.fillerReviews == reviews)
+    }
+
+    @Test(arguments: [(Double.nan, 2.3), (2.0, Double.infinity), (2.4, 2.3), (2.3, 2.3), (0.9, 2.3), (2.0, 4.1)])
+    func crossingUnsupportedAndNonfiniteFillerBoundsRefuse(start: Double, end: Double) throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        model.proposeFillers()
+        let review = try #require(model.fillerReviews.first)
+        let snapshot = model.state.store.model
+        model.setFillerBounds(review.id, start: start, end: end)
+        #expect(model.error != nil)
+        #expect(model.state.store.model == snapshot)
+    }
+
+    @Test func preciseFieldsDoNotRoundUntouchedEdgesAndManualMissesHaveNoDetectedTimes() throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        let lane = try #require(model.plan?.lanes.first)
+        model.addManualFiller(speaker: lane.speaker, start: 2.123456789, end: 2.234567891)
+        let manual = try #require(model.selectedFiller)
+        #expect(manual.origin == .manual && manual.detectedBounds == nil)
+        #expect(manual.transcriptID == model.episode?.cleanup?.transcripts.first?.id)
+        model.applyFillerText()
+        #expect(model.selectedFiller?.bounds == manual.bounds)
+        model.fillerStartText = "2.124"
+        model.applyFillerText()
+        #expect(model.selectedFiller?.bounds.alignedStart == 2.124)
+        #expect(model.selectedFiller?.bounds.alignedEnd == 2.234567891)
+        model.fillerEndText = "not a time"
+        let snapshot = model.state.store.model
+        model.applyFillerText()
+        #expect(model.error != nil && model.state.store.model == snapshot)
+        #expect(model.selectedFiller?.detectedBounds == nil)
+    }
+
+    @Test func keyboardNudgesSelectTheirOwnReviewWithoutChangingAnotherReview() throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        model.proposeFillers()
+        let detected = try #require(model.fillerReviews.first)
+        model.addManualFiller(speaker: detected.speaker, start: 3, end: 3.2)
+        let manual = try #require(model.selectedFiller)
+        try #require(manual.origin == .manual)
+        model.nudgeFiller(detected.id, edge: .end, seconds: 0.001)
+        #expect(model.selectedFillerID == detected.id)
+        #expect(model.selectedFiller?.bounds.alignedEnd == detected.bounds.alignedEnd + 0.001)
+        #expect(model.selectedFiller?.detectedBounds == detected.detectedBounds)
+        #expect(model.fillerReviews.first { $0.id == manual.id } == manual)
+    }
+
+    @Test(arguments: [false, true])
+    func affineAdaptiveMappingAndGapsRemainAuthoritative(adaptiveGap: Bool) throws {
+        let model = try fillerFixture(adaptiveGap: adaptiveGap)
+        defer { model.cancel() }
+        model.proposeFillers()
+        let review = try #require(model.fillerReviews.first)
+        let lane = try #require(model.plan?.lanes.first)
+        #expect(model.fillerIssue(review) == nil)
+        model.setFillerBounds(review.id, start: 3.7, end: adaptiveGap ? 3.99 : 4.25)
+        let adjusted = try #require(model.fillerReviews.first)
+        let expected = try #require(lane.sourceRange(start: adjusted.bounds.alignedStart, end: adjusted.bounds.alignedEnd))
+        #expect(adjusted.bounds.sourceStartFrame == expected.lowerBound)
+        #expect(adjusted.bounds.sourceEndFrame == expected.upperBound)
+        #expect(adjusted.detectedBounds == review.detectedBounds)
+        let audition = try #require(model.fillerAuditionRange(adjusted, context: 0.5))
+        if adaptiveGap {
+            #expect(audition.upperBound == 4, "Context stops at the accepted run's edge, not inside a gap")
+            let snapshot = model.state.store.model
+            model.setFillerBounds(review.id, start: 3.7, end: 6.2)
+            #expect(model.error != nil && model.state.store.model == snapshot)
+            model.setFillerBounds(review.id, start: 6.2, end: 6.4)
+            #expect(model.error != nil && model.state.store.model == snapshot, "Cannot teleport across unsupported timing")
+        } else {
+            #expect(audition.upperBound == 4.75, "Context follows connected adaptive segments")
+        }
+        #expect(model.fillerAuditionRange(adjusted, context: 0) == adjusted.bounds.alignedStart...adjusted.bounds.alignedEnd)
+        #expect(model.fillerAuditionRange(adjusted, context: .nan) == nil)
+    }
+
+    @Test func changedTranscriptIdentityWordRecipeRangeAndSourceNeverRebindHumanJudgments() throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        model.proposeFillers()
+        let review = try #require(model.fillerReviews.first)
+        model.setFillerBounds(review.id, start: 1.99, end: 2.21)
+        let saved = model.state.store.model
+        let adjusted = try #require(model.fillerReviews.first)
+        let lane = try #require(model.plan?.lanes.first)
+        let mutations: [(inout SpeakerTranscript) -> Void] = [
+            { $0.id = UUID() }, { $0.model = "new recipe" }, { $0.words[0].text = "UH" },
+            { $0.words[0].alignedStart = 1.999 }, { $0.sourceIdentity = String(repeating: "b", count: 64) },
+            { $0.workingRange?.tracksOut = 5 },
+        ]
+        for mutate in mutations {
+            var replacement = saved
+            mutate(&replacement.episodes[0].cleanup!.transcripts[0])
+            model.state.store.replaceLoadedModel(replacement)
+            #expect(model.fillerIssue(adjusted) != nil)
+            #expect(model.visibleFillers(for: lane).isEmpty)
+            model.setFillerBounds(review.id, start: 1.98, end: 2.22)
+            #expect(model.state.store.model == replacement && model.error != nil)
+            #expect(model.fillerReviews.first == adjusted)
+        }
+        model.state.store.replaceLoadedModel(saved)
+        model.identities[lane.primary.sourceID] = String(repeating: "c", count: 64)
+        #expect(model.fillerIssue(adjusted) != nil)
+        model.identities[lane.primary.sourceID] = review.sourceIdentity
+        #expect(model.fillerIssue(adjusted) == nil, "Restoring the exact original reactivates it without rebasing")
+        model.plan = nil
+        #expect(model.fillerIssue(adjusted) != nil)
+        #expect(model.episode?.cleanup?.isValid == true)
+    }
+
+    @Test func reviewEditsUseTheNormalDocumentUndoRedoAndPersistenceValue() throws {
+        let base = try fillerFixture()
+        defer { base.cancel() }
+        let document = ShowDocument()
+        defer { document.updateChangeCount(.changeCleared); document.close() }
+        document.store.replaceLoadedModel(base.state.store.model)
+        let model = EpisodeCleanupModel(state: ShowWindowState(store: document.store), episodeID: base.episodeID)
+        defer { model.cancel() }
+        model.plan = base.plan
+        model.identities = base.identities
+        let undo = try #require(document.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.removeAllActions()
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+        let original = document.store.model
+        undo.beginUndoGrouping()
+        model.proposeFillers()
+        undo.endUndoGrouping()
+        let proposed = document.store.model
+        let review = try #require(model.fillerReviews.first)
+        undo.beginUndoGrouping()
+        model.setFillerBounds(review.id, start: 1.99, end: 2.21)
+        undo.endUndoGrouping()
+        let adjusted = document.store.model
+        #expect(document.isDocumentEdited && adjusted != proposed)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        #expect(try coder.decode(coder.encode(adjusted, revision: 1)).payload == adjusted)
+        undo.undo()
+        #expect(document.store.model == proposed)
+        undo.undo()
+        #expect(document.store.model == original, "Undo of finding candidates is not immediately re-proposed")
+        undo.redo()
+        undo.redo()
+        #expect(document.store.model == adjusted)
+    }
+
+    @Test func changedAcceptedRevisionPrimaryAndWorkingRangeDisableWithoutRebasing() throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        model.proposeFillers()
+        let review = try #require(model.fillerReviews.first)
+        let saved = model.state.store.model
+        let mutations: [(inout Episode) -> Void] = [
+            { $0.cleanup?.workingRange?.tracksOut = 2.1 },
+            { $0.speakerAssignments[0].primary = ChannelReference(sourceID: review.primary.sourceID, statedChannel: 1) },
+            {
+                let old = $0.alignment!.maps[0]
+                $0.alignment?.maps.append(.init(revision: 2, derivedFrom: 1, inputs: old.inputs, map: old.map))
+                $0.alignment?.acceptedRevision = 2
+            },
+        ]
+        let lane = try #require(model.plan?.lanes.first)
+        for mutate in mutations {
+            var changed = saved
+            mutate(&changed.episodes[0])
+            model.state.store.replaceLoadedModel(changed)
+            #expect(model.fillerIssue(review) != nil)
+            #expect(model.visibleFillers(for: lane).isEmpty)
+            #expect(model.fillerAuditionRange(review, context: 0.5) == nil)
+            model.selectFiller(review.id)
+            model.markMissedFiller()
+            #expect(model.error != nil && model.state.store.model == changed,
+                    "An inactive historical selection cannot silently seed a new manual interval")
+            model.state.store.replaceLoadedModel(saved)
+            #expect(model.fillerIssue(review) == nil)
+            #expect(model.fillerReviews.first == review)
+        }
     }
 }
