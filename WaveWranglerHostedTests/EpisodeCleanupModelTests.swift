@@ -89,7 +89,7 @@ struct EpisodeCleanupModelTests {
         #expect(!model.canTranscribe)
     }
 
-    private func timelineFixture() throws -> EpisodeCleanupModel {
+    private func timelineFixture(offset: ExactRational = ExactRational(-2)) throws -> EpisodeCleanupModel {
         let speaker = Speaker(name: "Host")
         let epoch = RecordingEpoch(label: "Take")
         let group = RecorderGroup(name: "Recorder", epochs: [epoch])
@@ -114,7 +114,7 @@ struct EpisodeCleanupModelTests {
             placements: [.init(occurrence: referenceOccurrence, spans: [
                 .init(startFrame: 0, endFrame: 480_000, epoch: referenceEpoch.id, groupClockOffset: .zero)])])
         let segment = try AffineClockSegment(groupClockStart: .zero, groupClockEnd: ExactRational(30),
-            rateRatio: .one, alignedOffset: ExactRational(-2))
+            rateRatio: .one, alignedOffset: offset)
         let groupMap = try GroupTimeMap(group: group.id, reference: reference,
             epochs: [.init(epoch: epoch.id,
                            mapping: .mapped(segments: [segment], provenance: .manual(.init(basis: .numericEntry))))],
@@ -149,6 +149,113 @@ struct EpisodeCleanupModelTests {
         #expect(model.visibleDuration == 0.5)
         model.setWindow(start: .nan, duration: 1)
         #expect(model.error != nil && model.windowStart == -2)
+    }
+
+    @Test(arguments: [false, true])
+    func zoomCentersCurrentPlayheadAndClampsWithoutChangingTransportOrDocument(playing: Bool) throws {
+        let model = try timelineFixture(offset: ExactRational(numerator: -19, denominator: 8))
+        defer { model.cancel() }
+        let original = model.state.store.model
+        let snapshot = model.waveformSnapshot
+        let selected = TranscriptWord(text: "synthetic", alignedStart: 7.125, alignedEnd: 7.5)
+        model.selectedWord = selected
+        model.isPlaying = playing
+        model.transportMessage = playing ? "Playing synthetic timeline" : "Paused synthetic timeline"
+        let status = model.transportMessage
+        #expect(model.bounds == -2.375...27.625)
+        for initialStart in [-2.375, 0.25, 17.625] {
+            for time in [-2.375, -2.125, -0.375, 7.125, 27.375, 27.625] {
+                for duration in [0.5, 1.25, 5, 20, 30] {
+                    model.setWindow(start: initialStart, duration: 10)
+                    model.playhead = time
+                    model.zoomTimeline(duration: duration)
+                    let expectedStart = min(27.625 - duration, max(-2.375, time - duration / 2))
+                    #expect(abs(model.windowStart - expectedStart) < 0.000_001)
+                    #expect(model.windowDuration == duration && model.visibleDuration == duration)
+                    #expect(model.windowStart <= time && time <= model.windowStart + duration)
+                    #expect(model.windowStart >= -2.375 && model.windowStart + duration <= 27.625)
+                    #expect(model.playhead == time && model.isPlaying == playing)
+                    #expect(!model.isPreparingPlayback && model.transportMessage == status)
+                    #expect(model.error == nil)
+                }
+            }
+        }
+        #expect(model.state.store.model == original)
+        #expect(model.selectedWord == selected && model.waveformSnapshot == snapshot)
+    }
+
+    @Test func successiveZoomUpdatesFollowTheLatestPlayheadEvenDuringPlaybackPreparation() throws {
+        let model = try timelineFixture()
+        defer { model.cancel() }
+        model.isPreparingPlayback = true
+        model.playhead = 10.25
+        model.zoomTimeline(duration: 5)
+        #expect(model.windowStart == 7.75)
+        model.playhead = 11.125
+        model.zoomTimeline(duration: 2)
+        #expect(model.windowStart == 10.125)
+        model.playhead = 10.875
+        model.zoomTimeline(duration: 10)
+        #expect(model.windowStart == 5.875)
+        #expect(model.isPreparingPlayback && !model.isPlaying && model.playhead == 10.875)
+    }
+
+    @Test(arguments: [Int64(-86_400), 86_370])
+    func zoomAtSupportedTimeLimitsClampsBeforeValidatingTheWindow(offset: Int64) throws {
+        let model = try timelineFixture(offset: ExactRational(offset))
+        defer { model.cancel() }
+        for time in [model.bounds.lowerBound, model.bounds.upperBound] {
+            model.playhead = time
+            for duration in [0.5, 1.25, 30] {
+                model.zoomTimeline(duration: duration)
+                #expect(model.error == nil)
+                #expect(model.windowDuration == duration && model.playhead == time)
+                let expectedStart = time == model.bounds.lowerBound ? time : time - duration
+                #expect(model.windowStart == expectedStart)
+            }
+        }
+    }
+
+    @Test func zoomDoesNotTurnPanningIntoSeekingAndFitStillShowsTheFullTimeline() throws {
+        let model = try timelineFixture()
+        defer { model.cancel() }
+        model.playhead = 20.125
+        model.setWindow(start: -1.5, duration: 5)
+        #expect(model.windowStart == -1.5 && model.playhead == 20.125)
+        model.zoomTimeline(duration: 2)
+        #expect(model.windowStart == 19.125 && model.playhead == 20.125)
+        model.setWindow(start: -2, duration: 2)
+        #expect(model.windowStart == -2 && model.playhead == 20.125)
+        model.zoomTimeline(duration: 5)
+        #expect(model.windowStart == 17.625)
+        model.fitTimeline()
+        #expect(model.windowStart == -2 && model.windowDuration == 30 && model.playhead == 20.125)
+    }
+
+    @Test(arguments: [Double.nan, .infinity, -.infinity, 0, 0.25, 30.5])
+    func invalidZoomReportsAnErrorAndLeavesViewportAndPlayheadUnchanged(duration: Double) throws {
+        let model = try timelineFixture()
+        defer { model.cancel() }
+        model.setWindow(start: 5, duration: 10)
+        model.playhead = 8.125
+        model.zoomTimeline(duration: duration)
+        #expect(model.error != nil)
+        #expect(model.windowStart == 5 && model.windowDuration == 10 && model.playhead == 8.125)
+    }
+
+    @Test(arguments: [Double.nan, .infinity, -.infinity, -86_401, 86_401])
+    func zoomRejectsAnInvalidPlayheadWithoutChangingTheViewport(time: Double) throws {
+        let model = try timelineFixture()
+        defer {
+            model.playhead = 0
+            model.cancel()
+        }
+        model.setWindow(start: 5, duration: 10)
+        model.playhead = time
+        model.zoomTimeline(duration: 1)
+        #expect(model.error != nil)
+        #expect(model.windowStart == 5 && model.windowDuration == 10)
+        #expect(time.isNaN ? model.playhead.isNaN : model.playhead == time)
     }
 
     @Test func clickToolsAndPlayheadButtonsSaveCommonUndoableMarkersNotTrackMoves() throws {
