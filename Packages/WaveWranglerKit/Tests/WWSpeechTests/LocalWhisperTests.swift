@@ -7,26 +7,82 @@ import WWSpeech
 @Suite("Pinned local Whisper", .serialized)
 struct LocalWhisperTests {
     @Test func catalogOffersOnlyPinnedQualifiedModelsWithExplicitHTTPSDownloads() {
-        #expect(LocalWhisperWeights.allCases.count == 2)
+        #expect(LocalWhisperWeights.allCases == [.baseEnglish, .smallEnglish, .turbo, .largeV3])
         for weights in LocalWhisperWeights.allCases {
             #expect(weights.downloadURL.scheme == "https")
             #expect(weights.downloadURL.host == "huggingface.co")
             #expect(weights.downloadURL.lastPathComponent == weights.filename)
+            #expect(weights.downloadURL.pathComponents.contains(LocalWhisperWeights.sourceRevision))
+            #expect(!weights.downloadURL.pathComponents.contains("main"))
             #expect(weights.sha256.count == 64 && weights.byteCount > 100_000_000)
             #expect(!weights.title.isEmpty && !weights.detail.isEmpty)
         }
         #expect(LocalWhisperWeights.turbo.title.contains("recommended"))
+        #expect(LocalWhisperWeights.allCases.filter { $0.title.contains("recommended") } == [.turbo])
+        #expect(LocalWhisperWeights.baseEnglish.rawValue == "baseEnglish")
+        #expect(LocalWhisperWeights.turbo.rawValue == "turbo")
+        #expect(Set(LocalWhisperWeights.allCases.map(\.filename)).count == 4)
+        #expect(Set(LocalWhisperWeights.allCases.map(\.sha256)).count == 4)
+        #expect(LocalWhisperWeights.smallEnglish.byteCount == 487_614_201)
+        #expect(LocalWhisperWeights.smallEnglish.sha256 == "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d")
+        #expect(LocalWhisperWeights.largeV3.byteCount == 1_081_140_203)
+        #expect(LocalWhisperWeights.largeV3.sha256 == "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1")
     }
-    @Test func missingAndWrongSizeModelsRefuseBeforeInference() throws {
+    @Test(arguments: LocalWhisperWeights.allCases)
+    func missingAndWrongSizeModelsRefuseBeforeInference(_ weights: LocalWhisperWeights) throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: url) }
         #expect(throws: SpeechModelError.missingModel) {
-            try LocalWhisper.load(path: url.path, weights: .baseEnglish)
+            try LocalWhisper.load(path: url.path, weights: weights)
         }
         try Data([1]).write(to: url)
         #expect(throws: SpeechModelError.invalidSize) {
-            try LocalWhisper.load(path: url.path, weights: .baseEnglish)
+            try LocalWhisper.load(path: url.path, weights: weights)
         }
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_WHISPER_QUALIFICATION_MODEL"] != nil))
+    func optedInGeneratedSpeechQualifiesPinnedModelAndBackend() async throws {
+        let env = ProcessInfo.processInfo.environment
+        let weights = try #require(env["WW_WHISPER_QUALIFICATION_MODEL"].flatMap(LocalWhisperWeights.init(rawValue:)))
+        let backend = try #require(env["WW_WHISPER_QUALIFICATION_BACKEND"].flatMap(TranscriptionBackend.init(rawValue:)))
+        let root = URL(fileURLWithPath: try #require(env["WW_WHISPER_QUALIFICATION_DIRECTORY"]))
+        let configuration = try TranscriptionConfiguration.resolve(backend: backend, threads: .two)
+        let pool = TranscriptionWorkerPool()
+        let cost = try TranscriptionResources(weights: weights, configuration: configuration)
+        try await pool.withAdmission(resources: cost) {
+            let engine = try await LocalWhisper.load(url: root.appendingPathComponent(weights.filename),
+                                                    weights: weights, configuration: configuration)
+            let audio = try AVAudioFile(forReading: root.appendingPathComponent("generated-control.wav"))
+            try #require(audio.processingFormat.channelCount == 1 && audio.processingFormat.sampleRate == 48_000)
+            try #require(audio.length > 4_800 && audio.length <= 30 * 48_000)
+            let buffer = try #require(AVAudioPCMBuffer(pcmFormat: audio.processingFormat,
+                                                      frameCapacity: AVAudioFrameCount(audio.length)))
+            try audio.read(into: buffer)
+            let samples = try #require(buffer.floatChannelData?[0])
+            let pcm = Array(UnsafeBufferPointer(start: samples, count: Int(buffer.frameLength)))
+            let result = try await engine.transcribeWindow(pcm: pcm, sampleRate: 48_000)
+            let text = result.segments.map(\.text).joined(separator: " ").lowercased()
+            #expect(text.contains("review") && text.contains("meeting") && text.contains("notes"))
+            #expect(result.segments.contains { $0.startSeconds != nil })
+            for segment in result.segments {
+                #expect(!segment.text.isEmpty)
+                #expect((segment.startSeconds == nil) == (segment.endSeconds == nil))
+                if let start = segment.startSeconds, let end = segment.endSeconds {
+                    #expect(start >= 0 && end > start && end <= Double(pcm.count) / 48_000)
+                }
+            }
+            #expect(engine.revision == configuration.revision(weights: weights))
+            #expect(try engine.transcribe(pcm: [Float](repeating: 0, count: 16_000), sampleRate: 16_000).segments.isEmpty)
+            #expect(throws: PCMInferenceRefusal.cancelled) {
+                try engine.transcribe(pcm: pcm, sampleRate: 48_000, isCancelled: { true })
+            }
+            #expect(throws: PCMInferenceRefusal.invalidPCM) {
+                try engine.transcribe(pcm: [Float](repeating: 0, count: 480_001), sampleRate: 16_000)
+            }
+            print("WHISPER-MODEL-QUALIFICATION \(weights.rawValue) \(configuration.backend.rawValue): \(text); recipe=\(engine.revision)")
+        }
+        #expect(await pool.snapshot.reservedBytes == 0)
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_LOCAL_ASR_MODEL"] != nil
@@ -34,7 +90,7 @@ struct LocalWhisperTests {
     func explicitlyOptedInPublicSpeechRunsThroughTheActualNativeBackend() async throws {
         let env = ProcessInfo.processInfo.environment
         let path = try #require(env["WW_LOCAL_ASR_MODEL"])
-        let weights: LocalWhisperWeights = path.contains("turbo") ? .turbo : .baseEnglish
+        let weights = try #require(LocalWhisperWeights.allCases.first { $0.filename == URL(fileURLWithPath: path).lastPathComponent })
         let engine = try await LocalWhisper.load(url: URL(fileURLWithPath: path), weights: weights)
         #expect(engine.revision == TranscriptionConfiguration.cpu.revision(weights: weights))
         let file = try AVAudioFile(forReading: URL(fileURLWithPath: #require(env["WW_LOCAL_ASR_PUBLIC_WAV"])))
@@ -66,7 +122,7 @@ struct LocalWhisperTests {
     func optedInNativeContextsActuallyOverlapAndPreserveRecognitionAndTimestamps() async throws {
         let env = ProcessInfo.processInfo.environment
         let path = try #require(env["WW_LOCAL_ASR_MODEL"])
-        let weights: LocalWhisperWeights = path.contains("turbo") ? .turbo : .baseEnglish
+        let weights = try #require(LocalWhisperWeights.allCases.first { $0.filename == URL(fileURLWithPath: path).lastPathComponent })
         let engine = try await LocalWhisper.load(url: URL(fileURLWithPath: path), weights: weights)
         let file = try AVAudioFile(forReading: URL(fileURLWithPath: #require(env["WW_LOCAL_ASR_PUBLIC_WAV"])))
         try #require(file.processingFormat.channelCount == 1 && file.processingFormat.sampleRate == 16_000)
@@ -206,7 +262,7 @@ struct LocalWhisperTests {
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        for weights in LocalWhisperWeights.allCases {
+        for weights in [LocalWhisperWeights.baseEnglish, .turbo] {
             for backend in [TranscriptionBackend.cpu, .metal] {
                 let configuration = try TranscriptionConfiguration.resolve(backend: backend, threads: .four)
                 let loadStart = ProcessInfo.processInfo.systemUptime

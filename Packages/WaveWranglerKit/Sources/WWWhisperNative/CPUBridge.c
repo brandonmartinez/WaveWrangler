@@ -156,7 +156,8 @@ static WWNativeTranscript infer_pcm(
     }
     if (!model_bytes || !pcm) return result;
     if (window) {
-        if ((model_size != 147964211 && model_size != 574041195) ||
+        if ((model_size != 147964211 && model_size != 487614201 &&
+             model_size != 574041195 && model_size != 1081140203) ||
             sample_count < 1600 || sample_count > 480000) return result;
     } else if (model_size != 77704715 || sample_count != 32000) return result;
     for (int32_t i = 0; i < sample_count; ++i) {
