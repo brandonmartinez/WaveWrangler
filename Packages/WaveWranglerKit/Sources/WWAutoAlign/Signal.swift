@@ -26,7 +26,19 @@ struct Transform {
     }
 
     func correlation(_ x: [Double], spectrum b: (real: [Double], imaginary: [Double]), phat: Bool = false) -> [Double] {
-        let a = spectrum(x)
+        correlation(spectrum: spectrum(x), spectrum: b, phat: phat)
+    }
+
+    func correlations(_ x: [Double], _ y: [Double]) -> (raw: [Double], phat: [Double]) {
+        let a = spectrum(x), b = spectrum(y)
+        return (correlation(spectrum: a, spectrum: b, phat: false),
+                correlation(spectrum: a, spectrum: b, phat: true))
+    }
+
+    private func correlation(
+        spectrum a: (real: [Double], imaginary: [Double]),
+        spectrum b: (real: [Double], imaginary: [Double]), phat: Bool
+    ) -> [Double] {
         var re = [Double](repeating: 0, count: count), im = re
         let maximumPower = phat ? zip(a.real, a.imaginary).map { $0 * $0 + $1 * $1 }.max() ?? 0 : 0
         let referencePower = phat ? zip(b.real, b.imaginary).map { $0 * $0 + $1 * $1 }.max() ?? 0 : 0
@@ -48,6 +60,9 @@ struct Transform {
 
 struct Signal {
     static let rate = 4000.0
+    private static let templateRadius = 12
+    private static let templateCosine = (-templateRadius + 1...templateRadius).map { cos(.pi * Double($0) / Double(templateRadius)) }
+    private static let templateSine = (-templateRadius + 1...templateRadius).map { sin(.pi * Double($0) / Double(templateRadius)) }
     let samples: [Double]
 
     init(_ buffer: SampleBuffer) throws {
@@ -108,17 +123,21 @@ struct Signal {
     /// Analysis-only resampling onto the reference clock; the original buffers and their coordinates stay intact.
     static func template(_ input: [Double], start: Int, count: Int, rateRatio: Double) throws -> [Double] {
         if rateRatio == 1 { return Array(input[start..<start + count]) }
-        let radius = 12
+        let radius = templateRadius, cosine = templateCosine, sine = templateSine
         var output = [Double](repeating: 0, count: count)
         for i in output.indices {
             if i.isMultiple(of: 1024) { try Task.checkCancellation() }
             let position = Double(start) + Double(i) / rateRatio
             let center = Int(floor(position))
+            let fraction = position - Double(center)
+            let numerator = sin(.pi * fraction)
+            let a = cos(.pi * fraction / Double(radius)), b = sin(.pi * fraction / Double(radius))
             var value = 0.0, weight = 0.0
             for at in max(0, center - radius + 1)...min(input.count - 1, center + radius) {
-                let distance = position - Double(at)
-                let tap = abs(distance) < 1e-12 ? 1 : sin(.pi * distance) / (.pi * distance)
-                    * (0.5 + 0.5 * cos(.pi * distance / Double(radius)))
+                let j = at - center, distance = position - Double(at)
+                // sin(pi * (fraction - j)) alternates sign; expand the Hann cosine by subtraction.
+                let tap = abs(distance) < 1e-12 ? 1 : (j.isMultiple(of: 2) ? numerator : -numerator) / (.pi * distance)
+                    * (0.5 + 0.5 * (a * cosine[j + radius - 1] + b * sine[j + radius - 1]))
                 value += tap * input[at]
                 weight += tap
             }

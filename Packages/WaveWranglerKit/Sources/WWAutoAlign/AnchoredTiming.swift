@@ -159,7 +159,7 @@ public enum AnchoredTiming {
             let x = Statistics.centered(Array(t[at..<at + n]))
             let y = Array(r[lo..<hi])
             let fft = Transform(atLeast: x.count + y.count)
-            let raw = fft.correlation(x, y), white = fft.correlation(x, y, phat: true)
+            let (raw, white) = fft.correlations(x, y)
             let energy = x.reduce(0) { $0 + $1 * $1 }
             var sum = y.prefix(n).reduce(0, +), power = y.prefix(n).reduce(0) { $0 + $1 * $1 }
             var scores = [Double](repeating: 0, count: y.count - n + 1)

@@ -157,6 +157,99 @@ relax coverage, competing-peak, method-agreement, consensus, residual or discont
 The final result is still one measured constant rate plus offset, not elastic peak-by-peak warping.
 Accepted playback remains rate correction, not pitch-preserving time stretching.
 
+### Double-precision CPU reuse (2026-10-18)
+
+The reached `WWAutoAlign` fine path now shares **both input spectra and the existing forward/inverse
+Accelerate plans** between ordinary correlation and energy-masked PHAT. A three-attempt
+`AutomaticAlignment.measure` call caches at most one plan pair, reusing it only when the next
+attempt needs the same power-of-two padding size. Clipped source boundaries can reduce that size;
+they do not inherit a larger transform and different rounding. Plans and spectra are computation-local,
+not global mutable state or a recording-length cache. `AnchoredTiming.measure` uses the same paired
+correlation helper. Existing single-correlation and precomputed-reference-spectrum entry points remain
+compatible for coarse matching and adaptive corroborations; `AdaptiveMeasurement.swift` is unchanged.
+
+The same 24-tap, radius-12 normalized Hann-windowed sinc uses
+`sin(pi * (fraction - integer)) = (-1)^integer * sin(pi * fraction)` and the cosine subtraction
+identity. Immutable tap sine/cosine constants replace per-tap transcendental evaluations with three
+evaluations per output sample. Tap order, clipping, normalization, integer-rate slice fast path,
+Double coordinates and cancellation checks are unchanged. There is no Float conversion, Metal/ANE
+backend, dependency, public selector, recipe/schema change or threshold adjustment. The unrelated
+frozen `WWAlignEstimate` FFT remains untouched.
+
+**Production release before/after**, Apple M5 Max (Mac17,14, 18 CPU cores, 128 GiB),
+macOS 27.0.1, Xcode 27.0 / Swift 6.4. Baseline source is committed local
+`5e163137a98dd8304e3f4c7f967bd9fb801131ae`, a descendant of research baseline `370d41f1`;
+committed sentence/transcription work is preserved. Three serial repeats, `-O -enable-testing -DDEBUG`,
+three build jobs, one test worker, no app build/launch or shared build paths.
+
+| Generated real WAVE pair | Reference / target rate; selected lane | Offset / drift | Warm baseline ms, median [min,max] | Warm optimized ms, median [min,max] | Reduction |
+| --- | --- | --- | --- | --- | --- |
+| 64 s mono | 48/48 kHz; 0 | +0.83 s / +180 ppm | 137.985 [133.896,139.562] | 89.718 [89.600,91.377] | 35.0% |
+| 600 s stereo | 48/48 kHz; 1 | -1.25 s / -145 ppm | 486.741 [485.554,510.270] | 331.931 [330.358,335.611] | 31.8% |
+| 1800 s mono | 8/8 kHz; 0 | +2.25 s / +180 ppm | 594.732 [594.610,604.328] | 439.052 [439.018,449.058] | 26.2% |
+| 96 s seven-channel | 44.1/48 kHz; 6 | +0.83 s / +180 ppm | 173.985 [172.624,174.070] | 126.895 [126.872,128.521] | 27.1% |
+| 64 s inverted mono | 48/48 kHz; 0 | -0.83 s / -180 ppm | 136.367 [136.048,138.096] | 89.748 [89.638,92.556] | 34.2% |
+
+These are actual `AutomaticAnalysis.run` warm rematches: admission, fingerprint cache reads, fresh
+coarse search, revision-checked sparse system decoding/decimation, all fine attempts, fit and record
+encoding/decoding. They are **not kernel-only or experimental estimator replays**. The opt-in harness
+first asserts full record equality against `analyseSpeaker`, and separately measures its final-record
+cache (about 1-3 ms); outer coordinator publication/UI latency is excluded from rematch timing.
+Each WAVE uses deterministic seed-990, 2 kHz interpolated scene data on an 8 kHz base grid;
+target gain is 0.7 and other channels are unrelated noise. This reuses development controls from the
+local CPU study, not independent recorder ground truth or held-out speech qualification.
+
+This was a **shared-machine, fixed-order before/after measurement**, not exclusive-machine timing
+or an energy claim. Load averages were approximately 6-9; security scanning, WindowServer and another
+speech experiment were active. Thermal state stayed nominal. Digital silence, periodic tone,
+very-low-level unrelated audio and normal-level unrelated audio still abstained. Their 1-4 ms warm
+times are dominated by cache/scheduling noise (the low-level median rose from 1.11 to 1.98 ms);
+they do not reach the optimized fine path, so no negative-control speedup is claimed.
+Dense adaptive/quiet/anchor recovery has behavioral coverage, not a separate end-to-end speed claim.
+The combined improvement is measured; these numbers do not isolate the contribution of each edit.
+
+For all 27 before/after records the harness checks identical input SHA-256s, source rates/frame
+ranges, coarse evidence, coverage, methods, polarity, classifications, abstention and rounded affine
+rate/offset. Reported NCC/PHAT lag deltas were zero; maximum NCC score delta was `4.44e-16`.
+Positive-control endpoint truth error stayed below **0.00260 ms**. `RecordingDSPTests` additionally
+compares the full Double correlation arrays **bit for bit** with frozen pre-optimization arithmetic
+at 8192/32768/131072 points, including both mask directions, tiny cross-power and reused/reversed inputs.
+Its sinc sweep covers clipped ends, unit/near-unit rates, +/-500 ppm and source indices through
+159999: maximum absolute sample difference **6.66e-16**, worst per-case RMS **8.31e-17**;
+unit-rate output is exact. Fine-path replays include both offset/drift signs, polarity, upper speech,
+one-/two-second windows and a 32768-to-16384 padding change within one call.
+Existing reliability cases retain silence/periodicity/unrelated/step refusal, cancellation,
+selected-channel/source-frame mapping, changed-source publication vetoes and manual acceptance.
+Release validation passed 70 `WWAutoAlign` and 72 related pipeline regression tests, plus the
+opt-in benchmark. The existing 75-minute control still decoded 75,920,159 frames with a
+204,005,376-byte admission peak and maximum independent-truth map error below 0.004 ms.
+
+The narrow opt-in harness is `WWAlignPipelineTests/RecordingAlignmentBenchmarkTests.swift`.
+Raw evidence is worktree-local and ignored: `.build/recording-cpu/{baseline,optimized}/`
+contains `timings.json`, full record snapshots, hashes, media and caches; sibling logs,
+`environment.txt`, contention snapshots and `summary.json` retain the measurement context.
+To rerun, use a **new** absolute output path and a non-symlinked local scratch directory:
+
+```bash
+source "$HOME/.shell/exports-core.sh"
+SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
+WW_RECORDING_BENCH_DIR="$PWD/.build/recording-cpu/new-run" \
+WW_RECORDING_BASELINE="$PWD/.build/recording-cpu/baseline" \
+swift test --package-path Packages/WaveWranglerKit \
+  --scratch-path "$PWD/.build/recording-cpu/swiftpm" --configuration release \
+  -Xswiftc -enable-testing -Xswiftc -DDEBUG --jobs 3 --no-parallel \
+  --filter 'WWAlignPipelineTests.RecordingAlignmentBenchmarkTests'
+```
+
+Omit `WW_RECORDING_BASELINE` for a standalone run or to capture the first run with the unchanged
+harness against baseline production source before applying the DSP edits. Comparing two runs
+requires matching workloads/repeat counts. Optional `WW_RECORDING_CASES=scene-64,stereo-600` and
+`WW_RECORDING_REPEATS=1` bound the matrix (default three, maximum five). No external media or downloads.
+Normal numerical/safety coverage uses the same release flags with `WW_ESTIMATOR_TESTS=1` and filter
+`WWAutoAlignTests`; related pipeline tests use the `AutomaticAnalysisTests`, `AutomaticPipelineReliabilityTests`, `AdaptiveAnalysisTests`,
+`AdaptiveAcceptanceTests`, `AcceptanceTests`, `ConcurrencyTests`, `GuardTests` and
+`WitnessBoundPCMWindowTests` suites. No shared test-support, sentence/transcription or project files change.
+
 The app's review surface reports full indexed durations, source interval, usable/agreeing regions, attempted windows and their
 local classifications, excluded isolated outliers, fit residual and the distinction between sampled support and continuous
 inspection. It also labels the coarse rate hint as analysis-only, not accepted timing, and reports
