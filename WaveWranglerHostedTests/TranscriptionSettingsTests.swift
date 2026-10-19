@@ -30,6 +30,33 @@ struct TranscriptionSettingsTests {
         #expect(SettingsPane.allCases.contains(.transcription))
     }
 
+    @Test(arguments: LocalWhisperWeights.allCases)
+    func everyModelPreferenceReopensWithoutDownloadingOrRetargetingCapturedRecipes(_ weights: LocalWhisperWeights) throws {
+        let (settings, defaults, directory) = try fixture()
+        settings.selection = weights
+        let capturedWeights = settings.selection
+        let capturedConfiguration = try settings.captureConfiguration()
+        let recipe = capturedConfiguration.revision(weights: capturedWeights)
+        #expect(recipe.contains("/\(weights.rawValue)/\(weights.sha256)/"))
+        settings.selection = weights == .turbo ? .baseEnglish : .turbo
+        #expect(capturedConfiguration.revision(weights: capturedWeights) == recipe)
+        defaults.set(weights.rawValue, forKey: PreferenceKey.whisperModel)
+        let reopened = TranscriptionSettings(defaults: defaults, directory: directory)
+        #expect(reopened.selection == weights && reopened.error == nil)
+        #expect(reopened.available.isEmpty && reopened.selectedURL == nil && !reopened.isBusy)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    @Test func unsupportedModelPreferenceIsSurfacedWithoutADownload() throws {
+        let (_, defaults, directory) = try fixture()
+        defaults.set("unknown-model", forKey: PreferenceKey.whisperModel)
+        let settings = TranscriptionSettings(defaults: defaults, directory: directory)
+        #expect(settings.selection == .turbo)
+        #expect(settings.error?.contains("saved model is unsupported") == true)
+        #expect(!settings.isBusy && settings.available.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
+
     @Test func hardwareThreadsPersistWhileCapturedJobsNeverRetarget() throws {
         let (_, defaults, directory) = try fixture()
         let settings = TranscriptionSettings(defaults: defaults, directory: directory, metalAvailable: true)
@@ -116,10 +143,11 @@ struct TranscriptionSettingsTests {
         #expect(!FileManager.default.fileExists(atPath: settings.directory.path))
     }
 
-    @Test func successfulInstallationIsSharedAndPersistsAcrossSettingsInstances() async throws {
+    @Test(arguments: LocalWhisperWeights.allCases)
+    func successfulInstallationIsSharedAndPersistsAcrossSettingsInstances(_ weights: LocalWhisperWeights) async throws {
         let (settings, defaults, directory) = try fixture()
         defer { try? FileManager.default.removeItem(at: directory) }
-        settings.selection = .baseEnglish
+        settings.selection = weights
         settings.download(fetch: { weights, target, report in
             try Self.sparseModel(target, weights: weights)
             report(Int64(weights.byteCount))
@@ -129,9 +157,9 @@ struct TranscriptionSettingsTests {
         })
         try await wait { !settings.isBusy }
         #expect(settings.error == nil)
-        #expect(settings.available == [.baseEnglish])
+        #expect(settings.available == [weights])
         let installed = try #require(settings.selectedURL)
-        #expect(installed.lastPathComponent == LocalWhisperWeights.baseEnglish.filename)
+        #expect(installed.lastPathComponent == weights.filename)
         #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path) == [installed.lastPathComponent])
         let reopened = TranscriptionSettings(defaults: defaults, directory: directory)
         #expect(reopened.selectedURL == installed)
@@ -146,7 +174,7 @@ struct TranscriptionSettingsTests {
         let handle = try FileHandle(forReadingFrom: installed)
         defer { try? handle.close() }
         #expect(try handle.read(upToCount: 1) == Data([42]))
-        settings.selection = .turbo
+        settings.selection = weights == .turbo ? .baseEnglish : .turbo
         #expect(settings.selectedURL == nil, "Selecting an uninstalled model never uses other weights silently")
     }
 
@@ -180,10 +208,11 @@ struct TranscriptionSettingsTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path) == [installed.lastPathComponent])
     }
 
-    @Test func actualVerifierRejectsWrongSizeAndHashWithoutPublishing() async throws {
+    @Test(arguments: LocalWhisperWeights.allCases)
+    func actualVerifierRejectsWrongSizeAndHashWithoutPublishing(_ weights: LocalWhisperWeights) async throws {
         let (settings, _, directory) = try fixture()
         defer { try? FileManager.default.removeItem(at: directory) }
-        settings.selection = .baseEnglish
+        settings.selection = weights
         settings.download(fetch: { _, target, _ in try Data([1, 2, 3]).write(to: target) })
         try await wait { !settings.isBusy }
         #expect(settings.error?.contains("pinned size or SHA-256") == true && settings.available.isEmpty)

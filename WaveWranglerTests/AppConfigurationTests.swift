@@ -143,7 +143,10 @@ struct UITestHooksDebugOnlyTests {
         @Test func wholeModelReplacementsAreGuardedAgainstConcurrentEdits() throws {
             let source = try UITestHooksDebugOnlyTests.source("Alignment/EpisodeAlignmentModel.swift")
             let calls = source.components(separatedBy: "store.applyReplacement(").dropFirst()
-            #expect(calls.count == 4, "split, accept, initial placement, and group move are whole-model replacements")
+            #expect(
+                calls.count == 6,
+                "split, accept, initial placement, group move, adaptive timing, and reset are whole-model replacements"
+            )
             for call in calls {
                 #expect(call.prefix(200).contains("expecting: prior,"))
             }

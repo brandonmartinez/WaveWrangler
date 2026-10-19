@@ -5,44 +5,66 @@ import Foundation
 import WWWhisperNative
 
 public enum LocalWhisperWeights: String, Sendable, CaseIterable {
-    case baseEnglish, turbo
+    case baseEnglish, smallEnglish, turbo, largeV3
+
+    public static let sourceRevision = "5359861c739e955e79d9a303bcbc70fb988958b1"
 
     public var title: String {
         switch self {
         case .baseEnglish: "Whisper Base English"
+        case .smallEnglish: "Whisper Small English"
         case .turbo: "Whisper Turbo (recommended)"
+        case .largeV3: "Whisper Large-v3"
         }
     }
 
     public var detail: String {
         switch self {
-        case .baseEnglish: "148 MB. Smaller and faster, but less accurate in our conversational test."
-        case .turbo: "574 MB, Q5_0. Better recognition and filler retention than Base in our small conversational test. Metal accelerates inference on supported Apple silicon."
+        case .baseEnglish: "148 MB, F16. English-only. The smallest download and lowest memory reservation."
+        case .smallEnglish: "488 MB, F16. English-only. Larger weights and more working memory than Base."
+        case .turbo: "574 MB, Q5_0. Recommended default. A reduced decoder compared with full Large-v3; less working memory and computation."
+        case .largeV3: "1.08 GB, Q5_0. Full Large-v3, not Turbo, with quantized weights. The largest download and highest memory and computation requirements; not a guarantee of better recognition."
         }
     }
 
     public var downloadURL: URL {
-        URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/\(filename)")!
+        URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/\(Self.sourceRevision)/\(filename)")!
     }
 
     public var filename: String {
         switch self {
         case .baseEnglish: "ggml-base.en.bin"
+        case .smallEnglish: "ggml-small.en.bin"
         case .turbo: "ggml-large-v3-turbo-q5_0.bin"
+        case .largeV3: "ggml-large-v3-q5_0.bin"
         }
     }
 
     public var byteCount: Int {
         switch self {
         case .baseEnglish: 147_964_211
+        case .smallEnglish: 487_614_201
         case .turbo: 574_041_195
+        case .largeV3: 1_081_140_203
         }
     }
 
     public var sha256: String {
         switch self {
         case .baseEnglish: "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002"
+        case .smallEnglish: "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d"
         case .turbo: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+        case .largeV3: "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1"
+        }
+    }
+
+    /// Retained verified bytes, native weights/graphs and resampling; rendering is reserved separately.
+    public var inferenceMemoryBytes: Int {
+        switch self {
+        case .baseEnglish: 768 << 20
+        case .smallEnglish: 2 << 30
+        case .turbo: 3 << 30
+        case .largeV3: 5 << 30
         }
     }
 }

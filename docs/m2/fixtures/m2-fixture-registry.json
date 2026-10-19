@@ -303,6 +303,39 @@
    ]
   },
   {
+   "freezeID": "m3-freeze-decode-6",
+   "record": "docs/m2/fixtures/m3-freeze-decode-6.json",
+   "fixtures": ["M3-DECODE-006"],
+   "status": "CANDIDATE; fresh revision-6 synthetic calibration PASS; holdout NOT RUN; independent review and explicit activation/merge pending",
+   "supersedes": "m3-freeze-decode-5",
+   "counts": {"fixtures": 1, "calibrationCases": 130, "holdoutCases": 520},
+   "fixtureEntries": [
+    {
+     "id": "M3-DECODE-006",
+     "title": "WW-050 decode truth revision 6 candidate: unchanged gates on the bounded PCM resampling tree",
+     "family": "decode",
+     "role": "objective-gates",
+     "issues": ["WW-050"],
+     "automated": true,
+     "generator": {
+      "kind": "synthetic-deterministic",
+      "seedDerivation": "m3-freeze-decode-6.generator.seedDerivation (fresh M3-DECODE-006 namespace, disjoint from all five earlier namespaces)",
+      "recipe": "Identical JSON recipe, truth, measurement, counts and gates to m3-freeze-decode-5"
+     },
+     "expectedTruth": "Written samples, frames, format, channels and landmarks; planted typed errors. Identical to revision 5.",
+     "permission": {
+      "class": "authorized-synthetic",
+      "status": "authorized",
+      "scope": "User authorized 130 generated calibration cases only on 2026-10-19. No user recordings, models, network, provider trial or holdout."
+     },
+     "provenance": "Baseline merge-gate repair 2026-10-19; base e04233576ef358723b4696da9b19372114f505c4. Candidate only; historical records remain unchanged.",
+     "split": {"calibration": 130, "holdout": 520, "unit": "cases"},
+     "supportedClaimLimits": "Synthetic push-decoder calibration and separate bounded PCM conversion tests only; no resampling claim from decode calibration, clean-head full gate, real media, offline inference, protected edits or MVP completion.",
+     "evidenceStatus": "130 fresh synthetic calibration cases plus output-settings PASS; 131 ordered calibration-6.jsonl records, raw run log and SHA-256 digests in the revision-6 candidate record. Holdout NOT RUN; no approved or activated freeze."
+    }
+   ]
+  },
+  {
    "freezeID": "m2-freeze-timemap",
    "record": "docs/m2/fixtures/m2-freeze-timemap.json",
    "fixtures": [

@@ -15,6 +15,12 @@ struct TranscriptionSettingsView: View {
                 .disabled(settings.isBusy)
                 .accessibilityIdentifier("ww.settings.transcription.model")
                 Text(settings.selection.detail).wwFont(.callout)
+                Text("Reserves \(ByteCountFormatter.string(fromByteCount: Int64(settings.selection.inferenceMemoryBytes), countStyle: .memory)) per worker, plus source render buffers. Jobs that cannot fit the shared budget are refused before loading.")
+                    .wwFont(.caption)
+                if settings.selection.inferenceMemoryBytes >= settings.workerPool.budget.memoryBytes {
+                    Label("This model exceeds this Mac's transcription memory budget. Choose a smaller model for transcription.", systemImage: "exclamationmark.triangle")
+                        .wwFont(.caption)
+                }
                 Text("Applies to every episode. Changing models affects the next transcription, not an active job or saved transcript.")
                     .wwFont(.caption)
                 if settings.available.contains(settings.selection) {
@@ -77,7 +83,7 @@ struct TranscriptionSettingsView: View {
             }
             Section("Privacy & accuracy") {
                 Text("Download fetches only the selected MIT-licensed model from Hugging Face's ggerganov/whisper.cpp repository. Models are kept in this app's Application Support folder. No recording or transcript is uploaded.")
-                Text("Both choices use the same English, filler-preserving settings. Turbo was best in our small test, not a guarantee on your recordings. Larger Whisper models are not yet qualified here. Word times remain approximate, and all models can hallucinate.")
+                Text("All four choices use the same English, filler-preserving settings. Small English and full Large-v3 have native compatibility controls, not a comparative accuracy qualification. Turbo remains the recommended default. Word times remain approximate, and all models can hallucinate.")
                 Link("Whisper models and license", destination: URL(string: "https://github.com/openai/whisper#available-models-and-languages")!)
             }
             .wwFont(.caption)
