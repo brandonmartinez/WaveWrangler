@@ -105,6 +105,15 @@ Relink/Grant Access can also restore a missing device-local record or accept dif
 only after the user acknowledges the comparison; the chosen local file is rechecked around read-only
 raw-witness capture before its new confirmed baseline is saved. It never silently substitutes a file.
 
+The decoding-boundary scan distinguishes in-memory nominal conversion from source decoding:
+only `WWDecode/PCMResampling.swift` and `WWSpeech/LocalWhisper.swift` may name
+`AVAudioConverter` for already-decoded PCM. Raw `AudioConverter` and file/asset readers
+remain forbidden in both helpers; private content-gateway APIs remain restricted to `WWDecode`.
+Debug cleanup public-speech fixtures also inspect their explicitly supplied local WAV through
+`SourceDecoder.withDecodingCursor`, never an app-owned audio-file reader. The header-only probe
+requires mono 48 kHz PCM WAVE and 4-30 seconds, verifies the source unchanged, and reports errors
+without creating a show; it does not read samples or authorize any other media.
+
 Layout is per-window presentation: separate lanes can be grouped by recorder or assigned speaker,
 while overlay always groups enabled recordings by speaker. Both speaker layouts use the same
 source-to-speaker projection and retain unknown speakers. Recorder IDs and group-move semantics

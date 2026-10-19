@@ -259,6 +259,48 @@ struct RelinkTests {
         #expect(TreeSnapshot.take(tree.sources) == before)
     }
 
+    @Test(arguments: ["missing", "unknown", "different"])
+    func confirmedRegrantCapturesTheCurrentCandidateDespitePriorEvidence(prior: String) async throws {
+        let tree = try SyntheticTree(label: "confirmed-regrant-\(prior)")
+        var rng = SplitMix64(seed: 442)
+        let file = try tree.file("take.wav", bytes: 128, rng: &rng)
+        let context = SourceAccessContext(io: SystemSourceIO())
+        guard case let .success(metadata) = context.io.metadata(at: file) else {
+            Issue.record("synthetic file metadata unavailable")
+            return
+        }
+        let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
+        var recordedFingerprint = metadata.fingerprint
+        if prior == "unknown" { recordedFingerprint = FileSystemFingerprint() }
+        if prior == "different" { recordedFingerprint.fileSize = .known(64) }
+        let record: DeviceAccessRecord? = prior == "missing" ? nil : DeviceAccessRecord(
+            showID: key.showID, sourceID: key.sourceID,
+            recordedIdentity: RecordedIdentity(
+                fingerprint: recordedFingerprint, confirmation: .provisional, recordedAt: .now
+            ), createdAt: .now
+        )
+        let relink = RelinkEvaluator(context: context)
+        let proposal = relink.evaluate(candidate: file, for: key, record: record)
+        #expect(proposal.requiresConfirmation)
+        #expect(proposal.candidateFingerprint == metadata.fingerprint)
+        #expect(proposal.candidateRaw == nil)
+        #expect(throws: RelinkError.confirmationRequired(proposal.comparison)) {
+            try relink.apply(proposal, to: record, userConfirmed: false)
+        }
+        let before = TreeSnapshot.take(tree.sources)
+        let confirmed = try await relink.applyConfirmed(proposal, to: record) { url, fingerprint in
+            try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+        }
+        #expect(confirmed.key == key)
+        #expect(confirmed.recordedIdentity?.fingerprint == metadata.fingerprint)
+        #expect(confirmed.recordedIdentity?.confirmation == .userConfirmed)
+        #expect(confirmed.recordedIdentity?.rawWitness?.isUsable == true)
+        #expect(confirmed.relinkHistory.last?.comparison == proposal.comparison)
+        #expect(confirmed.relinkHistory.last?.userConfirmed == true)
+        #expect(TreeSnapshot.take(tree.sources) == before)
+        #expect(context.ledger.snapshot.openScopes == 0)
+    }
+
     @Test func confirmedCaptureRefusesDuplicateStaleChangedAndInaccessibleCandidate() async throws {
         let tree = try SyntheticTree(label: "confirmed-relink-refusals")
         var rng = SplitMix64(seed: 437)
@@ -286,10 +328,15 @@ struct RelinkTests {
         await #expect(throws: RelinkError.sourceMismatch) {
             try await relink.applyConfirmed(duplicate, to: record, captureRawIdentity: neverCapture)
         }
-        var differing = proposal
-        differing.comparison = .differs([.contentModificationDate], unknown: [])
+        var changedMetadata = proposal
+        changedMetadata.candidateFingerprint?.contentModificationDate = .known(.distantPast)
         await #expect(throws: RelinkError.sourceMismatch) {
-            try await relink.applyConfirmed(differing, to: record, captureRawIdentity: neverCapture)
+            try await relink.applyConfirmed(changedMetadata, to: record, captureRawIdentity: neverCapture)
+        }
+        var wrongSource = proposal
+        wrongSource.key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
+        await #expect(throws: RelinkError.sourceMismatch) {
+            try await relink.applyConfirmed(wrongSource, to: record, captureRawIdentity: neverCapture)
         }
         var stale = proposal
         stale.availability = .ready(bookmark: Data("invalid bookmark".utf8), resolvedPath: file.path)
@@ -851,6 +898,10 @@ struct ForbiddenAPITests {
     ]
     /// WWDecode's package-access content gateway: no module but WWDecode may name it or its entry points.
     static let contentGatewayAPITokens = ["SystemSourceContentIO", "openForDecoding", "readRawFrames"]
+    /// These two implementations convert already-decoded PCM buffers, not URLs or encoded streams.
+    static let inMemoryPCMConverterPaths: Set<String> = [
+        "WWDecode/PCMResampling.swift", "WWSpeech/LocalWhisper.swift",
+    ]
 
     static func code(_ source: String) -> String {
         source.split(separator: "\n", omittingEmptySubsequences: false)
@@ -910,7 +961,7 @@ struct ForbiddenAPITests {
     static func otherModuleViolations(in source: String, path: String) -> [String] {
         if path == "WWDecode/\(contentGatewayFile)" { return [] }
         var code = code(source)
-        if path == "WWDecode/PCMResampling.swift" {
+        if inMemoryPCMConverterPaths.contains(path) {
             code = code.replacingOccurrences(of: #"\bAVAudioConverter(?:InputBlock)?\b"#, with: "", options: .regularExpression)
         }
         var tokens = decodeTokens
@@ -978,6 +1029,23 @@ struct ForbiddenAPITests {
         #expect(Self.otherModuleViolations(in: "AVAudioConverter(from: pcm, to: pcm)", path: "WWDecode/Sub/PCMResampling.swift").contains("WWDecode/Sub/PCMResampling.swift: AVAudioConverter"))
         #expect(Self.otherModuleViolations(in: "AudioConverterNew(a, b, &c)", path: "WWDecode/PCMResampling.swift").contains("WWDecode/PCMResampling.swift: AudioConverter"))
         #expect(Self.otherModuleViolations(in: "AVAudioFile(forReading: url)", path: "WWDecode/PCMResampling.swift").contains("WWDecode/PCMResampling.swift: AVAudioFile"))
+        #expect(Self.otherModuleViolations(in: "AVAudioConverter(from: pcm, to: pcm)", path: "WWSpeech/LocalWhisper.swift").isEmpty)
+        for path in ["WWSpeech/Sub/LocalWhisper.swift", "WWSpeech/Other.swift", "WaveWrangler/LocalWhisper.swift"] {
+            #expect(Self.otherModuleViolations(in: "AVAudioConverter(from: pcm, to: pcm)", path: path).contains("\(path): AVAudioConverter"))
+        }
+        for path in Self.inMemoryPCMConverterPaths {
+            for (source, token) in [
+                ("AudioConverterNew(a, b, &c)", "AudioConverter"),
+                ("AVAudioFile(forReading: url)", "AVAudioFile"),
+                ("AVURLAsset(url: url)", "AVURLAsset"),
+                ("ExtAudioFileRead(ext, &frames, list)", "ExtAudioFile"),
+            ] {
+                #expect(Self.otherModuleViolations(in: source, path: path).contains("\(path): \(token)"))
+            }
+        }
+        #expect(Self.otherModuleViolations(
+            in: "SystemSourceContentIO().openForDecoding(url)", path: "WWSpeech/LocalWhisper.swift"
+        ) == ["WWSpeech/LocalWhisper.swift: SystemSourceContentIO", "WWSpeech/LocalWhisper.swift: openForDecoding"])
         #expect(Self.decodeViolations(in: "samples.append(contentsOf: buffer)", fileName: "PCMResampling.swift").isEmpty)
         #expect(Self.decodeViolations(in: "Data(contentsOf: url)", fileName: "PCMResampling.swift").contains("PCMResampling.swift: contentsOf"))
         #expect(Self.otherModuleViolations(in: "let r = try SystemSourceContentIO().openForDecoding(url)", path: "WWShow/Probe.swift") == ["WWShow/Probe.swift: SystemSourceContentIO", "WWShow/Probe.swift: openForDecoding"])

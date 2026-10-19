@@ -1,5 +1,4 @@
 import AppKit
-import AVFoundation
 import WWAlignPipeline
 import WWCore
 import WWDecode
@@ -152,17 +151,22 @@ enum LaunchFixtures {
         let showURL = folder.appending(path: "\(name).wwshow")
         if defaults.bool(forKey: "WWUITestAlignmentFixture") {
             let showID = ShowID()
-            let fixtures = (0..<count).map {
-                alignmentEpisode(index: $0, showID: showID, folder: folder)
-            }
-            var model = ShowDocumentModel.untitled(id: showID, title: name)
-            for fixture in fixtures {
-                model.speakers.append(contentsOf: fixture.speakers)
-                model = (try? model.addingEpisode(fixture.episode)) ?? model
-            }
             Task {
-                try? await SetupEngineProvider.store.save(fixtures.flatMap(\.records))
-                NewShowCommand.create(at: showURL, model: model)
+                do {
+                    var fixtures: [AlignmentEpisodeFixture] = []
+                    for index in 0..<count {
+                        fixtures.append(try await alignmentEpisode(index: index, showID: showID, folder: folder))
+                    }
+                    var model = ShowDocumentModel.untitled(id: showID, title: name)
+                    for fixture in fixtures {
+                        model.speakers.append(contentsOf: fixture.speakers)
+                        model = try model.addingEpisode(fixture.episode)
+                    }
+                    try await SetupEngineProvider.store.save(fixtures.flatMap(\.records))
+                    NewShowCommand.create(at: showURL, model: model)
+                } catch {
+                    NSApp.presentError(error)
+                }
             }
         } else {
             let episodes = (0..<count).map {
@@ -180,11 +184,19 @@ enum LaunchFixtures {
         var speakers: [Speaker] = []
     }
 
+    private enum FixtureError: LocalizedError {
+        case invalidPublicSpeech
+
+        var errorDescription: String? {
+            "Public cleanup control must be a 48 kHz mono PCM WAV, 4-30 seconds."
+        }
+    }
+
     private static func alignmentEpisode(
         index: Int,
         showID: ShowID,
         folder: URL
-    ) -> AlignmentEpisodeFixture {
+    ) async throws -> AlignmentEpisodeFixture {
         let referenceEpoch = RecordingEpoch(label: "Reference take")
         let targetEpoch = RecordingEpoch(label: "Guest take")
         let targetRestartEpoch = RecordingEpoch(label: "Guest restart")
@@ -214,10 +226,16 @@ enum LaunchFixtures {
             && UserDefaults.standard.bool(forKey: "WWUITestCleanupTimelineFixture")
         let frames: Int64
         if let publicPath {
-            let file = try! AVAudioFile(forReading: URL(filePath: publicPath))
-            precondition(file.processingFormat.channelCount == 1 && file.processingFormat.sampleRate == 48_000
-                && (48_000 * 4...48_000 * 30).contains(file.length), "Public cleanup control must be 48 kHz mono, 4-30 seconds")
-            frames = file.length
+            frames = try await SourceDecoder(access: SetupEngineProvider.context)
+                .withDecodingCursor(URL(filePath: publicPath), source: reference.id) { cursor in
+                    let format = cursor.interpretation
+                    guard format.container.kind == .wave, format.codec.kind == .linearPCM,
+                          format.channelCount == 1, format.sourceSampleRate == 48_000,
+                          (48_000 * 4...48_000 * 30).contains(format.frames.validFrames)
+                    else { throw FixtureError.invalidPublicSpeech }
+                    try await cursor.verifyUnchanged()
+                    return format.frames.validFrames
+                }
         } else { frames = 48_000 * (cleanupTimeline ? 12 : 5) }
         let sourceFolder = folder.appending(path: "AlignmentSources-\(index)", directoryHint: .isDirectory)
         try! FileManager.default.createDirectory(at: sourceFolder, withIntermediateDirectories: true)
