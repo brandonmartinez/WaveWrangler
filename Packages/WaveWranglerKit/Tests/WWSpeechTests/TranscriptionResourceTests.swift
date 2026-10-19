@@ -28,6 +28,32 @@ struct TranscriptionResourceTests {
         }
     }
 
+    @Test func modelSpecificReservationsAndLegacyRecipesRemainStable() throws {
+        let expected: [(LocalWhisperWeights, Int)] = [
+            (.baseEnglish, 768 << 20), (.smallEnglish, 2 << 30), (.turbo, 3 << 30), (.largeV3, 5 << 30)
+        ]
+        for (weights, memory) in expected {
+            let cost = try TranscriptionResources(weights: weights, configuration: .cpu)
+            #expect(cost.memoryBytes == memory + (32 << 20))
+            #expect(cost.cpuThreads == 4 && cost.metalWorkers == 0)
+            #expect(memory > weights.byteCount * 2, "Include retained bytes as well as native weights and graphs")
+        }
+        for weights in [LocalWhisperWeights.baseEnglish, .turbo] {
+            #expect(TranscriptionConfiguration.cpu.revision(weights: weights)
+                == "whisper.cpp/1.6.2+ww-token-bounds-v1+metal-v1/\(weights.rawValue)/\(weights.sha256)/verbatim-v1/requested=cpu;backend=cpu;threads=4")
+        }
+    }
+
+    @Test func largeModelRefusesAnInsufficientBudgetBeforeLoading() async throws {
+        let pool = TranscriptionWorkerPool(budget: .init(memoryBytes: 4 << 30, cpuThreads: 4, metalWorkers: 2))
+        let cost = try TranscriptionResources(weights: .largeV3, configuration: .cpu)
+        await #expect(throws: TranscriptionConfigurationError.resourceBudgetExceeded) {
+            try await pool.withAdmission(resources: cost) { Issue.record("An oversized model reached loading") }
+        }
+        let snapshot = await pool.snapshot
+        #expect(snapshot.active == 0 && snapshot.reservedBytes == 0)
+    }
+
     @Test(arguments: [0, 1, 2])
     func memoryThreadsAndGPUIndependentlyBoundTwoJobsBeforeLoading(_ constraint: Int) async throws {
         let budget = TranscriptionResourceBudget(memoryBytes: constraint == 0 ? 10 : 100,

@@ -26,7 +26,7 @@ public enum TranscriptionConfigurationError: Error, Sendable, LocalizedError {
         case .metalUnavailable:
             "The requested Metal backend is unavailable or could not initialize. No CPU substitution was made. Choose CPU in Settings > Transcription and retry."
         case .resourceBudgetExceeded:
-            "This transcription exceeds the app-wide memory or thread budget before loading audio or weights. Choose fewer CPU threads, Base English, or a source with fewer channels."
+            "This transcription exceeds the app-wide memory or thread budget before loading audio or weights. Choose fewer CPU threads, a smaller model such as Base English, or a source with fewer channels."
         }
     }
 }
@@ -73,7 +73,7 @@ public struct TranscriptionResources: Sendable, Equatable {
     public init(weights: LocalWhisperWeights, configuration: TranscriptionConfiguration, renderBytes: Int = 32 << 20) throws {
         // Includes independently retained verified bytes, native weights/graphs, and resampling buffers.
         // Add the lane's multichannel renderer envelope before loading either audio or the model.
-        let base = weights == .turbo ? 3 << 30 : 768 << 20
+        let base = weights.inferenceMemoryBytes
         guard renderBytes >= 0, renderBytes <= Int.max - base else {
             throw TranscriptionConfigurationError.resourceBudgetExceeded
         }

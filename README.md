@@ -187,16 +187,21 @@ the markers. Each Primary needs at least 0.1 seconds of supported audio in the r
 
 Choose a model in **Settings > Transcription**, also reachable from Cleanup's **Transcription Settings**
 button. The dropdown applies to every episode; no file picker is needed. **Whisper Turbo Q5_0**
-(574,041,195 bytes) is the recommended default for new setups; **Whisper Base English**
-(147,964,211 bytes) is smaller and faster but less accurate in our small conversational research test.
+(574,041,195 bytes) remains the recommended default for new setups. **Whisper Base English F16**
+(147,964,211 bytes) has the smallest download and memory reservation; **Whisper Small English F16**
+(487,614,201 bytes) uses larger English-only weights. **Whisper Large-v3 Q5_0**
+(1,081,140,203 bytes) is the full non-Turbo architecture with quantized weights, not an unquantized
+or higher-precision Turbo option. It requires the most memory and computation.
 An existing model bookmark/selection remains usable without choosing the file again. Changing the
 preference does not replace saved transcripts or change the model of an already-running job.
-Only these two pinned, previously exercised weights are offered; full Large v3 may be worth comparing
-later but has not been qualified here. OpenAI describes Turbo as a faster optimized Large v3 with
-some accuracy tradeoff: see the [upstream model comparison](https://github.com/openai/whisper#available-models-and-languages).
+Small English and Large-v3 have focused native compatibility controls, not comparative accuracy
+qualification. A larger model is not a promise of better recognition or filler retention on your
+recordings. See [model provenance and qualification](docs/research/whisper-model-choices.md) and the
+[upstream model comparison](https://github.com/openai/whisper#available-models-and-languages).
 
 **Download Model** explicitly fetches the selected MIT-licensed
-[whisper.cpp weights](https://huggingface.co/ggerganov/whisper.cpp) over HTTPS, with byte progress,
+[whisper.cpp weights](https://huggingface.co/ggerganov/whisper.cpp) from an immutable repository revision
+over HTTPS, with byte progress,
 cancellation and retry. Merely selecting a model never starts a download. Completed weights are
 installed into the sandbox's `Application Support/WaveWrangler/WhisperModels` only after exact
 size/SHA-256 verification against `LocalWhisperWeights`; interrupted or rejected files never replace
@@ -224,8 +229,11 @@ Each worker transcribes one speaker's Primary with sequential bounded chunks, se
 verified weights and native working memory. Model verification/loading occurs only after admission.
 The one app-wide pool also caps requested Whisper threads at the smaller of 16 and the active CPU
 count, Metal workers at **2**, and conservative memory reservations at one quarter of physical RAM
-(minimum 4 GiB, maximum 16 GiB). Reservations include 768 MiB/Base or 3 GiB/Turbo per worker,
+(minimum 4 GiB, maximum 16 GiB). Reservations include **768 MiB/Base, 2 GiB/Small English,
+3 GiB/Turbo or 5 GiB/Large-v3** per worker,
 plus the actual source's multichannel render envelope; model-download verification uses this same pool.
+Large-v3 cannot fit a 4 GiB admission budget, including the budget on a 16 GiB Mac; choose a smaller
+model there. Download verification reserves twice the artifact size, not the inference envelope.
 These are admission budgets, not total OS-thread or unified-memory guarantees: Accelerate/Metal may
 use additional execution resources. Work can queue below the chosen worker maximum.
 Extra workers beyond an episode's speaker count can serve other episodes. More workers consume more
